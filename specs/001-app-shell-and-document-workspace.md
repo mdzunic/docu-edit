@@ -30,3 +30,6 @@ Answer: use Datetime timestamp (from first opening/creating doc) for now, it's s
 
 Question: How should the system determine if a document ID at /doc/:id is valid or non-existent, given that document persistence is explicitly out of scope?
 Answer: Treat all IDs as valid for now
+
+Question: The acceptance criteria state that visiting /doc/:id for a non-existent ID should show a 'Document not found' message, but the Decisions section says to treat all IDs as valid for now. Should the 'Document not found' state be implemented, or is it impossible to reach given the decision to treat all IDs as valid?
+Answer: implement the 'Document not found' message, but don't test it as long there is on persistence
