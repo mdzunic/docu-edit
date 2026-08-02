@@ -33,4 +33,64 @@ describe("AppShell", () => {
       "canvas content",
     );
   });
+
+  it("does not enter edit mode on click when titleEditable is unset", async () => {
+    const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
+    await wrapper.get('[data-testid="document-title"]').trigger("click");
+    expect(wrapper.find('[data-testid="document-title-input"]').exists()).toBe(
+      false,
+    );
+  });
+
+  it("clicking the title enters edit mode with the current title (AC-6)", async () => {
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "My doc", titleEditable: true },
+    });
+    await wrapper.get('[data-testid="document-title"]').trigger("click");
+    const input = wrapper.get<HTMLInputElement>(
+      '[data-testid="document-title-input"]',
+    );
+    expect(input.element.value).toBe("My doc");
+  });
+
+  it("emits update:documentTitle on Enter (AC-7)", async () => {
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "My doc", titleEditable: true },
+    });
+    await wrapper.get('[data-testid="document-title"]').trigger("click");
+    const input = wrapper.get('[data-testid="document-title-input"]');
+    await input.setValue("New title");
+    await input.trigger("keydown.enter");
+    expect(wrapper.emitted("update:documentTitle")).toEqual([["New title"]]);
+    expect(wrapper.find('[data-testid="document-title-input"]').exists()).toBe(
+      false,
+    );
+  });
+
+  it("emits update:documentTitle on blur (AC-7)", async () => {
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "My doc", titleEditable: true },
+    });
+    await wrapper.get('[data-testid="document-title"]').trigger("click");
+    const input = wrapper.get('[data-testid="document-title-input"]');
+    await input.setValue("Blurred title");
+    await input.trigger("blur");
+    expect(wrapper.emitted("update:documentTitle")).toEqual([
+      ["Blurred title"],
+    ]);
+  });
+
+  it("Escape cancels editing without emitting (AC-8)", async () => {
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "My doc", titleEditable: true },
+    });
+    await wrapper.get('[data-testid="document-title"]').trigger("click");
+    const input = wrapper.get('[data-testid="document-title-input"]');
+    await input.setValue("Discarded");
+    await input.trigger("keydown.escape");
+    expect(wrapper.emitted("update:documentTitle")).toBeUndefined();
+    expect(wrapper.get('[data-testid="document-title"]').text()).toBe(
+      "My doc",
+    );
+  });
 });

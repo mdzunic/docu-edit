@@ -1,5 +1,14 @@
 <script setup lang="ts">
+import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import { getOrCreateDocument } from "../lib/documentStore";
+
+const router = useRouter();
+
+function createNewDocument() {
+  const doc = getOrCreateDocument(crypto.randomUUID());
+  router.push(`/doc/${doc.id}`);
+}
 </script>
 
 <template>
@@ -12,11 +21,12 @@ import AppShell from "../components/AppShell.vue";
         No document open
       </p>
       <div class="empty-actions">
-        <!-- Both actions are intentionally inert in SPEC-001; later specs
-             wire them up (create blank document, open from disk). -->
+        <!-- "Open document" is intentionally inert until SPEC-004/005 wire it
+             up (open from disk). -->
         <button
           type="button"
           data-testid="new-document"
+          @click="createNewDocument"
         >
           New document
         </button>

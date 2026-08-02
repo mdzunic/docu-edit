@@ -1,11 +1,46 @@
 <script setup lang="ts">
-// Runtime prop declaration (not the defineProps<{...}>() generic) because
-// ESLint parses .vue scripts with espree, which rejects TS-only syntax;
-// vue-tsc still infers `documentTitle: string` from it.
-defineProps({
+import { nextTick, ref, useTemplateRef } from "vue";
+
+// Runtime prop/emit declarations (not the defineProps<{...}>()/defineEmits<{...}>()
+// generics) because ESLint parses .vue scripts with espree, which rejects
+// TS-only syntax (generics, type annotations, casts); vue-tsc still infers
+// the types from them. useTemplateRef needs no generic for the same reason —
+// it infers the element type from the matching template `ref` attribute.
+const props = defineProps({
   /** Shown in the app bar next to the product name. */
   documentTitle: { type: String, required: true },
+  /** Whether clicking the title enters an editable text field. */
+  titleEditable: { type: Boolean, default: false },
 });
+
+const emit = defineEmits(["update:documentTitle"]);
+
+const isEditingTitle = ref(false);
+const draftTitle = ref("");
+const titleInput = useTemplateRef("titleInput");
+
+async function startEditingTitle() {
+  if (!props.titleEditable) {
+    return;
+  }
+  draftTitle.value = props.documentTitle;
+  isEditingTitle.value = true;
+  await nextTick();
+  titleInput.value?.focus();
+  titleInput.value?.select();
+}
+
+function commitTitleEdit() {
+  if (!isEditingTitle.value) {
+    return;
+  }
+  isEditingTitle.value = false;
+  emit("update:documentTitle", draftTitle.value);
+}
+
+function cancelTitleEdit() {
+  isEditingTitle.value = false;
+}
 </script>
 
 <template>
@@ -19,11 +54,26 @@ defineProps({
         data-testid="product-name"
       >docu-edit</span>
       <h1
+        v-if="!isEditingTitle"
         class="document-title"
         data-testid="document-title"
+        :tabindex="titleEditable ? 0 : undefined"
+        :role="titleEditable ? 'button' : undefined"
+        @click="startEditingTitle"
+        @keydown.enter="startEditingTitle"
       >
         {{ documentTitle }}
       </h1>
+      <input
+        v-else
+        ref="titleInput"
+        v-model="draftTitle"
+        class="document-title document-title-input"
+        data-testid="document-title-input"
+        @keydown.enter="commitTitleEdit"
+        @keydown.escape="cancelTitleEdit"
+        @blur="commitTitleEdit"
+      >
     </header>
     <div
       class="toolbar"
@@ -70,6 +120,19 @@ defineProps({
   margin: 0;
   font-size: 1rem;
   font-weight: 400;
+}
+
+h1.document-title[role="button"] {
+  cursor: pointer;
+}
+
+.document-title-input {
+  font: inherit;
+  color: inherit;
+  background: rgb(255 255 255 / 0.15);
+  border: 1px solid rgb(255 255 255 / 0.5);
+  border-radius: 2px;
+  padding: 0 0.25rem;
 }
 
 /* A single non-wrapping row: contents that overflow the viewport width are
