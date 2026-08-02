@@ -25,6 +25,7 @@ test("a new document renders a white, centred, margined page (AC-2, AC-3)", asyn
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New document" }).click();
+  await expect(page.getByTestId("page-margin")).toBeVisible();
 
   const canvas = (await page.getByTestId("canvas").boundingBox())!;
   const doc = (await page.getByTestId("document-page").boundingBox())!;
