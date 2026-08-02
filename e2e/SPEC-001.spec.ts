@@ -41,12 +41,15 @@ test("empty state shows 'No document open' and both buttons (AC-5..AC-8)", async
   ).toBeVisible();
 });
 
-test("/doc/:id titles the app bar with the client-side timestamp", async ({
+// SPEC-002 replaced the client-side-timestamp placeholder title with the
+// real document model's default title; see e2e/SPEC-002.spec.ts for that
+// behaviour and the rest of the document-creation flow.
+test("/doc/:id titles the app bar with the document's default title", async ({
   page,
 }) => {
   await page.goto("/doc/any-id");
   await expect(page.getByTestId("document-title")).toHaveText(
-    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+    "Untitled document",
   );
 });
 
