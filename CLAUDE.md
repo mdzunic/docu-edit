@@ -1,0 +1,69 @@
+# docu-edit
+
+Browser-based word processor that opens, edits and saves `.docx` (OOXML) and
+`.odt` (ODF) documents. Built spec-by-spec by an automated factory; `specs/`
+holds the queue and `specs/000-roadmap.md` the intended order.
+
+## Stack
+
+- **Vue 3** with `<script setup lang="ts">` SFCs — Composition API, not Options API
+- **TypeScript** strict mode
+- **Vite** dev server and build (port 5173)
+- **vue-router** — routes declared in `src/router.ts`
+- **HTML Canvas** for complex shapes and page rendering where DOM is a poor fit
+- **Vitest** + `@vue/test-utils` for unit tests
+- **Playwright** for e2e — pinned to **1.49.1** to match the CI container's
+  preinstalled browsers. Do not change this version.
+- **OXLint** for `.ts`, **ESLint** (`eslint-plugin-vue`) for `.vue` templates
+
+## Commands
+
+| Task | Command |
+| --- | --- |
+| Dev server | `npm run dev` |
+| Unit tests | `npm test` |
+| E2E tests | `npx playwright test` |
+| Typecheck | `npm run typecheck` |
+| Lint | `npm run lint` |
+
+## Layout
+
+```
+src/
+  main.ts          app entry — mounts to #app, installs the router
+  router.ts        route table; add routes here, not inline
+  App.vue          root shell — renders <RouterView />
+  views/           one component per route
+  components/      reusable UI
+  lib/             framework-free logic (parsers, formatters, converters)
+e2e/               Playwright specs; e2e/SPEC-NNN.spec.ts per feature
+```
+
+Keep document parsing and serialisation in `src/lib/` as plain TypeScript with
+no Vue imports — it must be unit-testable without mounting a component, and
+`.docx`/`.odt` handling is the part most likely to be reused headlessly.
+
+## Conventions
+
+- One component per file, `PascalCase.vue`; composables `useThing.ts`
+- Props and emits fully typed; no `any`
+- Scoped styles by default; global styles only in `App.vue`
+- Prefer semantic HTML and ARIA roles — e2e tests select by role and test-id,
+  so `data-testid` on anything a test needs to find
+- Unit tests live next to their subject as `*.spec.ts`
+
+## Testing rules
+
+- `src/harness.spec.ts` and `e2e/smoke.spec.ts` are baseline checks that must
+  keep passing; they assert nothing about product behaviour, so a feature
+  should never need to change them.
+- Add unit tests for logic in `src/lib/`, e2e tests for user-visible behaviour.
+- Never weaken or delete an existing test to make a change pass.
+
+## Constraints
+
+- `package.json` is protected: dependencies are not added by feature work. If a
+  spec genuinely cannot be built with the current dependency set, stop and say
+  so rather than working around it.
+- Round-trip fidelity matters more than feature count: never discard document
+  content you did not parse — preserve unknown parts verbatim (see SPEC-008).
