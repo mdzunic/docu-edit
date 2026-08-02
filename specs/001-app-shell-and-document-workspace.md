@@ -26,5 +26,7 @@ dark mode. Authentication.
 
 ## Decisions
 Question: For a valid document ID at /doc/:id, what should be displayed in the canvas and as the document title in the app bar, given that document parsing and persistence are explicitly out of scope?
-
 Answer: use Datetime timestamp (from first opening/creating doc) for now, it's simply the current client-side time on page load
+
+Question: How should the system determine if a document ID at /doc/:id is valid or non-existent, given that document persistence is explicitly out of scope?
+Answer: Treat all IDs as valid for now
