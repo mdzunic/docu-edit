@@ -23,3 +23,8 @@ adds a control to a known place instead of inventing its own layout.
 ## Out of scope
 Any document parsing, editing, or persistence. Mobile/touch layout. Theming or
 dark mode. Authentication.
+
+## Decisions
+Question: For a valid document ID at /doc/:id, what should be displayed in the canvas and as the document title in the app bar, given that document parsing and persistence are explicitly out of scope?
+
+Answer: use Datetime timestamp (from first opening/creating doc), as long real name is not implemented
