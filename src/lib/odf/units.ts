@@ -63,3 +63,105 @@ export function odfColorToCss(value: string | null | undefined): string | undefi
   }
   return value.toLowerCase();
 }
+
+// --- writer direction ------------------------------------------------------
+// The writer's requirement is stricter than "format the number": the save
+// round-trip tests compare models with toEqual, so parsing the emitted
+// string must reproduce the model's exact double. Formatting-then-parsing
+// is not the identity in floating point (the pt parse path rounds three
+// times), so each formatter searches for a string whose parse is bit-exact,
+// preferring the shortest decimal.
+
+/** `value.toFixed(digits)` with trailing fraction zeros trimmed. */
+function trimmedFixed(value: number, digits: number): string {
+  const text = value.toFixed(digits);
+  return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
+}
+
+const FLOAT_VIEW = new Float64Array(1);
+const BITS_VIEW = new BigUint64Array(FLOAT_VIEW.buffer);
+
+/** The double `steps` representable values away from `value` (positive
+ * steps move toward +Infinity), saturating at zero rather than crossing it —
+ * candidates for the neighbourhood searches below. */
+function ulpStep(value: number, steps: number): number {
+  FLOAT_VIEW[0] = value;
+  const bits = BITS_VIEW[0];
+  const negative = (bits & 0x8000000000000000n) !== 0n;
+  let magnitude = bits & 0x7fffffffffffffffn;
+  magnitude += negative ? BigInt(-steps) : BigInt(steps);
+  if (magnitude < 0n) {
+    magnitude = 0n;
+  }
+  BITS_VIEW[0] = negative ? magnitude | 0x8000000000000000n : magnitude;
+  return FLOAT_VIEW[0];
+}
+
+/** Formats a centimetre value as an ODF length ("1.27cm") that
+ * `odfLengthToCm` parses back to exactly `cm`. Exactness is guaranteed: the
+ * cm parse path multiplies by 1, so the full-precision decimal always
+ * round-trips — the search just prefers the shortest form. */
+export function cmToOdfLength(cm: number): string {
+  for (let digits = 0; digits <= 17; digits++) {
+    const candidate = `${trimmedFixed(cm, digits)}cm`;
+    if (odfLengthToCm(candidate) === cm) {
+      return candidate;
+    }
+  }
+  return `${cm}cm`;
+}
+
+/** Formats a point value as an ODF length ("12pt") that `odfLengthToPt`
+ * parses back to exactly `pt`. Model pt values come from two places, both
+ * covered: values parsed from a pt-denominated attribute are found by the
+ * pt-unit search, and values parsed from a cm-denominated one (LibreOffice
+ * writes paragraph spacing in cm) by the cm-unit search. Percentage-derived
+ * font sizes may need a decimal one ulp off the value itself, hence the
+ * neighbourhood walks. The final fallback — for doubles no ODF length
+ * string can parse to, which therefore never came from a file — is at most
+ * one ulp off. */
+export function ptToOdfLength(pt: number): string {
+  for (let digits = 0; digits <= 17; digits++) {
+    const candidate = `${trimmedFixed(pt, digits)}pt`;
+    if (odfLengthToPt(candidate) === pt) {
+      return candidate;
+    }
+  }
+  for (let steps = -6; steps <= 6; steps++) {
+    const candidate = `${ulpStep(pt, steps)}pt`;
+    if (odfLengthToPt(candidate) === pt) {
+      return candidate;
+    }
+  }
+  // One ulp of the cm-scale base moves the parsed pt result by less than an
+  // ulp of `pt`, so this window spans the same neighbourhood as the pt walk.
+  const cmBase = (pt / POINTS_PER_INCH) * CM_PER_INCH;
+  for (let digits = 0; digits <= 17; digits++) {
+    const candidate = `${trimmedFixed(cmBase, digits)}cm`;
+    if (odfLengthToPt(candidate) === pt) {
+      return candidate;
+    }
+  }
+  for (let steps = -34; steps <= 34; steps++) {
+    const candidate = `${ulpStep(cmBase, steps)}cm`;
+    if (odfLengthToPt(candidate) === pt) {
+      return candidate;
+    }
+  }
+  return `${pt}pt`;
+}
+
+/** Formats a line-height multiplier (1.15) as an ODF percentage ("115%")
+ * that `odfPercentage` divided by 100 parses back to exactly the
+ * multiplier — the inverse of the reader's fo:line-height mapping. */
+export function multiplierToOdfPercentage(value: number): string {
+  const percent = value * 100;
+  for (let digits = 0; digits <= 17; digits++) {
+    const candidate = `${trimmedFixed(percent, digits)}%`;
+    const parsed = odfPercentage(candidate);
+    if (parsed !== undefined && parsed / 100 === value) {
+      return candidate;
+    }
+  }
+  return `${percent}%`;
+}

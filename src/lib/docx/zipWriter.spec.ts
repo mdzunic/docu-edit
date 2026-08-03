@@ -69,3 +69,39 @@ describe("zip", () => {
     expect(archive.byteLength).toBeLessThan(5_000);
   });
 });
+
+describe("zip — store entries", () => {
+  it("writes a store entry uncompressed with method 0 in both headers", async () => {
+    const mimetype = "application/vnd.oasis.opendocument.text";
+    const archive = await zip([
+      { name: "mimetype", data: encoder.encode(mimetype), store: true },
+      { name: "content.xml", data: encoder.encode("<office:document-content/>") },
+    ]);
+    const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+    // Local header at offset 0: method STORE, sizes equal, raw bytes follow.
+    expect(view.getUint32(0, true)).toBe(0x04034b50);
+    expect(view.getUint16(8, true)).toBe(0);
+    expect(view.getUint32(18, true)).toBe(mimetype.length);
+    expect(view.getUint32(22, true)).toBe(mimetype.length);
+    const nameLength = view.getUint16(26, true);
+    expect(decoder.decode(archive.subarray(30, 30 + nameLength))).toBe("mimetype");
+    expect(decoder.decode(archive.subarray(30 + nameLength, 30 + nameLength + mimetype.length))).toBe(
+      mimetype,
+    );
+    // Central directory records the same method.
+    const eocdOffset = archive.byteLength - 22;
+    const centralOffset = view.getUint32(eocdOffset + 16, true);
+    expect(view.getUint16(centralOffset + 10, true)).toBe(0);
+  });
+
+  it("mixed store and deflate entries unzip back to identical parts", async () => {
+    const entries = [
+      { name: "mimetype", data: encoder.encode("stored bytes"), store: true },
+      { name: "content.xml", data: encoder.encode("deflated ".repeat(1_000)) },
+    ];
+    const parts = await unzip(await zip(entries));
+    for (const entry of entries) {
+      expect(decoder.decode(parts.get(entry.name))).toBe(decoder.decode(entry.data));
+    }
+  });
+});
