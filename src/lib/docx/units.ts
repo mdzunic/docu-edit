@@ -29,3 +29,36 @@ export function ooxmlColorToCss(value: string | null): string | undefined {
   }
   return `#${value.toLowerCase()}`;
 }
+
+// Inverse conversions for the writer (SPEC-006). Each rounds to the nearest
+// whole OOXML unit: the model's centimetre/point floats came from integer
+// twips/half-points in the first place, so rounding restores the original
+// integer exactly and keeps open -> save -> re-open byte-stable.
+
+/** Centimetres to twentieths of a point (OOXML's unit for margins, page
+ * size and indents), rounded to the nearest whole twip. */
+export function cmToTwips(cm: number): number {
+  return Math.round((cm / CM_PER_INCH) * TWIPS_PER_INCH);
+}
+
+/** Points to half-points (OOXML's unit for font size, `w:sz`). */
+export function ptToHalfPoints(pt: number): number {
+  return Math.round(pt * 2);
+}
+
+/** Points to twentieths of a point (OOXML's unit for spacing before/after
+ * and exact line spacing). */
+export function ptToTwentiethsOfPoint(pt: number): number {
+  return Math.round(pt * 20);
+}
+
+/** A CSS `#rrggbb` colour to OOXML's bare uppercase hex ("FF0000"), or
+ * undefined for anything else — the model only ever holds six-digit hex
+ * colours (that's all `ooxmlColorToCss` produces), so any other shape has
+ * no faithful OOXML encoding and is omitted rather than written broken. */
+export function cssColorToOoxml(value: string | undefined): string | undefined {
+  if (!value || !/^#[0-9a-f]{6}$/i.test(value)) {
+    return undefined;
+  }
+  return value.slice(1).toUpperCase();
+}

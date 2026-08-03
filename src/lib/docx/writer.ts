@@ -1,0 +1,361 @@
+// Serialises a DocumentModel into a WordprocessingML OPC package — the
+// inverse of reader.ts. Every field the reader maps into the model is
+// written back out (text, run formatting, paragraph formatting, style
+// references, section page setup), each as the exact inverse of the
+// reader's mapping, so open -> save -> re-open reproduces the model.
+//
+// Emission choices that keep the round trip exact:
+//  - Effective formatting is written as *direct* formatting on each run and
+//    paragraph. The reader resolves style formatting into the model (a
+//    paragraph's `formatting` is docDefaults + style chain + direct), so
+//    re-emitting the merged result directly reproduces it without having to
+//    reconstruct the original style definitions.
+//  - Referenced paragraph styles are declared in styles.xml by id and name
+//    only, with no formatting of their own — the reader merges style
+//    formatting into paragraphs, so a formatting-carrying style would be
+//    applied twice on re-open and break equality.
+//  - docDefaults carries the model's default font family/size; that is the
+//    one place the reader looks for `defaultStyles.fontFamily`/`fontSizePt`.
+//  - Child elements inside w:pPr/w:rPr/w:sectPr are emitted in the schema's
+//    sequence order (see validate.ts), which is what Word's strict reader
+//    checks before offering to "repair" a file.
+import type {
+  DefaultStyles,
+  DocumentModel,
+  Paragraph,
+  ParagraphAlignment,
+  Run,
+  RunFormatting,
+} from "../documentModel";
+import { DEFAULT_TITLE } from "../documentModel";
+import { WORD_NAMESPACE } from "./xml";
+import { cmToTwips, cssColorToOoxml, ptToHalfPoints, ptToTwentiethsOfPoint } from "./units";
+import { zip } from "./zipWriter";
+
+export const DOCX_MIME_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+
+const CONTENT_TYPES_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/content-types";
+const RELATIONSHIPS_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/relationships";
+const OFFICE_DOCUMENT_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+const STYLES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+const CORE_PROPERTIES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
+
+// Word's default header/footer distance (0.5"), in twips. The model does not
+// carry header/footer distances, but CT_PageMar requires the attributes.
+const HEADER_FOOTER_TWIPS = 720;
+
+/** The suggested download file name: `<title>.docx` (AC-2), falling back to
+ * the product's default title when the title is empty/whitespace. */
+export function docxFileName(title: string): string {
+  const trimmed = title.trim();
+  return `${trimmed.length > 0 ? trimmed : DEFAULT_TITLE}.docx`;
+}
+
+/** Escapes text for use in XML text content or attribute values. */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+// w:jc values are the inverse of the reader's ALIGNMENT_MAP ("both" is
+// OOXML's name for justified).
+const JC_VALUES: Record<ParagraphAlignment, string> = {
+  left: "left",
+  center: "center",
+  right: "right",
+  justify: "both",
+};
+
+function runPropertiesXml(formatting: RunFormatting): string {
+  const parts: string[] = [];
+  // Emitted in CT_RPr sequence order: rFonts, b, i, strike, color, sz,
+  // highlight, u. Explicit false values are written as w:val="0"/"none" —
+  // the model only holds false where the source explicitly switched the
+  // property off, and dropping that would change the re-opened model.
+  if (formatting.fontFamily !== undefined) {
+    const family = escapeXml(formatting.fontFamily);
+    parts.push(`<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>`);
+  }
+  if (formatting.bold !== undefined) {
+    parts.push(formatting.bold ? "<w:b/>" : '<w:b w:val="0"/>');
+  }
+  if (formatting.italic !== undefined) {
+    parts.push(formatting.italic ? "<w:i/>" : '<w:i w:val="0"/>');
+  }
+  if (formatting.strikethrough !== undefined) {
+    parts.push(formatting.strikethrough ? "<w:strike/>" : '<w:strike w:val="0"/>');
+  }
+  const color = cssColorToOoxml(formatting.color);
+  if (color !== undefined) {
+    parts.push(`<w:color w:val="${color}"/>`);
+  }
+  if (formatting.fontSizePt !== undefined) {
+    parts.push(`<w:sz w:val="${ptToHalfPoints(formatting.fontSizePt)}"/>`);
+  }
+  if (formatting.highlight !== undefined) {
+    parts.push(`<w:highlight w:val="${escapeXml(formatting.highlight)}"/>`);
+  }
+  if (formatting.underline !== undefined) {
+    parts.push(`<w:u w:val="${formatting.underline ? "single" : "none"}"/>`);
+  }
+  return parts.length > 0 ? `<w:rPr>${parts.join("")}</w:rPr>` : "";
+}
+
+/** A run's text as w:t/w:tab/w:br children — the inverse of the reader's
+ * literal "\t"/"\n" mapping. xml:space="preserve" keeps leading/trailing
+ * spaces through Word's whitespace normalisation. */
+function runContentXml(text: string): string {
+  let xml = "";
+  let buffer = "";
+  const flush = () => {
+    if (buffer.length > 0) {
+      const preserve = buffer.trim() !== buffer ? ' xml:space="preserve"' : "";
+      xml += `<w:t${preserve}>${escapeXml(buffer)}</w:t>`;
+      buffer = "";
+    }
+  };
+  for (const char of text) {
+    if (char === "\t") {
+      flush();
+      xml += "<w:tab/>";
+    } else if (char === "\n") {
+      flush();
+      xml += "<w:br/>";
+    } else {
+      buffer += char;
+    }
+  }
+  flush();
+  return xml;
+}
+
+function runXml(run: Run): string {
+  return `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
+}
+
+function paragraphPropertiesXml(paragraph: Paragraph): string {
+  const parts: string[] = [];
+  const formatting = paragraph.formatting ?? {};
+
+  // Emitted in CT_PPr sequence order: pStyle, spacing, ind, jc, outlineLvl.
+  if (paragraph.styleId !== undefined) {
+    parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
+  }
+
+  const spacingAttrs: string[] = [];
+  if (formatting.spaceBeforePt !== undefined) {
+    spacingAttrs.push(`w:before="${ptToTwentiethsOfPoint(formatting.spaceBeforePt)}"`);
+  }
+  if (formatting.spaceAfterPt !== undefined) {
+    spacingAttrs.push(`w:after="${ptToTwentiethsOfPoint(formatting.spaceAfterPt)}"`);
+  }
+  // A single w:line attribute carries either rule; lineSpacingPt wins when
+  // both are set, matching the model's documented precedence. "atLeast"
+  // (rather than "exact") so converted content can never clip tall glyphs;
+  // the reader maps any non-auto rule back to lineSpacingPt.
+  if (formatting.lineSpacingPt !== undefined) {
+    spacingAttrs.push(
+      `w:line="${ptToTwentiethsOfPoint(formatting.lineSpacingPt)}" w:lineRule="atLeast"`,
+    );
+  } else if (formatting.lineSpacing !== undefined) {
+    spacingAttrs.push(`w:line="${Math.round(formatting.lineSpacing * 240)}" w:lineRule="auto"`);
+  }
+  if (spacingAttrs.length > 0) {
+    parts.push(`<w:spacing ${spacingAttrs.join(" ")}/>`);
+  }
+
+  const indAttrs: string[] = [];
+  if (formatting.indentLeftCm !== undefined) {
+    indAttrs.push(`w:left="${cmToTwips(formatting.indentLeftCm)}"`);
+  }
+  if (formatting.indentRightCm !== undefined) {
+    indAttrs.push(`w:right="${cmToTwips(formatting.indentRightCm)}"`);
+  }
+  if (formatting.indentFirstLineCm !== undefined) {
+    indAttrs.push(
+      formatting.indentFirstLineCm >= 0
+        ? `w:firstLine="${cmToTwips(formatting.indentFirstLineCm)}"`
+        : `w:hanging="${cmToTwips(-formatting.indentFirstLineCm)}"`,
+    );
+  }
+  if (indAttrs.length > 0) {
+    parts.push(`<w:ind ${indAttrs.join(" ")}/>`);
+  }
+
+  if (formatting.alignment !== undefined) {
+    parts.push(`<w:jc w:val="${JC_VALUES[formatting.alignment]}"/>`);
+  }
+  if (paragraph.headingLevel !== undefined) {
+    parts.push(`<w:outlineLvl w:val="${paragraph.headingLevel - 1}"/>`);
+  }
+
+  return parts.length > 0 ? `<w:pPr>${parts.join("")}</w:pPr>` : "";
+}
+
+function paragraphXml(paragraph: Paragraph): string {
+  return `<w:p>${paragraphPropertiesXml(paragraph)}${paragraph.runs.map(runXml).join("")}</w:p>`;
+}
+
+function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
+  const width = cmToTwips(defaultStyles.pageSize.widthCm);
+  const height = cmToTwips(defaultStyles.pageSize.heightCm);
+  const orient = width > height ? ' w:orient="landscape"' : "";
+  const { topCm, rightCm, bottomCm, leftCm } = defaultStyles.margins;
+  return (
+    "<w:sectPr>" +
+    `<w:pgSz w:w="${width}" w:h="${height}"${orient}/>` +
+    `<w:pgMar w:top="${cmToTwips(topCm)}" w:right="${cmToTwips(rightCm)}"` +
+    ` w:bottom="${cmToTwips(bottomCm)}" w:left="${cmToTwips(leftCm)}"` +
+    ` w:header="${HEADER_FOOTER_TWIPS}" w:footer="${HEADER_FOOTER_TWIPS}" w:gutter="0"/>` +
+    "</w:sectPr>"
+  );
+}
+
+/** The main document part. Page setup lives on the model's `defaultStyles`
+ * (not per section), so all sections' blocks are written in order under one
+ * body-level w:sectPr. An empty document still gets one w:p — a body whose
+ * only child is w:sectPr triggers Word's repair prompt (AC-24). */
+export function buildDocumentXml(model: DocumentModel): string {
+  const paragraphs = model.sections.flatMap((section) => section.blocks).map(paragraphXml);
+  const body = paragraphs.length > 0 ? paragraphs.join("") : "<w:p/>";
+  return (
+    `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
+    `<w:body>${body}${sectionPropertiesXml(model.defaultStyles)}</w:body></w:document>`
+  );
+}
+
+// "Heading1".."Heading9" get Word's built-in style names ("heading 1"...);
+// anything else keeps its id as the name.
+function styleNameFor(styleId: string): string {
+  const match = /^Heading([1-9])$/.exec(styleId);
+  return match ? `heading ${match[1]}` : styleId;
+}
+
+/** The styles part: docDefaults carrying the document's default font, the
+ * required default "Normal" style, and a name-only definition for every
+ * style id the paragraphs reference (see the header comment for why these
+ * carry no formatting). */
+export function buildStylesXml(model: DocumentModel): string {
+  const { fontFamily, fontSizePt } = model.defaultStyles;
+  const family = escapeXml(fontFamily);
+
+  const referencedIds = new Set<string>();
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      if (block.styleId) {
+        referencedIds.add(block.styleId);
+      }
+    }
+  }
+
+  let styles =
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">' +
+    '<w:name w:val="Normal"/></w:style>';
+  for (const id of referencedIds) {
+    if (id === "Normal") {
+      continue;
+    }
+    styles +=
+      `<w:style w:type="paragraph" w:styleId="${escapeXml(id)}">` +
+      `<w:name w:val="${escapeXml(styleNameFor(id))}"/>` +
+      '<w:basedOn w:val="Normal"/></w:style>';
+  }
+
+  return (
+    `${XML_DECLARATION}<w:styles xmlns:w="${WORD_NAMESPACE}">` +
+    "<w:docDefaults><w:rPrDefault><w:rPr>" +
+    `<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>` +
+    `<w:sz w:val="${ptToHalfPoints(fontSizePt)}"/>` +
+    "</w:rPr></w:rPrDefault></w:docDefaults>" +
+    styles +
+    "</w:styles>"
+  );
+}
+
+/** A timestamp in the W3CDTF profile core.xml requires (whole seconds,
+ * UTC), e.g. "2026-08-03T12:00:00Z". */
+function toW3CDTF(date: Date): string {
+  return date.toISOString().replace(/\.\d+Z$/, "Z");
+}
+
+/** docProps/core.xml with the document title (AC-14) and created/modified
+ * timestamps (AC-15). */
+export function buildCorePropertiesXml(title: string, modified: Date): string {
+  const stamp = toW3CDTF(modified);
+  return (
+    `${XML_DECLARATION}<cp:coreProperties` +
+    ' xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"' +
+    ' xmlns:dc="http://purl.org/dc/elements/1.1/"' +
+    ' xmlns:dcterms="http://purl.org/dc/terms/"' +
+    ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
+    `<dc:title>${escapeXml(title)}</dc:title>` +
+    `<dcterms:created xsi:type="dcterms:W3CDTF">${stamp}</dcterms:created>` +
+    `<dcterms:modified xsi:type="dcterms:W3CDTF">${stamp}</dcterms:modified>` +
+    "</cp:coreProperties>"
+  );
+}
+
+export function buildContentTypesXml(): string {
+  return (
+    `${XML_DECLARATION}<Types xmlns="${CONTENT_TYPES_NAMESPACE}">` +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
+    '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
+    "</Types>"
+  );
+}
+
+export function buildPackageRelsXml(): string {
+  return (
+    `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
+    `<Relationship Id="rId1" Type="${OFFICE_DOCUMENT_RELATIONSHIP}" Target="word/document.xml"/>` +
+    `<Relationship Id="rId2" Type="${CORE_PROPERTIES_RELATIONSHIP}" Target="docProps/core.xml"/>` +
+    "</Relationships>"
+  );
+}
+
+export function buildDocumentRelsXml(): string {
+  return (
+    `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
+    `<Relationship Id="rId1" Type="${STYLES_RELATIONSHIP}" Target="styles.xml"/>` +
+    "</Relationships>"
+  );
+}
+
+export interface WriteDocxOptions {
+  /** The dcterms:created/modified timestamp; defaults to now. Injectable so
+   * tests can assert an exact core.xml. */
+  modified?: Date;
+}
+
+/** Serialises the model into `.docx` bytes: a valid OPC ZIP containing
+ * [Content_Types].xml, _rels/.rels, word/document.xml, word/styles.xml and
+ * docProps/core.xml (AC-3..8). */
+export async function writeDocx(
+  model: DocumentModel,
+  options: WriteDocxOptions = {},
+): Promise<Uint8Array> {
+  const modified = options.modified ?? new Date();
+  const title = model.title.trim().length > 0 ? model.title : DEFAULT_TITLE;
+  const encoder = new TextEncoder();
+  return zip([
+    { name: "[Content_Types].xml", data: encoder.encode(buildContentTypesXml()) },
+    { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
+    { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model)) },
+    { name: "word/_rels/document.xml.rels", data: encoder.encode(buildDocumentRelsXml()) },
+    { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
+    { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
+  ]);
+}

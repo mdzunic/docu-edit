@@ -83,6 +83,9 @@ function cancelTitleEdit() {
         class="format-badge"
         data-testid="format-badge"
       >{{ formatBadge }}</span>
+      <div class="app-bar-actions">
+        <slot name="app-bar-actions" />
+      </div>
     </header>
     <StorageWarningBanner />
     <div
@@ -144,6 +147,13 @@ h1.document-title[role="button"] {
   border: 1px solid rgb(255 255 255 / 0.5);
   border-radius: 2px;
   padding: 0 0.25rem;
+}
+
+/* Pushed to the far edge of the app bar; align-self keeps the actions
+   vertically centred even though the bar's items align to baseline. */
+.app-bar-actions {
+  margin-left: auto;
+  align-self: center;
 }
 
 .format-badge {

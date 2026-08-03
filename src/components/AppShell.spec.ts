@@ -105,4 +105,12 @@ describe("AppShell", () => {
     });
     expect(wrapper.get('[data-testid="format-badge"]').text()).toBe("DOCX");
   });
+
+  it("places app-bar-actions slot content inside the app bar (SPEC-006 AC-1)", () => {
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "t" },
+      slots: { "app-bar-actions": "<button>Download</button>" },
+    });
+    expect(wrapper.get('[data-testid="app-bar"]').text()).toContain("Download");
+  });
 });
