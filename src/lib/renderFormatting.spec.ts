@@ -1,0 +1,89 @@
+import { describe, it, expect } from "vitest";
+import { headingTag, paragraphStyle, runKey, runStyle } from "./renderFormatting";
+
+describe("headingTag", () => {
+  it("returns 'p' for no heading level", () => {
+    expect(headingTag(undefined)).toBe("p");
+  });
+
+  it("returns hN for a heading level", () => {
+    expect(headingTag(1)).toBe("h1");
+    expect(headingTag(3)).toBe("h3");
+  });
+
+  it("clamps levels above 6 to h6", () => {
+    expect(headingTag(9)).toBe("h6");
+  });
+});
+
+describe("runStyle", () => {
+  it("maps bold, italic, underline and strikethrough", () => {
+    const style = runStyle({ bold: true, italic: true, underline: true, strikethrough: true });
+    expect(style.fontWeight).toBe("bold");
+    expect(style.fontStyle).toBe("italic");
+    expect(style.textDecorationLine).toBe("underline line-through");
+  });
+
+  it("maps font family, size and colour", () => {
+    const style = runStyle({ fontFamily: "Arial", fontSizePt: 14, color: "#1155cc" });
+    expect(style.fontFamily).toBe("Arial");
+    expect(style.fontSize).toBe("14pt");
+    expect(style.color).toBe("#1155cc");
+  });
+
+  it("maps a known highlight name to its CSS colour", () => {
+    expect(runStyle({ highlight: "yellow" }).backgroundColor).toBe("#ffff00");
+  });
+
+  it("falls back to the raw value for an unknown highlight name", () => {
+    expect(runStyle({ highlight: "mystery" }).backgroundColor).toBe("mystery");
+  });
+
+  it("returns an empty style object for empty formatting", () => {
+    expect(runStyle({})).toEqual({});
+  });
+});
+
+describe("paragraphStyle", () => {
+  it("always sets white-space: pre-wrap so tabs/line breaks render", () => {
+    expect(paragraphStyle({ type: "paragraph", runs: [] }).whiteSpace).toBe("pre-wrap");
+  });
+
+  it("maps alignment, indents and spacing", () => {
+    const style = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      formatting: {
+        alignment: "center",
+        indentLeftCm: 1.27,
+        indentRightCm: 1.27,
+        indentFirstLineCm: 0.5,
+        spaceBeforePt: 12,
+        spaceAfterPt: 6,
+        lineSpacing: 1.5,
+      },
+    });
+    expect(style.textAlign).toBe("center");
+    expect(style.marginLeft).toBe("1.27cm");
+    expect(style.marginRight).toBe("1.27cm");
+    expect(style.textIndent).toBe("0.5cm");
+    expect(style.marginTop).toBe("12pt");
+    expect(style.marginBottom).toBe("6pt");
+    expect(style.lineHeight).toBe("1.5");
+  });
+
+  it("prefers an absolute lineSpacingPt over a lineSpacing multiplier", () => {
+    const style = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      formatting: { lineSpacing: 1.5, lineSpacingPt: 14 },
+    });
+    expect(style.lineHeight).toBe("14pt");
+  });
+});
+
+describe("runKey", () => {
+  it("produces a stable key from index and text length", () => {
+    expect(runKey({ text: "hello", formatting: {} }, 2)).toBe("2-5");
+  });
+});

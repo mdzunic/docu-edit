@@ -93,4 +93,16 @@ describe("AppShell", () => {
       "My doc",
     );
   });
+
+  it("shows no format badge when formatBadge is unset", () => {
+    const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
+    expect(wrapper.find('[data-testid="format-badge"]').exists()).toBe(false);
+  });
+
+  it("shows the format badge text when set (AC-30)", () => {
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "t", formatBadge: "DOCX" },
+    });
+    expect(wrapper.get('[data-testid="format-badge"]').text()).toBe("DOCX");
+  });
 });

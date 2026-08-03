@@ -5,6 +5,7 @@ import AppShell from "../components/AppShell.vue";
 import { documentExists } from "../lib/documents";
 import { getOrCreateDocument } from "../lib/documentStore";
 import { DEFAULT_TITLE } from "../lib/documentModel";
+import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
 
 const route = useRoute();
 const documentId = computed(() => String(route.params.id ?? ""));
@@ -46,6 +47,8 @@ const marginStyle = computed(() => {
   };
 });
 
+const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
+
 function handleTitleUpdate(newTitle = "") {
   if (!doc.value) {
     return;
@@ -60,6 +63,7 @@ function handleTitleUpdate(newTitle = "") {
     v-if="doc"
     :document-title="doc.title"
     title-editable
+    :format-badge="formatBadge"
     @update:document-title="handleTitleUpdate"
   >
     <div class="page-wrap">
@@ -72,7 +76,31 @@ function handleTitleUpdate(newTitle = "") {
           class="page-margin"
           data-testid="page-margin"
           :style="marginStyle"
-        />
+        >
+          <div
+            class="document-content"
+            data-testid="document-content"
+          >
+            <template
+              v-for="(section, sectionIndex) in doc.sections"
+              :key="sectionIndex"
+            >
+              <component
+                :is="headingTag(block.headingLevel)"
+                v-for="(block, blockIndex) in section.blocks"
+                :key="blockIndex"
+                class="doc-paragraph"
+                :style="paragraphStyle(block)"
+              >
+                <span
+                  v-for="(run, runIndex) in block.runs"
+                  :key="runKey(run, runIndex)"
+                  :style="runStyle(run.formatting)"
+                >{{ run.text }}</span>
+              </component>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
   </AppShell>
@@ -113,6 +141,18 @@ function handleTitleUpdate(newTitle = "") {
 .page-margin {
   position: absolute;
   border: 1px dashed #c8c8c8;
+}
+
+.document-content {
+  height: 100%;
+  overflow: hidden;
+  color: #202124;
+}
+
+.doc-paragraph {
+  margin: 0;
+  font-weight: normal;
+  font-size: inherit;
 }
 
 .not-found {
