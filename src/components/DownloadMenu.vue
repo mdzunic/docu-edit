@@ -4,7 +4,8 @@ import { onMounted, onUnmounted, ref } from "vue";
 // Runtime emit declaration (not the defineEmits<{...}>() generic) because
 // ESLint parses .vue scripts with espree, which rejects TS-only syntax;
 // vue-tsc still infers the emit signature from it. The payload is the
-// chosen format id — "docx" for Word (.docx).
+// chosen format id — "docx" for Word (.docx), "odt" for OpenDocument
+// Text (.odt).
 const emit = defineEmits(["download"]);
 
 const open = ref(false);
@@ -54,6 +55,14 @@ function choose(format = "") {
         @click="choose('docx')"
       >
         Word (.docx)
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="download-odt"
+        @click="choose('odt')"
+      >
+        OpenDocument Text (.odt)
       </button>
     </div>
   </div>

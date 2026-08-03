@@ -22,6 +22,24 @@ describe("DownloadMenu", () => {
     expect(item.attributes("role")).toBe("menuitem");
   });
 
+  it("opens the menu with an 'OpenDocument Text (.odt)' option after the .docx one (SPEC-007 AC-1)", async () => {
+    const wrapper = mount(DownloadMenu);
+    await wrapper.get('[data-testid="download-menu"]').trigger("click");
+    const item = wrapper.get('[data-testid="download-odt"]');
+    expect(item.text()).toBe("OpenDocument Text (.odt)");
+    expect(item.attributes("role")).toBe("menuitem");
+    const items = wrapper.findAll('[role="menuitem"]').map((option) => option.text());
+    expect(items).toEqual(["Word (.docx)", "OpenDocument Text (.odt)"]);
+  });
+
+  it("emits download('odt') and closes when the .odt option is chosen (SPEC-007 AC-2)", async () => {
+    const wrapper = mount(DownloadMenu);
+    await wrapper.get('[data-testid="download-menu"]').trigger("click");
+    await wrapper.get('[data-testid="download-odt"]').trigger("click");
+    expect(wrapper.emitted("download")).toEqual([["odt"]]);
+    expect(wrapper.find('[data-testid="download-menu-list"]').exists()).toBe(false);
+  });
+
   it("emits download('docx') and closes when the option is chosen (AC-2)", async () => {
     const wrapper = mount(DownloadMenu);
     await wrapper.get('[data-testid="download-menu"]').trigger("click");

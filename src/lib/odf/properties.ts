@@ -56,7 +56,8 @@ function parseLineStyleToggle(value: string | null): boolean | undefined {
 // OOXML name, matching the .docx reader) keyed by the hex value ODF's
 // `fo:background-color` uses for the same colour. An ODF highlight outside
 // this palette stays a raw CSS colour, which the renderer also accepts.
-const HIGHLIGHT_NAMES: Record<string, string> = {
+// Exported so the writer can invert the mapping when emitting.
+export const HIGHLIGHT_NAMES: Record<string, string> = {
   "#ffff00": "yellow",
   "#00ff00": "green",
   "#00ffff": "cyan",

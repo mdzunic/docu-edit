@@ -1,15 +1,16 @@
 // A minimal OPC/ZIP writer: the counterpart to zip.ts's reader, enough to
-// assemble a `.docx` package. Entries are DEFLATE-compressed via the
-// platform's CompressionStream (per this project's no-new-dependencies
-// constraint), sizes and CRC-32 are written into the local headers (no data
-// descriptors), and there is no ZIP64 or encryption — `.docx` packages are
-// always small, single-disk, unencrypted ZIPs.
+// assemble a `.docx` or `.odt` package. Entries are DEFLATE-compressed via
+// the platform's CompressionStream (per this project's no-new-dependencies
+// constraint) unless marked `store`, sizes and CRC-32 are written into the
+// local headers (no data descriptors), and there is no ZIP64 or encryption —
+// document packages are always small, single-disk, unencrypted ZIPs.
 
 const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const EOCD_SIGNATURE = 0x06054b50;
 
 const VERSION_NEEDED = 20;
+const COMPRESSION_STORE = 0;
 const COMPRESSION_DEFLATE = 8;
 
 /** A file to be added to the archive, in package order. */
@@ -17,6 +18,10 @@ export interface ZipEntryInput {
   /** Path within the archive, e.g. "word/document.xml". */
   name: string;
   data: Uint8Array;
+  /** Write the entry uncompressed (ZIP STORE). ODF packages require this
+   * for the `mimetype` entry so format sniffers can read it from the raw
+   * bytes; everything else defaults to DEFLATE. */
+  store?: boolean;
 }
 
 // Standard CRC-32 (IEEE 802.3, the polynomial ZIP mandates), table-driven.
@@ -106,6 +111,7 @@ class ByteWriter {
 interface PreparedEntry {
   nameBytes: Uint8Array;
   compressed: Uint8Array;
+  compressionMethod: number;
   crc: number;
   uncompressedSize: number;
   localHeaderOffset: number;
@@ -122,10 +128,11 @@ export async function zip(entries: ZipEntryInput[]): Promise<Uint8Array> {
 
   for (const entry of entries) {
     const nameBytes = encoder.encode(entry.name);
-    const compressed = await deflateRaw(entry.data);
+    const compressed = entry.store ? entry.data : await deflateRaw(entry.data);
     const record: PreparedEntry = {
       nameBytes,
       compressed,
+      compressionMethod: entry.store ? COMPRESSION_STORE : COMPRESSION_DEFLATE,
       crc: crc32(entry.data),
       uncompressedSize: entry.data.length,
       localHeaderOffset: out.length,
@@ -135,7 +142,7 @@ export async function zip(entries: ZipEntryInput[]): Promise<Uint8Array> {
     out.u32(LOCAL_FILE_HEADER_SIGNATURE);
     out.u16(VERSION_NEEDED);
     out.u16(0); // general-purpose bit flag: no data descriptor, no UTF-8 flag
-    out.u16(COMPRESSION_DEFLATE);
+    out.u16(record.compressionMethod);
     out.u16(0); // last-modified time
     out.u16(0); // last-modified date
     out.u32(record.crc);
@@ -153,7 +160,7 @@ export async function zip(entries: ZipEntryInput[]): Promise<Uint8Array> {
     out.u16(VERSION_NEEDED); // version made by
     out.u16(VERSION_NEEDED); // version needed to extract
     out.u16(0); // general-purpose bit flag
-    out.u16(COMPRESSION_DEFLATE);
+    out.u16(record.compressionMethod);
     out.u16(0); // last-modified time
     out.u16(0); // last-modified date
     out.u32(record.crc);
