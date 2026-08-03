@@ -27,3 +27,5 @@ library. Version history (SPEC-040).
 
 ## Decisions
 Rename should open modal. Validation rules - empty title not allowed, duplicate title gets number appended to the end like a count: "new document (2)". Max lenght: 200 chars. Renaming updates the last-modified timestamp.
+Every explicit save updates "last modified".
+"New" format badge is newly created document in session but not persisted, and still not saved as either docx or odt.
