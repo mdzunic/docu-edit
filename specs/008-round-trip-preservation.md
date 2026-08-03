@@ -17,9 +17,11 @@ cannot edit, we carry through untouched, and we tell the user when we cannot.
 - [ ] XML elements inside `document.xml` / `content.xml` that the reader does not model are retained as opaque nodes in the document model, anchored to their position, and re-emitted in place on save
 - [ ] Opening a file and saving it to the same format without editing produces `equalStructural(openedModel, reopenedModel)` and an `equalBytes` result for every preserved opaque part — see "Equality" below
 - [ ] Editing one paragraph and saving does not alter unrelated opaque content elsewhere in the document
-- [ ] Content that cannot be preserved when converting between formats is listed in a "Conversion report" dialog shown once after a cross-format save, naming each dropped item type and its approximate location (e.g. "Chart on page 3 — not converted")
+- [ ] Both writers return `{ blob, dropped }` instead of a bare `Blob`, where `dropped` is a `DropRecord[]` naming every item the writer could not represent in the target format — see "Writer API" below
+- [ ] Content that cannot be preserved when converting between formats is listed in a "Conversion report" dialog shown once after a cross-format save, naming each dropped item type and its approximate location (e.g. "Chart on page 3 — not converted"); the dialog renders `dropped` and derives no part of its contents by comparing models
 - [ ] The conversion report has a "Don't show again for this document" checkbox
 - [ ] A test opens a `.docx` containing a chart, a content control and a custom XML part, edits one paragraph, saves, and asserts all three are still present and intact in the output
+- [ ] The cross-format test asserts `dropped` deep-equals the exclusion list committed for that direction, then asserts `equalSemantic` between the source model with those items removed and the re-opened model — so the report and the test read the same array and cannot drift apart
 
 ## Out of scope
 Rendering the preserved content (a chart still shows as a placeholder box).
@@ -45,15 +47,41 @@ attribute order do not cause false failures.
 
 ### Existing I/O surface
 ```ts
-// src/io/docx/read.ts   readDocx(bytes): Promise<ReadResult>      — SPEC-004
-// src/io/odt/read.ts    readOdt(bytes):  Promise<ReadResult>      — SPEC-005
-// src/io/docx/write.ts  writeDocx(doc, opts?): Promise<Blob>      — SPEC-006
-// src/io/odt/write.ts   writeOdt(doc, opts?): Promise<Blob>       — SPEC-007
+// src/io/docx/read.ts   readDocx(bytes): Promise<ReadResult>       — SPEC-004
+// src/io/odt/read.ts    readOdt(bytes):  Promise<ReadResult>       — SPEC-005
+// src/io/docx/write.ts  writeDocx(doc, opts?): Promise<WriteResult> — SPEC-006, widened here
+// src/io/odt/write.ts   writeOdt(doc, opts?): Promise<WriteResult>  — SPEC-007, widened here
 type WriteOptions = { preserveOpaque?: boolean }
 ```
 This spec makes `preserveOpaque` the default behaviour rather than an option,
-and extends both readers to produce opaque nodes instead of dropping content.
+extends both readers to produce opaque nodes instead of dropping content, and
+widens both writers' return type from `Blob` to `WriteResult` (below).
+SPEC-006 and SPEC-007 ship the `Promise<Blob>` form; migrating both writers and
+their existing call sites is part of this spec's work.
 Read `specs/006-save-as-docx.md` and `specs/007-save-as-odt.md` first.
+
+### Writer API — where the exclusion list comes from
+`equalSemantic` is a boolean relation (`equalStructural(resolve(a), resolve(b))`)
+and produces no diff, so it cannot be the source of the conversion report. Nor
+could any post-hoc model diff be: once a chart has been dropped it is simply
+absent, and a diff over the models can only report a missing node at a path, not
+"a chart, on page 3". The writer performing the conversion is the only component
+that knows both facts at the moment it decides an item cannot be represented, so
+it is the single source both consumers read:
+```ts
+type WriteResult = { blob: Blob; dropped: DropRecord[] }
+type DropRecord  = {
+  kind: 'chart' | 'contentControl' | 'customXml' | 'embeddedObject'
+      | 'macro' | 'opaqueBlock' | 'opaqueInline' | 'opaquePart'
+  location: string   // human-readable, e.g. "page 3", "paragraph 12"
+  reason: string     // why the target format cannot carry it
+}
+```
+`dropped` is empty for a same-format save — opaque content round-trips
+untouched, so there is nothing to report. The conversion report dialog renders
+`dropped` directly; the cross-format test compares `dropped` against the
+committed exclusion list for that direction and uses it to mask the source model
+before calling `equalSemantic`. Neither side re-derives the list.
 
 ### Fixtures
 The shared set at `fixtures/` with `fixtures/manifest.json` (SPEC-004). This
@@ -69,6 +97,10 @@ implemented in `src/model/equality.ts`. All three relations are used here:
 - **`equalStructural`** — for the no-edit same-format round trip, and for
   asserting that editing one paragraph left every other node untouched.
 - **`equalSemantic`** — for cross-format saves, paired with the exclusion list
-  that this spec surfaces to the user as the conversion report. The report's
-  contents and the test's exclusion list are generated from the same source, so
-  they cannot drift apart.
+  this spec surfaces to the user as the conversion report. `equalSemantic`
+  returns a boolean and generates no list of its own; the list is the writer's
+  `dropped: DropRecord[]` (see "Writer API" above). The report renders that
+  array and the test asserts against it, so the two cannot drift apart.
+  Apply the exclusions as a transform on the source model —
+  `equalSemantic(withoutDropped(source, dropped), reopened)` — never as a
+  hand-rolled subset comparison.

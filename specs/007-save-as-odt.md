@@ -19,7 +19,7 @@ open a `.docx`, save it as `.odt`, and the content survives.
 - [ ] Files produced by the writer open in LibreOffice Writer without warnings — verified by a documented manual check recorded in the PR
 - [ ] The writer is exposed as `writeOdt` in `src/io/odt/write.ts`, matching the `writeDocx` signature in "Writer API" below, with no DOM dependency
 - [ ] An automated test round-trips every `.odt` fixture (open → save → re-open) and asserts `equalStructural(first, second)` — see "Equality" below — reporting the first differing path on failure
-- [ ] Cross-format tests assert `equalSemantic` for `.docx` → save-as-`.odt` → open and for `.odt` → save-as-`.docx` → open, paired with a committed exclusion list naming what each direction is permitted to lose
+- [ ] Cross-format tests assert `equalSemantic` for `.docx` → save-as-`.odt` → open and for `.odt` → save-as-`.docx` → open, paired with a committed exclusion list naming what each direction is permitted to lose. `equalSemantic` yields no such list itself — it is a boolean — so the list is authored per direction here and becomes writer-reported in SPEC-008
 - [ ] The exclusion list is empty for the content this spec covers — text, run formatting, paragraph formatting, styles and page layout convert without loss in both directions
 
 ## Out of scope
@@ -52,6 +52,14 @@ type ReadResult  = { doc: Doc; warnings: Warning[] }
 type Warning     = { code: string; message: string; path?: string }
 type WriteOptions = { preserveOpaque?: boolean }
 ```
+SPEC-008 widens both writers to `Promise<WriteResult>`, where
+`WriteResult = { blob: Blob; dropped: DropRecord[] }`. `dropped` names each item
+the writer could not represent in the target format, and is the single source of
+both the conversion report and the cross-format exclusion list — only the writer
+knows an item's type and location at the moment it drops it, which no comparison
+of the resulting models can recover. Structure the conversion path so that list
+can be collected as it goes.
+
 Their specs are `specs/005-open-odt-text-and-paragraphs.md` and
 `specs/006-save-as-docx.md` — read both; this spec is the ODF mirror of
 SPEC-006 and must not diverge in API shape, error handling or test structure.
@@ -72,6 +80,9 @@ implemented in `src/model/equality.ts`:
 - **`equalSemantic(a, b)`** — `equalStructural` over the style-resolved model,
   so formatting that moves between a style and a run still compares equal.
   **Use this for cross-format conversion**, always with an explicit exclusion
-  list; SPEC-008 turns that list into the user-facing conversion report.
+  list. It returns a boolean and produces no diff, so the exclusion list is
+  authored alongside the test, not derived from the comparison; SPEC-008 moves
+  it to the writer's `dropped` array and renders that as the user-facing
+  conversion report.
 
 Do not hand-roll a subset comparison — use the exported helpers.

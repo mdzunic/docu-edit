@@ -44,6 +44,14 @@ symmetric with the SPEC-004 reader so a round trip is lossless.
 writeDocx(doc: Doc, opts?: WriteOptions): Promise<Blob>
 type WriteOptions = { preserveOpaque?: boolean }   // SPEC-008 uses this
 ```
+SPEC-008 widens the return type to `Promise<WriteResult>`, where
+`WriteResult = { blob: Blob; dropped: DropRecord[] }` and `dropped` names what a
+cross-format save could not represent. That array — not any comparison of models
+— is the source of both the conversion report and the cross-format test's
+exclusion list, because only the writer knows an item's type and location at the
+point it drops it. Keep the conversion path structured so that list can be
+collected rather than reconstructed later.
+
 SPEC-007 adds `writeOdt` with the identical shape. The reader side already
 exists from SPEC-004: `readDocx(bytes): Promise<{ doc, warnings }>` in
 `src/io/docx/read.ts`, plus `detectFormat` in `src/io/detect.ts`.
@@ -64,7 +72,8 @@ Defined normatively in `specs/002-create-blank-document.md` ("Equality"):
   representation choices the writer is free to make, and strict about content.
 - **`equalSemantic`** — `equalStructural` over the style-resolved model, for
   the cross-format assertion above, where formatting may legitimately move
-  between a style and a run.
+  between a style and a run. It returns a boolean and produces no diff or
+  exclusion list; SPEC-008 pairs it with the writer's `dropped` array.
 
 Do not write a bespoke subset comparison for these tests; use the exported
 helpers from `src/model/equality.ts`.
