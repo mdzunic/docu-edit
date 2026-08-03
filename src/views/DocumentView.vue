@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
+import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
-import { getOrCreateDocument } from "../lib/documentStore";
+import {
+  deleteDocument,
+  getOrCreateDocument,
+  touchDocument,
+} from "../lib/documentStore";
 import { DEFAULT_TITLE } from "../lib/documentModel";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
 
 const route = useRoute();
+const router = useRouter();
+const { addToast } = useToasts();
 const documentId = computed(() => String(route.params.id ?? ""));
 
 // A plain object assigned into a ref is made deeply reactive by Vue, so
@@ -55,6 +63,22 @@ function handleTitleUpdate(newTitle = "") {
   }
   const trimmed = newTitle.trim();
   doc.value.title = trimmed.length > 0 ? trimmed : DEFAULT_TITLE;
+  // The assignment above already mutated the stored model (doc is a reactive
+  // proxy of it); touching records the modification time and persists.
+  touchDocument(doc.value.id);
+}
+
+const confirmingDelete = ref(false);
+
+function deleteOpenDocument() {
+  if (!doc.value) {
+    return;
+  }
+  const { id, title } = doc.value;
+  confirmingDelete.value = false;
+  deleteDocument(id);
+  addToast(`Deleted ${title}`);
+  router.push("/");
 }
 </script>
 
@@ -66,6 +90,16 @@ function handleTitleUpdate(newTitle = "") {
     :format-badge="formatBadge"
     @update:document-title="handleTitleUpdate"
   >
+    <template #toolbar>
+      <button
+        type="button"
+        class="toolbar-button"
+        data-testid="delete-document"
+        @click="confirmingDelete = true"
+      >
+        Delete
+      </button>
+    </template>
     <div class="page-wrap">
       <div
         class="page"
@@ -103,6 +137,12 @@ function handleTitleUpdate(newTitle = "") {
         </div>
       </div>
     </div>
+    <ConfirmDeleteDialog
+      v-if="confirmingDelete"
+      :document-title="doc.title"
+      @confirm="deleteOpenDocument"
+      @cancel="confirmingDelete = false"
+    />
   </AppShell>
   <AppShell
     v-else
@@ -123,6 +163,16 @@ function handleTitleUpdate(newTitle = "") {
 </template>
 
 <style scoped>
+.toolbar-button {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid #bdbdbd;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
 .page-wrap {
   padding: 2rem 1rem;
 }
