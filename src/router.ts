@@ -13,4 +13,9 @@ export const routes: RouteRecordRaw[] = [
     name: "document",
     component: () => import("./views/DocumentView.vue"),
   },
+  {
+    path: "/open",
+    name: "open-from-url",
+    component: () => import("./views/OpenFromUrlView.vue"),
+  },
 ];

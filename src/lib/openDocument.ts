@@ -11,6 +11,22 @@ import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } fro
 
 export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
 
+/** SPEC-009 AC-14: shared across every open path (picker, drag-drop,
+ * URL fetch) since they all funnel through `openDocumentFile`. */
+export const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+export const FILE_TOO_LARGE_MESSAGE = "That file is too large to open (limit 50 MB)";
+export class FileTooLargeError extends Error {}
+
+/** SPEC-009 AC-4: drag-and-drop is the one open path with no OS-level file
+ * filter (the picker's `accept` attribute has no drop equivalent), so it
+ * checks the name itself before ever reading the file. Format is still
+ * detected from content, never the extension, once a file passes this. */
+export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx and .odt files";
+
+export function hasSupportedExtension(fileName: string): boolean {
+  return /\.(docx|odt)$/i.test(fileName);
+}
+
 function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -47,6 +63,9 @@ function buildModel(
  * OpenDocument text opens as .odt, a flat XML ODF file (.fodt) is rejected
  * with its specific message, and everything else takes the .docx path. */
 export async function openDocumentFile(file: File): Promise<DocumentModel> {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    throw new FileTooLargeError(FILE_TOO_LARGE_MESSAGE);
+  }
   const buffer = await readFileAsArrayBuffer(file);
   const bytes = new Uint8Array(buffer);
   const odf = await detectOdf(bytes);

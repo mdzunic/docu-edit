@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { nextTick, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { useRouter } from "vue-router";
 import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
+import { useToasts } from "../composables/useToasts";
+import { storeDocument } from "../lib/documentStore";
+import {
+  hasSupportedExtension,
+  openDocumentFile,
+  UNSUPPORTED_FILE_TYPE_MESSAGE,
+} from "../lib/openDocument";
 
 // Runtime prop/emit declarations (not the defineProps<{...}>()/defineEmits<{...}>()
 // generics) because ESLint parses .vue scripts with espree, which rejects
@@ -45,6 +53,96 @@ function commitTitleEdit() {
 function cancelTitleEdit() {
   isEditingTitle.value = false;
 }
+
+// Window-level drag-and-drop (SPEC-009): the shell is the app's whole
+// window, so it owns the drop target regardless of which view (home or an
+// open document) is mounted. dragenter/dragleave fire once per element
+// boundary crossed, including into and out of every child, so a depth
+// counter — not a boolean — is what makes the overlay track "is a file
+// being dragged anywhere over the window" correctly.
+const router = useRouter();
+const { addToast } = useToasts();
+const dragDepth = ref(0);
+const showDropOverlay = computed(() => dragDepth.value > 0);
+const dropError = ref("");
+
+// Default values (rather than `event: DragEvent` annotations) are how this
+// file infers parameter types elsewhere too — ESLint parses .vue scripts
+// with plain espree, which rejects TS-only syntax; the default expression
+// is only ever evaluated if a caller omits the argument, which none here
+// do, so it never actually runs.
+function isFileDrag(event = new DragEvent("dragenter")) {
+  const types = event.dataTransfer?.types;
+  return !!types && types.includes("Files");
+}
+
+function handleDragEnter(event = new DragEvent("dragenter")) {
+  if (!isFileDrag(event)) {
+    return;
+  }
+  event.preventDefault();
+  dragDepth.value += 1;
+}
+
+function handleDragOver(event = new DragEvent("dragover")) {
+  if (!isFileDrag(event)) {
+    return;
+  }
+  // Required so the browser fires `drop` instead of rejecting it / opening
+  // the file itself.
+  event.preventDefault();
+}
+
+function handleDragLeave(event = new DragEvent("dragleave")) {
+  if (!isFileDrag(event)) {
+    return;
+  }
+  dragDepth.value = Math.max(0, dragDepth.value - 1);
+}
+
+// Until this resolves successfully, nothing here touches the currently
+// open document (AC-8) — only a rejected/errored drop sets dropError, and
+// only a parsed drop calls storeDocument/navigates.
+async function handleDrop(event = new DragEvent("drop")) {
+  if (!isFileDrag(event)) {
+    return;
+  }
+  event.preventDefault();
+  dragDepth.value = 0;
+  const files = event.dataTransfer?.files;
+  if (!files || files.length === 0) {
+    return;
+  }
+  dropError.value = "";
+  const file = files[0];
+  if (!hasSupportedExtension(file.name)) {
+    dropError.value = UNSUPPORTED_FILE_TYPE_MESSAGE;
+    return;
+  }
+  try {
+    const doc = await openDocumentFile(file);
+    storeDocument(doc);
+    if (files.length > 1) {
+      addToast(`Opened ${doc.title} — only one file at a time`);
+    }
+    router?.push(`/doc/${doc.id}`);
+  } catch (error) {
+    dropError.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("dragenter", handleDragEnter);
+  window.addEventListener("dragover", handleDragOver);
+  window.addEventListener("dragleave", handleDragLeave);
+  window.addEventListener("drop", handleDrop);
+});
+onUnmounted(() => {
+  window.removeEventListener("dragenter", handleDragEnter);
+  window.removeEventListener("dragover", handleDragOver);
+  window.removeEventListener("dragleave", handleDragLeave);
+  window.removeEventListener("drop", handleDrop);
+});
 </script>
 
 <template>
@@ -103,6 +201,21 @@ function cancelTitleEdit() {
       <slot />
     </main>
     <ToastHost />
+    <div
+      v-if="showDropOverlay"
+      class="drop-overlay"
+      data-testid="drop-overlay"
+    >
+      Drop to open
+    </div>
+    <p
+      v-if="dropError"
+      class="drop-error"
+      role="alert"
+      data-testid="drop-error"
+    >
+      {{ dropError }}
+    </p>
   </div>
 </template>
 
@@ -191,5 +304,35 @@ h1.document-title[role="button"] {
   min-height: 0;
   overflow-y: auto;
   background: #e8eaed;
+}
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #fff;
+  background: rgb(26 82 118 / 0.85);
+  border: 4px dashed rgb(255 255 255 / 0.8);
+  pointer-events: none;
+}
+
+.drop-error {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 150;
+  margin: 0;
+  max-width: 32rem;
+  padding: 0.625rem 1.25rem;
+  border-radius: 4px;
+  background: #fdecea;
+  color: #b3261e;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
 }
 </style>
