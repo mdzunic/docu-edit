@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import { openDocxFile } from "../lib/openDocument";
+import { openDocumentFile } from "../lib/openDocument";
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
@@ -80,7 +80,7 @@ async function handleFileChosen() {
     return;
   }
   try {
-    const doc = await openDocxFile(file);
+    const doc = await openDocumentFile(file);
     openError.value = "";
     storeDocument(doc);
     router.push(`/doc/${doc.id}`);
@@ -283,7 +283,7 @@ function confirmDelete() {
     <input
       ref="fileInput"
       type="file"
-      accept=".docx"
+      accept=".docx,.odt"
       data-testid="open-document-input"
       class="visually-hidden"
       @change="handleFileChosen"

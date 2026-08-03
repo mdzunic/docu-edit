@@ -2,9 +2,18 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openDocxFile, titleFromFileName, DocxOpenError, LegacyDocError } from "./openDocument";
+import {
+  openDocumentFile,
+  openDocxFile,
+  titleFromFileName,
+  DocxOpenError,
+  FlatOdfError,
+  LegacyDocError,
+} from "./openDocument";
+import { FLAT_ODF_MESSAGE } from "./odf/reader";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "docx", "fixtures");
+const odfFixturesDir = join(dirname(fileURLToPath(import.meta.url)), "odf", "fixtures");
 
 function loadFixtureFile(name: string): File {
   const bytes = readFileSync(join(fixturesDir, name));
@@ -56,5 +65,54 @@ describe("openDocxFile", () => {
     const magic = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
     const file = new File([magic], "old.docx");
     await expect(openDocxFile(file)).rejects.toThrow(LegacyDocError);
+  });
+});
+
+describe("titleFromFileName — .odt", () => {
+  it("strips the .odt extension, case-insensitively", () => {
+    expect(titleFromFileName("Meeting Minutes.odt")).toBe("Meeting Minutes");
+    expect(titleFromFileName("Report.ODT")).toBe("Report");
+  });
+});
+
+describe("openDocumentFile", () => {
+  const FLAT_ODF = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:mimetype="application/vnd.oasis.opendocument.text" office:version="1.3"/>`;
+
+  function loadOdfFixtureFile(name: string, as: string = name): File {
+    const bytes = readFileSync(join(odfFixturesDir, name));
+    return new File([bytes], as);
+  }
+
+  it("opens a real .odt file into a DocumentModel with format 'odt' (AC-1, AC-30)", async () => {
+    const doc = await openDocumentFile(loadOdfFixtureFile("libreoffice-writer.odt"));
+    expect(doc.format).toBe("odt");
+    expect(doc.title).toBe("libreoffice-writer");
+    expect(doc.sections[0].blocks.length).toBeGreaterThan(0);
+  });
+
+  it("detects ODF content behind a .docx name — mimetype entry wins over extension (AC-2)", async () => {
+    const doc = await openDocumentFile(loadOdfFixtureFile("libreoffice-writer.odt", "renamed.docx"));
+    expect(doc.format).toBe("odt");
+  });
+
+  it("detects OOXML content behind a .odt name — mimetype entry wins over extension (AC-2)", async () => {
+    const bytes = readFileSync(join(fixturesDir, "word-authored.docx"));
+    const doc = await openDocumentFile(new File([bytes], "renamed.odt"));
+    expect(doc.format).toBe("docx");
+  });
+
+  it("rejects a flat XML ODF (.fodt) file with the specific message (AC-29)", async () => {
+    const file = new File([new TextEncoder().encode(FLAT_ODF)], "flat.fodt");
+    await expect(openDocumentFile(file)).rejects.toThrow(FlatOdfError);
+    await expect(openDocumentFile(file)).rejects.toThrow(FLAT_ODF_MESSAGE);
+  });
+
+  it("still rejects non-ZIP and legacy .doc files via the .docx path", async () => {
+    const notZip = new File([new TextEncoder().encode("not a document")], "broken.odt");
+    await expect(openDocumentFile(notZip)).rejects.toThrow(DocxOpenError);
+
+    const magic = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
+    await expect(openDocumentFile(new File([magic], "old.doc"))).rejects.toThrow(LegacyDocError);
   });
 });

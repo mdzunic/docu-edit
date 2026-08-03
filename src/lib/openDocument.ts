@@ -1,12 +1,15 @@
 // Ties a File chosen from the "Open document" picker to the document model:
-// read its bytes, parse them, and produce a DocumentModel ready to store and
-// navigate to. Parsing errors (DocxOpenError / LegacyDocError) propagate
-// unchanged — the caller only mutates app state once this resolves, so a
-// rejected file leaves the previous state untouched (AC-33).
-import type { DocumentModel } from "./documentModel";
+// read its bytes, detect the format from the bytes themselves (never the
+// extension — an ODF package is recognised by its `mimetype` entry), parse
+// them, and produce a DocumentModel ready to store and navigate to. Parsing
+// errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
+// propagate unchanged — the caller only mutates app state once this
+// resolves, so a rejected file leaves the previous state untouched.
+import type { DocumentFormat, DocumentModel } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
+import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
 
-export { DocxOpenError, LegacyDocError };
+export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
 
 function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
@@ -20,20 +23,45 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 /** The app-bar title for an opened document: its file name with the
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
-  const withoutExtension = fileName.replace(/\.docx$/i, "");
+  const withoutExtension = fileName.replace(/\.(docx|odt)$/i, "");
   return withoutExtension.length > 0 ? withoutExtension : fileName;
+}
+
+function buildModel(
+  fileName: string,
+  format: DocumentFormat,
+  parsed: { sections: DocumentModel["sections"]; defaultStyles: DocumentModel["defaultStyles"] },
+): DocumentModel {
+  return {
+    id: crypto.randomUUID(),
+    title: titleFromFileName(fileName),
+    format,
+    sections: parsed.sections,
+    defaultStyles: parsed.defaultStyles,
+  };
+}
+
+/** Reads and parses a picked File into a new DocumentModel (not yet stored
+ * or navigated to — the caller does that once this resolves). The format is
+ * detected from the file's contents: a ZIP whose `mimetype` entry declares
+ * OpenDocument text opens as .odt, a flat XML ODF file (.fodt) is rejected
+ * with its specific message, and everything else takes the .docx path. */
+export async function openDocumentFile(file: File): Promise<DocumentModel> {
+  const buffer = await readFileAsArrayBuffer(file);
+  const bytes = new Uint8Array(buffer);
+  const odf = await detectOdf(bytes);
+  if (odf === "flat") {
+    throw new FlatOdfError(FLAT_ODF_MESSAGE);
+  }
+  if (odf === "package") {
+    return buildModel(file.name, "odt", await parseOdt(bytes));
+  }
+  return buildModel(file.name, "docx", await parseDocx(bytes));
 }
 
 /** Reads and parses a `.docx` File into a new DocumentModel (not yet
  * stored or navigated to — the caller does that once this resolves). */
 export async function openDocxFile(file: File): Promise<DocumentModel> {
   const buffer = await readFileAsArrayBuffer(file);
-  const parsed = await parseDocx(buffer);
-  return {
-    id: crypto.randomUUID(),
-    title: titleFromFileName(file.name),
-    format: "docx",
-    sections: parsed.sections,
-    defaultStyles: parsed.defaultStyles,
-  };
+  return buildModel(file.name, "docx", await parseDocx(buffer));
 }
