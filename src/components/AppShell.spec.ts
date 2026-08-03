@@ -1,6 +1,53 @@
-import { describe, it, expect } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, it, expect, afterEach } from "vitest";
+import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
+import { createMemoryHistory, createRouter } from "vue-router";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import AppShell from "./AppShell.vue";
+import { routes } from "../router";
+
+const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "docx", "fixtures");
+const docxBytes = readFileSync(join(fixturesDir, "word-authored.docx"));
+
+/** A window-level drag/drop Event carrying a fake DataTransfer — jsdom has
+ * no DragEvent/DataTransfer constructors, so a plain Event is extended with
+ * just the `dataTransfer` shape the handlers read (`types`, `files`). */
+function fileDragEvent(type: string, files: File[] = []) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], files } });
+  return event;
+}
+
+// AppShell listens on `window`, not its own DOM subtree, so a leftover
+// mounted instance from a previous test would keep reacting to drag events
+// dispatched by later tests; unmounting after each test removes those
+// listeners (see AppShell's onUnmounted).
+const mountedWrappers: VueWrapper[] = [];
+afterEach(() => {
+  mountedWrappers.splice(0).forEach((wrapper) => wrapper.unmount());
+});
+
+function mountWithRouter(documentTitle = "t") {
+  const router = createRouter({ history: createMemoryHistory(), routes });
+  const wrapper = mount(AppShell, { props: { documentTitle }, global: { plugins: [router] } });
+  mountedWrappers.push(wrapper);
+  return { wrapper, router };
+}
+
+// A drop's router.push() resolves only once its target route's async
+// component has been dynamically import()ed, which needs real event-loop
+// time, not just a promise-queue flush (same reason HomeView's library
+// spec polls rather than awaiting flushPromises() alone).
+async function untilNavigated(router: ReturnType<typeof createRouter>) {
+  for (let i = 0; i < 200; i += 1) {
+    if (router.currentRoute.value.path !== "/") {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 describe("AppShell", () => {
   it("renders the app bar with the product name and document title", () => {
@@ -112,5 +159,86 @@ describe("AppShell", () => {
       slots: { "app-bar-actions": "<button>Download</button>" },
     });
     expect(wrapper.get('[data-testid="app-bar"]').text()).toContain("Download");
+  });
+
+  describe("drag-and-drop (SPEC-009)", () => {
+    it("shows a full-window 'Drop to open' overlay while a file is dragged over the window (AC-1)", async () => {
+      const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
+      mountedWrappers.push(wrapper);
+      expect(wrapper.find('[data-testid="drop-overlay"]').exists()).toBe(false);
+
+      window.dispatchEvent(fileDragEvent("dragenter"));
+      await nextTick();
+
+      expect(wrapper.get('[data-testid="drop-overlay"]').text()).toBe("Drop to open");
+    });
+
+    it("keeps the overlay up across nested dragenter/dragleave and only hides once the drag truly leaves", async () => {
+      const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
+      mountedWrappers.push(wrapper);
+      window.dispatchEvent(fileDragEvent("dragenter"));
+      window.dispatchEvent(fileDragEvent("dragenter"));
+      window.dispatchEvent(fileDragEvent("dragleave"));
+      await nextTick();
+      expect(wrapper.find('[data-testid="drop-overlay"]').exists()).toBe(true);
+
+      window.dispatchEvent(fileDragEvent("dragleave"));
+      await nextTick();
+      expect(wrapper.find('[data-testid="drop-overlay"]').exists()).toBe(false);
+    });
+
+    it("dropping a .docx file opens it, exactly as the file picker would (AC-2)", async () => {
+      const { wrapper, router } = mountWithRouter();
+      const file = new File([docxBytes], "word-authored.docx");
+
+      window.dispatchEvent(fileDragEvent("drop", [file]));
+      await flushPromises();
+      await untilNavigated(router);
+
+      expect(router.currentRoute.value.path).toMatch(/^\/doc\/.+/);
+      expect(wrapper.find('[data-testid="drop-overlay"]').exists()).toBe(false);
+    });
+
+    it("dropping an unsupported file type shows the exact error and does not navigate away (AC-4, AC-5)", async () => {
+      const { wrapper, router } = mountWithRouter();
+      const file = new File([new TextEncoder().encode("hi")], "notes.txt");
+
+      window.dispatchEvent(fileDragEvent("drop", [file]));
+      await flushPromises();
+
+      expect(wrapper.get('[data-testid="drop-error"]').text()).toBe(
+        "We can only open .docx and .odt files",
+      );
+      expect(router.currentRoute.value.path).toBe("/");
+    });
+
+    it("dropping multiple files opens the first and shows a toast naming it (AC-6, AC-7)", async () => {
+      const { wrapper, router } = mountWithRouter();
+      const first = new File([docxBytes], "First.docx");
+      const second = new File([docxBytes], "Second.docx");
+
+      window.dispatchEvent(fileDragEvent("drop", [first, second]));
+      await flushPromises();
+      await untilNavigated(router);
+
+      expect(router.currentRoute.value.path).toMatch(/^\/doc\/.+/);
+      expect(wrapper.get('[data-testid="toast"]').text()).toBe(
+        "Opened First — only one file at a time",
+      );
+    });
+
+    it("dragging over the window while a document is open does not modify it until the drop completes (AC-8)", async () => {
+      const { wrapper, router } = mountWithRouter("Existing doc");
+      await router.push("/doc/already-open");
+
+      window.dispatchEvent(fileDragEvent("dragenter"));
+      await nextTick();
+      expect(router.currentRoute.value.path).toBe("/doc/already-open");
+      expect(wrapper.get('[data-testid="document-title"]').text()).toBe("Existing doc");
+
+      window.dispatchEvent(fileDragEvent("dragleave"));
+      await nextTick();
+      expect(router.currentRoute.value.path).toBe("/doc/already-open");
+    });
   });
 });
