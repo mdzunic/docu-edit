@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, useTemplateRef } from "vue";
+import StorageWarningBanner from "./StorageWarningBanner.vue";
+import ToastHost from "./ToastHost.vue";
 
 // Runtime prop/emit declarations (not the defineProps<{...}>()/defineEmits<{...}>()
 // generics) because ESLint parses .vue scripts with espree, which rejects
@@ -75,6 +77,7 @@ function cancelTitleEdit() {
         @blur="commitTitleEdit"
       >
     </header>
+    <StorageWarningBanner />
     <div
       class="toolbar"
       role="toolbar"
@@ -89,6 +92,7 @@ function cancelTitleEdit() {
     >
       <slot />
     </main>
+    <ToastHost />
   </div>
 </template>
 
