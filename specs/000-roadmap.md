@@ -27,6 +27,30 @@ Everything. See the individual specs.
 
 ---
 
+## Spec conventions
+Intake sees **one spec file at a time**, so a spec that leans on a shared
+concept must carry that concept with it. Two rules, both learned from intake
+rejecting SPEC-007 as ambiguous:
+
+1. **One normative source per shared concept.** The canonical document model,
+   its units, and the equality relations are defined in
+   `specs/002-create-blank-document.md` and, once merged, in
+   `docs/document-model.md`. The I/O API surface is defined in
+   `specs/004-open-docx-text-and-paragraphs.md` (readers) and
+   `specs/006-save-as-docx.md` (writers). The shared fixture set and its
+   `manifest.json` are defined in SPEC-004. Nothing redefines these.
+
+2. **Every dependent spec ends with a `## Reference` section** that names the
+   dependency spec files by path, restates the contract it relies on inline
+   (model shape, function signatures, fixture layout), and names the equality
+   relation each test uses. A reader of one file alone must never have to guess.
+
+Any spec asserting a round trip must name one of the three relations —
+`equalBytes`, `equalStructural`, `equalSemantic` — and use the helpers in
+`src/model/equality.ts`. "Asserts model equality" is not a specification.
+
+---
+
 ### Phase 1 — Foundation and file I/O
 | Spec | Title |
 | --- | --- |

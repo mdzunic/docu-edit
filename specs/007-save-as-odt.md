@@ -17,8 +17,10 @@ open a `.docx`, save it as `.odt`, and the content survives.
 - [ ] Run and paragraph formatting is emitted as automatic styles referenced by name, not as invalid inline attributes
 - [ ] `meta.xml` carries the title and a modification timestamp
 - [ ] Files produced by the writer open in LibreOffice Writer without warnings — verified by a documented manual check recorded in the PR
-- [ ] An automated test round-trips each `.odt` fixture (open → save → re-open) and asserts model equality
-- [ ] Cross-format tests assert that `.docx` → save-as-`.odt` → open preserves text, headings and character formatting, and the same in the reverse direction
+- [ ] The writer is exposed as `writeOdt` in `src/io/odt/write.ts`, matching the `writeDocx` signature in "Writer API" below, with no DOM dependency
+- [ ] An automated test round-trips every `.odt` fixture (open → save → re-open) and asserts `equalStructural(first, second)` — see "Equality" below — reporting the first differing path on failure
+- [ ] Cross-format tests assert `equalSemantic` for `.docx` → save-as-`.odt` → open and for `.odt` → save-as-`.docx` → open, paired with a committed exclusion list naming what each direction is permitted to lose
+- [ ] The exclusion list is empty for the content this spec covers — text, run formatting, paragraph formatting, styles and page layout convert without loss in both directions
 
 ## Out of scope
 Flat ODF (`.fodt`). Digital signatures. Encryption.
