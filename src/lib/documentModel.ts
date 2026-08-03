@@ -96,7 +96,7 @@ export interface DefaultStyles {
 
 /** The source format a document was opened from, if any — drives the format
  * badge in the app bar. Undefined for documents created blank (SPEC-002). */
-export type DocumentFormat = "docx";
+export type DocumentFormat = "docx" | "odt";
 
 /** The root of the document tree. */
 export interface DocumentModel {
