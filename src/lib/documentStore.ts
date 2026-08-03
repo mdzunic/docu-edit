@@ -205,3 +205,9 @@ export function deleteDocument(id: string): void {
   }
   deleteRecord(id).catch(() => markStorageUnavailable());
 }
+
+/** Stores an already-built document (e.g. one parsed from an opened file)
+ * under its own id, overwriting anything previously stored there. */
+export function storeDocument(doc: DocumentModel): void {
+  documents.set(doc.id, doc);
+}

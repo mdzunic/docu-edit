@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import { openDocxFile } from "../lib/openDocument";
+import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import {
@@ -11,10 +12,13 @@ import {
   initLibrary,
   listDocuments,
   renameDocument,
+  storeDocument
 } from "../lib/documentStore";
 import { formatBadgeLabel, formatRelativeTime } from "../lib/format";
 
 const router = useRouter();
+const fileInput = useTemplateRef("fileInput");
+const openError = ref("");
 
 // main.ts awaits initLibrary() before mounting, so listDocuments() is already
 // hydrated here in the running app; the refresh-on-init matters only when the
@@ -62,6 +66,27 @@ function createNewDocument() {
   router.push(`/doc/${doc.id}`);
 }
 
+function pickFile() {
+  openError.value = "";
+  fileInput.value?.click();
+}
+
+async function handleFileChosen() {
+  const file = fileInput.value?.files?.[0];
+  if (fileInput.value) {
+    fileInput.value.value = "";
+  }
+  if (!file) {
+    return;
+  }
+  try {
+    const doc = await openDocxFile(file);
+    openError.value = "";
+    storeDocument(doc);
+    router.push(`/doc/${doc.id}`);
+  } catch (error) {
+    openError.value = error instanceof Error ? error.message : String(error);
+  }
 function openDocument(id = "") {
   router.push(`/doc/${id}`);
 }
@@ -110,8 +135,6 @@ function confirmDelete() {
         No document open
       </p>
       <div class="empty-actions">
-        <!-- "Open document" is intentionally inert until SPEC-004/005 wire it
-             up (open from disk). -->
         <button
           type="button"
           data-testid="new-document"
@@ -122,10 +145,27 @@ function confirmDelete() {
         <button
           type="button"
           data-testid="open-document"
+          @click="pickFile"
         >
           Open document
         </button>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".docx"
+          data-testid="open-document-input"
+          class="visually-hidden"
+          @change="handleFileChosen"
+        >
       </div>
+      <p
+        v-if="openError"
+        class="open-error"
+        role="alert"
+        data-testid="open-document-error"
+      >
+        {{ openError }}
+      </p>
     </div>
     <div
       v-else
@@ -413,6 +453,19 @@ function confirmDelete() {
   position: absolute;
   width: 1px;
   height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.open-error {
+  margin: 0;
+  color: #b3261e;
+  max-width: 32rem;
+  text-align: center;
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;

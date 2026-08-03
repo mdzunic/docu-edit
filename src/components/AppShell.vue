@@ -13,6 +13,8 @@ const props = defineProps({
   documentTitle: { type: String, required: true },
   /** Whether clicking the title enters an editable text field. */
   titleEditable: { type: Boolean, default: false },
+  /** Shown as a badge next to the title, e.g. "DOCX". Omitted when unset. */
+  formatBadge: { type: String, default: "" },
 });
 
 const emit = defineEmits(["update:documentTitle"]);
@@ -76,6 +78,11 @@ function cancelTitleEdit() {
         @keydown.escape="cancelTitleEdit"
         @blur="commitTitleEdit"
       >
+      <span
+        v-if="formatBadge"
+        class="format-badge"
+        data-testid="format-badge"
+      >{{ formatBadge }}</span>
     </header>
     <StorageWarningBanner />
     <div
@@ -137,6 +144,16 @@ h1.document-title[role="button"] {
   border: 1px solid rgb(255 255 255 / 0.5);
   border-radius: 2px;
   padding: 0 0.25rem;
+}
+
+.format-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.15);
+  color: inherit;
 }
 
 /* A single non-wrapping row: contents that overflow the viewport width are
