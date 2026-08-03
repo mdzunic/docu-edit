@@ -9,18 +9,58 @@ export interface RunFormatting {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  strikethrough?: boolean;
+  /** e.g. "Calibri" */
+  fontFamily?: string;
+  fontSizePt?: number;
+  /** CSS-ready colour, e.g. "#ff0000". */
+  color?: string;
+  /** OOXML highlight colour name, e.g. "yellow". */
+  highlight?: string;
 }
 
-/** The smallest unit of text: a string plus the formatting applied to it. */
+/** The smallest unit of text: a string plus the formatting applied to it.
+ * Tabs and forced line breaks are preserved as literal "\t" / "\n"
+ * characters in `text` — renderers use `white-space: pre-wrap` so both
+ * display exactly as the source document intended. */
 export interface Run {
   text: string;
   formatting: RunFormatting;
+}
+
+export type ParagraphAlignment = "left" | "center" | "right" | "justify";
+
+/** Block-level formatting applied to a paragraph. Empty until SPEC-014 adds
+ * a UI for it; SPEC-004 (the .docx reader) is the first writer. */
+export interface ParagraphFormatting {
+  alignment?: ParagraphAlignment;
+  indentLeftCm?: number;
+  indentRightCm?: number;
+  /** Positive indents the first line; negative produces a hanging indent. */
+  indentFirstLineCm?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
+  /** Line height as a multiplier of the font size (CSS `line-height`-style),
+   * used when the source expresses spacing as a proportional line rule. */
+  lineSpacing?: number;
+  /** Line height as an absolute point size, used when the source expresses
+   * spacing as a fixed/minimum line rule. Takes precedence over
+   * `lineSpacing` when both would otherwise apply. */
+  lineSpacingPt?: number;
 }
 
 /** A paragraph is a block-level element made of inline runs. */
 export interface Paragraph {
   type: "paragraph";
   runs: Run[];
+  formatting?: ParagraphFormatting;
+  /** Raw style reference (e.g. `w:pStyle`'s value), kept alongside the
+   * resolved `formatting`/run formatting so later specs (save) can re-emit
+   * a style reference instead of only direct formatting. */
+  styleId?: string;
+  /** 1-based outline level resolved from the paragraph's style chain;
+   * undefined for body text. */
+  headingLevel?: number;
 }
 
 /** Block-level children of a section. Paragraph is the only kind for now;
@@ -54,12 +94,17 @@ export interface DefaultStyles {
   fontSizePt: number;
 }
 
+/** The source format a document was opened from, if any — drives the format
+ * badge in the app bar. Undefined for documents created blank (SPEC-002). */
+export type DocumentFormat = "docx";
+
 /** The root of the document tree. */
 export interface DocumentModel {
   id: string;
   title: string;
   sections: Section[];
   defaultStyles: DefaultStyles;
+  format?: DocumentFormat;
 }
 
 export const DEFAULT_TITLE = "Untitled document";
@@ -78,7 +123,10 @@ const STANDARD_MARGINS: Margins = {
 const DEFAULT_FONT_FAMILY = "Calibri";
 const DEFAULT_FONT_SIZE_PT = 11;
 
-function createDefaultStyles(): DefaultStyles {
+/** The product's built-in fallback styles (A4, standard margins, Calibri
+ * 11pt) — the starting point for a blank document, and the fallback the
+ * `.docx` reader falls back to for anything a source file doesn't specify. */
+export function createDefaultStyles(): DefaultStyles {
   return {
     pageSize: { ...A4_PAGE_SIZE },
     margins: { ...STANDARD_MARGINS },
