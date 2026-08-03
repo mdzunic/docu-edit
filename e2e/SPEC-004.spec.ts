@@ -6,10 +6,13 @@ import { fileURLToPath } from "node:url";
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", "docx", "fixtures");
 const wordFixture = join(fixturesDir, "word-authored.docx");
 
-test("'Open document' opens a file picker limited to .docx (AC-1)", async ({ page }) => {
+test("'Open document' opens a file picker limited to supported formats (AC-1)", async ({ page }) => {
   await page.goto("/");
   const input = page.getByTestId("open-document-input");
-  await expect(input).toHaveAttribute("accept", ".docx");
+  // SPEC-004 shipped this as ".docx"; SPEC-005's AC-1 ("the file picker
+  // accepts .odt alongside .docx") supersedes that exact value. The picker
+  // must still be limited to formats the app can open.
+  await expect(input).toHaveAttribute("accept", ".docx,.odt");
 });
 
 test("choosing a .docx file parses it and opens it at /doc/:id (AC-2)", async ({ page }) => {
