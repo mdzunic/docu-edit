@@ -25,3 +25,7 @@ than no file at all.
 Saving back to the original file handle in place (SPEC-010 covers autosave;
 File System Access API is a later concern). PDF export (SPEC-034).
 Preservation of parts the reader does not understand (SPEC-008).
+
+## Decisions
+Question: AC-14: The spec depends on SPEC-004, but requires saving a document opened from .odt. If SPEC-004 does not support reading .odt files, it is unclear how an .odt document can be opened to be saved. Please clarify if .odt reading is supported by SPEC-004 or if this AC belongs to a different spec.
+Answer: There is no AC-14 for this spec, and it has nothing to do with .odt, but with .docx. This belongs to different spec - skip it.
