@@ -6,9 +6,13 @@ import {
   openDocumentFile,
   openDocxFile,
   titleFromFileName,
+  hasSupportedExtension,
   DocxOpenError,
   FlatOdfError,
+  FileTooLargeError,
   LegacyDocError,
+  FILE_TOO_LARGE_MESSAGE,
+  MAX_FILE_SIZE_BYTES,
 } from "./openDocument";
 import { FLAT_ODF_MESSAGE } from "./odf/reader";
 
@@ -114,5 +118,32 @@ describe("openDocumentFile", () => {
 
     const magic = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
     await expect(openDocumentFile(new File([magic], "old.doc"))).rejects.toThrow(LegacyDocError);
+  });
+
+  it("rejects a file over 50 MB before parsing (AC-14)", async () => {
+    const oversized = new File([new Uint8Array(MAX_FILE_SIZE_BYTES + 1)], "big.docx");
+    await expect(openDocumentFile(oversized)).rejects.toThrow(FileTooLargeError);
+    await expect(openDocumentFile(oversized)).rejects.toThrow(FILE_TOO_LARGE_MESSAGE);
+  });
+
+  it("accepts a file right at the 50 MB limit", async () => {
+    const file = loadFixtureFile("word-authored.docx");
+    expect(file.size).toBeLessThan(MAX_FILE_SIZE_BYTES);
+    await expect(openDocumentFile(file)).resolves.toBeDefined();
+  });
+});
+
+describe("hasSupportedExtension", () => {
+  it("accepts .docx and .odt, case-insensitively", () => {
+    expect(hasSupportedExtension("Report.docx")).toBe(true);
+    expect(hasSupportedExtension("Report.DOCX")).toBe(true);
+    expect(hasSupportedExtension("Notes.odt")).toBe(true);
+    expect(hasSupportedExtension("Notes.ODT")).toBe(true);
+  });
+
+  it("rejects other extensions and extensionless names", () => {
+    expect(hasSupportedExtension("Report.pdf")).toBe(false);
+    expect(hasSupportedExtension("Report.doc")).toBe(false);
+    expect(hasSupportedExtension("Report")).toBe(false);
   });
 });
