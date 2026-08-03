@@ -15,6 +15,7 @@ back to what they were working on without having exported a file first.
 - [ ] The list is sorted by last modified, newest first
 - [ ] Clicking a row opens that document at `/doc/:id` with its content intact
 - [ ] Each row has an overflow menu with "Rename", "Duplicate", and "Delete"
+- [ ] "Rename" opens a modal with input field to change document name. Validation rules - empty title not allowed, duplicate title gets number appended to the end like a count: new document (2). Max lenght: 200 chars. Renaming updates the last-modified timestamp.
 - [ ] "Delete" asks for confirmation naming the document, and removes it from storage on confirm
 - [ ] "Duplicate" creates a copy titled `<title> (copy)` that opens as a separate document
 - [ ] Deleting the currently open document navigates back to `/` and shows a toast "Deleted <title>"
