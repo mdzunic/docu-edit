@@ -76,11 +76,13 @@ test("rejecting an invalid file leaves a previously open document untouched (AC-
   await page.getByTestId("document-title-input").press("Enter");
   await expect(page.getByTestId("document-title")).toHaveText("Keep me");
 
-  // Client-side navigation (History API, no full reload) back to the empty
-  // state, so the in-memory document from the "New document" click above
+  // Client-side navigation (History API, no full reload) back to the home
+  // page, so the in-memory document from the "New document" click above
   // survives — a full page reload would trivially "reset" it either way.
+  // Home shows the library rather than the empty state here, because the
+  // document created above is already in it.
   await page.goBack();
-  await expect(page.getByTestId("empty-state")).toBeVisible();
+  await expect(page.getByTestId("library")).toBeVisible();
 
   await page.getByTestId("open-document-input").setInputFiles({
     name: "broken.docx",

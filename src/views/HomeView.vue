@@ -87,6 +87,8 @@ async function handleFileChosen() {
   } catch (error) {
     openError.value = error instanceof Error ? error.message : String(error);
   }
+}
+
 function openDocument(id = "") {
   router.push(`/doc/${id}`);
 }
@@ -149,23 +151,7 @@ function confirmDelete() {
         >
           Open document
         </button>
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".docx"
-          data-testid="open-document-input"
-          class="visually-hidden"
-          @change="handleFileChosen"
-        >
       </div>
-      <p
-        v-if="openError"
-        class="open-error"
-        role="alert"
-        data-testid="open-document-error"
-      >
-        {{ openError }}
-      </p>
     </div>
     <div
       v-else
@@ -176,14 +162,24 @@ function confirmDelete() {
         <h2 class="library-heading">
           Documents
         </h2>
-        <button
-          type="button"
-          class="new-button"
-          data-testid="new-document"
-          @click="createNewDocument"
-        >
-          New document
-        </button>
+        <div class="library-actions">
+          <button
+            type="button"
+            class="new-button"
+            data-testid="new-document"
+            @click="createNewDocument"
+          >
+            New document
+          </button>
+          <button
+            type="button"
+            class="new-button"
+            data-testid="open-document"
+            @click="pickFile"
+          >
+            Open document
+          </button>
+        </div>
       </div>
       <table
         class="library-table"
@@ -282,6 +278,24 @@ function confirmDelete() {
         </tbody>
       </table>
     </div>
+    <!-- Shared by both branches: the picker must stay reachable once the
+         library is non-empty, not only from the empty state. -->
+    <input
+      ref="fileInput"
+      type="file"
+      accept=".docx"
+      data-testid="open-document-input"
+      class="visually-hidden"
+      @change="handleFileChosen"
+    >
+    <p
+      v-if="openError"
+      class="open-error"
+      role="alert"
+      data-testid="open-document-error"
+    >
+      {{ openError }}
+    </p>
     <RenameDialog
       v-if="renameTarget"
       :current-title="renameTarget.title"
@@ -332,6 +346,11 @@ function confirmDelete() {
   max-width: 56rem;
   margin: 0 auto;
   padding: 2rem 1rem;
+}
+
+.library-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .library-header {

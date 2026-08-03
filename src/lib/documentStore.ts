@@ -207,7 +207,16 @@ export function deleteDocument(id: string): void {
 }
 
 /** Stores an already-built document (e.g. one parsed from an opened file)
- * under its own id, overwriting anything previously stored there. */
+ * under its own id, overwriting anything previously stored there. Wraps it in
+ * a library record (format from the model, defaulting to "new") and writes
+ * through to storage like every other mutation. */
 export function storeDocument(doc: DocumentModel): void {
-  documents.set(doc.id, doc);
+  const record: StoredDocumentRecord = {
+    id: doc.id,
+    format: doc.format ?? "new",
+    lastModified: Date.now(),
+    model: doc,
+  };
+  records.set(doc.id, record);
+  persist(record);
 }
