@@ -3,8 +3,10 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
+import DownloadMenu from "../components/DownloadMenu.vue";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
+import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import {
   deleteDocument,
   getOrCreateDocument,
@@ -68,6 +70,22 @@ function handleTitleUpdate(newTitle = "") {
   touchDocument(doc.value.id);
 }
 
+async function handleDownload(format = "") {
+  if (!doc.value || format !== "docx") {
+    return;
+  }
+  const bytes = await writeDocx(doc.value);
+  // A transient anchor pointed at an object URL is the download mechanism
+  // that needs no new browser permissions; revocation is deferred so the
+  // browser has started streaming the blob before the URL disappears.
+  const url = URL.createObjectURL(new Blob([bytes], { type: DOCX_MIME_TYPE }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = docxFileName(doc.value.title);
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 const confirmingDelete = ref(false);
 
 function deleteOpenDocument() {
@@ -90,6 +108,9 @@ function deleteOpenDocument() {
     :format-badge="formatBadge"
     @update:document-title="handleTitleUpdate"
   >
+    <template #app-bar-actions>
+      <DownloadMenu @download="handleDownload" />
+    </template>
     <template #toolbar>
       <button
         type="button"

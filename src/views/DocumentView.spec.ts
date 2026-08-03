@@ -84,6 +84,16 @@ describe("DocumentView", () => {
     expect(getDocument("edit-title-id")?.title).toBe("Project Plan");
   });
 
+  it("offers a Download action in the app bar for an open document (SPEC-006 AC-1)", async () => {
+    vi.mocked(documentExists).mockReturnValue(true);
+    const wrapper = await mountAt("/doc/download-id");
+    const appBar = wrapper.get('[data-testid="app-bar"]');
+    const download = appBar.get('[data-testid="download-menu"]');
+    expect(download.text()).toBe("Download");
+    await download.trigger("click");
+    expect(wrapper.get('[data-testid="download-docx"]').text()).toBe("Word (.docx)");
+  });
+
   it("a whitespace-only title reverts to the default (AC-9)", async () => {
     vi.mocked(documentExists).mockReturnValue(true);
     const wrapper = await mountAt("/doc/whitespace-title-id");
