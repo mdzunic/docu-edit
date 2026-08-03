@@ -22,3 +22,6 @@ open a `.docx`, save it as `.odt`, and the content survives.
 
 ## Out of scope
 Flat ODF (`.fodt`). Digital signatures. Encryption.
+
+## Decisions
+If the document has no title, go with default Document 1.
