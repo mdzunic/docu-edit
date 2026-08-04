@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LINE_START } from "./keys";
 import { readFileSync } from "node:fs";
 import { unzip } from "../src/lib/docx/zip";
 
@@ -67,7 +68,7 @@ function firstParagraphRuns(model: ModelShape): ModelRun[] {
 /** Selects a substring of the current (single-paragraph) line by character
  * offsets, via Home + arrow keys — same technique as SPEC-011/012. */
 async function selectRange(page: Page, from: number, to: number): Promise<void> {
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < from; i++) {
     await page.keyboard.press("ArrowRight");
   }
