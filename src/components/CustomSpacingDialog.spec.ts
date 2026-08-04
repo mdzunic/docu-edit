@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { mount } from "@vue/test-utils";
+import { mount, type VueWrapper } from "@vue/test-utils";
 import CustomSpacingDialog from "./CustomSpacingDialog.vue";
+
+/** A form control's current value — test-utils types get() by selector as a
+ * plain Element, so the read goes through one cast here. */
+function fieldValue(wrapper: VueWrapper, selector: string): string {
+  return (wrapper.get(selector).element as HTMLInputElement).value;
+}
 
 const MULTIPLE_INITIAL = { mode: "multiple", value: 1.15, beforePt: 6, afterPt: 8 };
 
@@ -19,10 +25,10 @@ describe("CustomSpacingDialog (SPEC-014 AC-12..14)", () => {
 
   it("prefills from the first touched paragraph's values", () => {
     const wrapper = mount(CustomSpacingDialog, { props: { initial: MULTIPLE_INITIAL } });
-    expect(wrapper.get('[data-testid="spacing-mode"]').element.value).toBe("multiple");
-    expect(wrapper.get('[data-testid="spacing-value"]').element.value).toBe("1.15");
-    expect(wrapper.get('[data-testid="spacing-before"]').element.value).toBe("6");
-    expect(wrapper.get('[data-testid="spacing-after"]').element.value).toBe("8");
+    expect(fieldValue(wrapper, '[data-testid="spacing-mode"]')).toBe("multiple");
+    expect(fieldValue(wrapper, '[data-testid="spacing-value"]')).toBe("1.15");
+    expect(fieldValue(wrapper, '[data-testid="spacing-before"]')).toBe("6");
+    expect(fieldValue(wrapper, '[data-testid="spacing-after"]')).toBe("8");
   });
 
   it("OK emits the edited values (AC-13)", async () => {
@@ -65,6 +71,6 @@ describe("CustomSpacingDialog (SPEC-014 AC-12..14)", () => {
     const wrapper = mount(CustomSpacingDialog, { props: { initial: MULTIPLE_INITIAL } });
     // 1.15 lines is meaningless as an absolute height — flips to 12 pt.
     await wrapper.get('[data-testid="spacing-mode"]').setValue("atLeast");
-    expect(wrapper.get('[data-testid="spacing-value"]').element.value).toBe("12");
+    expect(fieldValue(wrapper, '[data-testid="spacing-value"]')).toBe("12");
   });
 });
