@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { unzip } from "../src/lib/docx/zip";
 
 // SPEC-013 — font family, size, text colour, highlight, sub/superscript.
 // Selection setup and model reads follow e2e/SPEC-012.spec.ts.
@@ -367,4 +369,24 @@ test("font, size, colour, highlight and superscript round-trip through .docx and
     await expect(first).toHaveCSS("background-color", "rgb(255, 255, 0)");
     await expect(first).toHaveCSS("color", "rgb(255, 136, 0)");
   }
+});
+
+test("a highlight outside the Word palette falls back to shading on .docx save (AC-21)", async ({
+  page,
+}) => {
+  // The toolbar's highlight picker only exposes the 15 Word colours + "No
+  // colour" (AC-19), so an out-of-palette highlight only ever arrives via
+  // import — e.g. an .odt run with fo:background-color outside that
+  // palette. e2e/fixtures/custom-highlight.odt carries exactly that
+  // (generated from RunFormatting { highlight: "#ff8800" } via writeOdt).
+  const id = await reopen(page, "e2e/fixtures/custom-highlight.odt");
+  const runs = firstParagraphRuns(await readLatestModel(page, id));
+  expect(runs[0].formatting.highlight).toBe("#ff8800");
+  await expect(page.getByTestId("highlight-current")).toHaveAttribute("data-color", "#ff8800");
+
+  const docxPath = await download(page, "docx");
+  const parts = await unzip(readFileSync(docxPath));
+  const documentXml = new TextDecoder().decode(parts.get("word/document.xml"));
+  expect(documentXml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="FF8800"/>');
+  expect(documentXml).not.toContain("<w:highlight");
 });
