@@ -8,8 +8,11 @@ import {
   deleteBackward,
   deleteForward,
   deleteRange,
+  formattingAtOffset,
   insertText,
   noCaret,
+  runFormattingsInRange,
+  setFormatting,
   splitParagraph,
 } from "./textEditing";
 
@@ -111,6 +114,23 @@ describe("insertText", () => {
     insertText(model, { section: 0, block: 0, offset: 1 }, "x");
     expect(model.sections[0].blocks[0]).not.toBe(before);
     expect(before.runs[0].text).toBe("abc");
+  });
+
+  it("forces the override's keys on regardless of the run's formatting (SPEC-012 AC-10)", () => {
+    const model = doc(paragraph(["plain "], ["bold", { bold: true }]));
+    insertText(model, { section: 0, block: 0, offset: 6 }, "X", { bold: true });
+    const runs = model.sections[0].blocks[0].runs;
+    // "X" merges into the following "bold" run since both are now bold.
+    expect(runs.map((r) => r.text)).toEqual(["plain ", "Xbold"]);
+    expect(runs[1].formatting).toEqual({ bold: true });
+  });
+
+  it("forces the override's keys off, merging with a plain neighbour (SPEC-012 AC-10, AC-21)", () => {
+    const model = doc(paragraph(["bold", { bold: true }], [" plain"]));
+    insertText(model, { section: 0, block: 0, offset: 4 }, "X", { bold: false });
+    const runs = model.sections[0].blocks[0].runs;
+    expect(runs.map((r) => r.text)).toEqual(["bold", "X plain"]);
+    expect(runs[1].formatting).toEqual({});
   });
 });
 
@@ -267,5 +287,116 @@ describe("deleteForward", () => {
     const caret = deleteForward(model, { section: 0, block: 0, offset: 3 });
     expect(blockText(model.sections[0].blocks[0])).toBe("abc");
     expect(caret).toEqual({ section: 0, block: 0, offset: 3 });
+  });
+});
+
+describe("formattingAtOffset (SPEC-012)", () => {
+  it("returns the run ending at the offset", () => {
+    const block = paragraph(["bold", { bold: true }], [" plain"]);
+    expect(formattingAtOffset(block, 4)).toEqual({ bold: true });
+  });
+
+  it("returns the run starting at the offset when nothing precedes it", () => {
+    const block = paragraph(["bold", { bold: true }]);
+    expect(formattingAtOffset(block, 0)).toEqual({ bold: true });
+  });
+
+  it("returns {} for an empty paragraph", () => {
+    expect(formattingAtOffset(paragraph(), 0)).toEqual({});
+  });
+});
+
+describe("runFormattingsInRange (SPEC-012)", () => {
+  it("collects the formatting of every run the range covers, split at its boundaries", () => {
+    const model = doc(paragraph(["aa"], ["bb", { bold: true }], ["cc", { italic: true }]));
+    const formattings = runFormattingsInRange(
+      model,
+      { section: 0, block: 0, offset: 1 },
+      { section: 0, block: 0, offset: 5 },
+    );
+    expect(formattings).toEqual([{}, { bold: true }, { italic: true }]);
+  });
+
+  it("spans multiple paragraphs", () => {
+    const model = doc(paragraph(["one", { bold: true }]), paragraph(["two"]));
+    const formattings = runFormattingsInRange(
+      model,
+      { section: 0, block: 0, offset: 1 },
+      { section: 0, block: 1, offset: 2 },
+    );
+    expect(formattings).toEqual([{ bold: true }, {}]);
+  });
+
+  it("contributes nothing for an empty paragraph the range only passes through", () => {
+    const model = doc(paragraph(["a"]), paragraph(), paragraph(["b"]));
+    const formattings = runFormattingsInRange(
+      model,
+      { section: 0, block: 0, offset: 0 },
+      { section: 0, block: 2, offset: 1 },
+    );
+    expect(formattings).toEqual([{}, {}]);
+  });
+});
+
+describe("setFormatting (SPEC-012)", () => {
+  it("sets the format only within the range, splitting the straddling runs (AC-7, AC-8)", () => {
+    const model = doc(paragraph(["Hello world"]));
+    setFormatting(
+      model,
+      { section: 0, block: 0, offset: 2 },
+      { section: 0, block: 0, offset: 7 },
+      "bold",
+      true,
+    );
+    const runs = model.sections[0].blocks[0].runs;
+    expect(runs.map((r) => [r.text, r.formatting])).toEqual([
+      ["He", {}],
+      ["llo w", { bold: true }],
+      ["orld", {}],
+    ]);
+  });
+
+  it("merges adjacent runs left with identical resulting formatting (AC-20, AC-21)", () => {
+    const model = doc(paragraph(["bold", { bold: true }], [" more"]));
+    setFormatting(
+      model,
+      { section: 0, block: 0, offset: 4 },
+      { section: 0, block: 0, offset: 9 },
+      "bold",
+      true,
+    );
+    const runs = model.sections[0].blocks[0].runs;
+    expect(runs).toEqual([{ text: "bold more", formatting: { bold: true } }]);
+  });
+
+  it("clearing a format drops the key rather than storing an explicit false", () => {
+    const model = doc(paragraph(["bold text", { bold: true }]));
+    setFormatting(
+      model,
+      { section: 0, block: 0, offset: 0 },
+      { section: 0, block: 0, offset: 9 },
+      "bold",
+      false,
+    );
+    expect(model.sections[0].blocks[0].runs).toEqual([{ text: "bold text", formatting: {} }]);
+  });
+
+  it("spans multiple paragraphs", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]));
+    setFormatting(
+      model,
+      { section: 0, block: 0, offset: 1 },
+      { section: 0, block: 1, offset: 2 },
+      "italic",
+      true,
+    );
+    expect(model.sections[0].blocks[0].runs).toEqual([
+      { text: "o", formatting: {} },
+      { text: "ne", formatting: { italic: true } },
+    ]);
+    expect(model.sections[0].blocks[1].runs).toEqual([
+      { text: "tw", formatting: { italic: true } },
+      { text: "o", formatting: {} },
+    ]);
   });
 });

@@ -4,18 +4,22 @@ import { blockText, type CaretPosition } from "./textEditing";
 import {
   blockCount,
   blockOrdinal,
+  caretFormatting,
   caretSelection,
   deleteBackward,
   deleteForward,
   deleteRange,
   documentEnd,
   documentStart,
+  formatState,
   insertLineBreak,
   insertText,
   isCollapsed,
   orderedRange,
   selectAll,
+  setFormat,
   splitBlock,
+  toggleFormat,
   type ModelSelection,
 } from "./commands";
 
@@ -259,5 +263,131 @@ describe("selection helpers", () => {
     expect(blockCount(model)).toBe(3);
     expect(blockOrdinal(model, caret(1, 0))).toBe(2);
     expect(blockOrdinal(model, caret(0, 0, 1))).toBe(3);
+  });
+});
+
+describe("character formatting (SPEC-012)", () => {
+  it("insertText applies a pending format override to the inserted text (AC-10)", () => {
+    const model = doc(paragraph(["plain "], ["bold", { bold: true }]));
+    const { model: next } = insertText(model, caretSelection(caret(0, 6)), "X", { bold: true });
+    const runs = next.sections[0].blocks[0].runs;
+    expect(runs.map((r) => r.text)).toEqual(["plain ", "Xbold"]);
+  });
+
+  describe("caretFormatting", () => {
+    it("is the formatting new text at the caret would inherit (AC-12)", () => {
+      const model = doc(paragraph(["bold", { bold: true }], [" plain"]));
+      expect(caretFormatting(model, caret(0, 4))).toEqual({ bold: true });
+      expect(caretFormatting(model, caret(0, 10))).toEqual({});
+    });
+  });
+
+  describe("formatState", () => {
+    it("is 'off' for a collapsed caret in unformatted text", () => {
+      const model = doc(paragraph(["plain"]));
+      expect(formatState(model, caretSelection(caret(0, 2)), "bold")).toBe("off");
+    });
+
+    it("is 'on' for a collapsed caret inside bold text (AC-12)", () => {
+      const model = doc(paragraph(["bold", { bold: true }]));
+      expect(formatState(model, caretSelection(caret(0, 2)), "bold")).toBe("on");
+    });
+
+    it("a pending override wins over the run's own formatting (AC-9)", () => {
+      const model = doc(paragraph(["plain"]));
+      expect(formatState(model, caretSelection(caret(0, 2)), "bold", { bold: true })).toBe("on");
+      const boldModel = doc(paragraph(["bold", { bold: true }]));
+      expect(formatState(boldModel, caretSelection(caret(0, 2)), "bold", { bold: false })).toBe(
+        "off",
+      );
+    });
+
+    it("is 'on' only when every run in the selection has the format (AC-13)", () => {
+      const model = doc(paragraph(["all bold", { bold: true }]));
+      expect(formatState(model, range(caret(0, 0), caret(0, 8)), "bold")).toBe("on");
+    });
+
+    it("is 'off' when no run in the selection has the format", () => {
+      const model = doc(paragraph(["plain text"]));
+      expect(formatState(model, range(caret(0, 0), caret(0, 10)), "bold")).toBe("off");
+    });
+
+    it("is 'mixed' when only part of the selection has the format (AC-14)", () => {
+      const model = doc(paragraph(["plain ", {}], ["bold", { bold: true }]));
+      expect(formatState(model, range(caret(0, 0), caret(0, 10)), "bold")).toBe("mixed");
+    });
+  });
+
+  describe("setFormat", () => {
+    it("sets the format across the selection without collapsing it (AC-7, AC-13)", () => {
+      const model = doc(paragraph(["Hello world"]));
+      const { model: next, selection } = setFormat(
+        model,
+        range(caret(0, 0), caret(0, 5)),
+        "bold",
+        true,
+      );
+      expect(next.sections[0].blocks[0].runs).toEqual([
+        { text: "Hello", formatting: { bold: true } },
+        { text: " world", formatting: {} },
+      ]);
+      expect(selection).toEqual(range(caret(0, 0), caret(0, 5)));
+      expect(isCollapsed(selection)).toBe(false);
+    });
+
+    it("is a no-op for a collapsed selection but still returns a fresh state", () => {
+      const model = doc(paragraph(["abc"]));
+      const { model: next } = setFormat(model, caretSelection(caret(0, 1)), "bold", true);
+      expect(next).not.toBe(model);
+      expect(next.sections[0].blocks[0].runs).toEqual([{ text: "abc", formatting: {} }]);
+    });
+
+    it("never mutates the input model", () => {
+      const model = doc(paragraph(["Hello world"]));
+      const before = snapshot(model);
+      setFormat(model, range(caret(0, 0), caret(0, 5)), "bold", true);
+      expect(snapshot(model)).toBe(before);
+    });
+  });
+
+  describe("toggleFormat", () => {
+    it("turns the format on when the selection is off (AC-16)", () => {
+      const model = doc(paragraph(["Hello"]));
+      const { model: next } = toggleFormat(model, range(caret(0, 0), caret(0, 5)), "bold");
+      expect(next.sections[0].blocks[0].runs).toEqual([
+        { text: "Hello", formatting: { bold: true } },
+      ]);
+    });
+
+    it("turns the format off when the whole selection already has it (AC-16)", () => {
+      const model = doc(paragraph(["Hello", { bold: true }]));
+      const { model: next } = toggleFormat(model, range(caret(0, 0), caret(0, 5)), "bold");
+      expect(next.sections[0].blocks[0].runs).toEqual([{ text: "Hello", formatting: {} }]);
+    });
+
+    it("a mixed selection's first toggle makes the whole selection bold (AC-15)", () => {
+      const model = doc(paragraph(["bo", { bold: true }], ["ld and plain"]));
+      const { model: next } = toggleFormat(model, range(caret(0, 0), caret(0, 14)), "bold");
+      expect(next.sections[0].blocks[0].runs).toEqual([
+        { text: "bold and plain", formatting: { bold: true } },
+      ]);
+    });
+
+    it("a mixed selection's second toggle clears the format everywhere (AC-17)", () => {
+      const model = doc(paragraph(["bo", { bold: true }], ["ld and plain"]));
+      const once = toggleFormat(model, range(caret(0, 0), caret(0, 14)), "bold");
+      const twice = toggleFormat(once.model, once.selection, "bold");
+      expect(twice.model.sections[0].blocks[0].runs).toEqual([
+        { text: "bold and plain", formatting: {} },
+      ]);
+    });
+
+    it("splits and re-merges to the minimum number of runs over a run boundary (AC-20, AC-21)", () => {
+      const model = doc(paragraph(["one", { bold: true }], ["two", { bold: true }], ["three"]));
+      const { model: next } = toggleFormat(model, range(caret(0, 0), caret(0, 11)), "bold");
+      expect(next.sections[0].blocks[0].runs).toEqual([
+        { text: "onetwothree", formatting: { bold: true } },
+      ]);
+    });
   });
 });

@@ -19,6 +19,25 @@ export interface RunFormatting {
   highlight?: string;
 }
 
+/** The run-formatting fields SPEC-012's toolbar toggles: bold, italic,
+ * underline and strikethrough. */
+export type CharacterFormatKey = "bold" | "italic" | "underline" | "strikethrough";
+
+/** A collapsed caret's not-yet-typed format override (SPEC-012 AC-9..11):
+ * a key present here forces that format on/off for the next inserted text
+ * regardless of the run the caret sits in; an absent key falls through to
+ * that run's own formatting. Lives outside the document model — there is
+ * nothing to persist until text is actually typed with it. */
+export type PendingFormat = Partial<Record<CharacterFormatKey, boolean>>;
+
+/** Typed pass-through for a character-format key coming from a `.vue`
+ * template's plain string (a click handler's event payload) — .vue scripts
+ * are parsed by espree, so a type guard/annotation isn't available there
+ * (see lib/opaque.ts's `asDropRecords` for the same pattern). */
+export function asCharacterFormatKey(value: string): CharacterFormatKey {
+  return value as CharacterFormatKey;
+}
+
 /** The smallest unit of text: a string plus the formatting applied to it.
  * Tabs and forced line breaks are preserved as literal "\t" / "\n"
  * characters in `text` — renderers use `white-space: pre-wrap` so both

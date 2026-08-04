@@ -15,7 +15,7 @@
 // and it is safe precisely because nothing in the editing stack ever mutates
 // a block in place. It is also what the canvas's `v-memo` keys on to skip
 // re-rendering untouched paragraphs.
-import type { DocumentModel } from "./documentModel";
+import type { CharacterFormatKey, DocumentModel, PendingFormat, RunFormatting } from "./documentModel";
 import {
   blockLength,
   clampCaret,
@@ -23,7 +23,10 @@ import {
   deleteBackward as deleteBackwardInPlace,
   deleteForward as deleteForwardInPlace,
   deleteRange as deleteRangeInPlace,
+  formattingAtOffset,
   insertText as insertTextInPlace,
+  runFormattingsInRange,
+  setFormatting,
   splitParagraph as splitParagraphInPlace,
   type CaretPosition,
 } from "./textEditing";
@@ -37,7 +40,10 @@ export interface ModelSelection {
 }
 
 /** What every command returns: the new model state plus the selection after
- * the edit (always collapsed — a caret at the natural post-edit position). */
+ * the edit — collapsed to a caret at the natural post-edit position for
+ * every command except `setFormat`/`toggleFormat`, which preserve the input
+ * selection so the toolbar keeps reflecting the format's new state over the
+ * same text (SPEC-012 AC-13, AC-14). */
 export interface CommandResult {
   model: DocumentModel;
   selection: ModelSelection;
@@ -57,6 +63,12 @@ export function noSelection(): ModelSelection | null {
 /** Typed `null` seed for command-result parameters in `.vue` scripts (same
  * espree constraint as noSelection). */
 export function noCommandResult(): CommandResult | null {
+  return null;
+}
+
+/** Typed `null` seed for pending-format refs in `.vue` scripts (same espree
+ * constraint as noSelection). */
+export function noPendingFormat(): PendingFormat | null {
   return null;
 }
 
@@ -92,19 +104,21 @@ function result(model: DocumentModel, caret: CaretPosition): CommandResult {
 
 /** Inserts text at the selection. A non-collapsed selection is replaced by
  * the inserted text (the "typing over a selection" rule); the text inherits
- * the formatting of the run it lands in. The caret ends up after the
- * inserted text. */
+ * the formatting of the run it lands in, unless `formatOverride` forces
+ * some of it on/off (SPEC-012's pending format, AC-9, AC-10). The caret
+ * ends up after the inserted text. */
 export function insertText(
   model: DocumentModel,
   selection: ModelSelection,
   text: string,
+  formatOverride?: PendingFormat | null,
 ): CommandResult {
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
   const base = isCollapsed(selection)
     ? start
     : deleteRangeInPlace(next, start, end);
-  return result(next, insertTextInPlace(next, base, text));
+  return result(next, insertTextInPlace(next, base, text, formatOverride));
 }
 
 /** Inserts a forced line break (Shift+Enter) at the selection: a literal
@@ -175,6 +189,79 @@ export function deleteForward(
   }
   const next = cloneContainers(model);
   return result(next, deleteForwardInPlace(next, selection.focus));
+}
+
+// --- character formatting (SPEC-012) ----------------------------------------
+
+/** Whether/how a character format is set: "on" only when every character
+ * covered has it, "off" only when none do, "mixed" otherwise. */
+export type FormatState = "on" | "off" | "mixed";
+
+/** The formatting new text typed at a caret would inherit — the read-only
+ * counterpart of insertText's inheritance rule (SPEC-012 AC-12). */
+export function caretFormatting(model: DocumentModel, caret: CaretPosition): RunFormatting {
+  const c = clampCaret(model, caret);
+  return formattingAtOffset(model.sections[c.section].blocks[c.block], c.offset);
+}
+
+/** A character format's state for the toolbar (SPEC-012 AC-12..14). For a
+ * collapsed selection (a caret) there is no text to inspect, so the state
+ * reflects what the *next* typed character would carry: the run's
+ * formatting the caret sits in, overridden by `pending` if given (the
+ * caller's pending format, AC-9). For a real selection it is computed over
+ * every run the selection covers. */
+export function formatState(
+  model: DocumentModel,
+  selection: ModelSelection,
+  key: CharacterFormatKey,
+  pending: PendingFormat | null = null,
+): FormatState {
+  if (isCollapsed(selection)) {
+    const base = caretFormatting(model, selection.focus)[key] === true;
+    const value = pending && pending[key] !== undefined ? pending[key] : base;
+    return value ? "on" : "off";
+  }
+  const { start, end } = orderedRange(model, selection);
+  const formattings = runFormattingsInRange(model, start, end);
+  if (formattings.length === 0) {
+    return "off";
+  }
+  const onCount = formattings.filter((formatting) => formatting[key] === true).length;
+  if (onCount === 0) {
+    return "off";
+  }
+  return onCount === formattings.length ? "on" : "mixed";
+}
+
+/** Sets a character format across a real selection, splitting runs at the
+ * boundaries and merging the result back down to the minimum run count
+ * (SPEC-012 AC-7, AC-8, AC-20, AC-21). Unlike every other command, the
+ * selection is not collapsed afterward — see `CommandResult`. A collapsed
+ * selection is a no-op: collapsed-caret formatting is a pending format the
+ * caller tracks outside the model (AC-9..11) and applies through
+ * insertText's `formatOverride` instead. */
+export function setFormat(
+  model: DocumentModel,
+  selection: ModelSelection,
+  key: CharacterFormatKey,
+  value: boolean,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  if (!isCollapsed(selection)) {
+    setFormatting(next, start, end, key, value);
+  }
+  return { model: next, selection: { anchor: start, focus: end } };
+}
+
+/** Toggles a character format across a real selection: off or mixed turns
+ * it fully on, on turns it fully off (SPEC-012 AC-16, AC-17). */
+export function toggleFormat(
+  model: DocumentModel,
+  selection: ModelSelection,
+  key: CharacterFormatKey,
+): CommandResult {
+  return setFormat(model, selection, key, formatState(model, selection, key) !== "on");
 }
 
 // --- caret/selection queries (pure reads for keyboard navigation) ----------
