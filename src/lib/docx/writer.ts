@@ -174,9 +174,17 @@ function paragraphPropertiesXml(paragraph: Paragraph): string {
   const parts: string[] = [];
   const formatting = paragraph.formatting ?? {};
 
-  // Emitted in CT_PPr sequence order: pStyle, spacing, ind, jc, outlineLvl.
+  // Emitted in CT_PPr sequence order: pStyle, bidi, spacing, ind, jc,
+  // outlineLvl.
   if (paragraph.styleId !== undefined) {
     parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
+  }
+
+  // The model's indents are logical start/end values, exactly what w:ind's
+  // left/right mean, so RTL needs only the w:bidi flag — the indent values
+  // are emitted unchanged (SPEC-014).
+  if (formatting.direction === "rtl") {
+    parts.push("<w:bidi/>");
   }
 
   const spacingAttrs: string[] = [];
@@ -187,12 +195,13 @@ function paragraphPropertiesXml(paragraph: Paragraph): string {
     spacingAttrs.push(`w:after="${ptToTwentiethsOfPoint(formatting.spaceAfterPt)}"`);
   }
   // A single w:line attribute carries either rule; lineSpacingPt wins when
-  // both are set, matching the model's documented precedence. "atLeast"
-  // (rather than "exact") so converted content can never clip tall glyphs;
-  // the reader maps any non-auto rule back to lineSpacingPt.
+  // both are set, matching the model's documented precedence. The absent
+  // lineSpacingRule default is "atLeast" — converted content can never clip
+  // tall glyphs — while an explicit "exact" survives as itself (SPEC-014).
   if (formatting.lineSpacingPt !== undefined) {
+    const rule = formatting.lineSpacingRule === "exact" ? "exact" : "atLeast";
     spacingAttrs.push(
-      `w:line="${ptToTwentiethsOfPoint(formatting.lineSpacingPt)}" w:lineRule="atLeast"`,
+      `w:line="${ptToTwentiethsOfPoint(formatting.lineSpacingPt)}" w:lineRule="${rule}"`,
     );
   } else if (formatting.lineSpacing !== undefined) {
     spacingAttrs.push(`w:line="${Math.round(formatting.lineSpacing * 240)}" w:lineRule="auto"`);
@@ -202,11 +211,11 @@ function paragraphPropertiesXml(paragraph: Paragraph): string {
   }
 
   const indAttrs: string[] = [];
-  if (formatting.indentLeftCm !== undefined) {
-    indAttrs.push(`w:left="${cmToTwips(formatting.indentLeftCm)}"`);
+  if (formatting.indentStartCm !== undefined) {
+    indAttrs.push(`w:left="${cmToTwips(formatting.indentStartCm)}"`);
   }
-  if (formatting.indentRightCm !== undefined) {
-    indAttrs.push(`w:right="${cmToTwips(formatting.indentRightCm)}"`);
+  if (formatting.indentEndCm !== undefined) {
+    indAttrs.push(`w:right="${cmToTwips(formatting.indentEndCm)}"`);
   }
   if (formatting.indentFirstLineCm !== undefined) {
     indAttrs.push(

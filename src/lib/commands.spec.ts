@@ -134,14 +134,14 @@ describe("splitBlock", () => {
     const model = doc(paragraph(["Centered text"]));
     model.sections[0].blocks[0] = {
       ...model.sections[0].blocks[0],
-      formatting: { alignment: "center", indentLeftCm: 1 },
+      formatting: { alignment: "center", indentStartCm: 1 },
       styleId: "Fancy",
       headingLevel: 2,
     };
     const { model: next } = splitBlock(model, caretSelection(caret(0, 8)));
     const [first, second] = next.sections[0].blocks;
-    expect(first.formatting).toEqual({ alignment: "center", indentLeftCm: 1 });
-    expect(second.formatting).toEqual({ alignment: "center", indentLeftCm: 1 });
+    expect(first.formatting).toEqual({ alignment: "center", indentStartCm: 1 });
+    expect(second.formatting).toEqual({ alignment: "center", indentStartCm: 1 });
     expect(second.styleId).toBe("Fancy");
     expect(second.headingLevel).toBe(2);
   });

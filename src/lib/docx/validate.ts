@@ -56,7 +56,7 @@ const HIGHLIGHT_VALUES = new Set([
 // Sequence order of the CT_PPr / CT_RPr / CT_SectPr children the writer
 // emits, per the ECMA-376 Transitional schema. Order within each list is
 // the schema's required document order.
-const PPR_SEQUENCE = ["pStyle", "spacing", "ind", "jc", "outlineLvl"];
+const PPR_SEQUENCE = ["pStyle", "bidi", "spacing", "ind", "jc", "outlineLvl"];
 // CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
 // fitText, vertAlign", so shd follows u and vertAlign follows shd.
 const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];

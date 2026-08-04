@@ -81,8 +81,8 @@ describe("paragraphStyle", () => {
       runs: [],
       formatting: {
         alignment: "center",
-        indentLeftCm: 1.27,
-        indentRightCm: 1.27,
+        indentStartCm: 1.27,
+        indentEndCm: 1.27,
         indentFirstLineCm: 0.5,
         spaceBeforePt: 12,
         spaceAfterPt: 6,
@@ -90,8 +90,8 @@ describe("paragraphStyle", () => {
       },
     });
     expect(style.textAlign).toBe("center");
-    expect(style.marginLeft).toBe("1.27cm");
-    expect(style.marginRight).toBe("1.27cm");
+    expect(style.marginInlineStart).toBe("1.27cm");
+    expect(style.marginInlineEnd).toBe("1.27cm");
     expect(style.textIndent).toBe("0.5cm");
     expect(style.marginTop).toBe("12pt");
     expect(style.marginBottom).toBe("6pt");
@@ -105,6 +105,27 @@ describe("paragraphStyle", () => {
       formatting: { lineSpacing: 1.5, lineSpacingPt: 14 },
     });
     expect(style.lineHeight).toBe("14pt");
+  });
+
+  it("sets direction: rtl so logical indents mirror physically (SPEC-014)", () => {
+    const style = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      formatting: { direction: "rtl", indentStartCm: 2, indentEndCm: 1 },
+    });
+    expect(style.direction).toBe("rtl");
+    // The values stay logical — the browser's inline axis does the mirroring.
+    expect(style.marginInlineStart).toBe("2cm");
+    expect(style.marginInlineEnd).toBe("1cm");
+  });
+
+  it("leaves direction unset for LTR paragraphs", () => {
+    const style = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      formatting: { indentStartCm: 2 },
+    });
+    expect(style.direction).toBeUndefined();
   });
 });
 

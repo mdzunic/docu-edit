@@ -116,8 +116,8 @@ describe("parseOdt — libreoffice-writer.odt", () => {
     const parsed = await parseOdt(fixture);
     const formatting = (parsed.sections[0].blocks[6] as Paragraph).formatting;
     expect(formatting?.alignment).toBe("center");
-    expect(formatting?.indentLeftCm).toBeCloseTo(1.27, 3);
-    expect(formatting?.indentRightCm).toBeCloseTo(1.27, 3);
+    expect(formatting?.indentStartCm).toBeCloseTo(1.27, 3);
+    expect(formatting?.indentEndCm).toBeCloseTo(1.27, 3);
     expect(formatting?.indentFirstLineCm).toBeCloseTo(0.635, 3);
     expect(formatting?.spaceBeforePt).toBeCloseTo(12, 1);
     expect(formatting?.spaceAfterPt).toBeCloseTo(12, 1);
@@ -207,8 +207,8 @@ describe("parseOdt — openoffice-era.odt", () => {
   it("maps inch-based margins and a negative text-indent to a hanging indent (AC-23)", async () => {
     const parsed = await parseOdt(fixture);
     const formatting = (parsed.sections[0].blocks[5] as Paragraph).formatting;
-    expect(formatting?.indentLeftCm).toBeCloseTo(1.27, 3);
-    expect(formatting?.indentRightCm).toBe(0);
+    expect(formatting?.indentStartCm).toBeCloseTo(1.27, 3);
+    expect(formatting?.indentEndCm).toBe(0);
     expect(formatting?.indentFirstLineCm).toBeCloseTo(-0.635, 3);
   });
 

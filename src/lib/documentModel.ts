@@ -77,13 +77,22 @@ export interface Run {
 
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
 
-/** Block-level formatting applied to a paragraph. Empty until SPEC-014 adds
- * a UI for it; SPEC-004 (the .docx reader) is the first writer. */
+/** Paragraph writing direction; absent means `"ltr"`. Readers only ever
+ * record `"rtl"` (SPEC-014) — an explicit `"ltr"` never reaches the model,
+ * which keeps the field round-trip-stable across both writers. */
+export type ParagraphDirection = "ltr" | "rtl";
+
+/** Block-level formatting applied to a paragraph (SPEC-014). Indents are
+ * held as *logical* start/end values: `direction` decides which physical
+ * edge each paints on — in the renderer, the ruler and both writers. */
 export interface ParagraphFormatting {
   alignment?: ParagraphAlignment;
-  indentLeftCm?: number;
-  indentRightCm?: number;
-  /** Positive indents the first line; negative produces a hanging indent. */
+  /** Indent on the edge the text starts from (left for LTR, right for RTL). */
+  indentStartCm?: number;
+  /** Indent on the edge the text runs toward. */
+  indentEndCm?: number;
+  /** Positive indents the first line; negative produces a hanging indent.
+   * Start-relative in both file formats, so no direction mapping applies. */
   indentFirstLineCm?: number;
   spaceBeforePt?: number;
   spaceAfterPt?: number;
@@ -94,6 +103,12 @@ export interface ParagraphFormatting {
    * spacing as a fixed/minimum line rule. Takes precedence over
    * `lineSpacing` when both would otherwise apply. */
   lineSpacingPt?: number;
+  /** How `lineSpacingPt` binds: "exact" is a fixed line height ("Exactly" in
+   * the spacing dialog); absent means "at least" — the historical default
+   * both writers emitted, kept as the absent value so models saved before
+   * SPEC-014 keep their meaning. Meaningless without `lineSpacingPt`. */
+  lineSpacingRule?: "exact";
+  direction?: ParagraphDirection;
 }
 
 /** An inline XML element the reader does not model (SPEC-008) — e.g. a

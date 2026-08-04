@@ -10,6 +10,7 @@ import type {
   OpaqueInline,
   OpaquePart,
   Paragraph,
+  ParagraphFormatting,
   Run,
   RunFormatting,
   Section,
@@ -203,6 +204,31 @@ function collectInline(
   }
 }
 
+/** ODF's fo:margin-left/right are physical, so the property parser fills
+ * the logical slots as if the paragraph were LTR. Once the style chain is
+ * resolved, an effective RTL writing mode means the physical left edge is
+ * the logical END — so the two slots swap; an explicit "ltr" (recorded only
+ * to win the chain merge) is dropped, leaving "rtl" the model's one stored
+ * direction (SPEC-014). */
+function normalizeResolvedDirection(formatting: ParagraphFormatting): void {
+  if (formatting.direction === "rtl") {
+    const start = formatting.indentStartCm;
+    const end = formatting.indentEndCm;
+    if (end !== undefined) {
+      formatting.indentStartCm = end;
+    } else {
+      delete formatting.indentStartCm;
+    }
+    if (start !== undefined) {
+      formatting.indentEndCm = start;
+    } else {
+      delete formatting.indentEndCm;
+    }
+  } else if (formatting.direction === "ltr") {
+    delete formatting.direction;
+  }
+}
+
 function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolean): Paragraph {
   const styleName = textAttr(el, "style-name") ?? undefined;
   const resolved = resolveParagraphStyle(catalog, styleName);
@@ -217,7 +243,9 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
 
   // Fresh object per paragraph — the resolver may hand back the catalog's
   // shared default when the style chain is empty.
-  const paragraph: Paragraph = { type: "paragraph", runs, formatting: { ...resolved.paragraphFormatting } };
+  const formatting: ParagraphFormatting = { ...resolved.paragraphFormatting };
+  normalizeResolvedDirection(formatting);
+  const paragraph: Paragraph = { type: "paragraph", runs, formatting };
   if (styleName) {
     paragraph.styleId = styleName;
   }

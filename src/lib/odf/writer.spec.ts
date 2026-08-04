@@ -206,7 +206,7 @@ describe("writeOdt — automatic styles (AC-16, AC-17, AC-18)", () => {
       {
         type: "paragraph",
         runs: [{ text: "styled", formatting: { bold: true, color: "#ff0000" } }],
-        formatting: { alignment: "center", indentLeftCm: 1.27 },
+        formatting: { alignment: "center", indentStartCm: 1.27 },
         styleId: "Fancy",
       },
     ];

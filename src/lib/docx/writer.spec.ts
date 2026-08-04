@@ -294,7 +294,7 @@ describe("buildDocumentXml", () => {
         headingLevel: 1,
         formatting: {
           alignment: "center",
-          indentLeftCm: 1.27,
+          indentStartCm: 1.27,
           spaceBeforePt: 12,
         },
       },

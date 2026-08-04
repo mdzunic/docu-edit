@@ -76,8 +76,8 @@ describe("parseDocx — word-authored.docx", () => {
     const parsed = await parseDocx(fixture);
     const formatting = (parsed.sections[0].blocks[3] as Paragraph).formatting;
     expect(formatting?.alignment).toBe("center");
-    expect(formatting?.indentLeftCm).toBeCloseTo(1.27, 2);
-    expect(formatting?.indentRightCm).toBeCloseTo(1.27, 2);
+    expect(formatting?.indentStartCm).toBeCloseTo(1.27, 2);
+    expect(formatting?.indentEndCm).toBeCloseTo(1.27, 2);
     expect(formatting?.indentFirstLineCm).toBeCloseTo(0.635, 2);
     expect(formatting?.spaceBeforePt).toBe(12);
     expect(formatting?.spaceAfterPt).toBe(12);

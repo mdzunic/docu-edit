@@ -163,6 +163,11 @@ function parseParagraph(pEl: Element, styleCatalog: StyleCatalog): Paragraph {
 
   const resolved = resolveStyle(styleCatalog, styleId);
   const formatting = mergeParagraphFormatting(resolved.paragraphFormatting, parseParagraphProperties(pPr));
+  // "ltr" exists only to let a direct w:bidi="0" override a style's RTL
+  // during the merge above; the model itself holds "rtl" or nothing.
+  if (formatting.direction === "ltr") {
+    delete formatting.direction;
+  }
   const headingLevel = parseOutlineLevel(pPr) ?? resolved.headingLevel;
 
   const runs: Run[] = [];

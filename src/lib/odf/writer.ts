@@ -142,11 +142,18 @@ function paragraphPropertiesXml(formatting: ParagraphFormatting): string {
     // The model's alignment values are all legal fo:text-align keywords.
     attrs.push(`fo:text-align="${formatting.alignment}"`);
   }
-  if (formatting.indentLeftCm !== undefined) {
-    attrs.push(`fo:margin-left="${cmToOdfLength(formatting.indentLeftCm)}"`);
+  // The model's indents are logical start/end; ODF's fo:margin-left/right
+  // are physical, so an RTL paragraph writes start on the right edge and
+  // end on the left — the exact inverse of the reader's post-resolution
+  // swap (SPEC-014). fo:text-indent is start-relative and never swaps.
+  const rtl = formatting.direction === "rtl";
+  const marginLeftCm = rtl ? formatting.indentEndCm : formatting.indentStartCm;
+  const marginRightCm = rtl ? formatting.indentStartCm : formatting.indentEndCm;
+  if (marginLeftCm !== undefined) {
+    attrs.push(`fo:margin-left="${cmToOdfLength(marginLeftCm)}"`);
   }
-  if (formatting.indentRightCm !== undefined) {
-    attrs.push(`fo:margin-right="${cmToOdfLength(formatting.indentRightCm)}"`);
+  if (marginRightCm !== undefined) {
+    attrs.push(`fo:margin-right="${cmToOdfLength(marginRightCm)}"`);
   }
   if (formatting.indentFirstLineCm !== undefined) {
     attrs.push(`fo:text-indent="${cmToOdfLength(formatting.indentFirstLineCm)}"`);
@@ -157,13 +164,22 @@ function paragraphPropertiesXml(formatting: ParagraphFormatting): string {
   if (formatting.spaceAfterPt !== undefined) {
     attrs.push(`fo:margin-bottom="${ptToOdfLength(formatting.spaceAfterPt)}"`);
   }
-  // A single fo:line-height carries either rule; lineSpacingPt wins when
-  // both are set, matching the model's documented precedence and the .docx
-  // writer.
+  // lineSpacingPt wins over lineSpacing when both are set, matching the
+  // model's documented precedence and the .docx writer. The absent-rule
+  // default is "at least" (style:line-height-at-least); an explicit "exact"
+  // is ODF's fixed fo:line-height (SPEC-014).
   if (formatting.lineSpacingPt !== undefined) {
-    attrs.push(`fo:line-height="${ptToOdfLength(formatting.lineSpacingPt)}"`);
+    const length = ptToOdfLength(formatting.lineSpacingPt);
+    attrs.push(
+      formatting.lineSpacingRule === "exact"
+        ? `fo:line-height="${length}"`
+        : `style:line-height-at-least="${length}"`,
+    );
   } else if (formatting.lineSpacing !== undefined) {
     attrs.push(`fo:line-height="${multiplierToOdfPercentage(formatting.lineSpacing)}"`);
+  }
+  if (rtl) {
+    attrs.push('style:writing-mode="rl-tb"');
   }
   return attrs.length > 0 ? `<style:paragraph-properties ${attrs.join(" ")}/>` : "";
 }

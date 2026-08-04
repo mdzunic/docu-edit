@@ -132,17 +132,20 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
     }
   }
 
+  // `w:ind`'s left/right (start/end under the strict schema names) are the
+  // LOGICAL start/end edges — with w:bidi they paint on the right/left — so
+  // they map onto the model's logical indents unchanged (SPEC-014).
   const ind = firstChildElement(pPr, WORD_NAMESPACE, "ind");
   if (ind) {
-    const left = attr(ind, "left") ?? attr(ind, "start");
-    const right = attr(ind, "right") ?? attr(ind, "end");
+    const start = attr(ind, "left") ?? attr(ind, "start");
+    const end = attr(ind, "right") ?? attr(ind, "end");
     const firstLine = attr(ind, "firstLine");
     const hanging = attr(ind, "hanging");
-    if (left) {
-      formatting.indentLeftCm = twipsToCm(Number(left));
+    if (start) {
+      formatting.indentStartCm = twipsToCm(Number(start));
     }
-    if (right) {
-      formatting.indentRightCm = twipsToCm(Number(right));
+    if (end) {
+      formatting.indentEndCm = twipsToCm(Number(end));
     }
     if (firstLine) {
       formatting.indentFirstLineCm = twipsToCm(Number(firstLine));
@@ -169,8 +172,22 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
         formatting.lineSpacing = lineValue / 240;
       } else {
         formatting.lineSpacingPt = twentiethsOfPointToPt(lineValue);
+        // "exact" is the marked rule; "atLeast" is the model's absent
+        // default (see ParagraphFormatting.lineSpacingRule).
+        if (lineRule === "exact") {
+          formatting.lineSpacingRule = "exact";
+        }
       }
     }
+  }
+
+  // w:bidi is an OOXML boolean toggle. An explicit off ("ltr") is recorded
+  // here so it can override a style chain's RTL during merging; the reader
+  // normalises "ltr" away before the model is assembled — the model itself
+  // only ever holds "rtl" (SPEC-014, see ParagraphDirection).
+  const bidi = parseBooleanToggle(firstChildElement(pPr, WORD_NAMESPACE, "bidi"));
+  if (bidi !== undefined) {
+    formatting.direction = bidi ? "rtl" : "ltr";
   }
 
   return formatting;
