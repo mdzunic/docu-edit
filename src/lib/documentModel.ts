@@ -82,22 +82,29 @@ export interface Paragraph {
 
 /** A block-level XML element the reader does not model (SPEC-008) — e.g. a
  * `w:tbl`, a block-level `w:sdt` content control or an ODF `table:table` —
- * held verbatim at its position among the section's blocks and re-emitted
- * in place on a same-format save. */
+ * held verbatim, anchored to its position among the section's blocks, and
+ * re-emitted in place on a same-format save. */
 export interface OpaqueBlock {
-  type: "opaqueBlock";
   /** Self-contained XML serialisation, compared canonically (see
    * OpaqueInline.xml). */
   xml: string;
+  /** The node sits immediately before `blocks[blockIndex]`; `blocks.length`
+   * means after the last block. */
+  blockIndex: number;
 }
 
-/** Block-level children of a section. Later specs (tables, images) extend
- * this union with modelled kinds. */
-export type Block = Paragraph | OpaqueBlock;
+/** Block-level children of a section. Paragraph is the only kind for now;
+ * later specs (tables, images) extend this union. */
+export type Block = Paragraph;
 
 /** A section groups block-level content; documents have one or more. */
 export interface Section {
   blocks: Block[];
+  /** Unmodelled block-level XML preserved through a same-format save
+   * (SPEC-008). A side-list (rather than a Block union member) so `blocks`
+   * stays renderable/editable without narrowing; order follows
+   * `blockIndex`. */
+  opaqueBlocks?: OpaqueBlock[];
 }
 
 /** Page dimensions in centimetres. */

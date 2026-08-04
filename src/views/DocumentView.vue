@@ -8,6 +8,7 @@ import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
+import { noConversionReport } from "../lib/opaque";
 import {
   deleteDocument,
   getOrCreateDocument,
@@ -76,7 +77,7 @@ async function handleDownload(format = "") {
     return;
   }
   const odt = format === "odt";
-  const bytes = odt ? await writeOdt(doc.value) : await writeDocx(doc.value);
+  const { bytes, dropped } = odt ? await writeOdt(doc.value) : await writeDocx(doc.value);
   const fileName = odt ? odtFileName(doc.value.title) : docxFileName(doc.value.title);
   // A transient anchor pointed at an object URL is the download mechanism
   // that needs no new browser permissions; revocation is deferred so the
@@ -87,6 +88,22 @@ async function handleDownload(format = "") {
   anchor.download = fileName;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  // SPEC-008: content that could not be preserved by a cross-format save is
+  // reported once, after the download has been triggered, unless the user
+  // opted out for this document.
+  if (dropped.length > 0 && !doc.value.suppressConversionReport) {
+    conversionReport.value = dropped;
+  }
+}
+
+const conversionReport = ref(noConversionReport());
+
+function closeConversionReport(dontShowAgain = false) {
+  conversionReport.value = null;
+  if (dontShowAgain && doc.value) {
+    doc.value.suppressConversionReport = true;
+    touchDocument(doc.value.id);
+  }
 }
 
 const confirmingDelete = ref(false);

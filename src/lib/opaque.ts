@@ -6,7 +6,7 @@
 // an item is and that it cannot be represented in the target format, so the
 // conversion report dialog and the tests both read the writer's `dropped`
 // array rather than diffing models.
-import type { Block, DocumentFormat, DocumentModel, OpaqueBlock, Paragraph } from "./documentModel";
+import type { DocumentFormat, DocumentModel } from "./documentModel";
 import { parseXml, XmlParseError } from "./docx/xml";
 
 // --- base64 ----------------------------------------------------------------
@@ -67,6 +67,13 @@ export interface DropRecord {
 export interface WriteResult {
   bytes: Uint8Array;
   dropped: DropRecord[];
+}
+
+/** The initial (hidden) state of the conversion-report dialog. A typed
+ * factory rather than an inline `as` cast because .vue scripts are parsed
+ * by espree, which cannot parse TypeScript-only syntax. */
+export function noConversionReport(): DropRecord[] | null {
+  return null;
 }
 
 /** Display names for the conversion report dialog. */
@@ -182,17 +189,11 @@ function record(kind: DropKind, location: string, target: DocumentFormat): DropR
   };
 }
 
-function isParagraph(block: Block): block is Paragraph {
-  return block.type === "paragraph";
-}
-
-function isOpaqueBlock(block: Block): block is OpaqueBlock {
-  return block.type === "opaqueBlock";
-}
-
 /** Everything a cross-format save of `model` will drop, in document order
  * (opaque nodes first, then unmodelled package parts). Empty when the model
- * carries no opaque content — a blank document converts losslessly. */
+ * carries no opaque content — a blank document converts losslessly. The
+ * "approximate location" is expressed in paragraph numbers: the product
+ * does not paginate, so page numbers do not exist to report. */
 export function collectDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
   const source = model.format;
   if (source === undefined || source === target) {
@@ -200,18 +201,28 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
   }
 
   const dropped: DropRecord[] = [];
-  const blocks = model.sections.flatMap((section) => section.blocks);
-  let paragraphNumber = 0;
-  blocks.forEach((block, index) => {
-    if (isParagraph(block)) {
-      paragraphNumber++;
-      for (const inline of block.opaqueInlines ?? []) {
-        dropped.push(record(nodeKind(inline.xml, "opaqueInline"), `paragraph ${paragraphNumber}`, target));
+  let paragraphOffset = 0;
+  for (const section of model.sections) {
+    const opaqueBlocks = [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex);
+    for (let index = 0; index <= section.blocks.length; index++) {
+      for (const block of opaqueBlocks) {
+        if (Math.min(block.blockIndex, section.blocks.length) === index) {
+          const location =
+            index < section.blocks.length
+              ? `before paragraph ${paragraphOffset + index + 1}`
+              : "end of document";
+          dropped.push(record(nodeKind(block.xml, "opaqueBlock"), location, target));
+        }
       }
-    } else if (isOpaqueBlock(block)) {
-      dropped.push(record(nodeKind(block.xml, "opaqueBlock"), `body block ${index + 1}`, target));
+      if (index < section.blocks.length) {
+        const paragraphNumber = paragraphOffset + index + 1;
+        for (const inline of section.blocks[index].opaqueInlines ?? []) {
+          dropped.push(record(nodeKind(inline.xml, "opaqueInline"), `paragraph ${paragraphNumber}`, target));
+        }
+      }
     }
-  });
+    paragraphOffset += section.blocks.length;
+  }
 
   for (const part of model.opaque ?? []) {
     if (!isInfrastructurePart(source, part.name)) {

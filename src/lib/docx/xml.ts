@@ -21,6 +21,13 @@ export function parseXml(text: string): Document {
   return doc;
 }
 
+/** A self-contained serialisation of an element (the platform serialiser
+ * declares any in-scope namespaces the fragment uses), stored verbatim on
+ * SPEC-008's opaque nodes and re-emitted as-is on save. */
+export function serializeElement(el: Element): string {
+  return new XMLSerializer().serializeToString(el);
+}
+
 export function childElements(parent: Element | Document, namespace: string, localName: string): Element[] {
   const result: Element[] = [];
   for (const child of Array.from(parent.children)) {
