@@ -282,6 +282,15 @@ describe("parseOdt — error handling", () => {
   });
 });
 
+async function makeOdt(contentXml: string): Promise<Uint8Array> {
+  const { zip } = await import("../docx/zipWriter");
+  const encoder = new TextEncoder();
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.text"), store: true },
+    { name: "content.xml", data: encoder.encode(contentXml) },
+  ]);
+}
+
 describe("parseOdt — RTL paragraphs (SPEC-014 AC-24, AC-25)", () => {
   // Hand-built to LibreOffice Writer's exact RTL serialisation (matching the
   // other fixtures' provenance note above): LO stores indents PHYSICALLY in
@@ -306,15 +315,6 @@ describe("parseOdt — RTL paragraphs (SPEC-014 AC-24, AC-25)", () => {
   </office:text>
  </office:body>
 </office:document-content>`;
-
-  async function makeOdt(contentXml: string): Promise<Uint8Array> {
-    const { zip } = await import("../docx/zipWriter");
-    const encoder = new TextEncoder();
-    return zip([
-      { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.text"), store: true },
-      { name: "content.xml", data: encoder.encode(contentXml) },
-    ]);
-  }
 
   it("swaps LibreOffice's physical margins onto the logical start/end", async () => {
     const parsed = await parseOdt(await makeOdt(RTL_CONTENT));

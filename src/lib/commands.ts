@@ -78,6 +78,16 @@ export function noCommandResult(): CommandResult | null {
   return null;
 }
 
+/** A command callback bound late to the current model/selection — how `.vue`
+ * scripts hand paragraph commands to a shared dispatcher without writing
+ * the function-type annotation espree can't parse. */
+export type ParagraphCommand = (model: DocumentModel, selection: ModelSelection) => CommandResult;
+
+/** Typed `null` seed for ParagraphCommand parameters in `.vue` scripts. */
+export function noParagraphCommand(): ParagraphCommand | null {
+  return null;
+}
+
 /** Typed `null` seed for pending-format refs in `.vue` scripts (same espree
  * constraint as noSelection). */
 export function noPendingFormat(): PendingFormat | null {
@@ -678,6 +688,29 @@ export function toggleSpaceBefore(
     ...formatting,
     spaceBeforePt: hasSpaceBefore(formatting) ? 0 : SPACE_BEFORE_TOGGLE_PT,
   }));
+}
+
+/** Sets the page's left/right margins (the ruler's margin markers, AC-23).
+ * Margins live on defaultStyles, not a paragraph, but the update flows
+ * through the same immutable command shape so applyEdit persists it. */
+export function setPageMargins(
+  model: DocumentModel,
+  selection: ModelSelection,
+  patch: { leftCm?: number; rightCm?: number },
+): CommandResult {
+  const margins = { ...model.defaultStyles.margins };
+  if (patch.leftCm !== undefined) {
+    margins.leftCm = snapCm(Math.max(0, patch.leftCm));
+  }
+  if (patch.rightCm !== undefined) {
+    margins.rightCm = snapCm(Math.max(0, patch.rightCm));
+  }
+  const next: DocumentModel = {
+    ...model,
+    defaultStyles: { ...model.defaultStyles, margins },
+  };
+  const { start, end } = orderedRange(next, selection);
+  return { model: next, selection: { anchor: start, focus: end } };
 }
 
 // --- caret/selection queries (pure reads for keyboard navigation) ----------

@@ -66,6 +66,12 @@ export function asCharacterFormatKey(value: string): CharacterFormatKey {
   return value as CharacterFormatKey;
 }
 
+/** Typed pass-through for an alignment coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asParagraphAlignment(value: string): ParagraphAlignment {
+  return value as ParagraphAlignment;
+}
+
 /** The smallest unit of text: a string plus the formatting applied to it.
  * Tabs and forced line breaks are preserved as literal "\t" / "\n"
  * characters in `text` — renderers use `white-space: pre-wrap` so both
