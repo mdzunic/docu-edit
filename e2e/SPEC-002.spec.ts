@@ -54,6 +54,17 @@ test("clicking the title makes it editable, and Enter commits the new value (AC-
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New document" }).click();
+  // Wait until the title is the *editable* one before clicking it.
+  // `document-title` renders on `/` as well, but AppShell only wires up the
+  // click when the view passes `titleEditable`, and it marks that element
+  // `role="button"` in the same condition. DocumentView is lazy-loaded, so
+  // until its chunk arrives the click lands on the inert home title and is
+  // silently swallowed — the input then never appears and the test burns its
+  // whole timeout. Asserting the role is what closes that window.
+  await expect(page.getByTestId("document-title")).toHaveAttribute(
+    "role",
+    "button",
+  );
 
   await page.getByTestId("document-title").click();
   const input = page.getByTestId("document-title-input");
@@ -73,6 +84,10 @@ test("blurring the title input commits the new value (AC-7)", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New document" }).click();
+  await expect(page.getByTestId("document-title")).toHaveAttribute(
+    "role",
+    "button",
+  );
 
   await page.getByTestId("document-title").click();
   await page.getByTestId("document-title-input").fill("Blurred Title");
@@ -88,6 +103,10 @@ test("pressing Escape reverts the title without committing (AC-8)", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New document" }).click();
+  await expect(page.getByTestId("document-title")).toHaveAttribute(
+    "role",
+    "button",
+  );
 
   await page.getByTestId("document-title").click();
   await page.getByTestId("document-title-input").fill("Discarded Title");
@@ -103,6 +122,10 @@ test("a whitespace-only title reverts to 'Untitled document' (AC-9)", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New document" }).click();
+  await expect(page.getByTestId("document-title")).toHaveAttribute(
+    "role",
+    "button",
+  );
 
   await page.getByTestId("document-title").click();
   await page.getByTestId("document-title-input").fill("Renamed First");

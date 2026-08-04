@@ -9,6 +9,12 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: false,
   retries: 0,
+  // Playwright's 5s default assumes a warm dev server. The factory runs this
+  // suite against a clean clone inside a container: Vite transforms every
+  // module on first request while every worker asks at once, so the first
+  // wait on a lazily-loaded route can legitimately outlast 5s. Failing tests
+  // still fail — they just get a budget that reflects where this runs.
+  expect: { timeout: 10_000 },
   reporter: [["list"]],
   use: {
     baseURL: "http://localhost:5173",
