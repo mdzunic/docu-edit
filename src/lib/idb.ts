@@ -5,7 +5,7 @@
 // Every function rejects when IndexedDB is missing, blocked, or over quota —
 // callers (documentStore) treat any rejection as "storage unavailable" and
 // keep working in-memory.
-import type { StoredDocumentRecord } from "./documentStore";
+import type { PersistedRecord } from "./documentStore";
 
 const DB_NAME = "docu-edit";
 const DB_VERSION = 1;
@@ -45,15 +45,27 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** Reads every persisted document record. */
-export async function loadAllRecords(): Promise<StoredDocumentRecord[]> {
+/** Reads every persisted record — committed documents and autosave drafts
+ * alike; callers split them by key prefix. */
+export async function loadAllRecords(): Promise<PersistedRecord[]> {
   const db = await getDb();
   const store = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME);
-  return requestToPromise(store.getAll() as IDBRequest<StoredDocumentRecord[]>);
+  return requestToPromise(store.getAll() as IDBRequest<PersistedRecord[]>);
 }
 
-/** Writes (inserts or replaces) one document record. */
-export async function putRecord(record: StoredDocumentRecord): Promise<void> {
+/** Reads one record by key, resolving undefined when absent. */
+export async function getRecord(
+  id: string,
+): Promise<PersistedRecord | undefined> {
+  const db = await getDb();
+  const store = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME);
+  return requestToPromise(
+    store.get(id) as IDBRequest<PersistedRecord | undefined>,
+  );
+}
+
+/** Writes (inserts or replaces) one record. */
+export async function putRecord(record: PersistedRecord): Promise<void> {
   const db = await getDb();
   const store = db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME);
   await requestToPromise(store.put(record));
