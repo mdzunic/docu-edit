@@ -25,7 +25,7 @@ async function writtenFixture(name: string): Promise<Uint8Array> {
     defaultStyles: parsed.defaultStyles,
     format: "docx",
   };
-  return writeDocx(model);
+  return (await writeDocx(model)).bytes;
 }
 
 const decoder = new TextDecoder();
@@ -61,7 +61,7 @@ describe("validateDocx — accepts everything the writer produces (AC-19, AC-22)
   );
 
   it("a blank document validates with no violations", async () => {
-    expect(await validateDocx(await writeDocx(createDocument("id-1")))).toEqual([]);
+    expect(await validateDocx((await writeDocx(createDocument("id-1"))).bytes)).toEqual([]);
   });
 
   it("a document converted from .odt validates with no violations (AC-23)", async () => {
@@ -73,7 +73,7 @@ describe("validateDocx — accepts everything the writer produces (AC-19, AC-22)
       defaultStyles: parsed.defaultStyles,
       format: "odt",
     };
-    expect(await validateDocx(await writeDocx(model))).toEqual([]);
+    expect(await validateDocx((await writeDocx(model)).bytes)).toEqual([]);
   });
 });
 

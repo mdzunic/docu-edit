@@ -32,7 +32,8 @@ import type {
   Run,
   RunFormatting,
 } from "../documentModel";
-import { zip } from "../docx/zipWriter";
+import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { ODT_MIMETYPE } from "./reader";
 import { HIGHLIGHT_NAMES } from "./properties";
 import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
@@ -316,35 +317,87 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
   return `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
 }
 
+/** The paragraph's inline content: its runs, with any preserved opaque
+ * inline nodes re-emitted verbatim at their anchored positions (SPEC-008).
+ * The whitespace state passes through opaque nodes unchanged — elements are
+ * transparent to ODF whitespace collapsing, so the reader's view matches. */
+function inlineContentXml(
+  paragraph: Paragraph,
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+): string {
+  const state: WhitespaceState = { lastChar: "" };
+  const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
+  if (opaque.length === 0) {
+    return paragraph.runs.map((run) => runXml(run, styles, state)).join("");
+  }
+  let content = "";
+  for (let i = 0; i <= paragraph.runs.length; i++) {
+    for (const node of opaque) {
+      if (Math.min(node.runIndex, paragraph.runs.length) === i) {
+        content += node.xml;
+      }
+    }
+    if (i < paragraph.runs.length) {
+      content += runXml(paragraph.runs[i], styles, state);
+    }
+  }
+  return content;
+}
+
 /** A paragraph as text:p — or text:h with text:outline-level when the model
  * carries a heading level, so the level survives re-opening regardless of
  * the style's definition. */
-function paragraphXml(paragraph: Paragraph, styles: AutomaticStyles): string {
+function paragraphXml(paragraph: Paragraph, styles: AutomaticStyles, includeOpaque: boolean): string {
   const styleName = styles.paragraphNameFor(paragraph);
   const tag = paragraph.headingLevel !== undefined ? "text:h" : "text:p";
   let attrs = styleName !== undefined ? ` text:style-name="${escapeXml(styleName)}"` : "";
   if (paragraph.headingLevel !== undefined) {
     attrs += ` text:outline-level="${paragraph.headingLevel}"`;
   }
-  const state: WhitespaceState = { lastChar: "" };
-  const content = paragraph.runs.map((run) => runXml(run, styles, state)).join("");
+  const content = inlineContentXml(paragraph, styles, includeOpaque);
   return content.length > 0 ? `<${tag}${attrs}>${content}</${tag}>` : `<${tag}${attrs}/>`;
 }
 
 /** The content part: automatic styles plus the document body. All sections'
  * blocks are written in order (page setup lives on defaultStyles, not per
  * section); a model with no blocks still gets one empty text:p, mirroring
- * the .docx writer. */
+ * the .docx writer.
+ *
+ * SPEC-008: when the model came from a .odt, preserved opaque blocks and
+ * inlines are re-emitted verbatim at their anchored positions, along with
+ * the original font-face declarations and the non-paragraph/text automatic
+ * styles those nodes may reference. Cross-format models carry foreign
+ * (WordprocessingML) XML in their opaque nodes, so those are excluded — the
+ * writer reports them as dropped instead. */
 export function buildContentXml(model: DocumentModel): string {
+  const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
-  const blocks = model.sections.flatMap((section) => section.blocks);
-  // Serialised before the styles are read: paragraphXml registers each
-  // automatic style on first use.
-  const body =
-    blocks.length > 0 ? blocks.map((block) => paragraphXml(block, styles)).join("") : "<text:p/>";
+  const blockXml: string[] = [];
+  for (const section of model.sections) {
+    const opaqueBlocks = includeOpaque
+      ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
+      : [];
+    for (let i = 0; i <= section.blocks.length; i++) {
+      for (const node of opaqueBlocks) {
+        if (Math.min(node.blockIndex, section.blocks.length) === i) {
+          blockXml.push(node.xml);
+        }
+      }
+      if (i < section.blocks.length) {
+        // Serialised before the styles are read: paragraphXml registers
+        // each automatic style on first use.
+        blockXml.push(paragraphXml(section.blocks[i], styles, includeOpaque));
+      }
+    }
+  }
+  const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
+  const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
+  const preservedStyles = includeOpaque ? (model.sourceXml?.odtAutomaticStyles ?? []) : [];
   return (
     `${XML_DECLARATION}<office:document-content${DOCUMENT_XMLNS} office:version="1.2">` +
-    `<office:automatic-styles>${styles.defs.join("")}</office:automatic-styles>` +
+    fontFaceDecls +
+    `<office:automatic-styles>${styles.defs.join("")}${preservedStyles.join("")}</office:automatic-styles>` +
     `<office:body><office:text>${body}</office:text></office:body>` +
     "</office:document-content>"
   );
@@ -429,26 +482,85 @@ export interface WriteOdtOptions {
   modified?: Date;
 }
 
-/** Serialises the model into `.odt` bytes: a valid ODF package whose
- * uncompressed mimetype entry comes first (AC-3, AC-9, AC-10), followed by
- * content.xml, styles.xml, meta.xml, settings.xml and META-INF/manifest.xml
- * (AC-4..AC-8). */
+/** Ensures a preserved manifest lists the parts this save (re)builds —
+ * needed when the source package lacked meta.xml or settings.xml. The patch
+ * is textual and no-ops gracefully on producers that bound the manifest
+ * namespace to another prefix (their packages carry the parts already). */
+function withManifestEntries(manifestXml: string, paths: string[]): string {
+  let out = manifestXml;
+  for (const path of paths) {
+    if (!out.includes(`manifest:full-path="${path}"`)) {
+      out = out.replace(
+        /<\/manifest:manifest>\s*$/,
+        `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="text/xml"/>` +
+          "</manifest:manifest>",
+      );
+    }
+  }
+  return out;
+}
+
+/** Serialises the model into `.odt` bytes plus the list of items that could
+ * not be represented (SPEC-008).
+ *
+ * A model opened from a .odt keeps its retained source package: every part
+ * the reader did not model (styles.xml, images, embedded objects, …) is
+ * written back byte-identical, and only content.xml and meta.xml
+ * (title/timestamp) are rebuilt — `dropped` is empty. Anything else (blank
+ * documents, models opened from .docx) is written from scratch as a valid
+ * ODF package whose uncompressed mimetype entry comes first (SPEC-007 AC-3,
+ * AC-9, AC-10), followed by content.xml, styles.xml, meta.xml, settings.xml
+ * and META-INF/manifest.xml (AC-4..AC-8), with unrepresentable .docx
+ * content reported in `dropped`. */
 export async function writeOdt(
   model: DocumentModel,
   options: WriteOdtOptions = {},
-): Promise<Uint8Array> {
+): Promise<WriteResult> {
   const modified = options.modified ?? new Date();
   const title = model.title.trim().length > 0 ? model.title : UNTITLED_ODT_TITLE;
   const encoder = new TextEncoder();
   const content = buildContentXml(model);
-  return zip([
-    // ODF requires the mimetype entry first and STOREd so format sniffers
-    // can read it from the raw bytes at a fixed offset.
-    { name: "mimetype", data: encoder.encode(ODT_MIMETYPE), store: true },
+
+  const preservedParts = model.format === "odt" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
+  if (preservedParts.size === 0) {
+    const bytes = await zip([
+      // ODF requires the mimetype entry first and STOREd so format sniffers
+      // can read it from the raw bytes at a fixed offset.
+      { name: "mimetype", data: encoder.encode(ODT_MIMETYPE), store: true },
+      { name: "content.xml", data: encoder.encode(content) },
+      { name: "styles.xml", data: encoder.encode(buildStylesXml(model)) },
+      { name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) },
+      { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
+      { name: "META-INF/manifest.xml", data: encoder.encode(buildManifestXml()) },
+    ]);
+    return { bytes, dropped: collectDropRecords(model, "odt") };
+  }
+
+  // Same-format save of an opened .odt: preserved parts verbatim, rebuilt
+  // content.xml/meta.xml, and settings.xml generated only when the source
+  // package had none (the manifest is patched to match).
+  const decoder = new TextDecoder("utf-8");
+  const addSettings = !preservedParts.has("settings.xml");
+  const addedPaths = ["content.xml", "meta.xml", ...(addSettings ? ["settings.xml"] : [])];
+
+  const entries: ZipEntryInput[] = [
+    { name: "mimetype", data: preservedParts.get("mimetype") ?? encoder.encode(ODT_MIMETYPE), store: true },
     { name: "content.xml", data: encoder.encode(content) },
-    { name: "styles.xml", data: encoder.encode(buildStylesXml(model)) },
-    { name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) },
-    { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
-    { name: "META-INF/manifest.xml", data: encoder.encode(buildManifestXml()) },
-  ]);
+  ];
+  for (const [name, data] of preservedParts) {
+    if (name === "mimetype" || name === "content.xml" || name === "meta.xml") {
+      continue; // Already emitted or rebuilt below.
+    }
+    if (name === "META-INF/manifest.xml") {
+      entries.push({ name, data: encoder.encode(withManifestEntries(decoder.decode(data), addedPaths)) });
+    } else {
+      entries.push({ name, data });
+    }
+  }
+  entries.push({ name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) });
+  if (addSettings) {
+    entries.push({ name: "settings.xml", data: encoder.encode(buildSettingsXml()) });
+  }
+
+  return { bytes: await zip(entries), dropped: [] };
 }

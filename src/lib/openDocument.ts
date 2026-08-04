@@ -5,7 +5,7 @@
 // errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
 // propagate unchanged — the caller only mutates app state once this
 // resolves, so a rejected file leaves the previous state untouched.
-import type { DocumentFormat, DocumentModel } from "./documentModel";
+import type { DocumentFormat, DocumentModel, OpaquePart, SourceXml } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
 
@@ -46,15 +46,29 @@ export function titleFromFileName(fileName: string): string {
 function buildModel(
   fileName: string,
   format: DocumentFormat,
-  parsed: { sections: DocumentModel["sections"]; defaultStyles: DocumentModel["defaultStyles"] },
+  parsed: {
+    sections: DocumentModel["sections"];
+    defaultStyles: DocumentModel["defaultStyles"];
+    opaque: OpaquePart[];
+    sourceXml: SourceXml;
+  },
 ): DocumentModel {
-  return {
+  const model: DocumentModel = {
     id: crypto.randomUUID(),
     title: titleFromFileName(fileName),
     format,
     sections: parsed.sections,
     defaultStyles: parsed.defaultStyles,
   };
+  // SPEC-008: the retained source package travels with the document for its
+  // lifetime, so a later same-format save can round-trip it.
+  if (parsed.opaque.length > 0) {
+    model.opaque = parsed.opaque;
+  }
+  if (Object.keys(parsed.sourceXml).length > 0) {
+    model.sourceXml = parsed.sourceXml;
+  }
+  return model;
 }
 
 /** Reads and parses a picked File into a new DocumentModel (not yet stored

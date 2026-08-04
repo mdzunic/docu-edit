@@ -28,9 +28,10 @@ import type {
   RunFormatting,
 } from "../documentModel";
 import { DEFAULT_TITLE } from "../documentModel";
-import { WORD_NAMESPACE } from "./xml";
+import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import { parseRelationships, resolvePartPath, WORD_NAMESPACE } from "./xml";
 import { cmToTwips, cssColorToOoxml, ptToHalfPoints, ptToTwentiethsOfPoint } from "./units";
-import { zip } from "./zipWriter";
+import { zip, type ZipEntryInput } from "./zipWriter";
 
 export const DOCX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -202,8 +203,32 @@ function paragraphPropertiesXml(paragraph: Paragraph): string {
   return parts.length > 0 ? `<w:pPr>${parts.join("")}</w:pPr>` : "";
 }
 
-function paragraphXml(paragraph: Paragraph): string {
-  return `<w:p>${paragraphPropertiesXml(paragraph)}${paragraph.runs.map(runXml).join("")}</w:p>`;
+/** The paragraph's inline content: its runs, with any preserved opaque
+ * inline nodes re-emitted verbatim at their anchored positions (SPEC-008).
+ * `runIndex === i` places a node immediately before run i; indexes past the
+ * end land after the last run. */
+function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean): string {
+  const runsXml = paragraph.runs.map(runXml);
+  const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
+  if (opaque.length === 0) {
+    return runsXml.join("");
+  }
+  let xml = "";
+  for (let i = 0; i <= runsXml.length; i++) {
+    for (const node of opaque) {
+      if (Math.min(node.runIndex, runsXml.length) === i) {
+        xml += node.xml;
+      }
+    }
+    if (i < runsXml.length) {
+      xml += runsXml[i];
+    }
+  }
+  return xml;
+}
+
+function paragraphXml(paragraph: Paragraph, includeOpaque: boolean): string {
+  return `<w:p>${paragraphPropertiesXml(paragraph)}${inlineContentXml(paragraph, includeOpaque)}</w:p>`;
 }
 
 function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
@@ -224,13 +249,40 @@ function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
 /** The main document part. Page setup lives on the model's `defaultStyles`
  * (not per section), so all sections' blocks are written in order under one
  * body-level w:sectPr. An empty document still gets one w:p — a body whose
- * only child is w:sectPr triggers Word's repair prompt (AC-24). */
+ * only child is w:sectPr triggers Word's repair prompt (AC-24).
+ *
+ * SPEC-008: when the model came from a .docx, preserved opaque blocks and
+ * inlines are re-emitted verbatim at their anchored positions, and the
+ * original body-level w:sectPr replaces the generated one so unmodelled
+ * section properties survive. Cross-format models carry foreign (ODF) XML
+ * in their opaque nodes, so those are excluded — the writer reports them as
+ * dropped instead. */
 export function buildDocumentXml(model: DocumentModel): string {
-  const paragraphs = model.sections.flatMap((section) => section.blocks).map(paragraphXml);
-  const body = paragraphs.length > 0 ? paragraphs.join("") : "<w:p/>";
+  const includeOpaque = model.format === "docx";
+  const blockXml: string[] = [];
+  for (const section of model.sections) {
+    const opaqueBlocks = includeOpaque
+      ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
+      : [];
+    for (let i = 0; i <= section.blocks.length; i++) {
+      for (const node of opaqueBlocks) {
+        if (Math.min(node.blockIndex, section.blocks.length) === i) {
+          blockXml.push(node.xml);
+        }
+      }
+      if (i < section.blocks.length) {
+        blockXml.push(paragraphXml(section.blocks[i], includeOpaque));
+      }
+    }
+  }
+  const body = blockXml.length > 0 ? blockXml.join("") : "<w:p/>";
+  const sectPr =
+    includeOpaque && model.sourceXml?.docxSectPr !== undefined
+      ? model.sourceXml.docxSectPr
+      : sectionPropertiesXml(model.defaultStyles);
   return (
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
-    `<w:body>${body}${sectionPropertiesXml(model.defaultStyles)}</w:body></w:document>`
+    `<w:body>${body}${sectPr}</w:body></w:document>`
   );
 }
 
@@ -340,22 +392,98 @@ export interface WriteDocxOptions {
   modified?: Date;
 }
 
-/** Serialises the model into `.docx` bytes: a valid OPC ZIP containing
+const CORE_CONTENT_TYPE = "application/vnd.openxmlformats-package.core-properties+xml";
+
+/** Adds the core-properties Override to a preserved [Content_Types].xml —
+ * needed when the source package had no docProps/core.xml but the save adds
+ * one to carry the edited title. */
+function withCoreContentType(contentTypesXml: string): string {
+  if (contentTypesXml.includes('PartName="/docProps/core.xml"')) {
+    return contentTypesXml;
+  }
+  return contentTypesXml.replace(
+    /<\/Types>\s*$/,
+    `<Override PartName="/docProps/core.xml" ContentType="${CORE_CONTENT_TYPE}"/></Types>`,
+  );
+}
+
+/** Adds a core-properties relationship (under a fresh, unused rId) to a
+ * preserved _rels/.rels for the same missing-core.xml case. */
+function withCoreRelationship(relsXml: string): string {
+  const rels = parseRelationships(relsXml);
+  let n = rels.size + 1;
+  while (rels.has(`rId${n}`)) {
+    n++;
+  }
+  return relsXml.replace(
+    /<\/Relationships>\s*$/,
+    `<Relationship Id="rId${n}" Type="${CORE_PROPERTIES_RELATIONSHIP}" Target="docProps/core.xml"/>` +
+      "</Relationships>",
+  );
+}
+
+/** Serialises the model into `.docx` bytes plus the list of items that could
+ * not be represented (SPEC-008).
+ *
+ * A model opened from a .docx keeps its retained source package: every part
+ * the reader did not model is written back byte-identical, and only the main
+ * document part and docProps/core.xml (title/timestamp) are rebuilt —
+ * `dropped` is empty. Anything else (blank documents, models opened from
+ * .odt) is written from scratch as a valid OPC ZIP containing
  * [Content_Types].xml, _rels/.rels, word/document.xml, word/styles.xml and
- * docProps/core.xml (AC-3..8). */
+ * docProps/core.xml (SPEC-006 AC-3..8), with unrepresentable .odt content
+ * reported in `dropped`. */
 export async function writeDocx(
   model: DocumentModel,
   options: WriteDocxOptions = {},
-): Promise<Uint8Array> {
+): Promise<WriteResult> {
   const modified = options.modified ?? new Date();
   const title = model.title.trim().length > 0 ? model.title : DEFAULT_TITLE;
   const encoder = new TextEncoder();
-  return zip([
-    { name: "[Content_Types].xml", data: encoder.encode(buildContentTypesXml()) },
-    { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
-    { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model)) },
-    { name: "word/_rels/document.xml.rels", data: encoder.encode(buildDocumentRelsXml()) },
-    { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
-    { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
-  ]);
+
+  const preservedParts = model.format === "docx" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
+  if (preservedParts.size === 0) {
+    const bytes = await zip([
+      { name: "[Content_Types].xml", data: encoder.encode(buildContentTypesXml()) },
+      { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
+      { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model)) },
+      { name: "word/_rels/document.xml.rels", data: encoder.encode(buildDocumentRelsXml()) },
+      { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
+      { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
+    ]);
+    return { bytes, dropped: collectDropRecords(model, "docx") };
+  }
+
+  // Same-format save of an opened .docx. The preserved _rels/.rels names the
+  // main document and core-properties parts, so the rebuilt parts land at
+  // the package's own paths regardless of producer layout.
+  const decoder = new TextDecoder("utf-8");
+  const relsBytes = preservedParts.get("_rels/.rels");
+  const relsText = relsBytes ? decoder.decode(relsBytes) : buildPackageRelsXml();
+  const rels = Array.from(parseRelationships(relsText).values());
+  const officeDocRel = rels.find((rel) => rel.type === OFFICE_DOCUMENT_RELATIONSHIP);
+  const mainPartName = officeDocRel ? resolvePartPath("", officeDocRel.target) : "word/document.xml";
+  const coreRel = rels.find((rel) => rel.type === CORE_PROPERTIES_RELATIONSHIP);
+  const corePartName = coreRel ? resolvePartPath("", coreRel.target) : "docProps/core.xml";
+
+  const entries: ZipEntryInput[] = [];
+  if (!relsBytes) {
+    entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
+  }
+  for (const [name, data] of preservedParts) {
+    if (name === mainPartName || name === corePartName) {
+      continue; // Rebuilt below (the reader excludes them from opaque anyway).
+    }
+    if (!coreRel && name === "_rels/.rels") {
+      entries.push({ name, data: encoder.encode(withCoreRelationship(relsText)) });
+    } else if (!coreRel && name === "[Content_Types].xml") {
+      entries.push({ name, data: encoder.encode(withCoreContentType(decoder.decode(data))) });
+    } else {
+      entries.push({ name, data });
+    }
+  }
+  entries.push({ name: mainPartName, data: encoder.encode(buildDocumentXml(model)) });
+  entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
+
+  return { bytes: await zip(entries), dropped: [] };
 }
