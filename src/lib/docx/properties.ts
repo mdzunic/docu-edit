@@ -3,6 +3,7 @@
 // the style-catalog parser (styles.xml carries the same properties on each
 // named style) and the document-body parser (direct formatting on `w:r`/`w:p`).
 import type { ParagraphAlignment, ParagraphFormatting, RunFormatting } from "../documentModel";
+import { HIGHLIGHT_NAMES } from "../odf/properties";
 import { firstChildElement, wordAttr as attr, WORD_NAMESPACE } from "./xml";
 import { halfPointsToPt, ooxmlColorToCss, twentiethsOfPointToPt, twipsToCm } from "./units";
 
@@ -75,8 +76,32 @@ export function parseRunProperties(rPr: Element | undefined): RunFormatting {
 
   const highlight = firstChildElement(rPr, WORD_NAMESPACE, "highlight");
   const highlightVal = highlight ? attr(highlight, "val") : null;
-  if (highlightVal && highlightVal.toLowerCase() !== "none") {
-    formatting.highlight = highlightVal;
+  if (highlightVal) {
+    // "none" is an explicit off (SPEC-013): it must survive as `false` to
+    // keep overriding a highlight inherited from the style chain.
+    formatting.highlight = highlightVal.toLowerCase() === "none" ? false : highlightVal;
+  }
+
+  // Run shading (w:shd). w:highlight wins when both are present — Word
+  // paints the highlight over the shading — and the shading is kept in the
+  // shadingFill preservation slot; a shading alone IS the run's background,
+  // so it becomes the highlight, normalised to the palette name when the
+  // fill matches one (SPEC-013).
+  const shd = firstChildElement(rPr, WORD_NAMESPACE, "shd");
+  const fill = shd ? attr(shd, "fill") : null;
+  if (fill && /^[0-9a-f]{6}$/i.test(fill)) {
+    const hex = `#${fill.toLowerCase()}`;
+    if (formatting.highlight !== undefined) {
+      formatting.shadingFill = hex;
+    } else {
+      formatting.highlight = HIGHLIGHT_NAMES[hex] ?? hex;
+    }
+  }
+
+  const vertAlign = firstChildElement(rPr, WORD_NAMESPACE, "vertAlign");
+  const vertAlignVal = vertAlign ? attr(vertAlign, "val") : null;
+  if (vertAlignVal === "subscript" || vertAlignVal === "superscript") {
+    formatting.vertAlign = vertAlignVal;
   }
 
   return formatting;

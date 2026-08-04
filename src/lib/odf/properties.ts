@@ -52,11 +52,16 @@ function parseLineStyleToggle(value: string | null): boolean | undefined {
   return value !== "none";
 }
 
-// The 15 standard OOXML highlight colours (the document model stores the
-// OOXML name, matching the .docx reader) keyed by the hex value ODF's
-// `fo:background-color` uses for the same colour. An ODF highlight outside
-// this palette stays a raw CSS colour, which the renderer also accepts.
-// Exported so the writer can invert the mapping when emitting.
+// The OOXML highlight palette (the document model stores the OOXML name,
+// matching the .docx reader) keyed by the hex value ODF's
+// `fo:background-color` uses for the same colour. 16 entries: the 15
+// colours Word's highlight picker offers plus `white`, which
+// ST_HighlightColor admits even though the picker never shows it — mapping
+// it keeps an incoming `w:highlight w:val="white"` alive across a
+// `.docx` → `.odt` → `.docx` trip (SPEC-013). A highlight outside this
+// palette stays a raw CSS colour, which the renderer also accepts. This is
+// the single source for the palette: the `.docx` reader/writer, the `.odt`
+// writer and the canvas renderer all derive from it.
 export const HIGHLIGHT_NAMES: Record<string, string> = {
   "#ffff00": "yellow",
   "#00ff00": "green",
@@ -73,7 +78,13 @@ export const HIGHLIGHT_NAMES: Record<string, string> = {
   "#a9a9a9": "darkGray",
   "#d3d3d3": "lightGray",
   "#000000": "black",
+  "#ffffff": "white",
 };
+
+/** The inverse palette: OOXML highlight name → hex colour. */
+export const HIGHLIGHT_HEX: Record<string, string> = Object.fromEntries(
+  Object.entries(HIGHLIGHT_NAMES).map(([hex, name]) => [name, hex]),
+);
 
 /** Strips quoting from a font-family value ("'Liberation Serif'") and takes
  * the first entry of a comma-separated fallback list. */
@@ -139,12 +150,46 @@ export function parseTextProperties(
     formatting.color = color;
   }
 
-  const background = odfColorToCss(foAttr(textPropsEl, "background-color"));
-  if (background) {
-    formatting.highlight = HIGHLIGHT_NAMES[background] ?? background;
+  const backgroundAttr = foAttr(textPropsEl, "background-color");
+  if (backgroundAttr?.trim().toLowerCase() === "transparent") {
+    // An explicit "no highlight", distinct from the attribute being absent —
+    // it must survive to override an inherited background (SPEC-013).
+    formatting.highlight = false;
+  } else {
+    const background = odfColorToCss(backgroundAttr);
+    if (background) {
+      formatting.highlight = HIGHLIGHT_NAMES[background] ?? background;
+    }
+  }
+
+  const vertAlign = parseTextPosition(styleAttr(textPropsEl, "text-position"));
+  if (vertAlign !== undefined) {
+    formatting.vertAlign = vertAlign;
   }
 
   return result;
+}
+
+/** `style:text-position`'s first value is the baseline shift: the keywords
+ * "sub"/"super" or a signed percentage ("-33%" is below the baseline,
+ * "33%" above, "0%" on it). The optional second value (font height) and a
+ * zero shift both leave the model's vertAlign unset. */
+function parseTextPosition(value: string | null): "subscript" | "superscript" | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const shift = value.trim().split(/\s+/)[0];
+  if (shift === "sub") {
+    return "subscript";
+  }
+  if (shift === "super") {
+    return "superscript";
+  }
+  const percent = Number.parseFloat(shift);
+  if (Number.isNaN(percent) || !shift.endsWith("%") || percent === 0) {
+    return undefined;
+  }
+  return percent < 0 ? "subscript" : "superscript";
 }
 
 const ALIGNMENT_MAP: Record<string, ParagraphAlignment> = {

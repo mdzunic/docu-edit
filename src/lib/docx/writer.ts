@@ -80,9 +80,10 @@ const JC_VALUES: Record<ParagraphAlignment, string> = {
 function runPropertiesXml(formatting: RunFormatting): string {
   const parts: string[] = [];
   // Emitted in CT_RPr sequence order: rFonts, b, i, strike, color, sz,
-  // highlight, u. Explicit false values are written as w:val="0"/"none" —
-  // the model only holds false where the source explicitly switched the
-  // property off, and dropping that would change the re-opened model.
+  // highlight, u, shd, vertAlign. Explicit false values are written as
+  // w:val="0"/"none" — the model only holds false where the source
+  // explicitly switched the property off, and dropping that would change
+  // the re-opened model.
   if (formatting.fontFamily !== undefined) {
     const family = escapeXml(formatting.fontFamily);
     parts.push(`<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>`);
@@ -103,11 +104,36 @@ function runPropertiesXml(formatting: RunFormatting): string {
   if (formatting.fontSizePt !== undefined) {
     parts.push(`<w:sz w:val="${ptToHalfPoints(formatting.fontSizePt)}"/>`);
   }
-  if (formatting.highlight !== undefined) {
+  // Highlight (SPEC-013): a palette name maps to w:highlight, whose value
+  // set is closed; an explicit "No colour" is w:val="none"; any other
+  // colour has no ST_HighlightColor encoding and degrades to run shading.
+  // The readers normalise palette-coloured fills back to names, so a bare
+  // "#rrggbb" here is guaranteed to be outside the palette.
+  const highlightHex =
+    typeof formatting.highlight === "string" && formatting.highlight.startsWith("#")
+      ? cssColorToOoxml(formatting.highlight)
+      : undefined;
+  if (formatting.highlight === false) {
+    parts.push('<w:highlight w:val="none"/>');
+  } else if (
+    typeof formatting.highlight === "string" &&
+    !formatting.highlight.startsWith("#")
+  ) {
     parts.push(`<w:highlight w:val="${escapeXml(formatting.highlight)}"/>`);
   }
   if (formatting.underline !== undefined) {
     parts.push(`<w:u w:val="${formatting.underline ? "single" : "none"}"/>`);
+  }
+  // One w:shd slot: an out-of-palette highlight claims it; otherwise the
+  // preserved source shading (kept beside a palette highlight) is
+  // re-emitted. When an edit leaves both (the user picked a custom
+  // highlight on a run that carried shading), the visible highlight wins.
+  const shadingHex = highlightHex ?? cssColorToOoxml(formatting.shadingFill);
+  if (shadingHex !== undefined) {
+    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shadingHex}"/>`);
+  }
+  if (formatting.vertAlign !== undefined) {
+    parts.push(`<w:vertAlign w:val="${formatting.vertAlign}"/>`);
   }
   return parts.length > 0 ? `<w:rPr>${parts.join("")}</w:rPr>` : "";
 }

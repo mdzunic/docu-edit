@@ -3,6 +3,10 @@
 // `JSON.stringify`/`JSON.parse` round-trips it without loss — that property
 // is what SPEC-006/007 (save) and SPEC-004/005 (open) will rely on.
 
+/** Sub/superscript (`w:vertAlign` / `style:text-position`). Mutually
+ * exclusive by construction: one field holds either value (SPEC-013). */
+export type VerticalAlignment = "subscript" | "superscript";
+
 /** Character-level formatting applied to a run's text. Empty until SPEC-012
  * (character formatting) and later specs add fields such as bold/italic. */
 export interface RunFormatting {
@@ -15,8 +19,16 @@ export interface RunFormatting {
   fontSizePt?: number;
   /** CSS-ready colour, e.g. "#ff0000". */
   color?: string;
-  /** OOXML highlight colour name, e.g. "yellow". */
-  highlight?: string;
+  /** OOXML highlight colour name ("yellow") for the 16-colour palette, a
+   * lowercase "#rrggbb" for any other colour, or `false` for an explicit
+   * "No colour" — distinct from undefined (not set) the same way the
+   * boolean toggles distinguish explicit-off from unset (SPEC-013). */
+  highlight?: string | false;
+  /** Run shading (`w:shd` fill) as lowercase "#rrggbb" — a preservation
+   * slot set only when a source run carried both `w:highlight` and `w:shd`
+   * (SPEC-013). Never shown in the picker; the highlight wins on screen. */
+  shadingFill?: string;
+  vertAlign?: VerticalAlignment;
 }
 
 /** The run-formatting fields SPEC-012's toolbar toggles: bold, italic,
@@ -24,11 +36,27 @@ export interface RunFormatting {
 export type CharacterFormatKey = "bold" | "italic" | "underline" | "strikethrough";
 
 /** A collapsed caret's not-yet-typed format override (SPEC-012 AC-9..11):
- * a key present here forces that format on/off for the next inserted text
+ * a key present here forces that format for the next inserted text
  * regardless of the run the caret sits in; an absent key falls through to
  * that run's own formatting. Lives outside the document model — there is
- * nothing to persist until text is actually typed with it. */
-export type PendingFormat = Partial<Record<CharacterFormatKey, boolean>>;
+ * nothing to persist until text is actually typed with it.
+ *
+ * SPEC-013 widens it to a general run-format patch, also the argument to
+ * the selection-formatting command. Per-key off semantics: `false` on a
+ * boolean toggle or on `vertAlign` removes the key (the text ends up as if
+ * never formatted); `false` on `highlight` is stored — "No colour" is an
+ * explicit off that must survive saving (SPEC-013). */
+export interface PendingFormat {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  fontFamily?: string;
+  fontSizePt?: number;
+  color?: string;
+  highlight?: string | false;
+  vertAlign?: VerticalAlignment | false;
+}
 
 /** Typed pass-through for a character-format key coming from a `.vue`
  * template's plain string (a click handler's event payload) — .vue scripts

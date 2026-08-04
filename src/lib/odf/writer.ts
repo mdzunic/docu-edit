@@ -35,7 +35,7 @@ import type {
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { ODT_MIMETYPE } from "./reader";
-import { HIGHLIGHT_NAMES } from "./properties";
+import { HIGHLIGHT_HEX } from "./properties";
 import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
@@ -75,20 +75,20 @@ function escapeXml(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
-// The OOXML highlight-name -> ODF background colour mapping, inverted from
-// the reader's palette.
-const HIGHLIGHT_COLORS: Record<string, string> = Object.fromEntries(
-  Object.entries(HIGHLIGHT_NAMES).map(([hex, name]) => [name, hex]),
-);
-
 /** A run's highlight as an fo:background-color value: palette names map to
- * their hex colour, raw CSS colours pass through, anything else (an OOXML
- * name outside the standard palette) has no ODF representation. */
-function highlightToOdfColor(highlight: string | undefined): string | undefined {
+ * their hex colour, raw CSS colours pass through, and the explicit
+ * "No colour" (`false`) becomes "transparent" — an explicit off the reader
+ * maps back to `false`, so it keeps overriding an inherited background
+ * (SPEC-013). An OOXML name outside the palette (which no reader produces)
+ * has no ODF representation. */
+function highlightToOdfColor(highlight: string | false | undefined): string | undefined {
   if (highlight === undefined) {
     return undefined;
   }
-  return highlight.startsWith("#") ? highlight : HIGHLIGHT_COLORS[highlight];
+  if (highlight === false) {
+    return "transparent";
+  }
+  return highlight.startsWith("#") ? highlight : HIGHLIGHT_HEX[highlight];
 }
 
 /** A style:text-properties element for the run formatting, or "" when there
@@ -121,6 +121,15 @@ function textPropertiesXml(formatting: RunFormatting): string {
   const background = highlightToOdfColor(formatting.highlight);
   if (background !== undefined) {
     attrs.push(`fo:background-color="${escapeXml(background)}"`);
+  }
+  // ODF has the one background slot, so a shadingFill preserved beside a
+  // highlight cannot be carried — the cross-format save reports it as
+  // dropped (see opaque.ts's runShading records) rather than writing it.
+  if (formatting.vertAlign !== undefined) {
+    // 58% is the conventional sub/superscript font height LibreOffice
+    // writes; the reader only reads the sub/super keyword back.
+    const position = formatting.vertAlign === "subscript" ? "sub 58%" : "super 58%";
+    attrs.push(`style:text-position="${position}"`);
   }
   return attrs.length > 0 ? `<style:text-properties ${attrs.join(" ")}/>` : "";
 }

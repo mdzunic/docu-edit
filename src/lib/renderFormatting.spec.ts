@@ -42,6 +42,32 @@ describe("runStyle", () => {
   it("returns an empty style object for empty formatting", () => {
     expect(runStyle({})).toEqual({});
   });
+
+  it("paints nothing for an explicit 'No colour' highlight (SPEC-013)", () => {
+    expect(runStyle({ highlight: false }).backgroundColor).toBeUndefined();
+  });
+
+  it("paints an out-of-palette highlight hex as-is (SPEC-013)", () => {
+    expect(runStyle({ highlight: "#ff8800" }).backgroundColor).toBe("#ff8800");
+  });
+
+  it("maps the white palette entry, which the picker hides (SPEC-013)", () => {
+    expect(runStyle({ highlight: "white" }).backgroundColor).toBe("#ffffff");
+  });
+
+  it("renders sub/superscript shifted and reduced (SPEC-013)", () => {
+    expect(runStyle({ vertAlign: "subscript" }).verticalAlign).toBe("sub");
+    expect(runStyle({ vertAlign: "subscript" }).fontSize).toBe("0.65em");
+    const sized = runStyle({ vertAlign: "superscript", fontSizePt: 20 });
+    expect(sized.verticalAlign).toBe("super");
+    expect(sized.fontSize).toBe("13pt");
+  });
+
+  it("never paints the shadingFill preservation slot (SPEC-013)", () => {
+    expect(runStyle({ highlight: "yellow", shadingFill: "#ff8800" }).backgroundColor).toBe(
+      "#ffff00",
+    );
+  });
 });
 
 describe("paragraphStyle", () => {
