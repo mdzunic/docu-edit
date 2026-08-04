@@ -5,6 +5,7 @@ import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
+import FormatToolbar from "../components/FormatToolbar.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
@@ -17,7 +18,7 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
-import { DEFAULT_TITLE } from "../lib/documentModel";
+import { asCharacterFormatKey, DEFAULT_TITLE } from "../lib/documentModel";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
 import {
   caretFromDomPoint,
@@ -41,13 +42,16 @@ import {
   deleteRange,
   documentEnd,
   documentStart,
+  formatState,
   insertLineBreak,
   insertText,
   isCollapsed,
   noCommandResult,
+  noPendingFormat,
   noSelection,
   selectAll,
   splitBlock,
+  toggleFormat,
 } from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
 
@@ -85,6 +89,20 @@ let caret = noCaret();
 let scrollTop = 0;
 let scrollContainer = noElement();
 let editLock = noEditLock();
+
+// --- character formatting (SPEC-012) ----------------------------------------
+// `selectionAnchor` is set only when the tracked selection is a real (non-
+// collapsed) range, so restoreCaretAfterRender knows to re-select rather
+// than place a plain caret — needed because setFormat/toggleFormat, unlike
+// every other command, do not collapse the selection (AC-13, AC-14).
+// `pendingFormat` is the collapsed-caret format set by a toolbar click or
+// shortcut with nothing selected (AC-9): it overrides the next inserted
+// text's formatting (AC-10) until a real caret move discards it (AC-11).
+let selectionAnchor = noCaret();
+let pendingFormat = noPendingFormat();
+
+const EMPTY_FORMAT_STATES = { bold: "off", italic: "off", underline: "off", strikethrough: "off" };
+const formatStates = ref(EMPTY_FORMAT_STATES);
 
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
@@ -206,6 +224,17 @@ function handleSelectionChange() {
   }
   const range = modelRangeFromSelection(root, document.getSelection());
   if (range) {
+    // A genuine external move (arrow keys, a native click/drag inside the
+    // canvas) discards the pending format (AC-11). Our own programmatic
+    // placements (restoreCaretAfterRender after an edit) don't count: they
+    // set `caret` to the new position *before* touching the DOM, so by the
+    // time this fires the observed range already matches it.
+    if (
+      pendingFormat &&
+      (!caret || compareCaret(range.end, caret) !== 0 || compareCaret(range.start, range.end) !== 0)
+    ) {
+      pendingFormat = noPendingFormat();
+    }
     caret = range.end;
     updateCaretStatus(range);
   }
@@ -252,13 +281,16 @@ function currentSelection(root = noElement()) {
 
 /** Applies a command result: the new model becomes the document (in the
  * view and in the store, so autosave and downloads see it), and the caret
- * moves to the command's post-edit position. */
+ * moves to the command's post-edit position — or, for the character-
+ * formatting commands, the whole (non-collapsed) selection is restored
+ * (SPEC-012 AC-13, AC-14). */
 function applyEdit(result = noCommandResult()) {
   if (!result) {
     return;
   }
   doc.value = replaceDocumentModel(documentId.value, result.model);
   caret = result.selection.focus;
+  selectionAnchor = isCollapsed(result.selection) ? noCaret() : result.selection.anchor;
   autosave.markDirty();
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   void restoreCaretAfterRender();
@@ -287,7 +319,7 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
       event.data ??
       (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
     if (text) {
-      result = insertText(model, selection, text);
+      result = insertText(model, selection, text, pendingFormat);
     }
   } else if (type === "insertParagraph") {
     result = splitBlock(model, selection);
@@ -312,7 +344,12 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
 async function restoreCaretAfterRender() {
   await nextTick();
   const root = contentRoot.value;
-  if (root && caret) {
+  if (!root || !caret) {
+    return;
+  }
+  if (selectionAnchor) {
+    setDomSelection(root, selectionAnchor, caret);
+  } else {
     setDomCaret(root, caret);
   }
 }
@@ -349,7 +386,7 @@ function handleCompositionEnd(event = new CompositionEvent("compositionend")) {
   // mounts it fresh from the model, discarding whatever nodes the browser's
   // composition left in the DOM (Vue cannot patch nodes it did not create).
   bumpBlockKey(range.anchor.section, range.anchor.block);
-  applyEdit(insertText(model, range, data));
+  applyEdit(insertText(model, range, data, pendingFormat));
   void verifyCanvasAfterRender();
 }
 
@@ -389,11 +426,13 @@ async function verifyCanvasAfterRender() {
 // mirrors back into model coordinates. Document-level jumps and paging are
 // implemented here because native behaviour is unreliable across them.
 
-/** Announces the caret/selection to assistive technology and mirrors it
- * into the tracked caret. */
+/** Announces the caret/selection to assistive technology, mirrors it into
+ * the tracked caret, and refreshes the toolbar's format button states
+ * (SPEC-012 AC-12..14) for the same range. */
 function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   const model = doc.value;
   if (!model || !range.start || !range.end) {
+    formatStates.value = EMPTY_FORMAT_STATES;
     return;
   }
   const total = blockCount(model);
@@ -407,15 +446,24 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
       `character ${range.start.offset + 1} to paragraph ` +
       `${blockOrdinal(model, range.end)}, character ${range.end.offset + 1}`;
   }
+  const selection = { anchor: range.start, focus: range.end };
+  formatStates.value = {
+    bold: formatState(model, selection, "bold", pendingFormat),
+    italic: formatState(model, selection, "italic", pendingFormat),
+    underline: formatState(model, selection, "underline", pendingFormat),
+    strikethrough: formatState(model, selection, "strikethrough", pendingFormat),
+  };
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
- * position and refreshes tracking + announcement. */
+ * position and refreshes tracking + announcement. Explicit navigation, so
+ * any pending format is discarded (SPEC-012 AC-11). */
 function applyCaretMove(target = noCaret(), extend = false) {
   const root = contentRoot.value;
   if (!root || !target) {
     return;
   }
+  pendingFormat = noPendingFormat();
   if (extend) {
     extendDomSelection(root, target);
   } else {
@@ -480,6 +528,33 @@ function moveCaretByPage(direction = 1, extend = false) {
   applyCaretMove(target, extend);
 }
 
+// --- character formatting toolbar/shortcuts (SPEC-012) ---------------------
+
+/** Bold/italic/underline/strikethrough (AC-3..6, AC-16, AC-17): a real
+ * selection is formatted through the command API (which keeps the
+ * selection live, see applyEdit); a collapsed caret instead sets/flips the
+ * pending format the next typed text will carry (AC-9, AC-10). */
+function toggleCharacterFormat(key = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  const formatKey = asCharacterFormatKey(key);
+  if (isCollapsed(selection)) {
+    const next = formatState(model, selection, formatKey, pendingFormat) !== "on";
+    pendingFormat = { ...pendingFormat, [formatKey]: next };
+    updateCaretStatus({ start: selection.anchor, end: selection.focus });
+  } else {
+    applyEdit(toggleFormat(model, selection, formatKey));
+  }
+  root.focus();
+}
+
 function handleKeyDown(event = new KeyboardEvent("keydown")) {
   const root = contentRoot.value;
   const model = doc.value;
@@ -487,6 +562,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     return;
   }
   const mod = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
   if (mod && (event.key === "Home" || event.key === "End")) {
     // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
     event.preventDefault();
@@ -498,13 +574,22 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       scrollContainer.scrollTop =
         event.key === "Home" ? 0 : scrollContainer.scrollHeight;
     }
-  } else if (mod && !event.shiftKey && event.key.toLowerCase() === "a") {
+  } else if (mod && !event.shiftKey && key === "a") {
     // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
     event.preventDefault();
+    pendingFormat = noPendingFormat();
     const all = selectAll(model);
     setDomSelection(root, all.anchor, all.focus);
     caret = all.focus;
     updateCaretStatus({ start: all.anchor, end: all.focus });
+  } else if (mod && !event.shiftKey && (key === "b" || key === "i" || key === "u")) {
+    // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
+    event.preventDefault();
+    toggleCharacterFormat(key === "b" ? "bold" : key === "i" ? "italic" : "underline");
+  } else if (mod && event.shiftKey && key === "x") {
+    // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
+    event.preventDefault();
+    toggleCharacterFormat("strikethrough");
   } else if (event.key === "PageDown" || event.key === "PageUp") {
     event.preventDefault();
     moveCaretByPage(event.key === "PageDown" ? 1 : -1, event.shiftKey);
@@ -674,6 +759,11 @@ function deleteOpenDocument() {
       </div>
     </template>
     <template #toolbar>
+      <FormatToolbar
+        v-if="editable"
+        :states="formatStates"
+        @toggle="toggleCharacterFormat"
+      />
       <button
         v-if="editable"
         type="button"
