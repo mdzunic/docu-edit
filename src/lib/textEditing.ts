@@ -9,7 +9,14 @@
 // array (never mutated in place). The renderer relies on this — `v-memo`
 // compares block object identity to skip re-rendering untouched paragraphs,
 // which is what keeps typing responsive on very large documents.
-import type { DocumentModel, Paragraph, Run } from "./documentModel";
+import type {
+  CharacterFormatKey,
+  DocumentModel,
+  Paragraph,
+  PendingFormat,
+  Run,
+  RunFormatting,
+} from "./documentModel";
 
 /** A caret location in model coordinates: a block address plus a character
  * offset into the block's concatenated run text (UTF-16 units). */
@@ -120,6 +127,36 @@ function splitRuns(runs: Run[], offset: number): [Run[], Run[]] {
   return [normalizeRuns(before), normalizeRuns(after)];
 }
 
+/** `formatting` with `key` forced to `value`. `false` deletes the key
+ * instead of storing an explicit false, so the result merges with plain
+ * runs that never carried the key at all — the same outcome as if the text
+ * had never been formatted (SPEC-012 AC-20, AC-21). */
+function withFormat(
+  formatting: RunFormatting,
+  key: CharacterFormatKey,
+  value: boolean,
+): RunFormatting {
+  if (!value) {
+    const rest = { ...formatting };
+    delete rest[key];
+    return rest;
+  }
+  return { ...formatting, [key]: true };
+}
+
+/** `base` with every key of `override` forced to its value — insertText's
+ * pending-format merge (SPEC-012 AC-9, AC-10). */
+function applyPendingFormat(base: RunFormatting, override: PendingFormat): RunFormatting {
+  let formatting = base;
+  for (const key of Object.keys(override) as CharacterFormatKey[]) {
+    const value = override[key];
+    if (value !== undefined) {
+      formatting = withFormat(formatting, key, value);
+    }
+  }
+  return formatting;
+}
+
 function replaceBlock(
   model: DocumentModel,
   section: number,
@@ -131,27 +168,32 @@ function replaceBlock(
 
 /** Inserts text at the caret. The inserted text inherits the formatting of
  * the run it lands in (the run to the left at a boundary, matching how word
- * processors extend formatting while typing). Returns the caret after the
- * inserted text. */
+ * processors extend formatting while typing) — or, with `formatOverride`
+ * set, that formatting with the override's keys forced on/off (SPEC-012's
+ * pending format, AC-9, AC-10). Returns the caret after the inserted text. */
 export function insertText(
   model: DocumentModel,
   caret: CaretPosition,
   text: string,
+  formatOverride?: PendingFormat | null,
 ): CaretPosition {
   const c = clampCaret(model, caret);
   const block = model.sections[c.section].blocks[c.block];
   const [before, after] = splitRuns(block.runs, c.offset);
-  let runs: Run[];
-  if (before.length > 0) {
-    const last = before[before.length - 1];
-    runs = [...before.slice(0, -1), { ...last, text: last.text + text }, ...after];
-  } else if (after.length > 0) {
-    const first = after[0];
-    runs = [{ ...first, text: text + first.text }, ...after.slice(1)];
-  } else {
-    runs = [{ text, formatting: {} }];
-  }
-  replaceBlock(model, c.section, c.block, { ...block, runs: normalizeRuns(runs) });
+  const baseFormatting =
+    before.length > 0
+      ? before[before.length - 1].formatting
+      : after.length > 0
+        ? after[0].formatting
+        : {};
+  const formatting = formatOverride
+    ? applyPendingFormat(baseFormatting, formatOverride)
+    : baseFormatting;
+  const inserted: Run = { text, formatting };
+  replaceBlock(model, c.section, c.block, {
+    ...block,
+    runs: normalizeRuns([...before, inserted, ...after]),
+  });
   return { section: c.section, block: c.block, offset: c.offset + text.length };
 }
 
@@ -300,4 +342,101 @@ export function deleteForward(
     return c;
   }
   return deleteRange(model, c, next);
+}
+
+// --- character formatting (SPEC-012) ----------------------------------------
+
+/** The formatting new content at `offset` would inherit — the run ending
+ * there if any, else the run starting there, else `{}` for an empty
+ * paragraph. The read-only counterpart of insertText's inheritance rule,
+ * used to drive the toolbar's caret-formatting display (AC-12). */
+export function formattingAtOffset(block: Paragraph, offset: number): RunFormatting {
+  const [before, after] = splitRuns(block.runs, offset);
+  if (before.length > 0) {
+    return before[before.length - 1].formatting;
+  }
+  if (after.length > 0) {
+    return after[0].formatting;
+  }
+  return {};
+}
+
+/** Every block address from `start`'s block up to and including `end`'s,
+ * in document order. Callers pass an already-ordered range (`start` at or
+ * before `end`). */
+function blockAddressesInRange(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+): Array<{ section: number; block: number }> {
+  const addresses: Array<{ section: number; block: number }> = [];
+  for (let section = start.section; section <= end.section; section++) {
+    const blocks = model.sections[section].blocks;
+    const from = section === start.section ? start.block : 0;
+    const to = section === end.section ? end.block : blocks.length - 1;
+    for (let block = from; block <= to; block++) {
+      addresses.push({ section, block });
+    }
+  }
+  return addresses;
+}
+
+/** Every run's formatting strictly between `start` and `end` (already
+ * ordered), including runs split at the range's boundaries. A paragraph the
+ * range merely passes through without covering any of its characters (an
+ * empty paragraph, or a boundary landing exactly between two of its runs)
+ * contributes nothing. */
+export function runFormattingsInRange(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+): RunFormatting[] {
+  const formattings: RunFormatting[] = [];
+  for (const { section, block } of blockAddressesInRange(model, start, end)) {
+    const paragraph = model.sections[section].blocks[block];
+    const from = section === start.section && block === start.block ? start.offset : 0;
+    const to =
+      section === end.section && block === end.block ? end.offset : blockLength(paragraph);
+    if (from >= to) {
+      continue;
+    }
+    const [, tail] = splitRuns(paragraph.runs, from);
+    const [within] = splitRuns(tail, to - from);
+    for (const run of within) {
+      formattings.push(run.formatting);
+    }
+  }
+  return formattings;
+}
+
+/** Sets `key` to `value` on every run between `start` and `end` (already
+ * ordered), splitting the runs straddling the range's boundaries first and
+ * merging the result back down to the minimum number of runs afterward
+ * (SPEC-012 AC-7, AC-8, AC-20, AC-21). */
+export function setFormatting(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+  key: CharacterFormatKey,
+  value: boolean,
+): void {
+  for (const { section, block } of blockAddressesInRange(model, start, end)) {
+    const paragraph = model.sections[section].blocks[block];
+    const from = section === start.section && block === start.block ? start.offset : 0;
+    const to =
+      section === end.section && block === end.block ? end.offset : blockLength(paragraph);
+    if (from >= to) {
+      continue;
+    }
+    const [before, tail] = splitRuns(paragraph.runs, from);
+    const [within, after] = splitRuns(tail, to - from);
+    const changed = within.map((run) => ({
+      text: run.text,
+      formatting: withFormat(run.formatting, key, value),
+    }));
+    replaceBlock(model, section, block, {
+      ...paragraph,
+      runs: normalizeRuns([...before, ...changed, ...after]),
+    });
+  }
 }
