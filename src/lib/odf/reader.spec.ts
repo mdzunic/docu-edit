@@ -281,3 +281,56 @@ describe("parseOdt — error handling", () => {
     await expect(parseOdt(docx)).rejects.toThrow(INVALID_ODT_MESSAGE);
   });
 });
+
+describe("parseOdt — RTL paragraphs (SPEC-014 AC-24, AC-25)", () => {
+  // Hand-built to LibreOffice Writer's exact RTL serialisation (matching the
+  // other fixtures' provenance note above): LO stores indents PHYSICALLY in
+  // fo:margin-left/right per XSL, with style:writing-mode="rl-tb" marking the
+  // direction — a "before text" (start) indent of an RTL paragraph lands in
+  // fo:margin-right. The reader must swap the physical edges back onto the
+  // model's logical start/end.
+  const RTL_CONTENT = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3">
+ <office:automatic-styles>
+  <style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard">
+   <style:paragraph-properties fo:margin-left="1.27cm" fo:margin-right="2.54cm" fo:text-indent="0.635cm" style:auto-text-indent="false" style:writing-mode="rl-tb"/>
+  </style:style>
+  <style:style style:name="P2" style:family="paragraph" style:parent-style-name="Standard">
+   <style:paragraph-properties style:writing-mode="lr-tb"/>
+  </style:style>
+ </office:automatic-styles>
+ <office:body>
+  <office:text>
+   <text:p text:style-name="P1">فقرة من اليمين إلى اليسار</text:p>
+   <text:p text:style-name="P2">explicit ltr</text:p>
+  </office:text>
+ </office:body>
+</office:document-content>`;
+
+  async function makeOdt(contentXml: string): Promise<Uint8Array> {
+    const { zip } = await import("../docx/zipWriter");
+    const encoder = new TextEncoder();
+    return zip([
+      { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.text"), store: true },
+      { name: "content.xml", data: encoder.encode(contentXml) },
+    ]);
+  }
+
+  it("swaps LibreOffice's physical margins onto the logical start/end", async () => {
+    const parsed = await parseOdt(await makeOdt(RTL_CONTENT));
+    const formatting = (parsed.sections[0].blocks[0] as Paragraph).formatting;
+    expect(formatting?.direction).toBe("rtl");
+    // Physical right margin (2.54) is the logical START edge for rl-tb;
+    // physical left (1.27) is the logical END.
+    expect(formatting?.indentStartCm).toBe(2.54);
+    expect(formatting?.indentEndCm).toBe(1.27);
+    // fo:text-indent is start-relative in both formats — never swapped.
+    expect(formatting?.indentFirstLineCm).toBe(0.635);
+  });
+
+  it("never stores an explicit ltr — absent means left-to-right", async () => {
+    const parsed = await parseOdt(await makeOdt(RTL_CONTENT));
+    const formatting = (parsed.sections[0].blocks[1] as Paragraph).formatting;
+    expect(formatting?.direction).toBeUndefined();
+  });
+});
