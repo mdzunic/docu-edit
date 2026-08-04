@@ -92,6 +92,7 @@ test("dropping multiple files opens the first and shows a toast naming it (AC-6,
 test("dragging over the window while a document is open does not modify it until the drop completes (AC-8)", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New document" }).click();
+  await expect(page.getByTestId("document-title")).toHaveAttribute("role", "button");
   await page.getByTestId("document-title").click();
   await page.getByTestId("document-title-input").fill("Keep me");
   await page.getByTestId("document-title-input").press("Enter");
