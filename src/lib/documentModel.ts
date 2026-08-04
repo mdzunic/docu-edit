@@ -49,6 +49,19 @@ export interface ParagraphFormatting {
   lineSpacingPt?: number;
 }
 
+/** An inline XML element the reader does not model (SPEC-008) — e.g. a
+ * `w:drawing`-carrying run or an ODF `draw:frame` — held verbatim and
+ * anchored to its position between the paragraph's runs so the writer can
+ * re-emit it in place. `xml` is a self-contained serialisation (namespace
+ * declarations included); it is compared with XML canonicalization, never
+ * byte-for-byte. */
+export interface OpaqueInline {
+  xml: string;
+  /** The node sits immediately before `runs[runIndex]`; `runs.length` means
+   * after the last run. */
+  runIndex: number;
+}
+
 /** A paragraph is a block-level element made of inline runs. */
 export interface Paragraph {
   type: "paragraph";
@@ -61,11 +74,26 @@ export interface Paragraph {
   /** 1-based outline level resolved from the paragraph's style chain;
    * undefined for body text. */
   headingLevel?: number;
+  /** Unmodelled inline XML preserved through a same-format save (SPEC-008).
+   * A side-list (rather than a run union) so `runs` stays a plain `Run[]`
+   * for every renderer and editing consumer; order follows `runIndex`. */
+  opaqueInlines?: OpaqueInline[];
 }
 
-/** Block-level children of a section. Paragraph is the only kind for now;
- * later specs (tables, images) extend this union. */
-export type Block = Paragraph;
+/** A block-level XML element the reader does not model (SPEC-008) — e.g. a
+ * `w:tbl`, a block-level `w:sdt` content control or an ODF `table:table` —
+ * held verbatim at its position among the section's blocks and re-emitted
+ * in place on a same-format save. */
+export interface OpaqueBlock {
+  type: "opaqueBlock";
+  /** Self-contained XML serialisation, compared canonically (see
+   * OpaqueInline.xml). */
+  xml: string;
+}
+
+/** Block-level children of a section. Later specs (tables, images) extend
+ * this union with modelled kinds. */
+export type Block = Paragraph | OpaqueBlock;
 
 /** A section groups block-level content; documents have one or more. */
 export interface Section {
@@ -98,6 +126,36 @@ export interface DefaultStyles {
  * badge in the app bar. Undefined for documents created blank (SPEC-002). */
 export type DocumentFormat = "docx" | "odt";
 
+/** A package part the reader does not model (SPEC-008) — `customXml/`,
+ * charts, themes, embedded objects, images, `word/webSettings.xml`, … —
+ * retained for the lifetime of the document and written back byte-identical
+ * on a save to the same format. */
+export interface OpaquePart {
+  /** Path within the source package, e.g. "word/charts/chart1.xml". */
+  name: string;
+  /** The part's original (decompressed) bytes, base64-encoded so the model
+   * stays JSON-serialisable (see the header comment). */
+  data: string;
+}
+
+/** Verbatim XML captured from the source package's modelled parts that the
+ * model itself cannot express, re-emitted on a same-format save (SPEC-008).
+ * Each field is format-specific; all are compared canonically. */
+export interface SourceXml {
+  /** .docx: the original body-level `w:sectPr`, emitted in place of a
+   * generated one so unmodelled section properties (header/footer
+   * references, columns, …) survive. Page size/margins cannot yet diverge
+   * from `defaultStyles` — no spec edits them. */
+  docxSectPr?: string;
+  /** .odt: the original `office:font-face-decls` of content.xml. */
+  odtFontFaceDecls?: string;
+  /** .odt: original automatic-style definitions of content.xml other than
+   * paragraph/text `style:style`s (graphic, table, list, … families) —
+   * kept because opaque nodes may reference them. Paragraph/text styles are
+   * regenerated from the model's resolved formatting instead. */
+  odtAutomaticStyles?: string[];
+}
+
 /** The root of the document tree. */
 export interface DocumentModel {
   id: string;
@@ -105,6 +163,13 @@ export interface DocumentModel {
   sections: Section[];
   defaultStyles: DefaultStyles;
   format?: DocumentFormat;
+  /** Unmodelled package parts retained from the opened file (SPEC-008). */
+  opaque?: OpaquePart[];
+  /** Unmodelled XML retained from the opened file's parsed parts. */
+  sourceXml?: SourceXml;
+  /** True once the user ticked "Don't show again for this document" on the
+   * conversion report dialog (SPEC-008); persisted with the document. */
+  suppressConversionReport?: boolean;
 }
 
 export const DEFAULT_TITLE = "Untitled document";
