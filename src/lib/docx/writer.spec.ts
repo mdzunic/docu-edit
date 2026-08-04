@@ -14,6 +14,7 @@ import {
 import { unzip } from "./zip";
 import { parseXml } from "./xml";
 import { createDocument, DEFAULT_TITLE, type DocumentModel, type Paragraph } from "../documentModel";
+import { firstStructuralDifference } from "../equality";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const docxFixturesDir = join(here, "fixtures");
@@ -294,7 +295,7 @@ describe("buildDocumentXml", () => {
         headingLevel: 1,
         formatting: {
           alignment: "center",
-          indentLeftCm: 1.27,
+          indentStartCm: 1.27,
           spaceBeforePt: 12,
         },
       },
@@ -312,5 +313,119 @@ describe("buildDocumentXml", () => {
     expect(DOCX_MIME_TYPE).toBe(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
+  });
+});
+
+describe("writeDocx — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
+  function geometryModel(): DocumentModel {
+    const model = createDocument("geometry");
+    model.sections[0].blocks = [
+      {
+        type: "paragraph",
+        runs: [{ text: "ltr paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+        formatting: {
+          alignment: "justify",
+          indentStartCm: 1.27,
+          indentEndCm: 0.635,
+          indentFirstLineCm: -0.635,
+          spaceBeforePt: 12,
+          spaceAfterPt: 6,
+          lineSpacing: 1.15,
+        },
+      },
+      {
+        type: "paragraph",
+        runs: [{ text: "rtl paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+        formatting: {
+          direction: "rtl",
+          indentStartCm: 2.54,
+          indentEndCm: 1.27,
+          indentFirstLineCm: 0.635,
+          lineSpacingPt: 14,
+          lineSpacingRule: "exact",
+        },
+      },
+      {
+        type: "paragraph",
+        runs: [{ text: "at least", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+        formatting: { lineSpacingPt: 16, spaceBeforePt: 0 },
+      },
+    ];
+    return model;
+  }
+
+  it("emits w:bidi with the logical w:ind values unchanged for RTL (AC-25)", async () => {
+    const documentXml = await partText((await writeDocx(geometryModel())).bytes, "word/document.xml");
+    // 2.54 cm start = 1440 twips, 1.27 cm end = 720 twips — the logical
+    // values, NOT swapped: w:left/w:right are already the start/end edges.
+    expect(documentXml).toContain("<w:bidi/>");
+    expect(documentXml).toContain('<w:ind w:left="1440" w:right="720" w:firstLine="360"/>');
+  });
+
+  it("emits lineRule exact for an exact rule and atLeast for the absent default", async () => {
+    const documentXml = await partText((await writeDocx(geometryModel())).bytes, "word/document.xml");
+    expect(documentXml).toContain('<w:spacing w:line="280" w:lineRule="exact"/>');
+    expect(documentXml).toContain('<w:spacing w:before="0" w:line="320" w:lineRule="atLeast"/>');
+  });
+
+  it("save -> re-open reproduces every geometry field structurally (AC-26)", async () => {
+    const model = geometryModel();
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
+    expect(
+      firstStructuralDifference(model.sections, reopened.sections),
+    ).toBeNull();
+    // Spot-check the exact doubles: no unit drift at all, not merely < 0.01 cm.
+    const rtl = reopened.sections[0].blocks[1] as Paragraph;
+    expect(rtl.formatting?.direction).toBe("rtl");
+    expect(rtl.formatting?.indentStartCm).toBe(2.54);
+    expect(rtl.formatting?.indentEndCm).toBe(1.27);
+    expect(rtl.formatting?.lineSpacingPt).toBe(14);
+    expect(rtl.formatting?.lineSpacingRule).toBe("exact");
+    const atLeast = reopened.sections[0].blocks[2] as Paragraph;
+    expect(atLeast.formatting?.lineSpacingPt).toBe(16);
+    expect(atLeast.formatting?.lineSpacingRule).toBeUndefined();
+    expect(atLeast.formatting?.spaceBeforePt).toBe(0);
+  });
+
+  it("parses Word's own RTL shape: w:bidi plus logical w:start/w:end names", async () => {
+    // Hand-crafted Word-style document.xml (strict attribute names) — the
+    // reader must map start/end onto the logical model slots unchanged.
+    const documentXml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+      "<w:p><w:pPr><w:bidi/><w:ind w:start=\"1134\" w:end=\"567\"/></w:pPr>" +
+      "<w:r><w:t>rtl</w:t></w:r></w:p>" +
+      "</w:body></w:document>";
+    const { zip } = await import("./zipWriter");
+    const bytes = await zip([
+      { name: "word/document.xml", data: new TextEncoder().encode(documentXml) },
+    ]);
+    const parsed = await parseDocx(bytes);
+    const paragraph = parsed.sections[0].blocks[0] as Paragraph;
+    expect(paragraph.formatting?.direction).toBe("rtl");
+    // Word wrote "2 cm" as 1134 twips; the parse converts, never swaps.
+    expect(paragraph.formatting?.indentStartCm).toBeCloseTo(2, 3);
+    expect(paragraph.formatting?.indentEndCm).toBeCloseTo(1, 3);
+  });
+
+  it("a direct w:bidi w:val=0 overrides a style chain's RTL", async () => {
+    const documentXml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+      '<w:p><w:pPr><w:bidi w:val="0"/></w:pPr><w:r><w:t>ltr</w:t></w:r></w:p>' +
+      "</w:body></w:document>";
+    const { zip } = await import("./zipWriter");
+    const bytes = await zip([
+      { name: "word/document.xml", data: new TextEncoder().encode(documentXml) },
+    ]);
+    const parsed = await parseDocx(bytes);
+    const paragraph = parsed.sections[0].blocks[0] as Paragraph;
+    // Never an explicit "ltr" in the model — absent means LTR.
+    expect(paragraph.formatting?.direction).toBeUndefined();
+  });
+
+  it("the written package still validates against the schema allowlist", async () => {
+    const { validateDocx } = await import("./validate");
+    expect(await validateDocx((await writeDocx(geometryModel())).bytes)).toEqual([]);
   });
 });

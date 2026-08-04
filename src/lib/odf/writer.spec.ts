@@ -16,6 +16,7 @@ import { unzip } from "../docx/zip";
 import { parseXml } from "../docx/xml";
 import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
 import { createDocument, type DocumentModel, type Paragraph } from "../documentModel";
+import { firstStructuralDifference } from "../equality";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const odfFixturesDir = join(here, "fixtures");
@@ -206,7 +207,7 @@ describe("writeOdt — automatic styles (AC-16, AC-17, AC-18)", () => {
       {
         type: "paragraph",
         runs: [{ text: "styled", formatting: { bold: true, color: "#ff0000" } }],
-        formatting: { alignment: "center", indentLeftCm: 1.27 },
+        formatting: { alignment: "center", indentStartCm: 1.27 },
         styleId: "Fancy",
       },
     ];
@@ -447,5 +448,73 @@ describe("odtFileName (AC-2)", () => {
 
   it("exposes the .odt MIME type for the download blob", () => {
     expect(ODT_MIMETYPE).toBe("application/vnd.oasis.opendocument.text");
+  });
+});
+
+describe("writeOdt — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
+  function geometryModel(): DocumentModel {
+    const model = createDocument("geometry");
+    model.sections[0].blocks = [
+      {
+        type: "paragraph",
+        runs: [{ text: "rtl paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+        formatting: {
+          direction: "rtl",
+          indentStartCm: 2.54,
+          indentEndCm: 1.27,
+          indentFirstLineCm: 0.635,
+        },
+      },
+      {
+        type: "paragraph",
+        runs: [{ text: "exact", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+        formatting: { lineSpacingPt: 14, lineSpacingRule: "exact", spaceBeforePt: 0 },
+      },
+      {
+        type: "paragraph",
+        runs: [{ text: "at least", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+        formatting: { lineSpacingPt: 16, spaceAfterPt: 6 },
+      },
+    ];
+    return model;
+  }
+
+  it("writes RTL indents on the physical edges LibreOffice expects (AC-25)", async () => {
+    const contentXml = await partText((await writeOdt(geometryModel())).bytes, "content.xml");
+    // Logical start (2.54) lands on the physical RIGHT edge; end (1.27) on
+    // the left. text-indent stays start-relative.
+    expect(contentXml).toContain('fo:margin-left="1.27cm"');
+    expect(contentXml).toContain('fo:margin-right="2.54cm"');
+    expect(contentXml).toContain('fo:text-indent="0.635cm"');
+    expect(contentXml).toContain('style:writing-mode="rl-tb"');
+  });
+
+  it("writes an exact rule as fo:line-height and the default as line-height-at-least", async () => {
+    const contentXml = await partText((await writeOdt(geometryModel())).bytes, "content.xml");
+    expect(contentXml).toContain('fo:line-height="14pt"');
+    expect(contentXml).toContain('style:line-height-at-least="16pt"');
+  });
+
+  it("save -> re-open reproduces every geometry field structurally (AC-26)", async () => {
+    // The first save assigns generated automatic-style names ("P1") that the
+    // reader records as styleIds, so the AC's equality is between the opened
+    // and re-opened models: open(save(model)) vs open(save(open(save(model)))).
+    const opened = await parseOdt((await writeOdt(geometryModel())).bytes);
+    const openedModel = { ...createDocument("geometry"), sections: opened.sections, defaultStyles: opened.defaultStyles };
+    const reopened = await parseOdt((await writeOdt(openedModel)).bytes);
+    expect(firstStructuralDifference(opened.sections, reopened.sections)).toBeNull();
+    const rtl = reopened.sections[0].blocks[0] as Paragraph;
+    expect(rtl.formatting?.direction).toBe("rtl");
+    expect(rtl.formatting?.indentStartCm).toBe(2.54);
+    expect(rtl.formatting?.indentEndCm).toBe(1.27);
+    const exact = reopened.sections[0].blocks[1] as Paragraph;
+    expect(exact.formatting?.lineSpacingPt).toBe(14);
+    expect(exact.formatting?.lineSpacingRule).toBe("exact");
+    // An explicit 0 pt space-before survives — it must keep overriding a
+    // style's value after reload (AC-21).
+    expect(exact.formatting?.spaceBeforePt).toBe(0);
+    const atLeast = reopened.sections[0].blocks[2] as Paragraph;
+    expect(atLeast.formatting?.lineSpacingPt).toBe(16);
+    expect(atLeast.formatting?.lineSpacingRule).toBeUndefined();
   });
 });

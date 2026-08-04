@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { createDocument, type DocumentModel, type Paragraph } from "./documentModel";
 import { blockText, type CaretPosition } from "./textEditing";
 import {
+  adjustIndent,
+  applyParagraphFormat,
   blockCount,
   blockOrdinal,
   caretFormatting,
@@ -11,17 +13,24 @@ import {
   deleteRange,
   documentEnd,
   documentStart,
+  firstTouchedFormatting,
   formatState,
+  hasSpaceBefore,
+  INDENT_STEP_CM,
   insertLineBreak,
   insertText,
   isCollapsed,
   orderedRange,
   selectAll,
+  setAlignment,
   setFormat,
   splitBlock,
   toggleFormat,
+  toggleSpaceBefore,
+  touchedBlocks,
   type ModelSelection,
 } from "./commands";
+import { cmToTwips, twipsToCm } from "./docx/units";
 
 function paragraph(...runs: Array<[string, Record<string, unknown>?]>): Paragraph {
   return {
@@ -134,14 +143,14 @@ describe("splitBlock", () => {
     const model = doc(paragraph(["Centered text"]));
     model.sections[0].blocks[0] = {
       ...model.sections[0].blocks[0],
-      formatting: { alignment: "center", indentLeftCm: 1 },
+      formatting: { alignment: "center", indentStartCm: 1 },
       styleId: "Fancy",
       headingLevel: 2,
     };
     const { model: next } = splitBlock(model, caretSelection(caret(0, 8)));
     const [first, second] = next.sections[0].blocks;
-    expect(first.formatting).toEqual({ alignment: "center", indentLeftCm: 1 });
-    expect(second.formatting).toEqual({ alignment: "center", indentLeftCm: 1 });
+    expect(first.formatting).toEqual({ alignment: "center", indentStartCm: 1 });
+    expect(second.formatting).toEqual({ alignment: "center", indentStartCm: 1 });
     expect(second.styleId).toBe("Fancy");
     expect(second.headingLevel).toBe(2);
   });
@@ -389,5 +398,227 @@ describe("character formatting (SPEC-012)", () => {
         { text: "onetwothree", formatting: { bold: true } },
       ]);
     });
+  });
+});
+
+// --- paragraph formatting (SPEC-014) ----------------------------------------
+
+describe("touchedBlocks (SPEC-014 AC-4)", () => {
+  it("a collapsed caret touches exactly its own paragraph", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]), paragraph(["three"]));
+    expect(touchedBlocks(model, caretSelection(caret(1, 2)))).toEqual([
+      { section: 0, block: 1 },
+    ]);
+  });
+
+  it("a range touches every paragraph it intersects, in document order", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]), paragraph(["three"]));
+    expect(touchedBlocks(model, range(caret(2, 1), caret(0, 2)))).toEqual([
+      { section: 0, block: 0 },
+      { section: 0, block: 1 },
+      { section: 0, block: 2 },
+    ]);
+  });
+});
+
+describe("setAlignment (SPEC-014 AC-2, AC-5)", () => {
+  it("applies to every paragraph the selection touches", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]), paragraph(["three"]));
+    const { model: next } = setAlignment(model, range(caret(0, 1), caret(1, 1)), "center");
+    expect(next.sections[0].blocks[0].formatting?.alignment).toBe("center");
+    expect(next.sections[0].blocks[1].formatting?.alignment).toBe("center");
+    expect(next.sections[0].blocks[2].formatting).toBeUndefined();
+  });
+
+  it("preserves the selection and never mutates the input", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]));
+    const before = snapshot(model);
+    const { model: next, selection } = setAlignment(model, range(caret(1, 1), caret(0, 1)), "right");
+    expect(snapshot(model)).toBe(before);
+    expect(next).not.toBe(model);
+    expect(selection).toEqual(range(caret(0, 1), caret(1, 1)));
+  });
+
+  it("keeps untouched paragraphs by reference for the canvas's v-memo", () => {
+    const untouched = paragraph(["stays"]);
+    const model = doc(paragraph(["edited"]), untouched);
+    const { model: next } = setAlignment(model, caretSelection(caret(0, 0)), "justify");
+    expect(next.sections[0].blocks[1]).toBe(untouched);
+  });
+});
+
+describe("adjustIndent (SPEC-014 AC-6, AC-7)", () => {
+  it("adds 1.27 cm to the start indent of every touched paragraph", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]));
+    const { model: next } = adjustIndent(model, range(caret(0, 0), caret(1, 1)), INDENT_STEP_CM);
+    expect(next.sections[0].blocks[0].formatting?.indentStartCm).toBeCloseTo(1.27, 10);
+    expect(next.sections[0].blocks[1].formatting?.indentStartCm).toBeCloseTo(1.27, 10);
+  });
+
+  it("accumulates on repeat and removes the same step back down", () => {
+    const model = doc(paragraph(["one"]));
+    const selection = caretSelection(caret(0, 0));
+    const once = adjustIndent(model, selection, INDENT_STEP_CM);
+    const twice = adjustIndent(once.model, selection, INDENT_STEP_CM);
+    expect(twice.model.sections[0].blocks[0].formatting?.indentStartCm).toBeCloseTo(2.54, 10);
+    const back = adjustIndent(twice.model, selection, -INDENT_STEP_CM);
+    expect(back.model.sections[0].blocks[0].formatting?.indentStartCm).toBeCloseTo(1.27, 10);
+  });
+
+  it("stops at 0: a partial indent decreases to an explicit 0, never negative", () => {
+    const model = doc(paragraph(["one"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { indentStartCm: 0.5 },
+    };
+    const { model: next } = adjustIndent(model, caretSelection(caret(0, 0)), -INDENT_STEP_CM);
+    expect(next.sections[0].blocks[0].formatting?.indentStartCm).toBe(0);
+  });
+
+  it("leaves a paragraph with no start indent untouched on decrease", () => {
+    const untouched = paragraph(["one"]);
+    const model = doc(untouched);
+    const { model: next } = adjustIndent(model, caretSelection(caret(0, 0)), -INDENT_STEP_CM);
+    expect(next.sections[0].blocks[0]).toBe(untouched);
+    expect(next.sections[0].blocks[0].formatting).toBeUndefined();
+  });
+
+  it("evaluates independently per touched paragraph (AC-5)", () => {
+    const model = doc(paragraph(["a"]), paragraph(["b"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { indentStartCm: 1.27 },
+    };
+    const { model: next } = adjustIndent(model, range(caret(0, 0), caret(1, 1)), INDENT_STEP_CM);
+    expect(next.sections[0].blocks[0].formatting?.indentStartCm).toBeCloseTo(2.54, 10);
+    expect(next.sections[0].blocks[1].formatting?.indentStartCm).toBeCloseTo(1.27, 10);
+  });
+
+  it("snaps the result to the .docx twip grid so a round trip is exact (AC-26)", () => {
+    const model = doc(paragraph(["one"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { indentStartCm: 1.27 },
+    };
+    const selection = caretSelection(caret(0, 0));
+    const twice = adjustIndent(adjustIndent(model, selection, INDENT_STEP_CM).model, selection, INDENT_STEP_CM);
+    const stored = twice.model.sections[0].blocks[0].formatting?.indentStartCm;
+    // 3 × 1.27 cm = 2160 twips exactly; the stored double must be the twip
+    // grid's own value, not a floating-point accumulation next to it.
+    expect(stored).toBe(twipsToCm(cmToTwips(3.81)));
+    expect(cmToTwips(stored ?? 0)).toBe(2160);
+  });
+});
+
+describe("space-before toggle (SPEC-014 AC-15..21)", () => {
+  it("hasSpaceBefore reads the table's label column: 0 or absent is 'Add'", () => {
+    expect(hasSpaceBefore({})).toBe(false);
+    expect(hasSpaceBefore({ spaceBeforePt: 0 })).toBe(false);
+    expect(hasSpaceBefore({ spaceBeforePt: 6 })).toBe(true);
+  });
+
+  it("sets an explicit 12 pt when space-before is absent (AC-15)", () => {
+    const model = doc(paragraph(["one"]));
+    const { model: next } = toggleSpaceBefore(model, caretSelection(caret(0, 0)));
+    expect(next.sections[0].blocks[0].formatting?.spaceBeforePt).toBe(12);
+  });
+
+  it("writes an explicit 0 — not an absence — when removing (AC-16, AC-19)", () => {
+    const model = doc(paragraph(["one"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { spaceBeforePt: 6 },
+    };
+    const { model: next } = toggleSpaceBefore(model, caretSelection(caret(0, 0)));
+    expect(next.sections[0].blocks[0].formatting?.spaceBeforePt).toBe(0);
+    expect("spaceBeforePt" in (next.sections[0].blocks[0].formatting ?? {})).toBe(true);
+  });
+
+  it("removing a custom 6 pt and adding it back yields 12, never 6 (AC-20)", () => {
+    const model = doc(paragraph(["one"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { spaceBeforePt: 6 },
+    };
+    const selection = caretSelection(caret(0, 0));
+    const removed = toggleSpaceBefore(model, selection);
+    const added = toggleSpaceBefore(removed.model, selection);
+    expect(added.model.sections[0].blocks[0].formatting?.spaceBeforePt).toBe(12);
+  });
+
+  it("applies per paragraph strictly by the table, regardless of the label source (AC-18)", () => {
+    const model = doc(paragraph(["has"]), paragraph(["none"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { spaceBeforePt: 6 },
+    };
+    const { model: next } = toggleSpaceBefore(model, range(caret(0, 0), caret(1, 2)));
+    expect(next.sections[0].blocks[0].formatting?.spaceBeforePt).toBe(0);
+    expect(next.sections[0].blocks[1].formatting?.spaceBeforePt).toBe(12);
+  });
+
+  it("firstTouchedFormatting reflects the first paragraph in document order (AC-17)", () => {
+    const model = doc(paragraph(["has"]), paragraph(["none"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { spaceBeforePt: 6 },
+    };
+    // Reversed selection: the anchor sits in the second paragraph.
+    const formatting = firstTouchedFormatting(model, range(caret(1, 2), caret(0, 0)));
+    expect(hasSpaceBefore(formatting)).toBe(true);
+  });
+});
+
+describe("applyParagraphFormat (SPEC-014 AC-12, AC-13, AC-24)", () => {
+  it("sets line spacing and space before/after on every touched paragraph", () => {
+    const model = doc(paragraph(["one"]), paragraph(["two"]));
+    const { model: next } = applyParagraphFormat(model, range(caret(0, 0), caret(1, 1)), {
+      lineSpacing: 1.5,
+      spaceBeforePt: 6,
+      spaceAfterPt: 8,
+    });
+    for (const block of next.sections[0].blocks) {
+      expect(block.formatting).toEqual({ lineSpacing: 1.5, spaceBeforePt: 6, spaceAfterPt: 8 });
+    }
+  });
+
+  it("null clears a field so a preset replaces an absolute line height", () => {
+    const model = doc(paragraph(["one"]));
+    model.sections[0].blocks[0] = {
+      ...model.sections[0].blocks[0],
+      formatting: { lineSpacingPt: 14, lineSpacingRule: "exact" },
+    };
+    const { model: next } = applyParagraphFormat(model, caretSelection(caret(0, 0)), {
+      lineSpacing: 2,
+      lineSpacingPt: null,
+      lineSpacingRule: null,
+    });
+    expect(next.sections[0].blocks[0].formatting).toEqual({ lineSpacing: 2 });
+  });
+
+  it("direction: rtl is stored; direction: ltr removes the field (AC-24)", () => {
+    const model = doc(paragraph(["one"]));
+    const rtl = applyParagraphFormat(model, caretSelection(caret(0, 0)), { direction: "rtl" });
+    expect(rtl.model.sections[0].blocks[0].formatting?.direction).toBe("rtl");
+    const ltr = applyParagraphFormat(rtl.model, caretSelection(caret(0, 0)), { direction: "ltr" });
+    expect(ltr.model.sections[0].blocks[0].formatting?.direction).toBeUndefined();
+  });
+
+  it("snaps point values to the .docx twentieths grid (AC-26)", () => {
+    const model = doc(paragraph(["one"]));
+    const { model: next } = applyParagraphFormat(model, caretSelection(caret(0, 0)), {
+      spaceBeforePt: 12.34,
+      lineSpacingPt: 12.34,
+    });
+    expect(next.sections[0].blocks[0].formatting?.spaceBeforePt).toBe(12.35);
+    expect(next.sections[0].blocks[0].formatting?.lineSpacingPt).toBe(12.35);
+  });
+
+  it("snaps a custom multiple to 20ths — exact in both formats' grids (AC-26)", () => {
+    const model = doc(paragraph(["one"]));
+    const { model: next } = applyParagraphFormat(model, caretSelection(caret(0, 0)), {
+      lineSpacing: 1.37,
+    });
+    expect(next.sections[0].blocks[0].formatting?.lineSpacing).toBe(1.35);
   });
 });

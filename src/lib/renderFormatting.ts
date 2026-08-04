@@ -70,11 +70,19 @@ export function paragraphStyle(paragraph: Paragraph): Record<string, string> {
   if (formatting.alignment) {
     style.textAlign = formatting.alignment;
   }
-  if (formatting.indentLeftCm) {
-    style.marginLeft = `${formatting.indentLeftCm}cm`;
+  // Logical start/end indents map to margin-inline-start/end, and the
+  // paragraph's own `direction` decides which physical edge each paints on —
+  // the browser mirrors RTL paragraphs for free (SPEC-014). text-indent is
+  // direction-relative in CSS already, matching the model's start-relative
+  // first-line indent.
+  if (formatting.direction === "rtl") {
+    style.direction = "rtl";
   }
-  if (formatting.indentRightCm) {
-    style.marginRight = `${formatting.indentRightCm}cm`;
+  if (formatting.indentStartCm) {
+    style.marginInlineStart = `${formatting.indentStartCm}cm`;
+  }
+  if (formatting.indentEndCm) {
+    style.marginInlineEnd = `${formatting.indentEndCm}cm`;
   }
   if (formatting.indentFirstLineCm) {
     style.textIndent = `${formatting.indentFirstLineCm}cm`;

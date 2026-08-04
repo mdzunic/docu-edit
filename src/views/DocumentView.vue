@@ -4,11 +4,14 @@ import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
+import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
+import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
+import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
@@ -22,7 +25,7 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
-import { asCharacterFormatKey, DEFAULT_TITLE } from "../lib/documentModel";
+import { asCharacterFormatKey, asParagraphAlignment, DEFAULT_TITLE } from "../lib/documentModel";
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
@@ -41,25 +44,36 @@ import {
 } from "../lib/caretGeometry";
 import { blockText, compareCaret, noCaret } from "../lib/textEditing";
 import {
+  adjustIndent,
   applyFormat,
+  applyParagraphFormat,
   blockCount,
   blockOrdinal,
+  caretSelection,
   deleteBackward,
   deleteForward,
   deleteRange,
   documentEnd,
   documentStart,
+  emptyParagraphFormatting,
   emptyToolbarFormatValues,
+  firstTouchedFormatting,
   formatState,
+  hasSpaceBefore,
+  INDENT_STEP_CM,
   insertLineBreak,
   insertText,
   isCollapsed,
   noCommandResult,
+  noParagraphCommand,
   noPendingFormat,
   noSelection,
   selectAll,
+  setAlignment,
+  setPageMargins,
   splitBlock,
   toggleFormat,
+  toggleSpaceBefore,
   toggleVerticalAlign,
   toolbarFormatValues,
   verticalAlignState,
@@ -126,6 +140,19 @@ const formatStates = ref(EMPTY_FORMAT_STATES);
 // The four value controls' display state (family, size, colour, highlight
 // with per-control mixed flags), recomputed alongside formatStates.
 const formatValues = ref(emptyToolbarFormatValues());
+
+// --- paragraph formatting (SPEC-014) ----------------------------------------
+// What the paragraph toolbar and ruler reflect, all read from the FIRST
+// touched paragraph (AC-17's label rule, applied uniformly): the pressed
+// alignment button, the space-before toggle label, the direction toggle,
+// and the full formatting the ruler positions its markers from.
+const EMPTY_PARAGRAPH_STATE = { alignment: "left", spaceBefore: false, direction: "ltr" };
+const paragraphState = ref(EMPTY_PARAGRAPH_STATE);
+const paragraphFormatting = ref(emptyParagraphFormatting());
+// The custom-spacing dialog (AC-12..14): open flag plus the prefill taken
+// from the first touched paragraph at the moment it opens.
+const customSpacingOpen = ref(false);
+const customSpacingInitial = ref({ mode: "multiple", value: 1, beforePt: 0, afterPt: 0 });
 // Recently applied text colours, shared across documents (SPEC-013 AC).
 const recentColors = ref(loadRecentColors());
 // The families used by the open document, for the dropdown's "Fonts in
@@ -470,6 +497,8 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   if (!model || !range.start || !range.end) {
     formatStates.value = EMPTY_FORMAT_STATES;
     formatValues.value = emptyToolbarFormatValues();
+    paragraphState.value = EMPTY_PARAGRAPH_STATE;
+    paragraphFormatting.value = emptyParagraphFormatting();
     return;
   }
   const total = blockCount(model);
@@ -493,6 +522,13 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     superscript: verticalAlignState(model, selection, "superscript", pendingFormat),
   };
   formatValues.value = toolbarFormatValues(model, selection, pendingFormat);
+  const firstFormatting = firstTouchedFormatting(model, selection);
+  paragraphFormatting.value = firstFormatting;
+  paragraphState.value = {
+    alignment: firstFormatting.alignment ?? "left",
+    spaceBefore: hasSpaceBefore(firstFormatting),
+    direction: firstFormatting.direction ?? "ltr",
+  };
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
@@ -656,6 +692,142 @@ function handleHighlightSelect(value = noHighlight()) {
   applyRunFormatPatch({ highlight: value });
 }
 
+// --- paragraph formatting toolbar/ruler/shortcuts (SPEC-014) ----------------
+
+/** The selection paragraph commands target: the live/tracked selection, or
+ * — before the canvas has ever held a caret — the document start, so a
+ * toolbar click or ruler drag on a fresh document still lands on the first
+ * paragraph. */
+function paragraphSelection(root = noElement()) {
+  return currentSelection(root) ?? caretSelection(documentStart());
+}
+
+/** Runs one paragraph command against the current selection and applies its
+ * result; `refocus` returns focus to the canvas (skipped for ruler drags,
+ * which would tear down the pointer capture mid-drag). */
+function applyParagraphCommand(command = noParagraphCommand(), refocus = true) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!command || !root || !model || !editable.value) {
+    return;
+  }
+  applyEdit(command(model, paragraphSelection(root)));
+  if (refocus) {
+    root.focus();
+  }
+}
+
+function handleAlign(alignment = "") {
+  applyParagraphCommand((model, selection) =>
+    setAlignment(model, selection, asParagraphAlignment(alignment)),
+  );
+}
+
+function handleIndent(direction = 1) {
+  applyParagraphCommand((model, selection) =>
+    adjustIndent(model, selection, direction * INDENT_STEP_CM),
+  );
+}
+
+/** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
+ * clears any absolute height so the preset actually takes effect (AC-11). */
+function handleSpacingPreset(multiple = 1) {
+  applyParagraphCommand((model, selection) =>
+    applyParagraphFormat(model, selection, {
+      lineSpacing: multiple,
+      lineSpacingPt: null,
+      lineSpacingRule: null,
+    }),
+  );
+}
+
+function handleToggleSpaceBefore() {
+  applyParagraphCommand(toggleSpaceBefore);
+}
+
+function handleToggleDirection() {
+  const rtl = paragraphState.value.direction !== "rtl";
+  applyParagraphCommand((model, selection) =>
+    applyParagraphFormat(model, selection, { direction: rtl ? "rtl" : "ltr" }),
+  );
+}
+
+function openCustomSpacing() {
+  const formatting = paragraphFormatting.value;
+  customSpacingInitial.value =
+    formatting.lineSpacingPt !== undefined
+      ? {
+          mode: formatting.lineSpacingRule === "exact" ? "exact" : "atLeast",
+          value: formatting.lineSpacingPt,
+          beforePt: formatting.spaceBeforePt ?? 0,
+          afterPt: formatting.spaceAfterPt ?? 0,
+        }
+      : {
+          mode: "multiple",
+          value: formatting.lineSpacing ?? 1,
+          beforePt: formatting.spaceBeforePt ?? 0,
+          afterPt: formatting.spaceAfterPt ?? 0,
+        };
+  customSpacingOpen.value = true;
+}
+
+/** OK in the custom-spacing dialog (AC-13): one patch, applied to every
+ * touched paragraph. The unused line-spacing representation is cleared so
+ * the chosen mode wins regardless of what was set before. */
+function handleCustomSpacingApply(payload = { mode: "multiple", value: 1, beforePt: 0, afterPt: 0 }) {
+  customSpacingOpen.value = false;
+  applyParagraphCommand((model, selection) =>
+    payload.mode === "multiple"
+      ? applyParagraphFormat(model, selection, {
+          lineSpacing: payload.value,
+          lineSpacingPt: null,
+          lineSpacingRule: null,
+          spaceBeforePt: payload.beforePt,
+          spaceAfterPt: payload.afterPt,
+        })
+      : applyParagraphFormat(model, selection, {
+          lineSpacing: null,
+          lineSpacingPt: payload.value,
+          lineSpacingRule: payload.mode === "exact" ? "exact" : null,
+          spaceBeforePt: payload.beforePt,
+          spaceAfterPt: payload.afterPt,
+        }),
+  );
+}
+
+/** A ruler marker drag (AC-23): indent updates go to every touched
+ * paragraph as logical values; margin updates go to the page margins. No
+ * refocus — grabbing focus mid-drag would break the pointer capture. */
+function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
+  const valueCm = update.valueCm;
+  if (update.kind === "indentStartCm") {
+    applyParagraphCommand(
+      (model, selection) => applyParagraphFormat(model, selection, { indentStartCm: valueCm }),
+      false,
+    );
+  } else if (update.kind === "indentEndCm") {
+    applyParagraphCommand(
+      (model, selection) => applyParagraphFormat(model, selection, { indentEndCm: valueCm }),
+      false,
+    );
+  } else if (update.kind === "indentFirstLineCm") {
+    applyParagraphCommand(
+      (model, selection) => applyParagraphFormat(model, selection, { indentFirstLineCm: valueCm }),
+      false,
+    );
+  } else if (update.kind === "marginLeftCm") {
+    applyParagraphCommand(
+      (model, selection) => setPageMargins(model, selection, { leftCm: valueCm }),
+      false,
+    );
+  } else if (update.kind === "marginRightCm") {
+    applyParagraphCommand(
+      (model, selection) => setPageMargins(model, selection, { rightCm: valueCm }),
+      false,
+    );
+  }
+}
+
 function handleKeyDown(event = new KeyboardEvent("keydown")) {
   const root = contentRoot.value;
   const model = doc.value;
@@ -695,6 +867,30 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
     event.preventDefault();
     toggleCharacterFormat(key === "," ? "subscript" : "superscript");
+  } else if (mod && !event.shiftKey && (key === "l" || key === "e" || key === "r" || key === "j")) {
+    // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
+    event.preventDefault();
+    handleAlign(key === "l" ? "left" : key === "e" ? "center" : key === "r" ? "right" : "justify");
+  } else if (!mod && event.key === "Tab") {
+    // SPEC-014 AC-8..10. A caret collapsed at offset 0 — an empty paragraph
+    // or the start of its first line — dispatches the toolbar's own indent
+    // command; a wrapped continuation line's visual start sits at a non-zero
+    // offset, so it falls through to the literal tab. Always prevented:
+    // the browser's default would move focus out of the editor.
+    event.preventDefault();
+    const selection = currentSelection(root);
+    if (!selection) {
+      return;
+    }
+    if (isCollapsed(selection) && selection.focus.offset === 0) {
+      applyParagraphCommand((current, target) =>
+        adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
+      );
+    } else if (!event.shiftKey) {
+      // Any other position — mid-paragraph or a non-collapsed selection —
+      // inserts a literal tab character (AC-10).
+      applyEdit(insertText(model, selection, "\t", pendingFormat));
+    }
   } else if (event.key === "PageDown" || event.key === "PageUp") {
     event.preventDefault();
     moveCaretByPage(event.key === "PageDown" ? 1 : -1, event.shiftKey);
@@ -882,6 +1078,18 @@ function deleteOpenDocument() {
         :states="formatStates"
         @toggle="toggleCharacterFormat"
       />
+      <ParagraphToolbar
+        v-if="editable"
+        :alignment="paragraphState.alignment"
+        :space-before="paragraphState.spaceBefore"
+        :direction="paragraphState.direction"
+        @align="handleAlign"
+        @indent="handleIndent"
+        @spacing-preset="handleSpacingPreset"
+        @custom-spacing="openCustomSpacing"
+        @toggle-space-before="handleToggleSpaceBefore"
+        @toggle-direction="handleToggleDirection"
+      />
       <TextColorPicker
         v-if="editable"
         :value="formatValues.color"
@@ -938,6 +1146,14 @@ function deleteOpenDocument() {
       </button>
     </div>
     <div class="page-wrap">
+      <DocumentRuler
+        :page-width-cm="doc.defaultStyles.pageSize.widthCm"
+        :margin-left-cm="doc.defaultStyles.margins.leftCm"
+        :margin-right-cm="doc.defaultStyles.margins.rightCm"
+        :formatting="paragraphFormatting"
+        :disabled="!editable"
+        @update="handleRulerUpdate"
+      />
       <div
         class="page"
         data-testid="document-page"
@@ -1005,6 +1221,12 @@ function deleteOpenDocument() {
       v-if="conversionReport"
       :items="conversionReport"
       @close="closeConversionReport"
+    />
+    <CustomSpacingDialog
+      v-if="customSpacingOpen"
+      :initial="customSpacingInitial"
+      @apply="handleCustomSpacingApply"
+      @cancel="customSpacingOpen = false"
     />
   </AppShell>
   <AppShell

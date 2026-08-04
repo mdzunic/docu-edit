@@ -216,17 +216,36 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
     }
   }
 
+  // ODF's fo:margin-left/right follow XSL and are PHYSICAL edges. They are
+  // parsed into the logical start/end slots as if the paragraph were LTR;
+  // the reader swaps start/end once the style chain is fully resolved and
+  // the effective writing mode is known (SPEC-014, see swapRtlIndents in
+  // reader.ts). fo:text-indent is start-relative already and needs no swap.
   const marginLeft = odfLengthToCm(foAttr(paragraphPropsEl, "margin-left"));
   if (marginLeft !== undefined) {
-    formatting.indentLeftCm = marginLeft;
+    formatting.indentStartCm = marginLeft;
   }
   const marginRight = odfLengthToCm(foAttr(paragraphPropsEl, "margin-right"));
   if (marginRight !== undefined) {
-    formatting.indentRightCm = marginRight;
+    formatting.indentEndCm = marginRight;
   }
   const textIndent = odfLengthToCm(foAttr(paragraphPropsEl, "text-indent"));
   if (textIndent !== undefined) {
     formatting.indentFirstLineCm = textIndent;
+  }
+
+  // style:writing-mode: "rl-tb"/"rl" are the right-to-left modes LibreOffice
+  // writes. An explicit LTR mode is recorded so it can override an inherited
+  // RTL during chain merging; the reader normalises it away — the model only
+  // ever holds "rtl" (SPEC-014, see ParagraphDirection).
+  const writingMode = styleAttr(paragraphPropsEl, "writing-mode");
+  if (writingMode !== null) {
+    const mode = writingMode.trim().toLowerCase();
+    if (mode === "rl-tb" || mode === "rl") {
+      formatting.direction = "rtl";
+    } else if (mode === "lr-tb" || mode === "lr") {
+      formatting.direction = "ltr";
+    }
   }
 
   const marginTop = odfLengthToPt(foAttr(paragraphPropsEl, "margin-top"));
@@ -239,18 +258,24 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
   }
 
   // fo:line-height is either a percentage of the font size (proportional,
-  // like OOXML's lineRule="auto"), an absolute length (fixed rule), or
-  // "normal" (inherit). style:line-height-at-least maps to the same absolute
-  // slot, matching how the .docx reader folds atLeast into lineSpacingPt.
+  // like OOXML's lineRule="auto"), an absolute length (a FIXED height —
+  // OOXML's "exact"), or "normal" (inherit). style:line-height-at-least is
+  // the minimum-height rule, which is the model's absent-rule default
+  // (SPEC-014, see ParagraphFormatting.lineSpacingRule).
   const lineHeight = foAttr(paragraphPropsEl, "line-height");
   const lineHeightPercent = odfPercentage(lineHeight);
   if (lineHeightPercent !== undefined) {
     formatting.lineSpacing = lineHeightPercent / 100;
   } else {
-    const lineHeightPt = odfLengthToPt(lineHeight)
-      ?? odfLengthToPt(styleAttr(paragraphPropsEl, "line-height-at-least"));
-    if (lineHeightPt !== undefined) {
-      formatting.lineSpacingPt = lineHeightPt;
+    const exactPt = odfLengthToPt(lineHeight);
+    if (exactPt !== undefined) {
+      formatting.lineSpacingPt = exactPt;
+      formatting.lineSpacingRule = "exact";
+    } else {
+      const atLeastPt = odfLengthToPt(styleAttr(paragraphPropsEl, "line-height-at-least"));
+      if (atLeastPt !== undefined) {
+        formatting.lineSpacingPt = atLeastPt;
+      }
     }
   }
 
