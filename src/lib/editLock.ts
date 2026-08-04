@@ -22,6 +22,12 @@ export interface LockManagerLike {
   ): Promise<unknown>;
 }
 
+/** Typed `null` seed for lock-handle variables in `.vue` scripts, which
+ * espree bars from writing the `EditLockHandle | null` annotation. */
+export function noEditLock(): EditLockHandle | null {
+  return null;
+}
+
 function defaultLockManager(): LockManagerLike | undefined {
   if (typeof navigator !== "undefined" && "locks" in navigator) {
     return navigator.locks;

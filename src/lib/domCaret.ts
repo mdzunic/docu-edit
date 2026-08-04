@@ -8,6 +8,12 @@ import type { CaretPosition } from "./textEditing";
 
 const BLOCK_SELECTOR = "[data-section][data-block]";
 
+/** Typed `null` seed for element variables in `.vue` scripts, which espree
+ * bars from writing the `Element | null` annotation themselves. */
+export function noElement(): Element | null {
+  return null;
+}
+
 /** The model caret for a DOM point (node + offset), or null when the point
  * is not inside one of the root's paragraph elements. */
 export function caretFromDomPoint(
