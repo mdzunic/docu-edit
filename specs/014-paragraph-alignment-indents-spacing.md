@@ -23,6 +23,9 @@ handling on both readers and both writers.
 - [ ] A horizontal ruler above the page shows left indent, first-line indent, right indent and margin markers, and dragging a marker changes the corresponding value live
 - [ ] Right-to-left paragraph direction is settable and swaps the meaning of left/right indent on both save formats
 - [ ] All paragraph properties round-trip through `.docx` (twips) and `.odt` (cm/in) with no unit drift greater than 0.01 cm
+-- Decisions
+When using the 'Add space before paragraph' / 'Remove space before paragraph' menu entries, what exact value (e.g., 10pt, 12pt) is added or removed from the space-before property?
+Answer: 12pt.
 
 ## Out of scope
 Tab stops (defer to SPEC-032's out of scope note; custom tab stops are a later
