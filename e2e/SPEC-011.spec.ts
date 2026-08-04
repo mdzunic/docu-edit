@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LINE_START, LINE_END, WORD_RIGHT, extend } from "./keys";
 
 // SPEC-011 — the rich text editing core: caret placement, keyboard and
 // mouse selection, mutation through the command API, IME composition and
@@ -196,7 +197,7 @@ test("typing inserts at the caret and the model matches the screen (AC-3, AC-4, 
   const id = await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Helo world");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < 2; i += 1) {
     await page.keyboard.press("ArrowRight");
   }
@@ -219,7 +220,7 @@ test("Backspace and Delete remove characters and merge paragraphs at boundaries 
   await expect(paragraphs(page)).toHaveCount(2);
 
   // Backspace at the start of "cd" merges the paragraphs (AC-7).
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await page.keyboard.press("Backspace");
   await expect(paragraphs(page)).toHaveCount(1);
   await expect(content(page)).toHaveText("abcd");
@@ -232,13 +233,13 @@ test("Backspace and Delete remove characters and merge paragraphs at boundaries 
   await expect(content(page)).toHaveText("ad");
 
   // Delete at a paragraph end also merges (AC-7 forward).
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press("Enter");
   await page.keyboard.type("tail");
   await expect(paragraphs(page)).toHaveCount(2);
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press("Delete");
   await expect(paragraphs(page)).toHaveCount(1);
   await expect(content(page)).toHaveText("adtail");
@@ -253,7 +254,7 @@ test("Enter splits carrying paragraph formatting; Shift+Enter breaks the line in
   ]);
   await page.goto(`/doc/${id}`);
   await content(page).click();
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < "Centered".length; i += 1) {
     await page.keyboard.press("ArrowRight");
   }
@@ -276,7 +277,7 @@ test("Enter splits carrying paragraph formatting; Shift+Enter breaks the line in
     .toEqual(["center", "center"]);
 
   // Shift+Enter adds a line inside the second paragraph, not a new one.
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("wrapped");
   await expect(paragraphs(page)).toHaveCount(2);
@@ -300,18 +301,18 @@ test("arrow keys, Home/End and word jumps move the caret; Shift extends (AC-11, 
   await page.keyboard.press("ArrowDown");
   await expect(status(page)).toContainText("Paragraph 2 of 2");
 
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await expect(status(page)).toHaveText("Paragraph 2 of 2, character 12");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await expect(status(page)).toHaveText("Paragraph 2 of 2, character 1");
 
   // Ctrl+Right jumps by word: past "gamma" (to its end or the next word's
   // start, depending on platform convention — both are word jumps).
-  await page.keyboard.press("Control+ArrowRight");
+  await page.keyboard.press(WORD_RIGHT);
   await expect(status(page)).toHaveText(/Paragraph 2 of 2, character (6|7)/);
 
   // Shift extends any movement (AC-15).
-  await page.keyboard.press("Shift+End");
+  await page.keyboard.press(extend(LINE_END));
   await expect(status(page)).toContainText("Selected from paragraph 2");
   expect(await selectionText(page)).toMatch(/delta$/);
 });
@@ -503,7 +504,7 @@ test("the editable region is an accessible textbox that announces caret movement
   const live = status(page);
   await expect(live).toHaveAttribute("role", "status");
   await expect(live).toHaveAttribute("aria-live", "polite");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await expect(live).toHaveText("Paragraph 1 of 1, character 1");
   await page.keyboard.press("ArrowRight");
   await expect(live).toHaveText("Paragraph 1 of 1, character 2");

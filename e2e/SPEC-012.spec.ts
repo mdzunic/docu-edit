@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LINE_START } from "./keys";
 
 // SPEC-012 — character formatting: bold, italic, underline, strikethrough.
 // Builds on SPEC-011's editing engine, so selection/caret setup here follows
@@ -68,7 +69,7 @@ function firstParagraphRuns(model: ModelShape): ModelRun[] {
  * offsets, via Home + arrow keys — the same technique SPEC-011's e2e specs
  * use for precise selections. */
 async function selectRange(page: Page, from: number, to: number): Promise<void> {
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < from; i++) {
     await page.keyboard.press("ArrowRight");
   }
@@ -163,7 +164,7 @@ test("a collapsed caret sets a pending format the next typed characters carry, d
   const id = await createDocument(page);
   await content(page).click();
   await page.keyboard.type("hello world");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < 6; i++) {
     await page.keyboard.press("ArrowRight");
   }
@@ -182,7 +183,7 @@ test("a collapsed caret sets a pending format the next typed characters carry, d
   ]);
 
   // Moving the caret discards the pending format (AC-11).
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await expect(bold).toHaveAttribute("aria-pressed", "false");
   await page.keyboard.type("Z");
   await waitForSaved(page);
