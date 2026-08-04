@@ -21,6 +21,10 @@ const FORMATS = [
   { key: "italic", label: "Italic", shortcut: `${mod}+I`, glyph: "I" },
   { key: "underline", label: "Underline", shortcut: `${mod}+U`, glyph: "U" },
   { key: "strikethrough", label: "Strikethrough", shortcut: `${mod}+Shift+X`, glyph: "S" },
+  // SPEC-013: sub/superscript are toggle buttons like the four above;
+  // mutual exclusivity lives in the command layer (one vertAlign field).
+  { key: "subscript", label: "Subscript", shortcut: `${mod}+,`, glyph: "X₂" },
+  { key: "superscript", label: "Superscript", shortcut: `${mod}+.`, glyph: "X²" },
 ];
 
 function tooltip(format = FORMATS[0]) {

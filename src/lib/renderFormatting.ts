@@ -4,26 +4,10 @@
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
 import type { Paragraph, Run, RunFormatting } from "./documentModel";
-
-// The 15 standard Word highlight colours (`w:highlight`'s closed value set)
-// mapped to CSS — the document model stores the OOXML colour name as-is.
-const HIGHLIGHT_COLORS: Record<string, string> = {
-  yellow: "#ffff00",
-  green: "#00ff00",
-  cyan: "#00ffff",
-  magenta: "#ff00ff",
-  blue: "#0000ff",
-  red: "#ff0000",
-  darkBlue: "#00008b",
-  darkCyan: "#008b8b",
-  darkGreen: "#006400",
-  darkMagenta: "#8b008b",
-  darkRed: "#8b0000",
-  darkYellow: "#808000",
-  darkGray: "#a9a9a9",
-  lightGray: "#d3d3d3",
-  black: "#000000",
-};
+// The one highlight palette (OOXML name -> hex), shared with both file
+// formats' readers/writers (SPEC-013) — the model stores the OOXML colour
+// name as-is.
+import { HIGHLIGHT_HEX } from "./odf/properties";
 
 /** The HTML tag a paragraph should render as: h1-h6 for a resolved heading
  * level (clamped to h6), otherwise a plain paragraph. */
@@ -61,8 +45,18 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
   if (formatting.color) {
     style.color = formatting.color;
   }
+  // highlight false is an explicit "No colour": like undefined it paints
+  // nothing, unlike undefined it survives saving (SPEC-013).
   if (formatting.highlight) {
-    style.backgroundColor = HIGHLIGHT_COLORS[formatting.highlight] ?? formatting.highlight;
+    style.backgroundColor = HIGHLIGHT_HEX[formatting.highlight] ?? formatting.highlight;
+  }
+  if (formatting.vertAlign) {
+    // Word renders sub/superscript at roughly two-thirds size on a shifted
+    // baseline; em-based so it composes with the run's own font size.
+    style.verticalAlign = formatting.vertAlign === "subscript" ? "sub" : "super";
+    style.fontSize = formatting.fontSizePt
+      ? `${formatting.fontSizePt * 0.65}pt`
+      : "0.65em";
   }
   return style;
 }

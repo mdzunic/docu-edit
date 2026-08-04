@@ -145,13 +145,26 @@ function withFormat(
 }
 
 /** `base` with every key of `override` forced to its value — insertText's
- * pending-format merge (SPEC-012 AC-9, AC-10). */
-function applyPendingFormat(base: RunFormatting, override: PendingFormat): RunFormatting {
+ * pending-format merge (SPEC-012 AC-9, AC-10) and the per-run step of the
+ * SPEC-013 selection-formatting command. Off semantics per PendingFormat's
+ * contract: `false` deletes boolean toggles and `vertAlign` (so the result
+ * merges with never-formatted runs), but is *stored* for `highlight` —
+ * "No colour" is an explicit off that must survive saving. */
+export function applyFormatPatch(base: RunFormatting, override: PendingFormat): RunFormatting {
   let formatting = base;
-  for (const key of Object.keys(override) as CharacterFormatKey[]) {
+  for (const key of Object.keys(override) as Array<keyof PendingFormat>) {
     const value = override[key];
-    if (value !== undefined) {
-      formatting = withFormat(formatting, key, value);
+    if (value === undefined) {
+      continue;
+    }
+    if (key === "vertAlign" && value === false) {
+      const rest = { ...formatting };
+      delete rest.vertAlign;
+      formatting = rest;
+    } else if (typeof value === "boolean" && key !== "highlight") {
+      formatting = withFormat(formatting, key as CharacterFormatKey, value);
+    } else {
+      formatting = { ...formatting, [key]: value };
     }
   }
   return formatting;
@@ -187,7 +200,7 @@ export function insertText(
         ? after[0].formatting
         : {};
   const formatting = formatOverride
-    ? applyPendingFormat(baseFormatting, formatOverride)
+    ? applyFormatPatch(baseFormatting, formatOverride)
     : baseFormatting;
   const inserted: Run = { text, formatting };
   replaceBlock(model, c.section, c.block, {
@@ -409,16 +422,16 @@ export function runFormattingsInRange(
   return formattings;
 }
 
-/** Sets `key` to `value` on every run between `start` and `end` (already
+/** Applies a format patch to every run between `start` and `end` (already
  * ordered), splitting the runs straddling the range's boundaries first and
  * merging the result back down to the minimum number of runs afterward
- * (SPEC-012 AC-7, AC-8, AC-20, AC-21). */
-export function setFormatting(
+ * (SPEC-012 AC-7, AC-8, AC-20, AC-21; SPEC-013 extends the patch beyond
+ * boolean toggles — see PendingFormat for the per-key off semantics). */
+export function patchFormatting(
   model: DocumentModel,
   start: CaretPosition,
   end: CaretPosition,
-  key: CharacterFormatKey,
-  value: boolean,
+  patch: PendingFormat,
 ): void {
   for (const { section, block } of blockAddressesInRange(model, start, end)) {
     const paragraph = model.sections[section].blocks[block];
@@ -432,11 +445,23 @@ export function setFormatting(
     const [within, after] = splitRuns(tail, to - from);
     const changed = within.map((run) => ({
       text: run.text,
-      formatting: withFormat(run.formatting, key, value),
+      formatting: applyFormatPatch(run.formatting, patch),
     }));
     replaceBlock(model, section, block, {
       ...paragraph,
       runs: normalizeRuns([...before, ...changed, ...after]),
     });
   }
+}
+
+/** Sets a single boolean character format across a range — SPEC-012's
+ * original entry point, now a thin wrapper over the SPEC-013 patch form. */
+export function setFormatting(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+  key: CharacterFormatKey,
+  value: boolean,
+): void {
+  patchFormatting(model, start, end, { [key]: value });
 }

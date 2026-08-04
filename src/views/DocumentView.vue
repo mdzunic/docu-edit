@@ -5,7 +5,11 @@ import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
+import FontFamilySelect from "../components/FontFamilySelect.vue";
+import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
+import HighlightPicker from "../components/HighlightPicker.vue";
+import TextColorPicker from "../components/TextColorPicker.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
@@ -19,6 +23,8 @@ import {
   touchDocument,
 } from "../lib/documentStore";
 import { asCharacterFormatKey, DEFAULT_TITLE } from "../lib/documentModel";
+import { documentFontFamilies } from "../lib/fonts";
+import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
 import {
   caretFromDomPoint,
@@ -35,6 +41,7 @@ import {
 } from "../lib/caretGeometry";
 import { blockText, compareCaret, noCaret } from "../lib/textEditing";
 import {
+  applyFormat,
   blockCount,
   blockOrdinal,
   deleteBackward,
@@ -42,6 +49,7 @@ import {
   deleteRange,
   documentEnd,
   documentStart,
+  emptyToolbarFormatValues,
   formatState,
   insertLineBreak,
   insertText,
@@ -52,6 +60,9 @@ import {
   selectAll,
   splitBlock,
   toggleFormat,
+  toggleVerticalAlign,
+  toolbarFormatValues,
+  verticalAlignState,
 } from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
 
@@ -101,8 +112,26 @@ let editLock = noEditLock();
 let selectionAnchor = noCaret();
 let pendingFormat = noPendingFormat();
 
-const EMPTY_FORMAT_STATES = { bold: "off", italic: "off", underline: "off", strikethrough: "off" };
+const EMPTY_FORMAT_STATES = {
+  bold: "off",
+  italic: "off",
+  underline: "off",
+  strikethrough: "off",
+  subscript: "off",
+  superscript: "off",
+};
 const formatStates = ref(EMPTY_FORMAT_STATES);
+
+// --- font/colour/highlight controls (SPEC-013) ------------------------------
+// The four value controls' display state (family, size, colour, highlight
+// with per-control mixed flags), recomputed alongside formatStates.
+const formatValues = ref(emptyToolbarFormatValues());
+// Recently applied text colours, shared across documents (SPEC-013 AC).
+const recentColors = ref(loadRecentColors());
+// The families used by the open document, for the dropdown's "Fonts in
+// this document" group — doc.value is replaced on every edit, so this
+// recomputes as families come and go.
+const documentFonts = computed(() => (doc.value ? documentFontFamilies(doc.value) : []));
 
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
@@ -236,6 +265,11 @@ function handleSelectionChange() {
       pendingFormat = noPendingFormat();
     }
     caret = range.end;
+    // Track the anchor of a real selection so a toolbar interaction that
+    // moves focus into its own input (the size field, the custom colour
+    // field) can still apply to the range the user selected (SPEC-013).
+    selectionAnchor =
+      compareCaret(range.start, range.end) === 0 ? noCaret() : range.start;
     updateCaretStatus(range);
   }
 }
@@ -267,7 +301,9 @@ onBeforeUnmount(() => {
 // exception is IME composition (see the composition handlers below).
 
 /** The current selection in model coordinates: the live DOM selection when
- * it is inside the canvas, else the tracked caret. */
+ * it is inside the canvas, else the tracked selection/caret — the tracked
+ * anchor covers toolbar interactions whose own inputs took the focus
+ * (SPEC-013's size and custom-colour fields). */
 function currentSelection(root = noElement()) {
   if (!root) {
     return null;
@@ -276,7 +312,7 @@ function currentSelection(root = noElement()) {
   if (range) {
     return { anchor: range.start, focus: range.end };
   }
-  return caret ? { anchor: caret, focus: caret } : null;
+  return caret ? { anchor: selectionAnchor ?? caret, focus: caret } : null;
 }
 
 /** Applies a command result: the new model becomes the document (in the
@@ -433,6 +469,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   const model = doc.value;
   if (!model || !range.start || !range.end) {
     formatStates.value = EMPTY_FORMAT_STATES;
+    formatValues.value = emptyToolbarFormatValues();
     return;
   }
   const total = blockCount(model);
@@ -452,7 +489,10 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     italic: formatState(model, selection, "italic", pendingFormat),
     underline: formatState(model, selection, "underline", pendingFormat),
     strikethrough: formatState(model, selection, "strikethrough", pendingFormat),
+    subscript: verticalAlignState(model, selection, "subscript", pendingFormat),
+    superscript: verticalAlignState(model, selection, "superscript", pendingFormat),
   };
+  formatValues.value = toolbarFormatValues(model, selection, pendingFormat);
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
@@ -528,12 +568,13 @@ function moveCaretByPage(direction = 1, extend = false) {
   applyCaretMove(target, extend);
 }
 
-// --- character formatting toolbar/shortcuts (SPEC-012) ---------------------
+// --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
 
-/** Bold/italic/underline/strikethrough (AC-3..6, AC-16, AC-17): a real
- * selection is formatted through the command API (which keeps the
- * selection live, see applyEdit); a collapsed caret instead sets/flips the
- * pending format the next typed text will carry (AC-9, AC-10). */
+/** Bold/italic/underline/strikethrough (SPEC-012 AC-3..6, AC-16, AC-17)
+ * and subscript/superscript (SPEC-013): a real selection is formatted
+ * through the command API (which keeps the selection live, see applyEdit);
+ * a collapsed caret instead sets/flips the pending format the next typed
+ * text will carry (AC-9, AC-10). */
 function toggleCharacterFormat(key = "") {
   const root = contentRoot.value;
   const model = doc.value;
@@ -542,6 +583,18 @@ function toggleCharacterFormat(key = "") {
   }
   const selection = currentSelection(root);
   if (!selection) {
+    return;
+  }
+  if (key === "subscript" || key === "superscript") {
+    // One vertAlign field makes the pair mutually exclusive (SPEC-013).
+    if (isCollapsed(selection)) {
+      const on = verticalAlignState(model, selection, key, pendingFormat) === "on";
+      pendingFormat = { ...pendingFormat, vertAlign: on ? false : key };
+      updateCaretStatus({ start: selection.anchor, end: selection.focus });
+    } else {
+      applyEdit(toggleVerticalAlign(model, selection, key));
+    }
+    root.focus();
     return;
   }
   const formatKey = asCharacterFormatKey(key);
@@ -553,6 +606,54 @@ function toggleCharacterFormat(key = "") {
     applyEdit(toggleFormat(model, selection, formatKey));
   }
   root.focus();
+}
+
+/** Applies a value-format patch (font family/size, colour, highlight —
+ * SPEC-013): a real selection goes through the command API; a collapsed
+ * caret merges the patch into the pending format the next typed text
+ * carries, exactly like the boolean toggles. */
+function applyRunFormatPatch(patch = noPendingFormat()) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!patch || !root || !model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  if (isCollapsed(selection)) {
+    pendingFormat = { ...pendingFormat, ...patch };
+    updateCaretStatus({ start: selection.anchor, end: selection.focus });
+  } else {
+    applyEdit(applyFormat(model, selection, patch));
+  }
+  root.focus();
+}
+
+function handleFontFamilySelect(family = "") {
+  if (family !== "") {
+    applyRunFormatPatch({ fontFamily: family });
+  }
+}
+
+function handleFontSizeChange(sizePt = 0) {
+  if (sizePt > 0) {
+    applyRunFormatPatch({ fontSizePt: sizePt });
+  }
+}
+
+function handleTextColorSelect(hex = "") {
+  if (hex !== "") {
+    applyRunFormatPatch({ color: hex });
+    recentColors.value = pushRecentColor(hex, recentColors.value);
+  }
+}
+
+/** The highlight picker emits a palette name or false for "No colour" —
+ * false is applied as an explicit off, not an absence (SPEC-013). */
+function handleHighlightSelect(value = noHighlight()) {
+  applyRunFormatPatch({ highlight: value });
 }
 
 function handleKeyDown(event = new KeyboardEvent("keydown")) {
@@ -590,6 +691,10 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
     event.preventDefault();
     toggleCharacterFormat("strikethrough");
+  } else if (mod && !event.shiftKey && (key === "," || key === ".")) {
+    // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
+    event.preventDefault();
+    toggleCharacterFormat(key === "," ? "subscript" : "superscript");
   } else if (event.key === "PageDown" || event.key === "PageUp") {
     event.preventDefault();
     moveCaretByPage(event.key === "PageDown" ? 1 : -1, event.shiftKey);
@@ -759,10 +864,36 @@ function deleteOpenDocument() {
       </div>
     </template>
     <template #toolbar>
+      <FontFamilySelect
+        v-if="editable"
+        :value="formatValues.fontFamily"
+        :document-fonts="documentFonts"
+        @select="handleFontFamilySelect"
+      />
+      <!-- ?? undefined: the mixed state's null must reach the control as
+           "prop absent" so its own null default (= blank) applies. -->
+      <FontSizeControl
+        v-if="editable"
+        :value="formatValues.fontSizePt ?? undefined"
+        @change="handleFontSizeChange"
+      />
       <FormatToolbar
         v-if="editable"
         :states="formatStates"
         @toggle="toggleCharacterFormat"
+      />
+      <TextColorPicker
+        v-if="editable"
+        :value="formatValues.color"
+        :mixed="formatValues.colorMixed"
+        :recent="recentColors"
+        @select="handleTextColorSelect"
+      />
+      <HighlightPicker
+        v-if="editable"
+        :value="formatValues.highlight"
+        :mixed="formatValues.highlightMixed"
+        @select="handleHighlightSelect"
       />
       <button
         v-if="editable"

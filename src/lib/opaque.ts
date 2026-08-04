@@ -50,7 +50,8 @@ export type DropKind =
   | "macro"
   | "opaqueBlock"
   | "opaqueInline"
-  | "opaquePart";
+  | "opaquePart"
+  | "runShading";
 
 /** One item a writer could not represent in its target format. */
 export interface DropRecord {
@@ -86,6 +87,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaqueBlock: "Unsupported block content",
   opaqueInline: "Unsupported inline content",
   opaquePart: "Package part",
+  runShading: "Run shading",
 };
 
 /** DROP_KIND_LABELS behind a plain-string lookup, for the dialog template
@@ -187,6 +189,8 @@ const REASONS: Record<DropKind, string> = {
   opaqueBlock: "this content is not understood by the editor and cannot be converted",
   opaqueInline: "this content is not understood by the editor and cannot be converted",
   opaquePart: "this file has no equivalent in the target format",
+  runShading:
+    "the target format has a single text background, which the highlight colour occupies",
 };
 
 const FORMAT_LABELS: Record<DocumentFormat, string> = {
@@ -231,6 +235,16 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
         const paragraphNumber = paragraphOffset + index + 1;
         for (const inline of section.blocks[index].opaqueInlines ?? []) {
           dropped.push(record(nodeKind(inline.xml, "opaqueInline"), `paragraph ${paragraphNumber}`, target));
+        }
+        // Run shading preserved beside a highlight (SPEC-013): ODF has one
+        // background slot, which the highlight occupies, so a .docx → .odt
+        // save loses the shading. One record per paragraph, not per run —
+        // the report locates by paragraph anyway.
+        if (
+          target === "odt" &&
+          section.blocks[index].runs.some((run) => run.formatting.shadingFill !== undefined)
+        ) {
+          dropped.push(record("runShading", `paragraph ${paragraphNumber}`, target));
         }
       }
     }

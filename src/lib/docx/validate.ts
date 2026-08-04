@@ -57,7 +57,9 @@ const HIGHLIGHT_VALUES = new Set([
 // emits, per the ECMA-376 Transitional schema. Order within each list is
 // the schema's required document order.
 const PPR_SEQUENCE = ["pStyle", "spacing", "ind", "jc", "outlineLvl"];
-const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u"];
+// CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
+// fitText, vertAlign", so shd follows u and vertAlign follows shd.
+const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];
 const SECTPR_SEQUENCE = ["pgSz", "pgMar"];
 const STYLE_SEQUENCE = ["name", "basedOn", "pPr", "rPr"];
 
@@ -147,6 +149,20 @@ function checkRunProperties(rPr: Element, context: string, violations: string[])
       case "u":
         checkAttr(child, "val", (v) => UNDERLINE_VALUES.has(v),
           "an ST_Underline value", context, violations);
+        break;
+      case "shd":
+        // The writer only emits the clear-pattern shading fallback
+        // (SPEC-013): a solid fill colour with no pattern overlay.
+        checkAttr(child, "val", (v) => v === "clear", 'the shading pattern "clear"',
+          context, violations);
+        checkAttr(child, "color", (v) => HEX_COLOR_PATTERN.test(v),
+          "a six-digit hex colour or 'auto'", context, violations, false);
+        checkAttr(child, "fill", (v) => HEX_COLOR_PATTERN.test(v),
+          "a six-digit hex colour or 'auto'", context, violations);
+        break;
+      case "vertAlign":
+        checkAttr(child, "val", (v) => ["baseline", "subscript", "superscript"].includes(v),
+          "an ST_VerticalAlignRun value", context, violations);
         break;
       case "rFonts":
         break;
