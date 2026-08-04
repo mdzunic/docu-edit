@@ -43,14 +43,14 @@ function buildStubbedContent(): HTMLElement {
   return root;
 }
 
-type CaretRangeDocument = Document & {
-  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+// jsdom's document has no own caretRangeFromPoint; tests install one and
+// remove it again (through a loose cast — lib.dom types it non-optional).
+const caretRangeDocument = document as Document & {
+  caretRangeFromPoint: (x: number, y: number) => Range | null;
 };
 
-const caretRangeDocument = document as CaretRangeDocument;
-
 afterEach(() => {
-  delete caretRangeDocument.caretRangeFromPoint;
+  delete (document as unknown as Record<string, unknown>).caretRangeFromPoint;
   document.body.innerHTML = "";
 });
 

@@ -15,24 +15,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
-// Chromium ships caretRangeFromPoint, Firefox caretPositionFromPoint (the
-// standard name); jsdom ships neither, which the callers' fallbacks cover.
-interface CaretPointDocument extends Document {
-  caretRangeFromPoint?: (x: number, y: number) => Range | null;
-  caretPositionFromPoint?: (
-    x: number,
-    y: number,
-  ) => { offsetNode: Node; offset: number } | null;
-}
-
+// Chromium ships caretRangeFromPoint (typed on Document by lib.dom), Firefox
+// ships caretPositionFromPoint (the standard name, not in lib.dom yet);
+// jsdom ships neither, which the callers' fallbacks cover.
 function caretPointAt(doc: Document, x: number, y: number): DomPoint | null {
-  const capable = doc as CaretPointDocument;
-  if (typeof capable.caretRangeFromPoint === "function") {
-    const range = capable.caretRangeFromPoint(x, y);
+  if (typeof doc.caretRangeFromPoint === "function") {
+    const range = doc.caretRangeFromPoint(x, y);
     return range ? { node: range.startContainer, offset: range.startOffset } : null;
   }
-  if (typeof capable.caretPositionFromPoint === "function") {
-    const position = capable.caretPositionFromPoint(x, y);
+  const positional = doc as Document & {
+    caretPositionFromPoint?: (
+      x: number,
+      y: number,
+    ) => { offsetNode: Node; offset: number } | null;
+  };
+  if (typeof positional.caretPositionFromPoint === "function") {
+    const position = positional.caretPositionFromPoint(x, y);
     return position ? { node: position.offsetNode, offset: position.offset } : null;
   }
   return null;

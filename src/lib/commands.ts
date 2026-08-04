@@ -48,6 +48,18 @@ export function caretSelection(caret: CaretPosition): ModelSelection {
   return { anchor: caret, focus: caret };
 }
 
+/** Typed `null` seed for selection variables in `.vue` scripts, which espree
+ * bars from writing the `ModelSelection | null` annotation themselves. */
+export function noSelection(): ModelSelection | null {
+  return null;
+}
+
+/** Typed `null` seed for command-result parameters in `.vue` scripts (same
+ * espree constraint as noSelection). */
+export function noCommandResult(): CommandResult | null {
+  return null;
+}
+
 export function isCollapsed(selection: ModelSelection): boolean {
   return compareCaret(selection.anchor, selection.focus) === 0;
 }
