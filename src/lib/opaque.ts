@@ -88,6 +88,19 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaquePart: "Package part",
 };
 
+/** DROP_KIND_LABELS behind a plain-string lookup, for the dialog template
+ * (espree-parsed .vue scripts cannot use TS-only index narrowing). */
+export function dropKindLabel(kind: string): string {
+  return (DROP_KIND_LABELS as Record<string, string>)[kind] ?? "Unsupported content";
+}
+
+/** Typed pass-through for the dialog's runtime `Array` prop — .vue scripts
+ * are parsed by espree, so the generic `PropType<DropRecord[]>` form is not
+ * available there. */
+export function asDropRecords(items: unknown): DropRecord[] {
+  return Array.isArray(items) ? (items as DropRecord[]) : [];
+}
+
 // --- drop report -----------------------------------------------------------
 
 const CHART_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/chart";

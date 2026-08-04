@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
+import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
@@ -183,6 +184,11 @@ function deleteOpenDocument() {
       :document-title="doc.title"
       @confirm="deleteOpenDocument"
       @cancel="confirmingDelete = false"
+    />
+    <ConversionReportDialog
+      v-if="conversionReport"
+      :items="conversionReport"
+      @close="closeConversionReport"
     />
   </AppShell>
   <AppShell
