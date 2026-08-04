@@ -14,19 +14,41 @@ import { noConversionReport } from "../lib/opaque";
 import {
   deleteDocument,
   getOrCreateDocument,
+  replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
 import { DEFAULT_TITLE } from "../lib/documentModel";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
-import { modelRangeFromSelection, noElement, setDomCaret } from "../lib/domCaret";
 import {
+  caretFromDomPoint,
+  extendDomSelection,
+  modelRangeFromSelection,
+  noElement,
+  setDomCaret,
+  setDomSelection,
+} from "../lib/domCaret";
+import {
+  caretAtClientPoint,
+  caretClientRect,
+  caretNearClientPoint,
+} from "../lib/caretGeometry";
+import { blockText, compareCaret, noCaret } from "../lib/textEditing";
+import {
+  blockCount,
+  blockOrdinal,
   deleteBackward,
   deleteForward,
   deleteRange,
+  documentEnd,
+  documentStart,
+  insertLineBreak,
   insertText,
-  noCaret,
-  splitParagraph,
-} from "../lib/textEditing";
+  isCollapsed,
+  noCommandResult,
+  noSelection,
+  selectAll,
+  splitBlock,
+} from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
 
 const route = useRoute();
@@ -64,6 +86,26 @@ let scrollTop = 0;
 let scrollContainer = noElement();
 let editLock = noEditLock();
 
+// --- IME composition (SPEC-011) --------------------------------------------
+// While the user composes (Japanese/Chinese/Korean input, dead keys) the
+// browser owns the DOM: preedit updates are neither cancelable nor modelled.
+// The model is committed exactly once, on compositionend, replacing the
+// selection snapshotted at compositionstart.
+let composing = false;
+let compositionRange = noSelection();
+
+// The screen-reader announcement for the current caret/selection (SPEC-011
+// AC: "announces caret movement") — rendered into a visually hidden
+// aria-live region below the canvas.
+const caretStatus = ref("");
+
+// Forces paragraph re-mounts by folding into the v-for keys: `key` names the
+// single block whose key carries `count` (bumped after an IME commit so the
+// browser-composed DOM nodes are discarded for a fresh model render), and
+// `epoch` re-keys the whole canvas (the recovery hatch when a composition
+// left the DOM diverged from the model).
+const remount = ref({ key: "", count: 0, epoch: 0 });
+
 const contentRoot = useTemplateRef("contentRoot");
 
 const autosave = useAutosave({
@@ -93,6 +135,7 @@ async function focusAndRestore() {
   root.focus();
   caret = caret ?? { section: 0, block: 0, offset: 0 };
   setDomCaret(root, caret);
+  updateCaretStatus({ start: caret, end: caret });
   // After focus/caret placement, which may themselves scroll.
   if (scrollContainer) {
     scrollContainer.scrollTop = scrollTop;
@@ -155,12 +198,16 @@ function handleScroll() {
 
 function handleSelectionChange() {
   const root = contentRoot.value;
-  if (!root || !editable.value) {
+  // During composition the DOM temporarily contains preedit text, so model
+  // offsets computed from it would be garbage — the caret is re-derived at
+  // compositionend instead.
+  if (!root || !editable.value || composing) {
     return;
   }
   const range = modelRangeFromSelection(root, document.getSelection());
   if (range) {
     caret = range.end;
+    updateCaretStatus(range);
   }
 }
 
@@ -181,63 +228,85 @@ onBeforeUnmount(() => {
   }
 });
 
-// --- typing (SPEC-010's minimal editing surface; SPEC-011 will extend it) --
+// --- the editing engine (SPEC-011) -----------------------------------------
 // Fully controlled: every beforeinput is cancelled and the supported ones
-// re-applied to the model, which re-renders and re-places the caret. The
-// model therefore never drifts from the DOM, and unsupported input types
-// are simply inert rather than corrupting.
+// re-applied through the command API in lib/commands, which returns a new
+// model state that replaces doc.value (and the store's model, so autosave
+// persists it). The DOM re-renders from the model and the caret is
+// re-placed — the model never drifts from the DOM, the DOM is never the
+// source of truth, and unsupported input types are simply inert. The one
+// exception is IME composition (see the composition handlers below).
+
+/** The current selection in model coordinates: the live DOM selection when
+ * it is inside the canvas, else the tracked caret. */
+function currentSelection(root = noElement()) {
+  if (!root) {
+    return null;
+  }
+  const range = modelRangeFromSelection(root, document.getSelection());
+  if (range) {
+    return { anchor: range.start, focus: range.end };
+  }
+  return caret ? { anchor: caret, focus: caret } : null;
+}
+
+/** Applies a command result: the new model becomes the document (in the
+ * view and in the store, so autosave and downloads see it), and the caret
+ * moves to the command's post-edit position. */
+function applyEdit(result = noCommandResult()) {
+  if (!result) {
+    return;
+  }
+  doc.value = replaceDocumentModel(documentId.value, result.model);
+  caret = result.selection.focus;
+  autosave.markDirty();
+  updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
+  void restoreCaretAfterRender();
+}
 
 function handleBeforeInput(event = new InputEvent("beforeinput")) {
+  const type = event.inputType;
+  if (composing || event.isComposing || type === "insertCompositionText") {
+    // The browser is composing into the DOM; insertCompositionText is not
+    // cancelable and the model must not change until compositionend.
+    return;
+  }
   event.preventDefault();
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model || !editable.value) {
     return;
   }
-  const selection = modelRangeFromSelection(root, document.getSelection());
-  const start = selection ? selection.start : caret;
-  const end = selection ? selection.end : caret;
-  if (!start || !end) {
+  const selection = currentSelection(root);
+  if (!selection) {
     return;
   }
-  const collapsed =
-    start.section === end.section &&
-    start.block === end.block &&
-    start.offset === end.offset;
-  const type = event.inputType;
-  let next = null;
+  let result = null;
   if (type === "insertText" || type === "insertFromPaste") {
     const text =
       event.data ??
       (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
     if (text) {
-      const base = collapsed ? start : deleteRange(model, start, end);
-      next = insertText(model, base, text);
+      result = insertText(model, selection, text);
     }
   } else if (type === "insertParagraph") {
-    const base = collapsed ? start : deleteRange(model, start, end);
-    next = splitParagraph(model, base);
+    result = splitBlock(model, selection);
   } else if (type === "insertLineBreak") {
     // Shift+Enter: a forced line break, stored as a literal "\n" that
     // pre-wrap rendering displays without a new paragraph.
-    const base = collapsed ? start : deleteRange(model, start, end);
-    next = insertText(model, base, "\n");
+    result = insertLineBreak(model, selection);
   } else if (type === "deleteContentBackward") {
-    next = collapsed ? deleteBackward(model, start) : deleteRange(model, start, end);
+    result = deleteBackward(model, selection);
   } else if (type === "deleteContentForward") {
-    next = collapsed ? deleteForward(model, start) : deleteRange(model, start, end);
+    result = deleteForward(model, selection);
   } else if (type === "deleteByCut" || type === "deleteContent") {
     // The clipboard copy half of a cut happened in the earlier `cut` event;
     // cancelling beforeinput only leaves the deletion to us.
-    next = collapsed ? null : deleteRange(model, start, end);
+    result = isCollapsed(selection) ? null : deleteRange(model, selection);
   }
-  if (!next) {
-    return;
+  if (result) {
+    applyEdit(result);
   }
-  caret = next;
-  triggerRef(doc);
-  autosave.markDirty();
-  void restoreCaretAfterRender();
 }
 
 async function restoreCaretAfterRender() {
@@ -246,6 +315,220 @@ async function restoreCaretAfterRender() {
   if (root && caret) {
     setDomCaret(root, caret);
   }
+}
+
+// --- IME composition and dead keys (SPEC-011) ------------------------------
+
+function handleCompositionStart() {
+  const root = contentRoot.value;
+  if (!root || !editable.value) {
+    return;
+  }
+  composing = true;
+  // Snapshot what the composition will replace BEFORE the browser touches
+  // the DOM: the selection at compositionstart, still in model coordinates.
+  compositionRange = currentSelection(root);
+}
+
+function handleCompositionEnd(event = new CompositionEvent("compositionend")) {
+  composing = false;
+  const range = compositionRange;
+  compositionRange = null;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value || !range) {
+    return;
+  }
+  const data = event.data ?? "";
+  if (!data) {
+    // Cancelled composition: the browser removed its own preedit and the
+    // model was never touched — nothing to commit.
+    return;
+  }
+  // Re-key the paragraph the composition happened in so the render below
+  // mounts it fresh from the model, discarding whatever nodes the browser's
+  // composition left in the DOM (Vue cannot patch nodes it did not create).
+  bumpBlockKey(range.anchor.section, range.anchor.block);
+  applyEdit(insertText(model, range, data));
+  void verifyCanvasAfterRender();
+}
+
+function bumpBlockKey(section = 0, block = 0) {
+  const current = remount.value;
+  remount.value = {
+    key: `${section}:${block}`,
+    count: current.count + 1,
+    epoch: current.epoch,
+  };
+}
+
+/** Belt and braces for composition edge cases: if the canvas text does not
+ * match the model after the commit render, re-key every paragraph so the
+ * whole canvas re-mounts from the model — the model always wins. */
+async function verifyCanvasAfterRender() {
+  await nextTick();
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model) {
+    return;
+  }
+  const expected = model.sections
+    .map((section) => section.blocks.map(blockText).join(""))
+    .join("");
+  if (root.textContent !== expected) {
+    const current = remount.value;
+    remount.value = { key: current.key, count: current.count, epoch: current.epoch + 1 };
+    void restoreCaretAfterRender();
+  }
+}
+
+// --- caret movement and selection (SPEC-011) -------------------------------
+// Character/word/line movement, plain Home/End and mouse selection are the
+// browser's native caret behaviour over the rendered canvas — the DOM
+// selection is the *presentation* of the selection, which selectionchange
+// mirrors back into model coordinates. Document-level jumps and paging are
+// implemented here because native behaviour is unreliable across them.
+
+/** Announces the caret/selection to assistive technology and mirrors it
+ * into the tracked caret. */
+function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
+  const model = doc.value;
+  if (!model || !range.start || !range.end) {
+    return;
+  }
+  const total = blockCount(model);
+  if (compareCaret(range.start, range.end) === 0) {
+    caretStatus.value =
+      `Paragraph ${blockOrdinal(model, range.end)} of ${total}, ` +
+      `character ${range.end.offset + 1}`;
+  } else {
+    caretStatus.value =
+      `Selected from paragraph ${blockOrdinal(model, range.start)}, ` +
+      `character ${range.start.offset + 1} to paragraph ` +
+      `${blockOrdinal(model, range.end)}, character ${range.end.offset + 1}`;
+  }
+}
+
+/** Moves the caret (or, with extend, the selection's focus end) to a model
+ * position and refreshes tracking + announcement. */
+function applyCaretMove(target = noCaret(), extend = false) {
+  const root = contentRoot.value;
+  if (!root || !target) {
+    return;
+  }
+  if (extend) {
+    extendDomSelection(root, target);
+  } else {
+    setDomCaret(root, target);
+  }
+  caret = target;
+  const range = modelRangeFromSelection(root, document.getSelection());
+  updateCaretStatus(range ?? { start: target, end: target });
+}
+
+/** The caret's moving end (the DOM selection's focus), which Shift+paging
+ * keeps extending; falls back to the tracked caret. */
+function domFocusCaret(root = noElement()) {
+  if (!root) {
+    return caret;
+  }
+  const selection = document.getSelection();
+  if (selection && selection.rangeCount > 0 && selection.focusNode) {
+    const focus = caretFromDomPoint(root, selection.focusNode, selection.focusOffset);
+    if (focus) {
+      return focus;
+    }
+  }
+  return caret;
+}
+
+/** PageUp/PageDown: scrolls one viewport and moves the caret to the text
+ * position one viewport away from where it was, snapping to the document's
+ * start/end when there is nothing further to page onto. */
+function moveCaretByPage(direction = 1, extend = false) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model) {
+    return;
+  }
+  const from = domFocusCaret(root) ?? { section: 0, block: 0, offset: 0 };
+  const rect = caretClientRect(root, from);
+  const container = scrollContainer;
+  const pageHeight =
+    container && container.clientHeight > 0
+      ? container.clientHeight
+      : window.innerHeight;
+  let target = null;
+  if (rect) {
+    const before = container ? container.scrollTop : 0;
+    if (container) {
+      container.scrollTop = before + direction * pageHeight;
+    }
+    const scrolled = container ? container.scrollTop - before : 0;
+    target = caretAtClientPoint(
+      root,
+      rect.left,
+      rect.top + direction * pageHeight - scrolled,
+    );
+    if (target && compareCaret(target, from) === 0) {
+      target = null;
+    }
+  }
+  if (!target) {
+    target = direction > 0 ? documentEnd(model) : documentStart();
+  }
+  applyCaretMove(target, extend);
+}
+
+function handleKeyDown(event = new KeyboardEvent("keydown")) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value || event.altKey) {
+    return;
+  }
+  const mod = event.ctrlKey || event.metaKey;
+  if (mod && (event.key === "Home" || event.key === "End")) {
+    // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
+    event.preventDefault();
+    applyCaretMove(
+      event.key === "Home" ? documentStart() : documentEnd(model),
+      event.shiftKey,
+    );
+    if (scrollContainer) {
+      scrollContainer.scrollTop =
+        event.key === "Home" ? 0 : scrollContainer.scrollHeight;
+    }
+  } else if (mod && !event.shiftKey && event.key.toLowerCase() === "a") {
+    // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
+    event.preventDefault();
+    const all = selectAll(model);
+    setDomSelection(root, all.anchor, all.focus);
+    caret = all.focus;
+    updateCaretStatus({ start: all.anchor, end: all.focus });
+  } else if (event.key === "PageDown" || event.key === "PageUp") {
+    event.preventDefault();
+    moveCaretByPage(event.key === "PageDown" ? 1 : -1, event.shiftKey);
+  }
+}
+
+/** Clicking anywhere on the page canvas outside the text (margins, empty
+ * space) places the caret at the nearest text position. Clicks inside the
+ * editable content keep the browser's native precise placement. */
+function handlePageMouseDown(event = new MouseEvent("mousedown")) {
+  const root = contentRoot.value;
+  if (!root || !editable.value) {
+    return;
+  }
+  if (event.target instanceof Node && root.contains(event.target)) {
+    return;
+  }
+  const target = caretNearClientPoint(root, event.clientX, event.clientY);
+  if (!target) {
+    return;
+  }
+  event.preventDefault();
+  root.focus();
+  applyCaretMove(target, event.shiftKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,13 +565,21 @@ const flatBlocks = computed(() => {
   if (!doc.value) {
     return [];
   }
+  // Keys carry the remount state (see `remount`): bumping it renames a key,
+  // which makes Vue mount that paragraph fresh instead of patching DOM the
+  // browser's IME composition may have rearranged underneath it.
+  const bump = remount.value;
   return doc.value.sections.flatMap((section, sectionIndex) =>
-    section.blocks.map((block, blockIndex) => ({
-      key: `${sectionIndex}:${blockIndex}`,
-      block,
-      section: sectionIndex,
-      blockIndex,
-    })),
+    section.blocks.map((block, blockIndex) => {
+      const address = `${sectionIndex}:${blockIndex}`;
+      const suffix = bump.key === address ? `:${bump.count}` : "";
+      return {
+        key: `${bump.epoch}:${address}${suffix}`,
+        block,
+        section: sectionIndex,
+        blockIndex,
+      };
+    }),
   );
 });
 const downloadFormat = computed(() =>
@@ -430,6 +721,7 @@ function deleteOpenDocument() {
         class="page"
         data-testid="document-page"
         :style="pageStyle"
+        @mousedown="handlePageMouseDown"
       >
         <div
           class="page-margin"
@@ -447,6 +739,9 @@ function deleteOpenDocument() {
             :contenteditable="editable"
             spellcheck="false"
             @beforeinput="handleBeforeInput"
+            @keydown="handleKeyDown"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
           >
             <component
               :is="headingTag(entry.block.headingLevel)"
@@ -469,6 +764,14 @@ function deleteOpenDocument() {
             </component>
           </div>
         </div>
+      </div>
+      <div
+        class="visually-hidden"
+        role="status"
+        aria-live="polite"
+        data-testid="caret-status"
+      >
+        {{ caretStatus }}
       </div>
     </div>
     <ConfirmDeleteDialog
@@ -587,6 +890,17 @@ function deleteOpenDocument() {
   margin: 0;
   font-weight: normal;
   font-size: inherit;
+}
+
+/* Off-screen but rendered, so the aria-live caret announcements reach
+   assistive technology without painting anything. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .not-found {
