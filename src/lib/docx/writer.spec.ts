@@ -52,7 +52,7 @@ function paragraphTexts(model: { sections: { blocks: Paragraph[] }[] }): string[
 
 describe("writeDocx — package structure (AC-3..AC-8)", () => {
   it("writes a valid OPC ZIP containing every required part", async () => {
-    const bytes = await writeDocx(createDocument("id-1"));
+    const bytes = (await writeDocx(createDocument("id-1"))).bytes;
     const parts = await unzip(bytes);
     for (const required of [
       "[Content_Types].xml",
@@ -66,7 +66,7 @@ describe("writeDocx — package structure (AC-3..AC-8)", () => {
   });
 
   it("every written part is well-formed XML", async () => {
-    const bytes = await writeDocx(createDocument("id-1"));
+    const bytes = (await writeDocx(createDocument("id-1"))).bytes;
     const parts = await unzip(bytes);
     for (const [name, raw] of parts) {
       expect(() => parseXml(decoder.decode(raw)), `${name} should parse`).not.toThrow();
@@ -79,14 +79,14 @@ describe("writeDocx — docProps/core.xml (AC-14, AC-15)", () => {
 
   it("carries the document title", async () => {
     const model = { ...createDocument("id-1"), title: "Quarterly Report" };
-    const core = parseXml(await partText(await writeDocx(model, { modified }), "docProps/core.xml"));
+    const core = parseXml(await partText((await writeDocx(model, { modified })).bytes, "docProps/core.xml"));
     const title = core.getElementsByTagNameNS("http://purl.org/dc/elements/1.1/", "title")[0];
     expect(title.textContent).toBe("Quarterly Report");
   });
 
   it("carries a dcterms:modified W3CDTF timestamp", async () => {
     const core = parseXml(
-      await partText(await writeDocx(createDocument("id-1"), { modified }), "docProps/core.xml"),
+      await partText((await writeDocx(createDocument("id-1"), { modified })).bytes, "docProps/core.xml"),
     );
     const el = core.getElementsByTagNameNS("http://purl.org/dc/terms/", "modified")[0];
     expect(el.textContent).toBe("2026-08-03T12:34:56Z");
@@ -105,7 +105,7 @@ describe("writeDocx — docProps/core.xml (AC-14, AC-15)", () => {
 
   it("falls back to the default title when the model title is blank", async () => {
     const model = { ...createDocument("id-1"), title: "   " };
-    const core = await partText(await writeDocx(model, { modified }), "docProps/core.xml");
+    const core = await partText((await writeDocx(model, { modified })).bytes, "docProps/core.xml");
     expect(core).toContain(`<dc:title>${DEFAULT_TITLE}</dc:title>`);
   });
 });
@@ -115,7 +115,7 @@ describe.each(["word-authored.docx", "libreoffice-authored.docx", "google-docs-e
   (fixtureName) => {
     it("open -> save -> re-open reproduces the model exactly", async () => {
       const first = await parseDocx(loadFixture(docxFixturesDir, fixtureName));
-      const written = await writeDocx(modelFrom(first));
+      const written = (await writeDocx(modelFrom(first))).bytes;
       const second = await parseDocx(written);
       // Text, run formatting, paragraph formatting, style references and
       // heading levels all live inside sections; page setup and default
@@ -128,9 +128,9 @@ describe.each(["word-authored.docx", "libreoffice-authored.docx", "google-docs-e
     it("a second save of the re-opened model is byte-identical (stable output)", async () => {
       const modified = new Date("2026-08-03T12:34:56Z");
       const first = await parseDocx(loadFixture(docxFixturesDir, fixtureName));
-      const written = await writeDocx(modelFrom(first), { modified });
+      const written = (await writeDocx(modelFrom(first), { modified })).bytes;
       const reopened = await parseDocx(written);
-      const rewritten = await writeDocx(modelFrom(reopened), { modified });
+      const rewritten = (await writeDocx(modelFrom(reopened), { modified })).bytes;
       expect(rewritten).toEqual(written);
     });
   },
@@ -142,10 +142,10 @@ describe("writeDocx — content details", () => {
     model.sections[0].blocks = [
       { type: "paragraph", runs: [{ text: "col1\tcol2\nnext line", formatting: {} }] },
     ];
-    const documentXml = await partText(await writeDocx(model), "word/document.xml");
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
     expect(documentXml).toContain("<w:tab/>");
     expect(documentXml).toContain("<w:br/>");
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     expect(paragraphTexts(reopened)).toEqual(["col1\tcol2\nnext line"]);
   });
 
@@ -153,7 +153,7 @@ describe("writeDocx — content details", () => {
     const text = `5 < 6 & 7 > 2, "quoted", 'single' — héllo π`;
     const model = createDocument("id-1");
     model.sections[0].blocks = [{ type: "paragraph", runs: [{ text, formatting: {} }] }];
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     expect(paragraphTexts(reopened)).toEqual([text]);
   });
 
@@ -162,9 +162,9 @@ describe("writeDocx — content details", () => {
     model.sections[0].blocks = [
       { type: "paragraph", runs: [{ text: "  spaced out  ", formatting: {} }] },
     ];
-    const documentXml = await partText(await writeDocx(model), "word/document.xml");
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
     expect(documentXml).toContain('<w:t xml:space="preserve">  spaced out  </w:t>');
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     expect(paragraphTexts(reopened)).toEqual(["  spaced out  "]);
   });
 
@@ -176,7 +176,7 @@ describe("writeDocx — content details", () => {
         runs: [{ text: "plain", formatting: { bold: false, underline: false } }],
       },
     ];
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     const run = (reopened.sections[0].blocks[0] as Paragraph).runs[0];
     expect(run.formatting.bold).toBe(false);
     expect(run.formatting.underline).toBe(false);
@@ -191,9 +191,9 @@ describe("writeDocx — content details", () => {
         formatting: { indentFirstLineCm: -1.27 },
       },
     ];
-    const documentXml = await partText(await writeDocx(model), "word/document.xml");
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
     expect(documentXml).toContain('<w:ind w:hanging="720"/>');
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     expect((reopened.sections[0].blocks[0] as Paragraph).formatting?.indentFirstLineCm).toBeCloseTo(
       -1.27,
       10,
@@ -202,7 +202,7 @@ describe("writeDocx — content details", () => {
 
   it("declares every referenced paragraph style in styles.xml (AC-12)", async () => {
     const first = await parseDocx(loadFixture(docxFixturesDir, "google-docs-exported.docx"));
-    const stylesXml = await partText(await writeDocx(modelFrom(first)), "word/styles.xml");
+    const stylesXml = await partText((await writeDocx(modelFrom(first))).bytes, "word/styles.xml");
     for (const id of ["Heading1", "Heading2", "Heading3"]) {
       expect(stylesXml).toContain(`w:styleId="${id}"`);
     }
@@ -211,14 +211,14 @@ describe("writeDocx — content details", () => {
 
   it("marks a landscape page with w:orient (AC-13)", async () => {
     const first = await parseDocx(loadFixture(docxFixturesDir, "libreoffice-authored.docx"));
-    const documentXml = await partText(await writeDocx(modelFrom(first)), "word/document.xml");
+    const documentXml = await partText((await writeDocx(modelFrom(first))).bytes, "word/document.xml");
     expect(documentXml).toContain('<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>');
   });
 });
 
 describe("writeDocx — empty document (AC-24)", () => {
   it("a freshly created blank document produces a valid one-paragraph file", async () => {
-    const reopened = await parseDocx(await writeDocx(createDocument("id-1")));
+    const reopened = await parseDocx((await writeDocx(createDocument("id-1"))).bytes);
     expect(reopened.sections[0].blocks).toHaveLength(1);
     expect((reopened.sections[0].blocks[0] as Paragraph).runs).toEqual([]);
   });
@@ -226,9 +226,9 @@ describe("writeDocx — empty document (AC-24)", () => {
   it("a model with no blocks at all still writes one paragraph", async () => {
     const model = createDocument("id-1");
     model.sections[0].blocks = [];
-    const documentXml = await partText(await writeDocx(model), "word/document.xml");
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
     expect(documentXml).toContain("<w:p/>");
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     expect(reopened.sections[0].blocks).toHaveLength(1);
   });
 });
@@ -243,7 +243,7 @@ describe("writeDocx — from a document opened as .odt (AC-23)", () => {
       defaultStyles: parsed.defaultStyles,
       format: "odt",
     };
-    const bytes = await writeDocx(model);
+    const bytes = (await writeDocx(model)).bytes;
     const parts = await unzip(bytes);
     expect(parts.has("word/document.xml")).toBe(true);
     expect(parts.has("mimetype")).toBe(false);
@@ -261,7 +261,7 @@ describe("writeDocx — from a document opened as .odt (AC-23)", () => {
       defaultStyles: parsed.defaultStyles,
       format: "odt",
     };
-    const reopened = await parseDocx(await writeDocx(model));
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
     expect(paragraphTexts(reopened)).toEqual(paragraphTexts(parsed));
     const originalHeadings = parsed.sections[0].blocks.map(
       (block) => (block as Paragraph).headingLevel,
