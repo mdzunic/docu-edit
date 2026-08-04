@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { HIGHLIGHT_PICKER_ITEMS } from "../lib/colors";
 import { HIGHLIGHT_HEX } from "../lib/odf/properties";
+import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -19,8 +20,18 @@ const emit = defineEmits(["select"]);
 
 const open = ref(false);
 const root = useTemplateRef("root");
+const triggerEl = useTemplateRef("triggerEl");
+const menuEl = useTemplateRef("menuEl");
 
 const ITEMS = HIGHLIGHT_PICKER_ITEMS;
+
+// The toolbar clips overflow on its vertical axis, so the menu is rendered
+// position:fixed (escaped below the anchor) instead of at a clipped offset.
+const { menuStyle } = useFloatingMenu({
+  open: () => open.value,
+  anchor: () => triggerEl.value,
+  menu: () => menuEl.value,
+});
 
 function toggle() {
   if (!props.disabled) {
@@ -69,6 +80,7 @@ onBeforeUnmount(() => {
     @keydown="handleKeydown"
   >
     <button
+      ref="triggerEl"
       type="button"
       class="picker-button"
       data-testid="highlight-button"
@@ -91,10 +103,12 @@ onBeforeUnmount(() => {
     </button>
     <div
       v-if="open"
+      ref="menuEl"
       class="picker-menu"
       data-testid="highlight-menu"
       role="dialog"
       aria-label="Highlight colour"
+      :style="menuStyle"
     >
       <div class="swatch-grid">
         <!-- The 15 Word highlight colours (SPEC-013 AC); white is in the
@@ -176,10 +190,9 @@ onBeforeUnmount(() => {
   background: repeating-linear-gradient(45deg, #bbb 0 2px, #eee 2px 4px);
 }
 
+/* position/left/top come inline from useFloatingMenu (fixed, escapes the
+   toolbar's vertical clipping). */
 .picker-menu {
-  position: absolute;
-  top: calc(100% + 0.25rem);
-  left: 0;
   z-index: 30;
   padding: 0.5rem;
   border: 1px solid #bdbdbd;

@@ -1,0 +1,72 @@
+import { getCurrentInstance, onBeforeUnmount, ref, watch } from "vue";
+
+export interface UseFloatingMenuOptions {
+  /** True while the popup is open; the popup only renders then, and it is
+   * (re)positioned at the moment it opens. */
+  open: () => boolean;
+  /** The button the popup anchors to; measured via getBoundingClientRect. */
+  anchor: () => Element | null;
+  /** The popup itself; its width is measured so it can be kept on-screen. */
+  menu: () => Element | null;
+  /** Gap between the anchor's bottom edge and the popup's top edge, in px. */
+  offsetY?: number;
+  /** Minimum distance to keep to the viewport's left/right edges, in px. */
+  margin?: number;
+}
+
+/** Anchors a position:fixed popup below its trigger. The toolbar that hosts
+ * these pickers scrolls horizontally (overflow-x: auto) and clips any content
+ * taller than one row, so an ordinary absolutely-positioned menu is cut off.
+ * A fixed popup escapes that clipping; on scroll/resize we re-measure the
+ * anchor so it stays pinned to its button even while the strip scrolls. */
+export function useFloatingMenu({
+  open,
+  anchor,
+  menu,
+  offsetY = 4,
+  margin = 8,
+}: UseFloatingMenuOptions) {
+  const menuStyle = ref<Record<string, string>>({});
+
+  function position() {
+    if (!open()) {
+      return;
+    }
+    const anchorEl = anchor();
+    if (!anchorEl) {
+      return;
+    }
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const menuEl = menu();
+    const menuWidth = menuEl ? menuEl.getBoundingClientRect().width : 0;
+    const maxLeft = window.innerWidth - menuWidth - margin;
+    const left = Math.max(margin, Math.min(anchorRect.left, maxLeft));
+    menuStyle.value = {
+      position: "fixed",
+      left: `${left}px`,
+      top: `${anchorRect.bottom + offsetY}px`,
+    };
+  }
+
+  // flush: "post" so the popup's DOM (gated on `open`) exists before its
+  // width is measured.
+  watch(open, (isOpen) => {
+    if (isOpen) {
+      position();
+    }
+  }, { flush: "post" });
+
+  // Capture-phase scroll also picks up the toolbar's own horizontal scroll,
+  // keeping the popup pinned to the button as the strip moves beneath it.
+  document.addEventListener("scroll", position, true);
+  window.addEventListener("resize", position);
+  const instance = getCurrentInstance();
+  if (instance) {
+    onBeforeUnmount(() => {
+      document.removeEventListener("scroll", position, true);
+      window.removeEventListener("resize", position);
+    });
+  }
+
+  return { menuStyle };
+}

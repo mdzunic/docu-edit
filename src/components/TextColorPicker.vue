@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { parseColorInput, TEXT_COLOR_PALETTE } from "../lib/colors";
+import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -21,8 +22,18 @@ const open = ref(false);
 const customDraft = ref("");
 const customInvalid = ref(false);
 const root = useTemplateRef("root");
+const triggerEl = useTemplateRef("triggerEl");
+const menuEl = useTemplateRef("menuEl");
 
 const PALETTE = TEXT_COLOR_PALETTE;
+
+// The toolbar clips overflow on its vertical axis, so the menu is rendered
+// position:fixed (escaped below the anchor) instead of at a clipped offset.
+const { menuStyle } = useFloatingMenu({
+  open: () => open.value,
+  anchor: () => triggerEl.value,
+  menu: () => menuEl.value,
+});
 
 // The runtime Array prop arrives untyped; String() gives the template the
 // string list it needs (espree bars a PropType<string[]> annotation here).
@@ -91,6 +102,7 @@ onBeforeUnmount(() => {
     @keydown="handleKeydown"
   >
     <button
+      ref="triggerEl"
       type="button"
       class="picker-button"
       data-testid="text-color-button"
@@ -115,10 +127,12 @@ onBeforeUnmount(() => {
     </button>
     <div
       v-if="open"
+      ref="menuEl"
       class="picker-menu"
       data-testid="text-color-menu"
       role="dialog"
       aria-label="Text colour"
+      :style="menuStyle"
     >
       <!-- Swatches prevent mousedown so the editor selection stays live;
            the custom input must NOT — it needs focus to be typed into. -->
@@ -237,10 +251,9 @@ onBeforeUnmount(() => {
   background: repeating-linear-gradient(45deg, #bbb 0 2px, #eee 2px 4px);
 }
 
+/* position/left/top come inline from useFloatingMenu (fixed, escapes the
+   toolbar's vertical clipping). */
 .picker-menu {
-  position: absolute;
-  top: calc(100% + 0.25rem);
-  left: 0;
   z-index: 30;
   padding: 0.5rem;
   border: 1px solid #bdbdbd;
