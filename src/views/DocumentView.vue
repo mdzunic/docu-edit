@@ -13,6 +13,7 @@ import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
+import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
@@ -79,6 +80,18 @@ import {
   verticalAlignState,
 } from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
+import {
+  breakGroup as breakTypingGroup,
+  canRedo as canRedoDocument,
+  canUndo as canUndoDocument,
+  clearHistory as clearUndoHistory,
+  noHistorySnapshot,
+  recordEdit as recordHistoryEdit,
+  redo as redoDocument,
+  redoLabel as redoDocumentLabel,
+  undo as undoDocument,
+  undoLabel as undoDocumentLabel,
+} from "../lib/undoHistory";
 
 const route = useRoute();
 const router = useRouter();
@@ -114,6 +127,28 @@ let caret = noCaret();
 let scrollTop = 0;
 let scrollContainer = noElement();
 let editLock = noEditLock();
+
+// --- undo/redo (SPEC-015) ----------------------------------------------
+// The undo/redo history itself is owned by the framework-free lib/undoHistory
+// module, keyed by document id (AC-18); this view only feeds it edits and
+// caret moves and mirrors its per-document state into a ref for the toolbar
+// (AC-5..8). `sessionDocId` — not documentId.value — is what closeSession
+// clears, the same reason useAutosave tracks its own docId closure variable:
+// by the time the documentId watcher's callback runs, documentId.value
+// already reflects the NEW id.
+let sessionDocId = "";
+const EMPTY_UNDO_REDO_STATE = { canUndo: false, undoLabel: "", canRedo: false, redoLabel: "" };
+const undoRedoState = ref(EMPTY_UNDO_REDO_STATE);
+
+function refreshUndoRedoState() {
+  const id = documentId.value;
+  undoRedoState.value = {
+    canUndo: canUndoDocument(id),
+    undoLabel: undoDocumentLabel(id) ?? "",
+    canRedo: canRedoDocument(id),
+    redoLabel: redoDocumentLabel(id) ?? "",
+  };
+}
 
 // --- character formatting (SPEC-012) ----------------------------------------
 // `selectionAnchor` is set only when the tracked selection is a real (non-
@@ -220,6 +255,7 @@ async function focusAndRestore() {
 
 function openSession(id = "") {
   lockState.value = "pending";
+  sessionDocId = id;
   editLock = acquireEditLock(id, (state) => {
     if (documentId.value !== id || !doc.value) {
       return;
@@ -227,6 +263,7 @@ function openSession(id = "") {
     lockState.value = state === "acquired" ? "acquired" : "busy";
     if (state === "acquired") {
       void autosave.beginSession(id);
+      refreshUndoRedoState();
     }
   });
 }
@@ -242,6 +279,12 @@ function closeSession() {
   lockState.value = "pending";
   caret = noCaret();
   scrollTop = 0;
+  // AC-19: the undo/redo history does not outlive the document being open.
+  if (sessionDocId) {
+    clearUndoHistory(sessionDocId);
+    sessionDocId = "";
+  }
+  undoRedoState.value = EMPTY_UNDO_REDO_STATE;
 }
 
 watch(documentId, (id) => {
@@ -281,15 +324,18 @@ function handleSelectionChange() {
   const range = modelRangeFromSelection(root, document.getSelection());
   if (range) {
     // A genuine external move (arrow keys, a native click/drag inside the
-    // canvas) discards the pending format (AC-11). Our own programmatic
+    // canvas) discards the pending format (AC-11 of SPEC-012) and breaks the
+    // undo history's typing group (SPEC-015 AC-10). Our own programmatic
     // placements (restoreCaretAfterRender after an edit) don't count: they
     // set `caret` to the new position *before* touching the DOM, so by the
     // time this fires the observed range already matches it.
-    if (
-      pendingFormat &&
-      (!caret || compareCaret(range.end, caret) !== 0 || compareCaret(range.start, range.end) !== 0)
-    ) {
+    const genuineMove =
+      !caret || compareCaret(range.end, caret) !== 0 || compareCaret(range.start, range.end) !== 0;
+    if (pendingFormat && genuineMove) {
       pendingFormat = noPendingFormat();
+    }
+    if (genuineMove) {
+      breakTypingGroup(documentId.value);
     }
     caret = range.end;
     // Track the anchor of a real selection so a toolbar interaction that
@@ -346,16 +392,75 @@ function currentSelection(root = noElement()) {
  * view and in the store, so autosave and downloads see it), and the caret
  * moves to the command's post-edit position — or, for the character-
  * formatting commands, the whole (non-collapsed) selection is restored
- * (SPEC-012 AC-13, AC-14). */
-function applyEdit(result = noCommandResult()) {
-  if (!result) {
+ * (SPEC-012 AC-13, AC-14).
+ *
+ * `beforeSelection` is the selection the command was given — exactly the
+ * state undo must restore the caret/selection to (SPEC-015 AC-14) — and
+ * `label`/`groupable` describe the edit for the undo history (AC-7..13):
+ * every call site names its own action, so recording is never skipped by
+ * accident the way a defaulted label could be. */
+function applyEdit(
+  result = noCommandResult(),
+  beforeSelection = noSelection(),
+  label = "",
+  groupable = false,
+) {
+  if (!result || !beforeSelection) {
     return;
+  }
+  const before = doc.value;
+  if (before) {
+    recordHistoryEdit(documentId.value, {
+      before: { model: before, selection: beforeSelection },
+      after: { model: result.model, selection: result.selection },
+      label,
+      groupable,
+    });
   }
   doc.value = replaceDocumentModel(documentId.value, result.model);
   caret = result.selection.focus;
   selectionAnchor = isCollapsed(result.selection) ? noCaret() : result.selection.anchor;
   autosave.markDirty();
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
+  refreshUndoRedoState();
+  void restoreCaretAfterRender();
+}
+
+/** Ctrl/Cmd+Z / the toolbar's Undo button (AC-1, AC-4). */
+function performUndo() {
+  const root = contentRoot.value;
+  if (!root || !editable.value) {
+    return;
+  }
+  applyHistorySnapshot(undoDocument(documentId.value));
+}
+
+/** Ctrl/Cmd+Shift+Z, Ctrl+Y on Windows / the toolbar's Redo button (AC-2,
+ * AC-3, AC-4). */
+function performRedo() {
+  const root = contentRoot.value;
+  if (!root || !editable.value) {
+    return;
+  }
+  applyHistorySnapshot(redoDocument(documentId.value));
+}
+
+/** Restores a snapshot from the undo/redo history: unlike applyEdit, no new
+ * edit is recorded (undo/redo isn't itself an undoable edit) and any
+ * pending format is discarded, since the selection is moving. */
+function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
+  const root = contentRoot.value;
+  if (!snapshot || !root) {
+    return;
+  }
+  doc.value = replaceDocumentModel(documentId.value, snapshot.model);
+  caret = snapshot.selection.focus;
+  selectionAnchor = isCollapsed(snapshot.selection) ? noCaret() : snapshot.selection.anchor;
+  pendingFormat = noPendingFormat();
+  autosave.markDirty();
+  updateCaretStatus({ start: snapshot.selection.anchor, end: snapshot.selection.focus });
+  refreshUndoRedoState();
+  root.focus();
   void restoreCaretAfterRender();
 }
 
@@ -377,30 +482,42 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
     return;
   }
   let result = null;
+  // Undo grouping (SPEC-015 AC-9, AC-12): only literal typed characters
+  // group into one step. A paste is bulk content, not "typed characters",
+  // so it stays its own step even though it shares insertText's mechanics.
+  let label = "";
+  let groupable = false;
   if (type === "insertText" || type === "insertFromPaste") {
     const text =
       event.data ??
       (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
     if (text) {
       result = insertText(model, selection, text, pendingFormat);
+      label = type === "insertText" ? "typing" : "paste";
+      groupable = type === "insertText";
     }
   } else if (type === "insertParagraph") {
     result = splitBlock(model, selection);
+    label = "new paragraph";
   } else if (type === "insertLineBreak") {
     // Shift+Enter: a forced line break, stored as a literal "\n" that
     // pre-wrap rendering displays without a new paragraph.
     result = insertLineBreak(model, selection);
+    label = "line break";
   } else if (type === "deleteContentBackward") {
     result = deleteBackward(model, selection);
+    label = "delete";
   } else if (type === "deleteContentForward") {
     result = deleteForward(model, selection);
+    label = "delete";
   } else if (type === "deleteByCut" || type === "deleteContent") {
     // The clipboard copy half of a cut happened in the earlier `cut` event;
     // cancelling beforeinput only leaves the deletion to us.
     result = isCollapsed(selection) ? null : deleteRange(model, selection);
+    label = "delete";
   }
   if (result) {
-    applyEdit(result);
+    applyEdit(result, selection, label, groupable);
   }
 }
 
@@ -449,7 +566,7 @@ function handleCompositionEnd(event = new CompositionEvent("compositionend")) {
   // mounts it fresh from the model, discarding whatever nodes the browser's
   // composition left in the DOM (Vue cannot patch nodes it did not create).
   bumpBlockKey(range.anchor.section, range.anchor.block);
-  applyEdit(insertText(model, range, data, pendingFormat));
+  applyEdit(insertText(model, range, data, pendingFormat), range, "typing", true);
   void verifyCanvasAfterRender();
 }
 
@@ -540,6 +657,11 @@ function applyCaretMove(target = noCaret(), extend = false) {
     return;
   }
   pendingFormat = noPendingFormat();
+  // Explicit navigation breaks the undo history's typing group too (SPEC-015
+  // AC-10) — handleSelectionChange only catches *native* moves (arrow keys,
+  // a native click/drag), not these app-driven ones, because `caret` is
+  // already updated to match by the time their selectionchange fires.
+  breakTypingGroup(documentId.value);
   if (extend) {
     extendDomSelection(root, target);
   } else {
@@ -628,7 +750,7 @@ function toggleCharacterFormat(key = "") {
       pendingFormat = { ...pendingFormat, vertAlign: on ? false : key };
       updateCaretStatus({ start: selection.anchor, end: selection.focus });
     } else {
-      applyEdit(toggleVerticalAlign(model, selection, key));
+      applyEdit(toggleVerticalAlign(model, selection, key), selection, key, false);
     }
     root.focus();
     return;
@@ -639,7 +761,7 @@ function toggleCharacterFormat(key = "") {
     pendingFormat = { ...pendingFormat, [formatKey]: next };
     updateCaretStatus({ start: selection.anchor, end: selection.focus });
   } else {
-    applyEdit(toggleFormat(model, selection, formatKey));
+    applyEdit(toggleFormat(model, selection, formatKey), selection, formatKey, false);
   }
   root.focus();
 }
@@ -648,7 +770,7 @@ function toggleCharacterFormat(key = "") {
  * SPEC-013): a real selection goes through the command API; a collapsed
  * caret merges the patch into the pending format the next typed text
  * carries, exactly like the boolean toggles. */
-function applyRunFormatPatch(patch = noPendingFormat()) {
+function applyRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
   const root = contentRoot.value;
   const model = doc.value;
   if (!patch || !root || !model || !editable.value) {
@@ -662,26 +784,26 @@ function applyRunFormatPatch(patch = noPendingFormat()) {
     pendingFormat = { ...pendingFormat, ...patch };
     updateCaretStatus({ start: selection.anchor, end: selection.focus });
   } else {
-    applyEdit(applyFormat(model, selection, patch));
+    applyEdit(applyFormat(model, selection, patch), selection, label, false);
   }
   root.focus();
 }
 
 function handleFontFamilySelect(family = "") {
   if (family !== "") {
-    applyRunFormatPatch({ fontFamily: family });
+    applyRunFormatPatch({ fontFamily: family }, "font family");
   }
 }
 
 function handleFontSizeChange(sizePt = 0) {
   if (sizePt > 0) {
-    applyRunFormatPatch({ fontSizePt: sizePt });
+    applyRunFormatPatch({ fontSizePt: sizePt }, "font size");
   }
 }
 
 function handleTextColorSelect(hex = "") {
   if (hex !== "") {
-    applyRunFormatPatch({ color: hex });
+    applyRunFormatPatch({ color: hex }, "text color");
     recentColors.value = pushRecentColor(hex, recentColors.value);
   }
 }
@@ -689,7 +811,7 @@ function handleTextColorSelect(hex = "") {
 /** The highlight picker emits a palette name or false for "No colour" —
  * false is applied as an explicit off, not an absence (SPEC-013). */
 function handleHighlightSelect(value = noHighlight()) {
-  applyRunFormatPatch({ highlight: value });
+  applyRunFormatPatch({ highlight: value }, "highlight");
 }
 
 // --- paragraph formatting toolbar/ruler/shortcuts (SPEC-014) ----------------
@@ -703,52 +825,60 @@ function paragraphSelection(root = noElement()) {
 }
 
 /** Runs one paragraph command against the current selection and applies its
- * result; `refocus` returns focus to the canvas (skipped for ruler drags,
- * which would tear down the pointer capture mid-drag). */
-function applyParagraphCommand(command = noParagraphCommand(), refocus = true) {
+ * result; `label` names the edit for the undo history (SPEC-015 AC-7, AC-8,
+ * AC-13 — every paragraph command is its own undo step); `refocus` returns
+ * focus to the canvas (skipped for ruler drags, which would tear down the
+ * pointer capture mid-drag). */
+function applyParagraphCommand(command = noParagraphCommand(), label = "formatting", refocus = true) {
   const root = contentRoot.value;
   const model = doc.value;
   if (!command || !root || !model || !editable.value) {
     return;
   }
-  applyEdit(command(model, paragraphSelection(root)));
+  const selection = paragraphSelection(root);
+  applyEdit(command(model, selection), selection, label, false);
   if (refocus) {
     root.focus();
   }
 }
 
 function handleAlign(alignment = "") {
-  applyParagraphCommand((model, selection) =>
-    setAlignment(model, selection, asParagraphAlignment(alignment)),
+  applyParagraphCommand(
+    (model, selection) => setAlignment(model, selection, asParagraphAlignment(alignment)),
+    "alignment",
   );
 }
 
 function handleIndent(direction = 1) {
-  applyParagraphCommand((model, selection) =>
-    adjustIndent(model, selection, direction * INDENT_STEP_CM),
+  applyParagraphCommand(
+    (model, selection) => adjustIndent(model, selection, direction * INDENT_STEP_CM),
+    "indent",
   );
 }
 
 /** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
  * clears any absolute height so the preset actually takes effect (AC-11). */
 function handleSpacingPreset(multiple = 1) {
-  applyParagraphCommand((model, selection) =>
-    applyParagraphFormat(model, selection, {
-      lineSpacing: multiple,
-      lineSpacingPt: null,
-      lineSpacingRule: null,
-    }),
+  applyParagraphCommand(
+    (model, selection) =>
+      applyParagraphFormat(model, selection, {
+        lineSpacing: multiple,
+        lineSpacingPt: null,
+        lineSpacingRule: null,
+      }),
+    "line spacing",
   );
 }
 
 function handleToggleSpaceBefore() {
-  applyParagraphCommand(toggleSpaceBefore);
+  applyParagraphCommand(toggleSpaceBefore, "space before");
 }
 
 function handleToggleDirection() {
   const rtl = paragraphState.value.direction !== "rtl";
-  applyParagraphCommand((model, selection) =>
-    applyParagraphFormat(model, selection, { direction: rtl ? "rtl" : "ltr" }),
+  applyParagraphCommand(
+    (model, selection) => applyParagraphFormat(model, selection, { direction: rtl ? "rtl" : "ltr" }),
+    "text direction",
   );
 }
 
@@ -776,22 +906,24 @@ function openCustomSpacing() {
  * the chosen mode wins regardless of what was set before. */
 function handleCustomSpacingApply(payload = { mode: "multiple", value: 1, beforePt: 0, afterPt: 0 }) {
   customSpacingOpen.value = false;
-  applyParagraphCommand((model, selection) =>
-    payload.mode === "multiple"
-      ? applyParagraphFormat(model, selection, {
-          lineSpacing: payload.value,
-          lineSpacingPt: null,
-          lineSpacingRule: null,
-          spaceBeforePt: payload.beforePt,
-          spaceAfterPt: payload.afterPt,
-        })
-      : applyParagraphFormat(model, selection, {
-          lineSpacing: null,
-          lineSpacingPt: payload.value,
-          lineSpacingRule: payload.mode === "exact" ? "exact" : null,
-          spaceBeforePt: payload.beforePt,
-          spaceAfterPt: payload.afterPt,
-        }),
+  applyParagraphCommand(
+    (model, selection) =>
+      payload.mode === "multiple"
+        ? applyParagraphFormat(model, selection, {
+            lineSpacing: payload.value,
+            lineSpacingPt: null,
+            lineSpacingRule: null,
+            spaceBeforePt: payload.beforePt,
+            spaceAfterPt: payload.afterPt,
+          })
+        : applyParagraphFormat(model, selection, {
+            lineSpacing: null,
+            lineSpacingPt: payload.value,
+            lineSpacingRule: payload.mode === "exact" ? "exact" : null,
+            spaceBeforePt: payload.beforePt,
+            spaceAfterPt: payload.afterPt,
+          }),
+    "paragraph spacing",
   );
 }
 
@@ -803,26 +935,31 @@ function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
   if (update.kind === "indentStartCm") {
     applyParagraphCommand(
       (model, selection) => applyParagraphFormat(model, selection, { indentStartCm: valueCm }),
+      "indent",
       false,
     );
   } else if (update.kind === "indentEndCm") {
     applyParagraphCommand(
       (model, selection) => applyParagraphFormat(model, selection, { indentEndCm: valueCm }),
+      "indent",
       false,
     );
   } else if (update.kind === "indentFirstLineCm") {
     applyParagraphCommand(
       (model, selection) => applyParagraphFormat(model, selection, { indentFirstLineCm: valueCm }),
+      "indent",
       false,
     );
   } else if (update.kind === "marginLeftCm") {
     applyParagraphCommand(
       (model, selection) => setPageMargins(model, selection, { leftCm: valueCm }),
+      "margins",
       false,
     );
   } else if (update.kind === "marginRightCm") {
     applyParagraphCommand(
       (model, selection) => setPageMargins(model, selection, { rightCm: valueCm }),
+      "margins",
       false,
     );
   }
@@ -847,6 +984,18 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       scrollContainer.scrollTop =
         event.key === "Home" ? 0 : scrollContainer.scrollHeight;
     }
+  } else if (mod && !event.shiftKey && key === "z") {
+    // Ctrl/Cmd+Z: undo (SPEC-015 AC-1).
+    event.preventDefault();
+    performUndo();
+  } else if (mod && event.shiftKey && key === "z") {
+    // Ctrl/Cmd+Shift+Z: redo (SPEC-015 AC-2).
+    event.preventDefault();
+    performRedo();
+  } else if (mod && !event.shiftKey && key === "y") {
+    // Ctrl+Y: redo, the Windows convention (SPEC-015 AC-3).
+    event.preventDefault();
+    performRedo();
   } else if (mod && !event.shiftKey && key === "a") {
     // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
     event.preventDefault();
@@ -883,13 +1032,15 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       return;
     }
     if (isCollapsed(selection) && selection.focus.offset === 0) {
-      applyParagraphCommand((current, target) =>
-        adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
+      applyParagraphCommand(
+        (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
+        "indent",
       );
     } else if (!event.shiftKey) {
       // Any other position — mid-paragraph or a non-collapsed selection —
-      // inserts a literal tab character (AC-10).
-      applyEdit(insertText(model, selection, "\t", pendingFormat));
+      // inserts a literal tab character (AC-10), grouped with typing like
+      // any other inserted character (SPEC-015 AC-9).
+      applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", true);
     }
   } else if (event.key === "PageDown" || event.key === "PageUp") {
     event.preventDefault();
@@ -1060,6 +1211,15 @@ function deleteOpenDocument() {
       </div>
     </template>
     <template #toolbar>
+      <UndoRedoControls
+        v-if="editable"
+        :can-undo="undoRedoState.canUndo"
+        :undo-label="undoRedoState.undoLabel"
+        :can-redo="undoRedoState.canRedo"
+        :redo-label="undoRedoState.redoLabel"
+        @undo="performUndo"
+        @redo="performRedo"
+      />
       <FontFamilySelect
         v-if="editable"
         :value="formatValues.fontFamily"
