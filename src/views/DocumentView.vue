@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
@@ -32,13 +32,16 @@ const router = useRouter();
 const { addToast } = useToasts();
 const documentId = computed(() => String(route.params.id ?? ""));
 
-// A plain object assigned into a ref is made deeply reactive by Vue, so
-// mutating doc.value.title below updates the app bar without extra plumbing.
-// The initial value is computed inline (rather than starting from `null`)
-// so TS infers `Ref<DocumentModel | null>` from this expression alone —
-// `ref<DocumentModel | null>(null)` would need a generic, which ESLint's
-// espree parser for .vue scripts can't parse.
-const doc = ref(
+// A SHALLOW ref, deliberately: the model must stay a plain object because
+// IndexedDB's structured clone rejects Vue's reactive proxies outright
+// (DataCloneError), and autosave persists this exact object. Mutations
+// therefore happen on the raw model and re-render via triggerRef — which is
+// also what keeps 200-page documents cheap: no proxy per block/run. The
+// initial value is computed inline (rather than starting from `null`) so TS
+// infers the `DocumentModel | null` type from this expression alone —
+// a generic would need TS syntax, which ESLint's espree parser for .vue
+// scripts can't parse.
+const doc = shallowRef(
   documentExists(documentId.value)
     ? getOrCreateDocument(documentId.value)
     : null,
@@ -86,7 +89,8 @@ async function focusAndRestore() {
     return;
   }
   root.focus();
-  setDomCaret(root, caret ?? { section: 0, block: 0, offset: 0 });
+  caret = caret ?? { section: 0, block: 0, offset: 0 };
+  setDomCaret(root, caret);
   // After focus/caret placement, which may themselves scroll.
   if (scrollContainer) {
     scrollContainer.scrollTop = scrollTop;
@@ -229,6 +233,7 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
     return;
   }
   caret = next;
+  triggerRef(doc);
   autosave.markDirty();
   void restoreCaretAfterRender();
 }
@@ -294,8 +299,9 @@ function handleTitleUpdate(newTitle = "") {
   }
   const trimmed = newTitle.trim();
   doc.value.title = trimmed.length > 0 ? trimmed : DEFAULT_TITLE;
-  // The assignment above already mutated the stored model (doc is a reactive
-  // proxy of it); touching records the modification time and persists.
+  triggerRef(doc);
+  // The assignment above already mutated the stored model (doc.value IS the
+  // raw stored model); touching records the modification time and persists.
   touchDocument(doc.value.id);
 }
 
