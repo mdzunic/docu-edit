@@ -3,7 +3,7 @@
 // split out of DocumentView.vue because that file's <script setup> is
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
-import type { Paragraph, Run, RunFormatting } from "./documentModel";
+import type { BorderSide, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
 import { listIndentCm } from "./lists";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
@@ -111,4 +111,102 @@ export function paragraphStyle(paragraph: Paragraph): Record<string, string> {
 
 export function runKey(run: Run, index: number): string {
   return `${index}-${run.text.length}`;
+}
+
+// --- tables (SPEC-023) -------------------------------------------------
+
+function borderSideCss(side: BorderSide): string {
+  if (side.style === "none") {
+    return "none";
+  }
+  const cssStyle = side.style === "single" ? "solid" : side.style;
+  const color = side.color !== "auto" ? side.color : "#000000";
+  return `${side.widthPt}pt ${cssStyle} ${color}`;
+}
+
+/** A cell's own border/shading/padding/vertical-alignment as inline CSS
+ * (AC-10..17): only the properties the cell actually sets — an unset side
+ * falls through to the canvas's default hairline gridline (see
+ * DocTableBlock.vue's `.doc-table-cell` rule). */
+export function tableCellStyle(cell: TableCell): Record<string, string> {
+  const style: Record<string, string> = {};
+  const borders = cell.borders;
+  if (borders?.top) {
+    style.borderTop = borderSideCss(borders.top);
+  }
+  if (borders?.bottom) {
+    style.borderBottom = borderSideCss(borders.bottom);
+  }
+  if (borders?.left) {
+    style.borderLeft = borderSideCss(borders.left);
+  }
+  if (borders?.right) {
+    style.borderRight = borderSideCss(borders.right);
+  }
+  if (cell.shadingFill !== undefined) {
+    style.backgroundColor = cell.shadingFill;
+  }
+  if (cell.paddingCm !== undefined) {
+    style.padding = `${cell.paddingCm}cm`;
+  }
+  if (cell.verticalAlign !== undefined) {
+    // CSS's table-cell vertical-align keyword for the model's "center" is
+    // "middle" — "center" itself is not a valid value and is silently
+    // dropped, leaving the canvas's default (top).
+    style.verticalAlign = cell.verticalAlign === "center" ? "middle" : cell.verticalAlign;
+  }
+  return style;
+}
+
+/** A cell's inline style (AC-15) with any explicit shading dropped while it
+ * is part of an active range selection — the canvas's `.cell-selected`
+ * class highlight would otherwise lose to the cell's own `style` attribute,
+ * which always wins over a class rule regardless of shading. */
+export function tableCellDisplayStyle(cell: TableCell, selected: boolean): Record<string, string> {
+  const style = tableCellStyle(cell);
+  if (selected) {
+    delete style.backgroundColor;
+  }
+  return style;
+}
+
+/** A row's minimum height (AC-4, AC-5): `height` on a `<tr>` is a floor in
+ * table layout, not a fixed size — the row still grows for its content. */
+export function tableRowStyle(row: TableRow): Record<string, string> {
+  return row.minHeightCm !== undefined ? { height: `${row.minHeightCm}cm` } : {};
+}
+
+/** A table's own width and page alignment (AC-22, AC-23): "auto" hands
+ * sizing to the browser's own content-based table layout; "percent" scales
+ * the text area; "fixed" (the default) is the column widths' own sum. */
+export function tableStyle(table: Table): Record<string, string> {
+  const style: Record<string, string> = { tableLayout: table.widthMode === "auto" ? "auto" : "fixed" };
+  if (table.widthMode === "percent") {
+    style.width = `${table.widthPercent ?? 100}%`;
+  } else if (table.widthMode !== "auto") {
+    const totalCm = table.columnWidthsCm.reduce((sum, cm) => sum + cm, 0);
+    style.width = `${totalCm}cm`;
+  }
+  if (table.alignment === "center") {
+    style.marginLeft = "auto";
+    style.marginRight = "auto";
+  } else if (table.alignment === "right") {
+    style.marginLeft = "auto";
+    style.marginRight = "0";
+  }
+  return style;
+}
+
+/** One `<col>`'s width (AC-23): a fixed-width table (the default) uses the
+ * column's own absolute width; a percent/auto-width table instead uses its
+ * *share* of the total as a relative percentage, so the columns scale down
+ * together with the table's own width/auto sizing instead of forcing it
+ * wide enough to fit their absolute centimetre widths regardless. */
+export function tableColumnWidth(table: Table, index: number): string {
+  const widthCm = table.columnWidthsCm[index] ?? 0;
+  if (table.widthMode !== "percent" && table.widthMode !== "auto") {
+    return `${widthCm}cm`;
+  }
+  const totalCm = table.columnWidthsCm.reduce((sum, cm) => sum + cm, 0);
+  return totalCm > 0 ? `${(widthCm / totalCm) * 100}%` : "auto";
 }
