@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   mergeNumberingXml,
   nextNumberingIds,
@@ -154,6 +157,35 @@ describe("SPEC-018 AC-18/AC-23 — .docx list round trip", () => {
     expect(reopened.sections[0].blocks.map((block) => block.list)).toEqual(
       model.sections[0].blocks.map((block) => block.list),
     );
+  });
+
+  it("imports the SPEC-018 e2e fixture with its markers, levels, indents and start (AC-20, AC-22)", async () => {
+    const fixture = new Uint8Array(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "e2e", "fixtures", "lists.docx"),
+      ),
+    );
+    const parsed = await parseDocx(fixture);
+    const blocks = parsed.sections[0].blocks;
+    expect(blocks.map((block) => block.runs.map((run) => run.text).join(""))).toEqual([
+      "Groceries", "Apples", "Bananas", "Green ones", "Wrapped ones",
+      "Steps", "First", "Second", "Detail",
+      "Continue from five", "Fifth", "Sixth",
+    ]);
+    expect(blocks.map((block) => block.list)).toEqual([
+      undefined,
+      { type: "bullet", level: 1, indentCm: 1.905 }, // Symbol F0B7 -> disc, non-default indent
+      { type: "bullet", level: 1, indentCm: 1.905 },
+      { type: "bullet", level: 2 }, // Courier "o" -> circle (the level default)
+      { type: "bullet", level: 3 }, // Wingdings F0A7 -> square (the level default)
+      undefined,
+      { type: "number", level: 1 },
+      { type: "number", level: 1 },
+      { type: "number", level: 2 },
+      undefined,
+      { type: "number", level: 1, startAt: 5 },
+      { type: "number", level: 1, startAt: 5 },
+    ]);
   });
 
   it("stays stable across a second same-format save (merge path)", async () => {
