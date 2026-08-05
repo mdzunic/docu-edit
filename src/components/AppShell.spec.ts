@@ -161,6 +161,30 @@ describe("AppShell", () => {
     expect(wrapper.get('[data-testid="app-bar"]').text()).toContain("Download");
   });
 
+  describe("keyboard shortcuts dialog (SPEC-021 AC-6, AC-9, AC-12)", () => {
+    it("Ctrl/Cmd+/ opens the dialog, and Escape closes it", async () => {
+      const wrapper = mount(AppShell, { props: { documentTitle: "t" }, attachTo: document.body });
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "/", ctrlKey: true, bubbles: true }));
+      await nextTick();
+      expect(wrapper.find('[data-testid="shortcuts-dialog"]').exists()).toBe(true);
+
+      await wrapper.get('[data-testid="shortcuts-dialog"]').trigger("keydown", { key: "Escape" });
+      expect(wrapper.find('[data-testid="shortcuts-dialog"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("does not open while focus is on a text input outside the document (AC-12, AC-14)", async () => {
+      const wrapper = mount(AppShell, { props: { documentTitle: "t" }, attachTo: document.body });
+      const input = document.createElement("input");
+      document.body.append(input);
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "/", ctrlKey: true, bubbles: true }));
+      await nextTick();
+      expect(wrapper.find('[data-testid="shortcuts-dialog"]').exists()).toBe(false);
+      input.remove();
+      wrapper.unmount();
+    });
+  });
+
   describe("drag-and-drop (SPEC-009)", () => {
     it("shows a full-window 'Drop to open' overlay while a file is dragged over the window (AC-1)", async () => {
       const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
