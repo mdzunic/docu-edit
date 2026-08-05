@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { modifierKeyLabel } from "../lib/platform";
+import { shortcutLabel } from "../lib/shortcuts";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits<{...}>()
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -16,14 +16,17 @@ const props = defineProps({
 
 const emit = defineEmits(["undo", "redo"]);
 
-const mod = modifierKeyLabel();
+// Shortcut text is read from the SPEC-021 registry rather than hardcoded
+// (AC-15, AC-16).
+const undoShortcut = shortcutLabel("edit.undo");
+const redoShortcut = shortcutLabel("edit.redo");
 
 function undoTitle() {
-  return props.canUndo ? `Undo ${props.undoLabel} (${mod}+Z)` : `Undo (${mod}+Z)`;
+  return props.canUndo ? `Undo ${props.undoLabel} (${undoShortcut})` : `Undo (${undoShortcut})`;
 }
 
 function redoTitle() {
-  return props.canRedo ? `Redo ${props.redoLabel} (${mod}+Shift+Z)` : `Redo (${mod}+Shift+Z)`;
+  return props.canRedo ? `Redo ${props.redoLabel} (${redoShortcut})` : `Redo (${redoShortcut})`;
 }
 </script>
 

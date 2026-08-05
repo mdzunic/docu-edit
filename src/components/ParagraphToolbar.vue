@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, useTemplateRef } from "vue";
-import { modifierKeyLabel } from "../lib/platform";
+import { shortcutLabel } from "../lib/shortcuts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Paragraph geometry controls (SPEC-014): alignment, indent step buttons,
@@ -40,15 +40,17 @@ const emit = defineEmits([
   "list-marker",
 ]);
 
-const mod = modifierKeyLabel();
-
-// Static per mount, like FormatToolbar's FORMATS list.
+// Static per mount, like FormatToolbar's FORMATS list. Shortcut text is read
+// from the SPEC-021 registry rather than hardcoded (AC-15, AC-16).
 const ALIGNMENTS = [
-  { key: "left", label: "Align left", shortcut: `${mod}+L` },
-  { key: "center", label: "Align centre", shortcut: `${mod}+E` },
-  { key: "right", label: "Align right", shortcut: `${mod}+R` },
-  { key: "justify", label: "Justify", shortcut: `${mod}+J` },
+  { key: "left", label: "Align left", shortcut: shortcutLabel("paragraph.alignLeft") },
+  { key: "center", label: "Align centre", shortcut: shortcutLabel("paragraph.alignCenter") },
+  { key: "right", label: "Align right", shortcut: shortcutLabel("paragraph.alignRight") },
+  { key: "justify", label: "Justify", shortcut: shortcutLabel("paragraph.alignJustify") },
 ];
+
+const decreaseIndentTitle = `Decrease indent (${shortcutLabel("paragraph.outdent")} at the start of a paragraph)`;
+const increaseIndentTitle = `Increase indent (${shortcutLabel("paragraph.indent")} at the start of a paragraph)`;
 
 // The four fixed presets of the line spacing menu (AC-11), as multiples.
 const SPACING_PRESETS = [
@@ -200,7 +202,7 @@ onBeforeUnmount(() => {
       class="paragraph-button"
       data-testid="indent-decrease"
       :disabled="disabled"
-      title="Decrease indent (Shift+Tab at the start of a paragraph)"
+      :title="decreaseIndentTitle"
       aria-label="Decrease indent"
       @mousedown.prevent
       @click="emit('indent', -1)"
@@ -212,7 +214,7 @@ onBeforeUnmount(() => {
       class="paragraph-button"
       data-testid="indent-increase"
       :disabled="disabled"
-      title="Increase indent (Tab at the start of a paragraph)"
+      :title="increaseIndentTitle"
       aria-label="Increase indent"
       @mousedown.prevent
       @click="emit('indent', 1)"

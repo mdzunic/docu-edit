@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import { useRouter } from "vue-router";
+import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
 import { useToasts } from "../composables/useToasts";
@@ -10,6 +11,7 @@ import {
   openDocumentFile,
   UNSUPPORTED_FILE_TYPE_MESSAGE,
 } from "../lib/openDocument";
+import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 
 // Runtime prop/emit declarations (not the defineProps<{...}>()/defineEmits<{...}>()
 // generics) because ESLint parses .vue scripts with espree, which rejects
@@ -143,6 +145,31 @@ onUnmounted(() => {
   window.removeEventListener("dragleave", handleDragLeave);
   window.removeEventListener("drop", handleDrop);
 });
+
+// Ctrl/Cmd+/ opens the shortcut reference (SPEC-021 AC-6) from anywhere in
+// the shell, not just the document canvas — so it lives here rather than in
+// DocumentView, alongside every other view AppShell wraps. Guarded the same
+// way every registry-driven shortcut is (AC-12..14): it does nothing while
+// focus is inside a dialog (including its own, so Ctrl+/ can't reopen itself
+// mid-search), the find bar, or another text input outside the document.
+const shortcutsOpen = ref(false);
+
+function handleGlobalKeydown(event = new KeyboardEvent("keydown")) {
+  if (event.altKey || isOutsideDocumentInput(event.target)) {
+    return;
+  }
+  if (findShortcut(event)?.id === "view.shortcuts") {
+    event.preventDefault();
+    shortcutsOpen.value = true;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("keydown", handleGlobalKeydown);
+});
+onUnmounted(() => {
+  document.removeEventListener("keydown", handleGlobalKeydown);
+});
 </script>
 
 <template>
@@ -201,6 +228,10 @@ onUnmounted(() => {
       <slot />
     </main>
     <ToastHost />
+    <ShortcutsDialog
+      v-if="shortcutsOpen"
+      @close="shortcutsOpen = false"
+    />
     <div
       v-if="showDropOverlay"
       class="drop-overlay"
