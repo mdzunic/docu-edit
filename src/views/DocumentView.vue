@@ -7,11 +7,13 @@ import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
+import EditorContextMenu from "../components/EditorContextMenu.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
+import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
@@ -44,6 +46,19 @@ import {
   caretNearClientPoint,
 } from "../lib/caretGeometry";
 import { blockText, compareCaret, noCaret } from "../lib/textEditing";
+import {
+  asPasteMode,
+  clipboardFlavours,
+  DOC_MODEL_MIME,
+  executePaste,
+  extractFragment,
+  IMAGES_UNSUPPORTED_MESSAGE,
+  noClipboardSnapshot,
+  noPastePayload,
+  parseFragmentPayload,
+  serializeFragment,
+} from "../lib/clipboard";
+import { importHtml } from "../lib/htmlPaste";
 import {
   adjustIndent,
   applyFormat,
@@ -149,6 +164,21 @@ function refreshUndoRedoState() {
     redoLabel: redoDocumentLabel(id) ?? "",
   };
 }
+
+// --- clipboard (SPEC-016) ---------------------------------------------------
+// `plainPasteNext` is armed by the Ctrl/Cmd+Shift+V keydown (AC-27): the
+// browser still fires a `paste` event for that combination, and the flag
+// routes it down the plain-text path. `pastePayload`/`pastePendingFormat`
+// describe the last applied paste so the options chip can re-interpret it;
+// `lastCopy` is the local snapshot backing the context menu's async paste
+// (see ClipboardSnapshot in lib/clipboard.ts). Plain variables — nothing
+// renders from them; the chip and menu render from the two refs below.
+let plainPasteNext = false;
+let pastePayload = noPastePayload();
+let pastePendingFormat = noPendingFormat();
+let lastCopy = noClipboardSnapshot();
+const pasteChip = ref({ visible: false, left: 0, top: 0, applied: "source" });
+const contextMenu = ref({ visible: false, left: 0, top: 0 });
 
 // --- character formatting (SPEC-012) ----------------------------------------
 // `selectionAnchor` is set only when the tracked selection is a real (non-
@@ -279,6 +309,9 @@ function closeSession() {
   lockState.value = "pending";
   caret = noCaret();
   scrollTop = 0;
+  dismissPasteChip();
+  closeContextMenu();
+  plainPasteNext = false;
   // AC-19: the undo/redo history does not outlive the document being open.
   if (sessionDocId) {
     clearUndoHistory(sessionDocId);
@@ -404,9 +437,15 @@ function applyEdit(
   beforeSelection = noSelection(),
   label = "",
   groupable = false,
+  keepPasteChip = false,
 ) {
   if (!result || !beforeSelection) {
     return;
+  }
+  // Any edit other than the paste (or its chip re-application, which passes
+  // keepPasteChip) supersedes the paste options chip (SPEC-016).
+  if (!keepPasteChip) {
+    dismissPasteChip();
   }
   const before = doc.value;
   if (before) {
@@ -453,6 +492,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   if (!snapshot || !root) {
     return;
   }
+  dismissPasteChip();
   doc.value = replaceDocumentModel(documentId.value, snapshot.model);
   caret = snapshot.selection.focus;
   selectionAnchor = isCollapsed(snapshot.selection) ? noCaret() : snapshot.selection.anchor;
@@ -597,6 +637,323 @@ async function verifyCanvasAfterRender() {
     remount.value = { key: current.key, count: current.count, epoch: current.epoch + 1 };
     void restoreCaretAfterRender();
   }
+}
+
+// --- cut, copy and paste (SPEC-016) ----------------------------------------
+// Fully controlled, like typing: the copy/cut/paste ClipboardEvents are
+// cancelled and re-implemented over the model, because only these
+// synchronous handlers can carry the private document-model MIME type
+// (navigator.clipboard.read/write accept a fixed type allowlist). The
+// native context menu's entries and Ctrl/Cmd+X/C/V both fire these same
+// events; the app's own context menu drives them via execCommand (cut/copy)
+// and the async clipboard API (paste).
+
+/** Captures the selection's fragment and writes all three clipboard
+ * flavours (AC-7..9): plain text, minimal HTML and the internal payload.
+ * Also remembers the snapshot locally for the context menu's paste. */
+function writeClipboardFlavours(data = new DataTransfer(), model = doc.value, selection = noSelection()) {
+  if (!model || !selection) {
+    return;
+  }
+  const fragment = extractFragment(model, selection);
+  const flavours = clipboardFlavours(fragment);
+  data.setData("text/plain", flavours.text);
+  data.setData("text/html", flavours.html);
+  data.setData(DOC_MODEL_MIME, flavours.payload);
+  lastCopy = { text: flavours.text, html: flavours.html, fragment };
+}
+
+/** Ctrl/Cmd+C and the context menu's Copy (AC-2, AC-5). Copying mutates
+ * nothing, so it works in a read-only (conflict-bar) session too. */
+function handleCopy(event = new ClipboardEvent("copy")) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  const data = event.clipboardData;
+  if (!root || !model || !data) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection || isCollapsed(selection)) {
+    return;
+  }
+  event.preventDefault();
+  writeClipboardFlavours(data, model, selection);
+}
+
+/** Ctrl/Cmd+X and the context menu's Cut (AC-1, AC-4): the copy flavours
+ * plus deleting the selection, recorded as a single "cut" undo step
+ * (AC-36..38). */
+function handleCut(event = new ClipboardEvent("cut")) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  const data = event.clipboardData;
+  if (!root || !model || !data || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection || isCollapsed(selection)) {
+    return;
+  }
+  event.preventDefault();
+  writeClipboardFlavours(data, model, selection);
+  applyEdit(deleteRange(model, selection), selection, "cut");
+}
+
+function clipboardHasImage(data = new DataTransfer()) {
+  const items = data.items;
+  if (!items) {
+    return false;
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" && items[i].type.startsWith("image/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Ctrl/Cmd+V and the native menu's Paste (AC-3, AC-6): reads the flavours
+ * off the event and routes them through performPaste. Always prevented —
+ * the browser must never splice its own HTML into the canvas. */
+function handlePaste(event = new ClipboardEvent("paste")) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  event.preventDefault();
+  const data = event.clipboardData;
+  if (!data) {
+    return;
+  }
+  const plainOnly = plainPasteNext;
+  plainPasteNext = false;
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  performPaste(
+    {
+      internal: data.getData(DOC_MODEL_MIME),
+      html: data.getData("text/html"),
+      text: data.getData("text/plain"),
+      hasImage: clipboardHasImage(data),
+    },
+    selection,
+    plainOnly,
+  );
+}
+
+/** One paste, whatever triggered it: the internal payload wins (exact
+ * editor-to-editor fidelity, AC-10..13), then the sanitised HTML import
+ * (AC-14..26), then plain text; `plainOnly` (Ctrl/Cmd+Shift+V, AC-27)
+ * forces the text path but keeps any richer fragment so the chip can still
+ * offer "Keep source formatting". Image content is gated behind the
+ * "Images aren't supported yet" toast until SPEC-024 (AC-45, AC-46). */
+function performPaste(
+  flavours = { internal: "", html: "", text: "", hasImage: false },
+  selection = noSelection(),
+  plainOnly = false,
+) {
+  const model = doc.value;
+  if (!model || !selection) {
+    return;
+  }
+  let fragment = flavours.internal ? parseFragmentPayload(flavours.internal) : null;
+  let imagesDropped = false;
+  if (!fragment && flavours.html) {
+    const imported = importHtml(flavours.html);
+    imagesDropped = imported.imagesDropped;
+    if (imported.blocks.length > 0) {
+      fragment = imported.blocks;
+    }
+  }
+  if (imagesDropped || flavours.hasImage) {
+    addToast(IMAGES_UNSUPPORTED_MESSAGE);
+  }
+  if (!fragment && !flavours.text) {
+    return;
+  }
+  const payload = { fragment, text: flavours.text };
+  const mode = plainOnly || !fragment ? "text" : "source";
+  const result = executePaste(model, selection, payload, mode, pendingFormat);
+  pastePayload = payload;
+  pastePendingFormat = pendingFormat ? { ...pendingFormat } : noPendingFormat();
+  applyEdit(result, selection, "paste", false, true);
+  void openPasteChip(mode);
+}
+
+/** Shows the chip pinned under the post-paste caret (AC-29). */
+async function openPasteChip(applied = "source") {
+  await nextTick();
+  const root = contentRoot.value;
+  const rect = root && caret ? caretClientRect(root, caret) : null;
+  pasteChip.value = {
+    visible: true,
+    left: rect ? Math.max(8, rect.left) : 16,
+    top: rect ? rect.bottom + 8 : 16,
+    applied,
+  };
+}
+
+function dismissPasteChip() {
+  if (pasteChip.value.visible) {
+    pasteChip.value = { visible: false, left: 0, top: 0, applied: "source" };
+  }
+  pastePayload = noPastePayload();
+  pastePendingFormat = noPendingFormat();
+}
+
+/** A chip choice (AC-30..32): re-applies the same paste under the chosen
+ * interpretation by replacing the paste's undo step — pop it, restore the
+ * pre-paste state, re-run the paste from the stored payload — so the paste
+ * plus the re-application stay one undo step (AC-33). Choosing the option
+ * already applied is a confirmation no-op. */
+function handlePasteOption(mode = "") {
+  const root = contentRoot.value;
+  const payload = pastePayload;
+  if (!root || !editable.value || !payload || !pasteChip.value.visible) {
+    return;
+  }
+  const chosen = asPasteMode(mode);
+  if (chosen === pasteChip.value.applied) {
+    root.focus();
+    return;
+  }
+  const snapshot = undoDocument(documentId.value);
+  if (!snapshot) {
+    return;
+  }
+  doc.value = snapshot.model;
+  const result = executePaste(
+    snapshot.model,
+    snapshot.selection,
+    payload,
+    chosen,
+    pastePendingFormat,
+  );
+  applyEdit(result, snapshot.selection, "paste", false, true);
+  void openPasteChip(chosen);
+  root.focus();
+}
+
+// --- the editor's context menu (SPEC-016 AC-4..6) --------------------------
+
+/** Right-click on the canvas: the app's own menu replaces the native one so
+ * its entries can drive the clipboard pipeline (and tests can reach them). */
+function handleContextMenu(event = new MouseEvent("contextmenu")) {
+  if (!doc.value || !editable.value) {
+    return;
+  }
+  event.preventDefault();
+  contextMenu.value = { visible: true, left: event.clientX, top: event.clientY };
+}
+
+function closeContextMenu() {
+  if (contextMenu.value.visible) {
+    contextMenu.value = { visible: false, left: 0, top: 0 };
+  }
+}
+
+/** Menu Cut/Copy synthesise a real cut/copy via execCommand — the only
+ * synchronous route from a button click to clipboardData (and the private
+ * MIME type). The events land in handleCut/handleCopy above. */
+function contextMenuCut() {
+  closeContextMenu();
+  const root = contentRoot.value;
+  if (!root) {
+    return;
+  }
+  root.focus();
+  if (typeof document.execCommand === "function") {
+    document.execCommand("cut");
+  }
+}
+
+function contextMenuCopy() {
+  closeContextMenu();
+  const root = contentRoot.value;
+  if (!root) {
+    return;
+  }
+  root.focus();
+  if (typeof document.execCommand === "function") {
+    document.execCommand("copy");
+  }
+}
+
+/** Reads text/html, text/plain and image presence via the async clipboard
+ * API — all a button click can reach. Null when the API is missing or the
+ * read was denied. */
+async function readAsyncClipboard() {
+  const clipboard = navigator.clipboard;
+  if (!clipboard) {
+    return null;
+  }
+  try {
+    if (typeof clipboard.read === "function") {
+      const items = await clipboard.read();
+      let html = "";
+      let text = "";
+      let hasImage = false;
+      for (const item of items) {
+        for (const type of item.types) {
+          if (type === "text/html") {
+            html = await (await item.getType(type)).text();
+          } else if (type === "text/plain") {
+            text = await (await item.getType(type)).text();
+          } else if (type.startsWith("image/")) {
+            hasImage = true;
+          }
+        }
+      }
+      return { html, text, hasImage };
+    }
+    if (typeof clipboard.readText === "function") {
+      return { html: "", text: await clipboard.readText(), hasImage: false };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** The menu's Paste (AC-6). The async API cannot carry the private MIME
+ * type, so a clipboard whose text/html matches our last copy is recognised
+ * as our own and pasted from the local fragment snapshot with exact
+ * fidelity; anything else takes the same import paths as a keyboard
+ * paste. */
+async function contextMenuPaste() {
+  closeContextMenu();
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  root.focus();
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  const flavours = await readAsyncClipboard();
+  if (!flavours) {
+    addToast("Clipboard unavailable — paste with the keyboard instead");
+    return;
+  }
+  const own =
+    lastCopy && flavours.html && flavours.html === lastCopy.html
+      ? lastCopy.fragment
+      : null;
+  performPaste(
+    {
+      internal: own ? serializeFragment(own) : "",
+      html: flavours.html,
+      text: flavours.text,
+      hasImage: flavours.hasImage,
+    },
+    selection,
+    false,
+  );
 }
 
 // --- caret movement and selection (SPEC-011) -------------------------------
@@ -996,6 +1353,19 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     // Ctrl+Y: redo, the Windows convention (SPEC-015 AC-3).
     event.preventDefault();
     performRedo();
+  } else if (mod && event.shiftKey && key === "v") {
+    // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
+    // the browser fire the paste event it still produces for this combo —
+    // only that event can hand us the clipboard's contents.
+    plainPasteNext = true;
+  } else if (mod && !event.shiftKey && key === "v") {
+    // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
+    // consumed because an empty clipboard fired no paste event).
+    plainPasteNext = false;
+  } else if (event.key === "Escape") {
+    // Escape dismisses the paste options chip and the context menu.
+    dismissPasteChip();
+    closeContextMenu();
   } else if (mod && !event.shiftKey && key === "a") {
     // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
     event.preventDefault();
@@ -1339,6 +1709,10 @@ function deleteOpenDocument() {
             @keydown="handleKeyDown"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
+            @copy="handleCopy"
+            @cut="handleCut"
+            @paste="handlePaste"
+            @contextmenu="handleContextMenu"
           >
             <component
               :is="headingTag(entry.block.headingLevel)"
@@ -1387,6 +1761,23 @@ function deleteOpenDocument() {
       :initial="customSpacingInitial"
       @apply="handleCustomSpacingApply"
       @cancel="customSpacingOpen = false"
+    />
+    <PasteOptionsChip
+      v-if="pasteChip.visible"
+      :left="pasteChip.left"
+      :top="pasteChip.top"
+      :applied="pasteChip.applied"
+      @select="handlePasteOption"
+      @dismiss="dismissPasteChip"
+    />
+    <EditorContextMenu
+      v-if="contextMenu.visible"
+      :left="contextMenu.left"
+      :top="contextMenu.top"
+      @cut="contextMenuCut"
+      @copy="contextMenuCopy"
+      @paste="contextMenuPaste"
+      @dismiss="closeContextMenu"
     />
   </AppShell>
   <AppShell

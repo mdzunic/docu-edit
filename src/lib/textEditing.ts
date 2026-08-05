@@ -87,8 +87,11 @@ function sameFormatting(a: Run["formatting"], b: Run["formatting"]): boolean {
 }
 
 /** Drops empty runs and coalesces adjacent runs with identical formatting,
- * so editing never fragments a paragraph into needless run boundaries. */
-function normalizeRuns(runs: Run[]): Run[] {
+ * so editing never fragments a paragraph into needless run boundaries.
+ * Exported as the model's run normalisation: the clipboard fragment
+ * machinery (SPEC-016) runs pasted/extracted runs through it so fragments
+ * obey the same invariants as edited paragraphs. */
+export function normalizeRuns(runs: Run[]): Run[] {
   const result: Run[] = [];
   for (const run of runs) {
     if (run.text.length === 0) {
@@ -106,8 +109,10 @@ function normalizeRuns(runs: Run[]): Run[] {
 
 /** Splits a run list at a character offset. Untouched runs are carried over
  * by reference (safe: operations replace runs, never mutate them); the run
- * straddling the offset is split into two runs sharing its formatting. */
-function splitRuns(runs: Run[], offset: number): [Run[], Run[]] {
+ * straddling the offset is split into two runs sharing its formatting.
+ * Exported for the clipboard fragment machinery (SPEC-016), which splits
+ * boundary runs at the selection edges when extracting or splicing. */
+export function splitRuns(runs: Run[], offset: number): [Run[], Run[]] {
   const before: Run[] = [];
   const after: Run[] = [];
   let consumed = 0;
