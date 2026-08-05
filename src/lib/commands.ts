@@ -42,10 +42,10 @@ import {
 import {
   builtInStyles,
   diffParagraphFormatting,
-  diffRunFormatting,
   namedStyleIdFor,
   paragraphStyleBase,
   resolveNamedStyle,
+  splitRunFormatting,
   styleById,
   styleChainIncludes,
   styleDisplayName,
@@ -952,23 +952,42 @@ export function toolbarListState(
 
 // --- paragraph styles (SPEC-019) --------------------------------------------
 
-/** A paragraph rebuilt around a style resolution, with the direct
- * formatting diffs layered back on top: paragraph and per-run formatting
- * become `resolved ⊕ diff`, and the heading level follows the resolution.
- * Shared by apply (diffs against the old style) and update (diffs recorded
- * before the catalogue changed). */
+/** A run's two layers relative to its old style base (see
+ * styles.splitRunFormatting): the default-derived underlay and the genuine
+ * direct-formatting diff. Recorded per run so a catalogue change can
+ * re-bake the run as `underlay ⊕ new style ⊕ diff`. */
+interface RunLayers {
+  underlay: RunFormatting;
+  diff: RunFormatting;
+}
+
+function runLayersFor(model: DocumentModel, block: Paragraph, base: ResolvedNamedStyle): RunLayers[] {
+  return block.runs.map((run) => splitRunFormatting(model, run.formatting, base.runFormatting));
+}
+
+/** A paragraph rebuilt around a style resolution, with each run's layers
+ * put back in order — underlay beneath the style, direct diff on top — and
+ * the paragraph formatting as `resolved ⊕ diff`; the heading level follows
+ * the resolution. Shared by apply (layers split against the old style) and
+ * update (layers recorded before the catalogue changed). */
 function restyledParagraph(
   block: Paragraph,
   resolved: ResolvedNamedStyle,
   paragraphDiff: ParagraphFormatting,
-  runDiffs: RunFormatting[],
+  runLayers: RunLayers[],
 ): Paragraph {
   const replacement: Paragraph = {
     ...block,
-    runs: block.runs.map((run, index) => ({
-      ...run,
-      formatting: mergeRunFormatting(resolved.runFormatting, runDiffs[index] ?? {}),
-    })),
+    runs: block.runs.map((run, index) => {
+      const layers = runLayers[index] ?? { underlay: {}, diff: {} };
+      return {
+        ...run,
+        formatting: mergeRunFormatting(
+          mergeRunFormatting(layers.underlay, resolved.runFormatting),
+          layers.diff,
+        ),
+      };
+    }),
   };
   const formatting = mergeParagraphFormatting(resolved.paragraphFormatting, paragraphDiff);
   if (Object.keys(formatting).length > 0) {
@@ -1024,7 +1043,7 @@ export function applyParagraphStyle(
       block,
       resolved,
       diffParagraphFormatting(block.formatting ?? {}, base.paragraphFormatting),
-      block.runs.map((run) => diffRunFormatting(run.formatting, base.runFormatting)),
+      runLayersFor(next, block, base),
     );
     replacement.styleId = styleId;
     replaceParagraphAt(next, address, replacement);
@@ -1051,7 +1070,14 @@ export function resetParagraphStyle(
     }
     const namedId = namedStyleIdFor(next, block.styleId);
     const base = paragraphStyleBase(next, block);
-    const replacement = restyledParagraph(block, base, {}, []);
+    // Empty diffs: the underlay (the baked document defaults) survives the
+    // reset, the direct formatting does not.
+    const replacement = restyledParagraph(
+      block,
+      base,
+      {},
+      runLayersFor(next, block, base).map((layers) => ({ underlay: layers.underlay, diff: {} })),
+    );
     if (base.headingLevel === undefined && block.headingLevel !== undefined) {
       replacement.headingLevel = block.headingLevel;
     }
@@ -1093,15 +1119,15 @@ export function updateStyleFromSelection(
   const ownParagraph = diffParagraphFormatting(source.formatting ?? {}, parentResolved.paragraphFormatting);
   const firstRun = source.runs[0];
   const ownRun = firstRun
-    ? diffRunFormatting(firstRun.formatting, parentResolved.runFormatting)
+    ? splitRunFormatting(next, firstRun.formatting, parentResolved.runFormatting).diff
     : (target.runFormatting ?? {});
 
-  // Per-paragraph direct-formatting diffs, recorded against the OLD
+  // Per-paragraph direct-formatting layers, recorded against the OLD
   // catalogue before it changes below.
   const affected: {
     address: BlockAddress;
     paragraphDiff: ParagraphFormatting;
-    runDiffs: RunFormatting[];
+    runLayers: RunLayers[];
   }[] = [];
   for (const address of touchedBlocks(next, selectAll(next))) {
     const block = paragraphAt(next, address);
@@ -1112,7 +1138,7 @@ export function updateStyleFromSelection(
     affected.push({
       address,
       paragraphDiff: diffParagraphFormatting(block.formatting ?? {}, base.paragraphFormatting),
-      runDiffs: block.runs.map((run) => diffRunFormatting(run.formatting, base.runFormatting)),
+      runLayers: runLayersFor(next, block, base),
     });
   }
 
@@ -1141,8 +1167,8 @@ export function updateStyleFromSelection(
   }
   next.styles = catalogue;
 
-  // Re-bake with the new catalogue: resolution changed, diffs did not.
-  for (const { address, paragraphDiff, runDiffs } of affected) {
+  // Re-bake with the new catalogue: resolution changed, the layers did not.
+  for (const { address, paragraphDiff, runLayers } of affected) {
     const block = paragraphAt(next, address);
     if (!block) {
       continue;
@@ -1150,7 +1176,7 @@ export function updateStyleFromSelection(
     replaceParagraphAt(
       next,
       address,
-      restyledParagraph(block, paragraphStyleBase(next, block), paragraphDiff, runDiffs),
+      restyledParagraph(block, paragraphStyleBase(next, block), paragraphDiff, runLayers),
     );
   }
   return preserved;

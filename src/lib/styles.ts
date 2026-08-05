@@ -328,6 +328,30 @@ export function diffRunFormatting(effective: RunFormatting, base: RunFormatting)
   return diff;
 }
 
+/** The two layers inside a run's baked formatting relative to a style
+ * base: `underlay` — the document defaults the readers bake into every run
+ * (a font family/size equal to defaultStyles that the base itself doesn't
+ * set) — and `diff`, the genuine direct formatting. They sit on opposite
+ * sides of a style: defaults underneath it (a style's own font size must
+ * beat the baked default), direct formatting on top (AC-10). */
+export function splitRunFormatting(
+  model: DocumentModel,
+  effective: RunFormatting,
+  base: RunFormatting,
+): { underlay: RunFormatting; diff: RunFormatting } {
+  const underlay: RunFormatting = {};
+  const remainder = { ...effective };
+  if (base.fontFamily === undefined && effective.fontFamily === model.defaultStyles.fontFamily) {
+    underlay.fontFamily = effective.fontFamily;
+    delete remainder.fontFamily;
+  }
+  if (base.fontSizePt === undefined && effective.fontSizePt === model.defaultStyles.fontSizePt) {
+    underlay.fontSizePt = effective.fontSizePt;
+    delete remainder.fontSizePt;
+  }
+  return { underlay, diff: diffRunFormatting(remainder, base) };
+}
+
 const PARAGRAPH_KEYS = [
   "alignment",
   "indentStartCm",

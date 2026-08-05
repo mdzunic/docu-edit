@@ -1846,7 +1846,10 @@ function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
 function handleKeyDown(event = new KeyboardEvent("keydown")) {
   const root = contentRoot.value;
   const model = doc.value;
-  if (!root || !model || !editable.value || event.altKey) {
+  // Alt combos flow through to the registry lookup — the style shortcuts
+  // (SPEC-019) bind Ctrl/Cmd+Alt+0..6; every other binding requires Alt to
+  // NOT be held (exact matching), so native Alt behaviours are untouched.
+  if (!root || !model || !editable.value) {
     return;
   }
   if (event.key === "Escape") {
@@ -1861,6 +1864,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     !event.ctrlKey &&
     !event.metaKey &&
     !event.shiftKey &&
+    !event.altKey &&
     (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight")
   ) {
     // Cell-boundary arrow movement (SPEC-022 AC-13, AC-14). A caret at the

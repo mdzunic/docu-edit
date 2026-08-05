@@ -139,13 +139,12 @@ describe("writeDocx — applied style round trip (AC-11, AC-15)", () => {
     expect(stylesXml).toContain('<w:color w:val="FF0000"/>');
 
     const reopened = await parseDocx(bytes);
-    // The updated definition captures the paragraph's effective formatting,
-    // docDefault-derived font included.
+    // The updated definition captures the paragraph's formatting minus the
+    // docDefault-derived font, which is an underlay, not direct formatting.
     expect(reopened.styles.find((style) => style.id === "Heading1")?.runFormatting).toEqual({
       bold: true,
       fontSizePt: 20,
       color: "#ff0000",
-      fontFamily: "Calibri",
     });
   });
 });
