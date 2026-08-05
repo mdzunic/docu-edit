@@ -136,6 +136,7 @@ import {
   undo as undoDocument,
   undoLabel as undoDocumentLabel,
 } from "../lib/undoHistory";
+import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 
 const route = useRoute();
 const router = useRouter();
@@ -420,7 +421,7 @@ function handleSelectionChange() {
 
 onMounted(() => {
   document.addEventListener("selectionchange", handleSelectionChange);
-  document.addEventListener("keydown", handleFindShortcut);
+  document.addEventListener("keydown", handleGlobalShortcut);
   attachScrollListener();
   if (doc.value) {
     openSession(documentId.value);
@@ -431,7 +432,7 @@ onBeforeUnmount(() => {
   closeSession();
   cancelFindScheduled();
   document.removeEventListener("selectionchange", handleSelectionChange);
-  document.removeEventListener("keydown", handleFindShortcut);
+  document.removeEventListener("keydown", handleGlobalShortcut);
   if (scrollContainer) {
     scrollContainer.removeEventListener("scroll", handleScroll);
     scrollContainer = null;
@@ -1436,109 +1437,151 @@ function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
   }
 }
 
+// Every key this handler acts on is looked up in the SPEC-021 registry
+// (AC-2) rather than compared against literal key/modifier checks — the
+// registry in lib/shortcuts.ts is the only place that spells out which key
+// combination belongs to which command. Two exceptions, both intentionally
+// outside the registry (see shortcuts.ts's header comment): Escape's
+// dismiss-the-current-popup behaviour, and the plain Ctrl/Cmd+V bookkeeping
+// below, which observes a key the browser already owns (nothing is
+// prevented) rather than binding one.
 function handleKeyDown(event = new KeyboardEvent("keydown")) {
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model || !editable.value || event.altKey) {
     return;
   }
-  const mod = event.ctrlKey || event.metaKey;
-  const key = event.key.toLowerCase();
-  if (mod && (event.key === "Home" || event.key === "End")) {
-    // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
-    event.preventDefault();
-    applyCaretMove(
-      event.key === "Home" ? documentStart() : documentEnd(model),
-      event.shiftKey,
-    );
-    if (scrollContainer) {
-      scrollContainer.scrollTop =
-        event.key === "Home" ? 0 : scrollContainer.scrollHeight;
-    }
-  } else if (mod && !event.shiftKey && key === "z") {
-    // Ctrl/Cmd+Z: undo (SPEC-015 AC-1).
-    event.preventDefault();
-    performUndo();
-  } else if (mod && event.shiftKey && key === "z") {
-    // Ctrl/Cmd+Shift+Z: redo (SPEC-015 AC-2).
-    event.preventDefault();
-    performRedo();
-  } else if (mod && !event.shiftKey && key === "y") {
-    // Ctrl+Y: redo, the Windows convention (SPEC-015 AC-3).
-    event.preventDefault();
-    performRedo();
-  } else if (mod && event.shiftKey && key === "v") {
-    // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
-    // the browser fire the paste event it still produces for this combo —
-    // only that event can hand us the clipboard's contents.
-    plainPasteNext = true;
-  } else if (mod && !event.shiftKey && key === "v") {
-    // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
-    // consumed because an empty clipboard fired no paste event).
-    plainPasteNext = false;
-  } else if (event.key === "Escape") {
+  if (event.key === "Escape") {
     // Escape dismisses the paste options chip and the context menu.
     dismissPasteChip();
     closeContextMenu();
-  } else if (mod && !event.shiftKey && key === "a") {
-    // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
-    event.preventDefault();
-    pendingFormat = noPendingFormat();
-    const all = selectAll(model);
-    setDomSelection(root, all.anchor, all.focus);
-    caret = all.focus;
-    updateCaretStatus({ start: all.anchor, end: all.focus });
-  } else if (mod && !event.shiftKey && (key === "b" || key === "i" || key === "u")) {
-    // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
-    event.preventDefault();
-    toggleCharacterFormat(key === "b" ? "bold" : key === "i" ? "italic" : "underline");
-  } else if (mod && event.shiftKey && key === "x") {
-    // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
-    event.preventDefault();
-    toggleCharacterFormat("strikethrough");
-  } else if (mod && !event.shiftKey && (key === "," || key === ".")) {
-    // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
-    event.preventDefault();
-    toggleCharacterFormat(key === "," ? "subscript" : "superscript");
-  } else if (mod && !event.shiftKey && (key === "l" || key === "e" || key === "r" || key === "j")) {
-    // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
-    event.preventDefault();
-    handleAlign(key === "l" ? "left" : key === "e" ? "center" : key === "r" ? "right" : "justify");
-  } else if (!mod && event.key === "Tab") {
-    // SPEC-014 AC-8..10. A caret collapsed at offset 0 — an empty paragraph
-    // or the start of its first line — dispatches the toolbar's own indent
-    // command; a wrapped continuation line's visual start sits at a non-zero
-    // offset, so it falls through to the literal tab. Always prevented:
-    // the browser's default would move focus out of the editor.
-    event.preventDefault();
-    const selection = currentSelection(root);
-    if (!selection) {
-      return;
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "v") {
+    // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
+    // consumed because an empty clipboard fired no paste event).
+    plainPasteNext = false;
+    return;
+  }
+  const shortcut = findShortcut(event);
+  if (!shortcut) {
+    return;
+  }
+  switch (shortcut.id) {
+    case "nav.documentStart":
+    case "nav.documentEnd": {
+      // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
+      event.preventDefault();
+      const toStart = shortcut.id === "nav.documentStart";
+      applyCaretMove(toStart ? documentStart() : documentEnd(model), event.shiftKey);
+      if (scrollContainer) {
+        scrollContainer.scrollTop = toStart ? 0 : scrollContainer.scrollHeight;
+      }
+      break;
     }
-    // SPEC-018 AC-3/AC-4: inside a list item — at any offset — Tab demotes
-    // and Shift+Tab promotes, taking priority over the indent behaviours.
-    const touchesList = touchedBlocks(model, selection).some(
-      (address) => !!model.sections[address.section].blocks[address.block].list,
-    );
-    if (touchesList) {
-      applyParagraphCommand(
-        (current, target) => changeListLevel(current, target, event.shiftKey ? -1 : 1),
-        "list level",
-      );
-    } else if (isCollapsed(selection) && selection.focus.offset === 0) {
-      applyParagraphCommand(
-        (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
-        "indent",
-      );
-    } else if (!event.shiftKey) {
-      // Any other position — mid-paragraph or a non-collapsed selection —
-      // inserts a literal tab character (AC-10), grouped with typing like
-      // any other inserted character (SPEC-015 AC-9).
-      applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", true);
+    case "edit.undo":
+      // Ctrl/Cmd+Z (SPEC-015 AC-1).
+      event.preventDefault();
+      performUndo();
+      break;
+    case "edit.redo":
+      // Ctrl/Cmd+Shift+Z, or Ctrl+Y — the Windows convention (SPEC-015 AC-2, AC-3).
+      event.preventDefault();
+      performRedo();
+      break;
+    case "edit.pastePlain":
+      // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
+      // the browser fire the paste event it still produces for this combo —
+      // only that event can hand us the clipboard's contents.
+      plainPasteNext = true;
+      break;
+    case "edit.selectAll": {
+      // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
+      event.preventDefault();
+      pendingFormat = noPendingFormat();
+      const all = selectAll(model);
+      setDomSelection(root, all.anchor, all.focus);
+      caret = all.focus;
+      updateCaretStatus({ start: all.anchor, end: all.focus });
+      break;
     }
-  } else if (event.key === "PageDown" || event.key === "PageUp") {
-    event.preventDefault();
-    moveCaretByPage(event.key === "PageDown" ? 1 : -1, event.shiftKey);
+    case "format.bold":
+    case "format.italic":
+    case "format.underline":
+      // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
+      event.preventDefault();
+      toggleCharacterFormat(
+        shortcut.id === "format.bold" ? "bold" : shortcut.id === "format.italic" ? "italic" : "underline",
+      );
+      break;
+    case "format.strikethrough":
+      // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
+      event.preventDefault();
+      toggleCharacterFormat("strikethrough");
+      break;
+    case "format.subscript":
+    case "format.superscript":
+      // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
+      event.preventDefault();
+      toggleCharacterFormat(shortcut.id === "format.subscript" ? "subscript" : "superscript");
+      break;
+    case "paragraph.alignLeft":
+    case "paragraph.alignCenter":
+    case "paragraph.alignRight":
+    case "paragraph.alignJustify": {
+      // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
+      event.preventDefault();
+      const alignment =
+        shortcut.id === "paragraph.alignLeft"
+          ? "left"
+          : shortcut.id === "paragraph.alignCenter"
+            ? "center"
+            : shortcut.id === "paragraph.alignRight"
+              ? "right"
+              : "justify";
+      handleAlign(alignment);
+      break;
+    }
+    case "paragraph.indent":
+    case "paragraph.outdent": {
+      // SPEC-014 AC-8..10. A caret collapsed at offset 0 — an empty paragraph
+      // or the start of its first line — dispatches the toolbar's own indent
+      // command; a wrapped continuation line's visual start sits at a non-zero
+      // offset, so it falls through to the literal tab. Always prevented:
+      // the browser's default would move focus out of the editor.
+      event.preventDefault();
+      const selection = currentSelection(root);
+      if (!selection) {
+        break;
+      }
+      // SPEC-018 AC-3/AC-4: inside a list item — at any offset — Tab demotes
+      // and Shift+Tab promotes, taking priority over the indent behaviours.
+      const touchesList = touchedBlocks(model, selection).some(
+        (address) => !!model.sections[address.section].blocks[address.block].list,
+      );
+      if (touchesList) {
+        applyParagraphCommand(
+          (current, target) => changeListLevel(current, target, event.shiftKey ? -1 : 1),
+          "list level",
+        );
+      } else if (isCollapsed(selection) && selection.focus.offset === 0) {
+        applyParagraphCommand(
+          (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
+          "indent",
+        );
+      } else if (!event.shiftKey) {
+        // Any other position — mid-paragraph or a non-collapsed selection —
+        // inserts a literal tab character (AC-10), grouped with typing like
+        // any other inserted character (SPEC-015 AC-9).
+        applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", true);
+      }
+      break;
+    }
+    case "nav.pageUp":
+    case "nav.pageDown":
+      event.preventDefault();
+      moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
+      break;
   }
 }
 
@@ -1734,25 +1777,29 @@ function currentFindOptions() {
   };
 }
 
-/** Ctrl/Cmd+F (and Ctrl/Cmd+H, which also reveals the replace row) at the
- * document level, so the shortcut works whether focus is in the canvas or
- * already in the bar; always prevented so the browser's own find never
- * opens. */
-function handleFindShortcut(event = new KeyboardEvent("keydown")) {
+/** The registry shortcuts that act regardless of where focus sits in the
+ * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
+ * the bar is already open) and Ctrl/Cmd+P (print) — so this is bound on
+ * `document` rather than the canvas element itself. Guarded like every
+ * other registry shortcut (SPEC-021 AC-12..14): none of them act while
+ * focus is inside a dialog, the find bar, or another text input. */
+function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   if (!doc.value || !editable.value || event.altKey) {
     return;
   }
-  const mod = event.ctrlKey || event.metaKey;
-  if (!mod || event.shiftKey) {
+  if (isOutsideDocumentInput(event.target)) {
     return;
   }
-  const key = event.key.toLowerCase();
-  if (key === "f") {
+  const shortcut = findShortcut(event);
+  if (shortcut?.id === "find.open") {
     event.preventDefault();
     openFind(false);
-  } else if (key === "h") {
+  } else if (shortcut?.id === "find.openReplace") {
     event.preventDefault();
     openFind(true);
+  } else if (shortcut?.id === "file.print") {
+    event.preventDefault();
+    window.print();
   }
 }
 
