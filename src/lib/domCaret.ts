@@ -15,6 +15,72 @@ export function noElement(): Element | null {
   return null;
 }
 
+/** Typed `null` seed for EventTarget parameters in `.vue` scripts (same
+ * espree constraint as noElement). */
+export function noEventTarget(): EventTarget | null {
+  return null;
+}
+
+/** A table cell as an event target resolves it (SPEC-022): the containing
+ * table's model address plus the cell's row/column. */
+export interface TableCellTarget {
+  section: number;
+  block: number;
+  row: number;
+  col: number;
+}
+
+/** Typed `null` seed for cell-target variables in `.vue` scripts (espree
+ * bars the annotation, same constraint as noElement). */
+export function noTableCellTarget(): TableCellTarget | null {
+  return null;
+}
+
+/** The table cell an event target sits in, or null outside tables. The
+ * table's model address is read off the cell's first paragraph — the td
+ * itself carries only its row/column (SPEC-022). */
+export function tableCellFromEventTarget(
+  root: Element,
+  target: EventTarget | null,
+): TableCellTarget | null {
+  if (!(target instanceof Node)) {
+    return null;
+  }
+  const element = target instanceof Element ? target : target.parentElement;
+  const td = element?.closest("td[data-row]");
+  if (!td || !root.contains(td)) {
+    return null;
+  }
+  const paragraph = td.querySelector("[data-section][data-block]");
+  if (!paragraph) {
+    return null;
+  }
+  const section = Number(paragraph.getAttribute("data-section"));
+  const block = Number(paragraph.getAttribute("data-block"));
+  const row = Number(td.getAttribute("data-row"));
+  const col = Number(td.getAttribute("data-col"));
+  if (![section, block, row, col].every(Number.isInteger)) {
+    return null;
+  }
+  return { section, block, row, col };
+}
+
+/** The cell path a canvas paragraph element carries (SPEC-022): cell
+ * paragraphs hold their table's section/block address plus
+ * data-row/data-col/data-cell-block; top-level paragraphs have no
+ * data-row. Exported for caretGeometry's fallback path. */
+export function cellPathOf(
+  paragraph: Element,
+): { row: number; col: number; block: number } | undefined {
+  const row = Number(paragraph.getAttribute("data-row"));
+  const col = Number(paragraph.getAttribute("data-col"));
+  const block = Number(paragraph.getAttribute("data-cell-block"));
+  if (!Number.isInteger(row) || !Number.isInteger(col) || !Number.isInteger(block)) {
+    return undefined;
+  }
+  return { row, col, block };
+}
+
 /** The model caret for a DOM point (node + offset), or null when the point
  * is not inside one of the root's paragraph elements. */
 export function caretFromDomPoint(
@@ -39,7 +105,12 @@ export function caretFromDomPoint(
   } catch {
     return null;
   }
-  return { section, block, offset: range.toString().length };
+  const caret: CaretPosition = { section, block, offset: range.toString().length };
+  const cell = paragraph.hasAttribute("data-row") ? cellPathOf(paragraph) : undefined;
+  if (cell) {
+    caret.cell = cell;
+  }
+  return caret;
 }
 
 /** The current DOM selection as an ordered model range, or null when either
@@ -74,9 +145,32 @@ export function domPointForCaret(
   root: Element,
   caret: CaretPosition,
 ): DomPoint | null {
-  const paragraph = root.querySelector(
-    `[data-section="${caret.section}"][data-block="${caret.block}"]`,
-  );
+  const address = `[data-section="${caret.section}"][data-block="${caret.block}"]`;
+  let paragraph: Element | null;
+  let atomOffset: number | undefined;
+  if (caret.cell) {
+    paragraph = root.querySelector(
+      `${address}[data-row="${caret.cell.row}"][data-col="${caret.cell.col}"]` +
+        `[data-cell-block="${caret.cell.block}"]`,
+    );
+  } else {
+    // Cell paragraphs carry their table's section/block address too, so a
+    // top-level lookup must exclude them. When the address itself is a
+    // table (an atom caret at its edge), resolve to the first or last cell
+    // paragraph instead — offset 0 is the position before the table.
+    paragraph = root.querySelector(`${address}:not([data-row])`);
+    if (!paragraph) {
+      const cellParagraphs = root.querySelectorAll(`${address}[data-row]`);
+      if (cellParagraphs.length === 0) {
+        return null;
+      }
+      // The atom offset (0 = before, 1 = after) maps to the first cell
+      // paragraph's start or the last one's end, not to a character count.
+      const atEnd = caret.offset > 0;
+      paragraph = atEnd ? cellParagraphs[cellParagraphs.length - 1] : cellParagraphs[0];
+      atomOffset = atEnd ? Number.MAX_SAFE_INTEGER : 0;
+    }
+  }
   if (!paragraph) {
     return null;
   }
@@ -84,7 +178,7 @@ export function domPointForCaret(
     paragraph,
     NodeFilter.SHOW_TEXT,
   );
-  let remaining = caret.offset;
+  let remaining = atomOffset ?? caret.offset;
   let lastText: Text | null = null;
   while (walker.nextNode()) {
     const text = walker.currentNode as Text;
