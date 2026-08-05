@@ -94,6 +94,10 @@ const REGISTRY: Record<string, Scenario> = {
     commands.resetParagraphStyle(model, caretSelection(caret(0, 8))),
   updateStyleFromSelection: (model) =>
     commands.updateStyleFromSelection(model, caretSelection(caret(0, 0)), "Heading1"),
+  clearFormatting: (model) =>
+    commands.clearFormatting(model, range(caret(0, 0), caret(0, 5))),
+  applyPainterFormat: (model) =>
+    commands.applyPainterFormat(model, range(caret(1, 0), caret(1, 6)), { run: { italic: true } }),
 };
 
 const QUERIES = new Set([
@@ -124,6 +128,9 @@ const QUERIES = new Set([
   "toolbarListState",
   "emptyToolbarStyleState",
   "toolbarStyleState",
+  "noPainterFormat",
+  "isWholeParagraphSelected",
+  "capturePainterFormat",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {

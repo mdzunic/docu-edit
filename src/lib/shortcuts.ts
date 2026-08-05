@@ -60,6 +60,7 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "format.strikethrough", label: "Strikethrough", category: "Formatting", bindings: [{ key: "x", mod: true, shift: true }] },
   { id: "format.subscript", label: "Subscript", category: "Formatting", bindings: [{ key: ",", mod: true }] },
   { id: "format.superscript", label: "Superscript", category: "Formatting", bindings: [{ key: ".", mod: true }] },
+  { id: "format.clearFormatting", label: "Clear formatting", category: "Formatting", bindings: [{ key: "\\", mod: true }] },
 
   // Paragraph
   { id: "paragraph.alignLeft", label: "Align left", category: "Paragraph", bindings: [{ key: "l", mod: true }] },
