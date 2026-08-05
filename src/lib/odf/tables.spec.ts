@@ -153,7 +153,7 @@ describe("parseOdt — table shapes (AC-25, SPEC-008 fallback)", () => {
     expect(table.rows[0].cells.map((cell) => blockText(cell.blocks[0]))).toEqual(["x", "x", "x"]);
   });
 
-  it("keeps a merged-cell table opaque (SPEC-008)", async () => {
+  it("models a horizontally merged cell's span instead of flattening it (SPEC-023 AC-28)", async () => {
     const body =
       "<table:table>" +
       "<table:table-column/><table:table-column/>" +
@@ -163,8 +163,15 @@ describe("parseOdt — table shapes (AC-25, SPEC-008 fallback)", () => {
       "</table:table-row>" +
       "</table:table><text:p/>";
     const parsed = await parseOdt(await makeOdt(contentWith(body)));
-    expect(parsed.sections[0].blocks.filter(isTable)).toHaveLength(0);
-    expect(parsed.sections[0].opaqueBlocks).toHaveLength(1);
+    expect(parsed.sections[0].opaqueBlocks ?? []).toHaveLength(0);
+    const table = parsed.sections[0].blocks[0];
+    expect(isTable(table)).toBe(true);
+    if (!isTable(table)) {
+      return;
+    }
+    expect(table.rows[0].cells[0].colSpan).toBe(2);
+    expect(table.rows[0].cells[0].blocks.map(blockText)).toEqual(["wide"]);
+    expect(table.rows[0].cells[1].covered).toBe(true);
   });
 
   it("keeps a header-rows table opaque (repetition is out of scope)", async () => {

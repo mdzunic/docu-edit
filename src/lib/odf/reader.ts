@@ -5,6 +5,10 @@
 // text:line-break), resolve style chains, and apply the master page's layout.
 import type {
   Block,
+  BorderLineStyle,
+  BorderSide,
+  CellBorders,
+  CellVerticalAlign,
   DefaultStyles,
   ListFormatting,
   NamedStyle,
@@ -18,8 +22,10 @@ import type {
   Section,
   SourceXml,
   Table,
+  TableAlignment,
   TableCell,
   TableRow,
+  TableWidthMode,
 } from "../documentModel";
 import { createDefaultStyles } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
@@ -27,12 +33,13 @@ import { ZipError, unzip } from "../docx/zip";
 import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { clampListLevel, defaultMarkerStyle } from "../lists";
-import { odfLengthToCm } from "./units";
+import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import {
   OFFICE_NAMESPACE,
   STYLE_NAMESPACE,
   TABLE_NAMESPACE,
   TEXT_NAMESPACE,
+  foAttr,
   styleAttr,
   tableAttr,
   textAttr,
@@ -403,13 +410,214 @@ function repeatCount(el: Element, attr: string): number | null {
   return count;
 }
 
-function parseTableCellElement(cellEl: Element, catalog: OdfStyleCatalog): TableCell | null {
-  const spanned = tableAttr(cellEl, "number-columns-spanned") ?? tableAttr(cellEl, "number-rows-spanned");
-  if (spanned !== null && Number(spanned) !== 1) {
-    // Merged cells (SPEC-023) break the regular grid; the whole table stays
-    // opaque.
-    return null;
+/** ODF's `fo:border`-family shorthand ("0.5pt solid #ff0000") or "none"/
+ * "hidden" (SPEC-023). */
+function parseBorderShorthand(value: string | null): BorderSide | undefined {
+  if (!value) {
+    return undefined;
   }
+  const trimmed = value.trim();
+  if (trimmed === "none" || trimmed === "hidden") {
+    return { style: "none", widthPt: 0, color: "#000000" };
+  }
+  const match = /^(\S+)\s+(\S+)\s+(#[0-9a-fA-F]{6})$/.exec(trimmed);
+  if (!match) {
+    return undefined;
+  }
+  const widthPt = odfLengthToPt(match[1]) ?? 1;
+  const style = mapOdfBorderStyle(match[2]);
+  const color = odfColorToCss(match[3]) ?? "#000000";
+  return { style, widthPt, color };
+}
+
+/** ODF's CSS2-derived border style keywords collapse to the model's small
+ * enum (SPEC-023), the same simplification the .docx reader applies. */
+function mapOdfBorderStyle(word: string): BorderLineStyle {
+  const w = word.toLowerCase();
+  if (w === "none" || w === "hidden") {
+    return "none";
+  }
+  if (w === "double") {
+    return "double";
+  }
+  if (w === "dashed") {
+    return "dashed";
+  }
+  if (w === "dotted") {
+    return "dotted";
+  }
+  return "single"; // "solid", "groove", "ridge", "inset", "outset", …
+}
+
+/** A `style:table-cell-properties` element's SPEC-023 fields: per-side
+ * borders (falling back to the `fo:border` shorthand for any side without
+ * its own `fo:border-*`), background shading, padding and vertical
+ * alignment. */
+interface ParsedCellStyle {
+  borders?: CellBorders;
+  shadingFill?: string;
+  paddingCm?: number;
+  verticalAlign?: CellVerticalAlign;
+}
+
+function parseCellStyleProperties(props: Element): ParsedCellStyle {
+  const shorthand = foAttr(props, "border");
+  const top = parseBorderShorthand(foAttr(props, "border-top") ?? shorthand);
+  const bottom = parseBorderShorthand(foAttr(props, "border-bottom") ?? shorthand);
+  const left = parseBorderShorthand(foAttr(props, "border-left") ?? shorthand);
+  const right = parseBorderShorthand(foAttr(props, "border-right") ?? shorthand);
+  const result: ParsedCellStyle = {};
+  if (top || bottom || left || right) {
+    const borders: CellBorders = {};
+    if (top) {
+      borders.top = top;
+    }
+    if (bottom) {
+      borders.bottom = bottom;
+    }
+    if (left) {
+      borders.left = left;
+    }
+    if (right) {
+      borders.right = right;
+    }
+    result.borders = borders;
+  }
+  const shadingFill = odfColorToCss(foAttr(props, "background-color"));
+  if (shadingFill !== undefined) {
+    result.shadingFill = shadingFill;
+  }
+  const paddingCm = odfLengthToCm(foAttr(props, "padding-top") ?? foAttr(props, "padding"));
+  if (paddingCm !== undefined) {
+    result.paddingCm = paddingCm;
+  }
+  const vAlign = styleAttr(props, "vertical-align");
+  if (vAlign === "top" || vAlign === "bottom") {
+    result.verticalAlign = vAlign;
+  } else if (vAlign === "middle") {
+    result.verticalAlign = "center";
+  }
+  return result;
+}
+
+/** A `style:style` (family "table") element's SPEC-023 width fields:
+ * `style:rel-width` is a percentage of the text area; its absence means a
+ * fixed width (the `columnWidthsCm` sum) — ODF text tables have no distinct
+ * "size to content" mode the way `w:tblLayout="autofit"` does, so `"auto"`
+ * is reachable only by setting it in the editor, not by reading one. */
+interface ParsedTableStyle {
+  widthMode?: TableWidthMode;
+  widthPercent?: number;
+}
+
+/** The three style families a table references, collected once per document
+ * (mirroring collectTableColumnWidths' scan-both-parts pattern) and threaded
+ * through parseTableElement/parseTableCellElement. */
+interface TableStyleTables {
+  columnWidths: Map<string, number>;
+  cellStyles: Map<string, ParsedCellStyle>;
+  rowMinHeights: Map<string, number>;
+  tableStyles: Map<string, ParsedTableStyle>;
+}
+
+function collectTableCellStyles(contentDoc: Document, stylesDoc: Document | undefined): Map<string, ParsedCellStyle> {
+  const styles = new Map<string, ParsedCellStyle>();
+  const scan = (doc: Document | undefined) => {
+    if (!doc) {
+      return;
+    }
+    for (const el of Array.from(doc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
+      if (el.getAttributeNS(STYLE_NAMESPACE, "family") !== "table-cell") {
+        continue;
+      }
+      const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+      const props = firstChildElement(el, STYLE_NAMESPACE, "table-cell-properties");
+      if (name && props) {
+        styles.set(name, parseCellStyleProperties(props));
+      }
+    }
+  };
+  scan(contentDoc);
+  scan(stylesDoc);
+  return styles;
+}
+
+function collectTableRowMinHeights(contentDoc: Document, stylesDoc: Document | undefined): Map<string, number> {
+  const heights = new Map<string, number>();
+  const scan = (doc: Document | undefined) => {
+    if (!doc) {
+      return;
+    }
+    for (const el of Array.from(doc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
+      if (el.getAttributeNS(STYLE_NAMESPACE, "family") !== "table-row") {
+        continue;
+      }
+      const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+      const props = firstChildElement(el, STYLE_NAMESPACE, "table-row-properties");
+      // `min-row-height` (a floor, matching the model) takes precedence over
+      // `row-height` (a fixed height, approximated the same way as the
+      // .docx reader treats `w:hRule="exact"`).
+      const height = props
+        ? (odfLengthToCm(styleAttr(props, "min-row-height")) ?? odfLengthToCm(styleAttr(props, "row-height")))
+        : undefined;
+      if (name && height !== undefined) {
+        heights.set(name, height);
+      }
+    }
+  };
+  scan(contentDoc);
+  scan(stylesDoc);
+  return heights;
+}
+
+function collectTableStyles(contentDoc: Document, stylesDoc: Document | undefined): Map<string, ParsedTableStyle> {
+  const styles = new Map<string, ParsedTableStyle>();
+  const scan = (doc: Document | undefined) => {
+    if (!doc) {
+      return;
+    }
+    for (const el of Array.from(doc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
+      if (el.getAttributeNS(STYLE_NAMESPACE, "family") !== "table") {
+        continue;
+      }
+      const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+      const props = firstChildElement(el, STYLE_NAMESPACE, "table-properties");
+      if (!name || !props) {
+        continue;
+      }
+      const relWidth = odfPercentage(styleAttr(props, "rel-width"));
+      styles.set(
+        name,
+        relWidth !== undefined
+          ? { widthMode: "percent", widthPercent: Math.min(100, Math.max(1, Math.round(relWidth))) }
+          : { widthMode: "fixed" },
+      );
+    }
+  };
+  scan(contentDoc);
+  scan(stylesDoc);
+  return styles;
+}
+
+/** `table:align` on the `table:table` element itself (SPEC-023 AC-22, not a
+ * style property): "margins" is ODF's own "left, indented like a paragraph"
+ * default and reads the same as "left" — table RTL is out of scope. */
+function parseTableAlignmentAttr(tableEl: Element): TableAlignment | undefined {
+  const val = tableAttr(tableEl, "align");
+  if (val === "center" || val === "right") {
+    return val;
+  }
+  if (val === "left" || val === "margins") {
+    return "left";
+  }
+  return undefined;
+}
+
+function parseTableCellElement(
+  cellEl: Element,
+  catalog: OdfStyleCatalog,
+  cellStyles: Map<string, ParsedCellStyle>,
+): TableCell | null {
   const blocks: Block[] = [];
   const strayOpaque: OpaqueBlock[] = [];
   for (const child of Array.from(cellEl.children)) {
@@ -440,22 +648,47 @@ function parseTableCellElement(cellEl: Element, catalog: OdfStyleCatalog): Table
     paragraphs.push({ type: "paragraph", runs: [], formatting: {} });
   }
   const cell: TableCell = { blocks: paragraphs };
+  // Merged cells (SPEC-023 AC-28): the origin carries its own span; the
+  // grid slots it covers are separate `table:covered-table-cell` elements
+  // (handled by the caller, not here).
+  const colSpan = Number(tableAttr(cellEl, "number-columns-spanned") ?? "1");
+  if (Number.isInteger(colSpan) && colSpan > 1) {
+    cell.colSpan = colSpan;
+  }
+  const rowSpan = Number(tableAttr(cellEl, "number-rows-spanned") ?? "1");
+  if (Number.isInteger(rowSpan) && rowSpan > 1) {
+    cell.rowSpan = rowSpan;
+  }
   const styleName = tableAttr(cellEl, "style-name");
   if (styleName !== null) {
     cell.odtStyleName = styleName;
+    const parsedStyle = cellStyles.get(styleName);
+    if (parsedStyle?.borders) {
+      cell.borders = parsedStyle.borders;
+    }
+    if (parsedStyle?.shadingFill !== undefined) {
+      cell.shadingFill = parsedStyle.shadingFill;
+    }
+    if (parsedStyle?.paddingCm !== undefined) {
+      cell.paddingCm = parsedStyle.paddingCm;
+    }
+    if (parsedStyle?.verticalAlign !== undefined) {
+      cell.verticalAlign = parsedStyle.verticalAlign;
+    }
   }
   return cell;
 }
 
-/** Parses a `table:table` into a modelled Table (SPEC-022), or null when it
- * uses features outside the model's regular grid (merged/covered cells,
- * header rows, nested tables, sub-tables, …) — the caller then preserves
- * the element verbatim as an opaque block (SPEC-008). */
-function parseTableElement(
-  tableEl: Element,
-  catalog: OdfStyleCatalog,
-  columnWidths: Map<string, number>,
-): Table | null {
+/** Parses a `table:table` into a modelled Table (SPEC-022; merged cells and
+ * formatting SPEC-023), or null when it uses features outside the model's
+ * regular grid (header rows, nested tables, sub-tables, …) — the caller
+ * then preserves the element verbatim as an opaque block (SPEC-008).
+ *
+ * A merged cell's covered neighbours are explicit `table:covered-table-cell`
+ * elements in the source — unlike `.docx`'s inferred `w:gridSpan`/`w:vMerge`
+ * chains, ODF already lists one element per grid slot, so no second pass is
+ * needed: each becomes a `covered: true` placeholder directly. */
+function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTables: TableStyleTables): Table | null {
   const columnStyleNames: Array<string | undefined> = [];
   const rows: TableRow[] = [];
   for (const child of Array.from(tableEl.children)) {
@@ -478,14 +711,21 @@ function parseTableElement(
       }
       const cells: TableCell[] = [];
       for (const cellEl of Array.from(child.children)) {
-        if (cellEl.namespaceURI !== TABLE_NAMESPACE || cellEl.localName !== "table-cell") {
+        if (cellEl.namespaceURI !== TABLE_NAMESPACE) {
           return null;
         }
         const cellRepeat = repeatCount(cellEl, "number-columns-repeated");
         if (cellRepeat === null) {
           return null;
         }
-        const cell = parseTableCellElement(cellEl, catalog);
+        let cell: TableCell | null;
+        if (cellEl.localName === "table-cell") {
+          cell = parseTableCellElement(cellEl, catalog, styleTables.cellStyles);
+        } else if (cellEl.localName === "covered-table-cell") {
+          cell = { blocks: [], covered: true };
+        } else {
+          return null;
+        }
         if (!cell) {
           return null;
         }
@@ -498,16 +738,20 @@ function parseTableElement(
         return null;
       }
       const rowStyleName = tableAttr(child, "style-name");
+      const minHeightCm = rowStyleName ? styleTables.rowMinHeights.get(rowStyleName) : undefined;
       for (let i = 0; i < repeat; i++) {
         const row: TableRow = { cells: i === 0 ? cells : structuredClone(cells) };
         if (rowStyleName !== null) {
           row.odtStyleName = rowStyleName;
         }
+        if (minHeightCm !== undefined) {
+          row.minHeightCm = minHeightCm;
+        }
         rows.push(row);
       }
     } else {
-      // table-header-rows, covered cells, sub-tables, title/desc, … — the
-      // model cannot express these; keep the table verbatim.
+      // table-header-rows, sub-tables, title/desc, … — the model cannot
+      // express these; keep the table verbatim.
       return null;
     }
   }
@@ -525,7 +769,7 @@ function parseTableElement(
   const pageSize = catalog.pageSize ?? fallback.pageSize;
   const margins = catalog.margins ?? fallback.margins;
   const textAreaCm = Math.max(1, pageSize.widthCm - margins.leftCm - margins.rightCm);
-  const declared = columnStyleNames.map((name) => (name ? columnWidths.get(name) : undefined));
+  const declared = columnStyleNames.map((name) => (name ? styleTables.columnWidths.get(name) : undefined));
   const columnWidthsCm = declared.every((width) => width !== undefined && width > 0)
     ? (declared as number[])
     : columnStyleNames.map(() => textAreaCm / columnStyleNames.length);
@@ -538,6 +782,17 @@ function parseTableElement(
   const styleName = tableAttr(tableEl, "style-name");
   if (styleName !== null) {
     table.odtStyleName = styleName;
+    const parsedStyle = styleTables.tableStyles.get(styleName);
+    if (parsedStyle?.widthMode !== undefined) {
+      table.widthMode = parsedStyle.widthMode;
+    }
+    if (parsedStyle?.widthPercent !== undefined) {
+      table.widthPercent = parsedStyle.widthPercent;
+    }
+  }
+  const alignment = parseTableAlignmentAttr(tableEl);
+  if (alignment !== undefined) {
+    table.alignment = alignment;
   }
   if (columnStyleNames.some((columnName) => columnName !== undefined)) {
     table.odtColumnStyleNames = columnStyleNames;
@@ -589,6 +844,12 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
 
   const catalog = parseOdfStyleCatalog(contentDoc, stylesDoc);
   const tableColumnWidths = collectTableColumnWidths(contentDoc, stylesDoc);
+  const tableStyleTables: TableStyleTables = {
+    columnWidths: tableColumnWidths,
+    cellStyles: collectTableCellStyles(contentDoc, stylesDoc),
+    rowMinHeights: collectTableRowMinHeights(contentDoc, stylesDoc),
+    tableStyles: collectTableStyles(contentDoc, stylesDoc),
+  };
 
   const body = firstChildElement(contentDoc.documentElement, OFFICE_NAMESPACE, "body");
   const textRoot = body ? firstChildElement(body, OFFICE_NAMESPACE, "text") : undefined;
@@ -609,7 +870,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     } else if (child.namespaceURI === TABLE_NAMESPACE && child.localName === "table") {
       // Regular-grid tables are modelled (SPEC-022); anything the model
       // cannot express falls through to the opaque path below.
-      const table = parseTableElement(child, catalog, tableColumnWidths);
+      const table = parseTableElement(child, catalog, tableStyleTables);
       if (table) {
         blocks.push(table);
       } else {
