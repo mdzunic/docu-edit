@@ -20,6 +20,10 @@
 //    sequence order (see validate.ts), which is what Word's strict reader
 //    checks before offering to "repair" a file.
 import type {
+  BorderLineStyle,
+  BorderSide,
+  CellBorders,
+  CellVerticalAlign,
   DefaultStyles,
   DocumentModel,
   NamedStyle,
@@ -29,6 +33,8 @@ import type {
   Run,
   RunFormatting,
   Table,
+  TableCell,
+  TableRow,
 } from "../documentModel";
 import { DEFAULT_TITLE } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
@@ -44,7 +50,13 @@ import {
   WORD_NAMESPACE,
 } from "./xml";
 import { catalogToNamedStyles, parseStylesCatalog } from "./styles";
-import { cmToTwips, cssColorToOoxml, ptToHalfPoints, ptToTwentiethsOfPoint } from "./units";
+import {
+  cmToTwips,
+  cssColorToOoxml,
+  ptToEighthPoints,
+  ptToHalfPoints,
+  ptToTwentiethsOfPoint,
+} from "./units";
 import {
   buildNumberingXml,
   mergeNumberingXml,
@@ -312,7 +324,9 @@ function paragraphXml(paragraph: Paragraph, includeOpaque: boolean, numRef?: Num
 // Word's default single-line borders for a table created in this editor —
 // self-contained (no style reference), so the table is visible in any
 // consumer without touching styles.xml. Sized 4 eighth-points, Word's own
-// default for an inserted table.
+// default for an inserted table. An explicit per-cell w:tcBorders (SPEC-023)
+// overrides this default for whichever edges it sets, the normal OOXML
+// cell-over-table precedence.
 const GENERATED_TABLE_BORDERS =
   "<w:tblBorders>" +
   '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
@@ -323,10 +337,191 @@ const GENERATED_TABLE_BORDERS =
   '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
   "</w:tblBorders>";
 
-/** One table block (SPEC-022): w:tblPr (the source's own, preserved
- * verbatim, or a generated one with plain borders), the w:tblGrid column
- * widths, then every row's cells with their width-carrying w:tcPr and
- * nested paragraphs. */
+/** A grid slot's owning real cell — the writer's own mirror of lib/tables.ts's
+ * same concept (SPEC-023), needed to know, for a merged table, which grid
+ * columns/rows a `w:tc` must skip (already covered by an earlier column's
+ * `w:gridSpan` in the same row) versus re-emit as a `w:vMerge` continuation
+ * (a later row within the origin's `rowSpan`). */
+interface CellOwner {
+  originRow: number;
+  originCol: number;
+  rowSpan: number;
+  colSpan: number;
+}
+
+function computeOwnerGrid(table: Table): CellOwner[][] {
+  const rowCount = table.rows.length;
+  const colCount = table.columnWidthsCm.length;
+  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
+  for (let r = 0; r < rowCount; r++) {
+    for (let c = 0; c < colCount; c++) {
+      if (grid[r][c]) {
+        continue;
+      }
+      const cell = table.rows[r].cells[c];
+      const owner: CellOwner = {
+        originRow: r,
+        originCol: c,
+        rowSpan: cell.rowSpan ?? 1,
+        colSpan: cell.colSpan ?? 1,
+      };
+      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
+        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
+          grid[r + dr][c + dc] = owner;
+        }
+      }
+    }
+  }
+  return grid;
+}
+
+function borderStyleVal(style: BorderLineStyle): string {
+  if (style === "none") {
+    return "nil";
+  }
+  return style;
+}
+
+function borderSideXml(tag: string, side: BorderSide): string {
+  const sz = side.style === "none" ? 0 : Math.max(1, ptToEighthPoints(side.widthPt));
+  const color = side.color !== "auto" ? (cssColorToOoxml(side.color) ?? "auto") : "auto";
+  return `<w:${tag} w:val="${borderStyleVal(side.style)}" w:sz="${sz}" w:space="0" w:color="${color}"/>`;
+}
+
+/** A cell's `w:tcBorders` (SPEC-023 AC-10..12, AC-25): only the edges the
+ * cell explicitly sets — an unset edge falls back to the table's own
+ * `w:tblBorders` default, the normal OOXML precedence. */
+function cellBordersXml(borders: CellBorders | undefined): string {
+  if (!borders) {
+    return "";
+  }
+  const parts: string[] = [];
+  if (borders.top) {
+    parts.push(borderSideXml("top", borders.top));
+  }
+  if (borders.bottom) {
+    parts.push(borderSideXml("bottom", borders.bottom));
+  }
+  if (borders.left) {
+    parts.push(borderSideXml("start", borders.left));
+  }
+  if (borders.right) {
+    parts.push(borderSideXml("end", borders.right));
+  }
+  return parts.length > 0 ? `<w:tcBorders>${parts.join("")}</w:tcBorders>` : "";
+}
+
+/** A cell's `w:shd` fill (SPEC-023 AC-15, AC-26). */
+function cellShadingXml(fill: string | undefined): string {
+  const hex = cssColorToOoxml(fill);
+  return hex !== undefined ? `<w:shd w:val="clear" w:color="auto" w:fill="${hex}"/>` : "";
+}
+
+/** A cell's `w:tcMar` (SPEC-023 AC-16): the model holds one uniform padding,
+ * written to all four sides. */
+function cellPaddingXml(paddingCm: number | undefined): string {
+  if (paddingCm === undefined) {
+    return "";
+  }
+  const w = cmToTwips(paddingCm);
+  return (
+    "<w:tcMar>" +
+    `<w:top w:w="${w}" w:type="dxa"/>` +
+    `<w:start w:w="${w}" w:type="dxa"/>` +
+    `<w:bottom w:w="${w}" w:type="dxa"/>` +
+    `<w:end w:w="${w}" w:type="dxa"/>` +
+    "</w:tcMar>"
+  );
+}
+
+function cellVAlignXml(align: CellVerticalAlign | undefined): string {
+  return align !== undefined ? `<w:vAlign w:val="${align}"/>` : "";
+}
+
+/** A freshly generated `w:tcPr` (no preserved source XML to reuse): width,
+ * then — in the schema's CT_TcPrBase sequence — gridSpan, vMerge,
+ * tcBorders, shd, tcMar, vAlign. */
+function generatedTcPrXml(
+  cell: TableCell,
+  widthTwips: number,
+  colSpan: number,
+  vMergeRestart: boolean,
+): string {
+  const parts = [`<w:tcW w:w="${widthTwips}" w:type="dxa"/>`];
+  if (colSpan > 1) {
+    parts.push(`<w:gridSpan w:val="${colSpan}"/>`);
+  }
+  if (vMergeRestart) {
+    parts.push('<w:vMerge w:val="restart"/>');
+  }
+  const borders = cellBordersXml(cell.borders);
+  if (borders) {
+    parts.push(borders);
+  }
+  const shading = cellShadingXml(cell.shadingFill);
+  if (shading) {
+    parts.push(shading);
+  }
+  const margin = cellPaddingXml(cell.paddingCm);
+  if (margin) {
+    parts.push(margin);
+  }
+  const valign = cellVAlignXml(cell.verticalAlign);
+  if (valign) {
+    parts.push(valign);
+  }
+  return `<w:tcPr>${parts.join("")}</w:tcPr>`;
+}
+
+/** A row's `w:trPr` (SPEC-023 AC-4, AC-5): the source's own, preserved
+ * verbatim, or — for a row this editor set a minimum height on —
+ * `w:trHeight` with `hRule="atLeast"`, OOXML's own "minimum, grows for
+ * content" row height rule. */
+function rowPropertiesXml(row: TableRow, includeOpaque: boolean): string {
+  if (includeOpaque && row.docxTrPr !== undefined) {
+    return row.docxTrPr;
+  }
+  if (row.minHeightCm !== undefined) {
+    return `<w:trPr><w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/></w:trPr>`;
+  }
+  return "";
+}
+
+/** A table's `w:tblW` (SPEC-023 AC-23, AC-27): fixed (the column widths'
+ * own sum), a percentage of the text area (fiftieths of a percent is
+ * OOXML's unit — 5000 = 100%), or auto (content-sized). */
+function tableWidthXml(table: Table, totalTwips: number): string {
+  if (table.widthMode === "auto") {
+    return '<w:tblW w:w="0" w:type="auto"/>';
+  }
+  if (table.widthMode === "percent") {
+    const pct = Math.round((table.widthPercent ?? 100) * 50);
+    return `<w:tblW w:w="${pct}" w:type="pct"/>`;
+  }
+  return `<w:tblW w:w="${totalTwips}" w:type="dxa"/>`;
+}
+
+/** A table's `w:jc` (SPEC-023 AC-22): absent means left, OOXML's own
+ * default, so only center/right need an explicit element. */
+function tableAlignmentXml(table: Table): string {
+  return table.alignment === "center" || table.alignment === "right"
+    ? `<w:jc w:val="${table.alignment}"/>`
+    : "";
+}
+
+/** One table block (SPEC-022; formatting and merged cells SPEC-023):
+ * w:tblPr (the source's own, preserved verbatim, or a generated one from
+ * the modelled width/alignment plus the default borders), the w:tblGrid
+ * column widths, then every row's cells.
+ *
+ * A merged cell's grid rectangle is walked via computeOwnerGrid: a column
+ * covered by an earlier column's `w:gridSpan` in the same row emits nothing
+ * (already part of that `w:tc`); the origin row emits the real `w:tc` with
+ * its content and (if merged) `w:gridSpan`/`w:vMerge="restart"`; any further
+ * row within a vertical merge's `rowSpan` emits an empty continuation
+ * `w:tc` marked `w:vMerge` (no `w:val` — "continue" is the schema default),
+ * repeating the same `w:gridSpan` so every row's cells still sum to the
+ * grid's column count. */
 function tableXml(
   table: Table,
   includeOpaque: boolean,
@@ -337,7 +532,8 @@ function tableXml(
     includeOpaque && table.docxTblPr !== undefined
       ? table.docxTblPr
       : "<w:tblPr>" +
-        `<w:tblW w:w="${totalTwips}" w:type="dxa"/>` +
+        tableWidthXml(table, totalTwips) +
+        tableAlignmentXml(table) +
         GENERATED_TABLE_BORDERS +
         '<w:tblLayout w:type="fixed"/>' +
         "</w:tblPr>";
@@ -345,16 +541,27 @@ function tableXml(
     "<w:tblGrid>" +
     table.columnWidthsCm.map((cm) => `<w:gridCol w:w="${cmToTwips(cm)}"/>`).join("") +
     "</w:tblGrid>";
+  const ownerGrid = computeOwnerGrid(table);
   const rows = table.rows
     .map((row, rowIndex) => {
-      const trPr = includeOpaque && row.docxTrPr !== undefined ? row.docxTrPr : "";
-      const cells = row.cells
-        .map((cell, colIndex) => {
-          const widthTwips = cmToTwips(table.columnWidthsCm[colIndex] ?? 0);
+      const trPr = rowPropertiesXml(row, includeOpaque);
+      const cells: string[] = [];
+      for (let colIndex = 0; colIndex < table.columnWidthsCm.length; colIndex++) {
+        const owner = ownerGrid[rowIndex][colIndex];
+        if (owner.originCol !== colIndex) {
+          // Covered by an earlier column's gridSpan in this row — already
+          // part of that w:tc.
+          continue;
+        }
+        const widthTwips = table.columnWidthsCm
+          .slice(colIndex, colIndex + owner.colSpan)
+          .reduce((sum, cm) => sum + cmToTwips(cm), 0);
+        if (owner.originRow === rowIndex) {
+          const cell = row.cells[colIndex];
           const tcPr =
             includeOpaque && cell.docxTcPr !== undefined
               ? cell.docxTcPr
-              : `<w:tcPr><w:tcW w:w="${widthTwips}" w:type="dxa"/></w:tcPr>`;
+              : generatedTcPrXml(cell, widthTwips, owner.colSpan, owner.rowSpan > 1);
           const content =
             cell.blocks.length > 0
               ? cell.blocks
@@ -363,10 +570,16 @@ function tableXml(
                   )
                   .join("")
               : "<w:p/>";
-          return `<w:tc>${tcPr}${content}</w:tc>`;
-        })
-        .join("");
-      return `<w:tr>${trPr}${cells}</w:tr>`;
+          cells.push(`<w:tc>${tcPr}${content}</w:tc>`);
+        } else {
+          const tcPr =
+            `<w:tcPr><w:tcW w:w="${widthTwips}" w:type="dxa"/>` +
+            (owner.colSpan > 1 ? `<w:gridSpan w:val="${owner.colSpan}"/>` : "") +
+            "<w:vMerge/></w:tcPr>";
+          cells.push(`<w:tc>${tcPr}<w:p/></w:tc>`);
+        }
+      }
+      return `<w:tr>${trPr}${cells.join("")}</w:tr>`;
     })
     .join("");
   return `<w:tbl>${tblPr}${grid}${rows}</w:tbl>`;

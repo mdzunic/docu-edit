@@ -338,6 +338,7 @@ function checkTable(table: Element, context: string, violations: string[]): void
       }
       const rowContext = `${context}/w:tr`;
       let cellCount = 0;
+      let columnsCovered = 0;
       Array.from(child.children).forEach((rowChild, rowIndex) => {
         if (!isWordElement(rowChild)) {
           violations.push(`${rowContext}: unexpected element ${rowChild.nodeName}`);
@@ -351,6 +352,7 @@ function checkTable(table: Element, context: string, violations: string[]): void
           cellCount += 1;
           const cellContext = `${rowContext}/w:tc[${cellCount}]`;
           let sawBlock = false;
+          let gridSpan = 1;
           Array.from(rowChild.children).forEach((cellChild, cellIndex) => {
             if (!isWordElement(cellChild)) {
               violations.push(`${cellContext}: unexpected element ${cellChild.nodeName}`);
@@ -359,6 +361,17 @@ function checkTable(table: Element, context: string, violations: string[]): void
             if (cellChild.localName === "tcPr") {
               if (cellIndex !== 0) {
                 violations.push(`${cellContext}: w:tcPr must be the first child of w:tc`);
+              }
+              // SPEC-023: a horizontally merged cell's w:gridSpan means this
+              // one w:tc stands in for that many w:tblGrid columns.
+              const gridSpanEl = Array.from(cellChild.children).find(
+                (el) => isWordElement(el) && el.localName === "gridSpan",
+              );
+              if (gridSpanEl) {
+                const val = Number(gridSpanEl.getAttributeNS(WORD_NAMESPACE, "val"));
+                if (Number.isInteger(val) && val > 0) {
+                  gridSpan = val;
+                }
               }
             } else if (cellChild.localName === "p") {
               sawBlock = true;
@@ -370,13 +383,14 @@ function checkTable(table: Element, context: string, violations: string[]): void
           if (!sawBlock) {
             violations.push(`${cellContext}: w:tc must contain at least one w:p`);
           }
+          columnsCovered += gridSpan;
         } else {
           violations.push(`${rowContext}: unexpected element w:${rowChild.localName}`);
         }
       });
-      if (columnCount > 0 && cellCount !== columnCount) {
+      if (columnCount > 0 && columnsCovered !== columnCount) {
         violations.push(
-          `${rowContext}: has ${cellCount} cells but w:tblGrid declares ${columnCount} columns`,
+          `${rowContext}: cells cover ${columnsCovered} grid columns but w:tblGrid declares ${columnCount}`,
         );
       }
     } else {

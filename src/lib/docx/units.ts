@@ -52,6 +52,17 @@ export function ptToTwentiethsOfPoint(pt: number): number {
   return Math.round(pt * 20);
 }
 
+/** Eighths of a point (OOXML's unit for border width, `w:sz` on
+ * `w:tcBorders`'s children) to points. */
+export function eighthPointsToPt(eighths: number): number {
+  return eighths / 8;
+}
+
+/** Points to eighths of a point (OOXML's unit for border width). */
+export function ptToEighthPoints(pt: number): number {
+  return Math.round(pt * 8);
+}
+
 /** A CSS `#rrggbb` colour to OOXML's bare uppercase hex ("FF0000"), or
  * undefined for anything else — the model only ever holds six-digit hex
  * colours (that's all `ooxmlColorToCss` produces), so any other shape has

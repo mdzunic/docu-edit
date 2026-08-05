@@ -146,16 +146,23 @@ describe("parseDocx — table shapes (AC-26..28, SPEC-008 fallback)", () => {
     expect(parsed.sections[0].opaqueBlocks ?? []).toHaveLength(0);
   });
 
-  it("keeps a merged-cell table opaque rather than flattening it (SPEC-008)", async () => {
+  it("models a horizontally merged cell's gridSpan instead of flattening it (SPEC-023 AC-24)", async () => {
     const merged =
       "<w:tbl>" +
       "<w:tblGrid><w:gridCol w:w=\"4513\"/><w:gridCol w:w=\"4513\"/></w:tblGrid>" +
       "<w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>wide</w:t></w:r></w:p></w:tc></w:tr>" +
       "</w:tbl>";
     const parsed = await parseDocx(await makeDocx(bodyDocx(`<w:p/>${merged}`)));
-    expect(parsed.sections[0].blocks).toHaveLength(1);
-    expect(parsed.sections[0].opaqueBlocks).toHaveLength(1);
-    expect(parsed.sections[0].opaqueBlocks![0].xml).toContain("gridSpan");
+    expect(parsed.sections[0].opaqueBlocks ?? []).toHaveLength(0);
+    const table = parsed.sections[0].blocks[1];
+    expect(isTable(table)).toBe(true);
+    if (!isTable(table)) {
+      return;
+    }
+    expect(table.rows[0].cells).toHaveLength(2);
+    expect(table.rows[0].cells[0].colSpan).toBe(2);
+    expect(table.rows[0].cells[0].blocks.map(blockText)).toEqual(["wide"]);
+    expect(table.rows[0].cells[1].covered).toBe(true);
   });
 
   it("keeps a table with a nested table opaque", async () => {
