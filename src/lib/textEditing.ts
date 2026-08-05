@@ -920,6 +920,36 @@ export function patchFormatting(
   }
 }
 
+/** Replaces every run's formatting outright between `start` and `end`
+ * (SPEC-020): unlike `patchFormatting`, `formatting` fully replaces each
+ * covered run's formatting rather than overlaying a patch onto it — what
+ * "Clear formatting" (an empty object) and the format painter (a copied
+ * `RunFormatting`) both need, since neither should inherit anything the
+ * covered text already carried. */
+export function replaceFormatting(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+  formatting: RunFormatting,
+): void {
+  for (const { address, from, to } of paragraphSlicesInRange(model, start, end)) {
+    if (from >= to) {
+      continue;
+    }
+    const paragraph = paragraphAt(model, address);
+    if (!paragraph) {
+      continue;
+    }
+    const [before, tail] = splitRuns(paragraph.runs, from);
+    const [within, after] = splitRuns(tail, to - from);
+    const changed = within.map((run) => ({ text: run.text, formatting: { ...formatting } }));
+    replaceParagraphAt(model, address, {
+      ...paragraph,
+      runs: normalizeRuns([...before, ...changed, ...after]),
+    });
+  }
+}
+
 /** Sets a single boolean character format across a range — SPEC-012's
  * original entry point, now a thin wrapper over the SPEC-013 patch form. */
 export function setFormatting(
