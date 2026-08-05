@@ -117,12 +117,15 @@ import {
   adjustIndent,
   applyFormat,
   applyListAutoformat,
+  applyPainterFormat,
   applyParagraphFormat,
   applyParagraphStyle,
   blockCount,
   blockOrdinal,
+  capturePainterFormat,
   caretSelection,
   changeListLevel,
+  clearFormatting,
   deleteBackward,
   deleteForward,
   deleteRange,
@@ -140,6 +143,7 @@ import {
   insertText,
   isCollapsed,
   noCommandResult,
+  noPainterFormat,
   noParagraphCommand,
   noPendingFormat,
   noSelection,
@@ -181,7 +185,7 @@ import {
   undo as undoDocument,
   undoLabel as undoDocumentLabel,
 } from "../lib/undoHistory";
-import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
+import { findShortcut, isOutsideDocumentInput, shortcutLabel } from "../lib/shortcuts";
 
 const route = useRoute();
 const router = useRouter();
@@ -338,6 +342,20 @@ const recentColors = ref(loadRecentColors());
 // this document" group — doc.value is replaced on every edit, so this
 // recomputes as families come and go.
 const documentFonts = computed(() => (doc.value ? documentFontFamilies(doc.value) : []));
+
+// --- format painter (SPEC-020) ----------------------------------------------
+// "" (unarmed), "once" (a single click — disarms itself after one applied
+// selection, AC-13) or "repeat" (a double-click — stays armed until Escape or
+// another button click, AC-14..17). A ref because the canvas's cursor and
+// the button's pressed state both render from it; `painterFormat` is the
+// copied formatting itself, plain because nothing renders from it directly.
+const painterMode = ref("");
+let painterFormat = noPainterFormat();
+// The selection maybeApplyPainter last acted on (applied to, or saw
+// collapsed and skipped) — guards against its own applyEdit's caret-restore
+// echo (setDomSelection re-selecting the same range still raises a
+// selectionchange) re-triggering the same application over and over.
+let lastPainterSelection = noSelection();
 
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
@@ -501,6 +519,13 @@ function handleSelectionChange() {
     selectionAnchor =
       compareCaret(range.start, range.end) === 0 ? noCaret() : range.start;
     updateCaretStatus(range);
+    // The format painter's target (SPEC-020 AC-12): skipped while a text
+    // drag is in progress (handleCanvasMouseUp applies on release instead,
+    // once the range has settled) — see maybeApplyPainter's own guard
+    // against re-triggering off its own caret-restore echo.
+    if (!mouseButtonDown) {
+      maybeApplyPainter();
+    }
   }
 }
 
@@ -1366,6 +1391,11 @@ function scheduleTableArrowFallback(key = "") {
   }, 0);
 }
 
+// Tracks the primary button across a text-selection drag (SPEC-020): the
+// format painter must not paint a partial selection mid-drag, only the
+// range the user settles on at mouseup — see maybeApplyPainter.
+let mouseButtonDown = false;
+
 /** Mousedown on the canvas: remembers the cell under the pointer as a
  * potential drag origin (AC-15) and dismisses any existing cell-range
  * highlight — a plain click always returns to a normal text caret. */
@@ -1373,6 +1403,7 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   if (event.button !== 0) {
     return;
   }
+  mouseButtonDown = true;
   clearCellSelection();
   cellDragOrigin = editable.value ? tableCellAtTarget(event.target) : null;
 }
@@ -1414,6 +1445,10 @@ function handleCanvasMouseMove(event = new MouseEvent("mousemove")) {
 
 function handleCanvasMouseUp() {
   cellDragOrigin = null;
+  if (mouseButtonDown) {
+    mouseButtonDown = false;
+    maybeApplyPainter();
+  }
 }
 
 /** Mouseover anywhere on the page: hovering a table measures its geometry
@@ -1710,6 +1745,95 @@ function handleResetStyle() {
   );
 }
 
+// --- clear formatting and format painter (SPEC-020) -------------------------
+
+/** The "Clear formatting" toolbar button and Ctrl/Cmd+\ (AC-1, AC-2, AC-3):
+ * one command result, so — like every other paragraph command — it is one
+ * undo step (AC-18). */
+function handleClearFormatting() {
+  applyParagraphCommand(clearFormatting, "clear formatting");
+}
+
+/** Disarms the format painter (AC-15, AC-16, AC-17): dropping the copied
+ * format and the armed cursor/button state. Idempotent, so Escape can call
+ * it unconditionally. */
+function disarmPainter() {
+  painterMode.value = "";
+  painterFormat = noPainterFormat();
+  lastPainterSelection = noSelection();
+}
+
+/** Arms the painter from the current caret/selection (AC-9, AC-10): copies
+ * its formatting and switches the canvas cursor and the button's pressed
+ * state on. */
+function armPainter(mode = "once") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  painterFormat = capturePainterFormat(model, selection);
+  painterMode.value = mode;
+  lastPainterSelection = noSelection();
+}
+
+/** A single click on the painter button: arms single-use mode, or disarms
+ * if it was already armed — including the first of the two clicks a
+ * dblclick fires, which the dblclick handler below re-arms as repeat mode
+ * (AC-13, AC-14, AC-16). */
+function handlePainterClick() {
+  if (painterMode.value !== "") {
+    disarmPainter();
+    return;
+  }
+  armPainter("once");
+}
+
+/** A double-click on the painter button arms repeated-use mode (AC-14). */
+function handlePainterDblClick() {
+  armPainter("repeat");
+}
+
+/** Applies the armed painter's copied formatting to the selection just made
+ * (AC-12) — the settled result of a text drag (canvas mouseup) or of a
+ * single-step keyboard/click selection change (handleSelectionChange).
+ * Single-use mode disarms after this one application (AC-13); repeated-use
+ * stays armed for the next one. A collapsed selection is not "a selection
+ * made" — nothing is applied, and the painter stays armed. `lastPainterSelection`
+ * skips a selection already acted on, which is what keeps this safe to call
+ * from every selectionchange without special-casing our own edits' echo. */
+function maybeApplyPainter() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || painterMode.value === "" || !painterFormat) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  const last = lastPainterSelection;
+  if (
+    last &&
+    compareCaret(selection.anchor, last.anchor) === 0 &&
+    compareCaret(selection.focus, last.focus) === 0
+  ) {
+    return;
+  }
+  lastPainterSelection = selection;
+  if (isCollapsed(selection)) {
+    return;
+  }
+  applyEdit(applyPainterFormat(model, selection, painterFormat), selection, "format painter", false);
+  if (painterMode.value === "once") {
+    disarmPainter();
+  }
+}
+
 /** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
  * clears any absolute height so the preset actually takes effect (AC-11). */
 function handleSpacingPreset(multiple = 1) {
@@ -1853,11 +1977,13 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     return;
   }
   if (event.key === "Escape") {
-    // Escape dismisses the paste options chip, the context menu and the
-    // cell-range selection (SPEC-022).
+    // Escape dismisses the paste options chip, the context menu, the
+    // cell-range selection (SPEC-022) and the format painter (SPEC-020
+    // AC-15, AC-17).
     dismissPasteChip();
     closeContextMenu();
     clearCellSelection();
+    disarmPainter();
     return;
   }
   if (
@@ -1947,6 +2073,11 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
       event.preventDefault();
       toggleCharacterFormat(shortcut.id === "format.subscript" ? "subscript" : "superscript");
+      break;
+    case "format.clearFormatting":
+      // Ctrl/Cmd+\ (SPEC-020 AC-3).
+      event.preventDefault();
+      handleClearFormatting();
       break;
     case "paragraph.alignLeft":
     case "paragraph.alignCenter":
@@ -2266,6 +2397,12 @@ function currentFindOptions() {
 function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   if (!doc.value || !editable.value || event.altKey) {
     return;
+  }
+  // Escape disarms the format painter regardless of where focus is (AC-17)
+  // — handleKeyDown below also disarms it when Escape is pressed with the
+  // canvas focused, so this is deliberately unguarded by isOutsideDocumentInput.
+  if (event.key === "Escape") {
+    disarmPainter();
   }
   if (isOutsideDocumentInput(event.target)) {
     return;
@@ -2806,6 +2943,32 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         v-if="editable"
         type="button"
         class="toolbar-button"
+        data-testid="clear-formatting-button"
+        :title="`Clear formatting (${shortcutLabel('format.clearFormatting')})`"
+        :aria-label="`Clear formatting (${shortcutLabel('format.clearFormatting')})`"
+        @mousedown.prevent
+        @click="handleClearFormatting"
+      >
+        Clear formatting
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
+        data-testid="format-painter-button"
+        title="Format painter (double-click to keep it on)"
+        aria-label="Format painter (double-click to keep it on)"
+        :aria-pressed="painterMode !== ''"
+        @mousedown.prevent
+        @click="handlePainterClick"
+        @dblclick="handlePainterDblClick"
+      >
+        Format painter
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
         data-testid="delete-document"
         @click="confirmingDelete = true"
       >
@@ -2996,6 +3159,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
           <div
             ref="contentRoot"
             class="document-content"
+            :class="{ 'painter-armed': painterMode !== '' }"
             data-testid="document-content"
             role="textbox"
             aria-multiline="true"
@@ -3123,6 +3287,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
   cursor: pointer;
 }
 
+/* The format painter button's armed state (SPEC-020 AC-11, AC-14). */
+.toolbar-button[aria-pressed="true"] {
+  background: #d2e3fc;
+  border-color: #8ab4f8;
+}
+
 .app-bar-cluster {
   display: flex;
   align-items: center;
@@ -3224,6 +3394,13 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
   overflow: hidden;
   color: #202124;
   outline: none;
+}
+
+/* The format painter's armed cursor (SPEC-020 AC-11) — a generic keyword
+   cursor rather than a custom image asset, matching the rest of the app's
+   cursor usage (DocumentRuler's resize handles, etc.). */
+.document-content.painter-armed {
+  cursor: copy;
 }
 
 .doc-paragraph {
