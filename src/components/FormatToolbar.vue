@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { modifierKeyLabel } from "../lib/platform";
+import { shortcutLabel } from "../lib/shortcuts";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits<{...}>()
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -12,19 +12,19 @@ const props = defineProps({
 
 const emit = defineEmits(["toggle"]);
 
-const mod = modifierKeyLabel();
-
 // Static per mount (the modifier key doesn't change mid-session), so this
-// runs once rather than as a computed.
+// runs once rather than as a computed. Shortcut text is read from the
+// SPEC-021 registry rather than hardcoded, so it can never drift from what
+// the app actually binds (AC-15, AC-16).
 const FORMATS = [
-  { key: "bold", label: "Bold", shortcut: `${mod}+B`, glyph: "B" },
-  { key: "italic", label: "Italic", shortcut: `${mod}+I`, glyph: "I" },
-  { key: "underline", label: "Underline", shortcut: `${mod}+U`, glyph: "U" },
-  { key: "strikethrough", label: "Strikethrough", shortcut: `${mod}+Shift+X`, glyph: "S" },
+  { key: "bold", label: "Bold", shortcut: shortcutLabel("format.bold"), glyph: "B" },
+  { key: "italic", label: "Italic", shortcut: shortcutLabel("format.italic"), glyph: "I" },
+  { key: "underline", label: "Underline", shortcut: shortcutLabel("format.underline"), glyph: "U" },
+  { key: "strikethrough", label: "Strikethrough", shortcut: shortcutLabel("format.strikethrough"), glyph: "S" },
   // SPEC-013: sub/superscript are toggle buttons like the four above;
   // mutual exclusivity lives in the command layer (one vertAlign field).
-  { key: "subscript", label: "Subscript", shortcut: `${mod}+,`, glyph: "X₂" },
-  { key: "superscript", label: "Superscript", shortcut: `${mod}+.`, glyph: "X²" },
+  { key: "subscript", label: "Subscript", shortcut: shortcutLabel("format.subscript"), glyph: "X₂" },
+  { key: "superscript", label: "Superscript", shortcut: shortcutLabel("format.superscript"), glyph: "X²" },
 ];
 
 function tooltip(format = FORMATS[0]) {
