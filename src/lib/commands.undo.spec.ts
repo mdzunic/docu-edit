@@ -40,14 +40,18 @@ function range(anchor: CaretPosition, focus: CaretPosition): ModelSelection {
 /** One fixture document, freshly built for every scenario: two paragraphs
  * with plain and bold text, enough for every command — text edits,
  * character/run formatting, paragraph formatting and page margins — to have
- * something meaningful to touch. */
+ * something meaningful to touch, plus one list item (SPEC-018) so the list
+ * commands genuinely mutate. */
 function fixtureDocument(): DocumentModel {
   const model = createDocument("undo-fixture");
+  const listItem = paragraph(["List item", {}]);
+  listItem.list = { type: "bullet", level: 2 };
   model.sections = [
     {
       blocks: [
         paragraph(["Hello ", {}], ["world", { bold: true }]),
         paragraph(["Second paragraph", {}]),
+        listItem,
       ],
     },
   ];
@@ -77,6 +81,13 @@ const REGISTRY: Record<string, Scenario> = {
   toggleSpaceBefore: (model) => commands.toggleSpaceBefore(model, caretSelection(caret(0, 0))),
   setPageMargins: (model) =>
     commands.setPageMargins(model, caretSelection(caret(0, 0)), { leftCm: 3 }),
+  toggleList: (model) => commands.toggleList(model, caretSelection(caret(0, 0)), "bullet"),
+  changeListLevel: (model) => commands.changeListLevel(model, caretSelection(caret(2, 0)), 1),
+  setListMarker: (model) =>
+    commands.setListMarker(model, caretSelection(caret(2, 0)), "square"),
+  removeListFormat: (model) => commands.removeListFormat(model, caretSelection(caret(2, 0))),
+  applyListAutoformat: (model) =>
+    commands.applyListAutoformat(model, caretSelection(caret(1, 0)), "number"),
 };
 
 const QUERIES = new Set([
@@ -102,6 +113,9 @@ const QUERIES = new Set([
   "selectAll",
   "blockCount",
   "blockOrdinal",
+  "allTouchedOfListType",
+  "emptyToolbarListState",
+  "toolbarListState",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {
