@@ -28,6 +28,7 @@
 import type {
   Block,
   DocumentModel,
+  NamedStyle,
   Paragraph,
   ParagraphFormatting,
   Run,
@@ -35,6 +36,7 @@ import type {
   Table,
 } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import { equalStructural } from "../equality";
 import {
   BULLET_CHARS,
   clampListLevel,
@@ -43,8 +45,10 @@ import {
   type PlannedListLevel,
 } from "../lists";
 import { zip, type ZipEntryInput } from "../docx/zipWriter";
+import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { HIGHLIGHT_HEX } from "./properties";
+import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
@@ -108,14 +112,18 @@ function highlightToOdfColor(highlight: string | false | undefined): string | un
 /** A style:text-properties element for the run formatting, or "" when there
  * is nothing to say. Explicit false values are written as "normal"/"none" —
  * the model only holds false where the source explicitly switched the
- * property off, and dropping that would change the re-opened model. */
-function textPropertiesXml(formatting: RunFormatting): string {
+ * property off, and dropping that would change the re-opened model.
+ * `fontSizePercent` is the named-style case (SPEC-019): a proportional size
+ * a style definition carries when it sets no absolute one. */
+function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number): string {
   const attrs: string[] = [];
   if (formatting.fontFamily !== undefined) {
     attrs.push(`fo:font-family="${escapeXml(formatting.fontFamily)}"`);
   }
   if (formatting.fontSizePt !== undefined) {
     attrs.push(`fo:font-size="${ptToOdfLength(formatting.fontSizePt)}"`);
+  } else if (fontSizePercent !== undefined) {
+    attrs.push(`fo:font-size="${fontSizePercent}%"`);
   }
   if (formatting.bold !== undefined) {
     attrs.push(`fo:font-weight="${formatting.bold ? "bold" : "normal"}"`);
@@ -737,11 +745,40 @@ export function buildContentXml(model: DocumentModel): string {
   );
 }
 
+/** One named paragraph style:style definition (SPEC-019) — the id as
+ * style:name (with the display name alongside when it differs), the parent
+ * link, the outline level that makes it a heading style, and the style's
+ * own paragraph/text properties. */
+function namedStyleDefinitionXml(definition: NamedStyle): string {
+  let attrs = `style:name="${escapeXml(definition.id)}"`;
+  if (definition.name !== undefined && definition.name !== definition.id) {
+    attrs += ` style:display-name="${escapeXml(definition.name)}"`;
+  }
+  attrs += ' style:family="paragraph"';
+  if (definition.basedOn !== undefined) {
+    attrs += ` style:parent-style-name="${escapeXml(definition.basedOn)}"`;
+  }
+  if (definition.headingLevel !== undefined) {
+    attrs += ` style:default-outline-level="${definition.headingLevel}"`;
+  }
+  const properties =
+    paragraphPropertiesXml(definition.paragraphFormatting ?? {}) +
+    textPropertiesXml(definition.runFormatting ?? {}, definition.fontSizePercent);
+  return properties.length > 0
+    ? `<style:style ${attrs}>${properties}</style:style>`
+    : `<style:style ${attrs}/>`;
+}
+
 /** The styles part: a paragraph default-style carrying the model's default
- * font (the reader's source for defaultStyles.fontFamily/fontSizePt), and
- * the page layout applied through the first master page (AC-15). */
+ * font (the reader's source for defaultStyles.fontFamily/fontSizePt), the
+ * model's named paragraph styles (SPEC-019), and the page layout applied
+ * through the first master page (AC-15). */
 export function buildStylesXml(model: DocumentModel): string {
   const { fontFamily, fontSizePt, pageSize, margins } = model.defaultStyles;
+  const namedStyles = (model.styles ?? [])
+    .filter((style) => style.name !== undefined)
+    .map(namedStyleDefinitionXml)
+    .join("");
   // ODF stores landscape pages with width/height already swapped; the
   // orientation attribute just marks them, mirroring the .docx writer's
   // w:orient.
@@ -753,6 +790,7 @@ export function buildStylesXml(model: DocumentModel): string {
     '<style:default-style style:family="paragraph">' +
     `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"/>` +
     "</style:default-style>" +
+    namedStyles +
     "</office:styles>" +
     "<office:automatic-styles>" +
     '<style:page-layout style:name="pm1">' +
@@ -767,6 +805,77 @@ export function buildStylesXml(model: DocumentModel): string {
     "</office:master-styles>" +
     "</office:document-styles>"
   );
+}
+
+/** A preserved styles.xml with the model's named-style changes applied
+ * (SPEC-019), or null when nothing needs changing — the caller then keeps
+ * the original part byte-identical (SPEC-008). A named style is rewritten
+ * only when the model's catalogue entry no longer matches what the part
+ * defines ("Update <style> to match"); one the part doesn't define at all
+ * (a built-in materialized by applying it) is added. `contentXml` is the
+ * save's rebuilt content part — the same font-face declarations the reader
+ * will resolve style font names against. */
+export function patchOdtStylesXml(
+  model: DocumentModel,
+  originalStylesXml: string,
+  contentXml: string,
+): string | null {
+  if (!model.styles) {
+    return null;
+  }
+  let stylesDoc: Document;
+  let contentDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+    contentDoc = parseXml(contentXml);
+  } catch {
+    return null;
+  }
+  const original = new Map(
+    catalogToNamedStyles(parseOdfStyleCatalog(contentDoc, stylesDoc)).map((style) => [
+      style.id,
+      style,
+    ]),
+  );
+  const upserts = (model.styles ?? []).filter((entry) => {
+    if (entry.name === undefined) {
+      return false;
+    }
+    const existing = original.get(entry.id);
+    return !existing || !equalStructural(existing, entry);
+  });
+  if (upserts.length === 0) {
+    return null;
+  }
+
+  const root = stylesDoc.documentElement;
+  let officeStyles = firstChildElement(root, OFFICE_NAMESPACE, "styles");
+  if (!officeStyles) {
+    officeStyles = stylesDoc.createElementNS(OFFICE_NAMESPACE, "office:styles");
+    root.insertBefore(
+      officeStyles,
+      firstChildElement(root, OFFICE_NAMESPACE, "automatic-styles") ?? null,
+    );
+  }
+  for (const definition of upserts) {
+    const wrapper = parseXml(
+      `<office:document-styles${DOCUMENT_XMLNS}>${namedStyleDefinitionXml(definition)}</office:document-styles>`,
+    );
+    const imported = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    const existing = Array.from(officeStyles.children).find(
+      (el) =>
+        el.namespaceURI === STYLE_NAMESPACE &&
+        el.localName === "style" &&
+        el.getAttributeNS(STYLE_NAMESPACE, "family") === "paragraph" &&
+        el.getAttributeNS(STYLE_NAMESPACE, "name") === definition.id,
+    );
+    if (existing) {
+      officeStyles.replaceChild(imported, existing);
+    } else {
+      officeStyles.appendChild(imported);
+    }
+  }
+  return `${XML_DECLARATION}${serializeElement(root)}`;
 }
 
 /** A timestamp in the W3CDTF profile ODF metadata uses (whole seconds,
@@ -871,11 +980,17 @@ export async function writeOdt(
   }
 
   // Same-format save of an opened .odt: preserved parts verbatim, rebuilt
-  // content.xml/meta.xml, and settings.xml generated only when the source
-  // package had none (the manifest is patched to match).
+  // content.xml/meta.xml, settings.xml generated only when the source
+  // package had none (the manifest is patched to match), and styles.xml
+  // patched only when the model's style catalogue diverges from it
+  // (SPEC-019).
   const decoder = new TextDecoder("utf-8");
   const addSettings = !preservedParts.has("settings.xml");
   const addedPaths = ["content.xml", "meta.xml", ...(addSettings ? ["settings.xml"] : [])];
+  const preservedStyles = preservedParts.get("styles.xml");
+  const patchedStyles = preservedStyles
+    ? patchOdtStylesXml(model, decoder.decode(preservedStyles), content)
+    : null;
 
   const entries: ZipEntryInput[] = [
     { name: "mimetype", data: preservedParts.get("mimetype") ?? encoder.encode(ODT_MIMETYPE), store: true },
@@ -887,6 +1002,8 @@ export async function writeOdt(
     }
     if (name === "META-INF/manifest.xml") {
       entries.push({ name, data: encoder.encode(withManifestEntries(decoder.decode(data), addedPaths)) });
+    } else if (patchedStyles !== null && name === "styles.xml") {
+      entries.push({ name, data: encoder.encode(patchedStyles) });
     } else {
       entries.push({ name, data });
     }

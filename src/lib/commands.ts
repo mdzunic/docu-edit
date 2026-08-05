@@ -998,14 +998,20 @@ export function applyParagraphStyle(
 ): CommandResult {
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
-  // Materialize a built-in definition into the document's own catalogue
-  // (never into a blank document's absent one — the built-ins are its
-  // implicit catalogue already).
-  if (next.styles && !next.styles.some((style) => style.id === styleId)) {
-    const builtIn = builtInStyles().find((style) => style.id === styleId);
-    if (builtIn) {
-      next.styles = [...next.styles, builtIn];
+  // Materialize the applied style into the model's catalogue: a document
+  // without one gets the full built-in set (the picker's implicit list
+  // becomes explicit), a document with its own gets the built-in definition
+  // appended. This is what lets the writers declare the style — a paragraph
+  // must never reference a style the saved file doesn't define (AC-15).
+  if (!next.styles?.some((style) => style.id === styleId)) {
+    const catalogue = next.styles ? [...next.styles] : builtInStyles();
+    if (!catalogue.some((style) => style.id === styleId)) {
+      const builtIn = builtInStyles().find((style) => style.id === styleId);
+      if (builtIn) {
+        catalogue.push(builtIn);
+      }
     }
+    next.styles = catalogue;
   }
   const resolved = resolveNamedStyle(next, styleId);
   for (const address of touchedBlocks(next, { anchor: start, focus: end })) {
