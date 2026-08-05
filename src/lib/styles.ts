@@ -108,6 +108,13 @@ const BUILT_IN_STYLES: readonly NamedStyle[] = [
   },
 ];
 
+/** Fresh copies of the built-in styles — the catalogue seed when a
+ * document without one of its own has a style updated, so the picker keeps
+ * offering the full built-in set afterwards. */
+export function builtInStyles(): NamedStyle[] {
+  return BUILT_IN_STYLES.map((style) => structuredClone(style));
+}
+
 /** The built-in heading style id for a 1-based level (clamped to 1..6) —
  * what the Ctrl/Cmd+Alt+1..6 shortcuts apply (AC-5). */
 export function headingStyleId(level: number): string {

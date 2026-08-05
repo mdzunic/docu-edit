@@ -22,6 +22,7 @@ import {
   type ListFormatting,
   type ListMarkerStyle,
   type ListType,
+  type NamedStyle,
   type Paragraph,
   type ParagraphAlignment,
   type ParagraphDirection,
@@ -31,12 +32,25 @@ import {
   type VerticalAlignment,
 } from "./documentModel";
 import { cmToTwips, twipsToCm } from "./docx/units";
+import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 import {
   clampListLevel,
   listRunAround,
   markerStyleOf,
   markerType,
 } from "./lists";
+import {
+  builtInStyles,
+  diffParagraphFormatting,
+  diffRunFormatting,
+  namedStyleIdFor,
+  paragraphStyleBase,
+  resolveNamedStyle,
+  styleById,
+  styleChainIncludes,
+  styleDisplayName,
+  type ResolvedNamedStyle,
+} from "./styles";
 import {
   blockLength,
   clampCaret,
@@ -933,6 +947,233 @@ export function toolbarListState(
     bulleted: allTouchedOfListType(model, selection, "bullet"),
     numbered: allTouchedOfListType(model, selection, "number"),
     marker: list ? markerStyleOf(list) : "",
+  };
+}
+
+// --- paragraph styles (SPEC-019) --------------------------------------------
+
+/** A paragraph rebuilt around a style resolution, with the direct
+ * formatting diffs layered back on top: paragraph and per-run formatting
+ * become `resolved ⊕ diff`, and the heading level follows the resolution.
+ * Shared by apply (diffs against the old style) and update (diffs recorded
+ * before the catalogue changed). */
+function restyledParagraph(
+  block: Paragraph,
+  resolved: ResolvedNamedStyle,
+  paragraphDiff: ParagraphFormatting,
+  runDiffs: RunFormatting[],
+): Paragraph {
+  const replacement: Paragraph = {
+    ...block,
+    runs: block.runs.map((run, index) => ({
+      ...run,
+      formatting: mergeRunFormatting(resolved.runFormatting, runDiffs[index] ?? {}),
+    })),
+  };
+  const formatting = mergeParagraphFormatting(resolved.paragraphFormatting, paragraphDiff);
+  if (Object.keys(formatting).length > 0) {
+    replacement.formatting = formatting;
+  } else {
+    delete replacement.formatting;
+  }
+  if (resolved.headingLevel !== undefined) {
+    replacement.headingLevel = resolved.headingLevel;
+  } else {
+    delete replacement.headingLevel;
+  }
+  return replacement;
+}
+
+/** Applies a paragraph style to every paragraph the selection touches
+ * (AC-3): each paragraph's baked formatting becomes the new style's
+ * resolution with its *direct* formatting — the diff between its old baked
+ * formatting and its old style's resolution — layered back on top, so
+ * direct formatting survives the style change (AC-9). A built-in style
+ * applied to a document that has a catalogue of its own is added to it, so
+ * the picker lists it and a save declares it. */
+export function applyParagraphStyle(
+  model: DocumentModel,
+  selection: ModelSelection,
+  styleId: string,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  // Materialize a built-in definition into the document's own catalogue
+  // (never into a blank document's absent one — the built-ins are its
+  // implicit catalogue already).
+  if (next.styles && !next.styles.some((style) => style.id === styleId)) {
+    const builtIn = builtInStyles().find((style) => style.id === styleId);
+    if (builtIn) {
+      next.styles = [...next.styles, builtIn];
+    }
+  }
+  const resolved = resolveNamedStyle(next, styleId);
+  for (const address of touchedBlocks(next, { anchor: start, focus: end })) {
+    const block = paragraphAt(next, address);
+    if (!block) {
+      continue;
+    }
+    const base = paragraphStyleBase(next, block);
+    const replacement = restyledParagraph(
+      block,
+      resolved,
+      diffParagraphFormatting(block.formatting ?? {}, base.paragraphFormatting),
+      block.runs.map((run) => diffRunFormatting(run.formatting, base.runFormatting)),
+    );
+    replacement.styleId = styleId;
+    replaceParagraphAt(next, address, replacement);
+  }
+  return { model: next, selection: { anchor: start, focus: end } };
+}
+
+/** "Reset style" (AC-14): removes direct formatting from every touched
+ * paragraph, leaving exactly what its style's resolution produces. A `.odt`
+ * paragraph referencing an automatic style is re-pointed at the named style
+ * underneath (the automatic style *was* the direct formatting). A heading
+ * level the style chain doesn't set (a direct outline level) is kept — it
+ * is structure, not appearance. */
+export function resetParagraphStyle(
+  model: DocumentModel,
+  selection: ModelSelection,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  for (const address of touchedBlocks(next, { anchor: start, focus: end })) {
+    const block = paragraphAt(next, address);
+    if (!block) {
+      continue;
+    }
+    const namedId = namedStyleIdFor(next, block.styleId);
+    const base = paragraphStyleBase(next, block);
+    const replacement = restyledParagraph(block, base, {}, []);
+    if (base.headingLevel === undefined && block.headingLevel !== undefined) {
+      replacement.headingLevel = block.headingLevel;
+    }
+    if (namedId !== undefined) {
+      replacement.styleId = namedId;
+    } else {
+      delete replacement.styleId;
+    }
+    replaceParagraphAt(next, address, replacement);
+  }
+  return { model: next, selection: { anchor: start, focus: end } };
+}
+
+/** "Update <style> to match" (AC-12, AC-13): redefines `styleId` so its
+ * resolution reproduces the current (first touched) paragraph's formatting,
+ * then re-bakes every paragraph whose style chain passes through it —
+ * keeping each one's direct formatting layered on the new resolution. A
+ * document without a catalogue of its own gets one seeded from the
+ * built-ins, so the picker keeps its full list. */
+export function updateStyleFromSelection(
+  model: DocumentModel,
+  selection: ModelSelection,
+  styleId: string,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  const preserved = { model: next, selection: { anchor: start, focus: end } };
+  const target = styleById(next, styleId);
+  const source = paragraphAtCaret(next, start);
+  if (!target || !source) {
+    return preserved;
+  }
+
+  // The style's new own formatting: the source paragraph's effective
+  // formatting minus what the style's parents already provide. Run
+  // formatting comes from the paragraph's first run; an empty paragraph
+  // keeps the style's current run formatting.
+  const parentResolved = resolveNamedStyle(next, target.basedOn);
+  const ownParagraph = diffParagraphFormatting(source.formatting ?? {}, parentResolved.paragraphFormatting);
+  const firstRun = source.runs[0];
+  const ownRun = firstRun
+    ? diffRunFormatting(firstRun.formatting, parentResolved.runFormatting)
+    : (target.runFormatting ?? {});
+
+  // Per-paragraph direct-formatting diffs, recorded against the OLD
+  // catalogue before it changes below.
+  const affected: {
+    address: BlockAddress;
+    paragraphDiff: ParagraphFormatting;
+    runDiffs: RunFormatting[];
+  }[] = [];
+  for (const address of touchedBlocks(next, selectAll(next))) {
+    const block = paragraphAt(next, address);
+    if (!block || !styleChainIncludes(next, block.styleId, styleId)) {
+      continue;
+    }
+    const base = paragraphStyleBase(next, block);
+    affected.push({
+      address,
+      paragraphDiff: diffParagraphFormatting(block.formatting ?? {}, base.paragraphFormatting),
+      runDiffs: block.runs.map((run) => diffRunFormatting(run.formatting, base.runFormatting)),
+    });
+  }
+
+  const updated: NamedStyle = { id: target.id };
+  if (target.name !== undefined) {
+    updated.name = target.name;
+  }
+  if (target.basedOn !== undefined) {
+    updated.basedOn = target.basedOn;
+  }
+  if (Object.keys(ownParagraph).length > 0) {
+    updated.paragraphFormatting = ownParagraph;
+  }
+  if (Object.keys(ownRun).length > 0) {
+    updated.runFormatting = ownRun;
+  }
+  if (target.headingLevel !== undefined) {
+    updated.headingLevel = target.headingLevel;
+  }
+  const catalogue = next.styles ? [...next.styles] : builtInStyles();
+  const index = catalogue.findIndex((style) => style.id === styleId);
+  if (index >= 0) {
+    catalogue[index] = updated;
+  } else {
+    catalogue.push(updated);
+  }
+  next.styles = catalogue;
+
+  // Re-bake with the new catalogue: resolution changed, diffs did not.
+  for (const { address, paragraphDiff, runDiffs } of affected) {
+    const block = paragraphAt(next, address);
+    if (!block) {
+      continue;
+    }
+    replaceParagraphAt(
+      next,
+      address,
+      restyledParagraph(block, paragraphStyleBase(next, block), paragraphDiff, runDiffs),
+    );
+  }
+  return preserved;
+}
+
+/** What the style picker shows for the selection (AC-1): the first touched
+ * paragraph's style — its resolved *named* style id and display name. */
+export interface ToolbarStyleState {
+  /** The named style id the current paragraph resolves to; "" when it
+   * resolves to none (displays as Normal). */
+  id: string;
+  name: string;
+}
+
+/** The initial/no-document state — a typed seed for `.vue` refs (espree
+ * bars the annotation, same constraint as noSelection). */
+export function emptyToolbarStyleState(): ToolbarStyleState {
+  return { id: "", name: "Normal" };
+}
+
+export function toolbarStyleState(
+  model: DocumentModel,
+  selection: ModelSelection,
+): ToolbarStyleState {
+  const { start } = orderedRange(model, selection);
+  const paragraph = paragraphAtCaret(model, start);
+  return {
+    id: namedStyleIdFor(model, paragraph?.styleId) ?? "",
+    name: styleDisplayName(model, paragraph?.styleId),
   };
 }
 
