@@ -109,7 +109,10 @@ export function orderedRange(
 }
 
 // Clones the containers the primitives mutate (see the header comment);
-// blocks and everything below them are shared with the input model.
+// blocks and everything below them are shared with the input model. The
+// clipboard commands (SPEC-016, lib/clipboard.ts) keep their own copy —
+// exporting it here would trip commands.undo.spec.ts's completeness guard,
+// which requires every export to be a command or a query.
 function cloneContainers(model: DocumentModel): DocumentModel {
   return {
     ...model,
