@@ -8,6 +8,7 @@ import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
+import FindBar from "../components/FindBar.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
@@ -33,13 +34,26 @@ import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
 import {
+  BLOCK_SELECTOR,
   caretFromDomPoint,
+  domPointForCaret,
   extendDomSelection,
   modelRangeFromSelection,
   noElement,
   setDomCaret,
   setDomSelection,
 } from "../lib/domCaret";
+import {
+  compileQuery,
+  findMatches,
+  indexAtOrAfter,
+  isQueryError,
+  matchSelection,
+  noHighlightRects,
+  noMatches,
+  replaceMatch,
+  replaceMatches,
+} from "../lib/findReplace";
 import {
   caretAtClientPoint,
   caretClientRect,
@@ -311,6 +325,7 @@ function closeSession() {
   scrollTop = 0;
   dismissPasteChip();
   closeContextMenu();
+  resetFindState();
   plainPasteNext = false;
   // AC-19: the undo/redo history does not outlive the document being open.
   if (sessionDocId) {
@@ -343,6 +358,11 @@ function attachScrollListener() {
 function handleScroll() {
   if (scrollContainer) {
     scrollTop = scrollContainer.scrollTop;
+  }
+  // Re-measure the (viewport-limited) highlight overlay for the new scroll
+  // position; rAF-throttled inside scheduleFindMeasure (SPEC-017).
+  if (findVisible.value) {
+    scheduleFindMeasure();
   }
 }
 
@@ -382,6 +402,7 @@ function handleSelectionChange() {
 
 onMounted(() => {
   document.addEventListener("selectionchange", handleSelectionChange);
+  document.addEventListener("keydown", handleFindShortcut);
   attachScrollListener();
   if (doc.value) {
     openSession(documentId.value);
@@ -390,7 +411,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   closeSession();
+  cancelFindScheduled();
   document.removeEventListener("selectionchange", handleSelectionChange);
+  document.removeEventListener("keydown", handleFindShortcut);
   if (scrollContainer) {
     scrollContainer.removeEventListener("scroll", handleScroll);
     scrollContainer = null;
@@ -463,6 +486,9 @@ function applyEdit(
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
   void restoreCaretAfterRender();
+  // An edit made with the find bar open shifts match positions; refresh off
+  // the keystroke path so typing stays responsive (SPEC-017 AC-31).
+  scheduleFindRefresh();
 }
 
 /** Ctrl/Cmd+Z / the toolbar's Undo button (AC-1, AC-4). */
@@ -502,6 +528,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   refreshUndoRedoState();
   root.focus();
   void restoreCaretAfterRender();
+  scheduleFindRefresh();
 }
 
 function handleBeforeInput(event = new InputEvent("beforeinput")) {
@@ -1553,6 +1580,499 @@ function deleteOpenDocument() {
   addToast(`Deleted ${title}`);
   router.push("/");
 }
+
+// --- find and replace (SPEC-017) -------------------------------------------
+// The pure logic (compiling a query, locating matches, rewriting the model)
+// lives in lib/findReplace.ts; this view owns the DOM-facing half: the find
+// bar's reactive state, the on-screen highlight overlay, scrolling the current
+// match into view, and applying replaces through the same applyEdit path as
+// every other edit so undo/autosave treat them identically.
+//
+// The performance contract (AC-30, AC-31 — first results within 300 ms and no
+// typing block on a 200-page document) shapes the whole design: finding
+// matches is a cheap string scan, but *measuring* a DOM rectangle for every
+// match is not, so the overlay only ever measures matches whose paragraph is
+// on screen (plus the current one), and a document edit while the bar is open
+// reschedules that work on a debounce/rAF instead of running it synchronously
+// in the keystroke path.
+const findVisible = ref(false);
+const findExpanded = ref(false);
+const findQuery = ref("");
+const findReplaceText = ref("");
+const findMatchCase = ref(false);
+const findWholeWords = ref(false);
+const findUseRegex = ref(false);
+const findError = ref("");
+const findHint = ref("");
+const findCurrentIndex = ref(-1);
+// A shallow ref of the match list and one of the overlay rectangles: shallow
+// because both are wholesale-replaced, never mutated in place, and can grow
+// large (thousands of matches) — a deep proxy per entry would be wasteful.
+const findMatchesRef = shallowRef(noMatches());
+const findHighlightRects = shallowRef(noHighlightRects());
+const pageRef = useTemplateRef("pageRef");
+
+// The caret to restore when Escape closes the bar (AC-13), a per-block index
+// of the matches for viewport-limited measuring, and the scheduling handles
+// that keep highlight work off the keystroke path. Plain variables — nothing
+// renders from them. window.setTimeout/requestAnimationFrame return numbers in
+// the DOM lib, so 0 is a safe "nothing scheduled" sentinel.
+let caretBeforeFind = noCaret();
+let findMatchesByBlock = new Map();
+let findRafId = 0;
+let findDebounceTimer = 0;
+let findHintTimer = 0;
+
+function currentFindOptions() {
+  return {
+    matchCase: findMatchCase.value,
+    wholeWords: findWholeWords.value,
+    regex: findUseRegex.value,
+  };
+}
+
+/** Ctrl/Cmd+F (and Ctrl/Cmd+H, which also reveals the replace row) at the
+ * document level, so the shortcut works whether focus is in the canvas or
+ * already in the bar; always prevented so the browser's own find never
+ * opens. */
+function handleFindShortcut(event = new KeyboardEvent("keydown")) {
+  if (!doc.value || !editable.value || event.altKey) {
+    return;
+  }
+  const mod = event.ctrlKey || event.metaKey;
+  if (!mod || event.shiftKey) {
+    return;
+  }
+  const key = event.key.toLowerCase();
+  if (key === "f") {
+    event.preventDefault();
+    openFind(false);
+  } else if (key === "h") {
+    event.preventDefault();
+    openFind(true);
+  }
+}
+
+function openFind(expand = false) {
+  if (!doc.value || !editable.value) {
+    return;
+  }
+  if (!findVisible.value) {
+    // Snapshot the caret only on a fresh open, so Escape can put it back
+    // exactly where it was (AC-13) even after navigation moved the selection.
+    caretBeforeFind = caret;
+  }
+  findVisible.value = true;
+  if (expand) {
+    findExpanded.value = true;
+  }
+  runSearch();
+}
+
+/** Escape / the close button (AC-4, AC-11, AC-12): hide the bar, clear the
+ * highlights, and — for Escape — return the caret to where it was (AC-13). */
+function closeFind(restoreCaret = false) {
+  if (!findVisible.value) {
+    return;
+  }
+  findVisible.value = false;
+  findExpanded.value = false;
+  findError.value = "";
+  findHint.value = "";
+  setFindMatches(noMatches(), -1);
+  findHighlightRects.value = noHighlightRects();
+  cancelFindScheduled();
+  const root = contentRoot.value;
+  if (root && editable.value) {
+    root.focus();
+    if (restoreCaret && caretBeforeFind) {
+      caret = caretBeforeFind;
+      setDomCaret(root, caret);
+      updateCaretStatus({ start: caret, end: caret });
+    }
+  }
+}
+
+function toggleFindExpand() {
+  findExpanded.value = !findExpanded.value;
+}
+
+/** Tears the bar down when the document session ends (navigation/unmount).
+ * The three search options are deliberately kept — they persist for the
+ * session (AC-23), across documents too. */
+function resetFindState() {
+  findVisible.value = false;
+  findExpanded.value = false;
+  findQuery.value = "";
+  findReplaceText.value = "";
+  findError.value = "";
+  findHint.value = "";
+  setFindMatches(noMatches(), -1);
+  findHighlightRects.value = noHighlightRects();
+  cancelFindScheduled();
+}
+
+function setFindMatches(matches = noMatches(), index = -1) {
+  findMatchesRef.value = matches;
+  findCurrentIndex.value = index;
+  const byBlock = new Map();
+  for (const match of matches) {
+    const key = `${match.section}:${match.block}`;
+    const list = byBlock.get(key);
+    if (list) {
+      list.push(match);
+    } else {
+      byBlock.set(key, [match]);
+    }
+  }
+  findMatchesByBlock = byBlock;
+}
+
+/** Recomputes matches for the current query/options (AC-5's "as the user
+ * types"). Cheap enough to run synchronously even on a large document (AC-30);
+ * only the DOM measurement is deferred. `preserveAnchor`, when given, keeps the
+ * current match near a model position across a change. */
+function runSearch(preserveAnchor = noCaret()) {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  findHint.value = "";
+  const compiled = compileQuery(findQuery.value, currentFindOptions());
+  if (compiled === null) {
+    findError.value = "";
+    setFindMatches(noMatches(), -1);
+    scheduleFindMeasure();
+    return;
+  }
+  if (isQueryError(compiled)) {
+    // AC-24, AC-25: an invalid regex shows an inline error and does not run —
+    // no matches, no highlights.
+    findError.value = compiled.error;
+    setFindMatches(noMatches(), -1);
+    scheduleFindMeasure();
+    return;
+  }
+  findError.value = "";
+  const matches = findMatches(model, compiled);
+  let index = matches.length > 0 ? 0 : -1;
+  if (preserveAnchor && matches.length > 0) {
+    index = indexAtOrAfter(matches, preserveAnchor);
+  }
+  setFindMatches(matches, index);
+  scheduleFindMeasure();
+  if (index >= 0) {
+    scheduleScrollCurrentIntoView();
+  }
+}
+
+function findNext() {
+  stepFind(1);
+}
+
+function findPrev() {
+  stepFind(-1);
+}
+
+/** Enter / Shift+Enter and the prev/next buttons (AC-3, AC-8, AC-9), wrapping
+ * at either end with a transient hint (AC-10). */
+function stepFind(direction = 1) {
+  const matches = findMatchesRef.value;
+  if (matches.length === 0) {
+    return;
+  }
+  let index = findCurrentIndex.value;
+  if (index < 0) {
+    index = 0;
+  } else {
+    const moved = index + direction;
+    if (moved < 0) {
+      index = matches.length - 1;
+      showFindHint("Wrapped to bottom");
+    } else if (moved >= matches.length) {
+      index = 0;
+      showFindHint("Wrapped to top");
+    } else {
+      index = moved;
+    }
+  }
+  findCurrentIndex.value = index;
+  scheduleFindMeasure();
+  scheduleScrollCurrentIntoView();
+}
+
+function showFindHint(text = "") {
+  findHint.value = text;
+  window.clearTimeout(findHintTimer);
+  findHintTimer = window.setTimeout(() => {
+    findHint.value = "";
+  }, 1500);
+}
+
+function currentFindSelection() {
+  const matches = findMatchesRef.value;
+  const index = findCurrentIndex.value;
+  if (index >= 0 && index < matches.length) {
+    return matchSelection(matches[index]);
+  }
+  return caret ? caretSelection(caret) : noSelection();
+}
+
+/** The "Replace" button (AC-16): replaces the current match, taking its first
+ * run's formatting (AC-26), then advances the current match to the next one so
+ * repeated clicks walk the document (AC-8). Focus stays in the bar — applyEdit
+ * places the DOM caret without stealing focus — so the button can be clicked
+ * again immediately. */
+function replaceCurrent() {
+  const model = doc.value;
+  const matches = findMatchesRef.value;
+  const index = findCurrentIndex.value;
+  if (!model || !editable.value || findError.value !== "" || index < 0 || index >= matches.length) {
+    return;
+  }
+  const match = matches[index];
+  const before = matchSelection(match);
+  const anchor = {
+    section: match.section,
+    block: match.block,
+    offset: match.start + findReplaceText.value.length,
+  };
+  applyEdit(replaceMatch(model, match, findReplaceText.value), before, "replace");
+  refreshFindAfterEdit(anchor);
+}
+
+/** The "Replace all" button (AC-17): one edit for every match (AC-19's single
+ * undo step), reporting the count (AC-18). Enabled even with no matches so it
+ * can report "Replaced 0 occurrences". */
+function replaceAll() {
+  const model = doc.value;
+  if (!model || !editable.value || findQuery.value === "" || findError.value !== "") {
+    return;
+  }
+  const compiled = compileQuery(findQuery.value, currentFindOptions());
+  if (compiled === null || isQueryError(compiled)) {
+    return;
+  }
+  const matches = findMatches(model, compiled);
+  const count = matches.length;
+  if (count > 0) {
+    const before = currentFindSelection() ?? caretSelection(documentStart());
+    applyEdit(replaceMatches(model, matches, findReplaceText.value), before, "replace all");
+  }
+  addToast(`Replaced ${count} occurrences`);
+  refreshFindAfterEdit(noCaret());
+}
+
+/** Recomputes matches after a model edit (a replace, or typing in the canvas
+ * with the bar open), keeping the current match near `anchor`. */
+function refreshFindAfterEdit(anchor = noCaret()) {
+  const model = doc.value;
+  if (!model || !findVisible.value) {
+    return;
+  }
+  const compiled = compileQuery(findQuery.value, currentFindOptions());
+  if (compiled === null || isQueryError(compiled)) {
+    setFindMatches(noMatches(), -1);
+    scheduleFindMeasure();
+    return;
+  }
+  const matches = findMatches(model, compiled);
+  const index = anchor
+    ? indexAtOrAfter(matches, anchor)
+    : matches.length > 0
+      ? 0
+      : -1;
+  setFindMatches(matches, index);
+  scheduleFindMeasure();
+  if (index >= 0) {
+    scheduleScrollCurrentIntoView();
+  }
+}
+
+function currentFindAnchor() {
+  const matches = findMatchesRef.value;
+  const index = findCurrentIndex.value;
+  if (index >= 0 && index < matches.length) {
+    return matchSelection(matches[index]).anchor;
+  }
+  return caret;
+}
+
+/** Called from every model-edit path while the bar is open. Debounced so a
+ * burst of keystrokes reschedules a single recompute rather than rescanning
+ * and re-measuring on every character — the crux of AC-31 (typing stays
+ * responsive even with thousands of matches highlighted). */
+function scheduleFindRefresh() {
+  if (!findVisible.value) {
+    return;
+  }
+  window.clearTimeout(findDebounceTimer);
+  findDebounceTimer = window.setTimeout(() => {
+    refreshFindAfterEdit(currentFindAnchor());
+  }, 120);
+}
+
+function scheduleFindMeasure() {
+  if (findRafId !== 0) {
+    return;
+  }
+  findRafId = window.requestAnimationFrame(() => {
+    findRafId = 0;
+    measureFindHighlights();
+  });
+}
+
+function scheduleScrollCurrentIntoView() {
+  window.requestAnimationFrame(scrollCurrentMatchIntoView);
+}
+
+function cancelFindScheduled() {
+  if (findRafId !== 0) {
+    window.cancelAnimationFrame(findRafId);
+    findRafId = 0;
+  }
+  window.clearTimeout(findDebounceTimer);
+  window.clearTimeout(findHintTimer);
+}
+
+function findViewportBounds() {
+  if (scrollContainer) {
+    const rect = scrollContainer.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom };
+  }
+  return { top: 0, bottom: window.innerHeight };
+}
+
+/** The set of "section:block" keys for paragraphs currently on (or just off)
+ * screen — the only ones whose matches are worth measuring. */
+function visibleFindBlockKeys(root = noElement(), bounds = { top: 0, bottom: 0 }) {
+  const keys = new Set();
+  if (!root) {
+    return keys;
+  }
+  const margin = 200;
+  for (const element of root.querySelectorAll(BLOCK_SELECTOR)) {
+    const rect = element.getBoundingClientRect();
+    if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+      continue;
+    }
+    keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
+  }
+  return keys;
+}
+
+function matchClientRects(root = noElement(), match = { section: 0, block: 0, start: 0, end: 0 }) {
+  if (!root) {
+    return [];
+  }
+  const startPoint = domPointForCaret(root, {
+    section: match.section,
+    block: match.block,
+    offset: match.start,
+  });
+  const endPoint = domPointForCaret(root, {
+    section: match.section,
+    block: match.block,
+    offset: match.end,
+  });
+  if (!startPoint || !endPoint) {
+    return [];
+  }
+  const range = root.ownerDocument.createRange();
+  try {
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+  } catch {
+    return [];
+  }
+  return Array.from(range.getClientRects());
+}
+
+/** Rebuilds the overlay rectangles, measuring only on-screen matches (plus the
+ * current one). Runs off the keystroke path via rAF. */
+function measureFindHighlights() {
+  const root = contentRoot.value;
+  const pageEl = pageRef.value;
+  const matches = findMatchesRef.value;
+  if (!findVisible.value || !root || !pageEl || matches.length === 0) {
+    findHighlightRects.value = noHighlightRects();
+    return;
+  }
+  const pageRect = pageEl.getBoundingClientRect();
+  const visibleKeys = visibleFindBlockKeys(root, findViewportBounds());
+  const currentIndex = findCurrentIndex.value;
+  const rects = noHighlightRects();
+  for (const [key, blockMatches] of findMatchesByBlock) {
+    if (!visibleKeys.has(key)) {
+      continue;
+    }
+    for (const match of blockMatches) {
+      pushMatchRects(rects, root, pageRect, match, false, currentIndex, matches);
+    }
+  }
+  // The current match is always drawn distinctly, even if it fell outside the
+  // measured band before its scroll-into-view lands (AC-6).
+  if (currentIndex >= 0 && currentIndex < matches.length) {
+    const current = matches[currentIndex];
+    if (!visibleKeys.has(`${current.section}:${current.block}`)) {
+      pushMatchRects(rects, root, pageRect, current, true, currentIndex, matches);
+    }
+  }
+  findHighlightRects.value = rects;
+}
+
+function pushMatchRects(
+  rects = noHighlightRects(),
+  root = noElement(),
+  pageRect = new DOMRect(),
+  match = { section: 0, block: 0, start: 0, end: 0 },
+  forceCurrent = false,
+  currentIndex = -1,
+  matches = noMatches(),
+) {
+  const isCurrent = forceCurrent || matches[currentIndex] === match;
+  for (const rect of matchClientRects(root, match)) {
+    rects.push({
+      left: rect.left - pageRect.left,
+      top: rect.top - pageRect.top,
+      width: rect.width,
+      height: rect.height,
+      current: isCurrent,
+    });
+  }
+}
+
+/** Scrolls the current match into view (AC-7); a following scroll event
+ * re-measures the overlay for the new viewport. */
+function scrollCurrentMatchIntoView() {
+  const root = contentRoot.value;
+  const matches = findMatchesRef.value;
+  const index = findCurrentIndex.value;
+  if (!root || !scrollContainer || index < 0 || index >= matches.length) {
+    return;
+  }
+  const rects = matchClientRects(root, matches[index]);
+  if (rects.length === 0) {
+    return;
+  }
+  const rect = rects[0];
+  const view = scrollContainer.getBoundingClientRect();
+  const pad = 60;
+  if (rect.top < view.top + pad) {
+    scrollContainer.scrollTop -= view.top + pad - rect.top;
+  } else if (rect.bottom > view.bottom - pad) {
+    scrollContainer.scrollTop += rect.bottom - (view.bottom - pad);
+  }
+}
+
+// Re-run the search whenever the query or an option changes while the bar is
+// open (AC-5, AC-20..23). Keeping the current match near where it was avoids
+// the view jumping to the top of the document on an option toggle.
+watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
+  if (findVisible.value) {
+    runSearch(currentFindAnchor());
+  }
+});
 </script>
 
 <template>
@@ -1676,6 +2196,35 @@ function deleteOpenDocument() {
       </button>
     </div>
     <div class="page-wrap">
+      <div
+        v-if="findVisible"
+        class="find-bar-dock"
+      >
+        <FindBar
+          :visible="findVisible"
+          :expanded="findExpanded"
+          :query="findQuery"
+          :replace-text="findReplaceText"
+          :match-case="findMatchCase"
+          :whole-words="findWholeWords"
+          :use-regex="findUseRegex"
+          :match-count="findMatchesRef.length"
+          :current-index="findCurrentIndex"
+          :error="findError"
+          :hint="findHint"
+          @update:query="findQuery = $event"
+          @update:replace-text="findReplaceText = $event"
+          @update:match-case="findMatchCase = $event"
+          @update:whole-words="findWholeWords = $event"
+          @update:use-regex="findUseRegex = $event"
+          @toggle-expand="toggleFindExpand"
+          @next="findNext"
+          @prev="findPrev"
+          @replace="replaceCurrent"
+          @replace-all="replaceAll"
+          @close="closeFind(true)"
+        />
+      </div>
       <DocumentRuler
         :page-width-cm="doc.defaultStyles.pageSize.widthCm"
         :margin-left-cm="doc.defaultStyles.margins.leftCm"
@@ -1685,11 +2234,32 @@ function deleteOpenDocument() {
         @update="handleRulerUpdate"
       />
       <div
+        ref="pageRef"
         class="page"
         data-testid="document-page"
         :style="pageStyle"
         @mousedown="handlePageMouseDown"
       >
+        <div
+          v-if="findVisible"
+          class="find-highlight-layer"
+          data-testid="find-highlights"
+          aria-hidden="true"
+        >
+          <div
+            v-for="(rect, index) in findHighlightRects"
+            :key="index"
+            class="find-highlight"
+            :class="{ current: rect.current }"
+            :data-current="rect.current ? 'true' : 'false'"
+            :style="{
+              left: `${rect.left}px`,
+              top: `${rect.top}px`,
+              width: `${rect.width}px`,
+              height: `${rect.height}px`,
+            }"
+          />
+        </div>
         <div
           class="page-margin"
           data-testid="page-margin"
@@ -1854,7 +2424,39 @@ function deleteOpenDocument() {
 }
 
 .page-wrap {
+  position: relative;
   padding: 2rem 1rem;
+}
+
+/* A zero-height sticky rail pinned to the top of the scrolling canvas; the
+   find bar (position: absolute) floats at its top-right and stays put while
+   the document scrolls. */
+.find-bar-dock {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  height: 0;
+}
+
+/* The highlight overlay sits inside the (positioned) .page, behind the text —
+   .page-margin renders after it, so the text paints on top and stays
+   readable. pointer-events: none lets clicks reach the text underneath. */
+.find-highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.find-highlight {
+  position: absolute;
+  background: rgb(255 214 0 / 0.45);
+  border-radius: 1px;
+}
+
+.find-highlight.current {
+  background: rgb(255 145 0 / 0.65);
+  outline: 1px solid #f57c00;
 }
 
 /* A page-shaped surface sized to the document's own defaultStyles (in real
