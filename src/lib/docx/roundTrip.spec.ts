@@ -13,6 +13,7 @@ import { unzip } from "./zip";
 import { canonicalizeXml, equalBytes, firstStructuralDifference } from "../equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel, Paragraph } from "../documentModel";
+import { asParagraph } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -60,7 +61,7 @@ describe("parseDocx — opaque capture (AC-1, AC-3, AC-4)", () => {
 
   it("captures the chart's w:drawing run as an opaque inline anchored between the runs", async () => {
     const parsed = await parseDocx(fixture);
-    const chartParagraph = parsed.sections[0].blocks[2];
+    const chartParagraph = asParagraph(parsed.sections[0].blocks[2]);
     expect(chartParagraph.runs.map((run) => run.text)).toEqual(["Quarterly results: "]);
     expect(chartParagraph.opaqueInlines).toHaveLength(1);
     expect(chartParagraph.opaqueInlines![0].runIndex).toBe(1);
@@ -156,7 +157,7 @@ describe("writeDocx — editing one paragraph leaves opaque content untouched (A
     // modelFrom shares the parsed tree by reference; clone so `opened`
     // stays the pristine as-opened model the assertions compare against.
     const model = modelFrom(structuredClone(opened));
-    const intro = model.sections[0].blocks[1];
+    const intro = asParagraph(model.sections[0].blocks[1]);
     expect(intro.runs[0].text).toBe("Editable intro paragraph.");
     intro.runs[0].text = "Edited intro paragraph!";
     const { bytes } = await writeDocx(model);
@@ -183,8 +184,8 @@ describe("writeDocx — editing one paragraph leaves opaque content untouched (A
     expect(canonicalizeXml(reopened.sections[0].opaqueBlocks![0].xml)).toBe(
       canonicalizeXml(opened.sections[0].opaqueBlocks![0].xml),
     );
-    expect(canonicalizeXml(reopened.sections[0].blocks[2].opaqueInlines![0].xml)).toBe(
-      canonicalizeXml(opened.sections[0].blocks[2].opaqueInlines![0].xml),
+    expect(canonicalizeXml(asParagraph(reopened.sections[0].blocks[2]).opaqueInlines![0].xml)).toBe(
+      canonicalizeXml(asParagraph(opened.sections[0].blocks[2]).opaqueInlines![0].xml),
     );
 
     // …and so is every other block: the edited paragraph is the only

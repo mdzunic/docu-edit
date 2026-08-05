@@ -14,7 +14,7 @@
 //    startAt -> w:start, indentCm -> w:ind/@w:left), and the reader stores
 //    a field only where it differs from the editor default, so an
 //    export -> import cycle reproduces the model bit-for-bit.
-import type { ListFormatting, ListMarkerStyle, ListType } from "../documentModel";
+import type { Block, ListFormatting, ListMarkerStyle, ListType } from "../documentModel";
 import {
   bulletStyleForChar,
   clampListLevel,
@@ -243,6 +243,19 @@ export function numberingRefFor(
   return plan.refs.get(`${section}:${block}`);
 }
 
+/** The plan entry for a paragraph inside a table cell (SPEC-022), keyed by
+ * the full cell path. */
+export function cellNumberingRefFor(
+  plan: NumberingPlan,
+  section: number,
+  block: number,
+  row: number,
+  col: number,
+  cellBlock: number,
+): NumberingRef | undefined {
+  return plan.refs.get(`${section}:${block}:${row}:${col}:${cellBlock}`);
+}
+
 function escapeAttr(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -279,14 +292,24 @@ export function planNumbering(
   let nextAbstract = firstIds.abstractNum;
   let nextNum = firstIds.num;
 
-  model.sections.forEach((section, sectionIndex) => {
+  // One pass over a block list: every contiguous run of list paragraphs
+  // becomes one num referencing a (deduplicated) abstract definition. Used
+  // for each section's top-level blocks and — with its own key space — for
+  // every table cell's block list (SPEC-022: a cell is its own list
+  // context, so its runs never join a run outside the table).
+  const planBlockList = (blocks: readonly Block[], keyFor: (index: number) => string) => {
     let runStart = -1;
     const flushRun = (end: number) => {
       if (runStart === -1) {
         return;
       }
-      const blocks = section.blocks.slice(runStart, end);
-      const items = blocks.map((block) => block.list!);
+      const items: ListFormatting[] = [];
+      for (let index = runStart; index < end; index++) {
+        const block = blocks[index];
+        if (block.type === "paragraph" && block.list) {
+          items.push(block.list);
+        }
+      }
       const levels = planListLevels(items);
       const key = JSON.stringify(levels);
       let abstractId = abstractByKey.get(key);
@@ -303,15 +326,15 @@ export function planNumbering(
       const numId = nextNum++;
       numXml.push(`<w:num w:numId="${numId}"><w:abstractNumId w:val="${abstractId}"/></w:num>`);
       items.forEach((item, offset) => {
-        refs.set(`${sectionIndex}:${runStart + offset}`, {
+        refs.set(keyFor(runStart + offset), {
           numId,
           ilvl: clampListLevel(item.level) - 1,
         });
       });
       runStart = -1;
     };
-    section.blocks.forEach((block, blockIndex) => {
-      if (block.list) {
+    blocks.forEach((block, blockIndex) => {
+      if (block.type === "paragraph" && block.list) {
         if (runStart === -1) {
           runStart = blockIndex;
         }
@@ -319,7 +342,24 @@ export function planNumbering(
         flushRun(blockIndex);
       }
     });
-    flushRun(section.blocks.length);
+    flushRun(blocks.length);
+  };
+
+  model.sections.forEach((section, sectionIndex) => {
+    planBlockList(section.blocks, (index) => `${sectionIndex}:${index}`);
+    section.blocks.forEach((block, blockIndex) => {
+      if (block.type !== "table") {
+        return;
+      }
+      block.rows.forEach((row, rowIndex) => {
+        row.cells.forEach((cell, colIndex) => {
+          planBlockList(
+            cell.blocks,
+            (index) => `${sectionIndex}:${blockIndex}:${rowIndex}:${colIndex}:${index}`,
+          );
+        });
+      });
+    });
   });
 
   return {

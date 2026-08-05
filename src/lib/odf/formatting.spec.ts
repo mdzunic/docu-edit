@@ -3,7 +3,7 @@
 // through the .odt reader and writer, plus the cross-format run-shading
 // drop report.
 import { describe, it, expect } from "vitest";
-import { createDocument, type DocumentModel, type RunFormatting } from "../documentModel";
+import { asParagraph, createDocument, type DocumentModel, type RunFormatting } from "../documentModel";
 import { parseTextProperties } from "./properties";
 import { parseOdt } from "./reader";
 import { buildContentXml, writeOdt } from "./writer";
@@ -103,7 +103,7 @@ describe("writeOdt — the SPEC-013 formatting round-trips", () => {
       }),
     );
     const reopened = await parseOdt(bytes);
-    const run = reopened.sections[0].blocks[0].runs[0];
+    const run = asParagraph(reopened.sections[0].blocks[0]).runs[0];
     expect(run.formatting.fontFamily).toBe("Georgia");
     expect(run.formatting.fontSizePt).toBe(11.5);
     expect(run.formatting.color).toBe("#1155cc");
@@ -115,10 +115,10 @@ describe("writeOdt — the SPEC-013 formatting round-trips", () => {
     for (const size of [1, 11.5, 208.5, 409]) {
       const first = await writeOdt(docWithRun({ fontSizePt: size }));
       const opened = await parseOdt(first.bytes);
-      expect(opened.sections[0].blocks[0].runs[0].formatting.fontSizePt).toBe(size);
-      const second = await writeOdt(docWithRun(opened.sections[0].blocks[0].runs[0].formatting));
+      expect(asParagraph(opened.sections[0].blocks[0]).runs[0].formatting.fontSizePt).toBe(size);
+      const second = await writeOdt(docWithRun(asParagraph(opened.sections[0].blocks[0]).runs[0].formatting));
       const reopened = await parseOdt(second.bytes);
-      expect(reopened.sections[0].blocks[0].runs[0].formatting.fontSizePt).toBe(size);
+      expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.fontSizePt).toBe(size);
     }
   });
 
@@ -127,17 +127,17 @@ describe("writeOdt — the SPEC-013 formatting round-trips", () => {
       docWithRun({ highlight: "#ff8800" }, "custom"),
     );
     const custom = await parseOdt(bytes);
-    expect(custom.sections[0].blocks[0].runs[0].formatting.highlight).toBe("#ff8800");
+    expect(asParagraph(custom.sections[0].blocks[0]).runs[0].formatting.highlight).toBe("#ff8800");
 
     const { bytes: offBytes } = await writeOdt(docWithRun({ highlight: false }, "off"));
     const off = await parseOdt(offBytes);
-    expect(off.sections[0].blocks[0].runs[0].formatting.highlight).toBe(false);
+    expect(asParagraph(off.sections[0].blocks[0]).runs[0].formatting.highlight).toBe(false);
   });
 
   it('keeps w:highlight w:val="white" alive across .docx -> .odt -> .docx (SPEC-013 decision)', async () => {
     const { bytes } = await writeOdt(docWithRun({ highlight: "white" }));
     const reopened = await parseOdt(bytes);
-    expect(reopened.sections[0].blocks[0].runs[0].formatting.highlight).toBe("white");
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.highlight).toBe("white");
   });
 
   it("reports run shading as dropped on a .docx -> .odt save (SPEC-013)", async () => {
@@ -150,7 +150,7 @@ describe("writeOdt — the SPEC-013 formatting round-trips", () => {
     expect(shading!.reason).toContain("Not preserved");
     // The highlight itself is kept.
     const reopened = await parseOdt(bytes);
-    expect(reopened.sections[0].blocks[0].runs[0].formatting.highlight).toBe("yellow");
-    expect(reopened.sections[0].blocks[0].runs[0].formatting.shadingFill).toBeUndefined();
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.highlight).toBe("yellow");
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.shadingFill).toBeUndefined();
   });
 });

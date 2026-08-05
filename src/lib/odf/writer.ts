@@ -26,11 +26,13 @@
 //  - Literal spaces that ODF whitespace collapsing would eat (leading,
 //    consecutive, after a tab or line break) are emitted as text:s.
 import type {
+  Block,
   DocumentModel,
   Paragraph,
   ParagraphFormatting,
   Run,
   RunFormatting,
+  Table,
 } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import {
@@ -43,7 +45,7 @@ import {
 import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { ODT_MIMETYPE } from "./reader";
 import { HIGHLIGHT_HEX } from "./properties";
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
 export { ODT_MIMETYPE };
@@ -60,6 +62,11 @@ const DOCUMENT_XMLNS =
   ` xmlns:style="${STYLE_NAMESPACE}"` +
   ` xmlns:text="${TEXT_NAMESPACE}"` +
   ` xmlns:fo="${FO_NAMESPACE}"`;
+
+// Declared locally on every table-related element rather than on the
+// document root, so content.xml's bytes are unchanged for documents without
+// tables (SPEC-022).
+const TABLE_XMLNS = ` xmlns:table="${TABLE_NAMESPACE}"`;
 
 /** The fallback title for a blank/whitespace-only model title — "Document 1"
  * per SPEC-007's decisions (unlike the .docx writer, which falls back to the
@@ -232,21 +239,82 @@ function listLevelXml(level: number, def: PlannedListLevel): string {
  * paragraphs get "P<n>" and runs share "T<n>" styles per distinct
  * formatting; list runs share "L<n>" list styles per distinct level set
  * (SPEC-018). */
+/** The names a serialised table references: its `table:name`, its
+ * table-family style, one table-column style per column, and the style
+ * generated cells share. `cellStyleName` is a lazy accessor so a table
+ * whose cells all carry preserved names never emits an unreferenced
+ * definition. */
+interface TableNames {
+  name: string;
+  styleName: string;
+  columnStyleNames: string[];
+  /** True when the table re-uses its source's own style name — its cells
+   * then keep exactly the style references they came with (possibly none),
+   * so a same-format save reproduces the source. */
+  preserved: boolean;
+  cellStyleName(): string;
+}
+
 interface AutomaticStyles {
   /** Serialised style:style elements, in first-use order. */
   defs: string[];
   paragraphNameFor(paragraph: Paragraph): string | undefined;
   textNameFor(formatting: RunFormatting): string;
   listNameFor(levels: PlannedListLevel[]): string;
+  tableNamesFor(table: Table, preserveNames: boolean): TableNames;
 }
 
 function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
   const takenNames = new Set<string>();
+  const takeTableNames = (table: Table) => {
+    if (table.odtName) {
+      takenNames.add(table.odtName);
+    }
+    if (table.odtStyleName) {
+      takenNames.add(table.odtStyleName);
+    }
+    for (const columnName of table.odtColumnStyleNames ?? []) {
+      if (columnName) {
+        takenNames.add(columnName);
+      }
+    }
+    for (const row of table.rows) {
+      if (row.odtStyleName) {
+        takenNames.add(row.odtStyleName);
+      }
+      for (const cell of row.cells) {
+        if (cell.odtStyleName) {
+          takenNames.add(cell.odtStyleName);
+        }
+      }
+    }
+  };
   for (const section of model.sections) {
     for (const block of section.blocks) {
+      if (block.type === "table") {
+        takeTableNames(block);
+        for (const row of block.rows) {
+          for (const cell of row.cells) {
+            for (const paragraph of cell.blocks) {
+              if (paragraph.styleId) {
+                takenNames.add(paragraph.styleId);
+              }
+            }
+          }
+        }
+        continue;
+      }
       if (block.styleId) {
         takenNames.add(block.styleId);
       }
+    }
+  }
+  // Preserved automatic styles (graphic, table, … families) are re-emitted
+  // verbatim beside the generated defs; their names must never be claimed
+  // for a generated style.
+  for (const preserved of model.sourceXml?.odtAutomaticStyles ?? []) {
+    for (const match of preserved.matchAll(/style:name="([^"]*)"/g)) {
+      takenNames.add(match[1]);
     }
   }
 
@@ -332,6 +400,63 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       listNames.set(levelsXml, name);
       defs.push(`<text:list-style style:name="${name}">${levelsXml}</text:list-style>`);
       return name;
+    },
+
+    tableNamesFor(table: Table, preserveNames: boolean): TableNames {
+      // With preserveNames (a same-format save), the source's own style
+      // names are re-emitted — their definitions travel in the preserved
+      // automatic styles — and only nameless parts (added in the editor)
+      // get generated styles. A cross-format save generates everything.
+      const totalCm = table.columnWidthsCm.reduce((sum, cm) => sum + cm, 0);
+      let styleName = preserveNames ? table.odtStyleName : undefined;
+      let base: string;
+      if (styleName === undefined) {
+        base = claimName("Table", "");
+        styleName = base;
+        defs.push(
+          `<style:style style:name="${escapeXml(base)}" style:family="table">` +
+            `<style:table-properties style:width="${cmToOdfLength(totalCm)}"/>` +
+            "</style:style>",
+        );
+      } else {
+        base = styleName;
+      }
+      const columnStyleNames = table.columnWidthsCm.map((widthCm, index) => {
+        const preserved = preserveNames ? table.odtColumnStyleNames?.[index] : undefined;
+        if (preserved !== undefined) {
+          return preserved;
+        }
+        const columnName = claimName(base, ".");
+        defs.push(
+          `<style:style style:name="${escapeXml(columnName)}" style:family="table-column">` +
+            `<style:table-column-properties style:column-width="${cmToOdfLength(widthCm)}"/>` +
+            "</style:style>",
+        );
+        return columnName;
+      });
+      // One shared style for cells without a preserved name — LibreOffice's
+      // default cell look (hairline border, small padding) so an inserted
+      // table is visibly a table in any consumer. Lazy: claimed only when a
+      // cell actually needs it, so a fully preserved table's styles are
+      // byte-identical to its source.
+      let generatedCellStyleName: string | undefined;
+      return {
+        name: table.odtName ?? base,
+        styleName,
+        columnStyleNames,
+        preserved: preserveNames && table.odtStyleName !== undefined,
+        cellStyleName(): string {
+          if (generatedCellStyleName === undefined) {
+            generatedCellStyleName = claimName(base, ".Cell");
+            defs.push(
+              `<style:style style:name="${escapeXml(generatedCellStyleName)}" style:family="table-cell">` +
+                '<style:table-cell-properties fo:padding="0.097cm" fo:border="0.05pt solid #000000"/>' +
+                "</style:style>",
+            );
+          }
+          return generatedCellStyleName;
+        },
+      };
     },
   };
 }
@@ -480,6 +605,71 @@ function paragraphXml(paragraph: Paragraph, styles: AutomaticStyles, includeOpaq
   return content.length > 0 ? `<${tag}${attrs}>${content}</${tag}>` : `<${tag}${attrs}/>`;
 }
 
+function isListParagraph(block: Block): boolean {
+  return block.type === "paragraph" && block.list !== undefined;
+}
+
+/** A cell's block content (SPEC-022): paragraphs, with consecutive list
+ * items grouped into text:list runs exactly like body content — a cell is
+ * its own list context, so runs never join one outside the table. */
+function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpaque: boolean): string {
+  let xml = "";
+  let i = 0;
+  while (i < blocks.length) {
+    if (!blocks[i].list) {
+      xml += paragraphXml(blocks[i], styles, includeOpaque);
+      i++;
+      continue;
+    }
+    let end = i + 1;
+    while (end < blocks.length && blocks[end].list) {
+      end++;
+    }
+    xml += listRunXml(blocks.slice(i, end), styles, includeOpaque);
+    i = end;
+  }
+  return xml.length > 0 ? xml : "<text:p/>";
+}
+
+/** One table block as table:table markup (SPEC-022): column definitions
+ * referencing width-carrying styles, then rows of string-typed cells. The
+ * table: namespace is declared on the element itself — see TABLE_XMLNS. */
+function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean): string {
+  const names = styles.tableNamesFor(table, includeOpaque);
+  let xml =
+    `<table:table${TABLE_XMLNS} table:name="${escapeXml(names.name)}"` +
+    ` table:style-name="${escapeXml(names.styleName)}">`;
+  for (const columnName of names.columnStyleNames) {
+    xml += `<table:table-column table:style-name="${escapeXml(columnName)}"/>`;
+  }
+  for (const row of table.rows) {
+    const rowStyle =
+      includeOpaque && row.odtStyleName !== undefined
+        ? ` table:style-name="${escapeXml(row.odtStyleName)}"`
+        : "";
+    xml += `<table:table-row${rowStyle}>`;
+    for (const cell of row.cells) {
+      // A preserved table's cells keep exactly the style references they
+      // came with — including none at all; only a table this writer styles
+      // itself gets the generated bordered cell style.
+      const cellStyleName =
+        includeOpaque && cell.odtStyleName !== undefined
+          ? cell.odtStyleName
+          : names.preserved
+            ? undefined
+            : names.cellStyleName();
+      const cellStyleAttr =
+        cellStyleName !== undefined ? ` table:style-name="${escapeXml(cellStyleName)}"` : "";
+      xml +=
+        `<table:table-cell${cellStyleAttr} office:value-type="string">` +
+        cellContentXml(cell.blocks, styles, includeOpaque) +
+        "</table:table-cell>";
+    }
+    xml += "</table:table-row>";
+  }
+  return `${xml}</table:table>`;
+}
+
 /** The content part: automatic styles plus the document body. All sections'
  * blocks are written in order (page setup lives on defaultStyles, not per
  * section); a model with no blocks still gets one empty text:p, mirroring
@@ -512,20 +702,26 @@ export function buildContentXml(model: DocumentModel): string {
       }
       // Serialised before the styles are read: paragraphXml/listRunXml
       // register each automatic style on first use.
-      if (!blocks[i].list) {
-        blockXml.push(paragraphXml(blocks[i], styles, includeOpaque));
+      const block = blocks[i];
+      if (block.type === "table") {
+        blockXml.push(tableXml(block, styles, includeOpaque));
+        i++;
+        continue;
+      }
+      if (!block.list) {
+        blockXml.push(paragraphXml(block, styles, includeOpaque));
         i++;
         continue;
       }
       // A run of consecutive list paragraphs becomes one nested text:list
       // (SPEC-018 AC-19). An opaque block anchored inside the run ends it —
       // the preserved node belongs at the body level, and the following
-      // items start a fresh list.
+      // items start a fresh list. A table block ends the run the same way.
       let end = i + 1;
-      while (end < blocks.length && blocks[end].list && anchorsAt(end).length === 0) {
+      while (end < blocks.length && isListParagraph(blocks[end]) && anchorsAt(end).length === 0) {
         end++;
       }
-      blockXml.push(listRunXml(blocks.slice(i, end), styles, includeOpaque));
+      blockXml.push(listRunXml(blocks.slice(i, end) as Paragraph[], styles, includeOpaque));
       i = end;
     }
   }

@@ -15,7 +15,7 @@ import {
 import { unzip } from "../docx/zip";
 import { parseXml } from "../docx/xml";
 import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
-import { createDocument, type DocumentModel, type Paragraph } from "../documentModel";
+import { asParagraph, createDocument, type Block, type DocumentModel, type Paragraph } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,14 +57,14 @@ async function partText(bytes: Uint8Array, name: string): Promise<string> {
   return decoder.decode(raw);
 }
 
-function paragraphTexts(model: { sections: { blocks: Paragraph[] }[] }): string[] {
+function paragraphTexts(model: { sections: { blocks: Block[] }[] }): string[] {
   return model.sections.flatMap((section) =>
-    section.blocks.map((block) => block.runs.map((run) => run.text).join("")),
+    section.blocks.map((block) => asParagraph(block).runs.map((run) => run.text).join("")),
   );
 }
 
-function headingLevels(model: { sections: { blocks: Paragraph[] }[] }): (number | undefined)[] {
-  return model.sections.flatMap((section) => section.blocks.map((block) => block.headingLevel));
+function headingLevels(model: { sections: { blocks: Block[] }[] }): (number | undefined)[] {
+  return model.sections.flatMap((section) => section.blocks.map((block) => asParagraph(block).headingLevel));
 }
 
 describe("writeOdt — package structure (AC-4..AC-8)", () => {
@@ -318,7 +318,7 @@ describe("writeOdt — content details", () => {
       },
     ];
     const reopened = await parseOdt((await writeOdt(model)).bytes);
-    const run = reopened.sections[0].blocks[0].runs[0];
+    const run = asParagraph(reopened.sections[0].blocks[0]).runs[0];
     expect(run.formatting.bold).toBe(false);
     expect(run.formatting.underline).toBe(false);
   });
@@ -331,7 +331,7 @@ describe("writeOdt — content details", () => {
     const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
     expect(contentXml).toContain('<text:h text:outline-level="3">');
     const reopened = await parseOdt((await writeOdt(model)).bytes);
-    expect(reopened.sections[0].blocks[0].headingLevel).toBe(3);
+    expect(asParagraph(reopened.sections[0].blocks[0]).headingLevel).toBe(3);
   });
 
   it("marks a landscape page with style:print-orientation and round-trips the page size (AC-15)", async () => {
@@ -348,7 +348,7 @@ describe("writeOdt — empty document", () => {
   it("a freshly created blank document produces a valid one-paragraph file", async () => {
     const reopened = await parseOdt((await writeOdt(createDocument("id-1"))).bytes);
     expect(reopened.sections[0].blocks).toHaveLength(1);
-    expect(reopened.sections[0].blocks[0].runs).toEqual([]);
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs).toEqual([]);
   });
 
   it("a model with no blocks at all still writes one paragraph", async () => {
@@ -389,7 +389,7 @@ describe("writeOdt — from a document opened as .docx (AC-24, AC-25, AC-26)", (
   it("preserves bold and italic character formatting (AC-26)", async () => {
     const parsed = await parseDocx(loadFixture(docxFixturesDir, "word-authored.docx"));
     const reopened = await parseOdt((await writeOdt(modelFromDocx(parsed))).bytes);
-    const runs = reopened.sections[0].blocks[1].runs;
+    const runs = asParagraph(reopened.sections[0].blocks[1]).runs;
     expect(runs.some((r) => r.text === "bold" && r.formatting.bold === true)).toBe(true);
     expect(runs.some((r) => r.text === "italic" && r.formatting.italic === true)).toBe(true);
   });
@@ -397,7 +397,7 @@ describe("writeOdt — from a document opened as .docx (AC-24, AC-25, AC-26)", (
   it("preserves underline and strikethrough character formatting (AC-26)", async () => {
     const parsed = await parseDocx(loadFixture(docxFixturesDir, "libreoffice-authored.docx"));
     const reopened = await parseOdt((await writeOdt(modelFromDocx(parsed))).bytes);
-    const runs = reopened.sections[0].blocks[1].runs;
+    const runs = asParagraph(reopened.sections[0].blocks[1]).runs;
     expect(runs.some((r) => r.text === "underlined" && r.formatting.underline === true)).toBe(true);
     expect(
       runs.some((r) => r.text === "struck through" && r.formatting.strikethrough === true),
@@ -424,12 +424,12 @@ describe("writeDocx — from a document opened as .odt (AC-27, AC-28, AC-29)", (
 
   it("preserves character formatting (AC-29)", async () => {
     const { reopened } = await convert("libreoffice-writer.odt");
-    const runs = reopened.sections[0].blocks[1].runs;
+    const runs = asParagraph(reopened.sections[0].blocks[1]).runs;
     expect(runs.some((r) => r.text === "bold" && r.formatting.bold === true)).toBe(true);
     expect(runs.some((r) => r.text === "italic" && r.formatting.italic === true)).toBe(true);
     expect(runs.some((r) => r.text === "underlined" && r.formatting.underline === true)).toBe(true);
     expect(runs.some((r) => r.text === "struck" && r.formatting.strikethrough === true)).toBe(true);
-    const red = reopened.sections[0].blocks[5].runs[0];
+    const red = asParagraph(reopened.sections[0].blocks[5]).runs[0];
     expect(red.text).toBe("Red Sans 14pt");
     expect(red.formatting.color).toBe("#c9211e");
     expect(red.formatting.fontSizePt).toBe(14);

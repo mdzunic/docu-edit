@@ -13,8 +13,9 @@ import {
 } from "./writer";
 import { unzip } from "./zip";
 import { parseXml } from "./xml";
-import { createDocument, DEFAULT_TITLE, type DocumentModel, type Paragraph } from "../documentModel";
+import { createDocument, DEFAULT_TITLE, type Block, type DocumentModel, type Paragraph } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
+import { asParagraph } from "../documentModel";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const docxFixturesDir = join(here, "fixtures");
@@ -45,9 +46,9 @@ async function partText(bytes: Uint8Array, name: string): Promise<string> {
   return decoder.decode(raw);
 }
 
-function paragraphTexts(model: { sections: { blocks: Paragraph[] }[] }): string[] {
+function paragraphTexts(model: { sections: { blocks: Block[] }[] }): string[] {
   return model.sections.flatMap((section) =>
-    section.blocks.map((block) => block.runs.map((run) => run.text).join("")),
+    section.blocks.map((block) => asParagraph(block).runs.map((run) => run.text).join("")),
   );
 }
 

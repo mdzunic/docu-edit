@@ -14,6 +14,9 @@ import type {
   RunFormatting,
   Section,
   SourceXml,
+  Table,
+  TableCell,
+  TableRow,
 } from "../documentModel";
 import { createDefaultStyles } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
@@ -212,6 +215,135 @@ function parseParagraph(
   return paragraph;
 }
 
+function parseTableCell(
+  tcEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+): TableCell | null {
+  const blocks: Paragraph[] = [];
+  let tcPr: string | undefined;
+  for (const child of Array.from(tcEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      return null;
+    }
+    if (child.localName === "tcPr") {
+      // Merged cells (SPEC-023) break the regular grid the model assumes;
+      // a table containing one is preserved verbatim instead.
+      if (
+        firstChildElement(child, WORD_NAMESPACE, "gridSpan") ||
+        firstChildElement(child, WORD_NAMESPACE, "vMerge")
+      ) {
+        return null;
+      }
+      tcPr = serializeElement(child);
+    } else if (child.localName === "p") {
+      blocks.push(parseParagraph(child, styleCatalog, numberingCatalog));
+    } else {
+      // Nested tables, block-level sdt, … — out of the model's table shape.
+      return null;
+    }
+  }
+  if (blocks.length === 0) {
+    // OOXML requires a w:p per cell; tolerate its absence with an empty one
+    // so every cell can hold a caret.
+    blocks.push({ type: "paragraph", runs: [], formatting: {} });
+  }
+  const cell: TableCell = { blocks };
+  if (tcPr !== undefined) {
+    cell.docxTcPr = tcPr;
+  }
+  return cell;
+}
+
+function parseTableRow(
+  trEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+): TableRow | null {
+  const cells: TableCell[] = [];
+  let trPr: string | undefined;
+  for (const child of Array.from(trEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      return null;
+    }
+    if (child.localName === "trPr") {
+      trPr = serializeElement(child);
+    } else if (child.localName === "tc") {
+      const cell = parseTableCell(child, styleCatalog, numberingCatalog);
+      if (!cell) {
+        return null;
+      }
+      cells.push(cell);
+    } else {
+      // tblPrEx, bookmarks between cells, … — keep the table verbatim.
+      return null;
+    }
+  }
+  if (cells.length === 0) {
+    return null;
+  }
+  const row: TableRow = { cells };
+  if (trPr !== undefined) {
+    row.docxTrPr = trPr;
+  }
+  return row;
+}
+
+/** Parses a `w:tbl` into a modelled Table (SPEC-022), or null when the
+ * table uses features outside the model's regular grid — merged cells,
+ * nested tables, a grid that doesn't match the rows — in which case the
+ * caller preserves the element verbatim as an opaque block instead
+ * (SPEC-008: fidelity over feature count). */
+function parseTable(
+  tblEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+): Table | null {
+  const rows: TableRow[] = [];
+  const columnWidthsCm: number[] = [];
+  let tblPr: string | undefined;
+  let sawGrid = false;
+  for (const child of Array.from(tblEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      return null;
+    }
+    if (child.localName === "tblPr") {
+      tblPr = serializeElement(child);
+    } else if (child.localName === "tblGrid") {
+      sawGrid = true;
+      for (const col of Array.from(child.children)) {
+        if (col.namespaceURI !== WORD_NAMESPACE || col.localName !== "gridCol") {
+          return null;
+        }
+        const w = Number(wordAttr(col, "w") ?? "");
+        if (!Number.isFinite(w) || w <= 0) {
+          return null;
+        }
+        columnWidthsCm.push(twipsToCm(w));
+      }
+    } else if (child.localName === "tr") {
+      const row = parseTableRow(child, styleCatalog, numberingCatalog);
+      if (!row) {
+        return null;
+      }
+      rows.push(row);
+    } else {
+      return null;
+    }
+  }
+  if (!sawGrid || rows.length === 0 || columnWidthsCm.length === 0) {
+    return null;
+  }
+  if (rows.some((row) => row.cells.length !== columnWidthsCm.length)) {
+    return null;
+  }
+  const table: Table = { type: "table", rows, columnWidthsCm };
+  if (tblPr !== undefined) {
+    table.docxTblPr = tblPr;
+  }
+  return table;
+}
+
 function applySectionProperties(sectPr: Element | undefined, base: DefaultStyles): DefaultStyles {
   if (!sectPr) {
     return base;
@@ -351,11 +483,21 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   for (const child of Array.from(body.children)) {
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "p") {
       blocks.push(parseParagraph(child, styleCatalog, numberingCatalog));
+    } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "tbl") {
+      // Regular-grid tables are modelled (SPEC-022); a table the model
+      // cannot express (merged cells, nested tables, …) falls through to
+      // the opaque path below.
+      const table = parseTable(child, styleCatalog, numberingCatalog);
+      if (table) {
+        blocks.push(table);
+      } else {
+        opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
+      }
     } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "sectPr") {
       sectPr = child;
     } else {
-      // Tables, block-level content controls, bookmarks, anything from
-      // another namespace: unmodelled body children are preserved verbatim,
+      // Block-level content controls, bookmarks, anything from another
+      // namespace: unmodelled body children are preserved verbatim,
       // anchored to their position among the paragraphs (SPEC-008).
       opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
     }

@@ -11,6 +11,7 @@ import {
   INVALID_ODT_MESSAGE,
 } from "./reader";
 import type { Paragraph } from "../documentModel";
+import { asParagraph } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const docxFixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "docx", "fixtures");
@@ -44,7 +45,7 @@ describe("parseOdt — libreoffice-writer.odt", () => {
   it("maps text:h with text:outline-level to heading levels (AC-6, AC-32)", async () => {
     const parsed = await parseOdt(fixture);
     const blocks = parsed.sections[0].blocks as Paragraph[];
-    expect(blocks.map((b) => b.headingLevel)).toEqual([
+    expect(blocks.map((b) => asParagraph(b).headingLevel)).toEqual([
       1,
       undefined,
       undefined,

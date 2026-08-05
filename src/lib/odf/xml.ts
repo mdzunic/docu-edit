@@ -6,6 +6,7 @@
 
 export const OFFICE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 export const TEXT_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+export const TABLE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 export const STYLE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 export const FO_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 export const SVG_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
@@ -18,6 +19,11 @@ export function officeAttr(el: Element, localName: string): string | null {
 /** Reads a `text:*` attribute regardless of the bound prefix. */
 export function textAttr(el: Element, localName: string): string | null {
   return el.getAttributeNS(TEXT_NAMESPACE, localName);
+}
+
+/** Reads a `table:*` attribute regardless of the bound prefix. */
+export function tableAttr(el: Element, localName: string): string | null {
+  return el.getAttributeNS(TABLE_NAMESPACE, localName);
 }
 
 /** Reads a `style:*` attribute regardless of the bound prefix. */

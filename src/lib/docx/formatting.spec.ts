@@ -1,7 +1,7 @@
 // SPEC-013 — font size, colour, highlight (w:highlight + w:shd fallback)
 // and sub/superscript through the .docx reader, writer and validator.
 import { describe, it, expect } from "vitest";
-import { createDocument, type DocumentModel, type RunFormatting } from "../documentModel";
+import { asParagraph, createDocument, type DocumentModel, type RunFormatting } from "../documentModel";
 import { parseRunProperties } from "./properties";
 import { parseDocx } from "./reader";
 import { buildDocumentXml, writeDocx } from "./writer";
@@ -104,7 +104,7 @@ describe("writeDocx — the SPEC-013 package validates and round-trips", () => {
 
   it("produces a schema-valid package for every new run property", async () => {
     const model = docWithRun(formatted);
-    model.sections[0].blocks[0].runs.push(
+    asParagraph(model.sections[0].blocks[0]).runs.push(
       { text: " shaded", formatting: { highlight: "#ff8800" } },
       { text: " off", formatting: { highlight: false } },
       { text: " both", formatting: { highlight: "cyan", shadingFill: "#123456" } },
@@ -116,7 +116,7 @@ describe("writeDocx — the SPEC-013 package validates and round-trips", () => {
   it("round-trips font, size, colour, highlight and vertAlign exactly", async () => {
     const { bytes } = await writeDocx(docWithRun(formatted));
     const reopened = await parseDocx(bytes);
-    const run = reopened.sections[0].blocks[0].runs[0];
+    const run = asParagraph(reopened.sections[0].blocks[0]).runs[0];
     expect(run.formatting.fontFamily).toBe("Georgia");
     expect(run.formatting.fontSizePt).toBe(11.5);
     expect(run.formatting.color).toBe("#1155cc");
@@ -128,30 +128,30 @@ describe("writeDocx — the SPEC-013 package validates and round-trips", () => {
     for (const size of [1, 11.5, 208.5, 409]) {
       const first = await writeDocx(docWithRun({ fontSizePt: size }));
       const opened = await parseDocx(first.bytes);
-      expect(opened.sections[0].blocks[0].runs[0].formatting.fontSizePt).toBe(size);
-      const model = docWithRun(opened.sections[0].blocks[0].runs[0].formatting);
+      expect(asParagraph(opened.sections[0].blocks[0]).runs[0].formatting.fontSizePt).toBe(size);
+      const model = docWithRun(asParagraph(opened.sections[0].blocks[0]).runs[0].formatting);
       const second = await writeDocx(model);
       const reopened = await parseDocx(second.bytes);
-      expect(reopened.sections[0].blocks[0].runs[0].formatting.fontSizePt).toBe(size);
+      expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.fontSizePt).toBe(size);
     }
   });
 
   it("round-trips an out-of-palette highlight through the shading fallback (AC)", async () => {
     const { bytes } = await writeDocx(docWithRun({ highlight: "#ff8800" }));
     const reopened = await parseDocx(bytes);
-    expect(reopened.sections[0].blocks[0].runs[0].formatting.highlight).toBe("#ff8800");
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.highlight).toBe("#ff8800");
   });
 
   it('round-trips "No colour" as an explicit off (AC)', async () => {
     const { bytes } = await writeDocx(docWithRun({ highlight: false }));
     const reopened = await parseDocx(bytes);
-    expect(reopened.sections[0].blocks[0].runs[0].formatting.highlight).toBe(false);
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.highlight).toBe(false);
   });
 
   it("keeps w:highlight and w:shd together across a .docx round trip (AC)", async () => {
     const { bytes } = await writeDocx(docWithRun({ highlight: "yellow", shadingFill: "#ff8800" }));
     const reopened = await parseDocx(bytes);
-    const formatting = reopened.sections[0].blocks[0].runs[0].formatting;
+    const formatting = asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting;
     expect(formatting.highlight).toBe("yellow");
     expect(formatting.shadingFill).toBe("#ff8800");
   });

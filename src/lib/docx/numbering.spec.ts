@@ -15,6 +15,7 @@ import { validateDocx } from "./validate";
 import { unzip } from "./zip";
 import { firstStructuralDifference } from "../equality";
 import { createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "../documentModel";
+import { asParagraph } from "../documentModel";
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 
@@ -154,8 +155,8 @@ describe("SPEC-018 AC-18/AC-23 — .docx list round trip", () => {
     const model = listedModel();
     const { bytes } = await writeDocx(model);
     const reopened = await parseDocx(bytes);
-    expect(reopened.sections[0].blocks.map((block) => block.list)).toEqual(
-      model.sections[0].blocks.map((block) => block.list),
+    expect(reopened.sections[0].blocks.map((block) => asParagraph(block).list)).toEqual(
+      model.sections[0].blocks.map((block) => asParagraph(block).list),
     );
   });
 
@@ -167,12 +168,12 @@ describe("SPEC-018 AC-18/AC-23 — .docx list round trip", () => {
     );
     const parsed = await parseDocx(fixture);
     const blocks = parsed.sections[0].blocks;
-    expect(blocks.map((block) => block.runs.map((run) => run.text).join(""))).toEqual([
+    expect(blocks.map((block) => asParagraph(block).runs.map((run) => run.text).join(""))).toEqual([
       "Groceries", "Apples", "Bananas", "Green ones", "Wrapped ones",
       "Steps", "First", "Second", "Detail",
       "Continue from five", "Fifth", "Sixth",
     ]);
-    expect(blocks.map((block) => block.list)).toEqual([
+    expect(blocks.map((block) => asParagraph(block).list)).toEqual([
       undefined,
       { type: "bullet", level: 1, indentCm: 1.905 }, // Symbol F0B7 -> disc, non-default indent
       { type: "bullet", level: 1, indentCm: 1.905 },

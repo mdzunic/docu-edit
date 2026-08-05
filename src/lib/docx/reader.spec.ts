@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
 import { DocxOpenError, LegacyDocError, LEGACY_DOC_MESSAGE, INVALID_DOCX_MESSAGE, parseDocx } from "./reader";
 import type { Paragraph } from "../documentModel";
+import { asParagraph } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -108,7 +109,7 @@ describe("parseDocx — libreoffice-authored.docx", () => {
   it("resolves heading levels from 'heading N'-named styles (AC-24, AC-38)", async () => {
     const parsed = await parseDocx(fixture);
     const blocks = parsed.sections[0].blocks as Paragraph[];
-    expect(blocks.map((b) => b.headingLevel)).toEqual([1, undefined, undefined, 2, undefined]);
+    expect(blocks.map((b) => asParagraph(b).headingLevel)).toEqual([1, undefined, undefined, 2, undefined]);
   });
 
   it("reads underline and strikethrough direct run formatting (AC-11, AC-12)", async () => {
@@ -149,7 +150,7 @@ describe("parseDocx — google-docs-exported.docx", () => {
   it("resolves three distinct heading levels (AC-24, AC-38)", async () => {
     const parsed = await parseDocx(fixture);
     const blocks = parsed.sections[0].blocks as Paragraph[];
-    expect(blocks.map((b) => b.headingLevel)).toEqual([
+    expect(blocks.map((b) => asParagraph(b).headingLevel)).toEqual([
       1,
       2,
       3,

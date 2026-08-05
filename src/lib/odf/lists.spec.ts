@@ -6,6 +6,7 @@ import { buildContentXml, writeOdt } from "./writer";
 import { parseOdt } from "./reader";
 import { unzip } from "../docx/zip";
 import { createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "../documentModel";
+import { asParagraph } from "../documentModel";
 
 function paragraph(text: string, list?: ListFormatting): Paragraph {
   const p: Paragraph = {
@@ -90,10 +91,10 @@ describe("SPEC-018 AC-21/AC-22/AC-23 — .odt list round trip", () => {
     const { bytes, dropped } = await writeOdt(model);
     expect(dropped).toEqual([]);
     const reopened = await parseOdt(bytes);
-    expect(reopened.sections[0].blocks.map((block) => block.list)).toEqual(
-      model.sections[0].blocks.map((block) => block.list),
+    expect(reopened.sections[0].blocks.map((block) => asParagraph(block).list)).toEqual(
+      model.sections[0].blocks.map((block) => asParagraph(block).list),
     );
-    expect(reopened.sections[0].blocks.map((block) => block.runs.map((run) => run.text).join(""))).toEqual([
+    expect(reopened.sections[0].blocks.map((block) => asParagraph(block).runs.map((run) => run.text).join(""))).toEqual([
       "first", "sub", "deep bullet", "plain", "bullet",
     ]);
   });
@@ -112,8 +113,8 @@ describe("SPEC-018 AC-21/AC-22/AC-23 — .odt list round trip", () => {
     const second = await writeOdt(editedModel);
     expect(second.dropped).toEqual([]);
     const reopened = await parseOdt(second.bytes);
-    expect(reopened.sections[0].blocks.map((block) => block.list)).toEqual(
-      opened.sections[0].blocks.map((block) => block.list),
+    expect(reopened.sections[0].blocks.map((block) => asParagraph(block).list)).toEqual(
+      opened.sections[0].blocks.map((block) => asParagraph(block).list),
     );
   });
 
@@ -125,12 +126,12 @@ describe("SPEC-018 AC-21/AC-22/AC-23 — .odt list round trip", () => {
     );
     const parsed = await parseOdt(fixture);
     const blocks = parsed.sections[0].blocks;
-    expect(blocks.map((block) => block.runs.map((run) => run.text).join(""))).toEqual([
+    expect(blocks.map((block) => asParagraph(block).runs.map((run) => run.text).join(""))).toEqual([
       "Groceries", "Apples", "Bananas", "Green ones", "Wrapped ones",
       "Steps", "First", "Second", "Detail",
       "Continue from five", "Fifth", "Sixth",
     ]);
-    expect(blocks.map((block) => block.list)).toEqual([
+    expect(blocks.map((block) => asParagraph(block).list)).toEqual([
       undefined,
       { type: "bullet", level: 1, indentCm: 1.905 }, // non-default indent from WL1
       { type: "bullet", level: 1, indentCm: 1.905 },
