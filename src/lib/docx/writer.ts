@@ -29,8 +29,19 @@ import type {
 } from "../documentModel";
 import { DEFAULT_TITLE } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
-import { parseRelationships, resolvePartPath, WORD_NAMESPACE } from "./xml";
+import { parseRelationships, relsPathFor, resolvePartPath, WORD_NAMESPACE } from "./xml";
 import { cmToTwips, cssColorToOoxml, ptToHalfPoints, ptToTwentiethsOfPoint } from "./units";
+import {
+  buildNumberingXml,
+  mergeNumberingXml,
+  nextNumberingIds,
+  NUMBERING_CONTENT_TYPE,
+  NUMBERING_RELATIONSHIP,
+  numberingRefFor,
+  planNumbering,
+  type NumberingPlan,
+  type NumberingRef,
+} from "./numbering";
 import { zip, type ZipEntryInput } from "./zipWriter";
 
 export const DOCX_MIME_TYPE =
@@ -170,14 +181,22 @@ function runXml(run: Run): string {
   return `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
 }
 
-function paragraphPropertiesXml(paragraph: Paragraph): string {
+function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): string {
   const parts: string[] = [];
   const formatting = paragraph.formatting ?? {};
 
-  // Emitted in CT_PPr sequence order: pStyle, bidi, spacing, ind, jc,
-  // outlineLvl.
+  // Emitted in CT_PPr sequence order: pStyle, numPr, bidi, spacing, ind,
+  // jc, outlineLvl.
   if (paragraph.styleId !== undefined) {
     parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
+  }
+
+  // The list reference (SPEC-018 AC-18): the numbering plan assigned this
+  // paragraph its num instance and 0-based level.
+  if (numRef) {
+    parts.push(
+      `<w:numPr><w:ilvl w:val="${numRef.ilvl}"/><w:numId w:val="${numRef.numId}"/></w:numPr>`,
+    );
   }
 
   // The model's indents are logical start/end values, exactly what w:ind's
@@ -262,8 +281,8 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean): string 
   return xml;
 }
 
-function paragraphXml(paragraph: Paragraph, includeOpaque: boolean): string {
-  return `<w:p>${paragraphPropertiesXml(paragraph)}${inlineContentXml(paragraph, includeOpaque)}</w:p>`;
+function paragraphXml(paragraph: Paragraph, includeOpaque: boolean, numRef?: NumberingRef): string {
+  return `<w:p>${paragraphPropertiesXml(paragraph, numRef)}${inlineContentXml(paragraph, includeOpaque)}</w:p>`;
 }
 
 function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
@@ -292,10 +311,10 @@ function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
  * section properties survive. Cross-format models carry foreign (ODF) XML
  * in their opaque nodes, so those are excluded — the writer reports them as
  * dropped instead. */
-export function buildDocumentXml(model: DocumentModel): string {
+export function buildDocumentXml(model: DocumentModel, plan: NumberingPlan = planNumbering(model)): string {
   const includeOpaque = model.format === "docx";
   const blockXml: string[] = [];
-  for (const section of model.sections) {
+  model.sections.forEach((section, sectionIndex) => {
     const opaqueBlocks = includeOpaque
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
       : [];
@@ -306,10 +325,12 @@ export function buildDocumentXml(model: DocumentModel): string {
         }
       }
       if (i < section.blocks.length) {
-        blockXml.push(paragraphXml(section.blocks[i], includeOpaque));
+        blockXml.push(
+          paragraphXml(section.blocks[i], includeOpaque, numberingRefFor(plan, sectionIndex, i)),
+        );
       }
     }
-  }
+  });
   const body = blockXml.length > 0 ? blockXml.join("") : "<w:p/>";
   const sectPr =
     includeOpaque && model.sourceXml?.docxSectPr !== undefined
@@ -392,13 +413,17 @@ export function buildCorePropertiesXml(title: string, modified: Date): string {
   );
 }
 
-export function buildContentTypesXml(): string {
+export function buildContentTypesXml(withNumbering = false): string {
+  const numbering = withNumbering
+    ? `<Override PartName="/word/numbering.xml" ContentType="${NUMBERING_CONTENT_TYPE}"/>`
+    : "";
   return (
     `${XML_DECLARATION}<Types xmlns="${CONTENT_TYPES_NAMESPACE}">` +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
+    numbering +
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
     "</Types>"
   );
@@ -413,10 +438,14 @@ export function buildPackageRelsXml(): string {
   );
 }
 
-export function buildDocumentRelsXml(): string {
+export function buildDocumentRelsXml(withNumbering = false): string {
+  const numbering = withNumbering
+    ? `<Relationship Id="rId2" Type="${NUMBERING_RELATIONSHIP}" Target="numbering.xml"/>`
+    : "";
   return (
     `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
     `<Relationship Id="rId1" Type="${STYLES_RELATIONSHIP}" Target="styles.xml"/>` +
+    numbering +
     "</Relationships>"
   );
 }
@@ -457,6 +486,33 @@ function withCoreRelationship(relsXml: string): string {
   );
 }
 
+/** Adds the numbering Override to a preserved [Content_Types].xml — needed
+ * when a save adds a numbering part to a package that had none (SPEC-018). */
+function withNumberingContentType(contentTypesXml: string, partName: string): string {
+  if (contentTypesXml.includes(`PartName="/${partName}"`)) {
+    return contentTypesXml;
+  }
+  return contentTypesXml.replace(
+    /<\/Types>\s*$/,
+    `<Override PartName="/${partName}" ContentType="${NUMBERING_CONTENT_TYPE}"/></Types>`,
+  );
+}
+
+/** Adds a numbering relationship (under a fresh, unused rId) to a preserved
+ * document rels part for the same added-numbering case. */
+function withNumberingRelationship(relsXml: string, target: string): string {
+  const rels = parseRelationships(relsXml);
+  let n = rels.size + 1;
+  while (rels.has(`rId${n}`)) {
+    n++;
+  }
+  return relsXml.replace(
+    /<\/Relationships>\s*$/,
+    `<Relationship Id="rId${n}" Type="${NUMBERING_RELATIONSHIP}" Target="${target}"/>` +
+      "</Relationships>",
+  );
+}
+
 /** Serialises the model into `.docx` bytes plus the list of items that could
  * not be represented (SPEC-008).
  *
@@ -478,14 +534,22 @@ export async function writeDocx(
 
   const preservedParts = model.format === "docx" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
   if (preservedParts.size === 0) {
-    const bytes = await zip([
-      { name: "[Content_Types].xml", data: encoder.encode(buildContentTypesXml()) },
+    const plan = planNumbering(model);
+    const entries: ZipEntryInput[] = [
+      { name: "[Content_Types].xml", data: encoder.encode(buildContentTypesXml(!plan.isEmpty)) },
       { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
-      { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model)) },
-      { name: "word/_rels/document.xml.rels", data: encoder.encode(buildDocumentRelsXml()) },
+      { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model, plan)) },
+      { name: "word/_rels/document.xml.rels", data: encoder.encode(buildDocumentRelsXml(!plan.isEmpty)) },
       { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
       { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
-    ]);
+    ];
+    if (!plan.isEmpty) {
+      entries.splice(5, 0, {
+        name: "word/numbering.xml",
+        data: encoder.encode(buildNumberingXml(plan)),
+      });
+    }
+    const bytes = await zip(entries);
     return { bytes, dropped: collectDropRecords(model, "docx") };
   }
 
@@ -501,6 +565,38 @@ export async function writeDocx(
   const coreRel = rels.find((rel) => rel.type === CORE_PROPERTIES_RELATIONSHIP);
   const corePartName = coreRel ? resolvePartPath("", coreRel.target) : "docProps/core.xml";
 
+  // Numbering (SPEC-018). When the model holds lists, its plan allocates
+  // ids above whatever the preserved numbering part already defines and the
+  // definitions are merged in — the original ones stay verbatim because
+  // opaque content (lists inside tables, say) may reference them. A package
+  // that had no numbering part gets one, declared in the rels/content types
+  // like the added-core.xml path just below.
+  const mainRelsName = relsPathFor(mainPartName);
+  const mainRelsBytes = preservedParts.get(mainRelsName);
+  const mainRelsText = mainRelsBytes ? decoder.decode(mainRelsBytes) : undefined;
+  const numberingRel = mainRelsText
+    ? Array.from(parseRelationships(mainRelsText).values()).find(
+        (rel) => rel.type === NUMBERING_RELATIONSHIP,
+      )
+    : undefined;
+  const mainDir = mainPartName.includes("/")
+    ? mainPartName.slice(0, mainPartName.lastIndexOf("/") + 1)
+    : "";
+  const numberingPartName = numberingRel
+    ? resolvePartPath(mainPartName, numberingRel.target)
+    : `${mainDir}numbering.xml`;
+  const preservedNumbering = preservedParts.get(numberingPartName);
+  const plan = planNumbering(
+    model,
+    preservedNumbering ? nextNumberingIds(decoder.decode(preservedNumbering)) : undefined,
+  );
+  const numberingOut = plan.isEmpty
+    ? null
+    : preservedNumbering
+      ? mergeNumberingXml(decoder.decode(preservedNumbering), plan)
+      : buildNumberingXml(plan);
+  const addNumberingDecls = numberingOut !== null && !numberingRel;
+
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
     entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
@@ -509,15 +605,32 @@ export async function writeDocx(
     if (name === mainPartName || name === corePartName) {
       continue; // Rebuilt below (the reader excludes them from opaque anyway).
     }
-    if (!coreRel && name === "_rels/.rels") {
+    if (numberingOut !== null && name === numberingPartName) {
+      entries.push({ name, data: encoder.encode(numberingOut) });
+    } else if (addNumberingDecls && name === mainRelsName) {
+      entries.push({
+        name,
+        data: encoder.encode(withNumberingRelationship(mainRelsText!, "numbering.xml")),
+      });
+    } else if (!coreRel && name === "_rels/.rels") {
       entries.push({ name, data: encoder.encode(withCoreRelationship(relsText)) });
-    } else if (!coreRel && name === "[Content_Types].xml") {
-      entries.push({ name, data: encoder.encode(withCoreContentType(decoder.decode(data))) });
+    } else if (name === "[Content_Types].xml" && (!coreRel || addNumberingDecls)) {
+      let contentTypes = decoder.decode(data);
+      if (!coreRel) {
+        contentTypes = withCoreContentType(contentTypes);
+      }
+      if (addNumberingDecls) {
+        contentTypes = withNumberingContentType(contentTypes, numberingPartName);
+      }
+      entries.push({ name, data: encoder.encode(contentTypes) });
     } else {
       entries.push({ name, data });
     }
   }
-  entries.push({ name: mainPartName, data: encoder.encode(buildDocumentXml(model)) });
+  if (numberingOut !== null && !preservedNumbering) {
+    entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
+  }
+  entries.push({ name: mainPartName, data: encoder.encode(buildDocumentXml(model, plan)) });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
 
   return { bytes: await zip(entries), dropped: [] };

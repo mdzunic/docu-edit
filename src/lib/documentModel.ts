@@ -117,6 +117,57 @@ export interface ParagraphFormatting {
   direction?: ParagraphDirection;
 }
 
+// --- lists (SPEC-018) -------------------------------------------------------
+
+export type ListType = "bullet" | "number";
+
+/** The marker styles the editor offers (SPEC-018 AC-12): three bullet
+ * characters and five number formats. */
+export type ListMarkerStyle =
+  | "disc"
+  | "circle"
+  | "square"
+  | "decimal"
+  | "lowerAlpha"
+  | "upperAlpha"
+  | "lowerRoman"
+  | "upperRoman";
+
+/** A paragraph's membership in a bulleted or numbered list (SPEC-018).
+ * List *identity* is adjacency: consecutive list paragraphs form one list,
+ * and a non-list paragraph between two list items splits them into two
+ * lists whose numbering restarts (AC-10, AC-11) — so no list id is stored.
+ * Displayed numbers are always derived by scanning the block sequence
+ * (lib/lists.ts), never persisted. */
+export interface ListFormatting {
+  type: ListType;
+  /** 1-based nesting depth, 1..9 (AC-3, AC-4). */
+  level: number;
+  /** Explicit marker style for this item's level (AC-12, AC-13); absent
+   * means the level's default cycle (AC-5, see lists.ts). */
+  marker?: ListMarkerStyle;
+  /** The number the item's list counts from at this level; absent means 1.
+   * Carried on every item of an imported list so a restart after an
+   * interruption returns to the list's own start value (AC-11, AC-22). */
+  startAt?: number;
+  /** The level's text indent in cm as defined by an imported numbering
+   * definition (AC-20, AC-21); absent means the editor default
+   * (level × 1.27 cm, see lists.ts). */
+  indentCm?: number;
+}
+
+/** Typed pass-through for a list type coming from a `.vue` template's plain
+ * string (same espree constraint as asCharacterFormatKey). */
+export function asListType(value: string): ListType {
+  return value as ListType;
+}
+
+/** Typed pass-through for a marker style coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asListMarkerStyle(value: string): ListMarkerStyle {
+  return value as ListMarkerStyle;
+}
+
 /** An inline XML element the reader does not model (SPEC-008) — e.g. a
  * `w:drawing`-carrying run or an ODF `draw:frame` — held verbatim and
  * anchored to its position between the paragraph's runs so the writer can
@@ -135,6 +186,9 @@ export interface Paragraph {
   type: "paragraph";
   runs: Run[];
   formatting?: ParagraphFormatting;
+  /** Bulleted/numbered list membership (SPEC-018); absent for a normal
+   * paragraph. */
+  list?: ListFormatting;
   /** Raw style reference (e.g. `w:pStyle`'s value), kept alongside the
    * resolved `formatting`/run formatting so later specs (save) can re-emit
    * a style reference instead of only direct formatting. */

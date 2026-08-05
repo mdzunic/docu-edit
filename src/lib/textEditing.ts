@@ -216,8 +216,9 @@ export function insertText(
 }
 
 /** Splits the caret's paragraph in two (the Enter key). Both halves keep the
- * paragraph's block-level formatting. Returns the caret at the start of the
- * second half. */
+ * paragraph's block-level formatting — including list membership, which is
+ * what makes Enter in a list item create the next item at the same level
+ * (SPEC-018 AC-6). Returns the caret at the start of the second half. */
 export function splitParagraph(
   model: DocumentModel,
   caret: CaretPosition,
@@ -231,6 +232,9 @@ export function splitParagraph(
     runs: after,
     formatting: block.formatting ? { ...block.formatting } : undefined,
   };
+  if (block.list) {
+    second.list = { ...block.list };
+  }
   model.sections[c.section].blocks.splice(c.block, 1, first, second);
   return { section: c.section, block: c.block + 1, offset: 0 };
 }

@@ -18,6 +18,9 @@
 import type {
   CharacterFormatKey,
   DocumentModel,
+  ListFormatting,
+  ListMarkerStyle,
+  ListType,
   Paragraph,
   ParagraphAlignment,
   ParagraphDirection,
@@ -27,6 +30,12 @@ import type {
   VerticalAlignment,
 } from "./documentModel";
 import { cmToTwips, twipsToCm } from "./docx/units";
+import {
+  clampListLevel,
+  listRunAround,
+  markerStyleOf,
+  markerType,
+} from "./lists";
 import {
   blockLength,
   clampCaret,
@@ -714,6 +723,198 @@ export function setPageMargins(
   };
   const { start, end } = orderedRange(next, selection);
   return { model: next, selection: { anchor: start, focus: end } };
+}
+
+// --- bulleted and numbered lists (SPEC-018) ---------------------------------
+
+/** Runs a per-paragraph list update over every touched paragraph, with the
+ * same replace-don't-mutate and selection-preserving contract as
+ * updateTouchedParagraphs. The updater returns the paragraph's next list
+ * formatting, null to remove list formatting, or `undefined` for "leave
+ * this paragraph untouched" (object identity kept for v-memo). */
+function updateTouchedLists(
+  model: DocumentModel,
+  selection: ModelSelection,
+  update: (paragraph: Paragraph) => ListFormatting | null | undefined,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  for (const address of touchedBlocks(next, { anchor: start, focus: end })) {
+    const blocks = next.sections[address.section].blocks;
+    const block = blocks[address.block];
+    const updated = update(block);
+    if (updated === undefined) {
+      continue;
+    }
+    const replacement: Paragraph = { ...block };
+    if (updated === null) {
+      delete replacement.list;
+    } else {
+      replacement.list = updated;
+    }
+    blocks[address.block] = replacement;
+  }
+  return { model: next, selection: { anchor: start, focus: end } };
+}
+
+/** Whether every touched paragraph is a list item of the given type — the
+ * AC-1/AC-2 toggle predicate, also the toolbar buttons' pressed state. */
+export function allTouchedOfListType(
+  model: DocumentModel,
+  selection: ModelSelection,
+  type: ListType,
+): boolean {
+  const addresses = touchedBlocks(model, selection);
+  return addresses.every(
+    (address) => model.sections[address.section].blocks[address.block].list?.type === type,
+  );
+}
+
+/** The bulleted/numbered toolbar toggle (AC-1, AC-2): if every touched
+ * paragraph is already a list item of `type`, list formatting is removed
+ * from all of them; otherwise all of them become items of `type` — a
+ * paragraph already in a list (of either type) keeps its level, a plain
+ * paragraph joins at level 1. An explicit marker is dropped when the type
+ * changes (it belonged to the other type's dropdown). */
+export function toggleList(
+  model: DocumentModel,
+  selection: ModelSelection,
+  type: ListType,
+): CommandResult {
+  const removeAll = allTouchedOfListType(model, selection, type);
+  return updateTouchedLists(model, selection, (paragraph) => {
+    if (removeAll) {
+      return null;
+    }
+    const current = paragraph.list;
+    if (!current) {
+      return { type, level: 1 };
+    }
+    if (current.type === type) {
+      return undefined;
+    }
+    const next: ListFormatting = { ...current, type };
+    if (next.marker !== undefined && markerType(next.marker) !== type) {
+      delete next.marker;
+    }
+    return next;
+  });
+}
+
+/** Tab / Shift+Tab in a list item (AC-3, AC-4): moves every touched list
+ * item's level by `delta`, clamped to 1..9 — a no-op at the bounds, and
+ * non-list paragraphs in the selection are untouched. */
+export function changeListLevel(
+  model: DocumentModel,
+  selection: ModelSelection,
+  delta: number,
+): CommandResult {
+  return updateTouchedLists(model, selection, (paragraph) => {
+    const current = paragraph.list;
+    if (!current) {
+      return undefined;
+    }
+    const level = clampListLevel(current.level + delta);
+    if (level === current.level) {
+      return undefined;
+    }
+    // The imported per-level indent belongs to the level the item is
+    // leaving; the new level renders at the editor default.
+    const next: ListFormatting = { ...current, level };
+    delete next.indentCm;
+    return next;
+  });
+}
+
+/** A marker-style pick from a list button's dropdown (AC-12, AC-13):
+ * applies the style — and the type it implies — to every item at the
+ * current level of the current list, i.e. the contiguous run of list
+ * paragraphs around the first touched block. The level is the first touched
+ * list item's own. No-op when the selection is not in a list. */
+export function setListMarker(
+  model: DocumentModel,
+  selection: ModelSelection,
+  marker: ListMarkerStyle,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  const result: CommandResult = { model: next, selection: { anchor: start, focus: end } };
+  const list = next.sections[start.section].blocks[start.block].list;
+  const run = listRunAround(next, start.section, start.block);
+  if (!list || !run) {
+    return result;
+  }
+  const level = list.level;
+  const type = markerType(marker);
+  const blocks = next.sections[start.section].blocks;
+  for (let index = run.first; index <= run.last; index++) {
+    const block = blocks[index];
+    if (block.list?.level !== level) {
+      continue;
+    }
+    blocks[index] = { ...block, list: { ...block.list, type, marker } };
+  }
+  return result;
+}
+
+/** Removes list formatting from every touched paragraph without touching
+ * its text — Backspace at the start of an item (AC-9) and Enter on an
+ * empty level-1 item (AC-8). */
+export function removeListFormat(
+  model: DocumentModel,
+  selection: ModelSelection,
+): CommandResult {
+  return updateTouchedLists(model, selection, (paragraph) =>
+    paragraph.list ? null : undefined,
+  );
+}
+
+/** The list-autoformat conversion (AC-14, AC-15): the caret paragraph —
+ * which the caller has verified contains exactly a typed trigger prefix —
+ * becomes an empty level-1 list item of `type`; the prefix text is
+ * consumed. Recorded as its own undo step by the caller, so Ctrl/Cmd+Z
+ * restores the literal prefix text (AC-16). */
+export function applyListAutoformat(
+  model: DocumentModel,
+  selection: ModelSelection,
+  type: ListType,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start } = orderedRange(next, selection);
+  const blocks = next.sections[start.section].blocks;
+  const block = blocks[start.block];
+  blocks[start.block] = { ...block, runs: [], list: { type, level: 1 } };
+  const caret = { section: start.section, block: start.block, offset: 0 };
+  return result(next, caret);
+}
+
+/** What the toolbar reflects about the selection's list state: the two
+ * buttons' pressed states (every touched paragraph of that type, matching
+ * the toggle predicate) and the first touched item's effective marker
+ * style, "" when the selection is not in a list. */
+export interface ToolbarListState {
+  bulleted: boolean;
+  numbered: boolean;
+  marker: string;
+}
+
+/** The initial/no-document state — a typed seed for `.vue` refs (espree
+ * bars the annotation, same constraint as noSelection). */
+export function emptyToolbarListState(): ToolbarListState {
+  return { bulleted: false, numbered: false, marker: "" };
+}
+
+export function toolbarListState(
+  model: DocumentModel,
+  selection: ModelSelection,
+): ToolbarListState {
+  const { start } = orderedRange(model, selection);
+  const list = model.sections[start.section].blocks[start.block].list;
+  return {
+    bulleted: allTouchedOfListType(model, selection, "bullet"),
+    numbered: allTouchedOfListType(model, selection, "number"),
+    marker: list ? markerStyleOf(list) : "",
+  };
 }
 
 // --- caret/selection queries (pure reads for keyboard navigation) ----------

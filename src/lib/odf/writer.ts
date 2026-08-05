@@ -33,6 +33,13 @@ import type {
   RunFormatting,
 } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import {
+  BULLET_CHARS,
+  clampListLevel,
+  LIST_MARKER_WIDTH_CM,
+  planListLevels,
+  type PlannedListLevel,
+} from "../lists";
 import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { ODT_MIMETYPE } from "./reader";
 import { HIGHLIGHT_HEX } from "./properties";
@@ -184,16 +191,53 @@ function paragraphPropertiesXml(formatting: ParagraphFormatting): string {
   return attrs.length > 0 ? `<style:paragraph-properties ${attrs.join(" ")}/>` : "";
 }
 
+// style:num-format values for the number marker styles (ODF 19.500) — the
+// inverse of the reader catalog's NUMBER_STYLE_BY_FORMAT.
+const NUM_FORMAT_BY_STYLE: Record<string, string> = {
+  decimal: "1",
+  lowerAlpha: "a",
+  upperAlpha: "A",
+  lowerRoman: "i",
+  upperRoman: "I",
+};
+
+/** One list level of a generated text:list-style (SPEC-018 AC-19). The
+ * indent is written in the label-alignment form, whose fo:margin-left
+ * carries the level's text indent as a single exact length — the older
+ * space-before + min-label-width split would re-import with float noise. */
+function listLevelXml(level: number, def: PlannedListLevel): string {
+  const props =
+    '<style:list-level-properties text:list-level-position-and-space-mode="label-alignment">' +
+    '<style:list-level-label-alignment text:label-followed-by="listtab"' +
+    ` fo:margin-left="${cmToOdfLength(def.indentCm)}"` +
+    ` fo:text-indent="-${cmToOdfLength(LIST_MARKER_WIDTH_CM)}"/>` +
+    "</style:list-level-properties>";
+  if (def.type === "bullet") {
+    return (
+      `<text:list-level-style-bullet text:level="${level}" text:bullet-char="${BULLET_CHARS[def.style]}">` +
+      `${props}</text:list-level-style-bullet>`
+    );
+  }
+  const start = def.startAt !== 1 ? ` text:start-value="${def.startAt}"` : "";
+  return (
+    `<text:list-level-style-number text:level="${level}"` +
+    ` style:num-format="${NUM_FORMAT_BY_STYLE[def.style]}" style:num-suffix="."${start}>` +
+    `${props}</text:list-level-style-number>`
+  );
+}
+
 /** Assigns and serialises the automatic styles of content.xml. Paragraph
  * styles are named after the paragraph's styleId (all styleIds are reserved
  * up front, so a generated name can never shadow one); styleless formatted
  * paragraphs get "P<n>" and runs share "T<n>" styles per distinct
- * formatting. */
+ * formatting; list runs share "L<n>" list styles per distinct level set
+ * (SPEC-018). */
 interface AutomaticStyles {
   /** Serialised style:style elements, in first-use order. */
   defs: string[];
   paragraphNameFor(paragraph: Paragraph): string | undefined;
   textNameFor(formatting: RunFormatting): string;
+  listNameFor(levels: PlannedListLevel[]): string;
 }
 
 function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
@@ -213,6 +257,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
   // emission order is fixed, so equal formatting yields equal XML.
   const paragraphNames = new Map<string, string>();
   const textNames = new Map<string, string>();
+  const listNames = new Map<string, string>();
   const boundStyleIds = new Set<string>();
 
   const claimName = (base: string, separator: string): string => {
@@ -276,7 +321,58 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       );
       return name;
     },
+
+    listNameFor(levels: PlannedListLevel[]): string {
+      const levelsXml = levels.map((def, index) => listLevelXml(index + 1, def)).join("");
+      const existing = listNames.get(levelsXml);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = claimName("L", "");
+      listNames.set(levelsXml, name);
+      defs.push(`<text:list-style style:name="${name}">${levelsXml}</text:list-style>`);
+      return name;
+    },
   };
+}
+
+/** A contiguous run of list paragraphs as nested text:list markup (AC-19):
+ * one outer text:list carrying the generated list style, a text:list-item
+ * per item, and a nested style-less text:list (inheriting the outer style,
+ * per ODF) opened inside the current item for each level of depth. Separate
+ * runs get separate text:list elements, which is what restarts numbering
+ * after an interruption (AC-11). */
+function listRunXml(
+  paragraphs: Paragraph[],
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+): string {
+  const styleName = styles.listNameFor(planListLevels(paragraphs.map((p) => p.list!)));
+  let xml = "";
+  let depth = 0;
+  for (const paragraph of paragraphs) {
+    const level = clampListLevel(paragraph.list!.level);
+    if (depth === 0) {
+      xml += `<text:list text:style-name="${escapeXml(styleName)}"><text:list-item>`;
+      depth = 1;
+    } else if (level <= depth) {
+      while (depth > level) {
+        xml += "</text:list-item></text:list>";
+        depth--;
+      }
+      xml += "</text:list-item><text:list-item>";
+    }
+    while (depth < level) {
+      xml += "<text:list><text:list-item>";
+      depth++;
+    }
+    xml += paragraphXml(paragraph, styles, includeOpaque);
+  }
+  while (depth > 0) {
+    xml += "</text:list-item></text:list>";
+    depth--;
+  }
+  return xml;
 }
 
 /** Whitespace context threaded through a paragraph's runs: the last
@@ -403,17 +499,34 @@ export function buildContentXml(model: DocumentModel): string {
     const opaqueBlocks = includeOpaque
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
       : [];
-    for (let i = 0; i <= section.blocks.length; i++) {
-      for (const node of opaqueBlocks) {
-        if (Math.min(node.blockIndex, section.blocks.length) === i) {
-          blockXml.push(node.xml);
-        }
+    const blocks = section.blocks;
+    const anchorsAt = (index: number): typeof opaqueBlocks =>
+      opaqueBlocks.filter((node) => Math.min(node.blockIndex, blocks.length) === index);
+    let i = 0;
+    while (i <= blocks.length) {
+      for (const node of anchorsAt(i)) {
+        blockXml.push(node.xml);
       }
-      if (i < section.blocks.length) {
-        // Serialised before the styles are read: paragraphXml registers
-        // each automatic style on first use.
-        blockXml.push(paragraphXml(section.blocks[i], styles, includeOpaque));
+      if (i >= blocks.length) {
+        break;
       }
+      // Serialised before the styles are read: paragraphXml/listRunXml
+      // register each automatic style on first use.
+      if (!blocks[i].list) {
+        blockXml.push(paragraphXml(blocks[i], styles, includeOpaque));
+        i++;
+        continue;
+      }
+      // A run of consecutive list paragraphs becomes one nested text:list
+      // (SPEC-018 AC-19). An opaque block anchored inside the run ends it —
+      // the preserved node belongs at the body level, and the following
+      // items start a fresh list.
+      let end = i + 1;
+      while (end < blocks.length && blocks[end].list && anchorsAt(end).length === 0) {
+        end++;
+      }
+      blockXml.push(listRunXml(blocks.slice(i, end), styles, includeOpaque));
+      i = end;
     }
   }
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";

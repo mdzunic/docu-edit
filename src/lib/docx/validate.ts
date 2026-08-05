@@ -53,10 +53,15 @@ const HIGHLIGHT_VALUES = new Set([
   "none", "red", "white", "yellow",
 ]);
 
+// ST_NumberFormat (the subset the SPEC-018 writer emits).
+const NUM_FMT_VALUES = new Set([
+  "bullet", "decimal", "lowerLetter", "upperLetter", "lowerRoman", "upperRoman",
+]);
+
 // Sequence order of the CT_PPr / CT_RPr / CT_SectPr children the writer
 // emits, per the ECMA-376 Transitional schema. Order within each list is
 // the schema's required document order.
-const PPR_SEQUENCE = ["pStyle", "bidi", "spacing", "ind", "jc", "outlineLvl"];
+const PPR_SEQUENCE = ["pStyle", "numPr", "bidi", "spacing", "ind", "jc", "outlineLvl"];
 // CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
 // fitText, vertAlign", so shd follows u and vertAlign follows shd.
 const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];
@@ -183,6 +188,18 @@ function checkParagraphProperties(pPr: Element, context: string, violations: str
     switch (child.localName) {
       case "pStyle":
         checkAttr(child, "val", (v) => v.length > 0, "a non-empty style id", context, violations);
+        break;
+      case "numPr":
+        checkSequence(Array.from(child.children), ["ilvl", "numId"], `${context}/w:numPr`, violations);
+        for (const numChild of Array.from(child.children)) {
+          if (isWordElement(numChild) && numChild.localName === "ilvl") {
+            checkAttr(numChild, "val", (v) => UNSIGNED_PATTERN.test(v) && Number(v) <= 8,
+              "a list level between 0 and 8", `${context}/w:numPr`, violations);
+          } else if (isWordElement(numChild) && numChild.localName === "numId") {
+            checkAttr(numChild, "val", (v) => UNSIGNED_PATTERN.test(v),
+              "a non-negative numbering id", `${context}/w:numPr`, violations);
+          }
+        }
         break;
       case "spacing":
         checkAttr(child, "before", (v) => UNSIGNED_PATTERN.test(v),
@@ -352,6 +369,79 @@ function checkStylesPart(doc: Document, violations: string[]): void {
     violations.push(
       `word/styles.xml: expected exactly one default paragraph style, found ${defaultParagraphStyles}`,
     );
+  }
+}
+
+// CT_Lvl children the SPEC-018 writer emits, in schema sequence order.
+const LVL_SEQUENCE = ["start", "numFmt", "lvlText", "lvlJc", "pPr"];
+
+/** The numbering part (SPEC-018 AC-18): every abstractNum precedes every
+ * num, each num references an abstractNum that exists, and levels carry the
+ * value spaces the writer emits. Checked only when the part is present. */
+function checkNumberingPart(doc: Document, violations: string[]): void {
+  const context = "word/numbering.xml";
+  const root = doc.documentElement;
+  if (root.namespaceURI !== WORD_NAMESPACE || root.localName !== "numbering") {
+    violations.push(`${context}: root element is not w:numbering`);
+    return;
+  }
+  const abstractIds = new Set<string>();
+  let sawNum = false;
+  for (const child of Array.from(root.children)) {
+    if (!isWordElement(child)) {
+      violations.push(`${context}: unexpected element ${child.nodeName}`);
+      continue;
+    }
+    if (child.localName === "abstractNum") {
+      if (sawNum) {
+        violations.push(`${context}: w:abstractNum must precede every w:num`);
+      }
+      const id = wordAttr(child, "abstractNumId");
+      if (id === null) {
+        violations.push(`${context}: w:abstractNum is missing w:abstractNumId`);
+      } else {
+        abstractIds.add(id);
+      }
+      for (const lvl of Array.from(child.children)) {
+        if (!isWordElement(lvl) || lvl.localName !== "lvl") {
+          continue;
+        }
+        const lvlContext = `${context}: w:abstractNum[@w:abstractNumId="${id}"]/w:lvl`;
+        checkAttr(lvl, "ilvl", (v) => UNSIGNED_PATTERN.test(v) && Number(v) <= 8,
+          "a list level between 0 and 8", lvlContext, violations);
+        checkSequence(Array.from(lvl.children), LVL_SEQUENCE, lvlContext, violations);
+        for (const lvlChild of Array.from(lvl.children)) {
+          if (!isWordElement(lvlChild)) {
+            continue;
+          }
+          if (lvlChild.localName === "start") {
+            checkAttr(lvlChild, "val", (v) => UNSIGNED_PATTERN.test(v),
+              "a non-negative start value", lvlContext, violations);
+          } else if (lvlChild.localName === "numFmt") {
+            checkAttr(lvlChild, "val", (v) => NUM_FMT_VALUES.has(v),
+              "an ST_NumberFormat value the writer emits", lvlContext, violations);
+          } else if (lvlChild.localName === "lvlText") {
+            checkAttr(lvlChild, "val", (v) => v.length > 0, "a non-empty level text",
+              lvlContext, violations);
+          }
+        }
+      }
+    } else if (child.localName === "num") {
+      sawNum = true;
+      checkAttr(child, "numId", (v) => UNSIGNED_PATTERN.test(v) && Number(v) > 0,
+        "a positive numbering id", context, violations);
+      const ref = Array.from(child.children).find(
+        (el) => isWordElement(el) && el.localName === "abstractNumId",
+      );
+      if (!ref) {
+        violations.push(`${context}: w:num is missing its w:abstractNumId child`);
+      } else {
+        checkAttr(ref, "val", (v) => abstractIds.has(v),
+          "the id of a declared w:abstractNum", context, violations);
+      }
+    } else if (child.localName !== "numPicBullet") {
+      violations.push(`${context}: unexpected element w:${child.localName}`);
+    }
   }
 }
 
@@ -535,6 +625,10 @@ export async function validateDocx(data: ArrayBuffer | Uint8Array): Promise<stri
   const stylesPart = parsePart("word/styles.xml");
   if (stylesPart) {
     checkStylesPart(stylesPart, violations);
+  }
+  const numberingPart = parsePart("word/numbering.xml");
+  if (numberingPart) {
+    checkNumberingPart(numberingPart, violations);
   }
   const corePart = parsePart("docProps/core.xml");
   if (corePart) {

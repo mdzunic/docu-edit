@@ -3,10 +3,18 @@
 // through) and named styles in styles.xml ("Standard", "Heading_20_1", ...) —
 // and resolves a style name's `style:parent-style-name` chain into effective
 // paragraph/run formatting, the ODF counterpart of docx/styles.ts.
-import type { Margins, PageSize, ParagraphFormatting, RunFormatting } from "../documentModel";
+import type {
+  ListMarkerStyle,
+  ListType,
+  Margins,
+  PageSize,
+  ParagraphFormatting,
+  RunFormatting,
+} from "../documentModel";
 import { childElements, firstChildElement } from "../docx/xml";
 import { mergeParagraphFormatting, mergeRunFormatting } from "../docx/properties";
-import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE } from "./xml";
+import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../lists";
+import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "./xml";
 import {
   cleanFontFamily,
   paragraphPropertiesOf,
@@ -35,9 +43,24 @@ interface StyleFamily {
   named: Map<string, OdfStyleDefinition>;
 }
 
+/** One level of a `text:list-style` (SPEC-018): the marker it draws and
+ * the text indent its list-level properties define. */
+export interface OdfListLevelDef {
+  type: ListType;
+  marker: ListMarkerStyle;
+  startAt: number;
+  indentCm?: number;
+}
+
+/** A named `text:list-style`'s levels, keyed by 1-based level. */
+export type OdfListStyle = Map<number, OdfListLevelDef>;
+
 export interface OdfStyleCatalog {
   paragraphStyles: StyleFamily;
   textStyles: StyleFamily;
+  /** `text:list-style` definitions by name — named styles from styles.xml,
+   * shadowed by automatic ones from content.xml (SPEC-018). */
+  listStyles: Map<string, OdfListStyle>;
   /** From `style:default-style` (family "paragraph") in styles.xml — the
    * base of every resolution chain, like docx's docDefaults. */
   defaultParagraphFormatting: ParagraphFormatting;
@@ -113,6 +136,92 @@ function collectStyles(
   }
 }
 
+// style:num-format values for the number marker styles, per ODF 19.500.
+const NUMBER_STYLE_BY_FORMAT: Record<string, ListMarkerStyle> = {
+  "1": "decimal",
+  a: "lowerAlpha",
+  A: "upperAlpha",
+  i: "lowerRoman",
+  I: "upperRoman",
+};
+
+/** The level's text indent from `style:list-level-properties`: the
+ * label-alignment form's fo:margin-left when present, else the older
+ * text:space-before + text:min-label-width sum. */
+function parseListLevelIndent(levelEl: Element): number | undefined {
+  const props = firstChildElement(levelEl, STYLE_NAMESPACE, "list-level-properties");
+  if (!props) {
+    return undefined;
+  }
+  const labelAlignment = firstChildElement(props, STYLE_NAMESPACE, "list-level-label-alignment");
+  const marginLeft = labelAlignment ? odfLengthToCm(foAttr(labelAlignment, "margin-left")) : undefined;
+  if (marginLeft !== undefined) {
+    return marginLeft;
+  }
+  const spaceBefore = odfLengthToCm(textAttr(props, "space-before"));
+  const minLabelWidth = odfLengthToCm(textAttr(props, "min-label-width"));
+  if (spaceBefore === undefined && minLabelWidth === undefined) {
+    return undefined;
+  }
+  return (spaceBefore ?? 0) + (minLabelWidth ?? 0);
+}
+
+/** Parses one `text:list-style` element's bullet/number levels. Image
+ * levels (and anything else) are skipped — an undefined level falls back
+ * to defaults at the use site. */
+function parseListStyle(listStyleEl: Element): OdfListStyle {
+  const levels: OdfListStyle = new Map();
+  for (const levelEl of Array.from(listStyleEl.children)) {
+    if (levelEl.namespaceURI !== TEXT_NAMESPACE) {
+      continue;
+    }
+    const levelValue = Number(textAttr(levelEl, "level") ?? "");
+    if (!Number.isInteger(levelValue) || levelValue < 1) {
+      continue;
+    }
+    const level = clampListLevel(levelValue);
+    let def: OdfListLevelDef;
+    if (levelEl.localName === "list-level-style-bullet") {
+      const char = textAttr(levelEl, "bullet-char") ?? "";
+      def = {
+        type: "bullet",
+        marker: bulletStyleForChar(char) ?? defaultMarkerStyle("bullet", level),
+        startAt: 1,
+      };
+    } else if (levelEl.localName === "list-level-style-number") {
+      const format = styleAttr(levelEl, "num-format") ?? "1";
+      const start = Number(textAttr(levelEl, "start-value") ?? "1");
+      def = {
+        type: "number",
+        marker: NUMBER_STYLE_BY_FORMAT[format] ?? "decimal",
+        startAt: Number.isFinite(start) && start >= 0 ? start : 1,
+      };
+    } else {
+      continue;
+    }
+    const indentCm = parseListLevelIndent(levelEl);
+    if (indentCm !== undefined) {
+      def.indentCm = indentCm;
+    }
+    if (!levels.has(level)) {
+      levels.set(level, def);
+    }
+  }
+  return levels;
+}
+
+function collectListStyles(container: Element | undefined, catalog: OdfStyleCatalog): void {
+  if (!container) {
+    return;
+  }
+  for (const listStyleEl of childElements(container, TEXT_NAMESPACE, "list-style")) {
+    const name = styleAttr(listStyleEl, "name");
+    if (name) {
+      catalog.listStyles.set(name, parseListStyle(listStyleEl));
+    }
+  }
+}
+
 function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
   const automaticStyles = firstChildElement(stylesRoot, OFFICE_NAMESPACE, "automatic-styles");
   const masterStyles = firstChildElement(stylesRoot, OFFICE_NAMESPACE, "master-styles");
@@ -166,6 +275,7 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
   const catalog: OdfStyleCatalog = {
     paragraphStyles: emptyFamily(),
     textStyles: emptyFamily(),
+    listStyles: new Map(),
     defaultParagraphFormatting: {},
     defaultRunFormatting: {},
   };
@@ -191,6 +301,7 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
         const target = family === "paragraph" ? catalog.paragraphStyles : catalog.textStyles;
         target.named.set(definition.name, definition);
       });
+      collectListStyles(officeStyles, catalog);
     }
     parsePageLayout(stylesRoot, catalog);
   }
@@ -200,8 +311,34 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
     const target = family === "paragraph" ? catalog.paragraphStyles : catalog.textStyles;
     target.automatic.set(definition.name, definition);
   });
+  // Automatic list styles shadow named ones of the same name (collected
+  // after, so the Map insertion overwrites).
+  collectListStyles(contentAutomatic, catalog);
 
   return catalog;
+}
+
+/** Resolves a list style's level definition for an item at `level`: the
+ * exact level when defined, else a nearest-shallower-level fallback that
+ * keeps the list's type with the level's default marker cycle. */
+export function resolveListLevel(
+  style: OdfListStyle | undefined,
+  level: number,
+): OdfListLevelDef | undefined {
+  if (!style) {
+    return undefined;
+  }
+  const exact = style.get(level);
+  if (exact) {
+    return exact;
+  }
+  for (let shallower = level - 1; shallower >= 1; shallower--) {
+    const def = style.get(shallower);
+    if (def) {
+      return { type: def.type, marker: defaultMarkerStyle(def.type, level), startAt: 1 };
+    }
+  }
+  return undefined;
 }
 
 /** The `style:parent-style-name` chain for a style name, root ancestor

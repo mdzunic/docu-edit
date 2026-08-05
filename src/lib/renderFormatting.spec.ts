@@ -127,6 +127,31 @@ describe("paragraphStyle", () => {
     });
     expect(style.direction).toBeUndefined();
   });
+
+  it("indents a list item by its level (SPEC-018 AC-5)", () => {
+    const style = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      list: { type: "bullet", level: 3 },
+    });
+    expect(style.marginInlineStart).toBe("3.81cm");
+  });
+
+  it("prefers an imported per-level indent, and a direct start indent over both (SPEC-018)", () => {
+    const imported = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      list: { type: "number", level: 1, indentCm: 2.5 },
+    });
+    expect(imported.marginInlineStart).toBe("2.5cm");
+    const direct = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      formatting: { indentStartCm: 4 },
+      list: { type: "number", level: 1, indentCm: 2.5 },
+    });
+    expect(direct.marginInlineStart).toBe("4cm");
+  });
 });
 
 describe("runKey", () => {

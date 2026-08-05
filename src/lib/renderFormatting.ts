@@ -4,6 +4,7 @@
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
 import type { Paragraph, Run, RunFormatting } from "./documentModel";
+import { listIndentCm } from "./lists";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
 // name as-is.
@@ -64,6 +65,13 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
 export function paragraphStyle(paragraph: Paragraph): Record<string, string> {
   const formatting = paragraph.formatting;
   const style: Record<string, string> = { whiteSpace: "pre-wrap" };
+  // A list item's text sits at the level's indent (SPEC-018 AC-5's per-level
+  // indents); the marker itself hangs before it via the canvas's ::before
+  // rule. A direct start indent on the paragraph wins, matching how both
+  // file formats let direct indentation override the list definition's.
+  if (paragraph.list && formatting?.indentStartCm === undefined) {
+    style.marginInlineStart = `${listIndentCm(paragraph.list)}cm`;
+  }
   if (!formatting) {
     return style;
   }

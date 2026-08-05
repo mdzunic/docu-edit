@@ -31,6 +31,12 @@ import {
 } from "./xml";
 import { parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
+  EMPTY_NUMBERING_CATALOG,
+  NUMBERING_RELATIONSHIP,
+  parseNumberingCatalog,
+  type NumberingCatalog,
+} from "./numbering";
+import {
   mergeParagraphFormatting,
   mergeRunFormatting,
   parseOutlineLevel,
@@ -156,7 +162,11 @@ function collectRuns(
   }
 }
 
-function parseParagraph(pEl: Element, styleCatalog: StyleCatalog): Paragraph {
+function parseParagraph(
+  pEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+): Paragraph {
   const pPr = firstChildElement(pEl, WORD_NAMESPACE, "pPr");
   const pStyleEl = pPr ? firstChildElement(pPr, WORD_NAMESPACE, "pStyle") : undefined;
   const styleId = pStyleEl ? (wordAttr(pStyleEl, "val") ?? undefined) : undefined;
@@ -175,6 +185,21 @@ function parseParagraph(pEl: Element, styleCatalog: StyleCatalog): Paragraph {
   collectRuns(pEl, resolved.runFormatting, runs, opaqueInlines);
 
   const paragraph: Paragraph = { type: "paragraph", runs, formatting };
+  // w:numPr resolves against the numbering catalog (SPEC-018 AC-20): the
+  // referenced level definition decides type, marker, start and indent.
+  const numPr = pPr ? firstChildElement(pPr, WORD_NAMESPACE, "numPr") : undefined;
+  if (numPr) {
+    const numIdEl = firstChildElement(numPr, WORD_NAMESPACE, "numId");
+    const ilvlEl = firstChildElement(numPr, WORD_NAMESPACE, "ilvl");
+    const numId = numIdEl ? wordAttr(numIdEl, "val") : null;
+    const ilvl = Number((ilvlEl ? wordAttr(ilvlEl, "val") : null) ?? "0");
+    if (numId !== null && Number.isInteger(ilvl) && ilvl >= 0) {
+      const list = numberingCatalog.listFormattingFor(numId, ilvl);
+      if (list) {
+        paragraph.list = list;
+      }
+    }
+  }
   if (styleId) {
     paragraph.styleId = styleId;
   }
@@ -297,6 +322,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   }
 
   let stylesDoc: Document | undefined;
+  let numberingCatalog: NumberingCatalog = EMPTY_NUMBERING_CATALOG;
   const mainRelsText = readPart(relsPathFor(mainPartPath));
   if (mainRelsText) {
     const mainRels = parseRelationships(mainRelsText);
@@ -307,6 +333,15 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
         stylesDoc = parseXml(stylesText);
       }
     }
+    const numberingRel = Array.from(mainRels.values()).find(
+      (rel) => rel.type === NUMBERING_RELATIONSHIP,
+    );
+    if (numberingRel) {
+      const numberingText = readPart(resolvePartPath(mainPartPath, numberingRel.target));
+      if (numberingText) {
+        numberingCatalog = parseNumberingCatalog(parseXml(numberingText));
+      }
+    }
   }
   const styleCatalog = parseStylesCatalog(stylesDoc);
 
@@ -315,7 +350,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   let sectPr: Element | undefined;
   for (const child of Array.from(body.children)) {
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "p") {
-      blocks.push(parseParagraph(child, styleCatalog));
+      blocks.push(parseParagraph(child, styleCatalog, numberingCatalog));
     } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "sectPr") {
       sectPr = child;
     } else {
