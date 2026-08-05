@@ -7,6 +7,7 @@ import type {
   ListMarkerStyle,
   ListType,
   Margins,
+  NamedStyle,
   PageSize,
   ParagraphFormatting,
   RunFormatting,
@@ -28,6 +29,9 @@ import { odfLengthToCm } from "./units";
 
 interface OdfStyleDefinition {
   name: string;
+  /** `style:display-name` — the user-facing name when the style:name had to
+   * be encoded ("Heading_20_1" displays as "Heading 1"). */
+  displayName?: string;
   parentName?: string;
   paragraphFormatting: ParagraphFormatting;
   textProperties: OdfTextProperties;
@@ -106,6 +110,10 @@ function parseStyleDefinition(styleEl: Element, fontFaces: FontFaceMap): OdfStyl
     paragraphFormatting: parseParagraphProperties(paragraphPropertiesOf(styleEl)),
     textProperties: parseTextProperties(textPropertiesOf(styleEl), fontFaces),
   };
+  const displayName = styleAttr(styleEl, "display-name");
+  if (displayName) {
+    definition.displayName = displayName;
+  }
   const outlineLevel = styleAttr(styleEl, "default-outline-level");
   if (outlineLevel) {
     const level = Number(outlineLevel);
@@ -401,6 +409,65 @@ export function resolveParagraphStyle(
   }
 
   return { paragraphFormatting, runFormatting, headingLevel };
+}
+
+/** An ODF style:name with its `_XX_`-encoded characters decoded — the
+ * fallback display name when the style carries no style:display-name
+ * ("Heading_20_1" -> "Heading 1"). */
+function decodeStyleName(name: string): string {
+  return name.replace(/_([0-9a-fA-F]{2})_/g, (_, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  );
+}
+
+/** The catalog's *named* paragraph styles as the model's style catalogue
+ * (SPEC-019), in styles.xml order. Automatic styles are deliberately not
+ * included: an automatic style is a paragraph's direct formatting, already
+ * baked into the model, and content.xml's automatic styles are regenerated
+ * on every save — carrying them would break the unedited round trip's
+ * structural equality (SPEC-008). A named style's own indents are stored as
+ * parsed (logical-as-LTR); a style that itself turns on RTL swaps them the
+ * same way the reader does after chain resolution. */
+export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
+  const styles: NamedStyle[] = [];
+  for (const definition of catalog.paragraphStyles.named.values()) {
+    const style: NamedStyle = {
+      id: definition.name,
+      name: definition.displayName ?? decodeStyleName(definition.name),
+    };
+    if (definition.parentName !== undefined) {
+      style.basedOn = definition.parentName;
+    }
+    const paragraphFormatting = { ...definition.paragraphFormatting };
+    if (paragraphFormatting.direction === "rtl") {
+      const start = paragraphFormatting.indentStartCm;
+      const end = paragraphFormatting.indentEndCm;
+      if (end !== undefined) {
+        paragraphFormatting.indentStartCm = end;
+      } else {
+        delete paragraphFormatting.indentStartCm;
+      }
+      if (start !== undefined) {
+        paragraphFormatting.indentEndCm = start;
+      } else {
+        delete paragraphFormatting.indentEndCm;
+      }
+    }
+    if (Object.keys(paragraphFormatting).length > 0) {
+      style.paragraphFormatting = paragraphFormatting;
+    }
+    if (Object.keys(definition.textProperties.formatting).length > 0) {
+      style.runFormatting = definition.textProperties.formatting;
+    }
+    if (definition.textProperties.fontSizePercent !== undefined) {
+      style.fontSizePercent = definition.textProperties.fontSizePercent;
+    }
+    if (definition.outlineLevel !== undefined) {
+      style.headingLevel = definition.outlineLevel;
+    }
+    styles.push(style);
+  }
+  return styles;
 }
 
 /** Resolves a span's `text:style-name` (family "text") over the formatting

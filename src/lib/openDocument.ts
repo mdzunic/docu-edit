@@ -5,7 +5,7 @@
 // errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
 // propagate unchanged — the caller only mutates app state once this
 // resolves, so a rejected file leaves the previous state untouched.
-import type { DocumentFormat, DocumentModel, OpaquePart, SourceXml } from "./documentModel";
+import type { DocumentFormat, DocumentModel, NamedStyle, OpaquePart, SourceXml } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
 
@@ -49,6 +49,7 @@ function buildModel(
   parsed: {
     sections: DocumentModel["sections"];
     defaultStyles: DocumentModel["defaultStyles"];
+    styles: NamedStyle[];
     opaque: OpaquePart[];
     sourceXml: SourceXml;
   },
@@ -60,6 +61,11 @@ function buildModel(
     sections: parsed.sections,
     defaultStyles: parsed.defaultStyles,
   };
+  // The document's own style catalogue (SPEC-019): what the picker lists
+  // and the writers re-declare on save.
+  if (parsed.styles.length > 0) {
+    model.styles = parsed.styles;
+  }
   // SPEC-008: the retained source package travels with the document for its
   // lifetime, so a later same-format save can round-trip it.
   if (parsed.opaque.length > 0) {
