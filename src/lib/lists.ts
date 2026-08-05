@@ -40,10 +40,33 @@ const BULLET_CYCLE: ListMarkerStyle[] = ["disc", "circle", "square"];
 const NUMBER_CYCLE: ListMarkerStyle[] = ["decimal", "lowerAlpha", "lowerRoman"];
 
 export const BULLET_CHARS: Record<string, string> = {
-  disc: "•", // •
-  circle: "◦", // ◦
-  square: "▪", // ▪
+  disc: "•",
+  circle: "◦",
+  square: "▪",
 };
+
+// Bullet characters seen in real files, mapped onto the three supported
+// styles: Word writes Symbol/Wingdings private-use glyphs and "o" (Courier
+// New) for circles; LibreOffice writes the plain glyphs. Shared by both
+// formats' readers.
+const BULLET_STYLE_BY_CHAR: Record<string, ListMarkerStyle> = {
+  "•": "disc",
+  "·": "disc",
+  "\uf0b7": "disc", // Symbol-font bullet
+  "◦": "circle",
+  o: "circle",
+  "○": "circle",
+  "▪": "square",
+  "■": "square",
+  "\uf0a7": "square", // Wingdings small square
+};
+
+/** The supported bullet style a marker character maps onto, or undefined
+ * for a character outside the recognised set (the caller falls back to the
+ * level's default cycle). */
+export function bulletStyleForChar(char: string): ListMarkerStyle | undefined {
+  return BULLET_STYLE_BY_CHAR[char];
+}
 
 export function isBulletStyle(style: ListMarkerStyle): boolean {
   return style === "disc" || style === "circle" || style === "square";
@@ -200,6 +223,34 @@ export function listRunAround(
     last++;
   }
   return { first, last };
+}
+
+/** One level of a list run's exported definition (both writers): the level
+ * is defined by the first item in the run at that level; levels no item
+ * uses fall back to the run's leading type with the AC-5 default cycle. */
+export interface PlannedListLevel {
+  type: ListType;
+  style: ListMarkerStyle;
+  startAt: number;
+  indentCm: number;
+}
+
+/** Plans the nine level definitions a contiguous run of list items exports
+ * as one list definition (a .docx abstractNum / an .odt text:list-style). */
+export function planListLevels(items: ListFormatting[]): PlannedListLevel[] {
+  const baseType = items[0].type;
+  const levels: PlannedListLevel[] = [];
+  for (let level = 1; level <= MAX_LIST_LEVEL; level++) {
+    const first = items.find((item) => clampListLevel(item.level) === level);
+    const type = first ? first.type : baseType;
+    levels.push({
+      type,
+      style: first ? markerStyleOf(first) : defaultMarkerStyle(type, level),
+      startAt: first?.startAt ?? 1,
+      indentCm: first?.indentCm ?? level * LIST_INDENT_STEP_CM,
+    });
+  }
+  return levels;
 }
 
 /** The autoformat prefixes (AC-14, AC-15): the exact paragraph text after

@@ -6,6 +6,7 @@
 import type {
   Block,
   DefaultStyles,
+  ListFormatting,
   OpaqueBlock,
   OpaqueInline,
   OpaquePart,
@@ -19,9 +20,18 @@ import type {
 import { createDefaultStyles } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
 import { ZipError, unzip } from "../docx/zip";
+import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
+import { clampListLevel, defaultMarkerStyle } from "../lists";
 import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "./xml";
-import { parseOdfStyleCatalog, resolveParagraphStyle, resolveTextStyle, type OdfStyleCatalog } from "./styles";
+import {
+  parseOdfStyleCatalog,
+  resolveListLevel,
+  resolveParagraphStyle,
+  resolveTextStyle,
+  type OdfListLevelDef,
+  type OdfStyleCatalog,
+} from "./styles";
 
 export class OdtOpenError extends Error {}
 export class FlatOdfError extends Error {}
@@ -262,6 +272,75 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   return paragraph;
 }
 
+// --- lists (SPEC-018) ------------------------------------------------------
+
+/** An item's model list formatting from its resolved level definition, with
+ * default-elision so an editor-default list re-imports without noise: the
+ * marker is stored only off the AC-5 cycle, startAt only when not 1, and
+ * the indent only when it differs from level × 1.27 cm (compared in twips,
+ * the shared cross-format grid, so float noise cannot leak in). */
+function buildListFormatting(def: OdfListLevelDef | undefined, level: number): ListFormatting {
+  const type = def?.type ?? "bullet";
+  const list: ListFormatting = { type, level };
+  if (!def) {
+    return list;
+  }
+  if (def.marker !== defaultMarkerStyle(type, level)) {
+    list.marker = def.marker;
+  }
+  if (type === "number" && def.startAt !== 1) {
+    list.startAt = def.startAt;
+  }
+  if (def.indentCm !== undefined && cmToTwips(def.indentCm) !== level * 720) {
+    list.indentCm = def.indentCm;
+  }
+  return list;
+}
+
+/** Parses a `text:list` (and its nested sub-lists) into consecutive list
+ * paragraphs (AC-21): nesting depth is the model's level, and the list's
+ * `text:list-style` levels supply type, marker, start and indent. Nested
+ * lists without their own style name inherit the ancestor's, per ODF. */
+function parseListElement(
+  listEl: Element,
+  catalog: OdfStyleCatalog,
+  depth: number,
+  inheritedStyleName: string | undefined,
+  blocks: Block[],
+  opaqueBlocks: OpaqueBlock[],
+): void {
+  const styleName = textAttr(listEl, "style-name") ?? inheritedStyleName;
+  const level = clampListLevel(depth);
+  for (const item of Array.from(listEl.children)) {
+    const isItem =
+      item.namespaceURI === TEXT_NAMESPACE &&
+      (item.localName === "list-item" || item.localName === "list-header");
+    if (!isItem) {
+      opaqueBlocks.push({ xml: serializeElement(item), blockIndex: blocks.length });
+      continue;
+    }
+    for (const child of Array.from(item.children)) {
+      if (
+        child.namespaceURI === TEXT_NAMESPACE &&
+        (child.localName === "p" || child.localName === "h")
+      ) {
+        const paragraph = parseTextBlock(child, catalog, child.localName === "h");
+        paragraph.list = buildListFormatting(
+          resolveListLevel(styleName ? catalog.listStyles.get(styleName) : undefined, level),
+          level,
+        );
+        blocks.push(paragraph);
+      } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
+        parseListElement(child, catalog, depth + 1, styleName, blocks, opaqueBlocks);
+      } else {
+        // Unmodelled list-item content (tables, frames, …) is preserved at
+        // the body level, anchored where the item sat (SPEC-008).
+        opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
+      }
+    }
+  }
+}
+
 // --- package ---------------------------------------------------------------
 
 function parsePart(text: string): Document {
@@ -319,8 +398,11 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
       blocks.push(parseTextBlock(child, catalog, false));
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "h") {
       blocks.push(parseTextBlock(child, catalog, true));
+    } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
+      // Bulleted/numbered lists (SPEC-018 AC-21).
+      parseListElement(child, catalog, 1, undefined, blocks, opaqueBlocks);
     } else {
-      // Tables, lists, sequence declarations, frames, ... — unmodelled body
+      // Tables, sequence declarations, frames, ... — unmodelled body
       // children are preserved verbatim, anchored to their position among
       // the paragraphs (SPEC-008).
       opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });

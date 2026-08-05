@@ -16,10 +16,12 @@
 //    export -> import cycle reproduces the model bit-for-bit.
 import type { ListFormatting, ListMarkerStyle, ListType } from "../documentModel";
 import {
+  bulletStyleForChar,
   clampListLevel,
   defaultMarkerStyle,
-  markerStyleOf,
   MAX_LIST_LEVEL,
+  planListLevels,
+  type PlannedListLevel,
 } from "../lists";
 import type { DocumentModel } from "../documentModel";
 import { firstChildElement, parseXml, serializeElement, wordAttr, WORD_NAMESPACE } from "./xml";
@@ -49,21 +51,6 @@ const STYLE_BY_NUM_FMT: Record<string, ListMarkerStyle> = {
   upperLetter: "upperAlpha",
   lowerRoman: "lowerRoman",
   upperRoman: "upperRoman",
-};
-
-// Bullet characters seen in real numbering.xml files, mapped onto the three
-// supported bullet styles. Word writes "" (Wingdings) for squares and "o"
-// (Courier New) for circles; LibreOffice writes the plain glyphs.
-const BULLET_STYLE_BY_CHAR: Record<string, ListMarkerStyle> = {
-  "•": "disc",
-  "·": "disc",
-  "\uf0b7": "disc", // Symbol-font bullet
-  "◦": "circle",
-  o: "circle",
-  "○": "circle",
-  "▪": "square",
-  "■": "square",
-  "\uf0a7": "square", // Wingdings small square
 };
 
 const BULLET_CHAR_BY_STYLE: Record<string, string> = {
@@ -112,7 +99,7 @@ function parseLevel(lvlEl: Element): NumberingLevelDef {
   let marker: ListMarkerStyle;
   if (numFmt === "bullet") {
     type = "bullet";
-    marker = BULLET_STYLE_BY_CHAR[lvlText] ?? defaultMarkerStyle("bullet", level);
+    marker = bulletStyleForChar(lvlText) ?? defaultMarkerStyle("bullet", level);
   } else {
     // Any numeric format outside the supported set (ordinal, cardinalText,
     // …) degrades to the closest supported marker rather than being
@@ -264,14 +251,7 @@ function escapeAttr(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-interface PlannedLevel {
-  style: ListMarkerStyle;
-  type: ListType;
-  startAt: number;
-  leftTwips: number;
-}
-
-function levelXml(ilvl: number, def: PlannedLevel): string {
+function levelXml(ilvl: number, def: PlannedListLevel): string {
   const numFmt = def.type === "bullet" ? "bullet" : NUM_FMT_BY_STYLE[def.style];
   const lvlText = def.type === "bullet" ? BULLET_CHAR_BY_STYLE[def.style] : `%${ilvl + 1}.`;
   return (
@@ -280,28 +260,9 @@ function levelXml(ilvl: number, def: PlannedLevel): string {
     `<w:numFmt w:val="${numFmt}"/>` +
     `<w:lvlText w:val="${escapeAttr(lvlText)}"/>` +
     '<w:lvlJc w:val="left"/>' +
-    `<w:pPr><w:ind w:left="${def.leftTwips}" w:hanging="${HANGING_TWIPS}"/></w:pPr>` +
+    `<w:pPr><w:ind w:left="${cmToTwips(def.indentCm)}" w:hanging="${HANGING_TWIPS}"/></w:pPr>` +
     "</w:lvl>"
   );
-}
-
-/** One run's nine level definitions: each level is defined by the first
- * item in the run at that level; levels no item uses get the run's leading
- * type with the AC-5 default cycle. */
-function planRunLevels(items: ListFormatting[]): PlannedLevel[] {
-  const baseType = items[0].type;
-  const levels: PlannedLevel[] = [];
-  for (let level = 1; level <= MAX_LIST_LEVEL; level++) {
-    const first = items.find((item) => clampListLevel(item.level) === level);
-    const type = first ? first.type : baseType;
-    levels.push({
-      type,
-      style: first ? markerStyleOf(first) : defaultMarkerStyle(type, level),
-      startAt: first?.startAt ?? 1,
-      leftTwips: first?.indentCm !== undefined ? cmToTwips(first.indentCm) : level * 720,
-    });
-  }
-  return levels;
 }
 
 /** Plans the numbering for every list paragraph in the model. `firstIds`
@@ -326,7 +287,7 @@ export function planNumbering(
       }
       const blocks = section.blocks.slice(runStart, end);
       const items = blocks.map((block) => block.list!);
-      const levels = planRunLevels(items);
+      const levels = planListLevels(items);
       const key = JSON.stringify(levels);
       let abstractId = abstractByKey.get(key);
       if (abstractId === undefined) {
