@@ -18,6 +18,7 @@ import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
+import StylePicker from "../components/StylePicker.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
@@ -117,6 +118,7 @@ import {
   applyFormat,
   applyListAutoformat,
   applyParagraphFormat,
+  applyParagraphStyle,
   blockCount,
   blockOrdinal,
   caretSelection,
@@ -129,6 +131,7 @@ import {
   emptyParagraphFormatting,
   emptyToolbarFormatValues,
   emptyToolbarListState,
+  emptyToolbarStyleState,
   firstTouchedFormatting,
   formatState,
   hasSpaceBefore,
@@ -141,6 +144,7 @@ import {
   noPendingFormat,
   noSelection,
   removeListFormat,
+  resetParagraphStyle,
   selectAll,
   setAlignment,
   setListMarker,
@@ -152,10 +156,19 @@ import {
   toggleVerticalAlign,
   toolbarFormatValues,
   toolbarListState,
+  toolbarStyleState,
   touchedBlocks,
+  updateStyleFromSelection,
   verticalAlignState,
 } from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
+import {
+  headingStyleId,
+  NORMAL_STYLE_ID,
+  noStyleEntries,
+  resolveNamedStyle,
+  stylePickerEntries,
+} from "../lib/styles";
 import {
   breakGroup as breakTypingGroup,
   canRedo as canRedoDocument,
@@ -308,6 +321,13 @@ const paragraphFormatting = ref(emptyParagraphFormatting());
 // The list buttons' pressed states and the current marker style, from the
 // same selection the rest of the toolbar reflects (SPEC-018).
 const listState = ref(emptyToolbarListState());
+// --- paragraph styles (SPEC-019) --------------------------------------------
+// The style picker's current entry (the first touched paragraph's named
+// style, AC-1) and its menu entries — the document's own styles, or the
+// built-in set for a blank document (AC-2, AC-8). doc.value is replaced on
+// every edit, so the list follows catalogue changes (AC-13).
+const styleState = ref(emptyToolbarStyleState());
+const styleEntries = computed(() => (doc.value ? stylePickerEntries(doc.value) : noStyleEntries()));
 // The custom-spacing dialog (AC-12..14): open flag plus the prefill taken
 // from the first touched paragraph at the moment it opens.
 const customSpacingOpen = ref(false);
@@ -1143,6 +1163,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     paragraphState.value = EMPTY_PARAGRAPH_STATE;
     paragraphFormatting.value = emptyParagraphFormatting();
     listState.value = emptyToolbarListState();
+    styleState.value = emptyToolbarStyleState();
     return;
   }
   const total = blockCount(model);
@@ -1174,6 +1195,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     direction: firstFormatting.direction ?? "ltr",
   };
   listState.value = toolbarListState(model, selection);
+  styleState.value = toolbarStyleState(model, selection);
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
@@ -1646,6 +1668,48 @@ function handleIndent(direction = 1) {
   );
 }
 
+// --- paragraph styles (SPEC-019) --------------------------------------------
+
+/** Applies a style to every paragraph in the selection (AC-3) — the picker's
+ * click and the Ctrl/Cmd+Alt+0..6 shortcuts (AC-5, AC-6) both land here. An
+ * empty caret paragraph has no run to carry the style's run formatting, so
+ * it becomes the pending format the next typed text takes. */
+function handleApplyStyle(styleId = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (styleId === "" || !root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(applyParagraphStyle(model, selection, styleId), selection, "paragraph style", false);
+  const after = doc.value;
+  const block = after ? paragraphAtCaret(after, selection.focus) : undefined;
+  if (after && block && block.runs.length === 0) {
+    pendingFormat = { ...resolveNamedStyle(after, styleId).runFormatting };
+    updateCaretStatus({ start: selection.anchor, end: selection.focus });
+  }
+  root.focus();
+}
+
+/** "Update <style> to match" from a picker entry's context menu (AC-12). */
+function handleUpdateStyle(styleId = "") {
+  if (styleId === "") {
+    return;
+  }
+  applyParagraphCommand(
+    (model, selection) => updateStyleFromSelection(model, selection, styleId),
+    "update style",
+  );
+}
+
+/** "Reset style": removes direct formatting from the selection (AC-14). */
+function handleResetStyle() {
+  applyParagraphCommand(
+    (model, selection) => resetParagraphStyle(model, selection),
+    "reset style",
+  );
+}
+
 /** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
  * clears any absolute height so the preset actually takes effect (AC-11). */
 function handleSpacingPreset(multiple = 1) {
@@ -1963,6 +2027,23 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       event.preventDefault();
       moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
       break;
+    case "style.normal":
+    case "style.heading1":
+    case "style.heading2":
+    case "style.heading3":
+    case "style.heading4":
+    case "style.heading5":
+    case "style.heading6": {
+      // Ctrl/Cmd+Alt+1..6 apply Heading 1-6, Ctrl/Cmd+Alt+0 Normal
+      // (SPEC-019 AC-5, AC-6).
+      event.preventDefault();
+      const styleId =
+        shortcut.id === "style.normal"
+          ? NORMAL_STYLE_ID
+          : headingStyleId(Number(shortcut.id.slice(-1)));
+      handleApplyStyle(styleId);
+      break;
+    }
   }
 }
 
@@ -2654,6 +2735,15 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         :redo-label="undoRedoState.redoLabel"
         @undo="performUndo"
         @redo="performRedo"
+      />
+      <StylePicker
+        v-if="editable"
+        :entries="styleEntries"
+        :current-id="styleState.id"
+        :current-name="styleState.name"
+        @apply="handleApplyStyle"
+        @update-style="handleUpdateStyle"
+        @reset-style="handleResetStyle"
       />
       <FontFamilySelect
         v-if="editable"

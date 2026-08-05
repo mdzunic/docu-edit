@@ -278,6 +278,12 @@ export function noStyleEntries(): StylePickerEntry[] {
   return [];
 }
 
+/** Typed pass-through for a `.vue` component's untyped Array prop (the
+ * same pattern as lib/opaque's asDropRecords). */
+export function asStyleEntries(value: unknown[]): StylePickerEntry[] {
+  return value as StylePickerEntry[];
+}
+
 // --- direct-formatting diffs ------------------------------------------------
 //
 // The difference between baked (effective) formatting and a style's resolved
