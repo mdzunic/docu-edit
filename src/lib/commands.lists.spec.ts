@@ -10,7 +10,7 @@ import {
   toolbarListState,
   type ModelSelection,
 } from "./commands";
-import { createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "./documentModel";
+import { asParagraph, createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "./documentModel";
 import type { CaretPosition } from "./textEditing";
 
 function paragraph(text: string, list?: ListFormatting): Paragraph {
@@ -39,7 +39,7 @@ function range(anchorBlock: number, focusBlock: number): ModelSelection {
 }
 
 function lists(model: DocumentModel): Array<ListFormatting | undefined> {
-  return model.sections[0].blocks.map((block) => block.list);
+  return model.sections[0].blocks.map((block) => asParagraph(block).list);
 }
 
 describe("SPEC-018 AC-1/AC-2 — toggleList", () => {
@@ -88,7 +88,7 @@ describe("SPEC-018 AC-1/AC-2 — toggleList", () => {
   it("does not mutate the input model", () => {
     const model = docWith(paragraph("a"));
     toggleList(model, caretSelection(caret(0)), "number");
-    expect(model.sections[0].blocks[0].list).toBeUndefined();
+    expect(asParagraph(model.sections[0].blocks[0]).list).toBeUndefined();
   });
 });
 
@@ -119,13 +119,13 @@ describe("SPEC-018 AC-3/AC-4 — changeListLevel", () => {
     const model = docWith(paragraph("plain"), paragraph("item", { type: "bullet", level: 1 }));
     const { model: next } = changeListLevel(model, range(0, 1), 1);
     expect(next.sections[0].blocks[0]).toBe(model.sections[0].blocks[0]);
-    expect(next.sections[0].blocks[1].list?.level).toBe(2);
+    expect(asParagraph(next.sections[0].blocks[1]).list?.level).toBe(2);
   });
 
   it("drops an imported per-level indent when the level changes", () => {
     const model = docWith(paragraph("a", { type: "bullet", level: 1, indentCm: 3 }));
     const { model: next } = changeListLevel(model, caretSelection(caret(0)), 1);
-    expect(next.sections[0].blocks[0].list).toEqual({ type: "bullet", level: 2 });
+    expect(asParagraph(next.sections[0].blocks[0]).list).toEqual({ type: "bullet", level: 2 });
   });
 });
 
@@ -171,8 +171,8 @@ describe("SPEC-018 AC-8/AC-9 — removeListFormat", () => {
   it("clears list formatting without touching text", () => {
     const model = docWith(paragraph("keep me", { type: "number", level: 3 }));
     const { model: next } = removeListFormat(model, caretSelection(caret(0)));
-    expect(next.sections[0].blocks[0].list).toBeUndefined();
-    expect(next.sections[0].blocks[0].runs[0].text).toBe("keep me");
+    expect(asParagraph(next.sections[0].blocks[0]).list).toBeUndefined();
+    expect(asParagraph(next.sections[0].blocks[0]).runs[0].text).toBe("keep me");
   });
 });
 
@@ -182,10 +182,10 @@ describe("SPEC-018 AC-6 — Enter creates the next item at the same level", () =
     const { model: next, selection } = splitBlock(model, caretSelection(caret(0, 4)));
     const blocks = next.sections[0].blocks;
     expect(blocks).toHaveLength(2);
-    expect(blocks[0].list).toEqual({ type: "bullet", level: 2, marker: "square" });
-    expect(blocks[1].list).toEqual({ type: "bullet", level: 2, marker: "square" });
+    expect(asParagraph(blocks[0]).list).toEqual({ type: "bullet", level: 2, marker: "square" });
+    expect(asParagraph(blocks[1]).list).toEqual({ type: "bullet", level: 2, marker: "square" });
     // Independent objects: editing one item's list must not alias the other.
-    expect(blocks[1].list).not.toBe(blocks[0].list);
+    expect(asParagraph(blocks[1]).list).not.toBe(asParagraph(blocks[0]).list);
     expect(selection.focus).toEqual({ section: 0, block: 1, offset: 0 });
   });
 });
@@ -198,12 +198,12 @@ describe("SPEC-018 AC-14..16 — applyListAutoformat", () => {
       caretSelection(caret(0, 3)),
       "number",
     );
-    const block = next.sections[0].blocks[0];
+    const block = asParagraph(next.sections[0].blocks[0]);
     expect(block.runs).toEqual([]);
     expect(block.list).toEqual({ type: "number", level: 1 });
     expect(selection.focus).toEqual({ section: 0, block: 0, offset: 0 });
     // The input model still holds the literal prefix — the undo snapshot.
-    expect(model.sections[0].blocks[0].runs[0].text).toBe("1. ");
+    expect(asParagraph(model.sections[0].blocks[0]).runs[0].text).toBe("1. ");
   });
 });
 

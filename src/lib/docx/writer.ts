@@ -26,6 +26,7 @@ import type {
   ParagraphAlignment,
   Run,
   RunFormatting,
+  Table,
 } from "../documentModel";
 import { DEFAULT_TITLE } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
@@ -37,6 +38,7 @@ import {
   nextNumberingIds,
   NUMBERING_CONTENT_TYPE,
   NUMBERING_RELATIONSHIP,
+  cellNumberingRefFor,
   numberingRefFor,
   planNumbering,
   type NumberingPlan,
@@ -285,6 +287,69 @@ function paragraphXml(paragraph: Paragraph, includeOpaque: boolean, numRef?: Num
   return `<w:p>${paragraphPropertiesXml(paragraph, numRef)}${inlineContentXml(paragraph, includeOpaque)}</w:p>`;
 }
 
+// Word's default single-line borders for a table created in this editor —
+// self-contained (no style reference), so the table is visible in any
+// consumer without touching styles.xml. Sized 4 eighth-points, Word's own
+// default for an inserted table.
+const GENERATED_TABLE_BORDERS =
+  "<w:tblBorders>" +
+  '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:start w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:end w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  "</w:tblBorders>";
+
+/** One table block (SPEC-022): w:tblPr (the source's own, preserved
+ * verbatim, or a generated one with plain borders), the w:tblGrid column
+ * widths, then every row's cells with their width-carrying w:tcPr and
+ * nested paragraphs. */
+function tableXml(
+  table: Table,
+  includeOpaque: boolean,
+  cellNumRef: (row: number, col: number, cellBlock: number) => NumberingRef | undefined,
+): string {
+  const totalTwips = table.columnWidthsCm.reduce((sum, cm) => sum + cmToTwips(cm), 0);
+  const tblPr =
+    includeOpaque && table.docxTblPr !== undefined
+      ? table.docxTblPr
+      : "<w:tblPr>" +
+        `<w:tblW w:w="${totalTwips}" w:type="dxa"/>` +
+        GENERATED_TABLE_BORDERS +
+        '<w:tblLayout w:type="fixed"/>' +
+        "</w:tblPr>";
+  const grid =
+    "<w:tblGrid>" +
+    table.columnWidthsCm.map((cm) => `<w:gridCol w:w="${cmToTwips(cm)}"/>`).join("") +
+    "</w:tblGrid>";
+  const rows = table.rows
+    .map((row, rowIndex) => {
+      const trPr = includeOpaque && row.docxTrPr !== undefined ? row.docxTrPr : "";
+      const cells = row.cells
+        .map((cell, colIndex) => {
+          const widthTwips = cmToTwips(table.columnWidthsCm[colIndex] ?? 0);
+          const tcPr =
+            includeOpaque && cell.docxTcPr !== undefined
+              ? cell.docxTcPr
+              : `<w:tcPr><w:tcW w:w="${widthTwips}" w:type="dxa"/></w:tcPr>`;
+          const content =
+            cell.blocks.length > 0
+              ? cell.blocks
+                  .map((paragraph, blockIndex) =>
+                    paragraphXml(paragraph, includeOpaque, cellNumRef(rowIndex, colIndex, blockIndex)),
+                  )
+                  .join("")
+              : "<w:p/>";
+          return `<w:tc>${tcPr}${content}</w:tc>`;
+        })
+        .join("");
+      return `<w:tr>${trPr}${cells}</w:tr>`;
+    })
+    .join("");
+  return `<w:tbl>${tblPr}${grid}${rows}</w:tbl>`;
+}
+
 function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
   const width = cmToTwips(defaultStyles.pageSize.widthCm);
   const height = cmToTwips(defaultStyles.pageSize.heightCm);
@@ -325,9 +390,18 @@ export function buildDocumentXml(model: DocumentModel, plan: NumberingPlan = pla
         }
       }
       if (i < section.blocks.length) {
-        blockXml.push(
-          paragraphXml(section.blocks[i], includeOpaque, numberingRefFor(plan, sectionIndex, i)),
-        );
+        const block = section.blocks[i];
+        if (block.type === "table") {
+          blockXml.push(
+            tableXml(block, includeOpaque, (row, col, cellBlock) =>
+              cellNumberingRefFor(plan, sectionIndex, i, row, col, cellBlock),
+            ),
+          );
+        } else {
+          blockXml.push(
+            paragraphXml(block, includeOpaque, numberingRefFor(plan, sectionIndex, i)),
+          );
+        }
       }
     }
   });
@@ -360,8 +434,14 @@ export function buildStylesXml(model: DocumentModel): string {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (block.styleId) {
-        referencedIds.add(block.styleId);
+      const paragraphs =
+        block.type === "table"
+          ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
+          : [block];
+      for (const paragraph of paragraphs) {
+        if (paragraph.styleId) {
+          referencedIds.add(paragraph.styleId);
+        }
       }
     }
   }

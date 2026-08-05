@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createDocument, type DocumentModel, type Paragraph } from "./documentModel";
+import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
 import { blockText, type CaretPosition } from "./textEditing";
 import { caretSelection, type ModelSelection } from "./commands";
 import { equalStructural } from "./equality";
@@ -67,9 +67,9 @@ describe("extractFragment", () => {
       paragraph(["Title"]),
       paragraph(["Body", { italic: true }]),
     );
-    model.sections[0].blocks[0].headingLevel = 1;
-    model.sections[0].blocks[0].styleId = "Heading1";
-    model.sections[0].blocks[1].formatting = { alignment: "center" };
+    asParagraph(model.sections[0].blocks[0]).headingLevel = 1;
+    asParagraph(model.sections[0].blocks[0]).styleId = "Heading1";
+    asParagraph(model.sections[0].blocks[1]).formatting = { alignment: "center" };
     const fragment = extractFragment(model, range(caret(0, 0), caret(1, 4)));
     expect(fragment).toHaveLength(2);
     expect(fragment[0].headingLevel).toBe(1);
@@ -79,10 +79,10 @@ describe("extractFragment", () => {
 
   it("excludes preservation side-lists and does not alias the model's runs", () => {
     const model = doc(paragraph(["hello"]));
-    model.sections[0].blocks[0].opaqueInlines = [{ xml: "<x/>", runIndex: 0 }];
+    asParagraph(model.sections[0].blocks[0]).opaqueInlines = [{ xml: "<x/>", runIndex: 0 }];
     const fragment = extractFragment(model, range(caret(0, 0), caret(0, 5)));
     expect(fragment[0].opaqueInlines).toBeUndefined();
-    expect(fragment[0].runs[0]).not.toBe(model.sections[0].blocks[0].runs[0]);
+    expect(fragment[0].runs[0]).not.toBe(asParagraph(model.sections[0].blocks[0]).runs[0]);
   });
 });
 
@@ -195,7 +195,7 @@ describe("pasteBlocks", () => {
       paragraph(["lo wor", { bold: true }]),
     ]);
     expect(blockText(result.model.sections[0].blocks[0])).toBe("hello wordo");
-    expect(result.model.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(result.model.sections[0].blocks[0]).runs).toEqual([
       { text: "hel", formatting: {} },
       { text: "lo wor", formatting: { bold: true } },
       { text: "do", formatting: {} },
@@ -206,11 +206,11 @@ describe("pasteBlocks", () => {
 
   it("keeps the destination's paragraph formatting for a single-block splice", () => {
     const model = doc(paragraph(["text"]));
-    model.sections[0].blocks[0].formatting = { alignment: "right" };
+    asParagraph(model.sections[0].blocks[0]).formatting = { alignment: "right" };
     const pasted: Paragraph = { ...paragraph(["X"]), headingLevel: 1 };
     const result = pasteBlocks(model, caretSelection(caret(0, 2)), [pasted]);
-    expect(result.model.sections[0].blocks[0].formatting).toEqual({ alignment: "right" });
-    expect(result.model.sections[0].blocks[0].headingLevel).toBeUndefined();
+    expect(asParagraph(result.model.sections[0].blocks[0]).formatting).toEqual({ alignment: "right" });
+    expect(asParagraph(result.model.sections[0].blocks[0]).headingLevel).toBeUndefined();
   });
 
   it("replaces an empty destination paragraph wholesale, keeping the pasted formatting", () => {
@@ -218,7 +218,7 @@ describe("pasteBlocks", () => {
     const pasted: Paragraph = { ...paragraph(["Heading"]), headingLevel: 2 };
     const result = pasteBlocks(model, caretSelection(caret(0, 0)), [pasted]);
     expect(result.model.sections[0].blocks).toHaveLength(1);
-    expect(result.model.sections[0].blocks[0].headingLevel).toBe(2);
+    expect(asParagraph(result.model.sections[0].blocks[0]).headingLevel).toBe(2);
     expect(result.selection.focus).toEqual(caret(0, 7));
   });
 
@@ -241,7 +241,7 @@ describe("pasteBlocks", () => {
 
   it("splits the destination paragraph around a multi-block paste (AC-35)", () => {
     const model = doc(paragraph(["helloworld"]));
-    model.sections[0].blocks[0].formatting = { alignment: "justify" };
+    asParagraph(model.sections[0].blocks[0]).formatting = { alignment: "justify" };
     const result = pasteBlocks(model, caretSelection(caret(0, 5)), [
       paragraph(["A"]),
       { ...paragraph(["B"]), headingLevel: 2 },
@@ -251,9 +251,9 @@ describe("pasteBlocks", () => {
     expect(blocks.map(blockText)).toEqual(["helloA", "B", "Cworld"]);
     // The split halves keep the destination's paragraph formatting; the
     // middle block lands verbatim.
-    expect(blocks[0].formatting).toEqual({ alignment: "justify" });
-    expect(blocks[1].headingLevel).toBe(2);
-    expect(blocks[2].formatting).toEqual({ alignment: "justify" });
+    expect(asParagraph(blocks[0]).formatting).toEqual({ alignment: "justify" });
+    expect(asParagraph(blocks[1]).headingLevel).toBe(2);
+    expect(asParagraph(blocks[2]).formatting).toEqual({ alignment: "justify" });
     expect(result.selection.focus).toEqual(caret(2, 1));
   });
 
@@ -265,8 +265,8 @@ describe("pasteBlocks", () => {
     ]);
     const blocks = result.model.sections[0].blocks;
     expect(blocks.map(blockText)).toEqual(["Head", "tail world"]);
-    expect(blocks[0].headingLevel).toBe(3);
-    expect(blocks[1].headingLevel).toBeUndefined();
+    expect(asParagraph(blocks[0]).headingLevel).toBe(3);
+    expect(asParagraph(blocks[1]).headingLevel).toBeUndefined();
   });
 
   it("pasting at a paragraph end appends the later blocks verbatim", () => {
@@ -277,7 +277,7 @@ describe("pasteBlocks", () => {
     ]);
     const blocks = result.model.sections[0].blocks;
     expect(blocks.map(blockText)).toEqual(["hello there", "Next"]);
-    expect(blocks[1].headingLevel).toBe(2);
+    expect(asParagraph(blocks[1]).headingLevel).toBe(2);
     expect(result.selection.focus).toEqual(caret(1, 4));
   });
 
@@ -305,19 +305,19 @@ describe("pastePlainText", () => {
   it("inserts text that inherits the caret run's formatting (AC-28)", () => {
     const model = doc(paragraph(["bold", { bold: true }]));
     const result = pastePlainText(model, caretSelection(caret(0, 4)), "er");
-    expect(result.model.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(result.model.sections[0].blocks[0]).runs).toEqual([
       { text: "bolder", formatting: { bold: true } },
     ]);
   });
 
   it("turns newlines into paragraph breaks that keep the caret paragraph's formatting", () => {
     const model = doc(paragraph(["start"]));
-    model.sections[0].blocks[0].formatting = { alignment: "center" };
+    asParagraph(model.sections[0].blocks[0]).formatting = { alignment: "center" };
     const result = pastePlainText(model, caretSelection(caret(0, 5)), "one\r\ntwo\rthree");
     const blocks = result.model.sections[0].blocks;
     expect(blocks.map(blockText)).toEqual(["startone", "two", "three"]);
-    expect(blocks[1].formatting).toEqual({ alignment: "center" });
-    expect(blocks[2].formatting).toEqual({ alignment: "center" });
+    expect(asParagraph(blocks[1]).formatting).toEqual({ alignment: "center" });
+    expect(asParagraph(blocks[2]).formatting).toEqual({ alignment: "center" });
     expect(result.selection.focus).toEqual(caret(2, 5));
   });
 
@@ -330,7 +330,7 @@ describe("pastePlainText", () => {
   it("honours the caller's pending format the way typing would", () => {
     const model = doc(paragraph(["x"]));
     const result = pastePlainText(model, caretSelection(caret(0, 1)), "y", { italic: true });
-    expect(result.model.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(result.model.sections[0].blocks[0]).runs).toEqual([
       { text: "x", formatting: {} },
       { text: "y", formatting: { italic: true } },
     ]);
@@ -375,8 +375,8 @@ describe("executePaste", () => {
   it("mode source pastes the fragment verbatim", () => {
     const model = doc(paragraph([""]));
     const result = executePaste(model, caretSelection(caret(0, 0)), { fragment, text: "" }, "source");
-    expect(result.model.sections[0].blocks[0].headingLevel).toBe(1);
-    expect(result.model.sections[0].blocks[0].runs[0].formatting).toEqual({ bold: true });
+    expect(asParagraph(result.model.sections[0].blocks[0]).headingLevel).toBe(1);
+    expect(asParagraph(result.model.sections[0].blocks[0]).runs[0].formatting).toEqual({ bold: true });
   });
 
   it("mode match takes the destination's paragraph and typed formatting", () => {
@@ -388,10 +388,10 @@ describe("executePaste", () => {
       "match",
     );
     const blocks = result.model.sections[0].blocks;
-    expect(blocks[0].headingLevel).toBeUndefined();
+    expect(asParagraph(blocks[0]).headingLevel).toBeUndefined();
     // Every pasted run now carries what a freshly typed character would.
-    expect(blocks[0].runs).toEqual([{ text: "ctxBig", formatting: { italic: true } }]);
-    expect(blocks[1].runs).toEqual([{ text: "small", formatting: { italic: true } }]);
+    expect(asParagraph(blocks[0]).runs).toEqual([{ text: "ctxBig", formatting: { italic: true } }]);
+    expect(asParagraph(blocks[1]).runs).toEqual([{ text: "small", formatting: { italic: true } }]);
   });
 
   it("mode text feeds the fragment's text through the plain-text path", () => {
@@ -399,8 +399,8 @@ describe("executePaste", () => {
     const result = executePaste(model, caretSelection(caret(0, 0)), { fragment, text: "" }, "text");
     const blocks = result.model.sections[0].blocks;
     expect(blocks.map(blockText)).toEqual(["Big", "small"]);
-    expect(blocks[0].headingLevel).toBeUndefined();
-    expect(blocks[0].runs[0].formatting).toEqual({});
+    expect(asParagraph(blocks[0]).headingLevel).toBeUndefined();
+    expect(asParagraph(blocks[0]).runs[0].formatting).toEqual({});
   });
 
   it("a payload without a fragment always pastes as plain text", () => {

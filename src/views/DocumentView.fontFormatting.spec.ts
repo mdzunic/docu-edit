@@ -6,6 +6,7 @@ import { routes } from "../router";
 import { setDomCaret, setDomSelection } from "../lib/domCaret";
 import type { Paragraph } from "../lib/documentModel";
 import type { CaretPosition } from "../lib/textEditing";
+import { asParagraph } from "../lib/documentModel";
 
 // SPEC-013 — the font family/size, colour, highlight and sub/superscript
 // controls through the component: value/blank state tracking the live
@@ -66,7 +67,7 @@ async function mountWithContent(id: string, blocks: Paragraph[]) {
 async function storedRuns(id: string) {
   const store = await import("../lib/documentStore");
   const model = store.getDocument(id);
-  return model ? model.sections[0].blocks.map((block) => block.runs) : [];
+  return model ? model.sections[0].blocks.map((block) => asParagraph(block).runs) : [];
 }
 
 function contentRoot(): HTMLElement {

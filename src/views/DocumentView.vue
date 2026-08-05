@@ -5,9 +5,12 @@ import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
+import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
+import InsertTableDialog from "../components/InsertTableDialog.vue";
+import TableInsertControl from "../components/TableInsertControl.vue";
 import FindBar from "../components/FindBar.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
@@ -34,9 +37,25 @@ import {
   asListMarkerStyle,
   asListType,
   asParagraphAlignment,
+  asParagraphBlock,
   DEFAULT_TITLE,
+  isTable,
 } from "../lib/documentModel";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
+import {
+  appendTableRowForTab,
+  arrowEscapeCaret,
+  caretTableLocation,
+  deleteTable,
+  deleteTableColumn,
+  deleteTableRow,
+  insertTable,
+  insertTableColumn,
+  insertTableRow,
+  nextCellCaret,
+  noCellRange,
+  prevCellCaret,
+} from "../lib/tables";
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
@@ -47,8 +66,11 @@ import {
   extendDomSelection,
   modelRangeFromSelection,
   noElement,
+  noEventTarget,
+  noTableCellTarget,
   setDomCaret,
   setDomSelection,
+  tableCellFromEventTarget,
 } from "../lib/domCaret";
 import {
   compileQuery,
@@ -65,8 +87,18 @@ import {
   caretAtClientPoint,
   caretClientRect,
   caretNearClientPoint,
+  caretOnBoundaryLine,
+  measureTableHandles,
+  noTableHandleGeometry,
 } from "../lib/caretGeometry";
-import { blockLength, blockText, compareCaret, noCaret } from "../lib/textEditing";
+import {
+  blockLength,
+  blockText,
+  compareCaret,
+  noCaret,
+  paragraphAt,
+  paragraphAtCaret,
+} from "../lib/textEditing";
 import {
   asPasteMode,
   clipboardFlavours,
@@ -210,6 +242,35 @@ let lastCopy = noClipboardSnapshot();
 const pasteChip = ref({ visible: false, left: 0, top: 0, applied: "source" });
 const contextMenu = ref({ visible: false, left: 0, top: 0 });
 
+// --- tables (SPEC-022) ------------------------------------------------------
+// The rectangular cell-range selection (AC-15, AC-16): activated by
+// dragging from one cell into another of the same table; the DOM text
+// selection is suppressed while it is active. `cellDragOrigin` remembers
+// the cell the primary button went down in until the button is released.
+const cellSelection = ref(noCellRange());
+let cellDragOrigin = noTableCellTarget();
+// The cell a right-click opened the context menu in — the target of the
+// menu's table actions (AC-17..19).
+let contextMenuTableCell = noTableCellTarget();
+// The hover handles' measured geometry (AC-20, AC-21): page-relative
+// rectangles for the hovered table, its columns and its rows. Null hides
+// the overlay.
+const tableHover = ref(noTableHandleGeometry());
+// The "Insert table…" dialog for sizes beyond the 10×10 picker (AC-2).
+const insertTableDialogOpen = ref(false);
+
+function clearCellSelection() {
+  if (cellSelection.value) {
+    cellSelection.value = noCellRange();
+  }
+}
+
+/** The table cell an event target sits in — see lib/domCaret. */
+function tableCellAtTarget(eventTarget = noEventTarget()) {
+  const root = contentRoot.value;
+  return root ? tableCellFromEventTarget(root, eventTarget) : null;
+}
+
 // --- character formatting (SPEC-012) ----------------------------------------
 // `selectionAnchor` is set only when the tracked selection is a real (non-
 // collapsed) range, so restoreCaretAfterRender knows to re-select rather
@@ -345,6 +406,10 @@ function closeSession() {
   dismissPasteChip();
   closeContextMenu();
   resetFindState();
+  clearCellSelection();
+  cellDragOrigin = null;
+  tableHover.value = null;
+  insertTableDialogOpen.value = false;
   plainPasteNext = false;
   // AC-19: the undo/redo history does not outlive the document being open.
   if (sessionDocId) {
@@ -489,6 +554,10 @@ function applyEdit(
   if (!keepPasteChip) {
     dismissPasteChip();
   }
+  // An edit invalidates the cell-range highlight and the hover handles'
+  // measured geometry (SPEC-022).
+  clearCellSelection();
+  tableHover.value = null;
   const before = doc.value;
   if (before) {
     recordHistoryEdit(documentId.value, {
@@ -568,9 +637,9 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
     return;
   }
   // The paragraph a collapsed caret sits in — what the list-specific Enter
-  // and Backspace behaviours below decide on (SPEC-018).
-  const focusBlock =
-    model.sections[selection.focus.section]?.blocks[selection.focus.block];
+  // and Backspace behaviours below decide on (SPEC-018). Resolved through
+  // the caret's cell path when it sits inside a table (SPEC-022).
+  const focusBlock = paragraphAtCaret(model, selection.focus);
   let result = null;
   // Undo grouping (SPEC-015 AC-9, AC-12): only literal typed characters
   // group into one step. A paste is bulk content, not "typed characters",
@@ -591,11 +660,10 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
         // undo steps — the typing, then the conversion — so Ctrl/Cmd+Z
         // right after restores the literal prefix (AC-16).
         const caretAfter = result.selection.focus;
-        const blockAfter =
-          result.model.sections[caretAfter.section].blocks[caretAfter.block];
-        const prefix = blockText(blockAfter);
+        const blockAfter = paragraphAtCaret(result.model, caretAfter);
+        const prefix = blockAfter ? blockText(blockAfter) : "";
         const autoformatType =
-          !blockAfter.list && caretAfter.offset === prefix.length
+          blockAfter && !blockAfter.list && caretAfter.offset === prefix.length
             ? detectListAutoformat(prefix)
             : null;
         if (autoformatType) {
@@ -943,6 +1011,9 @@ function handleContextMenu(event = new MouseEvent("contextmenu")) {
     return;
   }
   event.preventDefault();
+  // A right-click inside a table cell adds the row/column section to the
+  // menu, targeted at that cell (SPEC-022 AC-17..19).
+  contextMenuTableCell = tableCellAtTarget(event.target);
   contextMenu.value = { visible: true, left: event.clientX, top: event.clientY };
 }
 
@@ -950,6 +1021,7 @@ function closeContextMenu() {
   if (contextMenu.value.visible) {
     contextMenu.value = { visible: false, left: 0, top: 0 };
   }
+  contextMenuTableCell = null;
 }
 
 /** Menu Cut/Copy synthesise a real cut/copy via execCommand — the only
@@ -1180,6 +1252,268 @@ function moveCaretByPage(direction = 1, extend = false) {
     target = direction > 0 ? documentEnd(model) : documentStart();
   }
   applyCaretMove(target, extend);
+}
+
+// --- tables: arrow fallback, drag selection, handles (SPEC-022) -------------
+
+/** Deterministic cell-boundary arrows (AC-13): a collapsed caret exactly at
+ * the boundary its arrow points across — end of the cell for ArrowRight,
+ * start for ArrowLeft, first/last visual line of the first/last paragraph
+ * for ArrowUp/ArrowDown — moves straight to the neighbouring cell (or out
+ * of the table) instead of relying on the browser. Returns true when the
+ * event was consumed. */
+function handleTableArrowKey(event = new KeyboardEvent("keydown")) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return false;
+  }
+  const selection = currentSelection(root);
+  if (!selection || !isCollapsed(selection) || !selection.focus.cell) {
+    return false;
+  }
+  const focus = selection.focus;
+  const cellBlock = paragraphAtCaret(model, focus);
+  const cellPath = focus.cell;
+  if (!cellBlock || !cellPath) {
+    return false;
+  }
+  const table = model.sections[focus.section].blocks[focus.block];
+  if (!isTable(table)) {
+    return false;
+  }
+  const cellBlocks = table.rows[cellPath.row].cells[cellPath.col].blocks;
+  const atFirstParagraph = cellPath.block === 0;
+  const atLastParagraph = cellPath.block === cellBlocks.length - 1;
+  let direction = "";
+  if (event.key === "ArrowRight" && atLastParagraph && focus.offset >= blockLength(cellBlock)) {
+    direction = "right";
+  } else if (event.key === "ArrowLeft" && atFirstParagraph && focus.offset === 0) {
+    direction = "left";
+  } else if (event.key === "ArrowDown" && atLastParagraph && caretOnBoundaryLine(root, focus, "last")) {
+    direction = "down";
+  } else if (event.key === "ArrowUp" && atFirstParagraph && caretOnBoundaryLine(root, focus, "first")) {
+    direction = "up";
+  }
+  if (direction === "") {
+    return false;
+  }
+  event.preventDefault();
+  const target = arrowEscapeCaret(
+    model,
+    focus,
+    direction === "up" ? "up" : direction === "down" ? "down" : direction === "left" ? "left" : "right",
+  );
+  if (target) {
+    applyCaretMove(target);
+  }
+  return true;
+}
+
+/** After the browser processed an arrow keydown with a collapsed caret in a
+ * table cell, checks whether the caret actually moved; when it did not, the
+ * model-level escape (lib/tables.arrowEscapeCaret) moves it to the
+ * neighbouring cell or out of the table — the AC-14 guarantee that native
+ * visual navigation cannot strand the caret. */
+function scheduleTableArrowFallback(key = "") {
+  const root = contentRoot.value;
+  if (!root || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection || !isCollapsed(selection) || !selection.focus.cell) {
+    return;
+  }
+  const before = selection.focus;
+  const direction =
+    key === "ArrowUp" ? "up" : key === "ArrowDown" ? "down" : key === "ArrowLeft" ? "left" : "right";
+  window.setTimeout(() => {
+    const model = doc.value;
+    const currentRoot = contentRoot.value;
+    if (!model || !currentRoot || !editable.value) {
+      return;
+    }
+    const after = currentSelection(currentRoot);
+    if (!after || !isCollapsed(after) || compareCaret(after.focus, before) !== 0) {
+      return;
+    }
+    const target = arrowEscapeCaret(model, before, direction);
+    if (target) {
+      applyCaretMove(target);
+    }
+  }, 0);
+}
+
+/** Mousedown on the canvas: remembers the cell under the pointer as a
+ * potential drag origin (AC-15) and dismisses any existing cell-range
+ * highlight — a plain click always returns to a normal text caret. */
+function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
+  if (event.button !== 0) {
+    return;
+  }
+  clearCellSelection();
+  cellDragOrigin = editable.value ? tableCellAtTarget(event.target) : null;
+}
+
+/** Mousemove with the primary button down: entering a different cell of the
+ * drag origin's table activates (or extends) the rectangular cell range
+ * (AC-15). The DOM text selection is collapsed away — the highlighted cells
+ * are the selection's presentation (AC-16). */
+function handleCanvasMouseMove(event = new MouseEvent("mousemove")) {
+  const origin = cellDragOrigin;
+  if (!origin || (event.buttons & 1) === 0) {
+    return;
+  }
+  const cell = tableCellAtTarget(event.target);
+  if (!cell || cell.section !== origin.section || cell.block !== origin.block) {
+    return;
+  }
+  const active = cellSelection.value;
+  if (!active && cell.row === origin.row && cell.col === origin.col) {
+    return;
+  }
+  event.preventDefault();
+  const next = {
+    section: origin.section,
+    block: origin.block,
+    anchor: { row: origin.row, col: origin.col },
+    focus: { row: cell.row, col: cell.col },
+  };
+  const unchanged =
+    active && active.focus.row === next.focus.row && active.focus.col === next.focus.col;
+  if (!unchanged) {
+    cellSelection.value = next;
+    const domSelection = document.getSelection();
+    if (domSelection && domSelection.rangeCount > 0) {
+      domSelection.removeAllRanges();
+    }
+  }
+}
+
+function handleCanvasMouseUp() {
+  cellDragOrigin = null;
+}
+
+/** Mouseover anywhere on the page: hovering a table measures its geometry
+ * for the insert/delete handles (AC-20, AC-21); hovering the handles keeps
+ * them; anything else hides them. */
+function handlePageMouseOver(event = new MouseEvent("mouseover")) {
+  if (!editable.value || !(event.target instanceof Element)) {
+    return;
+  }
+  if (event.target.closest(".table-handles")) {
+    return;
+  }
+  const table = event.target.closest("table.doc-table");
+  const pageEl = pageRef.value;
+  if (!table || !pageEl) {
+    if (tableHover.value) {
+      tableHover.value = null;
+    }
+    return;
+  }
+  tableHover.value = measureTableHandles(pageEl, table);
+}
+
+/** One handle/menu table action against an explicit target cell. `before`
+ * is the current selection for undo restoration. */
+function applyTableAction(action = "", target = { section: 0, block: 0, row: 0, col: 0 }) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const location = target;
+  const fallbackCaret = {
+    section: location.section,
+    block: location.block,
+    offset: 0,
+    cell: { row: location.row, col: location.col, block: 0 },
+  };
+  const selection = currentSelection(root) ?? caretSelection(fallbackCaret);
+  let result = noCommandResult();
+  let label = "";
+  if (action === "insert-row-above") {
+    result = insertTableRow(model, selection, location, "above");
+    label = "insert row";
+  } else if (action === "insert-row-below") {
+    result = insertTableRow(model, selection, location, "below");
+    label = "insert row";
+  } else if (action === "insert-col-left") {
+    result = insertTableColumn(model, selection, location, "left");
+    label = "insert column";
+  } else if (action === "insert-col-right") {
+    result = insertTableColumn(model, selection, location, "right");
+    label = "insert column";
+  } else if (action === "delete-row") {
+    result = deleteTableRow(model, selection, location);
+    label = "delete row";
+  } else if (action === "delete-col") {
+    result = deleteTableColumn(model, selection, location);
+    label = "delete column";
+  } else if (action === "delete-table") {
+    result = deleteTable(model, selection, location);
+    label = "delete table";
+  }
+  if (result) {
+    applyEdit(result, selection, label);
+    root.focus();
+  }
+}
+
+/** A hover handle's click (AC-20, AC-21): boundary index `at` for inserts
+ * (0 = before the first row/column), row/column index for deletes. */
+function handleTableHandle(kind = "", at = 0) {
+  const hover = tableHover.value;
+  if (!hover) {
+    return;
+  }
+  const base = { section: hover.section, block: hover.block, row: 0, col: 0 };
+  if (kind === "insert-row") {
+    applyTableAction(at === 0 ? "insert-row-above" : "insert-row-below", {
+      ...base,
+      row: at === 0 ? 0 : at - 1,
+    });
+  } else if (kind === "delete-row") {
+    applyTableAction("delete-row", { ...base, row: at });
+  } else if (kind === "insert-col") {
+    applyTableAction(at === 0 ? "insert-col-left" : "insert-col-right", {
+      ...base,
+      col: at === 0 ? 0 : at - 1,
+    });
+  } else if (kind === "delete-col") {
+    applyTableAction("delete-col", { ...base, col: at });
+  }
+}
+
+/** The context menu's table action (AC-17..19), against the cell the
+ * right-click landed in. */
+function handleContextMenuTableAction(action = "") {
+  const target = contextMenuTableCell;
+  closeContextMenu();
+  if (target) {
+    applyTableAction(action, target);
+  }
+}
+
+/** The toolbar's grid picker or the dialog (AC-1..4): inserts at the caret
+ * and focuses the first cell. Inside a table the insert is refused —
+ * nested tables are out of scope (SPEC-022). */
+function handleInsertTable(size = { rows: 0, cols: 0 }) {
+  insertTableDialogOpen.value = false;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  if (selection.focus.cell) {
+    addToast("Tables can't be inserted inside a table");
+    root.focus();
+    return;
+  }
+  applyEdit(insertTable(model, selection, size.rows, size.cols), selection, "insert table");
+  root.focus();
 }
 
 // --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
@@ -1452,10 +1786,31 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     return;
   }
   if (event.key === "Escape") {
-    // Escape dismisses the paste options chip and the context menu.
+    // Escape dismisses the paste options chip, the context menu and the
+    // cell-range selection (SPEC-022).
     dismissPasteChip();
     closeContextMenu();
+    clearCellSelection();
     return;
+  }
+  if (
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight")
+  ) {
+    // Cell-boundary arrow movement (SPEC-022 AC-13, AC-14). A caret at the
+    // exact boundary in the arrow's direction moves deterministically to
+    // the neighbouring cell (or out of the table); anywhere else the
+    // browser's native movement handles it, backed by a scheduled check
+    // that steps in only when the native move made no progress — so the
+    // caret can never be trapped in a cell. Deliberately outside the
+    // SPEC-021 registry, like Escape: contextual caret behaviour, not a
+    // named command.
+    if (handleTableArrowKey(event)) {
+      return;
+    }
+    scheduleTableArrowFallback(event.key);
   }
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "v") {
     // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
@@ -1554,10 +1909,36 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       if (!selection) {
         break;
       }
+      // SPEC-022 AC-10..12: inside a table cell, Tab moves to the next cell
+      // and Shift+Tab to the previous — taking priority over every indent
+      // and list behaviour; Tab in the last cell appends a row.
+      if (isCollapsed(selection) && selection.focus.cell) {
+        if (event.shiftKey) {
+          const prev = prevCellCaret(model, selection.focus);
+          if (prev) {
+            applyCaretMove(prev);
+          }
+        } else {
+          const next = nextCellCaret(model, selection.focus);
+          if (next) {
+            applyCaretMove(next);
+          } else {
+            const location = caretTableLocation(model, selection.focus);
+            if (location) {
+              applyEdit(
+                appendTableRowForTab(model, selection, location),
+                selection,
+                "add table row",
+              );
+            }
+          }
+        }
+        break;
+      }
       // SPEC-018 AC-3/AC-4: inside a list item — at any offset — Tab demotes
       // and Shift+Tab promotes, taking priority over the indent behaviours.
       const touchesList = touchedBlocks(model, selection).some(
-        (address) => !!model.sections[address.section].blocks[address.block].list,
+        (address) => !!paragraphAt(model, address)?.list,
       );
       if (touchesList) {
         applyParagraphCommand(
@@ -1648,16 +2029,30 @@ const flatBlocks = computed(() => {
   // each entry's marker joins its v-memo key, because an edit elsewhere in
   // a list renumbers items whose block object never changed.
   const markers = listMarkers(doc.value);
+  // The active cell-range highlight joins table entries' v-memo keys the
+  // same way (SPEC-022 AC-16): the highlighted table's block object never
+  // changes when the drag extends.
+  const range = cellSelection.value;
   return doc.value.sections.flatMap((section, sectionIndex) =>
     section.blocks.map((block, blockIndex) => {
       const address = `${sectionIndex}:${blockIndex}`;
       const suffix = bump.key === address ? `:${bump.count}` : "";
+      const table = isTable(block);
+      const cellSel =
+        table && range && range.section === sectionIndex && range.block === blockIndex
+          ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
+          : "";
       return {
         key: `${bump.epoch}:${address}${suffix}`,
         block,
+        // The paragraph-branch view of the block — see asParagraphBlock;
+        // the template's table branch never reads it.
+        paragraph: asParagraphBlock(block),
+        isTable: table,
         section: sectionIndex,
         blockIndex,
         marker: markers[sectionIndex][blockIndex],
+        cellSel,
       };
     }),
   );
@@ -2295,6 +2690,11 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         @toggle-list="handleToggleList"
         @list-marker="handleListMarker"
       />
+      <TableInsertControl
+        v-if="editable"
+        @insert="handleInsertTable"
+        @open-dialog="insertTableDialogOpen = true"
+      />
       <TextColorPicker
         v-if="editable"
         :value="formatValues.color"
@@ -2394,6 +2794,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         data-testid="document-page"
         :style="pageStyle"
         @mousedown="handlePageMouseDown"
+        @mouseover="handlePageMouseOver"
       >
         <div
           v-if="findVisible"
@@ -2414,6 +2815,84 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
               height: `${rect.height}px`,
             }"
           />
+        </div>
+        <div
+          v-if="tableHover"
+          class="table-handles"
+          data-testid="table-handles"
+        >
+          <!-- Column handles above the table: an insert button at every
+               column boundary, a delete button over every column centre
+               (AC-20, AC-21). -->
+          <button
+            v-for="boundary in tableHover.cols.length + 1"
+            :key="`ci${boundary}`"
+            type="button"
+            class="table-handle insert"
+            :data-testid="`table-handle-insert-col-${boundary - 1}`"
+            :aria-label="`Insert column at position ${boundary}`"
+            :style="{
+              left: `${(boundary - 1 < tableHover.cols.length
+                ? tableHover.cols[boundary - 1].left
+                : tableHover.left + tableHover.width) - 8}px`,
+              top: `${tableHover.top - 20}px`,
+            }"
+            @mousedown.prevent
+            @click="handleTableHandle('insert-col', boundary - 1)"
+          >
+            +
+          </button>
+          <button
+            v-for="(col, colIndex) in tableHover.cols"
+            :key="`cd${colIndex}`"
+            type="button"
+            class="table-handle delete"
+            :data-testid="`table-handle-delete-col-${colIndex}`"
+            :aria-label="`Delete column ${colIndex + 1}`"
+            :style="{
+              left: `${col.left + col.width / 2 - 8}px`,
+              top: `${tableHover.top - 20}px`,
+            }"
+            @mousedown.prevent
+            @click="handleTableHandle('delete-col', colIndex)"
+          >
+            ×
+          </button>
+          <!-- Row handles left of the table: same pattern. -->
+          <button
+            v-for="boundary in tableHover.rows.length + 1"
+            :key="`ri${boundary}`"
+            type="button"
+            class="table-handle insert"
+            :data-testid="`table-handle-insert-row-${boundary - 1}`"
+            :aria-label="`Insert row at position ${boundary}`"
+            :style="{
+              left: `${tableHover.left - 20}px`,
+              top: `${(boundary - 1 < tableHover.rows.length
+                ? tableHover.rows[boundary - 1].top
+                : tableHover.top + tableHover.height) - 8}px`,
+            }"
+            @mousedown.prevent
+            @click="handleTableHandle('insert-row', boundary - 1)"
+          >
+            +
+          </button>
+          <button
+            v-for="(row, rowIndex) in tableHover.rows"
+            :key="`rd${rowIndex}`"
+            type="button"
+            class="table-handle delete"
+            :data-testid="`table-handle-delete-row-${rowIndex}`"
+            :aria-label="`Delete row ${rowIndex + 1}`"
+            :style="{
+              left: `${tableHover.left - 20}px`,
+              top: `${row.top + row.height / 2 - 8}px`,
+            }"
+            @mousedown.prevent
+            @click="handleTableHandle('delete-row', rowIndex)"
+          >
+            ×
+          </button>
         </div>
         <div
           class="page-margin"
@@ -2438,27 +2917,34 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             @cut="handleCut"
             @paste="handlePaste"
             @contextmenu="handleContextMenu"
+            @mousedown="handleCanvasMouseDown"
+            @mousemove="handleCanvasMouseMove"
+            @mouseup="handleCanvasMouseUp"
           >
             <component
-              :is="headingTag(entry.block.headingLevel)"
+              :is="entry.isTable ? DocTableBlock : headingTag(entry.paragraph.headingLevel)"
               v-for="entry in flatBlocks"
               :key="entry.key"
-              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker]"
-              class="doc-paragraph"
-              :style="paragraphStyle(entry.block)"
-              :data-section="entry.section"
-              :data-block="entry.blockIndex"
-              :data-list-marker="entry.marker || undefined"
-              :data-list-level="entry.block.list ? entry.block.list.level : undefined"
+              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker, entry.cellSel]"
+              :class="entry.isTable ? undefined : 'doc-paragraph'"
+              :style="entry.isTable ? undefined : paragraphStyle(entry.paragraph)"
+              :data-section="entry.isTable ? undefined : entry.section"
+              :data-block="entry.isTable ? undefined : entry.blockIndex"
+              :data-list-marker="entry.isTable ? undefined : (entry.marker || undefined)"
+              :data-list-level="!entry.isTable && entry.paragraph.list ? entry.paragraph.list.level : undefined"
+              :block="entry.isTable ? entry.block : undefined"
+              :section="entry.isTable ? entry.section : undefined"
+              :block-index="entry.isTable ? entry.blockIndex : undefined"
+              :cell-range="entry.isTable ? cellSelection : undefined"
             >
-              <template v-if="entry.block.runs.length > 0">
+              <template v-if="!entry.isTable && entry.paragraph.runs.length > 0">
                 <span
-                  v-for="(run, runIndex) in entry.block.runs"
+                  v-for="(run, runIndex) in entry.paragraph.runs"
                   :key="runKey(run, runIndex)"
                   :style="runStyle(run.formatting)"
                 >{{ run.text }}</span>
               </template>
-              <br v-else>
+              <br v-else-if="!entry.isTable">
             </component>
           </div>
         </div>
@@ -2501,10 +2987,17 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       v-if="contextMenu.visible"
       :left="contextMenu.left"
       :top="contextMenu.top"
+      :table-actions="!!contextMenuTableCell"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
+      @table-action="handleContextMenuTableAction"
       @dismiss="closeContextMenu"
+    />
+    <InsertTableDialog
+      v-if="insertTableDialogOpen"
+      @apply="handleInsertTable"
+      @cancel="insertTableDialogOpen = false"
     />
   </AppShell>
   <AppShell
@@ -2657,6 +3150,45 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
   min-width: 0.635cm;
   margin-inline-start: -0.635cm;
   white-space: nowrap;
+}
+
+/* The table hover handles (SPEC-022 AC-20, AC-21): a page-relative overlay
+   of small insert (+) and delete (×) buttons above the columns and beside
+   the rows of the hovered table. The layer itself ignores the pointer so
+   text editing underneath is unaffected; only the buttons are clickable. */
+.table-handles {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.table-handle {
+  position: absolute;
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid #bdbdbd;
+  border-radius: 50%;
+  background: #fff;
+  color: #3c4043;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+.table-handle.insert:hover {
+  background: #d2e3fc;
+  border-color: #1a73e8;
+  color: #1a73e8;
+}
+
+.table-handle.delete:hover {
+  background: #fce8e6;
+  border-color: #c5221f;
+  color: #c5221f;
 }
 
 /* Off-screen but rendered, so the aria-live caret announcements reach

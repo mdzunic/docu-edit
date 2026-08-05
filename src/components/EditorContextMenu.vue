@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // The editor's context menu (SPEC-016 AC-4..6): Cut, Copy and Paste at the
-// right-click point. Emits the chosen action only — the editor owns the
-// clipboard work. Dismissed by a click anywhere outside or Escape.
+// right-click point — plus, when opened inside a table cell, the
+// row/column section (SPEC-022 AC-17..19). Emits the chosen action only —
+// the editor owns the clipboard and table work. Dismissed by a click
+// anywhere outside or Escape.
 import { onBeforeUnmount, onMounted } from "vue";
 import { modifierKeyLabel } from "../lib/platform";
 
@@ -9,9 +11,24 @@ const props = defineProps({
   /** Viewport coordinates of the right-click that opened the menu. */
   left: { type: Number, required: true },
   top: { type: Number, required: true },
+  /** True when the right-click landed inside a table cell — shows the
+   * row/column section (SPEC-022 AC-17..19). */
+  tableActions: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["cut", "copy", "paste", "dismiss"]);
+const emit = defineEmits(["cut", "copy", "paste", "table-action", "dismiss"]);
+
+// The table section's entries, in menu order (SPEC-022 AC-17..19). The key
+// doubles as the emitted action id and the testid suffix.
+const TABLE_ACTIONS = [
+  { key: "insert-row-above", label: "Insert row above" },
+  { key: "insert-row-below", label: "Insert row below" },
+  { key: "insert-col-left", label: "Insert column left" },
+  { key: "insert-col-right", label: "Insert column right" },
+  { key: "delete-row", label: "Delete row" },
+  { key: "delete-col", label: "Delete column" },
+  { key: "delete-table", label: "Delete table" },
+];
 
 const mod = modifierKeyLabel();
 
@@ -79,6 +96,23 @@ onBeforeUnmount(() => {
       <span>Paste</span>
       <span class="context-menu-shortcut">{{ mod }}+V</span>
     </button>
+    <template v-if="tableActions">
+      <div
+        class="context-menu-separator"
+        role="separator"
+      />
+      <button
+        v-for="action in TABLE_ACTIONS"
+        :key="action.key"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :data-testid="`context-menu-${action.key}`"
+        @click="emit('table-action', action.key)"
+      >
+        <span>{{ action.label }}</span>
+      </button>
+    </template>
   </div>
 </template>
 
@@ -118,5 +152,11 @@ onBeforeUnmount(() => {
 .context-menu-shortcut {
   color: #5f6368;
   font-size: 0.75rem;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 0.25rem 0;
+  background: #e0e0e0;
 }
 </style>

@@ -40,9 +40,15 @@ export function documentFontFamilies(model: DocumentModel): string[] {
   add(model.defaultStyles.fontFamily);
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      for (const run of block.runs) {
-        if (run.formatting.fontFamily) {
-          add(run.formatting.fontFamily);
+      const paragraphs =
+        block.type === "table"
+          ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
+          : [block];
+      for (const paragraph of paragraphs) {
+        for (const run of paragraph.runs) {
+          if (run.formatting.fontFamily) {
+            add(run.formatting.fontFamily);
+          }
         }
       }
     }

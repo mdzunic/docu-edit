@@ -292,6 +292,105 @@ function checkSectionProperties(sectPr: Element, context: string, violations: st
   }
 }
 
+/** Structural check of a w:tbl (SPEC-022): child order (w:tblPr?,
+ * w:tblGrid, w:tr+), a positive-width w:gridCol per column, and a regular
+ * grid — every row holds exactly one w:tc per grid column, each with block
+ * content. Property bags (w:tblPr/w:trPr/w:tcPr) are not deep-checked: on a
+ * same-format save they carry the source document's own XML verbatim. */
+function checkTable(table: Element, context: string, violations: string[]): void {
+  const children = Array.from(table.children);
+  let columnCount = 0;
+  let sawGrid = false;
+  let sawRow = false;
+  children.forEach((child, index) => {
+    if (!isWordElement(child)) {
+      violations.push(`${context}: unexpected element ${child.nodeName}`);
+      return;
+    }
+    if (child.localName === "tblPr") {
+      if (index !== 0) {
+        violations.push(`${context}: w:tblPr must be the first child of w:tbl`);
+      }
+    } else if (child.localName === "tblGrid") {
+      if (sawGrid) {
+        violations.push(`${context}: duplicate w:tblGrid`);
+      }
+      if (sawRow) {
+        violations.push(`${context}: w:tblGrid must precede the table's rows`);
+      }
+      sawGrid = true;
+      for (const col of Array.from(child.children)) {
+        if (!isWordElement(col) || col.localName !== "gridCol") {
+          violations.push(`${context}: unexpected element in w:tblGrid`);
+          continue;
+        }
+        columnCount += 1;
+        checkAttr(col, "w", (v) => UNSIGNED_PATTERN.test(v) && Number(v) > 0,
+          "a positive column width in twips", context, violations);
+      }
+      if (columnCount === 0) {
+        violations.push(`${context}: w:tblGrid must declare at least one w:gridCol`);
+      }
+    } else if (child.localName === "tr") {
+      sawRow = true;
+      if (!sawGrid) {
+        violations.push(`${context}: w:tr before w:tblGrid`);
+      }
+      const rowContext = `${context}/w:tr`;
+      let cellCount = 0;
+      Array.from(child.children).forEach((rowChild, rowIndex) => {
+        if (!isWordElement(rowChild)) {
+          violations.push(`${rowContext}: unexpected element ${rowChild.nodeName}`);
+          return;
+        }
+        if (rowChild.localName === "trPr") {
+          if (rowIndex !== 0) {
+            violations.push(`${rowContext}: w:trPr must be the first child of w:tr`);
+          }
+        } else if (rowChild.localName === "tc") {
+          cellCount += 1;
+          const cellContext = `${rowContext}/w:tc[${cellCount}]`;
+          let sawBlock = false;
+          Array.from(rowChild.children).forEach((cellChild, cellIndex) => {
+            if (!isWordElement(cellChild)) {
+              violations.push(`${cellContext}: unexpected element ${cellChild.nodeName}`);
+              return;
+            }
+            if (cellChild.localName === "tcPr") {
+              if (cellIndex !== 0) {
+                violations.push(`${cellContext}: w:tcPr must be the first child of w:tc`);
+              }
+            } else if (cellChild.localName === "p") {
+              sawBlock = true;
+              checkParagraph(cellChild, `${cellContext}/w:p`, violations);
+            } else {
+              violations.push(`${cellContext}: unexpected element w:${cellChild.localName}`);
+            }
+          });
+          if (!sawBlock) {
+            violations.push(`${cellContext}: w:tc must contain at least one w:p`);
+          }
+        } else {
+          violations.push(`${rowContext}: unexpected element w:${rowChild.localName}`);
+        }
+      });
+      if (columnCount > 0 && cellCount !== columnCount) {
+        violations.push(
+          `${rowContext}: has ${cellCount} cells but w:tblGrid declares ${columnCount} columns`,
+        );
+      }
+    } else {
+      violations.push(`${context}: unexpected element w:${child.localName} in w:tbl`);
+    }
+  });
+  if (!sawGrid) {
+    violations.push(`${context}: w:tbl is missing w:tblGrid`);
+  }
+  if (!sawRow) {
+    violations.push(`${context}: w:tbl must contain at least one w:tr`);
+  }
+}
+
 function checkDocumentPart(doc: Document, violations: string[]): void {
   const root = doc.documentElement;
   if (root.namespaceURI !== WORD_NAMESPACE || root.localName !== "document") {
@@ -314,6 +413,8 @@ function checkDocumentPart(doc: Document, violations: string[]): void {
     }
     if (child.localName === "p") {
       checkParagraph(child, `word/document.xml: w:body/w:p[${index + 1}]`, violations);
+    } else if (child.localName === "tbl") {
+      checkTable(child, `word/document.xml: w:body/w:tbl[${index + 1}]`, violations);
     } else if (child.localName === "sectPr") {
       if (index !== bodyChildren.length - 1) {
         violations.push("word/document.xml: body-level w:sectPr must be the last child of w:body");

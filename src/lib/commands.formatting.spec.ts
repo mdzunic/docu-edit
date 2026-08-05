@@ -3,7 +3,7 @@
 // value/mixed queries, and the pending-format patch semantics insertText
 // applies at a collapsed caret.
 import { describe, it, expect } from "vitest";
-import { createDocument, type DocumentModel, type Paragraph } from "./documentModel";
+import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
 import { applyFormatPatch, type CaretPosition } from "./textEditing";
 import {
   applyFormat,
@@ -66,7 +66,7 @@ describe("applyFormat", () => {
       range(caret(0, 6), caret(0, 11)),
       { fontFamily: "Georgia", fontSizePt: 18 },
     );
-    expect(next.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(next.sections[0].blocks[0]).runs).toEqual([
       { text: "Hello ", formatting: {} },
       { text: "world", formatting: { fontFamily: "Georgia", fontSizePt: 18 } },
     ]);
@@ -84,7 +84,7 @@ describe("applyFormat", () => {
   it("is a no-op for a collapsed selection (pending format is the caller's)", () => {
     const model = doc(paragraph(["abc"]));
     const { model: next } = applyFormat(model, caretSelection(caret(0, 1)), { fontSizePt: 30 });
-    expect(next.sections[0].blocks[0].runs).toEqual([{ text: "abc", formatting: {} }]);
+    expect(asParagraph(next.sections[0].blocks[0]).runs).toEqual([{ text: "abc", formatting: {} }]);
   });
 
   it("sets an explicit no-colour highlight that does not merge away", () => {
@@ -92,7 +92,7 @@ describe("applyFormat", () => {
     const { model: next } = applyFormat(model, range(caret(0, 0), caret(0, 4)), {
       highlight: false,
     });
-    expect(next.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(next.sections[0].blocks[0]).runs).toEqual([
       { text: "abcd", formatting: { highlight: false } },
     ]);
   });
@@ -164,18 +164,18 @@ describe("verticalAlignState / toggleVerticalAlign", () => {
     const model = doc(paragraph(["ab", { vertAlign: "subscript" }], ["cd"]));
     const selection = range(caret(0, 0), caret(0, 4));
     const on = toggleVerticalAlign(model, selection, "subscript");
-    expect(on.model.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(on.model.sections[0].blocks[0]).runs).toEqual([
       { text: "abcd", formatting: { vertAlign: "subscript" } },
     ]);
     const off = toggleVerticalAlign(on.model, on.selection, "subscript");
-    expect(off.model.sections[0].blocks[0].runs).toEqual([{ text: "abcd", formatting: {} }]);
+    expect(asParagraph(off.model.sections[0].blocks[0]).runs).toEqual([{ text: "abcd", formatting: {} }]);
   });
 
   it("activating one deactivates the other — mutually exclusive", () => {
     const model = doc(paragraph(["abcd", { vertAlign: "subscript" }]));
     const selection = range(caret(0, 0), caret(0, 4));
     const { model: next } = toggleVerticalAlign(model, selection, "superscript");
-    expect(next.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(next.sections[0].blocks[0]).runs).toEqual([
       { text: "abcd", formatting: { vertAlign: "superscript" } },
     ]);
   });
@@ -188,7 +188,7 @@ describe("insertText with a value pending format", () => {
       fontFamily: "Georgia",
       color: "#ff0000",
     });
-    expect(next.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(next.sections[0].blocks[0]).runs).toEqual([
       { text: "ab", formatting: {} },
       { text: "X", formatting: { fontFamily: "Georgia", color: "#ff0000" } },
     ]);
@@ -199,13 +199,13 @@ describe("insertText with a value pending format", () => {
     const { model: next } = insertText(model, caretSelection(caret(0, 2)), "X", {
       vertAlign: "subscript",
     });
-    expect(next.sections[0].blocks[0].runs[1]).toEqual({
+    expect(asParagraph(next.sections[0].blocks[0]).runs[1]).toEqual({
       text: "X",
       formatting: { vertAlign: "subscript" },
     });
     const { model: cleared } = insertText(model, caretSelection(caret(0, 2)), "X", {
       vertAlign: false,
     });
-    expect(cleared.sections[0].blocks[0].runs[1]).toEqual({ text: "X", formatting: {} });
+    expect(asParagraph(cleared.sections[0].blocks[0]).runs[1]).toEqual({ text: "X", formatting: {} });
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { DocumentModel, Paragraph, Run } from "./documentModel";
+import { asParagraph } from "./documentModel";
 import { blockText } from "./textEditing";
 import {
   compileQuery,
@@ -162,7 +163,7 @@ describe("replaceMatches", () => {
     const model = docOf(paragraph(["plain "], ["cat", { bold: true }], [" plain"]));
     const matches = findMatches(model, compiled("cat"));
     const result = replaceMatches(model, matches, "dog");
-    const runs = result.model.sections[0].blocks[0].runs;
+    const runs = asParagraph(result.model.sections[0].blocks[0]).runs;
     const dogRun = runs.find((run: Run) => run.text.includes("dog"));
     expect(dogRun?.formatting).toEqual({ bold: true });
   });
@@ -171,7 +172,7 @@ describe("replaceMatches", () => {
     const model = docOf(paragraph(["ca", { italic: true }], ["t", { bold: true }]));
     const matches = findMatches(model, compiled("cat"));
     const result = replaceMatches(model, matches, "dog");
-    const runs = result.model.sections[0].blocks[0].runs;
+    const runs = asParagraph(result.model.sections[0].blocks[0]).runs;
     expect(runs).toEqual([{ text: "dog", formatting: { italic: true } }]);
   });
 

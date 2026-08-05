@@ -97,7 +97,15 @@ function xmlEquivalent(a: string, b: string): boolean {
 // --- structural equality ---------------------------------------------------
 
 /** Model fields holding XML strings, compared canonically. */
-const XML_STRING_KEYS = new Set(["xml", "docxSectPr", "odtFontFaceDecls"]);
+const XML_STRING_KEYS = new Set([
+  "xml",
+  "docxSectPr",
+  "odtFontFaceDecls",
+  // Verbatim table properties preserved from a .docx source (SPEC-022).
+  "docxTblPr",
+  "docxTrPr",
+  "docxTcPr",
+]);
 
 /** Model fields holding arrays of XML strings. */
 const XML_ARRAY_KEYS = new Set(["odtAutomaticStyles"]);

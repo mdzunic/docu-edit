@@ -26,8 +26,14 @@ import {
   formattingAtOffset,
   insertText as insertTextInPlace,
   normalizeRuns,
+  paragraphAt,
+  paragraphAtCaret,
+  paragraphSlicesInRange,
+  spliceParagraphs,
   splitParagraph as splitParagraphInPlace,
   splitRuns,
+  type CaretPosition,
+  type ParagraphAddress,
 } from "./textEditing";
 import { orderedRange, type CommandResult, type ModelSelection } from "./commands";
 
@@ -123,7 +129,10 @@ function copyParagraph(block: Paragraph, runs: Run[]): Paragraph {
 
 /** The `Paragraph[]` spanning a selection: boundary runs split at the
  * selection edges, every run re-normalised so the fragment obeys the model
- * invariants. Empty for a collapsed selection. */
+ * invariants. Empty for a collapsed selection. A selection that covers a
+ * table contributes the table's cell paragraphs in reading order — the
+ * fragment stays a flat paragraph list (SPEC-022: table structure is not a
+ * clipboard flavour yet), so a cut never silently loses cell text. */
 export function extractFragment(
   model: DocumentModel,
   selection: ModelSelection,
@@ -133,22 +142,14 @@ export function extractFragment(
     return [];
   }
   const fragment: Paragraph[] = [];
-  for (let section = start.section; section <= end.section; section++) {
-    const blocks = model.sections[section].blocks;
-    const from = section === start.section ? start.block : 0;
-    const to = section === end.section ? end.block : blocks.length - 1;
-    for (let block = from; block <= to; block++) {
-      const paragraph = blocks[block];
-      const fromOffset =
-        section === start.section && block === start.block ? start.offset : 0;
-      const toOffset =
-        section === end.section && block === end.block
-          ? end.offset
-          : blockLength(paragraph);
-      const [, tail] = splitRuns(paragraph.runs, fromOffset);
-      const [within] = splitRuns(tail, toOffset - fromOffset);
-      fragment.push(copyParagraph(paragraph, within));
+  for (const { address, from, to } of paragraphSlicesInRange(model, start, end)) {
+    const paragraph = paragraphAt(model, address);
+    if (!paragraph) {
+      continue;
     }
+    const [, tail] = splitRuns(paragraph.runs, from);
+    const [within] = splitRuns(tail, to - from);
+    fragment.push(copyParagraph(paragraph, within));
   }
   return fragment;
 }
@@ -438,8 +439,22 @@ export function pasteBlocks(
   if (blocks.length === 0) {
     return collapsedResult(next, caret);
   }
-  const container = next.sections[caret.section].blocks;
-  const target = container[caret.block];
+  const target = paragraphAtCaret(next, caret);
+  if (!target) {
+    return collapsedResult(next, caret);
+  }
+  // Splices land in the caret's own container — the cell's block list when
+  // the caret sits in a table (SPEC-022), so a paste into a cell grows the
+  // cell, never the section around the table.
+  const base = caret.cell ? caret.cell.block : caret.block;
+  const addressAt = (index: number): ParagraphAddress =>
+    caret.cell
+      ? { section: caret.section, block: caret.block, cell: { ...caret.cell, block: index } }
+      : { section: caret.section, block: index };
+  const caretAt = (index: number, offset: number): CaretPosition =>
+    caret.cell
+      ? { section: caret.section, block: caret.block, offset, cell: { ...caret.cell, block: index } }
+      : { section: caret.section, block: index, offset };
   const [before, after] = splitRuns(target.runs, caret.offset);
   if (blocks.length === 1) {
     const only = blocks[0];
@@ -447,12 +462,8 @@ export function pasteBlocks(
     const merged = emptyTarget
       ? only
       : { ...target, runs: normalizeRuns([...before, ...only.runs, ...after]) };
-    container.splice(caret.block, 1, merged);
-    return collapsedResult(next, {
-      section: caret.section,
-      block: caret.block,
-      offset: (emptyTarget ? 0 : caret.offset) + blockLength(only),
-    });
+    spliceParagraphs(next, addressAt(base), 1, merged);
+    return collapsedResult(next, caretAt(base, (emptyTarget ? 0 : caret.offset) + blockLength(only)));
   }
   const first = blocks[0];
   const last = blocks[blocks.length - 1];
@@ -464,12 +475,8 @@ export function pasteBlocks(
     after.length === 0
       ? last
       : { ...target, runs: normalizeRuns([...last.runs, ...after]) };
-  container.splice(caret.block, 1, head, ...blocks.slice(1, -1), tail);
-  return collapsedResult(next, {
-    section: caret.section,
-    block: caret.block + blocks.length - 1,
-    offset: blockLength(last),
-  });
+  spliceParagraphs(next, addressAt(base), 1, head, ...blocks.slice(1, -1), tail);
+  return collapsedResult(next, caretAt(base + blocks.length - 1, blockLength(last)));
 }
 
 /** The plain-text paste path (Ctrl/Cmd+Shift+V and the chip's "Keep text
@@ -546,7 +553,11 @@ export function executePaste(
   }
   if (mode === "match") {
     const { start } = orderedRange(model, selection);
-    const destination = model.sections[start.section].blocks[start.block];
+    const destination = paragraphAtCaret(model, start);
+    if (!destination) {
+      const text = payload.text || fragmentText(payload.fragment);
+      return pastePlainText(model, selection, text, pending);
+    }
     const typedFormatting = applyFormatPatch(
       formattingAtOffset(destination, start.offset),
       pending ?? {},

@@ -16,6 +16,9 @@ import type {
   RunFormatting,
   Section,
   SourceXml,
+  Table,
+  TableCell,
+  TableRow,
 } from "../documentModel";
 import { createDefaultStyles } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
@@ -23,7 +26,16 @@ import { ZipError, unzip } from "../docx/zip";
 import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { clampListLevel, defaultMarkerStyle } from "../lists";
-import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "./xml";
+import { odfLengthToCm } from "./units";
+import {
+  OFFICE_NAMESPACE,
+  STYLE_NAMESPACE,
+  TABLE_NAMESPACE,
+  TEXT_NAMESPACE,
+  styleAttr,
+  tableAttr,
+  textAttr,
+} from "./xml";
 import {
   parseOdfStyleCatalog,
   resolveListLevel,
@@ -341,6 +353,192 @@ function parseListElement(
   }
 }
 
+// --- tables (SPEC-022) -----------------------------------------------------
+
+/** Column widths declared by `table-column`-family styles, from both parts'
+ * automatic styles: style name -> `style:column-width` in cm. */
+function collectTableColumnWidths(contentDoc: Document, stylesDoc: Document | undefined): Map<string, number> {
+  const widths = new Map<string, number>();
+  const scan = (doc: Document | undefined) => {
+    if (!doc) {
+      return;
+    }
+    for (const el of Array.from(doc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
+      if (el.getAttributeNS(STYLE_NAMESPACE, "family") !== "table-column") {
+        continue;
+      }
+      const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+      const props = firstChildElement(el, STYLE_NAMESPACE, "table-column-properties");
+      const width = props ? odfLengthToCm(styleAttr(props, "column-width")) : undefined;
+      if (name && width !== undefined) {
+        widths.set(name, width);
+      }
+    }
+  };
+  scan(contentDoc);
+  scan(stylesDoc);
+  return widths;
+}
+
+// Repeat expansion cap: `table:number-columns-repeated` is also how ODF
+// producers pad to the sheet-like maximum; anything past this is not a text
+// document's table and stays opaque.
+const MAX_TABLE_REPEAT = 512;
+
+function repeatCount(el: Element, attr: string): number | null {
+  const raw = tableAttr(el, attr);
+  if (raw === null) {
+    return 1;
+  }
+  const count = Number(raw);
+  if (!Number.isInteger(count) || count < 1 || count > MAX_TABLE_REPEAT) {
+    return null;
+  }
+  return count;
+}
+
+function parseTableCellElement(cellEl: Element, catalog: OdfStyleCatalog): TableCell | null {
+  const spanned = tableAttr(cellEl, "number-columns-spanned") ?? tableAttr(cellEl, "number-rows-spanned");
+  if (spanned !== null && Number(spanned) !== 1) {
+    // Merged cells (SPEC-023) break the regular grid; the whole table stays
+    // opaque.
+    return null;
+  }
+  const blocks: Block[] = [];
+  const strayOpaque: OpaqueBlock[] = [];
+  for (const child of Array.from(cellEl.children)) {
+    if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "p") {
+      blocks.push(parseTextBlock(child, catalog, false));
+    } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "h") {
+      blocks.push(parseTextBlock(child, catalog, true));
+    } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
+      parseListElement(child, catalog, 1, undefined, blocks, strayOpaque);
+    } else {
+      // Nested tables, frames, … — outside the model's cell shape.
+      return null;
+    }
+  }
+  if (strayOpaque.length > 0) {
+    // A cell whose list carried unmodelled content has no body level to
+    // anchor it to; preserve the whole table verbatim instead.
+    return null;
+  }
+  const paragraphs: Paragraph[] = [];
+  for (const block of blocks) {
+    if (block.type !== "paragraph") {
+      return null;
+    }
+    paragraphs.push(block);
+  }
+  if (paragraphs.length === 0) {
+    paragraphs.push({ type: "paragraph", runs: [], formatting: {} });
+  }
+  const cell: TableCell = { blocks: paragraphs };
+  const styleName = tableAttr(cellEl, "style-name");
+  if (styleName !== null) {
+    cell.odtStyleName = styleName;
+  }
+  return cell;
+}
+
+/** Parses a `table:table` into a modelled Table (SPEC-022), or null when it
+ * uses features outside the model's regular grid (merged/covered cells,
+ * header rows, nested tables, sub-tables, …) — the caller then preserves
+ * the element verbatim as an opaque block (SPEC-008). */
+function parseTableElement(
+  tableEl: Element,
+  catalog: OdfStyleCatalog,
+  columnWidths: Map<string, number>,
+): Table | null {
+  const columnStyleNames: Array<string | undefined> = [];
+  const rows: TableRow[] = [];
+  for (const child of Array.from(tableEl.children)) {
+    if (child.namespaceURI !== TABLE_NAMESPACE) {
+      return null;
+    }
+    if (child.localName === "table-column") {
+      const repeat = repeatCount(child, "number-columns-repeated");
+      if (repeat === null) {
+        return null;
+      }
+      const styleName = tableAttr(child, "style-name") ?? undefined;
+      for (let i = 0; i < repeat; i++) {
+        columnStyleNames.push(styleName);
+      }
+    } else if (child.localName === "table-row") {
+      const repeat = repeatCount(child, "number-rows-repeated");
+      if (repeat === null) {
+        return null;
+      }
+      const cells: TableCell[] = [];
+      for (const cellEl of Array.from(child.children)) {
+        if (cellEl.namespaceURI !== TABLE_NAMESPACE || cellEl.localName !== "table-cell") {
+          return null;
+        }
+        const cellRepeat = repeatCount(cellEl, "number-columns-repeated");
+        if (cellRepeat === null) {
+          return null;
+        }
+        const cell = parseTableCellElement(cellEl, catalog);
+        if (!cell) {
+          return null;
+        }
+        cells.push(cell);
+        for (let i = 1; i < cellRepeat; i++) {
+          cells.push(structuredClone(cell));
+        }
+      }
+      if (cells.length === 0) {
+        return null;
+      }
+      const rowStyleName = tableAttr(child, "style-name");
+      for (let i = 0; i < repeat; i++) {
+        const row: TableRow = { cells: i === 0 ? cells : structuredClone(cells) };
+        if (rowStyleName !== null) {
+          row.odtStyleName = rowStyleName;
+        }
+        rows.push(row);
+      }
+    } else {
+      // table-header-rows, covered cells, sub-tables, title/desc, … — the
+      // model cannot express these; keep the table verbatim.
+      return null;
+    }
+  }
+  if (rows.length === 0 || columnStyleNames.length === 0) {
+    return null;
+  }
+  if (rows.some((row) => row.cells.length !== columnStyleNames.length)) {
+    return null;
+  }
+  // Column widths from the referenced column styles; when any is missing,
+  // fall back to an equal split of the text area (or of the declared
+  // widths' own total when only some are missing there is no better
+  // anchor).
+  const fallback = createDefaultStyles();
+  const pageSize = catalog.pageSize ?? fallback.pageSize;
+  const margins = catalog.margins ?? fallback.margins;
+  const textAreaCm = Math.max(1, pageSize.widthCm - margins.leftCm - margins.rightCm);
+  const declared = columnStyleNames.map((name) => (name ? columnWidths.get(name) : undefined));
+  const columnWidthsCm = declared.every((width) => width !== undefined && width > 0)
+    ? (declared as number[])
+    : columnStyleNames.map(() => textAreaCm / columnStyleNames.length);
+
+  const table: Table = { type: "table", rows, columnWidthsCm };
+  const name = tableAttr(tableEl, "name");
+  if (name !== null) {
+    table.odtName = name;
+  }
+  const styleName = tableAttr(tableEl, "style-name");
+  if (styleName !== null) {
+    table.odtStyleName = styleName;
+  }
+  if (columnStyleNames.some((columnName) => columnName !== undefined)) {
+    table.odtColumnStyleNames = columnStyleNames;
+  }
+  return table;
+}
+
 // --- package ---------------------------------------------------------------
 
 function parsePart(text: string): Document {
@@ -384,6 +582,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   const stylesDoc = stylesBytes ? parsePart(decodeUtf8(stylesBytes)) : undefined;
 
   const catalog = parseOdfStyleCatalog(contentDoc, stylesDoc);
+  const tableColumnWidths = collectTableColumnWidths(contentDoc, stylesDoc);
 
   const body = firstChildElement(contentDoc.documentElement, OFFICE_NAMESPACE, "body");
   const textRoot = body ? firstChildElement(body, OFFICE_NAMESPACE, "text") : undefined;
@@ -401,10 +600,19 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
       // Bulleted/numbered lists (SPEC-018 AC-21).
       parseListElement(child, catalog, 1, undefined, blocks, opaqueBlocks);
+    } else if (child.namespaceURI === TABLE_NAMESPACE && child.localName === "table") {
+      // Regular-grid tables are modelled (SPEC-022); anything the model
+      // cannot express falls through to the opaque path below.
+      const table = parseTableElement(child, catalog, tableColumnWidths);
+      if (table) {
+        blocks.push(table);
+      } else {
+        opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
+      }
     } else {
-      // Tables, sequence declarations, frames, ... — unmodelled body
-      // children are preserved verbatim, anchored to their position among
-      // the paragraphs (SPEC-008).
+      // Sequence declarations, frames, ... — unmodelled body children are
+      // preserved verbatim, anchored to their position among the
+      // paragraphs (SPEC-008).
       opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
     }
   }

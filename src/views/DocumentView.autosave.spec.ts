@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "../router";
-import { createDocument } from "../lib/documentModel";
+import { asParagraph, createDocument } from "../lib/documentModel";
 import { setDomCaret } from "../lib/domCaret";
 import {
   AUTOSAVE_DEBOUNCE_MS,
@@ -172,7 +172,7 @@ describe("DocumentView autosave", () => {
 
   it("a draft newer than the committed record opens with the recovery bar showing the draft content (AC-11)", async () => {
     const draftModel = createDocument("rec-doc");
-    draftModel.sections[0].blocks[0].runs = [
+    asParagraph(draftModel.sections[0].blocks[0]).runs = [
       { text: "Recovered text", formatting: {} },
     ];
     getRecord.mockImplementation(async (key) =>
@@ -197,7 +197,7 @@ describe("DocumentView autosave", () => {
 
   it("'Keep' commits the draft content and the bar disappears (AC-11)", async () => {
     const draftModel = createDocument("keep-doc");
-    draftModel.sections[0].blocks[0].runs = [
+    asParagraph(draftModel.sections[0].blocks[0]).runs = [
       { text: "Keep me", formatting: {} },
     ];
     getRecord.mockImplementation(async (key) =>
@@ -222,13 +222,13 @@ describe("DocumentView autosave", () => {
       .map(([record]) => record)
       .filter((record) => record.id === "keep-doc")
       .at(-1);
-    expect(committed.model.sections[0].blocks[0].runs[0].text).toBe("Keep me");
+    expect(asParagraph(committed.model.sections[0].blocks[0]).runs[0].text).toBe("Keep me");
     expect(deleteRecord).toHaveBeenCalledWith("draft:keep-doc");
   });
 
   it("'Discard' restores the committed state, deletes the draft and the bar disappears (AC-12, AC-13)", async () => {
     const draftModel = createDocument("discard-doc");
-    draftModel.sections[0].blocks[0].runs = [
+    asParagraph(draftModel.sections[0].blocks[0]).runs = [
       { text: "Crashed edits", formatting: {} },
     ];
     getRecord.mockImplementation(async (key) =>

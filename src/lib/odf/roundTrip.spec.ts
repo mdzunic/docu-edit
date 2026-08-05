@@ -13,6 +13,7 @@ import { unzip } from "../docx/zip";
 import { canonicalizeXml, equalBytes, firstStructuralDifference } from "../equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel } from "../documentModel";
+import { asParagraph } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -58,7 +59,7 @@ describe("parseOdt — opaque capture (AC-1, AC-3, AC-4)", () => {
 
   it("captures the draw:frame as an opaque inline anchored between the runs", async () => {
     const parsed = await parseOdt(fixture);
-    const photoParagraph = parsed.sections[0].blocks[2];
+    const photoParagraph = asParagraph(parsed.sections[0].blocks[2]);
     expect(photoParagraph.runs.map((run) => run.text)).toEqual(["Photo: ", "shows the site."]);
     expect(photoParagraph.opaqueInlines).toHaveLength(1);
     expect(photoParagraph.opaqueInlines![0].runIndex).toBe(1);
@@ -66,16 +67,27 @@ describe("parseOdt — opaque capture (AC-1, AC-3, AC-4)", () => {
     expect(photoParagraph.opaqueInlines![0].xml).toContain("Pictures/image1.png");
   });
 
-  it("captures the table as an opaque block anchored in the body", async () => {
+  it("models the table as a Table block anchored in the body (SPEC-022)", async () => {
     const parsed = await parseOdt(fixture);
-    // Blocks: heading, intro, photo paragraph, closing — the table sits
-    // before the closing paragraph.
-    expect(parsed.sections[0].blocks).toHaveLength(4);
-    expect(parsed.sections[0].opaqueBlocks).toHaveLength(1);
-    const table = parsed.sections[0].opaqueBlocks![0];
-    expect(table.blockIndex).toBe(3);
-    expect(table.xml).toContain("table");
-    expect(table.xml).toContain("Cell A");
+    // Blocks: heading, intro, photo paragraph, table, closing — the table
+    // sits before the closing paragraph, as a modelled block since
+    // SPEC-022 (previously preserved as an opaque node).
+    expect(parsed.sections[0].blocks).toHaveLength(5);
+    expect(parsed.sections[0].opaqueBlocks ?? []).toHaveLength(0);
+    const table = parsed.sections[0].blocks[3];
+    expect(table.type).toBe("table");
+    if (table.type !== "table") {
+      return;
+    }
+    expect(table.rows).toHaveLength(1);
+    // The fixture declares its two columns with number-columns-repeated.
+    expect(table.columnWidthsCm).toHaveLength(2);
+    expect(table.odtStyleName).toBe("Table1");
+    expect(
+      table.rows.map((row) =>
+        row.cells.map((cell) => cell.blocks.map((p) => p.runs.map((r) => r.text).join("")).join("")),
+      ),
+    ).toEqual([["Cell A", "Cell B"]]);
   });
 
   it("keeps font-face declarations and the non-paragraph/text automatic styles opaque nodes reference", async () => {
@@ -156,7 +168,7 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
     // modelFrom shares the parsed tree by reference; clone so `opened`
     // stays the pristine as-opened model the assertions compare against.
     const model = modelFrom(structuredClone(opened));
-    const intro = model.sections[0].blocks[1];
+    const intro = asParagraph(model.sections[0].blocks[1]);
     expect(intro.runs[0].text).toBe("Editable intro paragraph.");
     intro.runs[0].text = "Edited intro paragraph!";
     const { bytes } = await writeOdt(model);
@@ -168,16 +180,16 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
     ).toBe(true);
 
     const reopened = await parseOdt(bytes);
-    expect(reopened.sections[0].blocks[1].runs[0].text).toBe("Edited intro paragraph!");
-    expect(canonicalizeXml(reopened.sections[0].opaqueBlocks![0].xml)).toBe(
-      canonicalizeXml(opened.sections[0].opaqueBlocks![0].xml),
-    );
-    expect(canonicalizeXml(reopened.sections[0].blocks[2].opaqueInlines![0].xml)).toBe(
-      canonicalizeXml(opened.sections[0].blocks[2].opaqueInlines![0].xml),
+    expect(asParagraph(reopened.sections[0].blocks[1]).runs[0].text).toBe("Edited intro paragraph!");
+    // The table block (modelled since SPEC-022) survives structurally
+    // untouched — same rows, columns, widths and style references.
+    expect(firstStructuralDifference(opened.sections[0].blocks[3], reopened.sections[0].blocks[3])).toBeNull();
+    expect(canonicalizeXml(asParagraph(reopened.sections[0].blocks[2]).opaqueInlines![0].xml)).toBe(
+      canonicalizeXml(asParagraph(opened.sections[0].blocks[2]).opaqueInlines![0].xml),
     );
 
     const editedBack = structuredClone(reopened);
-    editedBack.sections[0].blocks[1].runs[0].text = "Editable intro paragraph.";
+    asParagraph(editedBack.sections[0].blocks[1]).runs[0].text = "Editable intro paragraph.";
     expect(firstStructuralDifference(opened, editedBack)).toBeNull();
   });
 });
@@ -190,7 +202,9 @@ describe("writeDocx — converting a .odt model reports what it drops (SPEC-008 
     const { bytes, dropped } = await writeDocx(modelFrom(opened));
 
     expect(dropped.some((d) => d.kind === "opaqueInline" && d.location === "paragraph 3")).toBe(true);
-    expect(dropped.some((d) => d.kind === "opaqueBlock" && d.location === "before paragraph 4")).toBe(true);
+    // The table converts as a modelled block since SPEC-022 — it is no
+    // longer reported as dropped content.
+    expect(dropped.some((d) => d.kind === "opaqueBlock")).toBe(false);
     expect(dropped.some((d) => d.kind === "opaquePart" && d.location.includes("Pictures/image1.png"))).toBe(true);
     // Packaging infrastructure is not reported as dropped content.
     expect(dropped.some((d) => d.location.includes("mimetype"))).toBe(false);
@@ -203,6 +217,9 @@ describe("writeDocx — converting a .odt model reports what it drops (SPEC-008 
     const documentXml = decoder.decode(parts.get("word/document.xml")!);
     expect(documentXml).not.toContain("draw:frame");
     expect(documentXml).not.toContain("table:table");
+    // The modelled table converts to WordprocessingML (SPEC-022 AC-24).
+    expect(documentXml).toContain("<w:tbl>");
+    expect(documentXml).toContain("Cell A");
     expect(documentXml).toContain("Photo:");
   });
 });

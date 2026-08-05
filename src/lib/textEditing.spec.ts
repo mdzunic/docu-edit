@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createDocument, type DocumentModel, type Paragraph } from "./documentModel";
+import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
 import {
   blockLength,
   blockText,
@@ -84,7 +84,7 @@ describe("insertText", () => {
   it("inserts inside a run and keeps its formatting", () => {
     const model = doc(paragraph(["bold text", { bold: true }]));
     insertText(model, { section: 0, block: 0, offset: 4 }, "er");
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs).toHaveLength(1);
     expect(runs[0].text).toBe("bolder text");
     expect(runs[0].formatting).toEqual({ bold: true });
@@ -93,7 +93,7 @@ describe("insertText", () => {
   it("inherits the left run's formatting at a run boundary", () => {
     const model = doc(paragraph(["plain "], ["bold", { bold: true }]));
     insertText(model, { section: 0, block: 0, offset: 6 }, "X");
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs.map((r) => r.text)).toEqual(["plain X", "bold"]);
     expect(runs[0].formatting).toEqual({});
     expect(runs[1].formatting).toEqual({ bold: true });
@@ -102,7 +102,7 @@ describe("insertText", () => {
   it("inherits the right run's formatting at the paragraph start", () => {
     const model = doc(paragraph(["bold", { bold: true }]));
     insertText(model, { section: 0, block: 0, offset: 0 }, "X");
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs).toHaveLength(1);
     expect(runs[0].text).toBe("Xbold");
     expect(runs[0].formatting).toEqual({ bold: true });
@@ -110,7 +110,7 @@ describe("insertText", () => {
 
   it("replaces the block object rather than mutating it (v-memo contract)", () => {
     const model = doc(paragraph(["abc"]));
-    const before = model.sections[0].blocks[0];
+    const before = asParagraph(model.sections[0].blocks[0]);
     insertText(model, { section: 0, block: 0, offset: 1 }, "x");
     expect(model.sections[0].blocks[0]).not.toBe(before);
     expect(before.runs[0].text).toBe("abc");
@@ -119,7 +119,7 @@ describe("insertText", () => {
   it("forces the override's keys on regardless of the run's formatting (SPEC-012 AC-10)", () => {
     const model = doc(paragraph(["plain "], ["bold", { bold: true }]));
     insertText(model, { section: 0, block: 0, offset: 6 }, "X", { bold: true });
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     // "X" merges into the following "bold" run since both are now bold.
     expect(runs.map((r) => r.text)).toEqual(["plain ", "Xbold"]);
     expect(runs[1].formatting).toEqual({ bold: true });
@@ -128,7 +128,7 @@ describe("insertText", () => {
   it("forces the override's keys off, merging with a plain neighbour (SPEC-012 AC-10, AC-21)", () => {
     const model = doc(paragraph(["bold", { bold: true }], [" plain"]));
     insertText(model, { section: 0, block: 0, offset: 4 }, "X", { bold: false });
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs.map((r) => r.text)).toEqual(["bold", "X plain"]);
     expect(runs[1].formatting).toEqual({});
   });
@@ -137,15 +137,15 @@ describe("insertText", () => {
 describe("splitParagraph", () => {
   it("splits runs across the two halves and keeps formatting on both", () => {
     const model = doc(paragraph(["Hello world", { italic: true }]));
-    model.sections[0].blocks[0].formatting = { alignment: "center" };
+    asParagraph(model.sections[0].blocks[0]).formatting = { alignment: "center" };
     const caret = splitParagraph(model, { section: 0, block: 0, offset: 5 });
     const blocks = model.sections[0].blocks;
     expect(blocks).toHaveLength(2);
     expect(blockText(blocks[0])).toBe("Hello");
     expect(blockText(blocks[1])).toBe(" world");
-    expect(blocks[0].formatting).toEqual({ alignment: "center" });
-    expect(blocks[1].formatting).toEqual({ alignment: "center" });
-    expect(blocks[1].runs[0].formatting).toEqual({ italic: true });
+    expect(asParagraph(blocks[0]).formatting).toEqual({ alignment: "center" });
+    expect(asParagraph(blocks[1]).formatting).toEqual({ alignment: "center" });
+    expect(asParagraph(blocks[1]).runs[0].formatting).toEqual({ italic: true });
     expect(caret).toEqual({ section: 0, block: 1, offset: 0 });
   });
 
@@ -154,14 +154,14 @@ describe("splitParagraph", () => {
     splitParagraph(model, { section: 0, block: 0, offset: 3 });
     const blocks = model.sections[0].blocks;
     expect(blockText(blocks[0])).toBe("abc");
-    expect(blocks[1].runs).toHaveLength(0);
+    expect(asParagraph(blocks[1]).runs).toHaveLength(0);
   });
 
   it("splitting at the start produces an empty first paragraph", () => {
     const model = doc(paragraph(["abc"]));
     const caret = splitParagraph(model, { section: 0, block: 0, offset: 0 });
     const blocks = model.sections[0].blocks;
-    expect(blocks[0].runs).toHaveLength(0);
+    expect(asParagraph(blocks[0]).runs).toHaveLength(0);
     expect(blockText(blocks[1])).toBe("abc");
     expect(caret).toEqual({ section: 0, block: 1, offset: 0 });
   });
@@ -196,7 +196,7 @@ describe("deleteRange", () => {
       { section: 0, block: 0, offset: 1 },
       { section: 0, block: 0, offset: 5 },
     );
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs.map((r) => r.text)).toEqual(["a", "c"]);
     expect(runs[0].formatting).toEqual({});
     expect(runs[1].formatting).toEqual({ italic: true });
@@ -348,7 +348,7 @@ describe("setFormatting (SPEC-012)", () => {
       "bold",
       true,
     );
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs.map((r) => [r.text, r.formatting])).toEqual([
       ["He", {}],
       ["llo w", { bold: true }],
@@ -365,7 +365,7 @@ describe("setFormatting (SPEC-012)", () => {
       "bold",
       true,
     );
-    const runs = model.sections[0].blocks[0].runs;
+    const runs = asParagraph(model.sections[0].blocks[0]).runs;
     expect(runs).toEqual([{ text: "bold more", formatting: { bold: true } }]);
   });
 
@@ -378,7 +378,7 @@ describe("setFormatting (SPEC-012)", () => {
       "bold",
       false,
     );
-    expect(model.sections[0].blocks[0].runs).toEqual([{ text: "bold text", formatting: {} }]);
+    expect(asParagraph(model.sections[0].blocks[0]).runs).toEqual([{ text: "bold text", formatting: {} }]);
   });
 
   it("spans multiple paragraphs", () => {
@@ -390,11 +390,11 @@ describe("setFormatting (SPEC-012)", () => {
       "italic",
       true,
     );
-    expect(model.sections[0].blocks[0].runs).toEqual([
+    expect(asParagraph(model.sections[0].blocks[0]).runs).toEqual([
       { text: "o", formatting: {} },
       { text: "ne", formatting: { italic: true } },
     ]);
-    expect(model.sections[0].blocks[1].runs).toEqual([
+    expect(asParagraph(model.sections[0].blocks[1]).runs).toEqual([
       { text: "tw", formatting: { italic: true } },
       { text: "o", formatting: {} },
     ]);

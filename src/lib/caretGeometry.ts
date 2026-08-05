@@ -6,7 +6,9 @@
 import {
   BLOCK_SELECTOR,
   caretFromDomPoint,
+  cellPathOf,
   domPointForCaret,
+  paragraphElementForCaret,
   type DomPoint,
 } from "./domCaret";
 import type { CaretPosition } from "./textEditing";
@@ -91,10 +93,102 @@ export function caretNearClientPoint(
   }
   const pastEnd =
     y > rect.bottom || (y >= rect.top && x > (rect.left + rect.right) / 2);
-  return {
+  const caret: CaretPosition = {
     section,
     block,
     offset: pastEnd ? (best.textContent ?? "").length : 0,
+  };
+  const cell = best.hasAttribute("data-row") ? cellPathOf(best) : undefined;
+  if (cell) {
+    caret.cell = cell;
+  }
+  return caret;
+}
+
+/** Whether a caret sits on its paragraph's first/last visual line — what
+ * decides if ArrowUp/ArrowDown at a table-cell boundary should leave the
+ * cell (SPEC-022 AC-13) or keep moving within the paragraph's wrapped
+ * lines. True when the environment cannot measure (jsdom): a paragraph is
+ * then treated as a single line. */
+export function caretOnBoundaryLine(
+  root: Element,
+  caret: CaretPosition,
+  edge: "first" | "last",
+): boolean {
+  const rect = caretClientRect(root, caret);
+  const paragraph = paragraphElementForCaret(root, caret);
+  if (!rect || !paragraph) {
+    return true;
+  }
+  const paragraphRect = paragraph.getBoundingClientRect();
+  if (rect.height <= 0) {
+    return true;
+  }
+  if (edge === "last") {
+    return paragraphRect.bottom - rect.bottom < rect.height * 0.5;
+  }
+  return rect.top - paragraphRect.top < rect.height * 0.5;
+}
+
+/** The measured geometry the table hover handles position from (SPEC-022
+ * AC-20, AC-21): the hovered table's rectangle plus per-column and per-row
+ * bands, all relative to the page element the overlay is absolutely
+ * positioned in. */
+export interface TableHandleGeometry {
+  section: number;
+  block: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  cols: Array<{ left: number; width: number }>;
+  rows: Array<{ top: number; height: number }>;
+}
+
+/** Typed `null` seed for hover-geometry refs in `.vue` scripts (espree bars
+ * the annotation — see domCaret.noElement). */
+export function noTableHandleGeometry(): TableHandleGeometry | null {
+  return null;
+}
+
+/** Measures a canvas table element for the hover handles. Null when the
+ * table holds no addressable cell paragraph (never the case for a rendered
+ * model table). */
+export function measureTableHandles(
+  pageEl: Element,
+  table: Element,
+): TableHandleGeometry | null {
+  const paragraph = table.querySelector("[data-section][data-block]");
+  if (!paragraph) {
+    return null;
+  }
+  const section = Number(paragraph.getAttribute("data-section"));
+  const block = Number(paragraph.getAttribute("data-block"));
+  if (!Number.isInteger(section) || !Number.isInteger(block)) {
+    return null;
+  }
+  const pageRect = pageEl.getBoundingClientRect();
+  const tableRect = table.getBoundingClientRect();
+  const firstRow = table.querySelector("tr");
+  const cols = firstRow
+    ? Array.from(firstRow.children).map((td) => {
+        const rect = td.getBoundingClientRect();
+        return { left: rect.left - pageRect.left, width: rect.width };
+      })
+    : [];
+  const rows = Array.from(table.querySelectorAll("tr")).map((tr) => {
+    const rect = tr.getBoundingClientRect();
+    return { top: rect.top - pageRect.top, height: rect.height };
+  });
+  return {
+    section,
+    block,
+    left: tableRect.left - pageRect.left,
+    top: tableRect.top - pageRect.top,
+    width: tableRect.width,
+    height: tableRect.height,
+    cols,
+    rows,
   };
 }
 

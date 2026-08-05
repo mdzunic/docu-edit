@@ -9,21 +9,48 @@
 // array (never mutated in place). The renderer relies on this — `v-memo`
 // compares block object identity to skip re-rendering untouched paragraphs,
 // which is what keeps typing responsive on very large documents.
-import type {
-  CharacterFormatKey,
-  DocumentModel,
-  Paragraph,
-  PendingFormat,
-  Run,
-  RunFormatting,
+import {
+  isTable,
+  type Block,
+  type CharacterFormatKey,
+  type DocumentModel,
+  type Paragraph,
+  type PendingFormat,
+  type Run,
+  type RunFormatting,
+  type Table,
 } from "./documentModel";
 
+/** The path from a table block down to one of its cell's paragraphs
+ * (SPEC-022): the cell's row/column plus the paragraph index within the
+ * cell's own block list. */
+export interface CellPath {
+  row: number;
+  col: number;
+  block: number;
+}
+
 /** A caret location in model coordinates: a block address plus a character
- * offset into the block's concatenated run text (UTF-16 units). */
+ * offset into the block's concatenated run text (UTF-16 units). When the
+ * addressed block is a table (SPEC-022), `cell` descends to a paragraph
+ * inside one of its cells and `offset` indexes that paragraph's text; a
+ * table address *without* `cell` is the table treated as an atom — offset 0
+ * is the position before it, offset 1 the position after — which is how
+ * ranges cover a whole table without addressing its interior. */
 export interface CaretPosition {
   section: number;
   block: number;
   offset: number;
+  cell?: CellPath;
+}
+
+/** A paragraph's address in the model: a top-level block, or — through
+ * `cell` — a paragraph inside a table cell (SPEC-022). The shared address
+ * shape for every per-paragraph command (commands.ts's touchedBlocks). */
+export interface ParagraphAddress {
+  section: number;
+  block: number;
+  cell?: CellPath;
 }
 
 /** Typed `null` seed for caret refs in `.vue` scripts, which espree bars
@@ -32,8 +59,22 @@ export function noCaret(): CaretPosition | null {
   return null;
 }
 
-/** The block's visible text: its runs' text concatenated. */
-export function blockText(block: Paragraph): string {
+/** The block's visible text: its runs' text concatenated. For a table, the
+ * text of every cell paragraph in DOM order — which is exactly what the
+ * rendered table element's `textContent` is, keeping the canvas's
+ * model/DOM text equality check meaningful (SPEC-022). */
+export function blockText(block: Block): string {
+  if (isTable(block)) {
+    let text = "";
+    for (const row of block.rows) {
+      for (const cell of row.cells) {
+        for (const paragraph of cell.blocks) {
+          text += blockText(paragraph);
+        }
+      }
+    }
+    return text;
+  }
   let text = "";
   for (const run of block.runs) {
     text += run.text;
@@ -41,7 +82,13 @@ export function blockText(block: Paragraph): string {
   return text;
 }
 
-export function blockLength(block: Paragraph): number {
+/** The block's caret-offset space. A table is an atom of length 1 (offset 0
+ * = before it, 1 = after it — see CaretPosition), never addressed by
+ * character. */
+export function blockLength(block: Block): number {
+  if (isTable(block)) {
+    return 1;
+  }
   let length = 0;
   for (const run of block.runs) {
     length += run.text.length;
@@ -49,13 +96,33 @@ export function blockLength(block: Paragraph): number {
   return length;
 }
 
-/** Negative when a precedes b, positive when a follows b, 0 when equal. */
+/** Negative when a precedes b, positive when a follows b, 0 when equal.
+ * Within one table block, a cell path orders by row, column, paragraph and
+ * offset; a table-atom caret (no cell) at offset 0 precedes the whole
+ * interior, at offset 1 follows it. */
 export function compareCaret(a: CaretPosition, b: CaretPosition): number {
   if (a.section !== b.section) {
     return a.section - b.section;
   }
   if (a.block !== b.block) {
     return a.block - b.block;
+  }
+  if (a.cell || b.cell) {
+    if (!a.cell) {
+      return a.offset <= 0 ? -1 : 1;
+    }
+    if (!b.cell) {
+      return b.offset <= 0 ? 1 : -1;
+    }
+    if (a.cell.row !== b.cell.row) {
+      return a.cell.row - b.cell.row;
+    }
+    if (a.cell.col !== b.cell.col) {
+      return a.cell.col - b.cell.col;
+    }
+    if (a.cell.block !== b.cell.block) {
+      return a.cell.block - b.cell.block;
+    }
   }
   return a.offset - b.offset;
 }
@@ -66,7 +133,9 @@ function clampNumber(value: number, min: number, max: number): number {
 
 /** Snaps a caret into the model's valid address space (indices and offset
  * clamped), so stale carets — e.g. restored from a record whose document
- * has since shrunk — can never address outside the tree. */
+ * has since shrunk — can never address outside the tree. A cell path is
+ * clamped into its table, dropped when the addressed block is not a table;
+ * a table addressed without a cell path clamps to its atom range 0..1. */
 export function clampCaret(
   model: DocumentModel,
   caret: CaretPosition,
@@ -74,8 +143,126 @@ export function clampCaret(
   const section = clampNumber(caret.section, 0, model.sections.length - 1);
   const blocks = model.sections[section].blocks;
   const block = clampNumber(caret.block, 0, blocks.length - 1);
-  const offset = clampNumber(caret.offset, 0, blockLength(blocks[block]));
+  const target = blocks[block];
+  if (isTable(target)) {
+    if (caret.cell) {
+      const row = clampNumber(caret.cell.row, 0, target.rows.length - 1);
+      const cells = target.rows[row].cells;
+      const col = clampNumber(caret.cell.col, 0, cells.length - 1);
+      const cellBlocks = cells[col].blocks;
+      const cellBlock = clampNumber(caret.cell.block, 0, cellBlocks.length - 1);
+      const offset = clampNumber(caret.offset, 0, blockLength(cellBlocks[cellBlock]));
+      return { section, block, offset, cell: { row, col, block: cellBlock } };
+    }
+    return { section, block, offset: clampNumber(caret.offset, 0, 1) };
+  }
+  const offset = clampNumber(caret.offset, 0, blockLength(target));
   return { section, block, offset };
+}
+
+/** The paragraph a caret addresses — through its cell path for a caret
+ * inside a table — or null for a table-atom caret, which addresses the
+ * table's edge rather than any paragraph. The caret must be clamped. */
+export function paragraphAtCaret(
+  model: DocumentModel,
+  caret: CaretPosition,
+): Paragraph | null {
+  return paragraphAt(model, caret);
+}
+
+/** The paragraph at an address, or null when the address points at a table
+ * block without descending into a cell. */
+export function paragraphAt(
+  model: DocumentModel,
+  address: ParagraphAddress,
+): Paragraph | null {
+  const block = model.sections[address.section].blocks[address.block];
+  if (isTable(block)) {
+    if (!address.cell) {
+      return null;
+    }
+    return block.rows[address.cell.row].cells[address.cell.col].blocks[address.cell.block];
+  }
+  return block;
+}
+
+/** `table` with the addressed cell's block list replaced — every container
+ * along the path (rows array, row, cells array, cell) is cloned, everything
+ * else shared, upholding the replace-don't-mutate contract one level down
+ * from the section's own blocks array. */
+export function withCellBlocks(
+  table: Table,
+  row: number,
+  col: number,
+  blocks: Paragraph[],
+): Table {
+  const rows = [...table.rows];
+  const cells = [...rows[row].cells];
+  cells[col] = { ...cells[col], blocks };
+  rows[row] = { ...rows[row], cells };
+  return { ...table, rows };
+}
+
+/** Splices a cell's block list (copy-on-write, see withCellBlocks) and
+ * writes the resulting table back into the section's blocks array. */
+function spliceCellBlocks(
+  model: DocumentModel,
+  section: number,
+  blockIndex: number,
+  row: number,
+  col: number,
+  start: number,
+  deleteCount: number,
+  ...items: Paragraph[]
+): void {
+  const table = model.sections[section].blocks[blockIndex];
+  if (!isTable(table)) {
+    return;
+  }
+  const blocks = [...table.rows[row].cells[col].blocks];
+  blocks.splice(start, deleteCount, ...items);
+  model.sections[section].blocks.splice(
+    blockIndex,
+    1,
+    withCellBlocks(table, row, col, blocks),
+  );
+}
+
+/** Replaces the paragraph at an address (copy-on-write through a table cell
+ * when the address descends into one). The shared write primitive of every
+ * per-paragraph command. */
+export function replaceParagraphAt(
+  model: DocumentModel,
+  address: ParagraphAddress,
+  next: Paragraph,
+): void {
+  spliceParagraphs(model, address, 1, next);
+}
+
+/** Splices the block list containing the addressed paragraph — the
+ * section's blocks, or the cell's own list (copy-on-write) for an address
+ * inside a table. The n-for-m generalisation of replaceParagraphAt, for
+ * callers (paste) that replace one paragraph with several. */
+export function spliceParagraphs(
+  model: DocumentModel,
+  address: ParagraphAddress,
+  deleteCount: number,
+  ...items: Paragraph[]
+): void {
+  if (address.cell) {
+    spliceCellBlocks(
+      model,
+      address.section,
+      address.block,
+      address.cell.row,
+      address.cell.col,
+      address.cell.block,
+      deleteCount,
+      ...items,
+    );
+    return;
+  }
+  model.sections[address.section].blocks.splice(address.block, deleteCount, ...items);
 }
 
 function sameFormatting(a: Run["formatting"], b: Run["formatting"]): boolean {
@@ -175,20 +362,13 @@ export function applyFormatPatch(base: RunFormatting, override: PendingFormat): 
   return formatting;
 }
 
-function replaceBlock(
-  model: DocumentModel,
-  section: number,
-  block: number,
-  next: Paragraph,
-): void {
-  model.sections[section].blocks.splice(block, 1, next);
-}
-
 /** Inserts text at the caret. The inserted text inherits the formatting of
  * the run it lands in (the run to the left at a boundary, matching how word
  * processors extend formatting while typing) — or, with `formatOverride`
  * set, that formatting with the override's keys forced on/off (SPEC-012's
- * pending format, AC-9, AC-10). Returns the caret after the inserted text. */
+ * pending format, AC-9, AC-10). Returns the caret after the inserted text.
+ * A table-atom caret (no cell path) is inert: there is no paragraph there
+ * to type into. */
 export function insertText(
   model: DocumentModel,
   caret: CaretPosition,
@@ -196,7 +376,10 @@ export function insertText(
   formatOverride?: PendingFormat | null,
 ): CaretPosition {
   const c = clampCaret(model, caret);
-  const block = model.sections[c.section].blocks[c.block];
+  const block = paragraphAt(model, c);
+  if (!block) {
+    return c;
+  }
   const [before, after] = splitRuns(block.runs, c.offset);
   const baseFormatting =
     before.length > 0
@@ -208,23 +391,28 @@ export function insertText(
     ? applyFormatPatch(baseFormatting, formatOverride)
     : baseFormatting;
   const inserted: Run = { text, formatting };
-  replaceBlock(model, c.section, c.block, {
+  replaceParagraphAt(model, c, {
     ...block,
     runs: normalizeRuns([...before, inserted, ...after]),
   });
-  return { section: c.section, block: c.block, offset: c.offset + text.length };
+  return { ...c, offset: c.offset + text.length };
 }
 
-/** Splits the caret's paragraph in two (the Enter key). Both halves keep the
- * paragraph's block-level formatting — including list membership, which is
- * what makes Enter in a list item create the next item at the same level
- * (SPEC-018 AC-6). Returns the caret at the start of the second half. */
+/** Splits the caret's paragraph in two (the Enter key) — inside its cell
+ * when the caret is in a table (SPEC-022), which is how a cell grows a
+ * second paragraph. Both halves keep the paragraph's block-level formatting
+ * — including list membership, which is what makes Enter in a list item
+ * create the next item at the same level (SPEC-018 AC-6). Returns the caret
+ * at the start of the second half. A table-atom caret is inert. */
 export function splitParagraph(
   model: DocumentModel,
   caret: CaretPosition,
 ): CaretPosition {
   const c = clampCaret(model, caret);
-  const block = model.sections[c.section].blocks[c.block];
+  const block = paragraphAt(model, c);
+  if (!block) {
+    return c;
+  }
   const [before, after] = splitRuns(block.runs, c.offset);
   const first: Paragraph = { ...block, runs: before };
   const second: Paragraph = {
@@ -235,61 +423,218 @@ export function splitParagraph(
   if (block.list) {
     second.list = { ...block.list };
   }
+  if (c.cell) {
+    spliceCellBlocks(
+      model,
+      c.section,
+      c.block,
+      c.cell.row,
+      c.cell.col,
+      c.cell.block,
+      1,
+      first,
+      second,
+    );
+    return {
+      section: c.section,
+      block: c.block,
+      offset: 0,
+      cell: { ...c.cell, block: c.cell.block + 1 },
+    };
+  }
   model.sections[c.section].blocks.splice(c.block, 1, first, second);
   return { section: c.section, block: c.block + 1, offset: 0 };
 }
 
-/** Deletes everything between two carets (any order). Deleting across a
- * paragraph boundary merges the boundary paragraphs (the surviving one keeps
- * the first paragraph's block formatting); across a section boundary the
- * sections merge too. Returns the caret at the deletion point. */
-export function deleteRange(
+function sameCell(a: CaretPosition, b: CaretPosition): boolean {
+  return (
+    !!a.cell &&
+    !!b.cell &&
+    a.section === b.section &&
+    a.block === b.block &&
+    a.cell.row === b.cell.row &&
+    a.cell.col === b.cell.col
+  );
+}
+
+/** Snaps an ordered range whose ends live in different containers onto
+ * table-atom boundaries (SPEC-022): a range across two cells — or from a
+ * cell out of its table — covers the WHOLE table, never a partial grid, so
+ * range edits can treat every table as an indivisible unit. Ends already in
+ * the same container (both top-level, or both in one cell) pass through
+ * untouched. Exported for the range-consuming commands, which must agree
+ * with deleteRange on what a cross-container selection covers. */
+export function normalizeRange(
   model: DocumentModel,
   a: CaretPosition,
   b: CaretPosition,
-): CaretPosition {
+): { start: CaretPosition; end: CaretPosition } {
   let start = clampCaret(model, a);
   let end = clampCaret(model, b);
   if (compareCaret(start, end) > 0) {
     [start, end] = [end, start];
   }
+  if (sameCell(start, end)) {
+    return { start, end };
+  }
+  if (start.cell) {
+    start = { section: start.section, block: start.block, offset: 0 };
+  }
+  if (end.cell) {
+    end = { section: end.section, block: end.block, offset: 1 };
+  }
+  return { start, end };
+}
+
+// A table-atom END of a still-open range is rephrased as its neighbouring
+// paragraph's edge where one exists, so the block-splicing logic below only
+// ever sees a table as either fully covered or not covered at all: a start
+// sitting AFTER a table (offset 1) advances to the next block's start; an
+// end sitting BEFORE one (offset 0) retreats to the previous block's end.
+function resolveTableEdges(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+): { start: CaretPosition; end: CaretPosition } {
+  const startBlock = model.sections[start.section].blocks[start.block];
+  if (isTable(startBlock) && !start.cell && start.offset >= 1) {
+    const next = nextBlockStart(model, start.section, start.block);
+    if (next) {
+      start = next;
+    }
+  }
+  const endBlock = model.sections[end.section].blocks[end.block];
+  if (isTable(endBlock) && !end.cell && end.offset <= 0) {
+    const prev = previousBlockEnd(model, end.section, end.block);
+    if (prev) {
+      end = prev;
+    }
+  }
+  return { start, end };
+}
+
+/** Deletes everything between two carets (any order). Deleting across a
+ * paragraph boundary merges the boundary paragraphs (the surviving one keeps
+ * the first paragraph's block formatting); across a section boundary the
+ * sections merge too. A range that reaches into a table covers the whole
+ * table (see normalizeRange) and deletes it whole — cells are never merged
+ * with outside text. Returns the caret at the deletion point. */
+export function deleteRange(
+  model: DocumentModel,
+  a: CaretPosition,
+  b: CaretPosition,
+): CaretPosition {
+  let { start, end } = normalizeRange(model, a, b);
   if (compareCaret(start, end) === 0) {
+    return start;
+  }
+  // Both ends inside one cell: the same-block/cross-paragraph logic below,
+  // scoped to the cell's own block list.
+  if (start.cell && end.cell) {
+    const cell = start.cell;
+    const table = model.sections[start.section].blocks[start.block];
+    if (!isTable(table)) {
+      return start;
+    }
+    const cellBlocks = table.rows[cell.row].cells[cell.col].blocks;
+    const startPara = cellBlocks[cell.block];
+    if (cell.block === end.cell!.block) {
+      const [before] = splitRuns(startPara.runs, start.offset);
+      const [, after] = splitRuns(startPara.runs, end.offset);
+      replaceParagraphAt(model, start, {
+        ...startPara,
+        runs: normalizeRuns([...before, ...after]),
+      });
+      return start;
+    }
+    const endPara = cellBlocks[end.cell!.block];
+    const [before] = splitRuns(startPara.runs, start.offset);
+    const [, after] = splitRuns(endPara.runs, end.offset);
+    spliceCellBlocks(
+      model,
+      start.section,
+      start.block,
+      cell.row,
+      cell.col,
+      cell.block,
+      end.cell!.block - cell.block + 1,
+      { ...startPara, runs: normalizeRuns([...before, ...after]) },
+    );
+    return start;
+  }
+  ({ start, end } = resolveTableEdges(model, start, end));
+  if (compareCaret(start, end) >= 0) {
     return start;
   }
   const startBlock = model.sections[start.section].blocks[start.block];
   const endBlock = model.sections[end.section].blocks[end.block];
   if (startBlock === endBlock) {
+    if (isTable(startBlock)) {
+      // The range covers exactly this table atom: remove it whole. The
+      // caret lands where the table was (SPEC-022 AC-23).
+      const blocks = model.sections[start.section].blocks;
+      blocks.splice(start.block, 1);
+      if (blocks.length === 0) {
+        blocks.push({ type: "paragraph", runs: [] });
+      }
+      return {
+        section: start.section,
+        block: Math.min(start.block, blocks.length - 1),
+        offset: 0,
+      };
+    }
     const [before] = splitRuns(startBlock.runs, start.offset);
     const [, after] = splitRuns(startBlock.runs, end.offset);
-    replaceBlock(model, start.section, start.block, {
+    replaceParagraphAt(model, start, {
       ...startBlock,
       runs: normalizeRuns([...before, ...after]),
     });
     return start;
   }
-  const [before] = splitRuns(startBlock.runs, start.offset);
-  const [, after] = splitRuns(endBlock.runs, end.offset);
-  const merged: Paragraph = {
-    ...startBlock,
-    runs: normalizeRuns([...before, ...after]),
-  };
-  if (start.section === end.section) {
-    model.sections[start.section].blocks.splice(
-      start.block,
-      end.block - start.block + 1,
-      merged,
-    );
+  // Cross-block: a boundary paragraph contributes its kept half; a boundary
+  // table (always fully covered after resolveTableEdges) contributes
+  // nothing and is removed whole.
+  const head = isTable(startBlock) ? null : splitRuns(startBlock.runs, start.offset)[0];
+  const tail = isTable(endBlock) ? null : splitRuns(endBlock.runs, end.offset)[1];
+  let replacement: Paragraph | null;
+  if (head !== null && tail !== null) {
+    replacement = { ...(startBlock as Paragraph), runs: normalizeRuns([...head, ...tail]) };
+  } else if (head !== null) {
+    replacement = { ...(startBlock as Paragraph), runs: normalizeRuns(head) };
+  } else if (tail !== null) {
+    replacement = { ...(endBlock as Paragraph), runs: normalizeRuns(tail) };
   } else {
-    const startSection = model.sections[start.section];
-    const endSection = model.sections[end.section];
-    startSection.blocks = [
-      ...startSection.blocks.slice(0, start.block),
-      merged,
-      ...endSection.blocks.slice(end.block + 1),
-    ];
-    model.sections.splice(start.section + 1, end.section - start.section);
+    replacement = null;
   }
-  return start;
+  const inserted = replacement ? [replacement] : [];
+  if (start.section === end.section) {
+    const blocks = model.sections[start.section].blocks;
+    blocks.splice(start.block, end.block - start.block + 1, ...inserted);
+    if (blocks.length === 0) {
+      blocks.push({ type: "paragraph", runs: [] });
+    }
+    return {
+      section: start.section,
+      block: Math.min(start.block, blocks.length - 1),
+      offset: head !== null ? start.offset : 0,
+    };
+  }
+  const startSection = model.sections[start.section];
+  const endSection = model.sections[end.section];
+  startSection.blocks = [
+    ...startSection.blocks.slice(0, start.block),
+    ...inserted,
+    ...endSection.blocks.slice(end.block + 1),
+  ];
+  if (startSection.blocks.length === 0) {
+    startSection.blocks.push({ type: "paragraph", runs: [] });
+  }
+  model.sections.splice(start.section + 1, end.section - start.section);
+  return {
+    section: start.section,
+    block: Math.min(start.block, startSection.blocks.length - 1),
+    offset: head !== null ? start.offset : 0,
+  };
 }
 
 /** The address one position past the end of a block, or null at the end of
@@ -331,17 +676,40 @@ function previousBlockEnd(
 
 /** Backspace: deletes the character before the caret, or merges with the
  * previous paragraph when the caret is at a paragraph start. No-op at the
- * very start of the document. */
+ * very start of the document — and at every table boundary (SPEC-022): at
+ * the start of a cell's first paragraph, and just after a table, nothing is
+ * deleted, so no keystroke ever merges cell content with outside text or
+ * silently swallows a table. */
 export function deleteBackward(
   model: DocumentModel,
   caret: CaretPosition,
 ): CaretPosition {
   const c = clampCaret(model, caret);
+  if (!paragraphAt(model, c)) {
+    return c;
+  }
   if (c.offset > 0) {
     return deleteRange(model, { ...c, offset: c.offset - 1 }, c);
   }
+  if (c.cell) {
+    if (c.cell.block === 0) {
+      return c;
+    }
+    const table = model.sections[c.section].blocks[c.block];
+    if (!isTable(table)) {
+      return c;
+    }
+    const prevBlocks = table.rows[c.cell.row].cells[c.cell.col].blocks;
+    const prev: CaretPosition = {
+      section: c.section,
+      block: c.block,
+      offset: blockLength(prevBlocks[c.cell.block - 1]),
+      cell: { ...c.cell, block: c.cell.block - 1 },
+    };
+    return deleteRange(model, prev, c);
+  }
   const prev = previousBlockEnd(model, c.section, c.block);
-  if (!prev) {
+  if (!prev || isTable(model.sections[prev.section].blocks[prev.block])) {
     return c;
   }
   return deleteRange(model, prev, c);
@@ -349,18 +717,39 @@ export function deleteBackward(
 
 /** Forward delete: deletes the character after the caret, or merges with the
  * next paragraph when the caret is at a paragraph end. No-op at the very end
- * of the document. */
+ * of the document — and at every table boundary (SPEC-022), mirroring
+ * deleteBackward's guarantees. */
 export function deleteForward(
   model: DocumentModel,
   caret: CaretPosition,
 ): CaretPosition {
   const c = clampCaret(model, caret);
-  const block = model.sections[c.section].blocks[c.block];
-  if (c.offset < blockLength(block)) {
+  const paragraph = paragraphAt(model, c);
+  if (!paragraph) {
+    return c;
+  }
+  if (c.offset < blockLength(paragraph)) {
     return deleteRange(model, c, { ...c, offset: c.offset + 1 });
   }
+  if (c.cell) {
+    const table = model.sections[c.section].blocks[c.block];
+    if (!isTable(table)) {
+      return c;
+    }
+    const cellBlocks = table.rows[c.cell.row].cells[c.cell.col].blocks;
+    if (c.cell.block >= cellBlocks.length - 1) {
+      return c;
+    }
+    const next: CaretPosition = {
+      section: c.section,
+      block: c.block,
+      offset: 0,
+      cell: { ...c.cell, block: c.cell.block + 1 },
+    };
+    return deleteRange(model, c, next);
+  }
   const next = nextBlockStart(model, c.section, c.block);
-  if (!next) {
+  if (!next || isTable(model.sections[next.section].blocks[next.block])) {
     return c;
   }
   return deleteRange(model, c, next);
@@ -383,43 +772,111 @@ export function formattingAtOffset(block: Paragraph, offset: number): RunFormatt
   return {};
 }
 
-/** Every block address from `start`'s block up to and including `end`'s,
- * in document order. Callers pass an already-ordered range (`start` at or
- * before `end`). */
-function blockAddressesInRange(
-  model: DocumentModel,
-  start: CaretPosition,
-  end: CaretPosition,
-): Array<{ section: number; block: number }> {
-  const addresses: Array<{ section: number; block: number }> = [];
-  for (let section = start.section; section <= end.section; section++) {
-    const blocks = model.sections[section].blocks;
-    const from = section === start.section ? start.block : 0;
-    const to = section === end.section ? end.block : blocks.length - 1;
-    for (let block = from; block <= to; block++) {
-      addresses.push({ section, block });
-    }
-  }
-  return addresses;
+/** One paragraph's share of a range: its address plus the covered character
+ * span within it (`from` may equal `to` for a paragraph the range passes
+ * through without covering text — commands that address paragraphs rather
+ * than characters still want those). */
+export interface ParagraphSlice {
+  address: ParagraphAddress;
+  from: number;
+  to: number;
 }
 
-/** Every run's formatting strictly between `start` and `end` (already
- * ordered), including runs split at the range's boundaries. A paragraph the
- * range merely passes through without covering any of its characters (an
- * empty paragraph, or a boundary landing exactly between two of its runs)
- * contributes nothing. */
+function cellSlices(
+  section: number,
+  block: number,
+  table: Table,
+): ParagraphSlice[] {
+  const slices: ParagraphSlice[] = [];
+  for (let row = 0; row < table.rows.length; row++) {
+    const cells = table.rows[row].cells;
+    for (let col = 0; col < cells.length; col++) {
+      const blocks = cells[col].blocks;
+      for (let index = 0; index < blocks.length; index++) {
+        slices.push({
+          address: { section, block, cell: { row, col, block: index } },
+          from: 0,
+          to: blockLength(blocks[index]),
+        });
+      }
+    }
+  }
+  return slices;
+}
+
+/** Every paragraph the range touches, with its covered span, in document
+ * order — through table cells: a range confined to one cell yields that
+ * cell's paragraphs, and a top-level range that covers a table yields every
+ * paragraph of every cell (fully covered), which is what makes select-all
+ * formatting reach table content (SPEC-022). Ends in different containers
+ * are snapped by normalizeRange first, so a table is always either fully
+ * covered or not touched at all. */
+export function paragraphSlicesInRange(
+  model: DocumentModel,
+  a: CaretPosition,
+  b: CaretPosition,
+): ParagraphSlice[] {
+  let { start, end } = normalizeRange(model, a, b);
+  if (start.cell && end.cell) {
+    const table = model.sections[start.section].blocks[start.block];
+    if (!isTable(table)) {
+      return [];
+    }
+    const blocks = table.rows[start.cell.row].cells[start.cell.col].blocks;
+    const slices: ParagraphSlice[] = [];
+    for (let index = start.cell.block; index <= end.cell.block; index++) {
+      slices.push({
+        address: {
+          section: start.section,
+          block: start.block,
+          cell: { ...start.cell, block: index },
+        },
+        from: index === start.cell.block ? start.offset : 0,
+        to: index === end.cell.block ? end.offset : blockLength(blocks[index]),
+      });
+    }
+    return slices;
+  }
+  ({ start, end } = resolveTableEdges(model, start, end));
+  if (compareCaret(start, end) > 0) {
+    return [];
+  }
+  const slices: ParagraphSlice[] = [];
+  for (let section = start.section; section <= end.section; section++) {
+    const blocks = model.sections[section].blocks;
+    const first = section === start.section ? start.block : 0;
+    const last = section === end.section ? end.block : blocks.length - 1;
+    for (let block = first; block <= last; block++) {
+      const target = blocks[block];
+      if (isTable(target)) {
+        slices.push(...cellSlices(section, block, target));
+        continue;
+      }
+      const from = section === start.section && block === start.block ? start.offset : 0;
+      const to =
+        section === end.section && block === end.block ? end.offset : blockLength(target);
+      slices.push({ address: { section, block }, from, to });
+    }
+  }
+  return slices;
+}
+
+/** Every run's formatting strictly between `start` and `end`, including
+ * runs split at the range's boundaries. A paragraph the range merely passes
+ * through without covering any of its characters (an empty paragraph, or a
+ * boundary landing exactly between two of its runs) contributes nothing. */
 export function runFormattingsInRange(
   model: DocumentModel,
   start: CaretPosition,
   end: CaretPosition,
 ): RunFormatting[] {
   const formattings: RunFormatting[] = [];
-  for (const { section, block } of blockAddressesInRange(model, start, end)) {
-    const paragraph = model.sections[section].blocks[block];
-    const from = section === start.section && block === start.block ? start.offset : 0;
-    const to =
-      section === end.section && block === end.block ? end.offset : blockLength(paragraph);
+  for (const { address, from, to } of paragraphSlicesInRange(model, start, end)) {
     if (from >= to) {
+      continue;
+    }
+    const paragraph = paragraphAt(model, address);
+    if (!paragraph) {
       continue;
     }
     const [, tail] = splitRuns(paragraph.runs, from);
@@ -431,23 +888,23 @@ export function runFormattingsInRange(
   return formattings;
 }
 
-/** Applies a format patch to every run between `start` and `end` (already
- * ordered), splitting the runs straddling the range's boundaries first and
- * merging the result back down to the minimum number of runs afterward
- * (SPEC-012 AC-7, AC-8, AC-20, AC-21; SPEC-013 extends the patch beyond
- * boolean toggles — see PendingFormat for the per-key off semantics). */
+/** Applies a format patch to every run between `start` and `end`, splitting
+ * the runs straddling the range's boundaries first and merging the result
+ * back down to the minimum number of runs afterward (SPEC-012 AC-7, AC-8,
+ * AC-20, AC-21; SPEC-013 extends the patch beyond boolean toggles — see
+ * PendingFormat for the per-key off semantics). */
 export function patchFormatting(
   model: DocumentModel,
   start: CaretPosition,
   end: CaretPosition,
   patch: PendingFormat,
 ): void {
-  for (const { section, block } of blockAddressesInRange(model, start, end)) {
-    const paragraph = model.sections[section].blocks[block];
-    const from = section === start.section && block === start.block ? start.offset : 0;
-    const to =
-      section === end.section && block === end.block ? end.offset : blockLength(paragraph);
+  for (const { address, from, to } of paragraphSlicesInRange(model, start, end)) {
     if (from >= to) {
+      continue;
+    }
+    const paragraph = paragraphAt(model, address);
+    if (!paragraph) {
       continue;
     }
     const [before, tail] = splitRuns(paragraph.runs, from);
@@ -456,7 +913,7 @@ export function patchFormatting(
       text: run.text,
       formatting: applyFormatPatch(run.formatting, patch),
     }));
-    replaceBlock(model, section, block, {
+    replaceParagraphAt(model, address, {
       ...paragraph,
       runs: normalizeRuns([...before, ...changed, ...after]),
     });

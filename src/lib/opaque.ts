@@ -233,18 +233,27 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
       }
       if (index < section.blocks.length) {
         const paragraphNumber = paragraphOffset + index + 1;
-        for (const inline of section.blocks[index].opaqueInlines ?? []) {
-          dropped.push(record(nodeKind(inline.xml, "opaqueInline"), `paragraph ${paragraphNumber}`, target));
-        }
-        // Run shading preserved beside a highlight (SPEC-013): ODF has one
-        // background slot, which the highlight occupies, so a .docx → .odt
-        // save loses the shading. One record per paragraph, not per run —
-        // the report locates by paragraph anyway.
-        if (
-          target === "odt" &&
-          section.blocks[index].runs.some((run) => run.formatting.shadingFill !== undefined)
-        ) {
-          dropped.push(record("runShading", `paragraph ${paragraphNumber}`, target));
+        const blockAt = section.blocks[index];
+        // A table's cell paragraphs are inspected too (SPEC-022); their
+        // records locate by the table's own block position.
+        const paragraphs =
+          blockAt.type === "table"
+            ? blockAt.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
+            : [blockAt];
+        for (const paragraph of paragraphs) {
+          for (const inline of paragraph.opaqueInlines ?? []) {
+            dropped.push(record(nodeKind(inline.xml, "opaqueInline"), `paragraph ${paragraphNumber}`, target));
+          }
+          // Run shading preserved beside a highlight (SPEC-013): ODF has one
+          // background slot, which the highlight occupies, so a .docx → .odt
+          // save loses the shading. One record per paragraph, not per run —
+          // the report locates by paragraph anyway.
+          if (
+            target === "odt" &&
+            paragraph.runs.some((run) => run.formatting.shadingFill !== undefined)
+          ) {
+            dropped.push(record("runShading", `paragraph ${paragraphNumber}`, target));
+          }
         }
       }
     }

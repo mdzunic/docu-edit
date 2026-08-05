@@ -202,10 +202,85 @@ export interface Paragraph {
   opaqueInlines?: OpaqueInline[];
 }
 
+// --- tables (SPEC-022) ------------------------------------------------------
+
+/** One table cell: a nested block container holding paragraphs only (nested
+ * tables are out of scope until further notice — SPEC-022). Always at least
+ * one paragraph, so a caret can land in any cell. */
+export interface TableCell {
+  blocks: Paragraph[];
+  /** Verbatim `w:tcPr` from a .docx source, re-emitted on a same-format
+   * save so unmodelled cell properties (borders, shading, …) survive
+   * (SPEC-008's fidelity rule). Absent on cells created in the editor. */
+  docxTcPr?: string;
+  /** `table:style-name` of the source .odt cell — re-emitted so the
+   * preserved automatic style (sourceXml.odtAutomaticStyles) applies
+   * again. */
+  odtStyleName?: string;
+}
+
+/** One table row. Rows carry no modelled formatting yet (SPEC-023); the
+ * source formats' row properties are preserved verbatim per format. */
+export interface TableRow {
+  cells: TableCell[];
+  /** Verbatim `w:trPr` from a .docx source (row height, header flag, …). */
+  docxTrPr?: string;
+  /** `table:style-name` of the source .odt row. */
+  odtStyleName?: string;
+}
+
+/** A table block (SPEC-022): a rectangular grid of cells. Every row has
+ * `columnWidthsCm.length` cells — merged cells are out of scope (SPEC-023),
+ * so the grid is always regular. */
+export interface Table {
+  type: "table";
+  rows: TableRow[];
+  /** Column widths in cm, one per column — the `w:tblGrid` / ODF
+   * table-column definitions both readers resolve and both writers emit. */
+  columnWidthsCm: number[];
+  /** Verbatim `w:tblPr` from a .docx source (table borders, style ref, …). */
+  docxTblPr?: string;
+  /** `table:name` of the source .odt table (user-facing table name). */
+  odtName?: string;
+  /** `table:style-name` of the source .odt table. */
+  odtStyleName?: string;
+  /** Per-column `table:style-name`s of the source .odt table's
+   * `table:table-column` elements; entries may be undefined for columns
+   * inserted in the editor (the writer generates a style for those). */
+  odtColumnStyleNames?: Array<string | undefined>;
+}
+
+/** Whether a block is a table — the one narrowing helper every consumer of
+ * the widened Block union shares (also usable from espree-parsed `.vue`
+ * scripts, which cannot write the type predicate themselves). */
+export function isTable(block: Block | undefined): block is Table {
+  return block?.type === "table";
+}
+
+/** Typed pass-through for a Block a `.vue` template renders down the
+ * paragraph branch — the branch itself guards on the block kind, but the
+ * espree-parsed script cannot express the narrowing (same constraint as
+ * asCharacterFormatKey). */
+export function asParagraphBlock(value: Block): Paragraph {
+  return value as Paragraph;
+}
+
+/** The block as a paragraph, throwing on anything else — the narrowing for
+ * call sites that know the block kind by construction (tests and fixture
+ * builders), where silently reading a table as a paragraph would hide a
+ * real defect. */
+export function asParagraph(block: Block | undefined): Paragraph {
+  if (!block || block.type !== "paragraph") {
+    throw new Error("expected a paragraph block");
+  }
+  return block;
+}
+
 /** A block-level XML element the reader does not model (SPEC-008) — e.g. a
- * `w:tbl`, a block-level `w:sdt` content control or an ODF `table:table` —
- * held verbatim, anchored to its position among the section's blocks, and
- * re-emitted in place on a same-format save. */
+ * block-level `w:sdt` content control, a complex (merged-cell/nested)
+ * table, or an ODF `draw:frame` — held verbatim, anchored to its position
+ * among the section's blocks, and re-emitted in place on a same-format
+ * save. */
 export interface OpaqueBlock {
   /** Self-contained XML serialisation, compared canonically (see
    * OpaqueInline.xml). */
@@ -215,9 +290,9 @@ export interface OpaqueBlock {
   blockIndex: number;
 }
 
-/** Block-level children of a section. Paragraph is the only kind for now;
- * later specs (tables, images) extend this union. */
-export type Block = Paragraph;
+/** Block-level children of a section. Paragraphs and tables (SPEC-022);
+ * later specs (images, …) extend this union further. */
+export type Block = Paragraph | Table;
 
 /** A section groups block-level content; documents have one or more. */
 export interface Section {
