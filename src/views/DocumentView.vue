@@ -87,6 +87,7 @@ import {
   caretAtClientPoint,
   caretClientRect,
   caretNearClientPoint,
+  caretOnBoundaryLine,
   measureTableHandles,
   noTableHandleGeometry,
 } from "../lib/caretGeometry";
@@ -1255,6 +1256,60 @@ function moveCaretByPage(direction = 1, extend = false) {
 
 // --- tables: arrow fallback, drag selection, handles (SPEC-022) -------------
 
+/** Deterministic cell-boundary arrows (AC-13): a collapsed caret exactly at
+ * the boundary its arrow points across — end of the cell for ArrowRight,
+ * start for ArrowLeft, first/last visual line of the first/last paragraph
+ * for ArrowUp/ArrowDown — moves straight to the neighbouring cell (or out
+ * of the table) instead of relying on the browser. Returns true when the
+ * event was consumed. */
+function handleTableArrowKey(event = new KeyboardEvent("keydown")) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return false;
+  }
+  const selection = currentSelection(root);
+  if (!selection || !isCollapsed(selection) || !selection.focus.cell) {
+    return false;
+  }
+  const focus = selection.focus;
+  const cellBlock = paragraphAtCaret(model, focus);
+  const cellPath = focus.cell;
+  if (!cellBlock || !cellPath) {
+    return false;
+  }
+  const table = model.sections[focus.section].blocks[focus.block];
+  if (!isTable(table)) {
+    return false;
+  }
+  const cellBlocks = table.rows[cellPath.row].cells[cellPath.col].blocks;
+  const atFirstParagraph = cellPath.block === 0;
+  const atLastParagraph = cellPath.block === cellBlocks.length - 1;
+  let direction = "";
+  if (event.key === "ArrowRight" && atLastParagraph && focus.offset >= blockLength(cellBlock)) {
+    direction = "right";
+  } else if (event.key === "ArrowLeft" && atFirstParagraph && focus.offset === 0) {
+    direction = "left";
+  } else if (event.key === "ArrowDown" && atLastParagraph && caretOnBoundaryLine(root, focus, "last")) {
+    direction = "down";
+  } else if (event.key === "ArrowUp" && atFirstParagraph && caretOnBoundaryLine(root, focus, "first")) {
+    direction = "up";
+  }
+  if (direction === "") {
+    return false;
+  }
+  event.preventDefault();
+  const target = arrowEscapeCaret(
+    model,
+    focus,
+    direction === "up" ? "up" : direction === "down" ? "down" : direction === "left" ? "left" : "right",
+  );
+  if (target) {
+    applyCaretMove(target);
+  }
+  return true;
+}
+
 /** After the browser processed an arrow keydown with a collapsed caret in a
  * table cell, checks whether the caret actually moved; when it did not, the
  * model-level escape (lib/tables.arrowEscapeCaret) moves it to the
@@ -1744,13 +1799,17 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     !event.shiftKey &&
     (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight")
   ) {
-    // Cell-boundary arrow movement (SPEC-022 AC-13, AC-14). Not prevented:
-    // the browser's native (visual) movement handles the common cases,
-    // including crossing into a neighbouring cell; the scheduled check only
-    // steps in when the native move made no progress, so the caret can
-    // never be trapped in a cell. Deliberately outside the SPEC-021
-    // registry, like Escape: contextual caret behaviour, not a named
-    // command.
+    // Cell-boundary arrow movement (SPEC-022 AC-13, AC-14). A caret at the
+    // exact boundary in the arrow's direction moves deterministically to
+    // the neighbouring cell (or out of the table); anywhere else the
+    // browser's native movement handles it, backed by a scheduled check
+    // that steps in only when the native move made no progress — so the
+    // caret can never be trapped in a cell. Deliberately outside the
+    // SPEC-021 registry, like Escape: contextual caret behaviour, not a
+    // named command.
+    if (handleTableArrowKey(event)) {
+      return;
+    }
     scheduleTableArrowFallback(event.key);
   }
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "v") {

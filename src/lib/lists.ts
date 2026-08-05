@@ -4,13 +4,14 @@
 // sequence, which is what makes numbering continuous across consecutive
 // items (AC-10) and restart after an interruption (AC-11) without any
 // bookkeeping in the editing commands.
-import type {
-  Block,
-  DocumentModel,
-  ListFormatting,
-  ListMarkerStyle,
-  ListType,
-  Paragraph,
+import {
+  isTable,
+  type Block,
+  type DocumentModel,
+  type ListFormatting,
+  type ListMarkerStyle,
+  type ListType,
+  type Paragraph,
 } from "./documentModel";
 
 /** Levels run 1..9 (AC-3: Tab at level 9 has no effect). */
@@ -168,7 +169,7 @@ export function markerText(style: ListMarkerStyle, ordinal: number): string {
 }
 
 function listOf(block: Block | undefined): ListFormatting | undefined {
-  return block?.type === "paragraph" ? block.list : undefined;
+  return block === undefined || isTable(block) ? undefined : block.list;
 }
 
 /** Every block's displayed marker for one block list, in order — "" for

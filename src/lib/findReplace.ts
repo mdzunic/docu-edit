@@ -8,7 +8,7 @@
 // Scope (AC "search covers body text"): every paragraph of every section is
 // searched. Headers, footers and footnotes are not part of the model yet, so
 // they are excluded for free — the find bar states this to the user.
-import type { DocumentModel, RunFormatting } from "./documentModel";
+import { isTable, type DocumentModel, type RunFormatting } from "./documentModel";
 import {
   blockText,
   clampCaret,
@@ -121,7 +121,7 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
     section.blocks.forEach((block, blockIndex) => {
       // Table content is not searched (SPEC-022): a FindMatch addresses a
       // top-level block's character space, which a table does not have.
-      if (block.type !== "paragraph") {
+      if (isTable(block)) {
         return;
       }
       const text = blockText(block);
@@ -209,7 +209,7 @@ export function replaceMatches(
   for (const [key, blockMatches] of byBlock) {
     const [section, block] = key.split(":").map(Number);
     const targetBlock = next.sections[section].blocks[block];
-    if (targetBlock.type !== "paragraph") {
+    if (isTable(targetBlock)) {
       continue;
     }
     let runs = targetBlock.runs;

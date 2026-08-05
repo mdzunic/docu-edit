@@ -8,6 +8,7 @@ import {
   caretFromDomPoint,
   cellPathOf,
   domPointForCaret,
+  paragraphElementForCaret,
   type DomPoint,
 } from "./domCaret";
 import type { CaretPosition } from "./textEditing";
@@ -102,6 +103,31 @@ export function caretNearClientPoint(
     caret.cell = cell;
   }
   return caret;
+}
+
+/** Whether a caret sits on its paragraph's first/last visual line — what
+ * decides if ArrowUp/ArrowDown at a table-cell boundary should leave the
+ * cell (SPEC-022 AC-13) or keep moving within the paragraph's wrapped
+ * lines. True when the environment cannot measure (jsdom): a paragraph is
+ * then treated as a single line. */
+export function caretOnBoundaryLine(
+  root: Element,
+  caret: CaretPosition,
+  edge: "first" | "last",
+): boolean {
+  const rect = caretClientRect(root, caret);
+  const paragraph = paragraphElementForCaret(root, caret);
+  if (!rect || !paragraph) {
+    return true;
+  }
+  const paragraphRect = paragraph.getBoundingClientRect();
+  if (rect.height <= 0) {
+    return true;
+  }
+  if (edge === "last") {
+    return paragraphRect.bottom - rect.bottom < rect.height * 0.5;
+  }
+  return rect.top - paragraphRect.top < rect.height * 0.5;
 }
 
 /** The measured geometry the table hover handles position from (SPEC-022

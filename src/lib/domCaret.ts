@@ -194,6 +194,23 @@ export function domPointForCaret(
   return { node: paragraph, offset: 0 };
 }
 
+/** The canvas element rendering a caret's paragraph, or null when it is
+ * not in the DOM — the measurement anchor for caretGeometry's boundary-line
+ * checks (SPEC-022). */
+export function paragraphElementForCaret(
+  root: Element,
+  caret: CaretPosition,
+): Element | null {
+  const address = `[data-section="${caret.section}"][data-block="${caret.block}"]`;
+  if (caret.cell) {
+    return root.querySelector(
+      `${address}[data-row="${caret.cell.row}"][data-col="${caret.cell.col}"]` +
+        `[data-cell-block="${caret.cell.block}"]`,
+    );
+  }
+  return root.querySelector(`${address}:not([data-row])`);
+}
+
 function selectionFor(root: Element): Selection | null {
   return root.ownerDocument.defaultView?.getSelection() ?? null;
 }
