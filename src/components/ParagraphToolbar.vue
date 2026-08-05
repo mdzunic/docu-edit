@@ -5,9 +5,10 @@ import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Paragraph geometry controls (SPEC-014): alignment, indent step buttons,
 // the line-spacing menu (presets, the space-before toggle, "Custom
-// spacing…") and the RTL direction toggle. Runtime prop/emit declarations,
-// not the defineProps<{...}>() generics — see AppShell.vue's comment on the
-// same espree constraint.
+// spacing…") and the RTL direction toggle — plus the bulleted/numbered
+// list toggles with their marker-style dropdowns (SPEC-018). Runtime
+// prop/emit declarations, not the defineProps<{...}>() generics — see
+// AppShell.vue's comment on the same espree constraint.
 const props = defineProps({
   /** The first touched paragraph's effective alignment ("left" when the
    * paragraph doesn't set one) — drives the pressed state (AC-1). */
@@ -17,6 +18,14 @@ const props = defineProps({
   spaceBefore: { type: Boolean, default: false },
   /** The first touched paragraph's direction; "ltr" when unset (AC-24). */
   direction: { type: String, default: "ltr" },
+  /** True when every touched paragraph is a bulleted list item — the
+   * bulleted toggle's pressed state (SPEC-018 AC-1). */
+  bulleted: { type: Boolean, default: false },
+  /** True when every touched paragraph is a numbered list item (AC-2). */
+  numbered: { type: Boolean, default: false },
+  /** The current level's effective marker style key ("disc", "decimal",
+   * …), "" outside a list — checks the matching dropdown entry (AC-12). */
+  listMarker: { type: String, default: "" },
   disabled: { type: Boolean, default: false },
 });
 
@@ -27,6 +36,8 @@ const emit = defineEmits([
   "custom-spacing",
   "toggle-space-before",
   "toggle-direction",
+  "toggle-list",
+  "list-marker",
 ]);
 
 const mod = modifierKeyLabel();
@@ -47,10 +58,31 @@ const SPACING_PRESETS = [
   { key: "double", label: "Double", value: 2 },
 ];
 
+// The two list buttons' marker dropdowns (SPEC-018 AC-12): every entry is a
+// marker style key from lib/lists.ts, previewed by its displayed marker.
+const BULLET_STYLES = [
+  { key: "disc", label: "•" },
+  { key: "circle", label: "◦" },
+  { key: "square", label: "▪" },
+];
+const NUMBER_STYLES = [
+  { key: "decimal", label: "1." },
+  { key: "lowerAlpha", label: "a." },
+  { key: "upperAlpha", label: "A." },
+  { key: "lowerRoman", label: "i." },
+  { key: "upperRoman", label: "I." },
+];
+
 const spacingOpen = ref(false);
 const root = useTemplateRef("root");
 const spacingButton = useTemplateRef("spacingButton");
 const spacingMenu = useTemplateRef("spacingMenu");
+const bulletMenuOpen = ref(false);
+const bulletMenuButton = useTemplateRef("bulletMenuButton");
+const bulletMenu = useTemplateRef("bulletMenu");
+const numberMenuOpen = ref(false);
+const numberMenuButton = useTemplateRef("numberMenuButton");
+const numberMenu = useTemplateRef("numberMenu");
 
 // Fixed-position menu escaping the toolbar strip's clipping — the same
 // pattern as HighlightPicker.
@@ -60,10 +92,42 @@ const { menuStyle } = useFloatingMenu({
   menu: () => spacingMenu.value,
 });
 
+const { menuStyle: bulletMenuStyle } = useFloatingMenu({
+  open: () => bulletMenuOpen.value,
+  anchor: () => bulletMenuButton.value,
+  menu: () => bulletMenu.value,
+});
+
+const { menuStyle: numberMenuStyle } = useFloatingMenu({
+  open: () => numberMenuOpen.value,
+  anchor: () => numberMenuButton.value,
+  menu: () => numberMenu.value,
+});
+
 function toggleSpacingMenu() {
   if (!props.disabled) {
     spacingOpen.value = !spacingOpen.value;
   }
+}
+
+function toggleBulletMenu() {
+  if (!props.disabled) {
+    numberMenuOpen.value = false;
+    bulletMenuOpen.value = !bulletMenuOpen.value;
+  }
+}
+
+function toggleNumberMenu() {
+  if (!props.disabled) {
+    bulletMenuOpen.value = false;
+    numberMenuOpen.value = !numberMenuOpen.value;
+  }
+}
+
+function chooseListMarker(style = "") {
+  bulletMenuOpen.value = false;
+  numberMenuOpen.value = false;
+  emit("list-marker", style);
 }
 
 function chooseSpacingPreset(value = 1) {
@@ -82,14 +146,19 @@ function chooseSpaceBeforeToggle() {
 }
 
 function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  if (spacingOpen.value && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
+  const anyOpen = spacingOpen.value || bulletMenuOpen.value || numberMenuOpen.value;
+  if (anyOpen && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
     spacingOpen.value = false;
+    bulletMenuOpen.value = false;
+    numberMenuOpen.value = false;
   }
 }
 
 function handleKeydown(event = new KeyboardEvent("keydown")) {
   if (event.key === "Escape") {
     spacingOpen.value = false;
+    bulletMenuOpen.value = false;
+    numberMenuOpen.value = false;
   }
 }
 
@@ -150,6 +219,115 @@ onBeforeUnmount(() => {
     >
       ⇥
     </button>
+    <!-- Bulleted/numbered list toggles (SPEC-018 AC-1, AC-2), each with a
+         marker-style dropdown on a separate expander next to the toggle
+         (AC-12) so a plain click still just toggles. -->
+    <div class="list-cluster">
+      <button
+        type="button"
+        class="paragraph-button list-toggle"
+        data-testid="list-bulleted"
+        :disabled="disabled"
+        title="Bulleted list"
+        aria-label="Bulleted list"
+        :aria-pressed="bulleted ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="emit('toggle-list', 'bullet')"
+      >
+        •≡
+      </button>
+      <button
+        ref="bulletMenuButton"
+        type="button"
+        class="paragraph-button list-menu-button"
+        data-testid="list-bulleted-menu-button"
+        :disabled="disabled"
+        title="Bullet styles"
+        aria-label="Bullet styles"
+        aria-haspopup="menu"
+        :aria-expanded="bulletMenuOpen ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="toggleBulletMenu"
+      >
+        ▾
+      </button>
+      <div
+        v-if="bulletMenuOpen"
+        ref="bulletMenu"
+        class="marker-menu"
+        data-testid="bullet-style-menu"
+        role="menu"
+        aria-label="Bullet styles"
+        :style="bulletMenuStyle"
+      >
+        <button
+          v-for="style in BULLET_STYLES"
+          :key="style.key"
+          type="button"
+          role="menuitemradio"
+          :aria-checked="listMarker === style.key ? 'true' : 'false'"
+          :data-testid="`bullet-style-${style.key}`"
+          :class="{ checked: listMarker === style.key }"
+          @mousedown.prevent
+          @click="chooseListMarker(style.key)"
+        >
+          {{ style.label }}
+        </button>
+      </div>
+    </div>
+    <div class="list-cluster">
+      <button
+        type="button"
+        class="paragraph-button list-toggle"
+        data-testid="list-numbered"
+        :disabled="disabled"
+        title="Numbered list"
+        aria-label="Numbered list"
+        :aria-pressed="numbered ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="emit('toggle-list', 'number')"
+      >
+        1≡
+      </button>
+      <button
+        ref="numberMenuButton"
+        type="button"
+        class="paragraph-button list-menu-button"
+        data-testid="list-numbered-menu-button"
+        :disabled="disabled"
+        title="Numbering styles"
+        aria-label="Numbering styles"
+        aria-haspopup="menu"
+        :aria-expanded="numberMenuOpen ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="toggleNumberMenu"
+      >
+        ▾
+      </button>
+      <div
+        v-if="numberMenuOpen"
+        ref="numberMenu"
+        class="marker-menu"
+        data-testid="number-style-menu"
+        role="menu"
+        aria-label="Numbering styles"
+        :style="numberMenuStyle"
+      >
+        <button
+          v-for="style in NUMBER_STYLES"
+          :key="style.key"
+          type="button"
+          role="menuitemradio"
+          :aria-checked="listMarker === style.key ? 'true' : 'false'"
+          :data-testid="`number-style-${style.key}`"
+          :class="{ checked: listMarker === style.key }"
+          @mousedown.prevent
+          @click="chooseListMarker(style.key)"
+        >
+          {{ style.label }}
+        </button>
+      </div>
+    </div>
     <button
       type="button"
       class="paragraph-button"
@@ -320,5 +498,57 @@ onBeforeUnmount(() => {
   margin: 0.25rem 0;
   border: none;
   border-top: 1px solid #e0e0e0;
+}
+
+/* A list toggle and its dropdown expander read as one control. */
+.list-cluster {
+  display: inline-flex;
+}
+
+.list-cluster .list-toggle {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.list-cluster .list-menu-button {
+  min-width: 1rem;
+  padding: 0;
+  font-size: 0.625rem;
+  border-inline-start: none;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+/* position/left/top come inline from useFloatingMenu, like .spacing-menu. */
+.marker-menu {
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 4rem;
+  padding: 0.25rem 0;
+  border: 1px solid #bdbdbd;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+}
+
+.marker-menu button {
+  font: inherit;
+  font-size: 0.875rem;
+  color: #202124;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.375rem 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.marker-menu button:hover {
+  background: #f1f3f4;
+}
+
+.marker-menu button.checked {
+  background: #d2e3fc;
 }
 </style>

@@ -29,7 +29,14 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
-import { asCharacterFormatKey, asParagraphAlignment, DEFAULT_TITLE } from "../lib/documentModel";
+import {
+  asCharacterFormatKey,
+  asListMarkerStyle,
+  asListType,
+  asParagraphAlignment,
+  DEFAULT_TITLE,
+} from "../lib/documentModel";
+import { detectListAutoformat, listMarkers } from "../lib/lists";
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
@@ -59,7 +66,7 @@ import {
   caretClientRect,
   caretNearClientPoint,
 } from "../lib/caretGeometry";
-import { blockText, compareCaret, noCaret } from "../lib/textEditing";
+import { blockLength, blockText, compareCaret, noCaret } from "../lib/textEditing";
 import {
   asPasteMode,
   clipboardFlavours,
@@ -76,10 +83,12 @@ import { importHtml } from "../lib/htmlPaste";
 import {
   adjustIndent,
   applyFormat,
+  applyListAutoformat,
   applyParagraphFormat,
   blockCount,
   blockOrdinal,
   caretSelection,
+  changeListLevel,
   deleteBackward,
   deleteForward,
   deleteRange,
@@ -87,6 +96,7 @@ import {
   documentStart,
   emptyParagraphFormatting,
   emptyToolbarFormatValues,
+  emptyToolbarListState,
   firstTouchedFormatting,
   formatState,
   hasSpaceBefore,
@@ -98,14 +108,19 @@ import {
   noParagraphCommand,
   noPendingFormat,
   noSelection,
+  removeListFormat,
   selectAll,
   setAlignment,
+  setListMarker,
   setPageMargins,
   splitBlock,
   toggleFormat,
+  toggleList,
   toggleSpaceBefore,
   toggleVerticalAlign,
   toolbarFormatValues,
+  toolbarListState,
+  touchedBlocks,
   verticalAlignState,
 } from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
@@ -228,6 +243,9 @@ const formatValues = ref(emptyToolbarFormatValues());
 const EMPTY_PARAGRAPH_STATE = { alignment: "left", spaceBefore: false, direction: "ltr" };
 const paragraphState = ref(EMPTY_PARAGRAPH_STATE);
 const paragraphFormatting = ref(emptyParagraphFormatting());
+// The list buttons' pressed states and the current marker style, from the
+// same selection the rest of the toolbar reflects (SPEC-018).
+const listState = ref(emptyToolbarListState());
 // The custom-spacing dialog (AC-12..14): open flag plus the prefill taken
 // from the first touched paragraph at the moment it opens.
 const customSpacingOpen = ref(false);
@@ -548,6 +566,10 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
   if (!selection) {
     return;
   }
+  // The paragraph a collapsed caret sits in — what the list-specific Enter
+  // and Backspace behaviours below decide on (SPEC-018).
+  const focusBlock =
+    model.sections[selection.focus.section]?.blocks[selection.focus.block];
   let result = null;
   // Undo grouping (SPEC-015 AC-9, AC-12): only literal typed characters
   // group into one step. A paste is bulk content, not "typed characters",
@@ -562,18 +584,65 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
       result = insertText(model, selection, text, pendingFormat);
       label = type === "insertText" ? "typing" : "paste";
       groupable = type === "insertText";
+      if (type === "insertText" && text === " " && isCollapsed(selection)) {
+        // List autoformat (SPEC-018 AC-14..17): the typed space completed a
+        // trigger prefix that is the paragraph's entire text. Two separate
+        // undo steps — the typing, then the conversion — so Ctrl/Cmd+Z
+        // right after restores the literal prefix (AC-16).
+        const caretAfter = result.selection.focus;
+        const blockAfter =
+          result.model.sections[caretAfter.section].blocks[caretAfter.block];
+        const prefix = blockText(blockAfter);
+        const autoformatType =
+          !blockAfter.list && caretAfter.offset === prefix.length
+            ? detectListAutoformat(prefix)
+            : null;
+        if (autoformatType) {
+          applyEdit(result, selection, label, groupable);
+          const autoformatSelection = caretSelection(caretAfter);
+          applyEdit(
+            applyListAutoformat(result.model, autoformatSelection, autoformatType),
+            autoformatSelection,
+            autoformatType === "bullet" ? "bulleted list" : "numbered list",
+            false,
+          );
+          return;
+        }
+      }
     }
   } else if (type === "insertParagraph") {
-    result = splitBlock(model, selection);
-    label = "new paragraph";
+    if (
+      isCollapsed(selection) &&
+      focusBlock &&
+      focusBlock.list &&
+      blockLength(focusBlock) === 0
+    ) {
+      // Enter on an empty list item (SPEC-018): outdent one level (AC-7),
+      // or at level 1 convert it to a normal paragraph (AC-8).
+      result =
+        focusBlock.list.level > 1
+          ? changeListLevel(model, selection, -1)
+          : removeListFormat(model, selection);
+      label = "list";
+    } else {
+      result = splitBlock(model, selection);
+      label = "new paragraph";
+    }
   } else if (type === "insertLineBreak") {
     // Shift+Enter: a forced line break, stored as a literal "\n" that
     // pre-wrap rendering displays without a new paragraph.
     result = insertLineBreak(model, selection);
     label = "line break";
   } else if (type === "deleteContentBackward") {
-    result = deleteBackward(model, selection);
-    label = "delete";
+    if (isCollapsed(selection) && selection.focus.offset === 0 && focusBlock?.list) {
+      // Backspace at the start of a list item removes only the list
+      // formatting, deleting nothing (SPEC-018 AC-9).
+      result = removeListFormat(model, selection);
+      label = "list";
+    } else {
+      result = deleteBackward(model, selection);
+      label = "delete";
+    }
   } else if (type === "deleteContentForward") {
     result = deleteForward(model, selection);
     label = "delete";
@@ -1000,6 +1069,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     formatValues.value = emptyToolbarFormatValues();
     paragraphState.value = EMPTY_PARAGRAPH_STATE;
     paragraphFormatting.value = emptyParagraphFormatting();
+    listState.value = emptyToolbarListState();
     return;
   }
   const total = blockCount(model);
@@ -1030,6 +1100,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     spaceBefore: hasSpaceBefore(firstFormatting),
     direction: firstFormatting.direction ?? "ltr",
   };
+  listState.value = toolbarListState(model, selection);
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
@@ -1258,6 +1329,22 @@ function handleToggleSpaceBefore() {
   applyParagraphCommand(toggleSpaceBefore, "space before");
 }
 
+/** The bulleted/numbered toolbar toggles (SPEC-018 AC-1, AC-2). */
+function handleToggleList(type = "") {
+  applyParagraphCommand(
+    (model, selection) => toggleList(model, selection, asListType(type)),
+    type === "bullet" ? "bulleted list" : "numbered list",
+  );
+}
+
+/** A marker style picked from a list button's dropdown (SPEC-018 AC-13). */
+function handleListMarker(style = "") {
+  applyParagraphCommand(
+    (model, selection) => setListMarker(model, selection, asListMarkerStyle(style)),
+    "list marker",
+  );
+}
+
 function handleToggleDirection() {
   const rtl = paragraphState.value.direction !== "rtl";
   applyParagraphCommand(
@@ -1428,7 +1515,17 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     if (!selection) {
       return;
     }
-    if (isCollapsed(selection) && selection.focus.offset === 0) {
+    // SPEC-018 AC-3/AC-4: inside a list item — at any offset — Tab demotes
+    // and Shift+Tab promotes, taking priority over the indent behaviours.
+    const touchesList = touchedBlocks(model, selection).some(
+      (address) => !!model.sections[address.section].blocks[address.block].list,
+    );
+    if (touchesList) {
+      applyParagraphCommand(
+        (current, target) => changeListLevel(current, target, event.shiftKey ? -1 : 1),
+        "list level",
+      );
+    } else if (isCollapsed(selection) && selection.focus.offset === 0) {
       applyParagraphCommand(
         (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
         "indent",
@@ -1503,6 +1600,11 @@ const flatBlocks = computed(() => {
   // which makes Vue mount that paragraph fresh instead of patching DOM the
   // browser's IME composition may have rearranged underneath it.
   const bump = remount.value;
+  // List markers are derived from the whole block sequence (SPEC-018 AC-10,
+  // AC-11), so they are computed here per render rather than stored — and
+  // each entry's marker joins its v-memo key, because an edit elsewhere in
+  // a list renumbers items whose block object never changed.
+  const markers = listMarkers(doc.value);
   return doc.value.sections.flatMap((section, sectionIndex) =>
     section.blocks.map((block, blockIndex) => {
       const address = `${sectionIndex}:${blockIndex}`;
@@ -1512,6 +1614,7 @@ const flatBlocks = computed(() => {
         block,
         section: sectionIndex,
         blockIndex,
+        marker: markers[sectionIndex][blockIndex],
       };
     }),
   );
@@ -2133,12 +2236,17 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         :alignment="paragraphState.alignment"
         :space-before="paragraphState.spaceBefore"
         :direction="paragraphState.direction"
+        :bulleted="listState.bulleted"
+        :numbered="listState.numbered"
+        :list-marker="listState.marker"
         @align="handleAlign"
         @indent="handleIndent"
         @spacing-preset="handleSpacingPreset"
         @custom-spacing="openCustomSpacing"
         @toggle-space-before="handleToggleSpaceBefore"
         @toggle-direction="handleToggleDirection"
+        @toggle-list="handleToggleList"
+        @list-marker="handleListMarker"
       />
       <TextColorPicker
         v-if="editable"
@@ -2288,11 +2396,13 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
               :is="headingTag(entry.block.headingLevel)"
               v-for="entry in flatBlocks"
               :key="entry.key"
-              v-memo="[entry.block, entry.section, entry.blockIndex]"
+              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker]"
               class="doc-paragraph"
               :style="paragraphStyle(entry.block)"
               :data-section="entry.section"
               :data-block="entry.blockIndex"
+              :data-list-marker="entry.marker || undefined"
+              :data-list-level="entry.block.list ? entry.block.list.level : undefined"
             >
               <template v-if="entry.block.runs.length > 0">
                 <span
@@ -2486,6 +2596,20 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
   margin: 0;
   font-weight: normal;
   font-size: inherit;
+}
+
+/* The list marker (SPEC-018): painted from the derived data-list-marker
+   attribute, never part of the editable text — caret offsets and the
+   model/DOM text equality check stay untouched. The inline-block with a
+   negative logical margin hangs it in the 0.635 cm box before the item's
+   text (which paragraphStyle indents per level); wrapped lines align at
+   the text edge. */
+.doc-paragraph[data-list-marker]::before {
+  content: attr(data-list-marker);
+  display: inline-block;
+  min-width: 0.635cm;
+  margin-inline-start: -0.635cm;
+  white-space: nowrap;
 }
 
 /* Off-screen but rendered, so the aria-live caret announcements reach
