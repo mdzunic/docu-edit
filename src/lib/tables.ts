@@ -11,11 +11,16 @@
 // the snapshot-based history for free (SPEC-015 AC-20).
 import {
   isTable,
+  type BorderSide,
+  type CellBorders,
+  type CellVerticalAlign,
   type DocumentModel,
   type Paragraph,
   type Table,
+  type TableAlignment,
   type TableCell,
   type TableRow,
+  type TableWidthMode,
 } from "./documentModel";
 import { cmToTwips, twipsToCm } from "./docx/units";
 import {
@@ -76,6 +81,30 @@ export function equalColumnWidthsCm(model: DocumentModel, columns: number): numb
 export function tableAt(model: DocumentModel, section: number, block: number): Table | null {
   const target = model.sections[section]?.blocks[block];
   return isTable(target) ? target : null;
+}
+
+/** Typed pass-through for a Table arriving as a runtime-declared Object prop
+ * (espree bars the type annotation the canvas's own props declaration would
+ * need — see documentModel.ts's asParagraphBlock for the same pattern). */
+export function asTable(value: unknown): Table {
+  return value as Table;
+}
+
+/** One row's real (non-covered) cells, each carrying its own grid column
+ * index — a merged cell's covered neighbours (SPEC-023) render nothing of
+ * their own; the spanning cell's own colspan/rowspan covers their space.
+ * Lives here (rather than as a .vue-local helper) so the canvas's template
+ * gets a properly typed `TableCell`/`colIndex` pair back regardless of how
+ * loosely its own runtime-declared props are typed — see asTable. */
+export interface VisibleCellEntry {
+  cell: TableCell;
+  colIndex: number;
+}
+
+export function visibleRowCells(row: TableRow): VisibleCellEntry[] {
+  return row.cells
+    .map((cell, colIndex) => ({ cell, colIndex }))
+    .filter((entry) => !entry.cell.covered);
 }
 
 /** Whether the caret sits inside a table cell — the predicate the editor's
@@ -575,4 +604,618 @@ export function isCellInRange(
   }
   const bounds = cellRangeBounds(range);
   return row >= bounds.top && row <= bounds.bottom && col >= bounds.left && col <= bounds.right;
+}
+
+// --- cell/border formatting and merge/split (SPEC-023) ----------------------
+
+/** The smallest width a dragged column boundary can leave a column (AC-2). */
+export const MIN_COLUMN_WIDTH_CM = 0.5;
+
+/** The smallest minimum height a dragged row boundary can set (AC-4). */
+export const MIN_ROW_HEIGHT_CM = 0.4;
+
+/** A grid slot's owning (real) cell: the cell at `originRow`/`originCol`
+ * whose `rowSpan`×`colSpan` rectangle covers the slot — itself when the slot
+ * is not covered by anything. Every merge/split/border/shading/padding
+ * operation resolves through this so a click anywhere in a merged cell's
+ * rectangle (or a range that only partly overlaps it) resolves to the same
+ * whole cell. */
+interface CellOwner {
+  originRow: number;
+  originCol: number;
+  rowSpan: number;
+  colSpan: number;
+}
+
+/** Every grid slot's owner, computed in one forward pass: row-major order
+ * always visits a cell's own (top-left) slot before any slot it covers, so
+ * each covered slot's owner is already known by the time it is reached. */
+function computeOwnerGrid(table: Table): CellOwner[][] {
+  const rowCount = table.rows.length;
+  const colCount = table.columnWidthsCm.length;
+  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
+  for (let r = 0; r < rowCount; r++) {
+    for (let c = 0; c < colCount; c++) {
+      if (grid[r][c]) {
+        continue;
+      }
+      const cell = table.rows[r].cells[c];
+      const owner: CellOwner = {
+        originRow: r,
+        originCol: c,
+        rowSpan: cell.rowSpan ?? 1,
+        colSpan: cell.colSpan ?? 1,
+      };
+      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
+        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
+          grid[r + dr][c + dc] = owner;
+        }
+      }
+    }
+  }
+  return grid;
+}
+
+interface GridBounds {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+/** Grows a selection's bounds to whole cells: a range that only partly
+ * overlaps a merged cell (dragged from inside it, or a stale selection after
+ * an earlier merge) expands to cover that cell's whole rectangle, repeating
+ * until stable (a newly included cell can itself pull the bounds further). */
+function expandRangeToWholeCells(table: Table, bounds: GridBounds): GridBounds {
+  const grid = computeOwnerGrid(table);
+  let { top, left, bottom, right } = bounds;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let r = top; r <= bottom; r++) {
+      for (let c = left; c <= right; c++) {
+        const owner = grid[r][c];
+        if (owner.originRow < top) {
+          top = owner.originRow;
+          changed = true;
+        }
+        if (owner.originCol < left) {
+          left = owner.originCol;
+          changed = true;
+        }
+        if (owner.originRow + owner.rowSpan - 1 > bottom) {
+          bottom = owner.originRow + owner.rowSpan - 1;
+          changed = true;
+        }
+        if (owner.originCol + owner.colSpan - 1 > right) {
+          right = owner.originCol + owner.colSpan - 1;
+          changed = true;
+        }
+      }
+    }
+  }
+  return { top, left, bottom, right };
+}
+
+/** `total` split into `parts` contiguous integer-sized groups, as equal as
+ * possible with any remainder going to the earliest groups — how a split
+ * cell's requested rows/columns are distributed across the grid rows/columns
+ * its rectangle already occupies (AC-9). */
+function partitionSizes(total: number, parts: number): number[] {
+  const base = Math.floor(total / parts);
+  const remainder = total % parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+/** Drops a cell's preserved source XML/style reference: any command that
+ * changes a modelled property must not let a stale `docxTcPr`/`odtStyleName`
+ * be re-emitted verbatim over top of it (the same rule insertTableColumn
+ * already applies to `odtColumnStyleNames`). */
+function clearPreservedCell(cell: TableCell): TableCell {
+  const next = { ...cell };
+  delete next.docxTcPr;
+  delete next.odtStyleName;
+  return next;
+}
+
+/** The same rule as clearPreservedCell, for the table's own preserved
+ * `w:tblPr`. */
+function clearPreservedTable(table: Table): Table {
+  const next = { ...table };
+  delete next.docxTblPr;
+  return next;
+}
+
+/** Inserts `count` new grid columns at `atCol` (AC-9's grow-then-split path
+ * for a plain cell split into more columns than it currently spans). Any
+ * cell whose span already crosses `atCol - 1` — including the cell being
+ * split, whose own span ends there — extends by `count` columns; every row
+ * gets `count` new covered placeholder slots at `atCol`, later overwritten
+ * by the caller for the rows/columns actually being split. Column widths
+ * rescale so the table's overall width is unchanged (the same rule
+ * insertTableColumn uses). Must only be called with `atCol >= 1`. */
+function insertGridColumns(table: Table, atCol: number, count: number): Table {
+  if (count <= 0) {
+    return table;
+  }
+  const grid = computeOwnerGrid(table);
+  const refWidth = table.columnWidthsCm[atCol - 1] ?? table.columnWidthsCm[0] ?? 1;
+  const originalTotal = table.columnWidthsCm.reduce((sum, w) => sum + w, 0);
+  const widths = [...table.columnWidthsCm];
+  for (let i = 0; i < count; i++) {
+    widths.splice(atCol, 0, refWidth);
+  }
+  const grownTotal = widths.reduce((sum, w) => sum + w, 0);
+  const scaledWidths = widths.map((w) => snapCm((w * originalTotal) / grownTotal));
+  const rows = table.rows.map((row, r) => {
+    const cells = [...row.cells];
+    const owner = grid[r][atCol - 1];
+    if (owner.originRow === r) {
+      const origin = cells[owner.originCol];
+      cells[owner.originCol] = { ...origin, colSpan: (origin.colSpan ?? 1) + count };
+    }
+    const inserted: TableCell[] = Array.from({ length: count }, () => ({ blocks: [], covered: true }));
+    cells.splice(atCol, 0, ...inserted);
+    return { ...row, cells };
+  });
+  const result = clearPreservedTable({ ...table, rows, columnWidthsCm: scaledWidths });
+  delete result.odtColumnStyleNames;
+  return result;
+}
+
+/** Inserts `count` new grid rows at `atRow` — the row analogue of
+ * insertGridColumns, used the same way. Must only be called with
+ * `atRow >= 1`. */
+function insertGridRows(table: Table, atRow: number, count: number): Table {
+  if (count <= 0) {
+    return table;
+  }
+  const grid = computeOwnerGrid(table);
+  const colCount = table.columnWidthsCm.length;
+  const rows = table.rows.map((row) => ({ ...row, cells: [...row.cells] }));
+  const bumped = new Set<string>();
+  for (let c = 0; c < colCount; c++) {
+    const owner = grid[atRow - 1][c];
+    const key = `${owner.originRow}:${owner.originCol}`;
+    if (bumped.has(key)) {
+      continue;
+    }
+    bumped.add(key);
+    const origin = rows[owner.originRow].cells[owner.originCol];
+    rows[owner.originRow].cells[owner.originCol] = { ...origin, rowSpan: (origin.rowSpan ?? 1) + count };
+  }
+  const insertedRows: TableRow[] = Array.from({ length: count }, () => ({
+    cells: Array.from({ length: colCount }, () => ({ blocks: [], covered: true })),
+  }));
+  rows.splice(atRow, 0, ...insertedRows);
+  return { ...table, rows };
+}
+
+/** Selecting a cell range and choosing "Merge cells" (AC-6, AC-7): the
+ * range's bounds expand to whole cells, then every cell in the resulting
+ * rectangle collapses into one, at the top-left corner, whose content is
+ * every covered cell's paragraphs concatenated in reading order. A range
+ * that resolves to a single cell is a no-op. */
+export function mergeCells(
+  model: DocumentModel,
+  selection: ModelSelection,
+  range: CellRange,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, range.section, range.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  const bounds = expandRangeToWholeCells(table, cellRangeBounds(range));
+  if (bounds.top === bounds.bottom && bounds.left === bounds.right) {
+    return { model: next, selection };
+  }
+  const grid = computeOwnerGrid(table);
+  const mergedBlocks: Paragraph[] = [];
+  const seen = new Set<string>();
+  for (let r = bounds.top; r <= bounds.bottom; r++) {
+    for (let c = bounds.left; c <= bounds.right; c++) {
+      const owner = grid[r][c];
+      const key = `${owner.originRow}:${owner.originCol}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      const cell = table.rows[owner.originRow].cells[owner.originCol];
+      if (!cell.covered) {
+        mergedBlocks.push(...cell.blocks);
+      }
+    }
+  }
+  const originBefore = clearPreservedCell(table.rows[bounds.top].cells[bounds.left]);
+  const rowSpan = bounds.bottom - bounds.top + 1;
+  const colSpan = bounds.right - bounds.left + 1;
+  const rows = table.rows.map((row) => ({ ...row, cells: [...row.cells] }));
+  for (let r = bounds.top; r <= bounds.bottom; r++) {
+    for (let c = bounds.left; c <= bounds.right; c++) {
+      if (r === bounds.top && c === bounds.left) {
+        rows[r].cells[c] = {
+          ...originBefore,
+          blocks: mergedBlocks.length > 0 ? mergedBlocks : [emptyParagraph()],
+          colSpan: colSpan > 1 ? colSpan : undefined,
+          rowSpan: rowSpan > 1 ? rowSpan : undefined,
+          covered: undefined,
+        };
+      } else {
+        rows[r].cells[c] = { blocks: [], covered: true };
+      }
+    }
+  }
+  replaceTable(
+    next,
+    { section: range.section, block: range.block, row: bounds.top, col: bounds.left },
+    { ...table, rows },
+  );
+  const caret = cellCaret(range.section, range.block, { row: bounds.top, col: bounds.left, block: 0 });
+  return { model: next, selection: caretSelection(caret) };
+}
+
+/** "Split cell…" (AC-8, AC-9): splits the cell at `location` into `rows`
+ * rows × `cols` columns. Splitting back down within the cell's current
+ * span (e.g. undoing an earlier merge) just repartitions its existing grid
+ * rectangle; splitting into more rows/columns than the cell currently spans
+ * grows the table's grid first (inserting just enough rows/columns, whose
+ * siblings extend across them to stay whole) and then partitions the grown
+ * rectangle — so both cases share one code path. The original content lands
+ * in the top-left sub-cell; the rest start empty. */
+export function splitCell(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  rows: number,
+  cols: number,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  if (!table || rows < 1 || cols < 1) {
+    return { model: next, selection };
+  }
+  const grid = computeOwnerGrid(table);
+  const owner = grid[location.row]?.[location.col];
+  if (!owner) {
+    return { model: next, selection };
+  }
+  const { originRow, originCol } = owner;
+  let rowSpanOld = owner.rowSpan;
+  let colSpanOld = owner.colSpan;
+  const projectedCols = table.columnWidthsCm.length + Math.max(0, cols - colSpanOld);
+  const projectedRows = table.rows.length + Math.max(0, rows - rowSpanOld);
+  if (projectedCols > MAX_TABLE_COLS || projectedRows > MAX_TABLE_ROWS) {
+    return { model: next, selection };
+  }
+  let working = table;
+  if (cols > colSpanOld) {
+    working = insertGridColumns(working, originCol + colSpanOld, cols - colSpanOld);
+    colSpanOld = cols;
+  }
+  if (rows > rowSpanOld) {
+    working = insertGridRows(working, originRow + rowSpanOld, rows - rowSpanOld);
+    rowSpanOld = rows;
+  }
+  const rowGroups = partitionSizes(rowSpanOld, rows);
+  const colGroups = partitionSizes(colSpanOld, cols);
+  const originalCell = clearPreservedCell(working.rows[originRow].cells[originCol]);
+  const originalBlocks = originalCell.blocks.length > 0 ? originalCell.blocks : [emptyParagraph()];
+  const newRows = working.rows.map((row) => ({ ...row, cells: [...row.cells] }));
+  let rowOffset = 0;
+  for (let i = 0; i < rows; i++) {
+    const rg = rowGroups[i];
+    let colOffset = 0;
+    for (let j = 0; j < cols; j++) {
+      const cg = colGroups[j];
+      const isFirstSubcell = i === 0 && j === 0;
+      for (let dr = 0; dr < rg; dr++) {
+        for (let dc = 0; dc < cg; dc++) {
+          const r = originRow + rowOffset + dr;
+          const c = originCol + colOffset + dc;
+          newRows[r].cells[c] =
+            dr === 0 && dc === 0
+              ? {
+                  blocks: isFirstSubcell ? originalBlocks : [emptyParagraph()],
+                  colSpan: cg > 1 ? cg : undefined,
+                  rowSpan: rg > 1 ? rg : undefined,
+                }
+              : { blocks: [], covered: true };
+        }
+      }
+      colOffset += cg;
+    }
+    rowOffset += rg;
+  }
+  replaceTable(next, location, { ...working, rows: newRows });
+  const caret = cellCaret(location.section, location.block, { row: originRow, col: originCol, block: 0 });
+  return { model: next, selection: caretSelection(caret) };
+}
+
+/** Applies `fn` to every distinct real cell overlapping `range` (expanded to
+ * whole cells first) and returns the table's updated rows — the shared
+ * traversal for the per-cell formatting commands below. `fn` also gets the
+ * cell's owner rectangle, for commands (border presets) that need to know
+ * where the cell sits relative to the range's own boundary. */
+function mapCellsInRange(
+  table: Table,
+  range: CellRange,
+  fn: (cell: TableCell, owner: CellOwner, bounds: GridBounds) => TableCell,
+): { rows: TableRow[]; bounds: GridBounds } {
+  const bounds = expandRangeToWholeCells(table, cellRangeBounds(range));
+  const grid = computeOwnerGrid(table);
+  const rows = table.rows.map((row) => ({ ...row, cells: [...row.cells] }));
+  const seen = new Set<string>();
+  for (let r = bounds.top; r <= bounds.bottom; r++) {
+    for (let c = bounds.left; c <= bounds.right; c++) {
+      const owner = grid[r][c];
+      const key = `${owner.originRow}:${owner.originCol}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      rows[owner.originRow].cells[owner.originCol] = fn(
+        table.rows[owner.originRow].cells[owner.originCol],
+        owner,
+        bounds,
+      );
+    }
+  }
+  return { rows, bounds };
+}
+
+/** A cell range spanning a whole table — "apply to the whole table" (AC-13)
+ * is "apply to every cell", the same per-cell commands "apply to selected
+ * cells" (AC-14) use with a smaller range. Null when the location has no
+ * table. */
+export function fullTableRange(model: DocumentModel, location: TableLocation): CellRange | null {
+  const table = tableAt(model, location.section, location.block);
+  if (!table) {
+    return null;
+  }
+  return {
+    section: location.section,
+    block: location.block,
+    anchor: { row: 0, col: 0 },
+    focus: { row: table.rows.length - 1, col: table.columnWidthsCm.length - 1 },
+  };
+}
+
+/** The standard border presets a table properties dialog offers (AC-18..21). */
+export type BorderPreset = "all" | "outer" | "inner" | "none";
+
+/** Typed pass-through for a border preset coming from a `.vue` template's
+ * plain string (same espree constraint as documentModel.ts's
+ * asCharacterFormatKey). */
+export function asBorderPreset(value: string): BorderPreset {
+  return value as BorderPreset;
+}
+
+const NO_BORDER: BorderSide = { style: "none", widthPt: 0, color: "#000000" };
+
+function presetEdge(preset: BorderPreset, isOuterEdge: boolean, side: BorderSide): BorderSide {
+  if (preset === "none") {
+    return NO_BORDER;
+  }
+  if (preset === "all") {
+    return side;
+  }
+  return isOuterEdge === (preset === "outer") ? side : NO_BORDER;
+}
+
+/** A table properties dialog's border section (AC-10..14, AC-18..21): sets
+ * `side` on every edge `preset` selects, over every cell `range` covers
+ * (the whole table, via fullTableRange, for AC-13; a drag-selected range for
+ * AC-14). An edge is "outer" when it sits on the (whole-cell-expanded)
+ * range's own boundary; "all" paints every edge, "none" clears every edge,
+ * "outer"/"inner" paint one set and clear the other so a repeated
+ * application is idempotent rather than additive. */
+export function applyBorderPreset(
+  model: DocumentModel,
+  selection: ModelSelection,
+  range: CellRange,
+  preset: BorderPreset,
+  side: BorderSide,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, range.section, range.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  const { rows, bounds } = mapCellsInRange(table, range, (cell, owner, bounds) => {
+    const rectBottom = owner.originRow + owner.rowSpan - 1;
+    const rectRight = owner.originCol + owner.colSpan - 1;
+    const borders: CellBorders = {
+      top: presetEdge(preset, owner.originRow === bounds.top, side),
+      bottom: presetEdge(preset, rectBottom === bounds.bottom, side),
+      left: presetEdge(preset, owner.originCol === bounds.left, side),
+      right: presetEdge(preset, rectRight === bounds.right, side),
+    };
+    return { ...clearPreservedCell(cell), borders };
+  });
+  replaceTable(
+    next,
+    { section: range.section, block: range.block, row: bounds.top, col: bounds.left },
+    { ...table, rows },
+  );
+  return { model: next, selection };
+}
+
+/** A table properties dialog's shading section (AC-15), over `range` (the
+ * whole table or a selected range, same convention as applyBorderPreset).
+ * `fill` undefined clears the cells' shading back to none. */
+export function setCellShading(
+  model: DocumentModel,
+  selection: ModelSelection,
+  range: CellRange,
+  fill: string | undefined,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, range.section, range.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  const { rows, bounds } = mapCellsInRange(table, range, (cell) => {
+    const updated = clearPreservedCell(cell);
+    if (fill === undefined) {
+      delete updated.shadingFill;
+    } else {
+      updated.shadingFill = fill;
+    }
+    return updated;
+  });
+  replaceTable(
+    next,
+    { section: range.section, block: range.block, row: bounds.top, col: bounds.left },
+    { ...table, rows },
+  );
+  return { model: next, selection };
+}
+
+/** A table properties dialog's cell padding section (AC-16), over `range`. */
+export function setCellPadding(
+  model: DocumentModel,
+  selection: ModelSelection,
+  range: CellRange,
+  paddingCm: number | undefined,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, range.section, range.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  const { rows, bounds } = mapCellsInRange(table, range, (cell) => {
+    const updated = clearPreservedCell(cell);
+    if (paddingCm === undefined) {
+      delete updated.paddingCm;
+    } else {
+      updated.paddingCm = Math.max(0, paddingCm);
+    }
+    return updated;
+  });
+  replaceTable(
+    next,
+    { section: range.section, block: range.block, row: bounds.top, col: bounds.left },
+    { ...table, rows },
+  );
+  return { model: next, selection };
+}
+
+/** A table properties dialog's vertical alignment section (AC-17), over
+ * `range`. */
+export function setCellVerticalAlign(
+  model: DocumentModel,
+  selection: ModelSelection,
+  range: CellRange,
+  align: CellVerticalAlign | undefined,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, range.section, range.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  const { rows, bounds } = mapCellsInRange(table, range, (cell) => {
+    const updated = clearPreservedCell(cell);
+    if (align === undefined) {
+      delete updated.verticalAlign;
+    } else {
+      updated.verticalAlign = align;
+    }
+    return updated;
+  });
+  replaceTable(
+    next,
+    { section: range.section, block: range.block, row: bounds.top, col: bounds.left },
+    { ...table, rows },
+  );
+  return { model: next, selection };
+}
+
+/** A table properties dialog's alignment section (AC-22): the table's own
+ * position on the page. */
+export function setTableAlignment(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  alignment: TableAlignment,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  replaceTable(next, location, clearPreservedTable({ ...table, alignment }));
+  return { model: next, selection };
+}
+
+/** A table properties dialog's width section (AC-23): auto (content-sized),
+ * fixed (the `columnWidthsCm` sum) or a percentage of the text area.
+ * `percent` is required for, and only meaningful with, `"percent"`. */
+export function setTableWidthMode(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  mode: TableWidthMode,
+  percent?: number,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  if (!table) {
+    return { model: next, selection };
+  }
+  const updated = clearPreservedTable({ ...table, widthMode: mode });
+  if (mode === "percent") {
+    updated.widthPercent = Math.min(100, Math.max(1, percent ?? table.widthPercent ?? 100));
+  } else {
+    delete updated.widthPercent;
+  }
+  replaceTable(next, location, updated);
+  return { model: next, selection };
+}
+
+/** Dragging a column boundary (AC-1..3): the view live-resizes the DOM
+ * during the drag and calls this once, on release, with the full widths
+ * array — never the model. Widths are clamped to MIN_COLUMN_WIDTH_CM and
+ * snapped to the twip grid; anything else (wrong column count) is a no-op. */
+export function setColumnWidths(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  widthsCm: number[],
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  if (!table || widthsCm.length !== table.columnWidthsCm.length) {
+    return { model: next, selection };
+  }
+  const columnWidthsCm = widthsCm.map((w) => snapCm(Math.max(MIN_COLUMN_WIDTH_CM, w)));
+  const updated = clearPreservedTable({ ...table, columnWidthsCm });
+  delete updated.odtColumnStyleNames;
+  replaceTable(next, location, updated);
+  return { model: next, selection };
+}
+
+/** Dragging a row boundary (AC-4, AC-5): sets the row's minimum height —
+ * rendering still lets the row grow taller than this for its content, since
+ * `minHeightCm` is a floor, never a fixed height. */
+export function setRowMinHeight(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  rowIndex: number,
+  minHeightCm: number,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  if (!table || !table.rows[rowIndex]) {
+    return { model: next, selection };
+  }
+  const rows = [...table.rows];
+  const row = { ...rows[rowIndex], minHeightCm: snapCm(Math.max(MIN_ROW_HEIGHT_CM, minHeightCm)) };
+  delete row.docxTrPr;
+  delete row.odtStyleName;
+  rows[rowIndex] = row;
+  replaceTable(next, location, { ...table, rows });
+  return { model: next, selection };
 }
