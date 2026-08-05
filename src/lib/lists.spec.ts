@@ -182,9 +182,9 @@ describe("listRunAround — the current list (AC-13)", () => {
       paragraph("plain again"),
       paragraph("d", { type: "bullet", level: 1 }),
     );
-    expect(listRunAround(model, 0, 2)).toEqual({ first: 1, last: 3 });
-    expect(listRunAround(model, 0, 5)).toEqual({ first: 5, last: 5 });
-    expect(listRunAround(model, 0, 0)).toBeNull();
+    expect(listRunAround(model.sections[0].blocks, 2)).toEqual({ first: 1, last: 3 });
+    expect(listRunAround(model.sections[0].blocks, 5)).toEqual({ first: 5, last: 5 });
+    expect(listRunAround(model.sections[0].blocks, 0)).toBeNull();
   });
 });
 

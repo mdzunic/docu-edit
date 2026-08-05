@@ -119,6 +119,11 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
   const regExp = compiled.regExp;
   model.sections.forEach((section, sectionIndex) => {
     section.blocks.forEach((block, blockIndex) => {
+      // Table content is not searched (SPEC-022): a FindMatch addresses a
+      // top-level block's character space, which a table does not have.
+      if (block.type !== "paragraph") {
+        return;
+      }
       const text = blockText(block);
       regExp.lastIndex = 0;
       let match = regExp.exec(text);
@@ -203,7 +208,11 @@ export function replaceMatches(
   }
   for (const [key, blockMatches] of byBlock) {
     const [section, block] = key.split(":").map(Number);
-    let runs = next.sections[section].blocks[block].runs;
+    const targetBlock = next.sections[section].blocks[block];
+    if (targetBlock.type !== "paragraph") {
+      continue;
+    }
+    let runs = targetBlock.runs;
     // Right-to-left: a later replacement never shifts an earlier match's
     // offsets, so each split uses offsets that are still valid.
     const ordered = [...blockMatches].sort((a, b) => b.start - a.start);
@@ -212,17 +221,14 @@ export function replaceMatches(
       const [within, after] = splitRuns(tail, match.end - match.start);
       const formatting = replacementFormatting(
         within,
-        formattingAtOffset(next.sections[section].blocks[block], match.start),
+        formattingAtOffset(targetBlock, match.start),
       );
       const inserted = replacement
         ? [{ text: replacement, formatting: { ...formatting } }]
         : [];
       runs = normalizeRuns([...before, ...inserted, ...after]);
     }
-    next.sections[section].blocks[block] = {
-      ...next.sections[section].blocks[block],
-      runs,
-    };
+    next.sections[section].blocks[block] = { ...targetBlock, runs };
   }
   const first = firstInDocumentOrder(matches);
   const caret = clampCaret(next, {

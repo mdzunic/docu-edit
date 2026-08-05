@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "../router";
 import { setDomCaret, setDomSelection } from "../lib/domCaret";
 import type { Paragraph } from "../lib/documentModel";
+import { asParagraph } from "../lib/documentModel";
 
 // SPEC-011 — the editing engine through the component: IME composition
 // commits through the command API without corrupting the model, keyboard
@@ -283,7 +284,7 @@ describe("command-driven mutations through the surface (AC-4, AC-7, AC-8, AC-9)"
     const store = await import("../lib/documentStore");
     const model = store.getDocument("split-fmt")!;
     model.sections[0].blocks[0] = {
-      ...model.sections[0].blocks[0],
+      ...asParagraph(model.sections[0].blocks[0]),
       formatting: { alignment: "center" },
     };
     setDomCaret(contentRoot(), { section: 0, block: 0, offset: 8 });
@@ -292,8 +293,8 @@ describe("command-driven mutations through the surface (AC-4, AC-7, AC-8, AC-9)"
 
     const after = store.getDocument("split-fmt")!;
     expect(after.sections[0].blocks).toHaveLength(2);
-    expect(after.sections[0].blocks[0].formatting).toEqual({ alignment: "center" });
-    expect(after.sections[0].blocks[1].formatting).toEqual({ alignment: "center" });
+    expect(asParagraph(after.sections[0].blocks[0]).formatting).toEqual({ alignment: "center" });
+    expect(asParagraph(after.sections[0].blocks[1]).formatting).toEqual({ alignment: "center" });
     expect(await storedText("split-fmt")).toEqual(["centered", " text"]);
   });
 

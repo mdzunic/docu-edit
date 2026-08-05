@@ -15,19 +15,20 @@
 // and it is safe precisely because nothing in the editing stack ever mutates
 // a block in place. It is also what the canvas's `v-memo` keys on to skip
 // re-rendering untouched paragraphs.
-import type {
-  CharacterFormatKey,
-  DocumentModel,
-  ListFormatting,
-  ListMarkerStyle,
-  ListType,
-  Paragraph,
-  ParagraphAlignment,
-  ParagraphDirection,
-  ParagraphFormatting,
-  PendingFormat,
-  RunFormatting,
-  VerticalAlignment,
+import {
+  isTable,
+  type CharacterFormatKey,
+  type DocumentModel,
+  type ListFormatting,
+  type ListMarkerStyle,
+  type ListType,
+  type Paragraph,
+  type ParagraphAlignment,
+  type ParagraphDirection,
+  type ParagraphFormatting,
+  type PendingFormat,
+  type RunFormatting,
+  type VerticalAlignment,
 } from "./documentModel";
 import { cmToTwips, twipsToCm } from "./docx/units";
 import {
@@ -45,11 +46,16 @@ import {
   deleteRange as deleteRangeInPlace,
   formattingAtOffset,
   insertText as insertTextInPlace,
+  paragraphAt,
+  paragraphAtCaret,
+  paragraphSlicesInRange,
   patchFormatting,
+  replaceParagraphAt,
   runFormattingsInRange,
   setFormatting,
   splitParagraph as splitParagraphInPlace,
   type CaretPosition,
+  type ParagraphAddress,
 } from "./textEditing";
 
 /** A selection in model coordinates. `anchor` is where the selection was
@@ -232,10 +238,12 @@ export function deleteForward(
 export type FormatState = "on" | "off" | "mixed";
 
 /** The formatting new text typed at a caret would inherit — the read-only
- * counterpart of insertText's inheritance rule (SPEC-012 AC-12). */
+ * counterpart of insertText's inheritance rule (SPEC-012 AC-12). `{}` for a
+ * table-atom caret, which addresses no paragraph (SPEC-022). */
 export function caretFormatting(model: DocumentModel, caret: CaretPosition): RunFormatting {
   const c = clampCaret(model, caret);
-  return formattingAtOffset(model.sections[c.section].blocks[c.block], c.offset);
+  const paragraph = paragraphAtCaret(model, c);
+  return paragraph ? formattingAtOffset(paragraph, c.offset) : {};
 }
 
 /** A character format's state for the toolbar (SPEC-012 AC-12..14). For a
@@ -493,27 +501,19 @@ function snapMultiple(value: number): number {
   return Math.round(value * 20) / 20;
 }
 
-/** A paragraph's address in the model. */
-export interface BlockAddress {
-  section: number;
-  block: number;
-}
+/** A paragraph's address in the model — through `cell` for a paragraph
+ * inside a table (SPEC-022; see textEditing.ParagraphAddress). */
+export type BlockAddress = ParagraphAddress;
 
 /** The paragraphs the selection touches (AC-4): the paragraph holding a
  * collapsed caret, or every paragraph the selection range intersects, in
- * document order. */
+ * document order — descending into table cells (SPEC-022): a selection
+ * inside one cell touches that cell's paragraphs, and a top-level range
+ * covering a table touches every paragraph of every cell. */
 export function touchedBlocks(model: DocumentModel, selection: ModelSelection): BlockAddress[] {
-  const { start, end } = orderedRange(model, selection);
-  const addresses: BlockAddress[] = [];
-  for (let section = start.section; section <= end.section; section++) {
-    const blocks = model.sections[section].blocks;
-    const first = section === start.section ? start.block : 0;
-    const last = section === end.section ? end.block : blocks.length - 1;
-    for (let block = first; block <= last; block++) {
-      addresses.push({ section, block });
-    }
-  }
-  return addresses;
+  return paragraphSlicesInRange(model, selection.anchor, selection.focus).map(
+    (slice) => slice.address,
+  );
 }
 
 /** The first touched paragraph's formatting in document order — the label
@@ -523,8 +523,11 @@ export function firstTouchedFormatting(
   model: DocumentModel,
   selection: ModelSelection,
 ): ParagraphFormatting {
-  const { start } = orderedRange(model, selection);
-  return model.sections[start.section].blocks[start.block].formatting ?? {};
+  const addresses = touchedBlocks(model, selection);
+  if (addresses.length === 0) {
+    return {};
+  }
+  return paragraphAt(model, addresses[0])?.formatting ?? {};
 }
 
 /** Typed empty-formatting seed for refs in `.vue` scripts (espree bars the
@@ -548,8 +551,10 @@ function updateTouchedParagraphs(
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
   for (const address of touchedBlocks(next, { anchor: start, focus: end })) {
-    const blocks = next.sections[address.section].blocks;
-    const block = blocks[address.block];
+    const block = paragraphAt(next, address);
+    if (!block) {
+      continue;
+    }
     const updated = update(block.formatting ?? {});
     if (updated === null) {
       continue;
@@ -560,7 +565,7 @@ function updateTouchedParagraphs(
     } else {
       delete replacement.formatting;
     }
-    blocks[address.block] = replacement;
+    replaceParagraphAt(next, address, replacement);
   }
   return { model: next, selection: { anchor: start, focus: end } };
 }
@@ -740,8 +745,10 @@ function updateTouchedLists(
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
   for (const address of touchedBlocks(next, { anchor: start, focus: end })) {
-    const blocks = next.sections[address.section].blocks;
-    const block = blocks[address.block];
+    const block = paragraphAt(next, address);
+    if (!block) {
+      continue;
+    }
     const updated = update(block);
     if (updated === undefined) {
       continue;
@@ -752,7 +759,7 @@ function updateTouchedLists(
     } else {
       replacement.list = updated;
     }
-    blocks[address.block] = replacement;
+    replaceParagraphAt(next, address, replacement);
   }
   return { model: next, selection: { anchor: start, focus: end } };
 }
@@ -766,7 +773,7 @@ export function allTouchedOfListType(
 ): boolean {
   const addresses = touchedBlocks(model, selection);
   return addresses.every(
-    (address) => model.sections[address.section].blocks[address.block].list?.type === type,
+    (address) => paragraphAt(model, address)?.list?.type === type,
   );
 }
 
@@ -839,20 +846,31 @@ export function setListMarker(
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
   const result: CommandResult = { model: next, selection: { anchor: start, focus: end } };
-  const list = next.sections[start.section].blocks[start.block].list;
-  const run = listRunAround(next, start.section, start.block);
+  const startParagraph = paragraphAtCaret(next, start);
+  const list = startParagraph?.list;
+  // The containing block list: the cell's own blocks for a caret inside a
+  // table (SPEC-022 — a cell is its own list context), else the section's.
+  const table = next.sections[start.section].blocks[start.block];
+  const container =
+    start.cell && isTable(table)
+      ? table.rows[start.cell.row].cells[start.cell.col].blocks
+      : next.sections[start.section].blocks;
+  const index = start.cell ? start.cell.block : start.block;
+  const run = listRunAround(container, index);
   if (!list || !run) {
     return result;
   }
   const level = list.level;
   const type = markerType(marker);
-  const blocks = next.sections[start.section].blocks;
-  for (let index = run.first; index <= run.last; index++) {
-    const block = blocks[index];
-    if (block.list?.level !== level) {
+  for (let blockIndex = run.first; blockIndex <= run.last; blockIndex++) {
+    const block = container[blockIndex];
+    if (block.type !== "paragraph" || block.list?.level !== level) {
       continue;
     }
-    blocks[index] = { ...block, list: { ...block.list, type, marker } };
+    const address: BlockAddress = start.cell
+      ? { section: start.section, block: start.block, cell: { ...start.cell, block: blockIndex } }
+      : { section: start.section, block: blockIndex };
+    replaceParagraphAt(next, address, { ...block, list: { ...block.list, type, marker } });
   }
   return result;
 }
@@ -881,11 +899,12 @@ export function applyListAutoformat(
 ): CommandResult {
   const next = cloneContainers(model);
   const { start } = orderedRange(next, selection);
-  const blocks = next.sections[start.section].blocks;
-  const block = blocks[start.block];
-  blocks[start.block] = { ...block, runs: [], list: { type, level: 1 } };
-  const caret = { section: start.section, block: start.block, offset: 0 };
-  return result(next, caret);
+  const block = paragraphAtCaret(next, start);
+  if (!block) {
+    return result(next, start);
+  }
+  replaceParagraphAt(next, start, { ...block, runs: [], list: { type, level: 1 } });
+  return result(next, { ...start, offset: 0 });
 }
 
 /** What the toolbar reflects about the selection's list state: the two
@@ -909,7 +928,7 @@ export function toolbarListState(
   selection: ModelSelection,
 ): ToolbarListState {
   const { start } = orderedRange(model, selection);
-  const list = model.sections[start.section].blocks[start.block].list;
+  const list = paragraphAtCaret(model, start)?.list;
   return {
     bulleted: allTouchedOfListType(model, selection, "bullet"),
     numbered: allTouchedOfListType(model, selection, "number"),

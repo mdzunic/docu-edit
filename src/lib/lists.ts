@@ -5,6 +5,7 @@
 // items (AC-10) and restart after an interruption (AC-11) without any
 // bookkeeping in the editing commands.
 import type {
+  Block,
   DocumentModel,
   ListFormatting,
   ListMarkerStyle,
@@ -166,60 +167,70 @@ export function markerText(style: ListMarkerStyle, ordinal: number): string {
   return `${formatOrdinal(style, ordinal)}.`;
 }
 
-/** Every block's displayed marker, per section, in block order — "" for
- * non-list paragraphs. One scan of the document implements the numbering
- * semantics: consecutive items at a level count up from the list's start
- * value (AC-10, AC-22), any non-list paragraph resets every counter
- * (AC-11), and returning to a shallower level resets the deeper counters,
- * so a later sub-list numbers from its start again. */
-export function listMarkers(model: DocumentModel): string[][] {
-  return model.sections.map((section) => {
-    // counters[level] is the last ordinal used at that level within the
-    // current uninterrupted run of list paragraphs.
-    let counters: Array<number | undefined> = [];
-    return section.blocks.map((block) => {
-      const list = block.list;
-      if (!list) {
-        counters = [];
-        return "";
-      }
-      const level = clampListLevel(list.level);
-      for (let deeper = level + 1; deeper < counters.length; deeper++) {
-        counters[deeper] = undefined;
-      }
-      const style = markerStyleOf(list);
-      if (list.type === "bullet") {
-        return markerText(style, 0);
-      }
-      const ordinal = (counters[level] ?? (list.startAt ?? 1) - 1) + 1;
-      counters[level] = ordinal;
-      return markerText(style, ordinal);
-    });
+function listOf(block: Block | undefined): ListFormatting | undefined {
+  return block?.type === "paragraph" ? block.list : undefined;
+}
+
+/** Every block's displayed marker for one block list, in order — "" for
+ * non-list paragraphs and for table blocks (a table interrupts numbering
+ * exactly like a plain paragraph would, AC-11). One scan implements the
+ * numbering semantics: consecutive items at a level count up from the
+ * list's start value (AC-10, AC-22), any non-list block resets every
+ * counter (AC-11), and returning to a shallower level resets the deeper
+ * counters, so a later sub-list numbers from its start again. Shared by the
+ * section canvas and each table cell's own block list (SPEC-022 — each cell
+ * is its own numbering context). */
+export function markersForBlocks(blocks: readonly Block[]): string[] {
+  // counters[level] is the last ordinal used at that level within the
+  // current uninterrupted run of list paragraphs.
+  let counters: Array<number | undefined> = [];
+  return blocks.map((block) => {
+    const list = listOf(block);
+    if (!list) {
+      counters = [];
+      return "";
+    }
+    const level = clampListLevel(list.level);
+    for (let deeper = level + 1; deeper < counters.length; deeper++) {
+      counters[deeper] = undefined;
+    }
+    const style = markerStyleOf(list);
+    if (list.type === "bullet") {
+      return markerText(style, 0);
+    }
+    const ordinal = (counters[level] ?? (list.startAt ?? 1) - 1) + 1;
+    counters[level] = ordinal;
+    return markerText(style, ordinal);
   });
+}
+
+/** Every top-level block's displayed marker, per section, in block order. */
+export function listMarkers(model: DocumentModel): string[][] {
+  return model.sections.map((section) => markersForBlocks(section.blocks));
 }
 
 export function clampListLevel(level: number): number {
   return Math.min(Math.max(Math.round(level), 1), MAX_LIST_LEVEL);
 }
 
-/** The contiguous run of list paragraphs around `block` in its section —
- * what AC-13 calls "the current list". Returns the inclusive [first, last]
- * block range, or null when the block is not a list item. */
+/** The contiguous run of list paragraphs around `block` in its containing
+ * block list — what AC-13 calls "the current list". Takes the container
+ * (a section's blocks, or a table cell's, SPEC-022) rather than the model
+ * so the run never leaks across a cell boundary. Returns the inclusive
+ * [first, last] range, or null when the block is not a list item. */
 export function listRunAround(
-  model: DocumentModel,
-  section: number,
+  blocks: readonly Block[] | undefined,
   block: number,
 ): { first: number; last: number } | null {
-  const blocks = model.sections[section]?.blocks;
-  if (!blocks || !blocks[block]?.list) {
+  if (!blocks || !listOf(blocks[block])) {
     return null;
   }
   let first = block;
-  while (first > 0 && blocks[first - 1].list) {
+  while (first > 0 && listOf(blocks[first - 1])) {
     first--;
   }
   let last = block;
-  while (last + 1 < blocks.length && blocks[last + 1].list) {
+  while (last + 1 < blocks.length && listOf(blocks[last + 1])) {
     last++;
   }
   return { first, last };

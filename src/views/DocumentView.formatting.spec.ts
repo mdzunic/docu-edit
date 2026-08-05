@@ -6,6 +6,7 @@ import { routes } from "../router";
 import { setDomCaret, setDomSelection } from "../lib/domCaret";
 import type { Paragraph } from "../lib/documentModel";
 import type { CaretPosition } from "../lib/textEditing";
+import { asParagraph } from "../lib/documentModel";
 
 // SPEC-012 — character formatting through the component: the toolbar and
 // keyboard shortcuts drive the same command API exercised directly in
@@ -68,7 +69,7 @@ async function mountWithContent(id: string, blocks: Paragraph[]) {
 async function storedRuns(id: string) {
   const store = await import("../lib/documentStore");
   const model = store.getDocument(id);
-  return model ? model.sections[0].blocks.map((block) => block.runs) : [];
+  return model ? model.sections[0].blocks.map((block) => asParagraph(block).runs) : [];
 }
 
 function contentRoot(): HTMLElement {
