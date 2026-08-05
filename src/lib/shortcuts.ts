@@ -18,7 +18,7 @@ import { isMacPlatform } from "./platform";
 /** One key combination that triggers a command. `key` is compared against
  * `KeyboardEvent.key` — case-insensitively for single characters, exactly
  * for named keys ("Home", "Tab", "PageUp", "PageDown"). Absence of `mod`/
- * `shift` means that modifier must NOT be held — bindings are matched
+ * `shift`/`alt` means that modifier must NOT be held — bindings are matched
  * exactly, not as a subset, so "Ctrl+Z" and "Ctrl+Shift+Z" never collide.
  * `shiftOptional` is for the handful of commands (page/document navigation)
  * where Shift doesn't select a *different* command, only how this one
@@ -29,6 +29,8 @@ export interface ShortcutBinding {
   key: string;
   mod?: boolean;
   shift?: boolean;
+  /** Alt on Windows/Linux, Option on macOS (SPEC-019's style shortcuts). */
+  alt?: boolean;
   shiftOptional?: boolean;
 }
 
@@ -66,6 +68,15 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "paragraph.alignJustify", label: "Justify", category: "Paragraph", bindings: [{ key: "j", mod: true }] },
   { id: "paragraph.indent", label: "Increase indent / demote list item", category: "Paragraph", bindings: [{ key: "Tab" }] },
   { id: "paragraph.outdent", label: "Decrease indent / promote list item", category: "Paragraph", bindings: [{ key: "Tab", shift: true }] },
+
+  // Paragraph styles (SPEC-019 AC-5, AC-6)
+  { id: "style.normal", label: "Apply Normal text", category: "Paragraph styles", bindings: [{ key: "0", mod: true, alt: true }] },
+  { id: "style.heading1", label: "Apply Heading 1", category: "Paragraph styles", bindings: [{ key: "1", mod: true, alt: true }] },
+  { id: "style.heading2", label: "Apply Heading 2", category: "Paragraph styles", bindings: [{ key: "2", mod: true, alt: true }] },
+  { id: "style.heading3", label: "Apply Heading 3", category: "Paragraph styles", bindings: [{ key: "3", mod: true, alt: true }] },
+  { id: "style.heading4", label: "Apply Heading 4", category: "Paragraph styles", bindings: [{ key: "4", mod: true, alt: true }] },
+  { id: "style.heading5", label: "Apply Heading 5", category: "Paragraph styles", bindings: [{ key: "5", mod: true, alt: true }] },
+  { id: "style.heading6", label: "Apply Heading 6", category: "Paragraph styles", bindings: [{ key: "6", mod: true, alt: true }] },
 
   // Editing
   { id: "edit.undo", label: "Undo", category: "Editing", bindings: [{ key: "z", mod: true }] },
@@ -122,6 +133,9 @@ function bindingMatchesEvent(binding: ShortcutBinding, event: KeyboardEvent, isM
   if (normalizeKey(binding.key) !== normalizeKey(event.key) || modPressed !== !!binding.mod) {
     return false;
   }
+  if (event.altKey !== !!binding.alt) {
+    return false;
+  }
   return binding.shiftOptional || event.shiftKey === !!binding.shift;
 }
 
@@ -143,6 +157,9 @@ export function formatBinding(binding: ShortcutBinding, isMac: boolean = isMacPl
   const parts: string[] = [];
   if (binding.mod) {
     parts.push(isMac ? "Cmd" : "Ctrl");
+  }
+  if (binding.alt) {
+    parts.push(isMac ? "Option" : "Alt");
   }
   if (binding.shift) {
     parts.push("Shift");

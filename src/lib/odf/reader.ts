@@ -7,6 +7,7 @@ import type {
   Block,
   DefaultStyles,
   ListFormatting,
+  NamedStyle,
   OpaqueBlock,
   OpaqueInline,
   OpaquePart,
@@ -37,6 +38,7 @@ import {
   textAttr,
 } from "./xml";
 import {
+  catalogToNamedStyles,
   parseOdfStyleCatalog,
   resolveListLevel,
   resolveParagraphStyle,
@@ -57,6 +59,10 @@ export const ODT_MIMETYPE = "application/vnd.oasis.opendocument.text";
 export interface ParsedOdtDocument {
   sections: Section[];
   defaultStyles: DefaultStyles;
+  /** The *named* paragraph styles of styles.xml as the model's style
+   * catalogue (SPEC-019); empty when the package defines none. Automatic
+   * styles are direct formatting and stay baked (see catalogToNamedStyles). */
+  styles: NamedStyle[];
   /** Every package part the reader did not model (SPEC-008), in package
    * order — written back byte-identical on a save to .odt. */
   opaque: OpaquePart[];
@@ -668,5 +674,11 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     }
   }
 
-  return { sections: [section], defaultStyles, opaque, sourceXml };
+  return {
+    sections: [section],
+    defaultStyles,
+    styles: catalogToNamedStyles(catalog),
+    opaque,
+    sourceXml,
+  };
 }

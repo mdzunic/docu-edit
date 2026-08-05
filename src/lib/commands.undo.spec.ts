@@ -88,6 +88,12 @@ const REGISTRY: Record<string, Scenario> = {
   removeListFormat: (model) => commands.removeListFormat(model, caretSelection(caret(2, 0))),
   applyListAutoformat: (model) =>
     commands.applyListAutoformat(model, caretSelection(caret(1, 0)), "number"),
+  applyParagraphStyle: (model) =>
+    commands.applyParagraphStyle(model, caretSelection(caret(0, 0)), "Heading1"),
+  resetParagraphStyle: (model) =>
+    commands.resetParagraphStyle(model, caretSelection(caret(0, 8))),
+  updateStyleFromSelection: (model) =>
+    commands.updateStyleFromSelection(model, caretSelection(caret(0, 0)), "Heading1"),
 };
 
 const QUERIES = new Set([
@@ -116,6 +122,8 @@ const QUERIES = new Set([
   "allTouchedOfListType",
   "emptyToolbarListState",
   "toolbarListState",
+  "emptyToolbarStyleState",
+  "toolbarStyleState",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {

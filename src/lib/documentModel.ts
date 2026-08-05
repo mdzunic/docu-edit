@@ -168,6 +168,35 @@ export function asListMarkerStyle(value: string): ListMarkerStyle {
   return value as ListMarkerStyle;
 }
 
+// --- paragraph styles (SPEC-019) --------------------------------------------
+
+/** One paragraph style of the document's style catalogue (SPEC-019): its
+ * *own* (non-inherited) formatting plus the parent link resolution follows
+ * (`w:basedOn` / `style:parent-style-name`). For a `.docx` these mirror the
+ * paragraph `w:style` elements of styles.xml; for a `.odt`, the named
+ * paragraph styles of its styles.xml. The model keeps paragraph/run
+ * formatting *baked* (effective) on each paragraph, so the catalogue is not
+ * needed to render — it drives the style picker, the diff that separates
+ * direct formatting from style formatting, and the writers' style
+ * definitions. */
+export interface NamedStyle {
+  /** Style identity as referenced by `Paragraph.styleId`. */
+  id: string;
+  /** Display name shown in the picker. */
+  name?: string;
+  /** Parent style id the style inherits from. */
+  basedOn?: string;
+  /** The style's own paragraph formatting; absent when it sets none. */
+  paragraphFormatting?: ParagraphFormatting;
+  /** The style's own run formatting; absent when it sets none. */
+  runFormatting?: RunFormatting;
+  /** ODF-only: a proportional font size ("130%" in the source), resolved
+   * against the inherited size during chain resolution. */
+  fontSizePercent?: number;
+  /** 1-based outline level; presence makes this a heading style. */
+  headingLevel?: number;
+}
+
 /** An inline XML element the reader does not model (SPEC-008) — e.g. a
  * `w:drawing`-carrying run or an ODF `draw:frame` — held verbatim and
  * anchored to its position between the paragraph's runs so the writer can
@@ -366,6 +395,10 @@ export interface DocumentModel {
   title: string;
   sections: Section[];
   defaultStyles: DefaultStyles;
+  /** The document's own paragraph-style catalogue (SPEC-019), read from the
+   * opened file's styles.xml. Absent for blank documents — the picker then
+   * offers the built-in set from lib/styles.ts. */
+  styles?: NamedStyle[];
   format?: DocumentFormat;
   /** Unmodelled package parts retained from the opened file (SPEC-008). */
   opaque?: OpaquePart[];

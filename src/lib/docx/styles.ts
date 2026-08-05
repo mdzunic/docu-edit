@@ -3,7 +3,7 @@
 // formatting — this is what lets built-in heading styles (AC-25) render at
 // their defined size and weight even when a paragraph carries no direct
 // formatting of its own.
-import type { ParagraphFormatting, RunFormatting } from "../documentModel";
+import type { NamedStyle, ParagraphFormatting, RunFormatting } from "../documentModel";
 import { childElements, firstChildElement, wordAttr as attr, WORD_NAMESPACE } from "./xml";
 import {
   mergeParagraphFormatting,
@@ -92,6 +92,33 @@ export function parseStylesCatalog(stylesDoc: Document | undefined): StyleCatalo
   }
 
   return catalog;
+}
+
+/** The catalog's paragraph styles as the model's style catalogue
+ * (SPEC-019): each style's *own* properties plus the basedOn link, in
+ * styles.xml order — the exact data resolveNamedStyle (lib/styles.ts)
+ * re-resolves and the writers re-emit. Empty formatting objects are elided
+ * so the entries compare structurally against catalogue entries built
+ * elsewhere (the writer's changed-style detection). */
+export function catalogToNamedStyles(catalog: StyleCatalog): NamedStyle[] {
+  const styles: NamedStyle[] = [];
+  for (const definition of catalog.styles.values()) {
+    const style: NamedStyle = { id: definition.id, name: definition.name ?? definition.id };
+    if (definition.basedOn !== undefined) {
+      style.basedOn = definition.basedOn;
+    }
+    if (Object.keys(definition.paragraphFormatting).length > 0) {
+      style.paragraphFormatting = definition.paragraphFormatting;
+    }
+    if (Object.keys(definition.runFormatting).length > 0) {
+      style.runFormatting = definition.runFormatting;
+    }
+    if (definition.headingLevel !== undefined) {
+      style.headingLevel = definition.headingLevel;
+    }
+    styles.push(style);
+  }
+  return styles;
 }
 
 /** Resolved effective formatting for a paragraph carrying `w:pStyle` =

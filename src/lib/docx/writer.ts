@@ -22,15 +22,28 @@
 import type {
   DefaultStyles,
   DocumentModel,
+  NamedStyle,
   Paragraph,
   ParagraphAlignment,
+  ParagraphFormatting,
   Run,
   RunFormatting,
   Table,
 } from "../documentModel";
 import { DEFAULT_TITLE } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
-import { parseRelationships, relsPathFor, resolvePartPath, WORD_NAMESPACE } from "./xml";
+import { equalStructural } from "../equality";
+import {
+  childElements,
+  parseRelationships,
+  parseXml,
+  relsPathFor,
+  resolvePartPath,
+  serializeElement,
+  wordAttr,
+  WORD_NAMESPACE,
+} from "./xml";
+import { catalogToNamedStyles, parseStylesCatalog } from "./styles";
 import { cmToTwips, cssColorToOoxml, ptToHalfPoints, ptToTwentiethsOfPoint } from "./units";
 import {
   buildNumberingXml,
@@ -183,23 +196,11 @@ function runXml(run: Run): string {
   return `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
 }
 
-function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): string {
+/** The pPr children a bare ParagraphFormatting produces — the shared tail
+ * of a paragraph's own w:pPr and a style definition's (SPEC-019), in CT_PPr
+ * sequence order: bidi, spacing, ind, jc. */
+function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   const parts: string[] = [];
-  const formatting = paragraph.formatting ?? {};
-
-  // Emitted in CT_PPr sequence order: pStyle, numPr, bidi, spacing, ind,
-  // jc, outlineLvl.
-  if (paragraph.styleId !== undefined) {
-    parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
-  }
-
-  // The list reference (SPEC-018 AC-18): the numbering plan assigned this
-  // paragraph its num instance and 0-based level.
-  if (numRef) {
-    parts.push(
-      `<w:numPr><w:ilvl w:val="${numRef.ilvl}"/><w:numId w:val="${numRef.numId}"/></w:numPr>`,
-    );
-  }
 
   // The model's indents are logical start/end values, exactly what w:ind's
   // left/right mean, so RTL needs only the w:bidi flag — the indent values
@@ -252,6 +253,27 @@ function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): st
   if (formatting.alignment !== undefined) {
     parts.push(`<w:jc w:val="${JC_VALUES[formatting.alignment]}"/>`);
   }
+  return parts;
+}
+
+function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): string {
+  const parts: string[] = [];
+
+  // Emitted in CT_PPr sequence order: pStyle, numPr, then the shared
+  // formatting parts, then outlineLvl.
+  if (paragraph.styleId !== undefined) {
+    parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
+  }
+
+  // The list reference (SPEC-018 AC-18): the numbering plan assigned this
+  // paragraph its num instance and 0-based level.
+  if (numRef) {
+    parts.push(
+      `<w:numPr><w:ilvl w:val="${numRef.ilvl}"/><w:numId w:val="${numRef.numId}"/></w:numPr>`,
+    );
+  }
+
+  parts.push(...paragraphFormattingParts(paragraph.formatting ?? {}));
   if (paragraph.headingLevel !== undefined) {
     parts.push(`<w:outlineLvl w:val="${paragraph.headingLevel - 1}"/>`);
   }
@@ -417,20 +439,16 @@ export function buildDocumentXml(model: DocumentModel, plan: NumberingPlan = pla
 }
 
 // "Heading1".."Heading9" get Word's built-in style names ("heading 1"...);
-// anything else keeps its id as the name.
+// anything else keeps its id as the name. Used only for ids no definition
+// exists for — defined styles (the model's catalogue or the built-ins,
+// SPEC-019) carry their own names.
 function styleNameFor(styleId: string): string {
   const match = /^Heading([1-9])$/.exec(styleId);
   return match ? `heading ${match[1]}` : styleId;
 }
 
-/** The styles part: docDefaults carrying the document's default font, the
- * required default "Normal" style, and a name-only definition for every
- * style id the paragraphs reference (see the header comment for why these
- * carry no formatting). */
-export function buildStylesXml(model: DocumentModel): string {
-  const { fontFamily, fontSizePt } = model.defaultStyles;
-  const family = escapeXml(fontFamily);
-
+/** Every style id the model's paragraphs reference, in first-use order. */
+function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
@@ -445,18 +463,90 @@ export function buildStylesXml(model: DocumentModel): string {
       }
     }
   }
+  return referencedIds;
+}
 
-  let styles =
-    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">' +
-    '<w:name w:val="Normal"/></w:style>';
-  for (const id of referencedIds) {
-    if (id === "Normal") {
+/** A style definition's w:pPr/w:rPr from its own formatting (SPEC-019).
+ * Style formatting is safe to declare even though every paragraph also
+ * carries its merged result as direct formatting: the reader resolves the
+ * style first and merges the (complete) direct formatting over it, which
+ * reproduces the identical model. */
+function stylePropertiesXml(definition: NamedStyle): string {
+  const pPrParts = paragraphFormattingParts(definition.paragraphFormatting ?? {});
+  if (definition.headingLevel !== undefined) {
+    pPrParts.push(`<w:outlineLvl w:val="${definition.headingLevel - 1}"/>`);
+  }
+  const pPr = pPrParts.length > 0 ? `<w:pPr>${pPrParts.join("")}</w:pPr>` : "";
+  return pPr + runPropertiesXml(definition.runFormatting ?? {});
+}
+
+/** One w:style element for a defined style (SPEC-019). */
+function styleDefinitionXml(definition: NamedStyle, isDefault: boolean): string {
+  const defaultAttr = isDefault ? ' w:default="1"' : "";
+  const basedOn =
+    definition.basedOn !== undefined
+      ? `<w:basedOn w:val="${escapeXml(definition.basedOn)}"/>`
+      : "";
+  return (
+    `<w:style w:type="paragraph"${defaultAttr} w:styleId="${escapeXml(definition.id)}">` +
+    `<w:name w:val="${escapeXml(definition.name ?? definition.id)}"/>` +
+    basedOn +
+    stylePropertiesXml(definition) +
+    "</w:style>"
+  );
+}
+
+/** The styles part: docDefaults carrying the document's default font, the
+ * required default "Normal" style, and a definition for every style the
+ * model's catalogue holds or its paragraphs reference (SPEC-019) — with the
+ * style's own formatting when a definition exists (the catalogue, or the
+ * built-in set for ids applied in the editor), name-only otherwise. */
+export function buildStylesXml(model: DocumentModel): string {
+  const { fontFamily, fontSizePt } = model.defaultStyles;
+  const family = escapeXml(fontFamily);
+
+  // Definitions come from the model's catalogue alone — never the built-in
+  // set: a style applied in the editor is materialized into the catalogue
+  // by the command (see commands.applyParagraphStyle), while a model
+  // carrying no catalogue must reproduce the old name-only declarations
+  // exactly (its styles' formatting is baked into the paragraphs).
+  const catalogueById = new Map((model.styles ?? []).map((style) => [style.id, style]));
+
+  // Declared ids: the catalogue in its own order, then referenced ids, then
+  // basedOn ancestors of anything declared — closed so no declared style
+  // references an undeclared parent.
+  const queue = [...catalogueById.keys(), ...collectReferencedStyleIds(model)];
+  const declared: string[] = [];
+  const seen = new Set<string>(["Normal"]);
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) {
       continue;
     }
-    styles +=
-      `<w:style w:type="paragraph" w:styleId="${escapeXml(id)}">` +
-      `<w:name w:val="${escapeXml(styleNameFor(id))}"/>` +
-      '<w:basedOn w:val="Normal"/></w:style>';
+    seen.add(id);
+    declared.push(id);
+    const parent = catalogueById.get(id)?.basedOn;
+    if (parent !== undefined) {
+      queue.push(parent);
+    }
+  }
+
+  const normal = catalogueById.get("Normal");
+  let styles =
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">' +
+    '<w:name w:val="Normal"/>' +
+    (normal ? stylePropertiesXml(normal) : "") +
+    "</w:style>";
+  for (const id of declared) {
+    const definition = catalogueById.get(id);
+    if (definition) {
+      styles += styleDefinitionXml(definition, false);
+    } else {
+      styles +=
+        `<w:style w:type="paragraph" w:styleId="${escapeXml(id)}">` +
+        `<w:name w:val="${escapeXml(styleNameFor(id))}"/>` +
+        '<w:basedOn w:val="Normal"/></w:style>';
+    }
   }
 
   return (
@@ -468,6 +558,84 @@ export function buildStylesXml(model: DocumentModel): string {
     styles +
     "</w:styles>"
   );
+}
+
+/** A preserved styles.xml with the model's style changes applied (SPEC-019),
+ * or null when nothing needs changing — the caller then keeps the original
+ * part byte-identical (SPEC-008). A style is rewritten only when the
+ * model's catalogue entry no longer matches what the part defines ("Update
+ * <style> to match"), and a definition is added for a catalogue entry or a
+ * referenced built-in the part doesn't define (a heading style applied in
+ * the editor must be a real style in the saved file, AC-15). Rewritten
+ * styles keep their unmodelled attributes and children (w:default, w:qFormat,
+ * w:next, …); only w:name, w:basedOn, w:pPr and w:rPr are regenerated. */
+export function patchStylesXml(model: DocumentModel, originalXml: string): string | null {
+  if (!model.styles) {
+    return null;
+  }
+  let doc: Document;
+  try {
+    doc = parseXml(originalXml);
+  } catch {
+    return null;
+  }
+  const original = new Map(
+    catalogToNamedStyles(parseStylesCatalog(doc)).map((style) => [style.id, style]),
+  );
+  const upserts: NamedStyle[] = [];
+  for (const entry of model.styles) {
+    const existing = original.get(entry.id);
+    if (!existing || !equalStructural(existing, entry)) {
+      upserts.push(entry);
+    }
+  }
+  if (upserts.length === 0) {
+    return null;
+  }
+
+  const root = doc.documentElement;
+  const importStyleElement = (definition: NamedStyle): Element => {
+    const wrapper = parseXml(
+      `<w:styles xmlns:w="${WORD_NAMESPACE}">${styleDefinitionXml(definition, false)}</w:styles>`,
+    );
+    return doc.importNode(wrapper.documentElement.firstElementChild!, true) as Element;
+  };
+  for (const definition of upserts) {
+    const existing = childElements(root, WORD_NAMESPACE, "style").find(
+      (el) => wordAttr(el, "type") === "paragraph" && wordAttr(el, "styleId") === definition.id,
+    );
+    if (!existing) {
+      root.appendChild(importStyleElement(definition));
+      continue;
+    }
+    const replacement = importStyleElement(definition);
+    // Carry the original element's unmodelled attributes (w:default, …) and
+    // children over: the regenerated element replaces only what the model
+    // expresses.
+    for (const attr of Array.from(existing.attributes)) {
+      if (
+        attr.namespaceURI === WORD_NAMESPACE &&
+        (attr.localName === "type" || attr.localName === "styleId")
+      ) {
+        continue;
+      }
+      replacement.setAttributeNodeNS(attr.cloneNode(true) as Attr);
+    }
+    const regenerated = new Set(["name", "basedOn", "pPr", "rPr"]);
+    // CT_Style puts pPr/rPr last, so preserved children slot in before them.
+    const propertiesStart =
+      Array.from(replacement.children).find(
+        (el) => el.namespaceURI === WORD_NAMESPACE && (el.localName === "pPr" || el.localName === "rPr"),
+      ) ?? null;
+    for (const child of Array.from(existing.children)) {
+      if (child.namespaceURI === WORD_NAMESPACE && regenerated.has(child.localName)) {
+        continue;
+      }
+      replacement.insertBefore(doc.importNode(child, true), propertiesStart);
+    }
+    root.replaceChild(replacement, existing);
+  }
+  return `${XML_DECLARATION}${serializeElement(root)}`;
 }
 
 /** A timestamp in the W3CDTF profile core.xml requires (whole seconds,
@@ -677,6 +845,22 @@ export async function writeDocx(
       : buildNumberingXml(plan);
   const addNumberingDecls = numberingOut !== null && !numberingRel;
 
+  // Styles (SPEC-019): the preserved styles part is kept byte-identical
+  // unless the model's catalogue diverges from it — a style updated in the
+  // editor, or a built-in style applied that the part doesn't define.
+  const stylesRel = mainRelsText
+    ? Array.from(parseRelationships(mainRelsText).values()).find(
+        (rel) => rel.type === STYLES_RELATIONSHIP,
+      )
+    : undefined;
+  const stylesPartName = stylesRel
+    ? resolvePartPath(mainPartName, stylesRel.target)
+    : `${mainDir}styles.xml`;
+  const preservedStyles = preservedParts.get(stylesPartName);
+  const patchedStyles = preservedStyles
+    ? patchStylesXml(model, decoder.decode(preservedStyles))
+    : null;
+
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
     entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
@@ -687,6 +871,8 @@ export async function writeDocx(
     }
     if (numberingOut !== null && name === numberingPartName) {
       entries.push({ name, data: encoder.encode(numberingOut) });
+    } else if (patchedStyles !== null && name === stylesPartName) {
+      entries.push({ name, data: encoder.encode(patchedStyles) });
     } else if (addNumberingDecls && name === mainRelsName) {
       entries.push({
         name,

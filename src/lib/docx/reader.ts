@@ -6,6 +6,7 @@
 import type {
   Block,
   DefaultStyles,
+  NamedStyle,
   OpaqueBlock,
   OpaqueInline,
   OpaquePart,
@@ -32,7 +33,7 @@ import {
   WORD_NAMESPACE,
   XmlParseError,
 } from "./xml";
-import { parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
+import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
   EMPTY_NUMBERING_CATALOG,
   NUMBERING_RELATIONSHIP,
@@ -90,6 +91,9 @@ function isLegacyDoc(bytes: Uint8Array): boolean {
 export interface ParsedDocxDocument {
   sections: Section[];
   defaultStyles: DefaultStyles;
+  /** The paragraph styles of styles.xml as the model's style catalogue
+   * (SPEC-019); empty when the package has no styles part. */
+  styles: NamedStyle[];
   /** Every package part the reader did not model (SPEC-008), in package
    * order — written back byte-identical on a save to .docx. */
   opaque: OpaquePart[];
@@ -531,5 +535,11 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     sourceXml.docxSectPr = serializeElement(sectPr);
   }
 
-  return { sections: [section], defaultStyles, opaque, sourceXml };
+  return {
+    sections: [section],
+    defaultStyles,
+    styles: catalogToNamedStyles(styleCatalog),
+    opaque,
+    sourceXml,
+  };
 }
