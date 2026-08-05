@@ -22,6 +22,9 @@ produces documents that cannot be restructured.
 - [ ] Applying a heading style makes the paragraph a real heading in the saved file: `w:pStyle` referencing the built-in heading style for `.docx`, `text:h` with the right outline level for `.odt`
 - [ ] Rendered headings expose correct heading semantics (h1–h6) to assistive technology
 
+## Decisions
+If a document has styles defined but lacks a 'Normal' style, does the picker show a fallback 'Normal' entry alongside the document's styles, or is 'Normal' only present when the document has zero styles? AC-4 implies the latter, but AC-7 implies a fallback Normal is always available. - Normal is always available.
+
 ## Out of scope
 Creating and managing custom styles (SPEC-042). Character styles and list
 styles. Style sets / theme switching.
