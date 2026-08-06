@@ -7,6 +7,7 @@
 // commands stay in commands.ts/textEditing.ts, exactly like tables.ts.
 import {
   isImage,
+  type Block,
   type DocumentModel,
   type Image,
   type ImageWrapMode,
@@ -182,7 +183,7 @@ export function insertImage(
   };
   next.media = [...(next.media ?? []), { mediaId: media.mediaId, contentType: media.contentType, data: media.data }];
 
-  const replacement: (Paragraph | Table | Image)[] = [];
+  const replacement: Block[] = [];
   let imageBlockOffset: number;
   if (target.type !== "paragraph") {
     // The caret addresses a table or (another) image as an atom (no `cell`,

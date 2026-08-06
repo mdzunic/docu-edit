@@ -376,7 +376,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
-      if (block.type === "image") {
+      if (block.type === "image" || block.type === "break") {
         continue;
       }
       if (block.styleId) {
@@ -938,6 +938,13 @@ export function buildContentXml(
       }
       if (block.type === "image") {
         blockXml.push(imageParagraphXml(block, styles, mediaPlan));
+        i++;
+        continue;
+      }
+      if (block.type === "break") {
+        // SPEC-028: a manual break exports as fo:break-before on the next
+        // paragraph's automatic style (see breakBeforeFor below); the break
+        // block itself emits nothing.
         i++;
         continue;
       }

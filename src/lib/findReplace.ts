@@ -8,7 +8,7 @@
 // Scope (AC "search covers body text"): every paragraph of every section is
 // searched. Headers, footers and footnotes are not part of the model yet, so
 // they are excluded for free — the find bar states this to the user.
-import { isImage, isTable, type DocumentModel, type RunFormatting } from "./documentModel";
+import { isBreak, isImage, isTable, type DocumentModel, type RunFormatting } from "./documentModel";
 import {
   blockText,
   clampCaret,
@@ -209,7 +209,7 @@ export function replaceMatches(
   for (const [key, blockMatches] of byBlock) {
     const [section, block] = key.split(":").map(Number);
     const targetBlock = next.sections[section].blocks[block];
-    if (isTable(targetBlock) || isImage(targetBlock)) {
+    if (isTable(targetBlock) || isImage(targetBlock) || isBreak(targetBlock)) {
       continue;
     }
     let runs = targetBlock.runs;

@@ -5,6 +5,7 @@
 // items (AC-10) and restart after an interruption (AC-11) without any
 // bookkeeping in the editing commands.
 import {
+  isBreak,
   isImage,
   isTable,
   type Block,
@@ -170,7 +171,9 @@ export function markerText(style: ListMarkerStyle, ordinal: number): string {
 }
 
 function listOf(block: Block | undefined): ListFormatting | undefined {
-  return block === undefined || isTable(block) || isImage(block) ? undefined : block.list;
+  return block === undefined || isTable(block) || isImage(block) || isBreak(block)
+    ? undefined
+    : block.list;
 }
 
 /** Every block's displayed marker for one block list, in order — "" for

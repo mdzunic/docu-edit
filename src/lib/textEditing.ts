@@ -10,6 +10,7 @@
 // compares block object identity to skip re-rendering untouched paragraphs,
 // which is what keeps typing responsive on very large documents.
 import {
+  isBreak,
   isImage,
   isTable,
   type Block,
@@ -78,7 +79,7 @@ export function blockText(block: Block): string {
     }
     return text;
   }
-  if (isImage(block)) {
+  if (isImage(block) || isBreak(block)) {
     return "";
   }
   let text = "";
@@ -88,11 +89,11 @@ export function blockText(block: Block): string {
   return text;
 }
 
-/** The block's caret-offset space. A table or image is an atom of length 1
- * (offset 0 = before it, 1 = after it — see CaretPosition), never addressed
- * by character. */
+/** The block's caret-offset space. A table, image or manual break is an atom
+ * of length 1 (offset 0 = before it, 1 = after it — see CaretPosition),
+ * never addressed by character. */
 export function blockLength(block: Block): number {
-  if (isTable(block) || isImage(block)) {
+  if (isTable(block) || isImage(block) || isBreak(block)) {
     return 1;
   }
   let length = 0;
@@ -162,7 +163,7 @@ export function clampCaret(
     }
     return { section, block, offset: clampNumber(caret.offset, 0, 1) };
   }
-  if (isImage(target)) {
+  if (isImage(target) || isBreak(target)) {
     return { section, block, offset: clampNumber(caret.offset, 0, 1) };
   }
   const offset = clampNumber(caret.offset, 0, blockLength(target));
@@ -192,7 +193,7 @@ export function paragraphAt(
     }
     return block.rows[address.cell.row].cells[address.cell.col].blocks[address.cell.block];
   }
-  if (isImage(block)) {
+  if (isImage(block) || isBreak(block)) {
     return null;
   }
   return block;
@@ -621,14 +622,14 @@ function resolveTableEdges(
   end: CaretPosition,
 ): { start: CaretPosition; end: CaretPosition } {
   const startBlock = model.sections[start.section].blocks[start.block];
-  if ((isTable(startBlock) || isImage(startBlock)) && !start.cell && start.offset >= 1) {
+  if ((isTable(startBlock) || isImage(startBlock) || isBreak(startBlock)) && !start.cell && start.offset >= 1) {
     const next = nextBlockStart(model, start.section, start.block);
     if (next) {
       start = next;
     }
   }
   const endBlock = model.sections[end.section].blocks[end.block];
-  if ((isTable(endBlock) || isImage(endBlock)) && !end.cell && end.offset <= 0) {
+  if ((isTable(endBlock) || isImage(endBlock) || isBreak(endBlock)) && !end.cell && end.offset <= 0) {
     const prev = previousBlockEnd(model, end.section, end.block);
     if (prev) {
       end = prev;
@@ -700,9 +701,9 @@ export function deleteRange(
   const startBlock = model.sections[start.section].blocks[start.block];
   const endBlock = model.sections[end.section].blocks[end.block];
   if (startBlock === endBlock) {
-    if (isTable(startBlock) || isImage(startBlock)) {
-      // The range covers exactly this table/image atom: remove it whole.
-      // The caret lands where the atom was (SPEC-022 AC-23, SPEC-024 AC-30).
+    if (isTable(startBlock) || isImage(startBlock) || isBreak(startBlock)) {
+      // The range covers exactly this atom: remove it whole. The caret
+      // lands where the atom was (SPEC-022 AC-23, SPEC-024 AC-30).
       const blocks = model.sections[start.section].blocks;
       blocks.splice(start.block, 1);
       if (blocks.length === 0) {
@@ -727,10 +728,16 @@ export function deleteRange(
     return start;
   }
   // Cross-block: a boundary paragraph contributes its kept half; a boundary
-  // table/image (always fully covered after resolveTableEdges) contributes
-  // nothing and is removed whole.
-  const head = isTable(startBlock) || isImage(startBlock) ? null : splitRuns(startBlock.runs, start.offset)[0];
-  const tail = isTable(endBlock) || isImage(endBlock) ? null : splitRuns(endBlock.runs, end.offset)[1];
+  // table/image/break (always fully covered after resolveTableEdges)
+  // contributes nothing and is removed whole.
+  const head =
+    isTable(startBlock) || isImage(startBlock) || isBreak(startBlock)
+      ? null
+      : splitRuns(startBlock.runs, start.offset)[0];
+  const tail =
+    isTable(endBlock) || isImage(endBlock) || isBreak(endBlock)
+      ? null
+      : splitRuns(endBlock.runs, end.offset)[1];
   let replacement: Paragraph | null;
   if (head !== null && tail !== null) {
     replacement = setBookmarks(
@@ -820,12 +827,38 @@ function previousBlockEnd(
   return null;
 }
 
+/** Merges a section into the one before it, keeping the earlier section's
+ * own page setup (SPEC-028): the boundary between two sections IS the
+ * section break, so deleting it dissolves the later section into the
+ * earlier one. Blocks are concatenated; the later section's preserved
+ * opaque blocks are re-anchored past the earlier section's blocks. Returns
+ * the caret at the start of what was the later section's first block. */
+function mergeSections(model: DocumentModel, sectionIndex: number): CaretPosition {
+  const before = model.sections[sectionIndex - 1];
+  const after = model.sections[sectionIndex];
+  const joinIndex = before.blocks.length;
+  before.blocks = [...before.blocks, ...after.blocks];
+  if (after.opaqueBlocks && after.opaqueBlocks.length > 0) {
+    before.opaqueBlocks = [
+      ...(before.opaqueBlocks ?? []),
+      ...after.opaqueBlocks.map((opaque) => ({
+        ...opaque,
+        blockIndex: opaque.blockIndex + joinIndex,
+      })),
+    ];
+  }
+  model.sections.splice(sectionIndex, 1);
+  return { section: sectionIndex - 1, block: joinIndex, offset: 0 };
+}
+
 /** Backspace: deletes the character before the caret, or merges with the
  * previous paragraph when the caret is at a paragraph start. No-op at the
  * very start of the document — and at every table boundary (SPEC-022): at
  * the start of a cell's first paragraph, and just after a table, nothing is
  * deleted, so no keystroke ever merges cell content with outside text or
- * silently swallows a table. */
+ * silently swallows a table. At the start of a section it deletes the
+ * section break (the sections merge — SPEC-028 AC-10), and just after a
+ * manual break block it deletes the break, rejoining the flow. */
 export function deleteBackward(
   model: DocumentModel,
   caret: CaretPosition,
@@ -864,6 +897,20 @@ export function deleteBackward(
     return c;
   }
   const prevBlock = model.sections[prev.section].blocks[prev.block];
+  if (
+    prev.section !== c.section &&
+    (isTable(prevBlock) || isImage(prevBlock) || isBreak(prevBlock))
+  ) {
+    // Backspace at a section start whose previous section ends in an atom:
+    // the section break itself is deleted (the sections merge), the atom
+    // stays — one keystroke deletes one thing (SPEC-028 AC-10).
+    return mergeSections(model, c.section);
+  }
+  if (isBreak(prevBlock)) {
+    // Deleting a manual break rejoins the flow (SPEC-028 AC-10): the break
+    // atom is removed whole, the caret's paragraph is kept as-is.
+    return deleteRange(model, { section: prev.section, block: prev.block, offset: 0 }, c);
+  }
   if (isTable(prevBlock) || isImage(prevBlock)) {
     return c;
   }
@@ -873,7 +920,8 @@ export function deleteBackward(
 /** Forward delete: deletes the character after the caret, or merges with the
  * next paragraph when the caret is at a paragraph end. No-op at the very end
  * of the document — and at every table boundary (SPEC-022), mirroring
- * deleteBackward's guarantees. */
+ * deleteBackward's guarantees, including its SPEC-028 break/section-break
+ * deletion behaviour. */
 export function deleteForward(
   model: DocumentModel,
   caret: CaretPosition,
@@ -910,6 +958,20 @@ export function deleteForward(
     return c;
   }
   const nextBlock = model.sections[next.section].blocks[next.block];
+  if (
+    next.section !== c.section &&
+    (isTable(nextBlock) || isImage(nextBlock) || isBreak(nextBlock))
+  ) {
+    // Delete at a section end whose next section starts with an atom: the
+    // section break is deleted (the sections merge), the atom stays and the
+    // caret does not move (SPEC-028 AC-10).
+    mergeSections(model, next.section);
+    return c;
+  }
+  if (isBreak(nextBlock)) {
+    // Deleting a manual break just ahead rejoins the flow (SPEC-028 AC-10).
+    return deleteRange(model, c, { section: next.section, block: next.block, offset: 1 });
+  }
   if (isTable(nextBlock) || isImage(nextBlock)) {
     return c;
   }

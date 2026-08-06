@@ -806,6 +806,11 @@ export function buildDocumentXml(
           );
         } else if (block.type === "image") {
           blockXml.push(imageParagraphXml(block, mediaPlan, docPrId++));
+        } else if (block.type === "break") {
+          // A manual break block (SPEC-028 AC-30): a paragraph holding just
+          // the typed w:br run, the shape the reader folds back into a
+          // BreakBlock on open.
+          blockXml.push(`<w:p><w:r><w:br w:type="${block.kind}"/></w:r></w:p>`);
         } else {
           blockXml.push(
             paragraphXml(block, includeOpaque, inlineCtx, numberingRefFor(plan, sectionIndex, i)),
@@ -839,7 +844,7 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (block.type === "image") {
+      if (block.type === "image" || block.type === "break") {
         continue;
       }
       const paragraphs =
