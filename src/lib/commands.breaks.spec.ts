@@ -60,6 +60,13 @@ describe("insertBreak", () => {
     expect(selection.focus).toEqual(caret(2, 0));
   });
 
+  it("inserts a column break node into the document model (AC-10)", () => {
+    const { model, selection } = insertBreak(fixture("HelloWorld"), caretSelection(caret(0, 5)), "column");
+    expect(blockTypes(model)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(model.sections[0].blocks[1]).toEqual({ type: "break", kind: "column" });
+    expect(selection.focus).toEqual(caret(2, 0));
+  });
+
   it("does not leave an empty half when the caret is at a paragraph start", () => {
     const { model, selection } = insertBreak(fixture("One", "Two"), caretSelection(caret(1, 0)), "page");
     expect(blockTexts(model)).toEqual(["One", "<break>", "Two"]);

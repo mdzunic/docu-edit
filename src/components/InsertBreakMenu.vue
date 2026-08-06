@@ -3,8 +3,9 @@ import { onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { shortcutLabel } from "../lib/shortcuts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 
-// The Insert → Break menu (SPEC-028 AC-6..9): page break, column break
-// (disabled until SPEC-030 gives it meaning) and the two section breaks.
+// The Insert → Break menu (SPEC-028 AC-8..16): page break, column break
+// (stored and round-tripped, but visually inert until SPEC-030 gives
+// columns a layout) and the two section breaks.
 // Runtime prop/emit declarations — see AppShell.vue's espree comment.
 const props = defineProps({
   disabled: { type: Boolean, default: false },
@@ -26,7 +27,7 @@ const { menuStyle } = useFloatingMenu({
   menu: () => menu.value,
 });
 
-const pageBreakTitle = `Page break (${shortcutLabel("insert.pageBreak")})`;
+const pageBreakTitle = `Page Break (${shortcutLabel("insert.pageBreak")})`;
 
 function toggleMenu() {
   if (!props.disabled) {
@@ -99,16 +100,17 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="chooseBreak('page')"
       >
-        Page break
+        Page Break
       </button>
       <button
         type="button"
         role="menuitem"
         data-testid="break-column"
-        disabled
-        title="Requires columns (coming soon)"
+        title="No layout effect until columns exist"
+        @mousedown.prevent
+        @click="chooseBreak('column')"
       >
-        Column break
+        Column Break
       </button>
       <hr class="break-separator">
       <button
@@ -118,7 +120,7 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="chooseSectionBreak('nextPage')"
       >
-        Section break (next page)
+        Section Break (Next Page)
       </button>
       <button
         type="button"
@@ -127,7 +129,7 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="chooseSectionBreak('continuous')"
       >
-        Section break (continuous)
+        Section Break (Continuous)
       </button>
     </div>
   </div>

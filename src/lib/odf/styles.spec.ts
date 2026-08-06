@@ -121,22 +121,38 @@ describe("paragraphAutoStyleSignals (SPEC-028)", () => {
     contentDoc(`
       <style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master">
         <style:paragraph-properties fo:break-before="page"/>
+      </style:style>
+      <style:style style:name="P2" style:family="paragraph">
+        <style:paragraph-properties fo:break-before="column"/>
       </style:style>`),
     stylesDoc(`
       <style:style style:name="PageStart" style:family="paragraph">
         <style:paragraph-properties fo:break-before="page"/>
+      </style:style>
+      <style:style style:name="ColStart" style:family="paragraph">
+        <style:paragraph-properties fo:break-before="column"/>
       </style:style>`),
   );
 
   it("reports the break/master signals of an automatic style", () => {
     expect(paragraphAutoStyleSignals(catalog, "P1")).toEqual({
       pageBreakBefore: true,
+      columnBreakBefore: false,
       masterPageName: "A5Master",
+    });
+  });
+
+  it("reports fo:break-before='column' on an automatic style (AC-10/11)", () => {
+    expect(paragraphAutoStyleSignals(catalog, "P2")).toEqual({
+      pageBreakBefore: false,
+      columnBreakBefore: true,
+      masterPageName: undefined,
     });
   });
 
   it("never reports signals from a NAMED style — its break-before stays formatting", () => {
     expect(paragraphAutoStyleSignals(catalog, "PageStart").pageBreakBefore).toBe(false);
+    expect(paragraphAutoStyleSignals(catalog, "ColStart").columnBreakBefore).toBe(false);
     expect(paragraphAutoStyleSignals(catalog, "PageStart").masterPageName).toBeUndefined();
     expect(paragraphAutoStyleSignals(catalog, undefined).pageBreakBefore).toBe(false);
   });

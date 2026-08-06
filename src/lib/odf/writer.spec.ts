@@ -607,6 +607,23 @@ describe("writeOdt — manual breaks (SPEC-028 AC-32)", () => {
     await expectSecondCycleFixedPoint(model);
   });
 
+  it("round-trips a column BreakBlock as fo:break-before='column' (AC-10/11)", async () => {
+    const model = createDocument("column-break");
+    model.sections[0].blocks = [
+      textParagraph("before"),
+      { type: "break", kind: "column" },
+      textParagraph("after"),
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    expect(contentXml).toContain('fo:break-before="column"');
+
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    const blocks = opened.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "column" });
+    await expectSecondCycleFixedPoint(model);
+  });
+
   it("canonicalises pageBreakBefore FORMATTING to a break block through .odt (documented convergence)", async () => {
     // ODF has one channel for both concepts (fo:break-before), so a direct
     // pageBreakBefore flag re-opens as a manual BreakBlock — identical

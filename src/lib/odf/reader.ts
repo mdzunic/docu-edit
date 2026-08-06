@@ -1089,6 +1089,12 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
       // paragraphAutoStyleSignals).
       if (signals.pageBreakBefore) {
         blocks.push({ type: "break", kind: "page" });
+      } else if (signals.columnBreakBefore) {
+        // fo:break-before="column" (one attribute — mutually exclusive with
+        // "page") likewise materialises a column BreakBlock (AC-10/11); no
+        // formatting flag to strip afterwards, since the model has no
+        // column counterpart of pageBreakBefore (SPEC-030).
+        blocks.push({ type: "break", kind: "column" });
       }
       const { blocks: parsedBlocks, media } = parseBodyTextBlockOrSplit(
         child,

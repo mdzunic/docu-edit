@@ -540,9 +540,10 @@ export interface OpaqueBlock {
 
 // --- breaks and sections (SPEC-028) -----------------------------------------
 
-/** The manual break kinds Insert → Break offers (SPEC-028 AC-6/7). Column
- * breaks are modelled for round-trip fidelity but render as line breaks
- * until columns exist (SPEC-030). */
+/** The manual break kinds Insert → Break offers (SPEC-028 AC-9/10). Column
+ * breaks are stored and round-tripped but have no layout effect — they sit
+ * inertly in the flow (marker visible when formatting marks are on) until
+ * columns exist (SPEC-030). */
 export type BreakKind = "page" | "column";
 
 /** A manual break (SPEC-028): a block-level atom (blockLength 1, like Image)

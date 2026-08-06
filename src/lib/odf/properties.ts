@@ -289,9 +289,12 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
   if (foAttr(paragraphPropsEl, "keep-together") === "always") {
     formatting.keepLines = true;
   }
-  // Only "page" maps; fo:break-before="column" is ignored until columns
-  // exist (SPEC-030), and fo:break-after is out of scope. Whether a "page"
-  // value materialises a BreakBlock or stays this formatting flag is the
+  // Only "page" maps here: the model has no column-break formatting flag
+  // (columns are SPEC-030), so fo:break-before="column" is surfaced through
+  // the style definition's columnBreakBefore (styles.ts) and materialises a
+  // column BreakBlock on open (SPEC-028 AC-10/11) instead of a formatting
+  // flag; fo:break-after is out of scope. Whether a "page" value
+  // materialises a BreakBlock or stays this formatting flag is the
   // reader's call (SPEC-028 AC-26/32, see reader.ts) — this parser reports
   // what the properties element says.
   if (foAttr(paragraphPropsEl, "break-before") === "page") {

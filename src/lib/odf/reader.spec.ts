@@ -427,7 +427,9 @@ describe("parseOdt — manual page breaks (SPEC-028 AC-32)", () => {
     expect(asParagraph(blocks[1]).formatting?.pageBreakBefore).toBe(true);
   });
 
-  it("ignores fo:break-before='column' until columns exist (SPEC-030)", async () => {
+  it("materialises fo:break-before='column' from an AUTOMATIC style as a column break (AC-10/11)", async () => {
+    // The refined spec stores column breaks for round-trip even though they
+    // have no layout effect until columns exist (SPEC-030, AC-12).
     const parsed = await parseOdt(
       await makeOdt(
         spec028Content(
@@ -435,6 +437,29 @@ describe("parseOdt — manual page breaks (SPEC-028 AC-32)", () => {
             '<style:paragraph-properties fo:break-before="column"/></style:style>',
           '<text:p>before</text:p><text:p text:style-name="P1">after</text:p>',
         ),
+      ),
+    );
+    const blocks = parsed.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "column" });
+    // No formatting residue: the model has no column-break formatting flag.
+    expect(asParagraph(blocks[2]).formatting?.pageBreakBefore).toBeUndefined();
+  });
+
+  it("keeps fo:break-before='column' from a NAMED style unmodelled — no break block", async () => {
+    const styles =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"' +
+      ' xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"' +
+      ' xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">' +
+      "<office:styles>" +
+      '<style:style style:name="ColStart" style:family="paragraph">' +
+      '<style:paragraph-properties fo:break-before="column"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content("", '<text:p>before</text:p><text:p text:style-name="ColStart">after</text:p>'),
+        styles,
       ),
     );
     const blocks = parsed.sections[0].blocks;

@@ -41,6 +41,12 @@ interface OdfStyleDefinition {
    * paragraph using the style starts on a new page under that master page,
    * i.e. it begins a new section (SPEC-028 AC-33). */
   masterPageName?: string;
+  /** `fo:break-before="column"` on the style's paragraph-properties. Kept
+   * off ParagraphFormatting — the model has no column-break formatting flag
+   * (columns are SPEC-030) — so an AUTOMATIC style carrying it materialises
+   * a column BreakBlock on open instead (SPEC-028 AC-10/11); on a named
+   * style it stays unmodelled. */
+  columnBreakBefore?: boolean;
 }
 
 /** Styles of one family ("paragraph" or "text"). Automatic and named styles
@@ -123,12 +129,16 @@ function parseStyleDefinition(styleEl: Element, fontFaces: FontFaceMap): OdfStyl
   if (!name) {
     return undefined;
   }
+  const paragraphProps = paragraphPropertiesOf(styleEl);
   const definition: OdfStyleDefinition = {
     name,
     parentName: styleAttr(styleEl, "parent-style-name") ?? undefined,
-    paragraphFormatting: parseParagraphProperties(paragraphPropertiesOf(styleEl)),
+    paragraphFormatting: parseParagraphProperties(paragraphProps),
     textProperties: parseTextProperties(textPropertiesOf(styleEl), fontFaces),
   };
+  if (paragraphProps && foAttr(paragraphProps, "break-before") === "column") {
+    definition.columnBreakBefore = true;
+  }
   const displayName = styleAttr(styleEl, "display-name");
   if (displayName) {
     definition.displayName = displayName;
@@ -527,6 +537,11 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
  * `pageBreakBefore` flag via ordinary chain resolution. */
 export interface OdfParagraphSignals {
   pageBreakBefore: boolean;
+  /** `fo:break-before="column"` (SPEC-028 AC-10/11): materialises a column
+   * BreakBlock before the paragraph — a separate signal from
+   * pageBreakBefore because the model has no column-break formatting flag
+   * to canonicalise into (columns are SPEC-030). */
+  columnBreakBefore: boolean;
   masterPageName?: string;
 }
 
@@ -537,6 +552,7 @@ export function paragraphAutoStyleSignals(
   const definition = styleName ? catalog.paragraphStyles.automatic.get(styleName) : undefined;
   return {
     pageBreakBefore: definition?.paragraphFormatting.pageBreakBefore === true,
+    columnBreakBefore: definition?.columnBreakBefore === true,
     masterPageName: definition?.masterPageName,
   };
 }
