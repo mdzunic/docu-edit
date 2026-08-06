@@ -1,6 +1,6 @@
 // The font-family catalogue and font-size rules behind SPEC-013's toolbar
 // controls. Framework-free (no Vue imports) per the src/lib convention.
-import type { DocumentModel } from "./documentModel";
+import { isImage, type DocumentModel } from "./documentModel";
 
 /** The families the font dropdown always offers (SPEC-013 AC): the classic
  * web-safe set plus the common document fonts — Word's modern defaults
@@ -40,6 +40,9 @@ export function documentFontFamilies(model: DocumentModel): string[] {
   add(model.defaultStyles.fontFamily);
   for (const section of model.sections) {
     for (const block of section.blocks) {
+      if (isImage(block)) {
+        continue;
+      }
       const paragraphs =
         block.type === "table"
           ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))

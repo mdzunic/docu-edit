@@ -6,7 +6,7 @@
 // an item is and that it cannot be represented in the target format, so the
 // conversion report dialog and the tests both read the writer's `dropped`
 // array rather than diffing models.
-import type { DocumentFormat, DocumentModel } from "./documentModel";
+import { isImage, type DocumentFormat, type DocumentModel } from "./documentModel";
 import { parseXml, XmlParseError } from "./docx/xml";
 
 // --- base64 ----------------------------------------------------------------
@@ -51,7 +51,8 @@ export type DropKind =
   | "opaqueBlock"
   | "opaqueInline"
   | "opaquePart"
-  | "runShading";
+  | "runShading"
+  | "svgImage";
 
 /** One item a writer could not represent in its target format. */
 export interface DropRecord {
@@ -88,6 +89,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaqueInline: "Unsupported inline content",
   opaquePart: "Package part",
   runShading: "Run shading",
+  svgImage: "SVG image",
 };
 
 /** DROP_KIND_LABELS behind a plain-string lookup, for the dialog template
@@ -191,6 +193,7 @@ const REASONS: Record<DropKind, string> = {
   opaquePart: "this file has no equivalent in the target format",
   runShading:
     "the target format has a single text background, which the highlight colour occupies",
+  svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
 };
 
 const FORMAT_LABELS: Record<DocumentFormat, string> = {
@@ -234,6 +237,19 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
       if (index < section.blocks.length) {
         const paragraphNumber = paragraphOffset + index + 1;
         const blockAt = section.blocks[index];
+        if (isImage(blockAt)) {
+          // Images convert losslessly between formats (both carry media
+          // parts) except SVG, which .docx cannot store at all (SPEC-024
+          // AC-2 converts it to PNG at insert time — the only way one still
+          // reaches a .docx save is a cross-format Save As of a .odt
+          // document that has an SVG image, since raster conversion here
+          // would need a browser canvas this pure module cannot assume).
+          const media = (model.media ?? []).find((part) => part.mediaId === blockAt.mediaId);
+          if (target === "docx" && media?.contentType === "image/svg+xml") {
+            dropped.push(record("svgImage", `paragraph ${paragraphNumber}`, target));
+          }
+          continue;
+        }
         // A table's cell paragraphs are inspected too (SPEC-022); their
         // records locate by the table's own block position.
         const paragraphs =

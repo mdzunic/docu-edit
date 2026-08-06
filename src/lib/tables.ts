@@ -10,6 +10,7 @@
 // by reference with the input model — so every command here is undoable by
 // the snapshot-based history for free (SPEC-015 AC-20).
 import {
+  isImage,
   isTable,
   type BorderSide,
   type CellBorders,
@@ -143,7 +144,7 @@ export function insertTable(
     rows: Array.from({ length: rows }, () => emptyRow(cols)),
     columnWidthsCm: equalColumnWidthsCm(next, cols),
   };
-  if (isTable(target)) {
+  if (isTable(target) || isImage(target)) {
     return { model: next, selection: caretSelection(at) };
   }
   const length = blockLength(target);

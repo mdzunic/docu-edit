@@ -10,6 +10,7 @@
 // compares block object identity to skip re-rendering untouched paragraphs,
 // which is what keeps typing responsive on very large documents.
 import {
+  isImage,
   isTable,
   type Block,
   type CharacterFormatKey,
@@ -75,6 +76,9 @@ export function blockText(block: Block): string {
     }
     return text;
   }
+  if (isImage(block)) {
+    return "";
+  }
   let text = "";
   for (const run of block.runs) {
     text += run.text;
@@ -82,11 +86,11 @@ export function blockText(block: Block): string {
   return text;
 }
 
-/** The block's caret-offset space. A table is an atom of length 1 (offset 0
- * = before it, 1 = after it — see CaretPosition), never addressed by
- * character. */
+/** The block's caret-offset space. A table or image is an atom of length 1
+ * (offset 0 = before it, 1 = after it — see CaretPosition), never addressed
+ * by character. */
 export function blockLength(block: Block): number {
-  if (isTable(block)) {
+  if (isTable(block) || isImage(block)) {
     return 1;
   }
   let length = 0;
@@ -156,6 +160,9 @@ export function clampCaret(
     }
     return { section, block, offset: clampNumber(caret.offset, 0, 1) };
   }
+  if (isImage(target)) {
+    return { section, block, offset: clampNumber(caret.offset, 0, 1) };
+  }
   const offset = clampNumber(caret.offset, 0, blockLength(target));
   return { section, block, offset };
 }
@@ -182,6 +189,9 @@ export function paragraphAt(
       return null;
     }
     return block.rows[address.cell.row].cells[address.cell.col].blocks[address.cell.block];
+  }
+  if (isImage(block)) {
+    return null;
   }
   return block;
 }
@@ -497,14 +507,14 @@ function resolveTableEdges(
   end: CaretPosition,
 ): { start: CaretPosition; end: CaretPosition } {
   const startBlock = model.sections[start.section].blocks[start.block];
-  if (isTable(startBlock) && !start.cell && start.offset >= 1) {
+  if ((isTable(startBlock) || isImage(startBlock)) && !start.cell && start.offset >= 1) {
     const next = nextBlockStart(model, start.section, start.block);
     if (next) {
       start = next;
     }
   }
   const endBlock = model.sections[end.section].blocks[end.block];
-  if (isTable(endBlock) && !end.cell && end.offset <= 0) {
+  if ((isTable(endBlock) || isImage(endBlock)) && !end.cell && end.offset <= 0) {
     const prev = previousBlockEnd(model, end.section, end.block);
     if (prev) {
       end = prev;
@@ -569,9 +579,9 @@ export function deleteRange(
   const startBlock = model.sections[start.section].blocks[start.block];
   const endBlock = model.sections[end.section].blocks[end.block];
   if (startBlock === endBlock) {
-    if (isTable(startBlock)) {
-      // The range covers exactly this table atom: remove it whole. The
-      // caret lands where the table was (SPEC-022 AC-23).
+    if (isTable(startBlock) || isImage(startBlock)) {
+      // The range covers exactly this table/image atom: remove it whole.
+      // The caret lands where the atom was (SPEC-022 AC-23, SPEC-024 AC-30).
       const blocks = model.sections[start.section].blocks;
       blocks.splice(start.block, 1);
       if (blocks.length === 0) {
@@ -592,10 +602,10 @@ export function deleteRange(
     return start;
   }
   // Cross-block: a boundary paragraph contributes its kept half; a boundary
-  // table (always fully covered after resolveTableEdges) contributes
+  // table/image (always fully covered after resolveTableEdges) contributes
   // nothing and is removed whole.
-  const head = isTable(startBlock) ? null : splitRuns(startBlock.runs, start.offset)[0];
-  const tail = isTable(endBlock) ? null : splitRuns(endBlock.runs, end.offset)[1];
+  const head = isTable(startBlock) || isImage(startBlock) ? null : splitRuns(startBlock.runs, start.offset)[0];
+  const tail = isTable(endBlock) || isImage(endBlock) ? null : splitRuns(endBlock.runs, end.offset)[1];
   let replacement: Paragraph | null;
   if (head !== null && tail !== null) {
     replacement = { ...(startBlock as Paragraph), runs: normalizeRuns([...head, ...tail]) };
@@ -709,7 +719,11 @@ export function deleteBackward(
     return deleteRange(model, prev, c);
   }
   const prev = previousBlockEnd(model, c.section, c.block);
-  if (!prev || isTable(model.sections[prev.section].blocks[prev.block])) {
+  if (!prev) {
+    return c;
+  }
+  const prevBlock = model.sections[prev.section].blocks[prev.block];
+  if (isTable(prevBlock) || isImage(prevBlock)) {
     return c;
   }
   return deleteRange(model, prev, c);
@@ -749,7 +763,11 @@ export function deleteForward(
     return deleteRange(model, c, next);
   }
   const next = nextBlockStart(model, c.section, c.block);
-  if (!next || isTable(model.sections[next.section].blocks[next.block])) {
+  if (!next) {
+    return c;
+  }
+  const nextBlock = model.sections[next.section].blocks[next.block];
+  if (isTable(nextBlock) || isImage(nextBlock)) {
     return c;
   }
   return deleteRange(model, c, next);
