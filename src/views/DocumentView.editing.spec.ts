@@ -259,7 +259,9 @@ describe("page canvas clicks (AC-1)", () => {
       range.setStart(textNode, 3);
       return range;
     };
-    const page = document.querySelector('[data-testid="document-page"]')!;
+    // SPEC-028: pages render inside the editable root, so "outside the
+    // editable content" is the pages wrapper (page gaps and overlays).
+    const page = document.querySelector('[data-testid="document-pages"]')!;
     page.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 5, clientY: 40 }),
     );

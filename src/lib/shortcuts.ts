@@ -119,12 +119,18 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     bindings: [{ key: "PageDown", shiftOptional: true }],
   },
 
-  // Insert (SPEC-026)
+  // Insert (SPEC-026; page break SPEC-028)
   {
     id: "insert.nonBreakingSpace",
     label: "Insert non-breaking space",
     category: "Insert",
     bindings: [{ key: " ", mod: true, shift: true }],
+  },
+  {
+    id: "insert.pageBreak",
+    label: "Insert page break",
+    category: "Insert",
+    bindings: [{ key: "Enter", mod: true }],
   },
 
   // File
@@ -132,6 +138,12 @@ export const SHORTCUTS: ShortcutDefinition[] = [
 
   // View
   { id: "view.shortcuts", label: "Keyboard shortcuts", category: "View", bindings: [{ key: "/", mod: true }] },
+  {
+    id: "view.formattingMarks",
+    label: "Show formatting marks",
+    category: "View",
+    bindings: [{ key: "p", mod: true, shift: true }],
+  },
 ];
 
 function normalizeKey(key: string): string {

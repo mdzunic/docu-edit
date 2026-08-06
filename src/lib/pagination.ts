@@ -102,10 +102,6 @@ export function sectionGeometryPx(
 // off-by-one-line oscillation between layout passes.
 const EPS = 0.5;
 
-/** Widow/orphan control's minimum lines kept together on either side of a
- * split (AC-29) — the conventional 2. */
-const MIN_SPLIT_LINES = 2;
-
 // Backtracking a keep-with-next chain stops rather than move more blocks
 // than this — a runaway chain (every paragraph keepNext) must not empty
 // pages or loop (AC-23's "honoured" never requires moving whole pages).
@@ -135,6 +131,45 @@ function sliceHeight(metrics: BlockMetrics, startLine: number, endLine: number):
   }
   const last = lines[endLine - 1];
   return last.top + last.height - top;
+}
+
+function placeWhole(page: OpenPage, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {
+  const gap = page.layout.items.length === 0 ? m.marginTopPx : Math.max(page.pendingMargin, m.marginTopPx);
+  page.layout.items.push({ sectionIndex, blockIndex });
+  page.cursor += gap + m.heightPx;
+  page.pendingMargin = m.marginBottomPx;
+}
+
+function placeSlice(
+  page: OpenPage,
+  sectionIndex: number,
+  blockIndex: number,
+  m: BlockMetrics,
+  startLine: number,
+  endLine: number,
+): void {
+  // A continuation slice renders with its top margin stripped.
+  const marginTop = startLine === 0 ? m.marginTopPx : 0;
+  const gap = page.layout.items.length === 0 ? marginTop : Math.max(page.pendingMargin, marginTop);
+  page.layout.items.push({ sectionIndex, blockIndex, startLine, endLine });
+  page.cursor += gap + sliceHeight(m, startLine, endLine);
+  page.pendingMargin = endLine >= m.lines.length ? m.marginBottomPx : 0;
+}
+
+// How many of the block's lines from `startLine` on fit within `available`
+// px.
+function linesFitting(m: BlockMetrics, startLine: number, available: number): number {
+  let count = 0;
+  const base = m.lines[startLine]?.top ?? 0;
+  for (let i = startLine; i < m.lines.length; i += 1) {
+    const line = m.lines[i];
+    if (line.top + line.height - base <= available + EPS) {
+      count = i - startLine + 1;
+    } else {
+      break;
+    }
+  }
+  return count;
 }
 
 /** Lays the whole document out onto pages. */
@@ -218,45 +253,6 @@ export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLa
       );
       placeWhole(page, item.sectionIndex, item.blockIndex, m);
     }
-  }
-
-  function placeWhole(page: OpenPage, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {
-    const gap = page.layout.items.length === 0 ? m.marginTopPx : Math.max(page.pendingMargin, m.marginTopPx);
-    page.layout.items.push({ sectionIndex, blockIndex });
-    page.cursor += gap + m.heightPx;
-    page.pendingMargin = m.marginBottomPx;
-  }
-
-  function placeSlice(
-    page: OpenPage,
-    sectionIndex: number,
-    blockIndex: number,
-    m: BlockMetrics,
-    startLine: number,
-    endLine: number,
-  ): void {
-    // A continuation slice renders with its top margin stripped.
-    const marginTop = startLine === 0 ? m.marginTopPx : 0;
-    const gap = page.layout.items.length === 0 ? marginTop : Math.max(page.pendingMargin, marginTop);
-    page.layout.items.push({ sectionIndex, blockIndex, startLine, endLine });
-    page.cursor += gap + sliceHeight(m, startLine, endLine);
-    page.pendingMargin = endLine >= m.lines.length ? m.marginBottomPx : 0;
-  }
-
-  // How many of the block's lines from `startLine` on fit within
-  // `available` px.
-  function linesFitting(m: BlockMetrics, startLine: number, available: number): number {
-    let count = 0;
-    const base = m.lines[startLine]?.top ?? 0;
-    for (let i = startLine; i < m.lines.length; i += 1) {
-      const line = m.lines[i];
-      if (line.top + line.height - base <= available + EPS) {
-        count = i - startLine + 1;
-      } else {
-        break;
-      }
-    }
-    return count;
   }
 
   function placeBlock(sectionIndex: number, blockIndex: number, block: Block): void {
@@ -406,6 +402,12 @@ export function reconcilePages(prev: PageLayout[], next: PageLayout[]): PageLayo
     const before = prev[index];
     return before && samePage(before, page) ? before : page;
   });
+}
+
+/** A whole-block page item — the typed seed for `.vue` scripts' default
+ * parameters (espree bars the annotation; see textEditing.noCaret). */
+export function wholePageItem(sectionIndex: number, blockIndex: number): PageItem {
+  return { sectionIndex, blockIndex };
 }
 
 /** The page (0-based) a block starts on — the caret page indicator's coarse

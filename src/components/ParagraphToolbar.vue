@@ -26,6 +26,13 @@ const props = defineProps({
   /** The current level's effective marker style key ("disc", "decimal",
    * …), "" outside a list — checks the matching dropdown entry (AC-12). */
   listMarker: { type: String, default: "" },
+  /** The first touched paragraph's pagination flags (SPEC-028 AC-22..28) —
+   * commands.paragraphPaginationState's shape; widowControl reads true by
+   * default. */
+  pagination: {
+    type: Object,
+    default: () => ({ keepNext: false, keepLines: false, pageBreakBefore: false, widowControl: true }),
+  },
   disabled: { type: Boolean, default: false },
 });
 
@@ -38,6 +45,7 @@ const emit = defineEmits([
   "toggle-direction",
   "toggle-list",
   "list-marker",
+  "toggle-pagination",
 ]);
 
 // Static per mount, like FormatToolbar's FORMATS list. Shortcut text is read
@@ -75,6 +83,15 @@ const NUMBER_STYLES = [
   { key: "upperRoman", label: "I." },
 ];
 
+// The pagination menu's four independent toggles (SPEC-028): each row is a
+// menuitemcheckbox whose checked state comes from the pagination prop.
+const PAGINATION_OPTIONS = [
+  { key: "keepNext", label: "Keep with next" },
+  { key: "keepLines", label: "Keep lines together" },
+  { key: "pageBreakBefore", label: "Page break before" },
+  { key: "widowControl", label: "Widow/orphan control" },
+];
+
 const spacingOpen = ref(false);
 const root = useTemplateRef("root");
 const spacingButton = useTemplateRef("spacingButton");
@@ -85,6 +102,9 @@ const bulletMenu = useTemplateRef("bulletMenu");
 const numberMenuOpen = ref(false);
 const numberMenuButton = useTemplateRef("numberMenuButton");
 const numberMenu = useTemplateRef("numberMenu");
+const paginationOpen = ref(false);
+const paginationButton = useTemplateRef("paginationButton");
+const paginationMenu = useTemplateRef("paginationMenu");
 
 // Fixed-position menu escaping the toolbar strip's clipping — the same
 // pattern as HighlightPicker.
@@ -106,10 +126,42 @@ const { menuStyle: numberMenuStyle } = useFloatingMenu({
   menu: () => numberMenu.value,
 });
 
+const { menuStyle: paginationMenuStyle } = useFloatingMenu({
+  open: () => paginationOpen.value,
+  anchor: () => paginationButton.value,
+  menu: () => paginationMenu.value,
+});
+
 function toggleSpacingMenu() {
   if (!props.disabled) {
     spacingOpen.value = !spacingOpen.value;
   }
+}
+
+function togglePaginationMenu() {
+  if (!props.disabled) {
+    paginationOpen.value = !paginationOpen.value;
+  }
+}
+
+function isPaginationChecked(key = "") {
+  const state = props.pagination ?? {};
+  if (key === "keepNext") {
+    return state.keepNext === true;
+  }
+  if (key === "keepLines") {
+    return state.keepLines === true;
+  }
+  if (key === "pageBreakBefore") {
+    return state.pageBreakBefore === true;
+  }
+  return state.widowControl !== false;
+}
+
+function choosePaginationToggle(key = "") {
+  // The menu stays open: flipping several pagination flags in one visit is
+  // the common flow, and aria-checked updating in place shows the effect.
+  emit("toggle-pagination", key);
 }
 
 function toggleBulletMenu() {
@@ -148,11 +200,13 @@ function chooseSpaceBeforeToggle() {
 }
 
 function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  const anyOpen = spacingOpen.value || bulletMenuOpen.value || numberMenuOpen.value;
+  const anyOpen =
+    spacingOpen.value || bulletMenuOpen.value || numberMenuOpen.value || paginationOpen.value;
   if (anyOpen && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
     spacingOpen.value = false;
     bulletMenuOpen.value = false;
     numberMenuOpen.value = false;
+    paginationOpen.value = false;
   }
 }
 
@@ -161,6 +215,7 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
     spacingOpen.value = false;
     bulletMenuOpen.value = false;
     numberMenuOpen.value = false;
+    paginationOpen.value = false;
   }
 }
 
@@ -398,6 +453,44 @@ onBeforeUnmount(() => {
         @click="chooseSpaceBeforeToggle"
       >
         {{ spaceBefore ? "Remove space before paragraph" : "Add space before paragraph" }}
+      </button>
+    </div>
+    <button
+      ref="paginationButton"
+      type="button"
+      class="paragraph-button pagination-button"
+      data-testid="paragraph-pagination-button"
+      :disabled="disabled"
+      title="Paragraph pagination"
+      aria-label="Paragraph pagination"
+      aria-haspopup="menu"
+      :aria-expanded="paginationOpen ? 'true' : 'false'"
+      @mousedown.prevent
+      @click="togglePaginationMenu"
+    >
+      ¶⇟
+    </button>
+    <div
+      v-if="paginationOpen"
+      ref="paginationMenu"
+      class="spacing-menu"
+      data-testid="paragraph-pagination-menu"
+      role="menu"
+      aria-label="Paragraph pagination"
+      :style="paginationMenuStyle"
+    >
+      <button
+        v-for="option in PAGINATION_OPTIONS"
+        :key="option.key"
+        type="button"
+        role="menuitemcheckbox"
+        :aria-checked="isPaginationChecked(option.key) ? 'true' : 'false'"
+        :class="{ checked: isPaginationChecked(option.key) }"
+        :data-testid="`pagination-${option.key}`"
+        @mousedown.prevent
+        @click="choosePaginationToggle(option.key)"
+      >
+        {{ option.label }}
       </button>
     </div>
   </div>

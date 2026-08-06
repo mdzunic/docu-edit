@@ -28,13 +28,16 @@ import {
 // same physical size.
 const props = defineProps({
   /** Prefill: { pageSize: {widthCm,heightCm}, margins: {topCm,rightCm,
-   * bottomCm,leftCm}, measurementUnit }. */
+   * bottomCm,leftCm}, measurementUnit, applyTo }. */
   initial: { type: Object, required: true },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
 
 const unit = ref(String(props.initial.measurementUnit || "cm"));
+// What the edit targets (SPEC-028 AC-20/21): the caret's section or the
+// whole document — commands.PageSetupScope's values.
+const applyTo = ref(String(props.initial.applyTo || "wholeDocument"));
 const paperSize = ref(String(matchPaperSize(props.initial.pageSize)));
 const orientation = ref(String(orientationOf(props.initial.pageSize)));
 
@@ -156,6 +159,7 @@ function apply() {
     pageSize: pageSize.value,
     margins: margins.value,
     measurementUnit: unit.value,
+    applyTo: applyTo.value,
   });
 }
 </script>
@@ -326,6 +330,26 @@ function apply() {
         >
           {{ marginsError }}
         </p>
+      </section>
+
+      <section class="section">
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Apply to</span>
+            <select
+              v-model="applyTo"
+              class="field-input"
+              data-testid="page-setup-apply-to"
+            >
+              <option value="thisSection">
+                this section
+              </option>
+              <option value="wholeDocument">
+                whole document
+              </option>
+            </select>
+          </label>
+        </div>
       </section>
 
       <div class="dialog-actions">

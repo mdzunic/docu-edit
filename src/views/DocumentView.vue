@@ -9,6 +9,7 @@ import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
 import DocImageBlock from "../components/DocImageBlock.vue";
+import DocPage from "../components/DocPage.vue";
 import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
@@ -16,6 +17,7 @@ import EditorContextMenu from "../components/EditorContextMenu.vue";
 import ImageInsertControl from "../components/ImageInsertControl.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
+import InsertBreakMenu from "../components/InsertBreakMenu.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
@@ -35,6 +37,7 @@ import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
+import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
@@ -57,12 +60,17 @@ import {
   asMeasurementUnit,
   asParagraphAlignment,
   asParagraphBlock,
+  asBreakKind,
+  asSectionStart,
   asTableAlignment,
   asTableWidthMode,
   createDocument,
   DEFAULT_TITLE,
+  isBreak,
   isImage,
   isTable,
+  sectionMargins,
+  sectionPageSize,
 } from "../lib/documentModel";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
 import {
@@ -165,6 +173,7 @@ import {
   noCaret,
   paragraphAt,
   paragraphAtCaret,
+  splitRuns,
 } from "../lib/textEditing";
 import {
   dashSubstitution,
@@ -195,6 +204,7 @@ import {
   applyPainterFormat,
   applyParagraphFormat,
   applyParagraphStyle,
+  asPageSetupScope,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
@@ -207,6 +217,7 @@ import {
   documentEnd,
   documentStart,
   emptyParagraphFormatting,
+  emptyParagraphPaginationState,
   emptyToolbarFormatValues,
   emptyToolbarListState,
   emptyToolbarStyleState,
@@ -214,7 +225,9 @@ import {
   formatState,
   hasSpaceBefore,
   INDENT_STEP_CM,
+  insertBreak,
   insertLineBreak,
+  insertSectionBreak,
   insertText,
   isCollapsed,
   noCommandResult,
@@ -222,6 +235,7 @@ import {
   noParagraphCommand,
   noPendingFormat,
   noSelection,
+  paragraphPaginationState,
   removeListFormat,
   resetParagraphStyle,
   selectAll,
@@ -242,6 +256,8 @@ import {
   verticalAlignState,
 } from "../lib/commands";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
+import { markSegments } from "../lib/marks";
+import { sectionGeometryPx, wholePageItem } from "../lib/pagination";
 import {
   deleteImage,
   imageAt,
@@ -717,6 +733,7 @@ const pageSetupInitial = ref({
   pageSize: { widthCm: 21, heightCm: 29.7 },
   margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
   measurementUnit: "cm",
+  applyTo: "wholeDocument",
 });
 // Recently applied text colours, shared across documents (SPEC-013 AC).
 const recentColors = ref(loadRecentColors());
@@ -2173,6 +2190,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     paragraphFormatting.value = emptyParagraphFormatting();
     listState.value = emptyToolbarListState();
     styleState.value = emptyToolbarStyleState();
+    paragraphPagination.value = emptyParagraphPaginationState();
     return;
   }
   const total = blockCount(model);
@@ -2205,6 +2223,9 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   };
   listState.value = toolbarListState(model, selection);
   styleState.value = toolbarStyleState(model, selection);
+  paragraphPagination.value = paragraphPaginationState(model, selection);
+  caretSectionIndex.value = range.end.section;
+  refreshCaretPage();
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
@@ -3307,10 +3328,14 @@ function openPageSetup() {
   if (!model) {
     return;
   }
+  // Prefilled from the caret's section (SPEC-028 AC-20): with per-section
+  // page setup, "what the dialog shows" is the geometry under the caret.
+  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
   pageSetupInitial.value = {
-    pageSize: { ...model.defaultStyles.pageSize },
-    margins: { ...model.defaultStyles.margins },
+    pageSize: { ...sectionPageSize(model, sectionIndex) },
+    margins: { ...sectionMargins(model, sectionIndex) },
     measurementUnit: model.measurementUnit ?? "cm",
+    applyTo: "wholeDocument",
   };
   pageSetupOpen.value = true;
 }
@@ -3324,6 +3349,7 @@ function handlePageSetupApply(
     pageSize: { widthCm: 21, heightCm: 29.7 },
     margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
     measurementUnit: "cm",
+    applyTo: "wholeDocument",
   },
 ) {
   pageSetupOpen.value = false;
@@ -3334,11 +3360,16 @@ function handlePageSetupApply(
   }
   const selection = paragraphSelection(root);
   applyEdit(
-    setPageSetup(model, selection, {
-      pageSize: payload.pageSize,
-      margins: payload.margins,
-      measurementUnit: asMeasurementUnit(payload.measurementUnit),
-    }),
+    setPageSetup(
+      model,
+      selection,
+      {
+        pageSize: payload.pageSize,
+        margins: payload.margins,
+        measurementUnit: asMeasurementUnit(payload.measurementUnit),
+      },
+      asPageSetupScope(payload.applyTo ?? "wholeDocument"),
+    ),
     selection,
     "page setup",
   );
@@ -3431,6 +3462,19 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     return;
   }
   switch (shortcut.id) {
+    case "insert.pageBreak": {
+      // Ctrl/Cmd+Enter (AC-4): a manual page break at the caret.
+      event.preventDefault();
+      const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+      applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
+      break;
+    }
+    case "view.formattingMarks": {
+      // Ctrl/Cmd+Shift+P (AC-12).
+      event.preventDefault();
+      toggleFormattingMarks();
+      break;
+    }
     case "nav.documentStart":
     case "nav.documentEnd": {
       // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
@@ -3629,26 +3673,292 @@ function handlePageMouseDown(event = new MouseEvent("mousedown")) {
 
 // ---------------------------------------------------------------------------
 
-const pageStyle = computed(() => {
-  if (!doc.value) {
-    return {};
+// --- pagination (SPEC-028) --------------------------------------------------
+// The controller owns measurement; every doc.value replacement re-lays-out
+// synchronously (flush: "sync") so the rendered pages always agree with the
+// new model's block indices before Vue patches the canvas.
+
+const pagination = usePagination(
+  () => doc.value,
+  () => contentRoot.value,
+);
+const paginationPages = pagination.pages;
+const paginationBusy = pagination.busy;
+const paginationState = pagination.state;
+
+watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
+onMounted(() => pagination.schedule());
+onBeforeUnmount(() => pagination.stop());
+
+const marksOn = computed(() => doc.value?.showFormattingMarks === true);
+const pageCount = computed(() => Math.max(1, paginationPages.value.length));
+const caretPage = ref(1);
+const caretSectionIndex = ref(0);
+const paragraphPagination = ref(emptyParagraphPaginationState());
+
+function refreshCaretPage() {
+  if (caret) {
+    caretPage.value = pagination.pageOfCaret(caret) + 1;
+  } else if (caretPage.value > pageCount.value) {
+    caretPage.value = pageCount.value;
   }
-  const { widthCm, heightCm } = doc.value.defaultStyles.pageSize;
-  return { width: `${widthCm}cm`, height: `${heightCm}cm` };
+}
+watch(paginationPages, refreshCaretPage);
+
+/** The "Show formatting marks" toggle (AC-12): a view preference like the
+ * ruler's, persisted with the document — and a re-measure trigger, because
+ * the pilcrow pseudo-element can change where full lines wrap. */
+function toggleFormattingMarks() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  model.showFormattingMarks = model.showFormattingMarks !== true;
+  triggerRef(doc);
+  touchDocument(model.id);
+  pagination.invalidateAll();
+}
+
+// The ruler and the Page setup dialog follow the caret's section (AC-17..21)
+// so a per-section page setup is edited where the caret sits.
+const rulerSectionIndex = computed(() => {
+  const model = doc.value;
+  return model ? Math.min(caretSectionIndex.value, model.sections.length - 1) : 0;
+});
+const rulerPageWidthCm = computed(() =>
+  doc.value ? sectionPageSize(doc.value, rulerSectionIndex.value).widthCm : 21,
+);
+const rulerMarginLeftCm = computed(() =>
+  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).leftCm : 2.54,
+);
+const rulerMarginRightCm = computed(() =>
+  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).rightCm : 2.54,
+);
+
+const SECTION_MARKER_LABELS = {
+  continuous: "Section Break (Continuous)",
+  nextPage: "Section Break (Next Page)",
+};
+const BREAK_LABELS = { page: "Page Break", column: "Column Break" };
+
+// Typed-null seeds for renderEntryFor's espree-style defaults (never hit:
+// pagedViews always passes real values).
+function noDocument() {
+  return createDocument("unused");
+}
+function noFlatEntry() {
+  return flatBlocks.value[0];
+}
+
+/** One page item's precomputed render entry for DocPage — or null for the
+ * continuation slice of a block whose real metrics have not arrived yet
+ * (it renders whole at its first slice until measured). */
+function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = wholePageItem(0, 0), marks = false) {
+  const block = flatEntry.block;
+  if (isBreak(block)) {
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, marks],
+      kind: "break",
+      tag: "div",
+      className: "doc-break",
+      uneditable: true,
+      dataSection: flatEntry.section,
+      dataBlock: flatEntry.blockIndex,
+      breakKind: block.kind,
+      markerLabel: BREAK_LABELS[block.kind] ?? "Break",
+    };
+  }
+  if (flatEntry.isTable || flatEntry.isImage) {
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel],
+      kind: flatEntry.isTable ? "table" : "image",
+      blockProp: block,
+      sectionProp: flatEntry.section,
+      blockIndexProp: flatEntry.blockIndex,
+      imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
+      imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
+    };
+  }
+  const paragraph = flatEntry.paragraph;
+  let sliceStart;
+  let sliceEnd;
+  if (item.startLine !== undefined) {
+    const widthPx = sectionGeometryPx(model, item.sectionIndex).contentWidthPx;
+    const offsets = pagination.isMeasured(block, widthPx) ? pagination.lineOffsetsFor(block) : null;
+    if (!offsets) {
+      if (item.startLine > 0) {
+        return null;
+      }
+    } else {
+      sliceStart = offsets[item.startLine] ?? 0;
+      sliceEnd =
+        item.endLine !== undefined && item.endLine < offsets.length
+          ? offsets[item.endLine]
+          : undefined;
+      if (sliceStart === 0 && sliceEnd === undefined) {
+        sliceStart = undefined;
+      }
+    }
+  }
+  let runs = paragraph.runs;
+  if (sliceStart !== undefined || sliceEnd !== undefined) {
+    const from = sliceStart ?? 0;
+    const tail = splitRuns(paragraph.runs, from)[1];
+    runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
+  }
+  const styleObj = { ...paragraphStyle(paragraph) };
+  const continuation = sliceStart !== undefined && sliceStart > 0;
+  if (continuation) {
+    // A continuation slice starts mid-paragraph: no space-before, no
+    // first-line indent, no repeated list marker.
+    styleObj.marginTop = "0";
+    styleObj.textIndent = "0";
+  }
+  if (sliceEnd !== undefined) {
+    styleObj.marginBottom = "0";
+  }
+  const sliceSig = `${sliceStart ?? ""}:${sliceEnd ?? ""}`;
+  const renderRuns = runs.map((run, runIndex) => {
+    const href = runLinkHref(run.formatting);
+    const external = href ? isExternalLink(run.formatting) : false;
+    // Segments only when the run actually holds a space/tab to mark — the
+    // plain variant keeps the span's single-text-node DOM shape.
+    const segments = marks ? markSegments(run.text) : null;
+    const marked = segments && segments.some((segment) => segment.kind !== "text");
+    return {
+      key: runKey(run, runIndex),
+      href: href || "",
+      target: external ? "_blank" : undefined,
+      rel: external ? "noopener noreferrer" : undefined,
+      styleObj: runStyle(run.formatting),
+      text: run.text,
+      segments: marked ? segments : null,
+    };
+  });
+  return {
+    key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
+    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks],
+    kind: "paragraph",
+    tag: headingTag(paragraph.headingLevel),
+    className: "doc-paragraph",
+    styleObj,
+    dataSection: flatEntry.section,
+    dataBlock: flatEntry.blockIndex,
+    sliceStart: continuation ? String(sliceStart) : undefined,
+    sliceMore: sliceEnd !== undefined ? "1" : undefined,
+    listMarker: continuation ? undefined : flatEntry.marker || undefined,
+    listLevel: paragraph.list ? paragraph.list.level : undefined,
+    runs: renderRuns,
+    needsBr: runs.length === 0,
+  };
+}
+
+// The rendered pages: the layout's items joined with flatBlocks' per-block
+// render data, styles resolved from each page's own geometry (AC-17..19).
+const pagedViews = computed(() => {
+  const model = doc.value;
+  if (!model) {
+    return [];
+  }
+  const marks = marksOn.value;
+  const byAddress = new Map();
+  for (const entry of flatBlocks.value) {
+    byAddress.set(`${entry.section}:${entry.blockIndex}`, entry);
+  }
+  const lastSection = model.sections.length - 1;
+  return paginationPages.value.map((page) => {
+    const entries = [];
+    for (const item of page.items) {
+      const flatEntry = byAddress.get(`${item.sectionIndex}:${item.blockIndex}`);
+      if (!flatEntry) {
+        continue;
+      }
+      const entry = renderEntryFor(model, flatEntry, item, marks);
+      if (!entry) {
+        continue;
+      }
+      entries.push(entry);
+      const sectionBlocks = model.sections[item.sectionIndex].blocks;
+      if (
+        marks &&
+        item.sectionIndex < lastSection &&
+        item.blockIndex === sectionBlocks.length - 1 &&
+        entry.sliceMore === undefined
+      ) {
+        const kind =
+          model.sections[item.sectionIndex + 1].start === "continuous" ? "continuous" : "nextPage";
+        entries.push({
+          key: `${flatEntry.key}:marker`,
+          memo: [kind, marks, flatEntry.key],
+          kind: "marker",
+          tag: "div",
+          className: "doc-section-marker",
+          uneditable: true,
+          sectionMarker: kind,
+          markerLabel: SECTION_MARKER_LABELS[kind],
+        });
+      }
+    }
+    return {
+      pageStyle: {
+        width: `${page.pageSize.widthCm}cm`,
+        height: `${page.pageSize.heightCm}cm`,
+      },
+      contentStyle: {
+        padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
+      },
+      entries,
+    };
+  });
 });
 
-const marginStyle = computed(() => {
-  if (!doc.value) {
-    return {};
+/** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
+function handleInsertBreak(kind = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
   }
-  const { topCm, rightCm, bottomCm, leftCm } = doc.value.defaultStyles.margins;
-  return {
-    top: `${topCm}cm`,
-    right: `${rightCm}cm`,
-    bottom: `${bottomCm}cm`,
-    left: `${leftCm}cm`,
-  };
-});
+  const selection = paragraphSelection(root);
+  applyEdit(insertBreak(model, selection, asBreakKind(kind)), selection, "insert break");
+  root.focus();
+}
+
+function handleInsertSectionBreak(start = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(
+    insertSectionBreak(model, selection, asSectionStart(start)),
+    selection,
+    "insert section break",
+  );
+  root.focus();
+}
+
+/** The paragraph pagination menu's toggles (AC-22..28): each key flips
+ * against the first touched paragraph's current state, applied to every
+ * touched paragraph. */
+function handleTogglePagination(key = "") {
+  applyParagraphCommand((model, selection) => {
+    const state = paragraphPaginationState(model, selection);
+    if (key === "keepNext") {
+      return applyParagraphFormat(model, selection, { keepNext: !state.keepNext });
+    }
+    if (key === "keepLines") {
+      return applyParagraphFormat(model, selection, { keepLines: !state.keepLines });
+    }
+    if (key === "pageBreakBefore") {
+      return applyParagraphFormat(model, selection, { pageBreakBefore: !state.pageBreakBefore });
+    }
+    return applyParagraphFormat(model, selection, { widowControl: !state.widowControl });
+  }, "paragraph pagination");
+}
 
 const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
 
@@ -4348,6 +4658,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         :bulleted="listState.bulleted"
         :numbered="listState.numbered"
         :list-marker="listState.marker"
+        :pagination="paragraphPagination"
         @align="handleAlign"
         @indent="handleIndent"
         @spacing-preset="handleSpacingPreset"
@@ -4356,11 +4667,17 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         @toggle-direction="handleToggleDirection"
         @toggle-list="handleToggleList"
         @list-marker="handleListMarker"
+        @toggle-pagination="handleTogglePagination"
       />
       <TableInsertControl
         v-if="editable"
         @insert="handleInsertTable"
         @open-dialog="insertTableDialogOpen = true"
+      />
+      <InsertBreakMenu
+        v-if="editable"
+        @insert-break="handleInsertBreak"
+        @insert-section-break="handleInsertSectionBreak"
       />
       <ImageInsertControl
         v-if="editable"
@@ -4556,18 +4873,18 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       </div>
       <DocumentRuler
         v-if="doc.showRuler !== false"
-        :page-width-cm="doc.defaultStyles.pageSize.widthCm"
-        :margin-left-cm="doc.defaultStyles.margins.leftCm"
-        :margin-right-cm="doc.defaultStyles.margins.rightCm"
+        :page-width-cm="rulerPageWidthCm"
+        :margin-left-cm="rulerMarginLeftCm"
+        :margin-right-cm="rulerMarginRightCm"
         :formatting="paragraphFormatting"
         :disabled="!editable"
         @update="handleRulerUpdate"
       />
       <div
         ref="pageRef"
-        class="page"
-        data-testid="document-page"
-        :style="pageStyle"
+        class="pages"
+        data-testid="document-pages"
+        :data-pagination-state="paginationState"
         @mousedown="handlePageMouseDown"
         @mouseover="handlePageMouseOver"
       >
@@ -4711,78 +5028,41 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
           />
         </div>
         <div
-          class="page-margin"
-          data-testid="page-margin"
-          :style="marginStyle"
+          ref="contentRoot"
+          class="document-content"
+          :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksOn }"
+          data-testid="document-content"
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Document content"
+          :aria-readonly="editable ? undefined : 'true'"
+          :contenteditable="editable"
+          spellcheck="false"
+          @beforeinput="handleBeforeInput"
+          @keydown="handleKeyDown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
+          @copy="handleCopy"
+          @cut="handleCut"
+          @paste="handlePaste"
+          @contextmenu="handleContextMenu"
+          @mousedown="handleCanvasMouseDown"
+          @mousemove="handleCanvasMouseMove"
+          @mouseup="handleCanvasMouseUp"
+          @click="handleContentClick"
+          @dragenter="handleCanvasDragEnter"
+          @dragover="handleCanvasDragOver"
+          @drop="handleCanvasDrop"
         >
-          <div
-            ref="contentRoot"
-            class="document-content"
-            :class="{ 'painter-armed': painterMode !== '' }"
-            data-testid="document-content"
-            role="textbox"
-            aria-multiline="true"
-            aria-label="Document content"
-            :aria-readonly="editable ? undefined : 'true'"
-            :contenteditable="editable"
-            spellcheck="false"
-            @beforeinput="handleBeforeInput"
-            @keydown="handleKeyDown"
-            @compositionstart="handleCompositionStart"
-            @compositionend="handleCompositionEnd"
-            @copy="handleCopy"
-            @cut="handleCut"
-            @paste="handlePaste"
-            @contextmenu="handleContextMenu"
-            @mousedown="handleCanvasMouseDown"
-            @mousemove="handleCanvasMouseMove"
-            @mouseup="handleCanvasMouseUp"
-            @click="handleContentClick"
-            @dragenter="handleCanvasDragEnter"
-            @dragover="handleCanvasDragOver"
-            @drop="handleCanvasDrop"
-          >
-            <component
-              :is="entry.isTable ? DocTableBlock : entry.isImage ? DocImageBlock : headingTag(entry.paragraph.headingLevel)"
-              v-for="entry in flatBlocks"
-              :key="entry.key"
-              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker, entry.cellSel, entry.imgSel]"
-              :class="entry.isTable || entry.isImage ? undefined : 'doc-paragraph'"
-              :style="entry.isTable || entry.isImage ? undefined : paragraphStyle(entry.paragraph)"
-              :data-section="entry.isTable || entry.isImage ? undefined : entry.section"
-              :data-block="entry.isTable || entry.isImage ? undefined : entry.blockIndex"
-              :data-list-marker="entry.isTable || entry.isImage ? undefined : (entry.marker || undefined)"
-              :data-list-level="!entry.isTable && !entry.isImage && entry.paragraph.list ? entry.paragraph.list.level : undefined"
-              :block="entry.isTable || entry.isImage ? entry.block : undefined"
-              :section="entry.isTable || entry.isImage ? entry.section : undefined"
-              :block-index="entry.isTable || entry.isImage ? entry.blockIndex : undefined"
-              :cell-range="entry.isTable ? cellSelection : undefined"
-              :src="entry.isImage ? entry.imageSrc : undefined"
-              :selected="entry.isImage ? entry.imageSelected : undefined"
-              @select="entry.isImage ? handleImageSelect(entry.section, entry.blockIndex) : undefined"
-            >
-              <template v-if="!entry.isTable && !entry.isImage && entry.paragraph.runs.length > 0">
-                <template
-                  v-for="(run, runIndex) in entry.paragraph.runs"
-                  :key="runKey(run, runIndex)"
-                >
-                  <a
-                    v-if="runLinkHref(run.formatting)"
-                    data-doc-link=""
-                    :href="runLinkHref(run.formatting)"
-                    :target="isExternalLink(run.formatting) ? '_blank' : undefined"
-                    :rel="isExternalLink(run.formatting) ? 'noopener noreferrer' : undefined"
-                    :style="runStyle(run.formatting)"
-                  >{{ run.text }}</a>
-                  <span
-                    v-else
-                    :style="runStyle(run.formatting)"
-                  >{{ run.text }}</span>
-                </template>
-              </template>
-              <br v-else-if="!entry.isTable && !entry.isImage">
-            </component>
-          </div>
+          <DocPage
+            v-for="(pageView, pageIndex) in pagedViews"
+            :key="pageIndex"
+            :page-style="pageView.pageStyle"
+            :content-style="pageView.contentStyle"
+            :entries="pageView.entries"
+            :cell-range="cellSelection || undefined"
+            @image-select="handleImageSelect"
+          />
         </div>
       </div>
       <div
@@ -4794,6 +5074,13 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         {{ caretStatus }}
       </div>
     </div>
+    <template #status-bar>
+      <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
+      <span
+        v-if="paginationBusy"
+        data-testid="pagination-busy"
+      >Paginating…</span>
+    </template>
     <LinkChip
       v-if="linkChip.visible"
       :left="linkChip.left"
@@ -5024,25 +5311,15 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
   outline: 1px solid #f57c00;
 }
 
-/* A page-shaped surface sized to the document's own defaultStyles (in real
-   centimetres via CSS's absolute cm unit) — later specs render content onto
-   it. .page-margin marks where the page margins end and content begins. */
-.page {
+/* The paginated canvas (SPEC-028): one relative wrapper hosting every page
+   box plus the page-relative overlays (find highlights, table/image
+   handles), so overlay coordinates keep working across pages. The page
+   surfaces themselves live in DocPage.vue. */
+.pages {
   position: relative;
-  margin: 0 auto;
-  background: #fff;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
-  box-sizing: border-box;
-}
-
-.page-margin {
-  position: absolute;
-  border: 1px dashed #c8c8c8;
 }
 
 .document-content {
-  height: 100%;
-  overflow: hidden;
   color: #202124;
   outline: none;
 }
@@ -5052,26 +5329,6 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
    cursor usage (DocumentRuler's resize handles, etc.). */
 .document-content.painter-armed {
   cursor: copy;
-}
-
-.doc-paragraph {
-  margin: 0;
-  font-weight: normal;
-  font-size: inherit;
-}
-
-/* The list marker (SPEC-018): painted from the derived data-list-marker
-   attribute, never part of the editable text — caret offsets and the
-   model/DOM text equality check stay untouched. The inline-block with a
-   negative logical margin hangs it in the 0.635 cm box before the item's
-   text (which paragraphStyle indents per level); wrapped lines align at
-   the text edge. */
-.doc-paragraph[data-list-marker]::before {
-  content: attr(data-list-marker);
-  display: inline-block;
-  min-width: 0.635cm;
-  margin-inline-start: -0.635cm;
-  white-space: nowrap;
 }
 
 /* The table hover handles (SPEC-022 AC-20, AC-21): a page-relative overlay

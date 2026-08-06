@@ -13,7 +13,6 @@ import {
   type ImageWrapMode,
   type MediaPart,
   type Paragraph,
-  type Table,
 } from "./documentModel";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";

@@ -53,9 +53,13 @@ describe("DocumentView", () => {
     expect(page.attributes("style")).toContain(
       `height: ${doc!.defaultStyles.pageSize.heightCm}cm`,
     );
+    // SPEC-028's paginated canvas: the margins render as the page content
+    // box's padding (DocPage.vue), the page-margin element marks the
+    // resulting content area.
     const margin = wrapper.get('[data-testid="page-margin"]');
-    expect(margin.attributes("style")).toContain(
-      `top: ${doc!.defaultStyles.margins.topCm}cm`,
+    const contentBox = margin.element.parentElement;
+    expect(contentBox?.getAttribute("style")).toContain(
+      `padding: ${doc!.defaultStyles.margins.topCm}cm ${doc!.defaultStyles.margins.rightCm}cm`,
     );
   });
 
