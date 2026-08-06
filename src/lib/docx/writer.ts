@@ -200,6 +200,12 @@ function runContentXml(text: string): string {
     } else if (char === "\n") {
       flush();
       xml += "<w:br/>";
+    } else if (char === "‑") {
+      flush();
+      xml += "<w:noBreakHyphen/>";
+    } else if (char === "­") {
+      flush();
+      xml += "<w:softHyphen/>";
     } else {
       buffer += char;
     }

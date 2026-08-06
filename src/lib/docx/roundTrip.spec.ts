@@ -7,13 +7,14 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
+import { parseOdt } from "../odf/reader";
 import { writeDocx } from "./writer";
 import { writeOdt } from "../odf/writer";
 import { unzip } from "./zip";
-import { canonicalizeXml, equalBytes, firstStructuralDifference } from "../equality";
+import { canonicalizeXml, equalBytes, equalStructural, firstStructuralDifference } from "../equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel, Paragraph } from "../documentModel";
-import { asParagraph } from "../documentModel";
+import { asParagraph, createDocument } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -193,6 +194,76 @@ describe("writeDocx — editing one paragraph leaves opaque content untouched (A
     const editedBack = structuredClone(reopened);
     (editedBack.sections[0].blocks[1] as Paragraph).runs[0].text = "Editable intro paragraph.";
     expect(firstStructuralDifference(opened, editedBack)).toBeNull();
+  });
+});
+
+// SPEC-026 — special characters. The canonical fixture paragraph carries, in
+// one run: "a b c", NON-BREAKING HYPHEN (U+2011), "d", SOFT HYPHEN (U+00AD),
+// "e", MATHEMATICAL ITALIC SMALL X (U+1D465, non-BMP), "f", GRINNING FACE
+// (U+1F600, non-BMP), "g". Every character is representable in both formats.
+const SPECIAL_FIXTURE = "a b c‑d­e\u{1D465}f\u{1F600}g";
+
+/** A blank document carrying a single paragraph with the given text — a fresh
+ * model, before any format's defaults (font, page size) have been applied. */
+function specialModel(text: string): DocumentModel {
+  const model = createDocument("spec-026");
+  model.sections[0].blocks = [{ type: "paragraph", runs: [{ text, formatting: {} }] }];
+  return model;
+}
+
+/** Wraps a parsed document (docx or odt) back into a writable model — the
+ * canonical, defaults-resolved model an opened document actually holds. */
+function rewrap(
+  parsed: { sections: DocumentModel["sections"]; defaultStyles: DocumentModel["defaultStyles"] },
+  format: "docx" | "odt",
+): DocumentModel {
+  return {
+    id: "spec-026",
+    title: "Special characters",
+    sections: parsed.sections,
+    defaultStyles: parsed.defaultStyles,
+    format,
+  };
+}
+
+function paragraphText(parsed: { sections: DocumentModel["sections"] }): string {
+  return asParagraph(parsed.sections[0].blocks[0]).runs.map((run) => run.text).join("");
+}
+
+describe("writeDocx — special characters round-trip (SPEC-026 AC-45, AC-57)", () => {
+  it("survives open -> save -> open equalStructural for the canonical fixture (AC-45)", async () => {
+    // The first serialise+parse yields the canonical opened model (defaults
+    // resolved); the fixture text must survive it byte-for-byte…
+    const opened = await parseDocx((await writeDocx(specialModel(SPECIAL_FIXTURE))).bytes);
+    expect(paragraphText(opened)).toBe(SPECIAL_FIXTURE);
+    // …and a further save+open is structurally identical.
+    const reopened = await parseDocx((await writeDocx(rewrap(opened, "docx"))).bytes);
+    expect(equalStructural(opened.sections, reopened.sections)).toBe(true);
+  });
+
+  it("round-trips NBSP, narrow NBSP, non-breaking hyphen, soft hyphen and a non-BMP char (AC-45)", async () => {
+    // U+00A0 NBSP, U+202F NARROW NBSP, U+2011 NB-HYPHEN, U+00AD SOFT HYPHEN, U+1F600 emoji.
+    const separately = "  ‑­q\u{1F600}";
+    const opened = await parseDocx((await writeDocx(specialModel(separately))).bytes);
+    expect(paragraphText(opened)).toBe(separately);
+    const reopened = await parseDocx((await writeDocx(rewrap(opened, "docx"))).bytes);
+    expect(equalStructural(opened.sections, reopened.sections)).toBe(true);
+  });
+
+  it("survives docx -> odf -> docx unchanged (AC-57)", async () => {
+    const opened = await parseDocx((await writeDocx(specialModel(SPECIAL_FIXTURE))).bytes);
+    const asOdf = await parseOdt((await writeOdt(rewrap(opened, "odt"))).bytes);
+    expect(paragraphText(asOdf)).toBe(SPECIAL_FIXTURE);
+    const backToDocx = await parseDocx((await writeDocx(rewrap(asOdf, "docx"))).bytes);
+    expect(equalStructural(opened.sections, backToDocx.sections)).toBe(true);
+  });
+
+  it("survives odf -> docx -> odf unchanged (AC-57)", async () => {
+    const opened = await parseOdt((await writeOdt(specialModel(SPECIAL_FIXTURE))).bytes);
+    const asDocx = await parseDocx((await writeDocx(rewrap(opened, "docx"))).bytes);
+    expect(paragraphText(asDocx)).toBe(SPECIAL_FIXTURE);
+    const backToOdf = await parseOdt((await writeOdt(rewrap(asDocx, "odt"))).bytes);
+    expect(equalStructural(opened.sections, backToOdf.sections)).toBe(true);
   });
 });
 

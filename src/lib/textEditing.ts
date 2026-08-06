@@ -22,6 +22,7 @@ import {
   type RunFormatting,
   type Table,
 } from "./documentModel";
+import { nextGraphemeBoundary, previousGraphemeBoundary } from "./grapheme";
 
 /** The path from a table block down to one of its cell's paragraphs
  * (SPEC-022): the cell's row/column plus the paragraph index within the
@@ -830,11 +831,16 @@ export function deleteBackward(
   caret: CaretPosition,
 ): CaretPosition {
   const c = clampCaret(model, caret);
-  if (!paragraphAt(model, c)) {
+  const paragraph = paragraphAt(model, c);
+  if (!paragraph) {
     return c;
   }
   if (c.offset > 0) {
-    return deleteRange(model, { ...c, offset: c.offset - 1 }, c);
+    // Step by extended grapheme cluster so a surrogate pair or an emoji
+    // ZWJ/variation-selector/skin-tone sequence deletes as a single unit
+    // (SPEC-026).
+    const prevOffset = previousGraphemeBoundary(blockText(paragraph), c.offset);
+    return deleteRange(model, { ...c, offset: prevOffset }, c);
   }
   if (c.cell) {
     if (c.cell.block === 0) {
@@ -878,7 +884,9 @@ export function deleteForward(
     return c;
   }
   if (c.offset < blockLength(paragraph)) {
-    return deleteRange(model, c, { ...c, offset: c.offset + 1 });
+    // Step by extended grapheme cluster (SPEC-026), mirroring deleteBackward.
+    const nextOffset = nextGraphemeBoundary(blockText(paragraph), c.offset);
+    return deleteRange(model, c, { ...c, offset: nextOffset });
   }
   if (c.cell) {
     const table = model.sections[c.section].blocks[c.block];

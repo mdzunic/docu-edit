@@ -303,6 +303,18 @@ describe("writeOdt — content details", () => {
     expect(paragraphTexts(reopened)).toEqual(["  spaced  out  "]);
   });
 
+  it("keeps consecutive no-break spaces as literal characters, never text:s (AC-56)", async () => {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "a  b", formatting: {} }] },
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    // Two literal U+00A0 characters — ODF never collapses them, so no text:s.
+    expect(contentXml).toContain("  ");
+    expect(contentXml).not.toContain("<text:s/>");
+    expect(contentXml).not.toContain("<text:s ");
+  });
+
   it("protects a space that follows a tab across a run boundary", async () => {
     const model = createDocument("id-1");
     model.sections[0].blocks = [
