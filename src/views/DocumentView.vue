@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, trigge
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import AutocorrectMenu from "../components/AutocorrectMenu.vue";
+import BookmarkDialog from "../components/BookmarkDialog.vue";
+import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
@@ -16,6 +18,8 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
+import LinkChip from "../components/LinkChip.vue";
+import LinkDialog from "../components/LinkDialog.vue";
 import TableInsertControl from "../components/TableInsertControl.vue";
 import FindBar from "../components/FindBar.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
@@ -59,6 +63,23 @@ import {
   isTable,
 } from "../lib/documentModel";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
+import {
+  anchorCaret,
+  applyLink,
+  autolinkAt,
+  deleteBookmark,
+  insertBookmark,
+  insertLinkText,
+  linkAtCaret,
+  linkTargetLabel,
+  listBookmarks,
+  listHeadings,
+  noLinkExtent,
+  noLinkTarget,
+  removeLink,
+  sanitizeHref,
+  validateBookmarkName,
+} from "../lib/links";
 import {
   appendTableRowForTab,
   applyBorderPreset,
@@ -157,6 +178,7 @@ import {
   DOC_MODEL_MIME,
   executePaste,
   extractFragment,
+  fragmentText,
   IMAGES_UNSUPPORTED_MESSAGE,
   noClipboardSnapshot,
   noPastePayload,
@@ -216,7 +238,7 @@ import {
   updateStyleFromSelection,
   verticalAlignState,
 } from "../lib/commands";
-import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
+import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import {
   deleteImage,
   imageAt,
@@ -706,6 +728,19 @@ let painterFormat = noPainterFormat();
 // selectionchange) re-triggering the same application over and over.
 let lastPainterSelection = noSelection();
 
+// --- hyperlinks and bookmarks (SPEC-025) ------------------------------------
+// The link/bookmark dialogs capture the selection they will apply to when
+// they open (their own inputs take the focus); the chip tracks the link
+// extent the caret currently sits in. Plain vars where nothing renders.
+const linkDialogOpen = ref(false);
+const linkDialogInitial = ref({ text: "", url: "", anchor: "" });
+let linkDialogSelection = noSelection();
+const linkChip = ref({ visible: false, left: 0, top: 0, label: "", external: false });
+let linkChipExtent = noLinkExtent();
+const bookmarkDialogOpen = ref(false);
+let bookmarkDialogSelection = noSelection();
+const bookmarkManagerOpen = ref(false);
+
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
 // browser owns the DOM: preedit updates are neither cancelable nor modelled.
@@ -871,6 +906,7 @@ function handleSelectionChange() {
     selectionAnchor =
       compareCaret(range.start, range.end) === 0 ? noCaret() : range.start;
     updateCaretStatus(range);
+    void refreshLinkChip();
     // The format painter's target (SPEC-020 AC-12): skipped while a text
     // drag is in progress (handleCanvasMouseUp applies on release instead,
     // once the range has settled) — see maybeApplyPainter's own guard
@@ -981,6 +1017,7 @@ function applyEdit(
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
   void restoreCaretAfterRender();
+  void refreshLinkChip();
   if (
     priorImageSelection &&
     isImage(doc.value.sections[priorImageSelection.section]?.blocks[priorImageSelection.block])
@@ -1324,6 +1361,13 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
   }
   if (result) {
     applyEdit(result, selection, label, groupable);
+    // Autolink (SPEC-025 AC-5, AC-6): a completed space or Enter may have
+    // finished a bare URL just before the split/insertion point.
+    if (type === "insertText" && event.data === " " && label === "typing") {
+      maybeAutolink(result, false);
+    } else if (type === "insertParagraph" && label === "new paragraph") {
+      maybeAutolink(result, true);
+    }
   }
 }
 
@@ -1623,6 +1667,357 @@ function handlePasteOption(mode = "") {
   applyEdit(result, snapshot.selection, "paste", false, true);
   void openPasteChip(chosen);
   root.focus();
+}
+
+// --- hyperlinks and bookmarks (SPEC-025) -----------------------------------
+
+/** The dialog's heading targets (AC-19, AC-21), re-read from the current
+ * model each time the dialog template evaluates them. */
+function documentHeadings() {
+  const model = doc.value;
+  return model
+    ? listHeadings(model).map((heading) => ({
+        anchor: heading.anchor,
+        text: heading.text,
+        level: heading.level,
+      }))
+    : [];
+}
+
+/** The dialog's bookmark targets (AC-20, AC-21). */
+function documentBookmarkTargets() {
+  const model = doc.value;
+  return model
+    ? listBookmarks(model).map((bookmark) => ({ anchor: bookmark.name, text: bookmark.name }))
+    : [];
+}
+
+/** Bookmark names in document order — the manager's list (AC-23) and the
+ * uniqueness set the insert dialog validates against (AC-27). */
+function documentBookmarkNames() {
+  const model = doc.value;
+  return model ? listBookmarks(model).map((bookmark) => bookmark.name) : [];
+}
+
+/** A model selection spanning a link extent — what Edit/Remove act on. */
+function extentSelection(extent = noLinkExtent()) {
+  if (!extent) {
+    return null;
+  }
+  const address = extent.address;
+  const anchor = address.cell
+    ? { section: address.section, block: address.block, offset: extent.from, cell: address.cell }
+    : { section: address.section, block: address.block, offset: extent.from };
+  const focus = address.cell
+    ? { section: address.section, block: address.block, offset: extent.to, cell: address.cell }
+    : { section: address.section, block: address.block, offset: extent.to };
+  return { anchor, focus };
+}
+
+/** Opens the link dialog (AC-1, AC-2): prefilled with the selected text and
+ * an empty URL, both fields empty without a selection — or, with a collapsed
+ * caret inside an existing link, editing that link's whole extent (AC-9). */
+function openLinkDialog() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  dismissLinkChip();
+  const selection = currentSelection(root) ?? caretSelection(documentStart());
+  const extent = isCollapsed(selection) ? linkAtCaret(model, selection.focus) : null;
+  if (extent) {
+    linkDialogSelection = extentSelection(extent);
+    linkDialogInitial.value = {
+      text: extent.text,
+      url: extent.target.href ?? "",
+      anchor: extent.target.anchor ?? "",
+    };
+  } else {
+    linkDialogSelection = selection;
+    linkDialogInitial.value = {
+      text: isCollapsed(selection) ? "" : fragmentText(extractFragment(model, selection)),
+      url: "",
+      anchor: "",
+    };
+  }
+  linkDialogOpen.value = true;
+}
+
+/** Applies the dialog's link (AC-3, AC-19, AC-20): the selection is wrapped
+ * when its text was kept, or replaced by the edited text. The dialog already
+ * rejected dangerous schemes (AC-14..16); sanitizeHref here is a backstop. */
+function handleLinkDialogSave(payload = { text: "", href: "", anchor: "" }) {
+  const model = doc.value;
+  const selection = linkDialogSelection;
+  linkDialogOpen.value = false;
+  linkDialogSelection = noSelection();
+  if (!model || !selection) {
+    return;
+  }
+  const anchor = String(payload.anchor ?? "");
+  const href = anchor === "" ? sanitizeHref(String(payload.href ?? "")) : null;
+  if (anchor === "" && href === null) {
+    return;
+  }
+  const target = anchor !== "" ? { anchor } : { href: href ?? "" };
+  const text = String(payload.text ?? "");
+  const selectionText = isCollapsed(selection)
+    ? ""
+    : fragmentText(extractFragment(model, selection));
+  const result =
+    !isCollapsed(selection) && text === selectionText
+      ? applyLink(model, selection, target)
+      : insertLinkText(model, selection, text, target);
+  applyEdit(result, selection, "insert link", false);
+  contentRoot.value?.focus();
+}
+
+function handleLinkDialogCancel() {
+  linkDialogOpen.value = false;
+  linkDialogSelection = noSelection();
+  contentRoot.value?.focus();
+  void restoreCaretAfterRender();
+}
+
+function dismissLinkChip() {
+  if (linkChip.value.visible) {
+    linkChip.value = { visible: false, left: 0, top: 0, label: "", external: false };
+  }
+  linkChipExtent = noLinkExtent();
+}
+
+/** Shows the chip when a collapsed caret sits inside a link (AC-8), pinned
+ * under the caret like the paste options chip; hides it everywhere else. */
+async function refreshLinkChip() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value || !caret || selectionAnchor || linkDialogOpen.value) {
+    dismissLinkChip();
+    return;
+  }
+  const at = caret;
+  const extent = linkAtCaret(model, at);
+  if (!extent) {
+    dismissLinkChip();
+    return;
+  }
+  await nextTick();
+  if (caret !== at || !contentRoot.value) {
+    return;
+  }
+  const rect = caretClientRect(root, at);
+  if (!rect) {
+    dismissLinkChip();
+    return;
+  }
+  linkChipExtent = extent;
+  linkChip.value = {
+    visible: true,
+    left: Math.max(8, rect.left),
+    top: rect.bottom + 8,
+    label: linkTargetLabel(model, extent.target),
+    external: extent.target.href !== undefined,
+  };
+}
+
+/** Opens a link target: an external URL in a new tab (AC-12, AC-13 — the
+ * window.open feature string is the programmatic rel="noopener noreferrer";
+ * the rendered <a> carries the literal attribute too), an internal anchor
+ * as an in-document jump. Re-sanitized before navigating (AC-17). */
+function openLinkTarget(target = noLinkTarget()) {
+  if (!target) {
+    return;
+  }
+  if (target.href !== undefined) {
+    const href = sanitizeHref(target.href);
+    if (href !== null) {
+      window.open(href, "_blank", "noopener,noreferrer");
+    }
+    return;
+  }
+  jumpToAnchor(target.anchor ?? "");
+}
+
+/** Moves the caret to a bookmark or heading anchor and scrolls it into
+ * view (AC-24, and internal link opens). */
+function jumpToAnchor(anchor = "") {
+  const model = doc.value;
+  if (!model || anchor === "") {
+    return;
+  }
+  const position = anchorCaret(model, anchor);
+  if (!position) {
+    return;
+  }
+  applyCaretMove(position, false);
+  void scrollModelCaretIntoView(position);
+}
+
+async function scrollModelCaretIntoView(position = noCaret()) {
+  await nextTick();
+  const root = contentRoot.value;
+  if (!root || !position || !scrollContainer) {
+    return;
+  }
+  const rect = caretClientRect(root, position);
+  if (!rect) {
+    return;
+  }
+  const containerRect = scrollContainer.getBoundingClientRect();
+  if (rect.top < containerRect.top || rect.bottom > containerRect.bottom) {
+    scrollContainer.scrollTop += rect.top - containerRect.top - containerRect.height / 3;
+  }
+}
+
+function handleLinkChipOpen() {
+  const extent = linkChipExtent;
+  if (extent) {
+    openLinkTarget(extent.target);
+  }
+}
+
+function handleLinkChipEdit() {
+  openLinkDialog();
+}
+
+/** Copies the chip's target to the clipboard (AC-10). */
+function handleLinkChipCopy() {
+  const extent = linkChipExtent;
+  if (!extent) {
+    return;
+  }
+  const text = extent.target.href ?? `#${extent.target.anchor ?? ""}`;
+  void navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+/** Removes the link the caret sits in, keeping the text and its other
+ * formatting (AC-11, AC-33, AC-34). */
+function handleLinkChipRemove() {
+  const model = doc.value;
+  if (!model || !editable.value || !caret) {
+    return;
+  }
+  const selection = caretSelection(caret);
+  applyEdit(removeLink(model, selection), selection, "remove link", false);
+  contentRoot.value?.focus();
+}
+
+/** Clicks on rendered hyperlinks (AC-12). Browsers do not navigate a plain
+ * click on an <a> inside a contenteditable region — the anchors are real
+ * links (href/target/rel) purely for fidelity and Ctrl/Cmd+click — but
+ * preventDefault keeps that guaranteed; with Ctrl/Cmd held the target opens
+ * through the same sanitized path as the chip. */
+function handleContentClick(event = new MouseEvent("click")) {
+  const eventTarget = event.target;
+  const anchor = eventTarget instanceof Element ? eventTarget.closest("a[data-doc-link]") : null;
+  if (!anchor) {
+    return;
+  }
+  event.preventDefault();
+  if (!event.ctrlKey && !event.metaKey) {
+    return;
+  }
+  const href = anchor.getAttribute("href") ?? "";
+  if (href.startsWith("#")) {
+    jumpToAnchor(href.slice(1));
+  } else if (href !== "") {
+    openLinkTarget({ href });
+  }
+}
+
+/** Autolinks after a completed space/Enter edit (AC-5, AC-6): a bare URL
+ * ending where the word ended becomes a link, as its own undo step so
+ * Ctrl/Cmd+Z right after reverts just the link (AC-7). The caret stays
+ * exactly where the base edit put it — after the space, or at the start of
+ * the paragraph Enter created; the autolink itself never moves it. */
+function maybeAutolink(result = noCommandResult(), afterEnter = false) {
+  const model = doc.value;
+  if (!model || !result) {
+    return;
+  }
+  const focus = result.selection.focus;
+  const cell = focus.cell;
+  if (afterEnter && (focus.offset !== 0 || (cell ? cell.block === 0 : focus.block === 0))) {
+    return;
+  }
+  const address = afterEnter
+    ? cell
+      ? {
+          section: focus.section,
+          block: focus.block,
+          cell: { row: cell.row, col: cell.col, block: cell.block - 1 },
+        }
+      : { section: focus.section, block: focus.block - 1 }
+    : cell
+      ? { section: focus.section, block: focus.block, cell }
+      : { section: focus.section, block: focus.block };
+  const paragraph = paragraphAt(model, address);
+  if (!paragraph) {
+    return;
+  }
+  const endOffset = afterEnter ? blockLength(paragraph) : focus.offset - 1;
+  if (endOffset <= 0) {
+    return;
+  }
+  const linked = autolinkAt(model, address, endOffset);
+  if (!linked) {
+    return;
+  }
+  const keep = caretSelection(focus);
+  applyEdit({ model: linked, selection: keep }, keep, "autolink", false);
+}
+
+/** Opens the "Insert bookmark" dialog (AC-22) for the current caret. */
+function openBookmarkDialog() {
+  const root = contentRoot.value;
+  if (!root || !doc.value || !editable.value) {
+    return;
+  }
+  bookmarkDialogSelection = currentSelection(root) ?? caretSelection(documentStart());
+  bookmarkDialogOpen.value = true;
+}
+
+function handleBookmarkDialogSave(name = "") {
+  const model = doc.value;
+  const selection = bookmarkDialogSelection;
+  bookmarkDialogOpen.value = false;
+  bookmarkDialogSelection = noSelection();
+  if (!model || !selection || name === "") {
+    return;
+  }
+  if (validateBookmarkName(name, documentBookmarkNames()) !== "") {
+    return;
+  }
+  applyEdit(insertBookmark(model, selection, name), selection, "insert bookmark", false);
+  contentRoot.value?.focus();
+}
+
+function handleBookmarkDialogCancel() {
+  bookmarkDialogOpen.value = false;
+  bookmarkDialogSelection = noSelection();
+  contentRoot.value?.focus();
+  void restoreCaretAfterRender();
+}
+
+function handleBookmarkJump(name = "") {
+  bookmarkManagerOpen.value = false;
+  contentRoot.value?.focus();
+  jumpToAnchor(String(name));
+}
+
+function handleBookmarkRemove(name = "") {
+  const model = doc.value;
+  if (!model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(contentRoot.value) ?? caretSelection(documentStart());
+  applyEdit(deleteBookmark(model, selection, String(name)), selection, "delete bookmark", false);
+}
+
+function closeBookmarkManager() {
+  bookmarkManagerOpen.value = false;
+  contentRoot.value?.focus();
 }
 
 // --- the editor's context menu (SPEC-016 AC-4..6) --------------------------
@@ -2913,6 +3308,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     // cell-range selection (SPEC-022) and the format painter (SPEC-020
     // AC-15, AC-17); also the selected image (SPEC-024).
     dismissPasteChip();
+    dismissLinkChip();
     closeContextMenu();
     clearCellSelection();
     disarmPainter();
@@ -3105,6 +3501,11 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       }
       break;
     }
+    case "insert.link":
+      // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
+      event.preventDefault();
+      openLinkDialog();
+      break;
     case "nav.pageUp":
     case "nav.pageDown":
       event.preventDefault();
@@ -3951,6 +4352,40 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         v-if="editable"
         type="button"
         class="toolbar-button"
+        data-testid="toolbar-insert-link"
+        :title="`Insert link (${shortcutLabel('insert.link')})`"
+        :aria-label="`Insert link (${shortcutLabel('insert.link')})`"
+        @mousedown.prevent
+        @click="openLinkDialog"
+      >
+        Link
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
+        data-testid="toolbar-insert-bookmark"
+        title="Insert bookmark"
+        aria-label="Insert bookmark"
+        @mousedown.prevent
+        @click="openBookmarkDialog"
+      >
+        Bookmark
+      </button>
+      <button
+        type="button"
+        class="toolbar-button"
+        data-testid="toolbar-bookmarks"
+        title="Bookmarks"
+        aria-label="Bookmarks"
+        @click="bookmarkManagerOpen = true"
+      >
+        Bookmarks
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
         data-testid="delete-document"
         @click="confirmingDelete = true"
       >
@@ -4201,6 +4636,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             @mousedown="handleCanvasMouseDown"
             @mousemove="handleCanvasMouseMove"
             @mouseup="handleCanvasMouseUp"
+            @click="handleContentClick"
             @dragenter="handleCanvasDragEnter"
             @dragover="handleCanvasDragOver"
             @drop="handleCanvasDrop"
@@ -4225,11 +4661,23 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
               @select="entry.isImage ? handleImageSelect(entry.section, entry.blockIndex) : undefined"
             >
               <template v-if="!entry.isTable && !entry.isImage && entry.paragraph.runs.length > 0">
-                <span
+                <template
                   v-for="(run, runIndex) in entry.paragraph.runs"
                   :key="runKey(run, runIndex)"
-                  :style="runStyle(run.formatting)"
-                >{{ run.text }}</span>
+                >
+                  <a
+                    v-if="runLinkHref(run.formatting)"
+                    data-doc-link=""
+                    :href="runLinkHref(run.formatting)"
+                    :target="isExternalLink(run.formatting) ? '_blank' : undefined"
+                    :rel="isExternalLink(run.formatting) ? 'noopener noreferrer' : undefined"
+                    :style="runStyle(run.formatting)"
+                  >{{ run.text }}</a>
+                  <span
+                    v-else
+                    :style="runStyle(run.formatting)"
+                  >{{ run.text }}</span>
+                </template>
               </template>
               <br v-else-if="!entry.isTable && !entry.isImage">
             </component>
@@ -4245,6 +4693,41 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         {{ caretStatus }}
       </div>
     </div>
+    <LinkChip
+      v-if="linkChip.visible"
+      :left="linkChip.left"
+      :top="linkChip.top"
+      :label="linkChip.label"
+      :external="linkChip.external"
+      @open="handleLinkChipOpen"
+      @edit="handleLinkChipEdit"
+      @copy="handleLinkChipCopy"
+      @remove="handleLinkChipRemove"
+      @dismiss="dismissLinkChip"
+    />
+    <LinkDialog
+      v-if="linkDialogOpen"
+      :initial-text="linkDialogInitial.text"
+      :initial-url="linkDialogInitial.url"
+      :initial-anchor="linkDialogInitial.anchor"
+      :headings="documentHeadings()"
+      :bookmarks="documentBookmarkTargets()"
+      @save="handleLinkDialogSave"
+      @cancel="handleLinkDialogCancel"
+    />
+    <BookmarkDialog
+      v-if="bookmarkDialogOpen"
+      :existing-names="documentBookmarkNames()"
+      @save="handleBookmarkDialogSave"
+      @cancel="handleBookmarkDialogCancel"
+    />
+    <BookmarkManagerDialog
+      v-if="bookmarkManagerOpen"
+      :names="documentBookmarkNames()"
+      @jump="handleBookmarkJump"
+      @remove="handleBookmarkRemove"
+      @close="closeBookmarkManager"
+    />
     <ConfirmDeleteDialog
       v-if="confirmingDelete"
       :document-title="doc.title"

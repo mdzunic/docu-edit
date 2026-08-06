@@ -92,6 +92,7 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   },
   { id: "edit.selectAll", label: "Select all", category: "Editing", bindings: [{ key: "a", mod: true }] },
   { id: "edit.pastePlain", label: "Paste without formatting", category: "Editing", bindings: [{ key: "v", mod: true, shift: true }] },
+  { id: "insert.link", label: "Insert link", category: "Editing", bindings: [{ key: "k", mod: true }] },
 
   // Find & replace
   { id: "find.open", label: "Find", category: "Find & replace", bindings: [{ key: "f", mod: true }], overridesBrowser: true },
