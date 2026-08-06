@@ -60,7 +60,7 @@ import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, styleAttr } from "./xml";
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
@@ -985,6 +985,7 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
 export function buildContentXml(
   model: DocumentModel,
   mediaPlan: OdtMediaWritePlan = planOdtMediaWrite(model),
+  masterNames?: (string | null)[],
 ): string {
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
@@ -1001,7 +1002,15 @@ export function buildContentXml(
     // `start`: ODF has no continuous-section concept, so a "continuous"
     // section re-opens as nextPage — a documented fidelity loss that keeps
     // the section boundary itself alive.
-    let pendingMaster = sectionIndex > 0 ? sectionMasterName(sectionIndex) : undefined;
+    // The plan is authoritative when given: a null entry means the section's
+    // generated master collided with a foreign definition and was skipped by
+    // the patch, so content.xml must not reference it either.
+    let pendingMaster =
+      sectionIndex > 0
+        ? masterNames
+          ? (masterNames[sectionIndex] ?? undefined)
+          : sectionMasterName(sectionIndex)
+        : undefined;
     const takeStyleOptions = (): ParagraphStyleOptions | undefined => {
       if (pendingBreak === undefined && pendingMaster === undefined) {
         return undefined;
@@ -1135,6 +1144,140 @@ function sectionMasterName(index: number): string {
 
 function sectionLayoutName(index: number): string {
   return `pm${index + 1}`;
+}
+
+interface OdtStyleNamesByName {
+  layouts: Map<string, Element>;
+  masters: Map<string, Element>;
+}
+
+/** Collects every page-layout and master-page the preserved styles part
+ * already defines, keyed by style:name — the uniqueness ground a same-format
+ * save checks before deciding which generated names it may use. */
+function collectOdtStyleNames(root: Element): OdtStyleNamesByName {
+  const layouts = new Map<string, Element>();
+  const masters = new Map<string, Element>();
+  const collect = (parentName: string, localName: string, into: Map<string, Element>) => {
+    const parent = firstChildElement(root, OFFICE_NAMESPACE, parentName);
+    if (!parent) {
+      return;
+    }
+    for (const el of Array.from(parent.children)) {
+      if (el.namespaceURI === STYLE_NAMESPACE && el.localName === localName) {
+        const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+        if (name) {
+          into.set(name, el);
+        }
+      }
+    }
+  };
+  collect("automatic-styles", "page-layout", layouts);
+  collect("master-styles", "master-page", masters);
+  return { layouts, masters };
+}
+
+/** The page-layout name the writer uses for the section at `index` (>=1) on
+ * a same-format save. The conventional `pm${index+1}` (e.g. pm2) is
+ * OpenOffice/older-LibreOffice's own running numbering for automatic
+ * page-layouts, so a foreign doc's second section is literally "pm2" —
+ * colliding with the factory's generated layout. To honour SPEC-008 (never
+ * displace a definition the source owns) the writer scans for a name that
+ * either does not exist in the preserved styles at all, or already exists
+ * AND is referenced by the writer's OWN master page for that section — the
+ * marker that it came from a previous factory save. Anything else is a
+ * foreign definition and is skipped, never overwritten. Returns null when
+ * every candidate is taken by someone else's styles. */
+function usableLayoutName(
+  index: number,
+  names: OdtStyleNamesByName,
+  preferredMasterName: string,
+): string | null {
+  const preferred = sectionLayoutName(index);
+  for (let n = 0; n < 64; n++) {
+    const candidate = n === 0 ? preferred : `${preferred}-${n + 1}`;
+    if (!names.layouts.has(candidate)) {
+      return candidate; // Free — safe to add.
+    }
+    const master = names.masters.get(preferredMasterName);
+    if (master && styleAttr(master, "page-layout-name") === candidate) {
+      return candidate; // Ours from a previous factory save — safe to reuse.
+    }
+  }
+  return null; // Every candidate collides with a foreign definition.
+}
+
+/** The master-page name the writer uses for the section at `index` (>=1),
+ * given the page-layout name that section's generated master page will
+ * reference. The conventional `SectionMaster${index+1}` is factory-specific,
+ * but a stored definition under that name that references a DIFFERENT layout
+ * belongs to the source — never displace it. Returns null when every
+ * candidate is someone else's. */
+function usableMasterName(
+  index: number,
+  names: OdtStyleNamesByName,
+  layoutName: string,
+): string | null {
+  const preferred = sectionMasterName(index);
+  for (let n = 0; n < 64; n++) {
+    const candidate = n === 0 ? preferred : `SectionMaster${index + 1}-${n + 1}`;
+    if (!names.masters.has(candidate)) {
+      return candidate;
+    }
+    const master = names.masters.get(candidate);
+    if (master && styleAttr(master, "page-layout-name") === layoutName) {
+      return candidate; // Ours from a previous factory save.
+    }
+  }
+  return null;
+}
+
+/** The per-section master-page/page-layout names a save will emit, aligned
+ * with `model.sections` (index 0 keeps the conventional Standard/pm1 pair
+ * that every single-section document uses). When a preserved styles.xml is
+ * given, names are resolved collision-free against it (see usableLayoutName
+ * / usableMasterName); otherwise — fresh documents — the conventional names
+ * are used, which buildStylesXml also emits. content.xml's master-page
+ * references and the styles patch are built from the SAME plan, so the
+ * referenced and defined names always agree. */
+function planOdtSectionNames(
+  model: DocumentModel,
+  originalStylesXml: string | undefined,
+): { masters: (string | null)[]; layouts: (string | null)[] } {
+  const n = model.sections.length;
+  const masters: (string | null)[] = Array.from({ length: n }, (_, i) => sectionMasterName(i));
+  const layouts: (string | null)[] = Array.from({ length: n }, (_, i) => sectionLayoutName(i));
+  if (n <= 1 || !originalStylesXml) {
+    return { masters, layouts };
+  }
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return { masters, layouts };
+  }
+  const names = collectOdtStyleNames(stylesDoc.documentElement);
+  for (let index = 1; index < n; index++) {
+    const layoutName = usableLayoutName(index, names, sectionMasterName(index));
+    if (layoutName === null) {
+      // Every candidate is foreign — mark the pair unusable so the patch
+      // skips this section rather than clobber.
+      masters[index] = null;
+      layouts[index] = null;
+      continue;
+    }
+    const masterName = usableMasterName(index, names, layoutName);
+    if (masterName === null) {
+      masters[index] = null;
+      layouts[index] = null;
+      continue;
+    }
+    layouts[index] = layoutName;
+    masters[index] = masterName;
+    // Register both chosen names so later sections never re-pick them.
+    names.layouts.set(layoutName, stylesDoc.documentElement);
+    names.masters.set(masterName, stylesDoc.documentElement);
+  }
+  return { masters, layouts };
 }
 
 /** One style:page-layout carrying a page geometry — the shape the reader's
@@ -1271,11 +1414,15 @@ export function patchOdtStylesXml(
  * already defines them all exactly — a same-format save of an unedited
  * multi-section document then keeps the part byte-identical (the
  * patchOdtStylesXml contract). The source's own master pages are left
- * untouched; only the generated "SectionMasterN"/"pmN" pairs are managed,
- * so a definition whose geometry the user edited is replaced in place. */
+ * untouched; only the resolved generated pairs from `sectionNames` (the
+ * plan planOdtSectionNames computed against the preserved part) are managed,
+ * so a foreign definition that shares a conventional "pmN" name is never
+ * displaced (SPEC-008) while a definition a previous factory save wrote is
+ * replaced in place when its geometry was edited. */
 export function patchOdtSectionMasterPages(
   model: DocumentModel,
   originalStylesXml: string,
+  sectionNames?: { masters: (string | null)[]; layouts: (string | null)[] },
 ): string | null {
   if (model.sections.length <= 1) {
     return null;
@@ -1287,6 +1434,7 @@ export function patchOdtSectionMasterPages(
     return null;
   }
   const root = stylesDoc.documentElement;
+  const names = sectionNames ?? planOdtSectionNames(model, originalStylesXml);
   let changed = false;
   const upsert = (parentName: string, localName: string, styleName: string, xml: string) => {
     let parent = firstChildElement(root, OFFICE_NAMESPACE, parentName);
@@ -1317,7 +1465,14 @@ export function patchOdtSectionMasterPages(
     changed = true;
   };
   for (let index = 1; index < model.sections.length; index++) {
-    const layoutName = sectionLayoutName(index);
+    const masterName = names.masters[index];
+    const layoutName = names.layouts[index];
+    if (layoutName === null || masterName === null) {
+      // Every generated name collided with a foreign definition — the master
+      // this save would define belongs to someone else's styles. Refuse to
+      // clobber; the reader will fall back to the document default layout.
+      continue;
+    }
     upsert(
       "automatic-styles",
       "page-layout",
@@ -1327,8 +1482,8 @@ export function patchOdtSectionMasterPages(
     upsert(
       "master-styles",
       "master-page",
-      sectionMasterName(index),
-      masterPageXml(sectionMasterName(index), layoutName),
+      masterName,
+      masterPageXml(masterName, layoutName),
     );
   }
   return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
@@ -1427,7 +1582,17 @@ export async function writeOdt(
   // package already uses, so a freshly written Pictures/imageN.ext can
   // never collide (mirrors docx/writer.ts's own media planning).
   const mediaPlan = planOdtMediaWrite(model, new Set(preservedParts.keys()));
-  const content = buildContentXml(model, mediaPlan);
+  const decoder = new TextDecoder("utf-8");
+  const originalStyles = preservedParts.get("styles.xml")
+    ? decoder.decode(preservedParts.get("styles.xml")!)
+    : undefined;
+  // Resolve the per-section master-page/page-layout names once, against the
+  // preserved styles.xml (SPEC-028 AC-33). content.xml (the reference) and
+  // the styles patch (the definition) must agree; when no styles.xml is
+  // preserved the conventional SectionMasterN/pmN names are used, matching
+  // buildStylesXml.
+  const sectionNames = planOdtSectionNames(model, originalStyles);
+  const content = buildContentXml(model, mediaPlan, sectionNames.masters);
 
   if (preservedParts.size === 0) {
     const bytes = await zip([
@@ -1449,7 +1614,6 @@ export async function writeOdt(
   // package had none (the manifest is patched to match), and styles.xml
   // patched only when the model's style catalogue diverges from it
   // (SPEC-019).
-  const decoder = new TextDecoder("utf-8");
   const addSettings = !preservedParts.has("settings.xml");
   const addedPaths: OdtManifestEntry[] = [
     { path: "content.xml", mediaType: "text/xml" },
@@ -1466,7 +1630,7 @@ export async function writeOdt(
     const originalStyles = decoder.decode(preservedStyles);
     patchedStyles = patchOdtStylesXml(model, originalStyles, content);
     patchedStyles =
-      patchOdtSectionMasterPages(model, patchedStyles ?? originalStyles) ?? patchedStyles;
+      patchOdtSectionMasterPages(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
   }
 
   const entries: ZipEntryInput[] = [

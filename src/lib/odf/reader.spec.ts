@@ -498,4 +498,27 @@ describe("parseOdt — sections via master pages (SPEC-028 AC-33)", () => {
     expect(parsed.sections).toHaveLength(1);
     expect(text(asParagraph(parsed.sections[0].blocks[0]))).toBe("only");
   });
+
+  it("folds the geometry of the master the FIRST paragraph names — not the first-listed one (review #55 bug)", async () => {
+    // SECTION_STYLES lists Standard/pm1 (21x29.7) BEFORE A5Master/pm2
+    // (14.8x21). The very first body paragraph references A5Master — the
+    // master the body actually starts on. The document default and the
+    // single section must report A5, never the first-LISTED Standard.
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/>',
+          '<text:p text:style-name="P1">starts-on-a5</text:p>',
+        ),
+        SECTION_STYLES,
+      ),
+    );
+    expect(parsed.sections).toHaveLength(1);
+    expect(parsed.defaultStyles.pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+    expect(parsed.defaultStyles.margins).toEqual({ topCm: 1, rightCm: 1, bottomCm: 1, leftCm: 1 });
+    // The leading section pins the referenced master's geometry explicitly,
+    // the same way later sections that switch masters do (AC-17/18/19).
+    expect(parsed.sections[0].pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+    expect(parsed.sections[0].margins).toEqual({ topCm: 1, rightCm: 1, bottomCm: 1, leftCm: 1 });
+  });
 });

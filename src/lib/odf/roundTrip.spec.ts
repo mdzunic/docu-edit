@@ -281,6 +281,54 @@ describe("writeOdt — sections through a same-format save (SPEC-028 AC-33)", ()
     expect(firstStructuralDifference(reopened.sections, reopenedAgain.sections)).toBeNull();
   });
 
+  it("never displaces a FOREIGN page-layout that shares the generated name (pm2 — SPEC-008)", async () => {
+    // OpenOffice/older-LibreOffice number automatic page-layouts pm1, pm2, …
+    // so a foreign doc's second section is literally "pm2", carrying content
+    // this writer does not model. A same-format save must keep that
+    // definition byte-for-byte and give the factory's own section a
+    // non-colliding layout name instead.
+    const { zip } = await import("../docx/zipWriter");
+    const makeContent = () => `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">
+ <office:automatic-styles><style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/></office:automatic-styles>
+ <office:body><office:text><text:p>first</text:p><text:p text:style-name="P1">second</text:p></office:text></office:body>
+</office:document-content>`;
+    const makeStyles = () => `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">
+ <office:automatic-styles>
+  <style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm"/></style:page-layout>
+  <style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="14.8cm" fo:page-height="21cm"><style:background-image/></style:page-layout-properties></style:page-layout>
+ </office:automatic-styles>
+ <office:master-styles>
+  <style:master-page style:name="Standard" style:page-layout-name="pm1"/>
+  <style:master-page style:name="A5Master" style:page-layout-name="pm2"/>
+ </office:master-styles>
+</office:document-styles>`;
+    const opened = await parseOdt(
+      await zip([
+        { name: "mimetype", data: new TextEncoder().encode("application/vnd.oasis.opendocument.text"), store: true },
+        { name: "content.xml", data: new TextEncoder().encode(makeContent()) },
+        { name: "styles.xml", data: new TextEncoder().encode(makeStyles()) },
+      ]),
+    );
+    const model = modelFrom(opened, "Collision");
+    expect(model.sections).toHaveLength(2);
+
+    const { bytes } = await writeOdt(model, { modified });
+    const parts = await unzip(bytes);
+    const stylesXml = decoder.decode(parts.get("styles.xml")!);
+    // The foreign pm2 — with its unmodeled background-image — survives whole.
+    expect(stylesXml).toContain(
+      '<style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="14.8cm"' +
+        ' fo:page-height="21cm"><style:background-image/></style:page-layout-properties></style:page-layout>',
+    );
+    // The factory's own section gets a non-colliding layout name…
+    expect(stylesXml).toContain('style:name="pm2-2"');
+    expect(stylesXml).toContain('<style:master-page style:name="SectionMaster2" style:page-layout-name="pm2-2"/>');
+    // …and content.xml references the factory's master page consistently.
+    expect(decoder.decode(parts.get("content.xml")!)).toContain('style:master-page-name="SectionMaster2"');
+  });
+
   it("replaces a stale generated master page when the section's geometry was edited", async () => {
     const opened = await parseOdt(loadFixture("libreoffice-writer.odt"));
     const model = modelFrom(opened, "Sectioned");

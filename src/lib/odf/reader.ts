@@ -1035,6 +1035,14 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   // switched to (SPEC-028 AC-33); undefined for the first section, whose
   // master is the document default folded into defaultStyles below.
   let sectionGeometry: OdfMasterPageLayout | undefined;
+  // The master page named by the document's very FIRST body paragraph. The
+  // reader never opens an empty leading section for such a reference (see
+  // the guard below) — but that master, not the first-listed one, is the one
+  // the body actually starts on, so it must supply the document defaults and
+  // the first section's geometry (SPEC-028 AC-17/18/19/33). Undefined when
+  // the first paragraph names no master: the first-listed master stays the
+  // default, exactly as before.
+  let leadingMasterName: string | undefined;
   const finishSection = () => {
     const section: Section = { blocks };
     if (opaqueBlocks.length > 0) {
@@ -1056,14 +1064,20 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
       const signals = paragraphAutoStyleSignals(catalog, textAttr(child, "style-name") ?? undefined);
       // A style:master-page-name on the paragraph's automatic style starts
       // a new section here (SPEC-028 AC-33) — except on the document's very
-      // first block, where the first master page already applies (it is
-      // folded into defaultStyles, keeping single-section documents exactly
-      // as before).
-      if (signals.masterPageName !== undefined && !(sections.length === 0 && blocks.length === 0)) {
-        finishSection();
-        blocks = [];
-        opaqueBlocks = [];
-        sectionGeometry = catalog.masterPageLayouts.get(signals.masterPageName);
+      // first block, where opening an empty leading section would be wrong.
+      // But "first master page" is then the one this paragraph actually
+      // names — NOT whichever is listed first in master-styles (a foreign
+      // doc can list Standard first and have the body start on A5Master) —
+      // so record it and let it provide the document defaults below.
+      if (signals.masterPageName !== undefined) {
+        if (sections.length === 0 && blocks.length === 0) {
+          leadingMasterName = signals.masterPageName;
+        } else {
+          finishSection();
+          blocks = [];
+          opaqueBlocks = [];
+          sectionGeometry = catalog.masterPageLayouts.get(signals.masterPageName);
+        }
       }
       // fo:break-before="page" on the AUTOMATIC style materialises a manual
       // BreakBlock before the paragraph, and the flag is dropped from the
@@ -1115,9 +1129,32 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   finishSection();
 
   const fallback = createDefaultStyles();
+  // The document default page geometry is the master the body actually
+  // starts on: the master named by the first body paragraph when there is
+  // one, else the first-listed master folded into catalog.pageSize/margins.
+  // parsePageLayout folds the first-listed master for the no-lead case; when
+  // a lead exists it wins (SPEC-028 AC-17/18/19/33 — a foreign doc must read
+  // back the geometry it actually starts on, not whichever master happens to
+  // be listed first).
+  const leadingGeometry = leadingMasterName
+    ? catalog.masterPageLayouts.get(leadingMasterName)
+    : undefined;
+  // The leading section's geometry is the master the very first paragraph
+  // named, so it carries explicit pageSize/margins like every later section
+  // that switches masters — reported by AC-17/18/19/33 and rendered/round-
+  // tripped correctly rather than silently inheriting the first-LISTED
+  // master. A document whose first paragraph names no master keeps the
+  // first-listed master folded into defaults exactly as before.
+  const leadingSection = sections[0];
+  if (leadingSection && leadingGeometry?.pageSize) {
+    leadingSection.pageSize = { ...leadingGeometry.pageSize };
+  }
+  if (leadingSection && leadingGeometry?.margins) {
+    leadingSection.margins = { ...leadingGeometry.margins };
+  }
   const defaultStyles: DefaultStyles = {
-    pageSize: catalog.pageSize ?? fallback.pageSize,
-    margins: catalog.margins ?? fallback.margins,
+    pageSize: leadingGeometry?.pageSize ?? catalog.pageSize ?? fallback.pageSize,
+    margins: leadingGeometry?.margins ?? catalog.margins ?? fallback.margins,
     fontFamily: catalog.defaultRunFormatting.fontFamily ?? fallback.fontFamily,
     fontSizePt: catalog.defaultRunFormatting.fontSizePt ?? fallback.fontSizePt,
   };
