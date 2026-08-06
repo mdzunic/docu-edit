@@ -4,11 +4,14 @@ import { LINE_START } from "./keys";
 // SPEC-016 — cut, copy and paste: keyboard shortcuts and context menu
 // entries, the three clipboard flavours, exact internal round-trip paste,
 // sanitised external-HTML import (Word Online / Google Docs / web page),
-// plain-text paste, the paste options chip's single-undo-step
-// re-application, and the image gate. Model-level assertions read the
-// persisted model from IndexedDB like e2e/SPEC-012.spec.ts; external
-// clipboards are simulated by dispatching ClipboardEvents with a
-// DataTransfer, which is exactly what the browser's own paste path does.
+// plain-text paste, and the paste options chip's single-undo-step
+// re-application. Model-level assertions read the persisted model from
+// IndexedDB like e2e/SPEC-012.spec.ts; external clipboards are simulated by
+// dispatching ClipboardEvents with a DataTransfer, which is exactly what the
+// browser's own paste path does. Pasting an actual image is SPEC-024's
+// (e2e/SPEC-024.spec.ts) — this file keeps only the malformed-image case,
+// since an accepted image type with unreadable bytes is still possible
+// (a truncated/corrupt file) regardless of that spec.
 
 const DOC_MODEL_MIME = "application/x-docu-edit-docmodel+json";
 
@@ -421,12 +424,15 @@ test("'Match destination formatting' re-resolves the paste to the destination (A
   expect(all[0].runs).toEqual([{ text: "contextLoud", formatting: {} }]);
 });
 
-test("pasting an image from the clipboard shows the gate message until SPEC-024 (AC-46)", async ({
+test("pasting a malformed image from the clipboard is rejected, not inserted (SPEC-024)", async ({
   page,
 }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("keep");
+  // Only the PNG signature bytes, no IHDR/IDAT — an accepted MIME type
+  // (image/png) that still fails to decode, the one case SPEC-024's paste
+  // path can reject regardless of type (a truncated/corrupt file).
   await page.evaluate(() => {
     const transfer = new DataTransfer();
     transfer.items.add(
@@ -441,7 +447,7 @@ test("pasting an image from the clipboard shows the gate message until SPEC-024 
       }),
     );
   });
-  await expect(page.getByTestId("toast")).toHaveText("Images aren't supported yet");
+  await expect(page.getByTestId("toast")).toHaveText("That image could not be read");
   await expect(content(page)).toHaveText("keep");
 });
 

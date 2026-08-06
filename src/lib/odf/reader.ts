@@ -10,7 +10,9 @@ import type {
   CellBorders,
   CellVerticalAlign,
   DefaultStyles,
+  ImageWrapMode,
   ListFormatting,
+  MediaPart,
   NamedStyle,
   OpaqueBlock,
   OpaqueInline,
@@ -33,8 +35,10 @@ import { ZipError, unzip } from "../docx/zip";
 import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { clampListLevel, defaultMarkerStyle } from "../lists";
+import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import {
+  DRAW_NAMESPACE,
   OFFICE_NAMESPACE,
   STYLE_NAMESPACE,
   TABLE_NAMESPACE,
@@ -77,6 +81,9 @@ export interface ParsedOdtDocument {
    * font-face declarations and non-paragraph/text automatic styles that
    * preserved opaque nodes may reference. */
   sourceXml: SourceXml;
+  /** Media parts modelled Image blocks reference (SPEC-024), one per
+   * distinct source media part. */
+  media: MediaPart[];
 }
 
 // Transient markup LibreOffice regenerates on every open (rendered
@@ -295,6 +302,122 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
     paragraph.headingLevel = level ?? 1;
   }
   return paragraph;
+}
+
+/** Context a body-level text-block parse needs to resolve a `draw:frame`
+ * into actual image bytes (SPEC-024). */
+export interface OdfDrawingContext {
+  parts: Map<string, Uint8Array>;
+  graphicWrapStyles: Map<string, ImageWrapMode>;
+}
+
+/** collectInline run over a detached clone of `nodes` — reused so a
+ * mid-paragraph image split (parseBodyTextBlockOrSplit) gets exactly the
+ * same whitespace-collapsing/span-resolution behaviour as an ordinary
+ * paragraph, without re-implementing collectInline's state machine for a
+ * node subset. Cloning is safe (the source tree is never mutated) and cheap
+ * at this scale (paragraph-sized fragments only). */
+function collectInlineSegment(
+  nodes: Node[],
+  formatting: RunFormatting,
+  catalog: OdfStyleCatalog,
+  ownerDocument: Document,
+): InlineAccumulator {
+  const acc: InlineAccumulator = { pieces: [], lastChar: "", opaqueInlines: [], mergeBarrier: false };
+  const temp = ownerDocument.createElementNS(TEXT_NAMESPACE, "text:tmp");
+  for (const node of nodes) {
+    temp.appendChild(node.cloneNode(true));
+  }
+  collectInline(temp, formatting, catalog, acc);
+  return acc;
+}
+
+interface BodyTextBlockResult {
+  blocks: Block[];
+  media: MediaPart[];
+}
+
+/** Parses one body-level `text:p`/`text:h` into one or more blocks
+ * (SPEC-024): a paragraph containing a modelled `draw:frame` picture splits
+ * around each image, since the document model addresses an image as its own
+ * top-level block (see documentModel.ts's Image doc comment) — mirroring
+ * how a `table:table` already breaks the block sequence, just with the split
+ * happening here instead of being structural in the source XML. Every
+ * resulting paragraph piece keeps the source block's own style/heading
+ * level. A frame nested inside a `text:span`/`text:a` is not detected (real
+ * producers place image frames as direct paragraph children, never inside a
+ * run) — such a paragraph parses exactly as parseTextBlock always did, so
+ * this function is a pure superset, never a behaviour change for the common
+ * case. Used only for section-level body content, not list items or table
+ * cells — images are not modelled inside either (out of scope, SPEC-024). */
+function parseBodyTextBlockOrSplit(
+  el: Element,
+  catalog: OdfStyleCatalog,
+  isHeading: boolean,
+  ctx: OdfDrawingContext,
+): BodyTextBlockResult {
+  const frameChildren = Array.from(el.children).filter(
+    (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "frame",
+  );
+  const hasImage = frameChildren.some((frame) => parseDrawFrame(frame, ctx.parts, ctx.graphicWrapStyles) !== null);
+  if (!hasImage) {
+    return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
+  }
+
+  const styleName = textAttr(el, "style-name") ?? undefined;
+  const resolved = resolveParagraphStyle(catalog, styleName);
+  let headingLevel: number | undefined;
+  if (isHeading) {
+    const attrValue = Number(textAttr(el, "outline-level") ?? "");
+    headingLevel = (Number.isInteger(attrValue) && attrValue > 0 ? attrValue : resolved.headingLevel) ?? 1;
+  }
+
+  const blocks: Block[] = [];
+  const media: MediaPart[] = [];
+  let segment: Node[] = [];
+  const flush = () => {
+    if (segment.length === 0) {
+      return;
+    }
+    const acc = collectInlineSegment(segment, resolved.runFormatting, catalog, el.ownerDocument);
+    segment = [];
+    const runs: Run[] = acc.pieces
+      .filter((piece) => piece.text.length > 0)
+      .map((piece) => ({ text: piece.text, formatting: { ...piece.formatting } }));
+    if (runs.length === 0 && acc.opaqueInlines.length === 0) {
+      return;
+    }
+    const formatting: ParagraphFormatting = { ...resolved.paragraphFormatting };
+    normalizeResolvedDirection(formatting);
+    const paragraph: Paragraph = { type: "paragraph", runs, formatting };
+    if (styleName) {
+      paragraph.styleId = styleName;
+    }
+    if (acc.opaqueInlines.length > 0) {
+      paragraph.opaqueInlines = acc.opaqueInlines;
+    }
+    if (headingLevel !== undefined) {
+      paragraph.headingLevel = headingLevel;
+    }
+    blocks.push(paragraph);
+  };
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const frameEl = node as Element;
+      if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "frame") {
+        const parsed = parseDrawFrame(frameEl, ctx.parts, ctx.graphicWrapStyles);
+        if (parsed) {
+          flush();
+          blocks.push(parsed.image);
+          media.push(parsed.media);
+          continue;
+        }
+      }
+    }
+    segment.push(node);
+  }
+  flush();
+  return { blocks, media };
 }
 
 // --- lists (SPEC-018) ------------------------------------------------------
@@ -857,13 +980,22 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     throw new OdtOpenError(INVALID_ODT_MESSAGE);
   }
 
+  const drawingCtx: OdfDrawingContext = { parts, graphicWrapStyles: collectGraphicWrapStyles(contentDoc, stylesDoc) };
+  const mediaById = new Map<string, MediaPart>();
   const blocks: Block[] = [];
   const opaqueBlocks: OpaqueBlock[] = [];
   for (const child of Array.from(textRoot.children)) {
-    if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "p") {
-      blocks.push(parseTextBlock(child, catalog, false));
-    } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "h") {
-      blocks.push(parseTextBlock(child, catalog, true));
+    if (child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h")) {
+      const { blocks: parsedBlocks, media } = parseBodyTextBlockOrSplit(
+        child,
+        catalog,
+        child.localName === "h",
+        drawingCtx,
+      );
+      blocks.push(...parsedBlocks);
+      for (const part of media) {
+        mediaById.set(part.mediaId, part);
+      }
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
       // Bulleted/numbered lists (SPEC-018 AC-21).
       parseListElement(child, catalog, 1, undefined, blocks, opaqueBlocks);
@@ -899,11 +1031,14 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
 
   // content.xml and meta.xml are rebuilt on save (body/title/timestamp);
   // everything else — mimetype, styles.xml, the manifest, settings,
-  // images, embedded objects — is retained verbatim for the lifetime of
-  // the document (SPEC-008).
+  // embedded objects — is retained verbatim for the lifetime of the
+  // document (SPEC-008). Media parts a modelled Image references (SPEC-024)
+  // are excluded here — they travel in `media` instead (see docx/reader.ts's
+  // parseDocx for why: the writer regenerates their manifest/relationship
+  // entries from `media` on every save, same-format or not).
   const opaque: OpaquePart[] = [];
   for (const [name, data] of parts) {
-    if (name !== "content.xml" && name !== "meta.xml") {
+    if (name !== "content.xml" && name !== "meta.xml" && !mediaById.has(name)) {
       opaque.push({ name, data: bytesToBase64(data) });
     }
   }
@@ -941,5 +1076,6 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     styles: catalogToNamedStyles(catalog),
     opaque,
     sourceXml,
+    media: Array.from(mediaById.values()),
   };
 }

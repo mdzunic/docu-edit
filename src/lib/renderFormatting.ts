@@ -3,7 +3,7 @@
 // split out of DocumentView.vue because that file's <script setup> is
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
-import type { BorderSide, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
+import type { BorderSide, Image, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
 import { listIndentCm } from "./lists";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
@@ -209,4 +209,27 @@ export function tableColumnWidth(table: Table, index: number): string {
   }
   const totalCm = table.columnWidthsCm.reduce((sum, cm) => sum + cm, 0);
   return totalCm > 0 ? `${(widthCm / totalCm) * 100}%` : "auto";
+}
+
+/** An image's size and wrap-mode rendering (SPEC-024 AC-13, AC-14):
+ * "inline" is a plain block, no different from a paragraph's own box;
+ * "square" floats left with text wrapping around it; "behind"/"infront"
+ * float out of flow entirely (positioned at their block's own slot via the
+ * zero-size anchor DocImageBlock.vue renders around them), stacked behind
+ * or in front of the surrounding text by z-index. */
+export function imageDisplayStyle(image: Image): Record<string, string> {
+  const style: Record<string, string> = {
+    width: `${image.widthCm}cm`,
+    height: `${image.heightCm}cm`,
+  };
+  if (image.wrap === "square") {
+    style.float = "left";
+    style.marginRight = "0.35cm";
+  } else if (image.wrap === "behind" || image.wrap === "infront") {
+    style.position = "absolute";
+    style.left = "0";
+    style.top = "0";
+    style.zIndex = image.wrap === "behind" ? "0" : "5";
+  }
+  return style;
 }

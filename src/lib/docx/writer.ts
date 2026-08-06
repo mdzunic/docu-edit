@@ -26,6 +26,7 @@ import type {
   CellVerticalAlign,
   DefaultStyles,
   DocumentModel,
+  Image,
   NamedStyle,
   Paragraph,
   ParagraphAlignment,
@@ -69,6 +70,8 @@ import {
   type NumberingPlan,
   type NumberingRef,
 } from "./numbering";
+import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
+import { planMediaWrite, takenRelIdsOf, type MediaWritePlan } from "./media";
 import { zip, type ZipEntryInput } from "./zipWriter";
 
 export const DOCX_MIME_TYPE =
@@ -319,6 +322,21 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean): string 
 
 function paragraphXml(paragraph: Paragraph, includeOpaque: boolean, numRef?: NumberingRef): string {
   return `<w:p>${paragraphPropertiesXml(paragraph, numRef)}${inlineContentXml(paragraph, includeOpaque)}</w:p>`;
+}
+
+/** An Image block (SPEC-024): OOXML has no body-level picture element, so
+ * it is wrapped exactly the way Word itself requires — one paragraph
+ * holding one run holding the `w:drawing` (see drawing.ts's drawingXml).
+ * Returns "" when `mediaPlan` dropped this image's media (an SVG with no
+ * .docx representation, see media.ts) — the caller omits the block
+ * entirely, matching the drop record opaque.ts's collectDropRecords already
+ * reports for it. */
+function imageParagraphXml(image: Image, mediaPlan: MediaWritePlan, docPrId: number): string {
+  const relId = mediaPlan.relIdFor(image.mediaId);
+  if (!relId) {
+    return "";
+  }
+  return `<w:p><w:r>${drawingXml(image, relId, docPrId)}</w:r></w:p>`;
 }
 
 // Word's default single-line borders for a table created in this editor —
@@ -611,9 +629,14 @@ function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
  * section properties survive. Cross-format models carry foreign (ODF) XML
  * in their opaque nodes, so those are excluded — the writer reports them as
  * dropped instead. */
-export function buildDocumentXml(model: DocumentModel, plan: NumberingPlan = planNumbering(model)): string {
+export function buildDocumentXml(
+  model: DocumentModel,
+  plan: NumberingPlan = planNumbering(model),
+  mediaPlan: MediaWritePlan = planMediaWrite(model),
+): string {
   const includeOpaque = model.format === "docx";
   const blockXml: string[] = [];
+  let docPrId = 1;
   model.sections.forEach((section, sectionIndex) => {
     const opaqueBlocks = includeOpaque
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
@@ -632,6 +655,8 @@ export function buildDocumentXml(model: DocumentModel, plan: NumberingPlan = pla
               cellNumberingRefFor(plan, sectionIndex, i, row, col, cellBlock),
             ),
           );
+        } else if (block.type === "image") {
+          blockXml.push(imageParagraphXml(block, mediaPlan, docPrId++));
         } else {
           blockXml.push(
             paragraphXml(block, includeOpaque, numberingRefFor(plan, sectionIndex, i)),
@@ -665,6 +690,9 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
+      if (block.type === "image") {
+        continue;
+      }
       const paragraphs =
         block.type === "table"
           ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
@@ -874,7 +902,17 @@ export function buildCorePropertiesXml(title: string, modified: Date): string {
   );
 }
 
-export function buildContentTypesXml(withNumbering = false): string {
+/** `<Default>` entries for the image extensions the model's media plan
+ * actually uses (SPEC-024 AC-26) — content types are declared once per
+ * extension, package-wide, never per part (unlike word/document.xml's own
+ * Override). */
+function imageContentTypesXml(extensions: string[]): string {
+  return extensions
+    .map((ext) => `<Default Extension="${ext}" ContentType="${CONTENT_TYPE_BY_EXTENSION[ext]}"/>`)
+    .join("");
+}
+
+export function buildContentTypesXml(withNumbering = false, imageExtensions: string[] = []): string {
   const numbering = withNumbering
     ? `<Override PartName="/word/numbering.xml" ContentType="${NUMBERING_CONTENT_TYPE}"/>`
     : "";
@@ -882,6 +920,7 @@ export function buildContentTypesXml(withNumbering = false): string {
     `${XML_DECLARATION}<Types xmlns="${CONTENT_TYPES_NAMESPACE}">` +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
+    imageContentTypesXml(imageExtensions) +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     numbering +
@@ -899,7 +938,7 @@ export function buildPackageRelsXml(): string {
   );
 }
 
-export function buildDocumentRelsXml(withNumbering = false): string {
+export function buildDocumentRelsXml(withNumbering = false, mediaRelationshipsXml = ""): string {
   const numbering = withNumbering
     ? `<Relationship Id="rId2" Type="${NUMBERING_RELATIONSHIP}" Target="numbering.xml"/>`
     : "";
@@ -907,6 +946,7 @@ export function buildDocumentRelsXml(withNumbering = false): string {
     `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
     `<Relationship Id="rId1" Type="${STYLES_RELATIONSHIP}" Target="styles.xml"/>` +
     numbering +
+    mediaRelationshipsXml +
     "</Relationships>"
   );
 }
@@ -974,6 +1014,29 @@ function withNumberingRelationship(relsXml: string, target: string): string {
   );
 }
 
+/** Adds Default content-type entries for the image extensions a save's
+ * media plan introduces (SPEC-024 AC-26) — needed when a package that
+ * previously had no images gets one, or gains an extension it didn't
+ * already declare. */
+function withImageContentTypes(contentTypesXml: string, extensions: string[]): string {
+  const missing = extensions.filter((ext) => !contentTypesXml.includes(`Extension="${ext}"`));
+  if (missing.length === 0) {
+    return contentTypesXml;
+  }
+  const defaults = missing
+    .map((ext) => `<Default Extension="${ext}" ContentType="${CONTENT_TYPE_BY_EXTENSION[ext]}"/>`)
+    .join("");
+  return contentTypesXml.replace(/<\/Types>\s*$/, `${defaults}</Types>`);
+}
+
+/** Appends the media plan's `<Relationship>` elements to a preserved
+ * document rels part — the ids were already allocated past every id that
+ * part uses (planMediaWrite's `takenRelIds`), so this is always a pure
+ * append. */
+function withMediaRelationships(relsXml: string, relationshipsXml: string): string {
+  return relsXml.replace(/<\/Relationships>\s*$/, `${relationshipsXml}</Relationships>`);
+}
+
 /** Serialises the model into `.docx` bytes plus the list of items that could
  * not be represented (SPEC-008).
  *
@@ -996,13 +1059,23 @@ export async function writeDocx(
   const preservedParts = model.format === "docx" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
   if (preservedParts.size === 0) {
     const plan = planNumbering(model);
+    // rId1 is styles.xml and (if present) rId2 is numbering.xml, both
+    // hardcoded by buildDocumentRelsXml — media ids must start past them.
+    const mediaPlan = planMediaWrite(model, new Set(plan.isEmpty ? ["rId1"] : ["rId1", "rId2"]));
     const entries: ZipEntryInput[] = [
-      { name: "[Content_Types].xml", data: encoder.encode(buildContentTypesXml(!plan.isEmpty)) },
+      {
+        name: "[Content_Types].xml",
+        data: encoder.encode(buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions)),
+      },
       { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
-      { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model, plan)) },
-      { name: "word/_rels/document.xml.rels", data: encoder.encode(buildDocumentRelsXml(!plan.isEmpty)) },
+      { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model, plan, mediaPlan)) },
+      {
+        name: "word/_rels/document.xml.rels",
+        data: encoder.encode(buildDocumentRelsXml(!plan.isEmpty, mediaPlan.relationshipsXml)),
+      },
       { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
       { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
+      ...mediaPlan.zipEntries,
     ];
     if (!plan.isEmpty) {
       entries.splice(5, 0, {
@@ -1074,6 +1147,13 @@ export async function writeDocx(
     ? patchStylesXml(model, decoder.decode(preservedStyles))
     : null;
 
+  // Images (SPEC-024): media ids start past whatever the preserved main
+  // rels part already uses, and past whatever package part names already
+  // exist, so a freshly written word/media/imageN.ext can never collide.
+  const mainRelsTaken = mainRelsText ? takenRelIdsOf(parseRelationships(mainRelsText).values()) : new Set<string>();
+  const mediaPlan = planMediaWrite(model, mainRelsTaken, new Set(preservedParts.keys()));
+  const addMediaDecls = mediaPlan.relationshipsXml.length > 0;
+
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
     entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
@@ -1086,20 +1166,27 @@ export async function writeDocx(
       entries.push({ name, data: encoder.encode(numberingOut) });
     } else if (patchedStyles !== null && name === stylesPartName) {
       entries.push({ name, data: encoder.encode(patchedStyles) });
-    } else if (addNumberingDecls && name === mainRelsName) {
-      entries.push({
-        name,
-        data: encoder.encode(withNumberingRelationship(mainRelsText!, "numbering.xml")),
-      });
+    } else if ((addNumberingDecls || addMediaDecls) && name === mainRelsName) {
+      let rels = mainRelsText!;
+      if (addNumberingDecls) {
+        rels = withNumberingRelationship(rels, "numbering.xml");
+      }
+      if (addMediaDecls) {
+        rels = withMediaRelationships(rels, mediaPlan.relationshipsXml);
+      }
+      entries.push({ name, data: encoder.encode(rels) });
     } else if (!coreRel && name === "_rels/.rels") {
       entries.push({ name, data: encoder.encode(withCoreRelationship(relsText)) });
-    } else if (name === "[Content_Types].xml" && (!coreRel || addNumberingDecls)) {
+    } else if (name === "[Content_Types].xml" && (!coreRel || addNumberingDecls || addMediaDecls)) {
       let contentTypes = decoder.decode(data);
       if (!coreRel) {
         contentTypes = withCoreContentType(contentTypes);
       }
       if (addNumberingDecls) {
         contentTypes = withNumberingContentType(contentTypes, numberingPartName);
+      }
+      if (addMediaDecls) {
+        contentTypes = withImageContentTypes(contentTypes, mediaPlan.extensions);
       }
       entries.push({ name, data: encoder.encode(contentTypes) });
     } else {
@@ -1109,8 +1196,9 @@ export async function writeDocx(
   if (numberingOut !== null && !preservedNumbering) {
     entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
   }
-  entries.push({ name: mainPartName, data: encoder.encode(buildDocumentXml(model, plan)) });
+  entries.push({ name: mainPartName, data: encoder.encode(buildDocumentXml(model, plan, mediaPlan)) });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
+  entries.push(...mediaPlan.zipEntries);
 
   return { bytes: await zip(entries), dropped: [] };
 }

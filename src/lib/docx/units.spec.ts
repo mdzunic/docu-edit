@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  cmToEmu,
   cmToTwips,
   cssColorToOoxml,
+  emuToCm,
   halfPointsToPt,
   ooxmlColorToCss,
   ptToHalfPoints,
@@ -49,5 +51,32 @@ describe("inverse unit conversions (SPEC-006 writer)", () => {
     expect(cssColorToOoxml("red")).toBeUndefined();
     expect(cssColorToOoxml("#fff")).toBeUndefined();
     expect(cssColorToOoxml("ff0000")).toBeUndefined();
+  });
+});
+
+describe("cmToEmu / emuToCm (SPEC-024 DrawingML sizes)", () => {
+  it("converts a whole inch (2.54cm) to 914400 EMU", () => {
+    expect(cmToEmu(2.54)).toBe(914400);
+  });
+
+  it("converts a whole centimetre to 360000 EMU", () => {
+    expect(cmToEmu(1)).toBe(360000);
+  });
+
+  it("emuToCm inverts cmToEmu for round EMU values real files use", () => {
+    for (const emu of [0, 360000, 457200, 914400, 12700, 5334000]) {
+      expect(cmToEmu(emuToCm(emu))).toBe(emu);
+    }
+  });
+
+  it("rounds to the nearest whole EMU", () => {
+    // 1px at 96 DPI in cm, times EMU/inch, is not a whole number pre-rounding.
+    expect(cmToEmu(2.54 / 96)).toBe(Math.round((2.54 / 96 / 2.54) * 914400));
+    expect(Number.isInteger(cmToEmu(1 / 3))).toBe(true);
+  });
+
+  it("emuToCm is the plain (unrounded) inverse ratio", () => {
+    expect(emuToCm(914400)).toBeCloseTo(2.54, 10);
+    expect(emuToCm(0)).toBe(0);
   });
 });

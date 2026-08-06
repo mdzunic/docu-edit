@@ -192,6 +192,45 @@ export function measureTableHandles(
   };
 }
 
+/** A selected image's page-relative rectangle (SPEC-024 AC-8, AC-9): the
+ * resize handles and the floating image toolbar are both positioned from
+ * this, the same page-relative-pixel convention measureTableHandles uses. */
+export interface ImageHandleGeometry {
+  section: number;
+  block: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** Typed `null` seed for an image-handle-geometry ref in `.vue` scripts
+ * (espree bars the annotation — see noTableHandleGeometry). */
+export function noImageHandleGeometry(): ImageHandleGeometry | null {
+  return null;
+}
+
+/** Measures a canvas image element for the resize handles/floating toolbar.
+ * Null when the element carries no section/block address (never the case
+ * for a rendered model image). */
+export function measureImageGeometry(pageEl: Element, imageEl: Element): ImageHandleGeometry | null {
+  const section = Number(imageEl.getAttribute("data-section"));
+  const block = Number(imageEl.getAttribute("data-block"));
+  if (!Number.isInteger(section) || !Number.isInteger(block)) {
+    return null;
+  }
+  const pageRect = pageEl.getBoundingClientRect();
+  const rect = imageEl.getBoundingClientRect();
+  return {
+    section,
+    block,
+    left: rect.left - pageRect.left,
+    top: rect.top - pageRect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
 /** The viewport rectangle of a model caret — where the blinking caret would
  * paint. Falls back to the paragraph element's own rect when the position
  * has no measurable text (an empty paragraph). Null when the paragraph is

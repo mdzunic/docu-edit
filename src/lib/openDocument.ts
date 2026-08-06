@@ -5,7 +5,7 @@
 // errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
 // propagate unchanged — the caller only mutates app state once this
 // resolves, so a rejected file leaves the previous state untouched.
-import type { DocumentFormat, DocumentModel, NamedStyle, OpaquePart, SourceXml } from "./documentModel";
+import type { DocumentFormat, DocumentModel, MediaPart, NamedStyle, OpaquePart, SourceXml } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
 
@@ -52,6 +52,7 @@ function buildModel(
     styles: NamedStyle[];
     opaque: OpaquePart[];
     sourceXml: SourceXml;
+    media: MediaPart[];
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -73,6 +74,10 @@ function buildModel(
   }
   if (Object.keys(parsed.sourceXml).length > 0) {
     model.sourceXml = parsed.sourceXml;
+  }
+  // Images (SPEC-024): media bytes referenced by the model's Image blocks.
+  if (parsed.media.length > 0) {
+    model.media = parsed.media;
   }
   return model;
 }

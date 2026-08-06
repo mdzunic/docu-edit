@@ -255,6 +255,78 @@ export interface Paragraph {
   opaqueInlines?: OpaqueInline[];
 }
 
+// --- images (SPEC-024) -------------------------------------------------------
+
+/** How an image sits relative to the surrounding text (SPEC-024 AC-13,
+ * AC-14): `"inline"` flows with the text like a character; `"square"` floats
+ * with text wrapping around its rectangle; `"behind"`/`"infront"` float
+ * without wrapping, stacked behind or in front of the text. */
+export type ImageWrapMode = "inline" | "square" | "behind" | "infront";
+
+/** An image block (SPEC-024): a block-level object addressed by `CaretPosition`
+ * the same way `Table` is — a length-1 atom (see textEditing.blockLength) a
+ * caret sits before or after, never inside. Real .docx/.odt inline images
+ * live mid-run in the source XML; the reader splits the paragraph around one
+ * on open (mirroring how a body-level `w:tbl` already breaks the block
+ * sequence) so every image, inline or floating, is one section block here —
+ * one caret/selection/rendering model for both, instead of a second
+ * inline-anchor system alongside `OpaqueInline`. `"inline"` wrap renders as a
+ * plain block (no float); `"square"` floats with text wrapping around it;
+ * `"behind"`/`"infront"` float out of flow, stacked behind or in front of
+ * surrounding text (AC-13, AC-14). */
+export interface Image {
+  type: "image";
+  /** References a `DocumentModel.media` entry's `mediaId`. */
+  mediaId: string;
+  /** The source image's pixel dimensions, fixed at insertion time — the
+   * "Reset size" button's target (AC-21) and the fit-to-text-area check's
+   * input (AC-5, AC-6), both independent of the current display size below. */
+  naturalWidthPx: number;
+  naturalHeightPx: number;
+  /** Current display size in cm (AC-16, AC-19, AC-20). */
+  widthCm: number;
+  heightCm: number;
+  wrap: ImageWrapMode;
+  /** `wp:docPr/@descr` (.docx) / `svg:desc` (.odt) — AC-7, AC-23..25. */
+  altText?: string;
+}
+
+/** Typed pass-through for a wrap mode coming from a `.vue` template's plain
+ * string (same espree constraint as asCharacterFormatKey). */
+export function asImageWrapMode(value: string): ImageWrapMode {
+  return value as ImageWrapMode;
+}
+
+/** Whether a block is an image — the isTable-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isImage(block: Block | undefined): block is Image {
+  return block?.type === "image";
+}
+
+/** Typed pass-through for an Image arriving as a runtime-declared Object prop
+ * (espree bars the type annotation — see tables.ts's asTable for the same
+ * pattern). */
+export function asImage(value: unknown): Image {
+  return value as Image;
+}
+
+/** A binary image payload stored once and referenced by `Image.mediaId` — so
+ * an image used twice in the document (AC-32) shares one entry, and deleting
+ * one use does not by itself remove it (see lib/images.ts's reference-counted
+ * pruning, AC-31). `mediaId` is deliberately not named `id`: lib/equality.ts's
+ * IGNORED_KEYS drops any bare "id" key from structural comparison, which
+ * would let a wrong mediaId reference pass a round-trip test unnoticed. */
+export interface MediaPart {
+  mediaId: string;
+  /** MIME type — "image/png", "image/jpeg", "image/gif", or "image/svg+xml"
+   * for a `.odt` (never `.docx`: SVG is converted to PNG on insert, AC-2). */
+  contentType: string;
+  /** The image bytes, base64-encoded so the model stays JSON-serialisable
+   * (see opaque.ts's OpaquePart, the same convention). */
+  data: string;
+}
+
 // --- tables (SPEC-022, cell/border formatting SPEC-023) ---------------------
 
 /** A border line's rendering (SPEC-023): the standard presets plus width and
@@ -427,9 +499,9 @@ export interface OpaqueBlock {
   blockIndex: number;
 }
 
-/** Block-level children of a section. Paragraphs and tables (SPEC-022);
- * later specs (images, …) extend this union further. */
-export type Block = Paragraph | Table;
+/** Block-level children of a section: paragraphs, tables (SPEC-022) and
+ * images (SPEC-024). */
+export type Block = Paragraph | Table | Image;
 
 /** A section groups block-level content; documents have one or more. */
 export interface Section {
@@ -508,6 +580,9 @@ export interface DocumentModel {
    * offers the built-in set from lib/styles.ts. */
   styles?: NamedStyle[];
   format?: DocumentFormat;
+  /** Image bytes referenced by `Image.mediaId` (SPEC-024), deduplicated —
+   * one entry per distinct image regardless of how many times it is used. */
+  media?: MediaPart[];
   /** Unmodelled package parts retained from the opened file (SPEC-008). */
   opaque?: OpaquePart[];
   /** Unmodelled XML retained from the opened file's parsed parts. */
