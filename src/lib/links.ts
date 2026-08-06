@@ -47,6 +47,20 @@ export function noLinkTarget(): LinkTarget | null {
   return null;
 }
 
+/** One internal-target entry the link dialog lists (AC-19..21): the anchor
+ * it links to, the display text, and — for headings — the outline level. */
+export interface LinkTargetEntry {
+  anchor: string;
+  text: string;
+  level?: number;
+}
+
+/** Typed pass-through for target entries arriving as a runtime-declared
+ * Array prop (same espree constraint as styles.ts's asStyleEntries). */
+export function asLinkTargetEntries(value: unknown[]): LinkTargetEntry[] {
+  return value as LinkTargetEntry[];
+}
+
 // --- URL safety (AC-14..18) -------------------------------------------------
 
 // The schemes that execute script or smuggle content when navigated to.

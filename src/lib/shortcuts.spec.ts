@@ -82,7 +82,9 @@ describe("findShortcut", () => {
   });
 
   it("returns undefined for an unbound combination", () => {
-    expect(findShortcut(keydown({ key: "k", ctrlKey: true }), false)).toBeUndefined();
+    // Ctrl+K was this test's example until SPEC-025 bound it to "Insert
+    // link"; Ctrl+Q remains genuinely unbound.
+    expect(findShortcut(keydown({ key: "q", ctrlKey: true }), false)).toBeUndefined();
   });
 
   it("matches Ctrl+Home and Ctrl+Shift+Home as the same command (shift extends, doesn't gate)", () => {
