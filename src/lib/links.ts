@@ -9,6 +9,7 @@ import {
   isTable,
   type DocumentModel,
   type Paragraph,
+  type Run,
   type RunFormatting,
 } from "./documentModel";
 import {
@@ -353,6 +354,62 @@ export function autolinkAt(
   const next = cloneContainers(model);
   setLinkOnParagraphRange(next, address, match.start, match.end, { href: match.href });
   return next;
+}
+
+// --- writer support (AC-29..32) ---------------------------------------------
+
+/** A paragraph's inline content laid out for a file-format writer: runs
+ * split at every bookmark offset (so each bookmark lands exactly on a run
+ * boundary), the bookmark names per boundary, and a remapping of
+ * opaque-inline anchors (which index the ORIGINAL runs) onto the split
+ * list. Shared by the .docx and .odt writers. */
+export interface InlineWriteLayout {
+  runs: Run[];
+  bookmarksAtBoundary: Map<number, string[]>;
+  boundaryFor(originalIndex: number): number;
+}
+
+export function inlineWriteLayout(paragraph: Paragraph): InlineWriteLayout {
+  const bookmarks = paragraph.bookmarks ?? [];
+  const cutOffsets = Array.from(new Set(bookmarks.map((b) => b.offset))).sort((a, b) => a - b);
+  const runs: Run[] = [];
+  const indexMap: number[] = [0];
+  let pos = 0;
+  for (const run of paragraph.runs) {
+    const end = pos + run.text.length;
+    let sliceStart = 0;
+    for (const offset of cutOffsets) {
+      if (offset > pos && offset < end) {
+        runs.push({ text: run.text.slice(sliceStart, offset - pos), formatting: run.formatting });
+        sliceStart = offset - pos;
+      }
+    }
+    runs.push({ text: run.text.slice(sliceStart), formatting: run.formatting });
+    indexMap.push(runs.length);
+    pos = end;
+  }
+  const boundaryForOffset = (offset: number): number => {
+    let accumulated = 0;
+    for (let i = 0; i < runs.length; i++) {
+      if (accumulated >= offset) {
+        return i;
+      }
+      accumulated += runs[i].text.length;
+    }
+    return runs.length;
+  };
+  const bookmarksAtBoundary = new Map<number, string[]>();
+  for (const bookmark of bookmarks) {
+    const boundary = boundaryForOffset(bookmark.offset);
+    const names = bookmarksAtBoundary.get(boundary) ?? [];
+    names.push(bookmark.name);
+    bookmarksAtBoundary.set(boundary, names);
+  }
+  return {
+    runs,
+    bookmarksAtBoundary,
+    boundaryFor: (originalIndex: number) => indexMap[Math.min(originalIndex, indexMap.length - 1)],
+  };
 }
 
 // --- bookmarks (AC-22..28) --------------------------------------------------

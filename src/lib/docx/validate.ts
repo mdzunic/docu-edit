@@ -246,6 +246,41 @@ function checkRun(run: Element, context: string, violations: string[]): void {
   });
 }
 
+// The r: attribute namespace (w:hyperlink/@r:id) — SPEC-025.
+const R_ATTRIBUTE_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/** A `w:hyperlink` (SPEC-025): must carry exactly one target — an r:id
+ * (external relationship) or a w:anchor (internal bookmark/heading) — and
+ * contains runs and bookmark elements like the paragraph itself. */
+function checkHyperlink(hyperlink: Element, context: string, violations: string[]): void {
+  const relId = hyperlink.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
+  const anchor = wordAttr(hyperlink, "anchor");
+  if ((relId === null || relId.length === 0) === (anchor === null || anchor.length === 0)) {
+    violations.push(`${context}: w:hyperlink must carry exactly one of r:id or w:anchor`);
+  }
+  for (const child of Array.from(hyperlink.children)) {
+    if (!isWordElement(child)) {
+      violations.push(`${context}: unexpected element ${child.nodeName}`);
+    } else if (child.localName === "r") {
+      checkRun(child, `${context}/w:r`, violations);
+    } else if (child.localName === "bookmarkStart" || child.localName === "bookmarkEnd") {
+      checkBookmarkElement(child, context, violations);
+    } else {
+      violations.push(`${context}: unexpected element w:${child.localName}`);
+    }
+  }
+}
+
+/** A `w:bookmarkStart`/`w:bookmarkEnd` (SPEC-025): both need a numeric
+ * w:id; the start additionally needs a non-empty, space-free w:name. */
+function checkBookmarkElement(el: Element, context: string, violations: string[]): void {
+  checkAttr(el, "id", (v) => UNSIGNED_PATTERN.test(v), "a non-negative bookmark id", context, violations);
+  if (el.localName === "bookmarkStart") {
+    checkAttr(el, "name", (v) => v.length > 0 && !/\s/.test(v),
+      "a non-empty bookmark name without spaces", context, violations);
+  }
+}
+
 function checkParagraph(paragraph: Element, context: string, violations: string[]): void {
   Array.from(paragraph.children).forEach((child, index) => {
     if (!isWordElement(child)) {
@@ -259,6 +294,10 @@ function checkParagraph(paragraph: Element, context: string, violations: string[
       checkParagraphProperties(child, `${context}/w:pPr`, violations);
     } else if (child.localName === "r") {
       checkRun(child, `${context}/w:r`, violations);
+    } else if (child.localName === "hyperlink") {
+      checkHyperlink(child, `${context}/w:hyperlink`, violations);
+    } else if (child.localName === "bookmarkStart" || child.localName === "bookmarkEnd") {
+      checkBookmarkElement(child, context, violations);
     } else {
       violations.push(`${context}: unexpected element w:${child.localName}`);
     }

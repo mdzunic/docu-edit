@@ -40,6 +40,7 @@ import type {
 import { DEFAULT_TITLE } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
+import { inlineWriteLayout, linkTargetOf } from "../links";
 import {
   childElements,
   parseRelationships,
@@ -387,66 +388,6 @@ interface InlineWriteContext {
   bookmarkIds: Map<string, number>;
 }
 
-function runLinkTarget(formatting: RunFormatting): { href?: string; anchor?: string } | null {
-  if (formatting.linkHref !== undefined) {
-    return { href: formatting.linkHref };
-  }
-  if (formatting.linkAnchor !== undefined) {
-    return { anchor: formatting.linkAnchor };
-  }
-  return null;
-}
-
-/** Splits a paragraph's runs at its bookmark offsets so every bookmark
- * lands on a run boundary, and remaps opaque-inline anchors (which index
- * the ORIGINAL runs) onto the split list. */
-function splitInlineForWrite(paragraph: Paragraph): {
-  runs: Run[];
-  bookmarksAtBoundary: Map<number, string[]>;
-  boundaryFor: (originalIndex: number) => number;
-} {
-  const bookmarks = paragraph.bookmarks ?? [];
-  const cutOffsets = Array.from(new Set(bookmarks.map((b) => b.offset))).sort((a, b) => a - b);
-  const runs: Run[] = [];
-  const indexMap: number[] = [0];
-  let pos = 0;
-  for (const run of paragraph.runs) {
-    const end = pos + run.text.length;
-    let sliceStart = 0;
-    for (const offset of cutOffsets) {
-      if (offset > pos && offset < end) {
-        runs.push({ text: run.text.slice(sliceStart, offset - pos), formatting: run.formatting });
-        sliceStart = offset - pos;
-      }
-    }
-    runs.push({ text: run.text.slice(sliceStart), formatting: run.formatting });
-    indexMap.push(runs.length);
-    pos = end;
-  }
-  const boundaryForOffset = (offset: number): number => {
-    let accumulated = 0;
-    for (let i = 0; i < runs.length; i++) {
-      if (accumulated >= offset) {
-        return i;
-      }
-      accumulated += runs[i].text.length;
-    }
-    return runs.length;
-  };
-  const bookmarksAtBoundary = new Map<number, string[]>();
-  for (const bookmark of bookmarks) {
-    const boundary = boundaryForOffset(bookmark.offset);
-    const names = bookmarksAtBoundary.get(boundary) ?? [];
-    names.push(bookmark.name);
-    bookmarksAtBoundary.set(boundary, names);
-  }
-  return {
-    runs,
-    bookmarksAtBoundary,
-    boundaryFor: (originalIndex: number) => indexMap[Math.min(originalIndex, indexMap.length - 1)],
-  };
-}
-
 /** The paragraph's inline content: its runs, with any preserved opaque
  * inline nodes re-emitted verbatim at their anchored positions (SPEC-008),
  * consecutive same-target link runs grouped under one `w:hyperlink`
@@ -456,12 +397,12 @@ function splitInlineForWrite(paragraph: Paragraph): {
  * links/bookmarks are modelled content, unlike opaque nodes. */
 function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: InlineWriteContext): string {
   const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
-  const hasLinks = paragraph.runs.some((run) => runLinkTarget(run.formatting) !== null);
+  const hasLinks = paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null);
   const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
   if (opaque.length === 0 && !hasLinks && !hasBookmarks) {
     return paragraph.runs.map(runXml).join("");
   }
-  const { runs, bookmarksAtBoundary, boundaryFor } = splitInlineForWrite(paragraph);
+  const { runs, bookmarksAtBoundary, boundaryFor } = inlineWriteLayout(paragraph);
   const opaqueAtBoundary = new Map<number, string[]>();
   for (const node of opaque) {
     const boundary = boundaryFor(node.runIndex);
@@ -479,7 +420,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
   };
   for (let i = 0; i <= runs.length; i++) {
     const run = i < runs.length ? runs[i] : null;
-    const target = run ? runLinkTarget(run.formatting) : null;
+    const target = run ? linkTargetOf(run.formatting) : null;
     const opaqueHere = opaqueAtBoundary.get(i) ?? [];
     // An opaque node's XML is arbitrary — never emit it inside a hyperlink;
     // the wrapper is split around it instead (two w:hyperlink elements with

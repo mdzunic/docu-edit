@@ -250,11 +250,20 @@ describe("writeOdt — automatic styles (AC-16, AC-17, AC-18)", () => {
     const first = await parseOdt(loadFixture(odfFixturesDir, "libreoffice-writer.odt"));
     const dom = await contentDom(modelFrom(first));
     const body = dom.getElementsByTagNameNS(OFFICE_NAMESPACE, "body")[0];
-    const allowed = new Set(["style-name", "outline-level", "c"]);
+    const allowed = new Set(["style-name", "outline-level", "c", "name"]);
+    // Hyperlinks/bookmarks (SPEC-025) put link *targets* inline — text:a's
+    // xlink:href/type, text:bookmark's text:name, and the xmlns:xlink
+    // declaration on a link-carrying paragraph. Targets are content, not
+    // formatting, so they are the one addition to this whitelist; every
+    // formatting attribute is still required to live in automatic styles.
+    const XLINK_NS = "http://www.w3.org/1999/xlink";
+    const XMLNS_NS = "http://www.w3.org/2000/xmlns/";
     for (const el of Array.from(body.getElementsByTagName("*"))) {
       for (const attr of Array.from(el.attributes)) {
         expect(
-          attr.namespaceURI === TEXT_NAMESPACE && allowed.has(attr.localName),
+          (attr.namespaceURI === TEXT_NAMESPACE && allowed.has(attr.localName)) ||
+            (attr.namespaceURI === XLINK_NS && (attr.localName === "href" || attr.localName === "type")) ||
+            (attr.namespaceURI === XMLNS_NS && attr.localName === "xlink"),
           `unexpected inline attribute ${attr.name} on ${el.tagName}`,
         ).toBe(true);
       }

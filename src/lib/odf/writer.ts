@@ -56,7 +56,8 @@ import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
+import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
 export { ODT_MIMETYPE };
@@ -78,6 +79,12 @@ const DOCUMENT_XMLNS =
 // document root, so content.xml's bytes are unchanged for documents without
 // tables (SPEC-022).
 const TABLE_XMLNS = ` xmlns:table="${TABLE_NAMESPACE}"`;
+
+// Declared once on each link-carrying paragraph (SPEC-025) — the TABLE_XMLNS
+// pattern, so content.xml is unchanged for documents without hyperlinks —
+// rather than on every text:a, so a paragraph with several links still
+// carries a single declaration.
+const LINK_XMLNS = ` xmlns:xlink="${XLINK_NAMESPACE}"`;
 
 /** The fallback title for a blank/whitespace-only model title — "Document 1"
  * per SPEC-007's decisions (unlike the .docx writer, which falls back to the
@@ -675,9 +682,13 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
 }
 
 /** The paragraph's inline content: its runs, with any preserved opaque
- * inline nodes re-emitted verbatim at their anchored positions (SPEC-008).
- * The whitespace state passes through opaque nodes unchanged — elements are
- * transparent to ODF whitespace collapsing, so the reader's view matches. */
+ * inline nodes re-emitted verbatim at their anchored positions (SPEC-008),
+ * consecutive same-target link runs grouped under one `text:a` (SPEC-025),
+ * and bookmarks emitted as point `text:bookmark` elements at their
+ * character offsets. The whitespace state passes through opaque nodes,
+ * link boundaries and bookmarks unchanged — elements are transparent to
+ * ODF whitespace collapsing, so the reader's view matches. Links and
+ * bookmarks are modelled content, emitted on cross-format saves too. */
 function inlineContentXml(
   paragraph: Paragraph,
   styles: AutomaticStyles,
@@ -685,20 +696,58 @@ function inlineContentXml(
 ): string {
   const state: WhitespaceState = { lastChar: "" };
   const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
-  if (opaque.length === 0) {
+  const hasLinks = paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null);
+  const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
+  if (opaque.length === 0 && !hasLinks && !hasBookmarks) {
     return paragraph.runs.map((run) => runXml(run, styles, state)).join("");
   }
-  let content = "";
-  for (let i = 0; i <= paragraph.runs.length; i++) {
-    for (const node of opaque) {
-      if (Math.min(node.runIndex, paragraph.runs.length) === i) {
-        content += node.xml;
-      }
-    }
-    if (i < paragraph.runs.length) {
-      content += runXml(paragraph.runs[i], styles, state);
-    }
+  const { runs, bookmarksAtBoundary, boundaryFor } = inlineWriteLayout(paragraph);
+  const opaqueAtBoundary = new Map<number, string[]>();
+  for (const node of opaque) {
+    const boundary = boundaryFor(node.runIndex);
+    const list = opaqueAtBoundary.get(boundary) ?? [];
+    list.push(node.xml);
+    opaqueAtBoundary.set(boundary, list);
   }
+  let content = "";
+  let openTarget: LinkTarget | null = null;
+  const closeLink = () => {
+    if (openTarget) {
+      content += "</text:a>";
+      openTarget = null;
+    }
+  };
+  for (let i = 0; i <= runs.length; i++) {
+    const run = i < runs.length ? runs[i] : null;
+    const target = run ? linkTargetOf(run.formatting) : null;
+    const opaqueHere = opaqueAtBoundary.get(i) ?? [];
+    // An opaque node's XML is arbitrary — never emit it inside a text:a;
+    // the link is split around it instead (two same-target text:a elements
+    // are equivalent).
+    if (opaqueHere.length > 0) {
+      closeLink();
+    }
+    if (
+      openTarget &&
+      (!target || target.href !== openTarget.href || target.anchor !== openTarget.anchor)
+    ) {
+      closeLink();
+    }
+    content += opaqueHere.join("");
+    for (const name of bookmarksAtBoundary.get(i) ?? []) {
+      content += `<text:bookmark text:name="${escapeXml(name)}"/>`;
+    }
+    if (!run) {
+      break;
+    }
+    if (target && !openTarget) {
+      const href = target.href !== undefined ? target.href : `#${target.anchor ?? ""}`;
+      content += `<text:a xlink:type="simple" xlink:href="${escapeXml(href)}">`;
+      openTarget = target;
+    }
+    content += runXml(run, styles, state);
+  }
+  closeLink();
   return content;
 }
 
@@ -711,6 +760,9 @@ function paragraphXml(paragraph: Paragraph, styles: AutomaticStyles, includeOpaq
   let attrs = styleName !== undefined ? ` text:style-name="${escapeXml(styleName)}"` : "";
   if (paragraph.headingLevel !== undefined) {
     attrs += ` text:outline-level="${paragraph.headingLevel}"`;
+  }
+  if (paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null)) {
+    attrs += LINK_XMLNS;
   }
   const content = inlineContentXml(paragraph, styles, includeOpaque);
   return content.length > 0 ? `<${tag}${attrs}>${content}</${tag}>` : `<${tag}${attrs}/>`;
