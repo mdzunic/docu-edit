@@ -133,11 +133,11 @@ function componentFor(entry = noRenderEntries()[0]) {
 
 <style scoped>
 /* A page-shaped surface sized by the layout's own geometry (inline style,
-   real centimetres). 24px of margin is AC-2's visible gap between pages;
+   real centimetres). 12px of margin is AC-2's visible gap between pages;
    overflow clips provisional overhang while measurement settles. */
 .page {
   position: relative;
-  margin: 0 auto 24px;
+  margin: 0 auto 12px;
   background: #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
   box-sizing: border-box;
