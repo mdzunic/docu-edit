@@ -29,6 +29,14 @@ export interface RunFormatting {
    * (SPEC-013). Never shown in the picker; the highlight wins on screen. */
   shadingFill?: string;
   vertAlign?: VerticalAlignment;
+  /** External hyperlink target (SPEC-025) — an absolute URL. Two scalar
+   * fields rather than one `{href}` object so run coalescing and formatting
+   * equality keep working on `===` per key (see textEditing's
+   * sameFormatting). At most one of `linkHref`/`linkAnchor` is set. */
+  linkHref?: string;
+  /** Internal link target (SPEC-025): a bookmark name or a derived heading
+   * anchor (see lib/links.ts) in this document. */
+  linkAnchor?: string;
 }
 
 /** The run-formatting fields SPEC-012's toolbar toggles: bold, italic,
@@ -234,6 +242,19 @@ export interface OpaqueInline {
   runIndex: number;
 }
 
+/** A named point location in a paragraph's text (SPEC-025) — the model form
+ * of `w:bookmarkStart/End` (.docx) and `text:bookmark` (.odt). Bookmarks are
+ * points, not ranges: the editor's "Insert bookmark" names a location, and a
+ * ranged source bookmark is anchored at its start. Deliberately not named
+ * `id`: lib/equality.ts's IGNORED_KEYS drops bare "id" keys from structural
+ * comparison, which would let a wrong reference pass a round-trip test. */
+export interface BookmarkAnchor {
+  /** Unique document-wide, no spaces (validated in lib/links.ts). */
+  name: string;
+  /** Character offset into the paragraph's concatenated run text. */
+  offset: number;
+}
+
 /** A paragraph is a block-level element made of inline runs. */
 export interface Paragraph {
   type: "paragraph";
@@ -253,6 +274,10 @@ export interface Paragraph {
    * A side-list (rather than a run union) so `runs` stays a plain `Run[]`
    * for every renderer and editing consumer; order follows `runIndex`. */
   opaqueInlines?: OpaqueInline[];
+  /** Named point locations in this paragraph (SPEC-025), ordered by
+   * `offset`. A side-list like `opaqueInlines` so `runs` stays plain;
+   * offsets are maintained by the textEditing primitives. */
+  bookmarks?: BookmarkAnchor[];
 }
 
 // --- images (SPEC-024) -------------------------------------------------------

@@ -19,8 +19,32 @@ export function headingTag(level: number | undefined): string {
   return `h${Math.min(Math.max(level, 1), 6)}`;
 }
 
+/** The hyperlink colour (SPEC-025 AC-4) — the blue Word and Docs both use
+ * for the built-in Hyperlink character style. */
+export const LINK_COLOR = "#1a73e8";
+
+/** The href a rendered link run carries: the external URL as-is, or
+ * `#anchor` for an internal bookmark/heading target. Undefined for plain
+ * text — the template picks `<a>` vs `<span>` on this. */
+export function runLinkHref(formatting: RunFormatting): string | undefined {
+  if (formatting.linkHref !== undefined) {
+    return formatting.linkHref;
+  }
+  if (formatting.linkAnchor !== undefined) {
+    return `#${formatting.linkAnchor}`;
+  }
+  return undefined;
+}
+
+/** Whether the run links outside the document — only those open in a new
+ * tab and carry `target`/`rel` (AC-12, AC-13); internal links jump. */
+export function isExternalLink(formatting: RunFormatting): boolean {
+  return formatting.linkHref !== undefined;
+}
+
 export function runStyle(formatting: RunFormatting): Record<string, string> {
   const style: Record<string, string> = {};
+  const linked = formatting.linkHref !== undefined || formatting.linkAnchor !== undefined;
   if (formatting.bold) {
     style.fontWeight = "bold";
   }
@@ -28,7 +52,10 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
     style.fontStyle = "italic";
   }
   const decorations: string[] = [];
-  if (formatting.underline) {
+  // A hyperlink is always underlined in the link colour (SPEC-025 AC-4); an
+  // explicit run colour still wins over the link blue, like Word's direct
+  // formatting over the Hyperlink style.
+  if (formatting.underline || linked) {
     decorations.push("underline");
   }
   if (formatting.strikethrough) {
@@ -45,6 +72,8 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
   }
   if (formatting.color) {
     style.color = formatting.color;
+  } else if (linked) {
+    style.color = LINK_COLOR;
   }
   // highlight false is an explicit "No colour": like undefined it paints
   // nothing, unlike undefined it survives saving (SPEC-013).
