@@ -13,6 +13,7 @@ import {
   isImage,
   isTable,
   type Block,
+  type BookmarkAnchor,
   type CharacterFormatKey,
   type DocumentModel,
   type Paragraph,
@@ -329,6 +330,84 @@ export function splitRuns(runs: Run[], offset: number): [Run[], Run[]] {
   return [normalizeRuns(before), normalizeRuns(after)];
 }
 
+// --- bookmark anchor maintenance (SPEC-025) ---------------------------------
+// Bookmarks are character-offset anchors on a paragraph (a side-list, like
+// opaqueInlines), so the operations below that rebuild a paragraph's text
+// keep the anchors pointing at the same spot. Every helper returns the
+// input untouched when there are no bookmarks, so pre-SPEC-025 behaviour is
+// byte-identical for bookmark-free documents.
+
+/** Writes a bookmark list onto a freshly built paragraph: assigns it when
+ * non-empty, removes the key entirely when empty — an `undefined`-valued
+ * key would read as a structural difference in round-trip comparison. */
+function setBookmarks(paragraph: Paragraph, bookmarks: BookmarkAnchor[] | undefined): Paragraph {
+  if (bookmarks && bookmarks.length > 0) {
+    paragraph.bookmarks = bookmarks;
+  } else {
+    delete paragraph.bookmarks;
+  }
+  return paragraph;
+}
+
+/** Anchors after inserting `length` characters at `offset`: anchors after
+ * the point shift right; one exactly at it stays put, so text typed at a
+ * just-inserted bookmark lands after the bookmark. */
+function bookmarksAfterInsert(
+  bookmarks: BookmarkAnchor[] | undefined,
+  offset: number,
+  length: number,
+): BookmarkAnchor[] | undefined {
+  if (!bookmarks || length === 0) {
+    return bookmarks;
+  }
+  return bookmarks.map((bookmark) =>
+    bookmark.offset > offset ? { ...bookmark, offset: bookmark.offset + length } : bookmark,
+  );
+}
+
+/** Anchors after deleting [from, to) within one paragraph: anchors past the
+ * range shift left; anchors inside it collapse to the deletion point rather
+ * than vanishing, so deleting text around a bookmark never silently loses
+ * the bookmark itself. */
+function bookmarksAfterDelete(
+  bookmarks: BookmarkAnchor[] | undefined,
+  from: number,
+  to: number,
+): BookmarkAnchor[] | undefined {
+  if (!bookmarks || from >= to) {
+    return bookmarks;
+  }
+  return bookmarks.map((bookmark) =>
+    bookmark.offset <= from
+      ? bookmark
+      : { ...bookmark, offset: Math.max(from, bookmark.offset - (to - from)) },
+  );
+}
+
+/** Anchors of two paragraphs merged by a cross-paragraph deletion: the
+ * first keeps [0, from] (later anchors collapse to `from`), the second's
+ * land at `from` plus their distance past `to`. */
+function mergedBookmarks(
+  first: Paragraph,
+  second: Paragraph,
+  from: number,
+  to: number,
+): BookmarkAnchor[] | undefined {
+  if (!first.bookmarks && !second.bookmarks) {
+    return undefined;
+  }
+  const merged = [
+    ...(first.bookmarks ?? []).map((bookmark) =>
+      bookmark.offset <= from ? bookmark : { ...bookmark, offset: from },
+    ),
+    ...(second.bookmarks ?? []).map((bookmark) => ({
+      ...bookmark,
+      offset: from + Math.max(0, bookmark.offset - to),
+    })),
+  ];
+  return merged.sort((a, b) => a.offset - b.offset);
+}
+
 /** `formatting` with `key` forced to `value`. `false` deletes the key
  * instead of storing an explicit false, so the result merges with plain
  * runs that never carried the key at all — the same outcome as if the text
@@ -397,14 +476,36 @@ export function insertText(
       : after.length > 0
         ? after[0].formatting
         : {};
-  const formatting = formatOverride
+  let formatting = formatOverride
     ? applyFormatPatch(baseFormatting, formatOverride)
     : baseFormatting;
+  if (formatting.linkHref !== undefined || formatting.linkAnchor !== undefined) {
+    // Typing at a link's edge must not extend the link (SPEC-025): the text
+    // keeps the link only when both neighbouring runs carry the same target,
+    // i.e. the caret sits strictly inside it.
+    const insideLink =
+      before.length > 0 &&
+      after.length > 0 &&
+      before[before.length - 1].formatting.linkHref === formatting.linkHref &&
+      before[before.length - 1].formatting.linkAnchor === formatting.linkAnchor &&
+      after[0].formatting.linkHref === formatting.linkHref &&
+      after[0].formatting.linkAnchor === formatting.linkAnchor;
+    if (!insideLink) {
+      const rest = { ...formatting };
+      delete rest.linkHref;
+      delete rest.linkAnchor;
+      formatting = rest;
+    }
+  }
   const inserted: Run = { text, formatting };
-  replaceParagraphAt(model, c, {
-    ...block,
-    runs: normalizeRuns([...before, inserted, ...after]),
-  });
+  replaceParagraphAt(
+    model,
+    c,
+    setBookmarks(
+      { ...block, runs: normalizeRuns([...before, inserted, ...after]) },
+      bookmarksAfterInsert(block.bookmarks, c.offset, text.length),
+    ),
+  );
   return { ...c, offset: c.offset + text.length };
 }
 
@@ -432,6 +533,18 @@ export function splitParagraph(
   };
   if (block.list) {
     second.list = { ...block.list };
+  }
+  if (block.bookmarks) {
+    // Anchors distribute by offset: one exactly at the split point stays at
+    // the end of the first half (the location it named), never duplicated
+    // onto both halves — names are unique document-wide (SPEC-025).
+    setBookmarks(first, block.bookmarks.filter((bookmark) => bookmark.offset <= c.offset));
+    setBookmarks(
+      second,
+      block.bookmarks
+        .filter((bookmark) => bookmark.offset > c.offset)
+        .map((bookmark) => ({ ...bookmark, offset: bookmark.offset - c.offset })),
+    );
   }
   if (c.cell) {
     spliceCellBlocks(
@@ -551,10 +664,14 @@ export function deleteRange(
     if (cell.block === end.cell!.block) {
       const [before] = splitRuns(startPara.runs, start.offset);
       const [, after] = splitRuns(startPara.runs, end.offset);
-      replaceParagraphAt(model, start, {
-        ...startPara,
-        runs: normalizeRuns([...before, ...after]),
-      });
+      replaceParagraphAt(
+        model,
+        start,
+        setBookmarks(
+          { ...startPara, runs: normalizeRuns([...before, ...after]) },
+          bookmarksAfterDelete(startPara.bookmarks, start.offset, end.offset),
+        ),
+      );
       return start;
     }
     const endPara = cellBlocks[end.cell!.block];
@@ -568,7 +685,10 @@ export function deleteRange(
       cell.col,
       cell.block,
       end.cell!.block - cell.block + 1,
-      { ...startPara, runs: normalizeRuns([...before, ...after]) },
+      setBookmarks(
+        { ...startPara, runs: normalizeRuns([...before, ...after]) },
+        mergedBookmarks(startPara, endPara, start.offset, end.offset),
+      ),
     );
     return start;
   }
@@ -595,10 +715,14 @@ export function deleteRange(
     }
     const [before] = splitRuns(startBlock.runs, start.offset);
     const [, after] = splitRuns(startBlock.runs, end.offset);
-    replaceParagraphAt(model, start, {
-      ...startBlock,
-      runs: normalizeRuns([...before, ...after]),
-    });
+    replaceParagraphAt(
+      model,
+      start,
+      setBookmarks(
+        { ...startBlock, runs: normalizeRuns([...before, ...after]) },
+        bookmarksAfterDelete(startBlock.bookmarks, start.offset, end.offset),
+      ),
+    );
     return start;
   }
   // Cross-block: a boundary paragraph contributes its kept half; a boundary
@@ -608,11 +732,22 @@ export function deleteRange(
   const tail = isTable(endBlock) || isImage(endBlock) ? null : splitRuns(endBlock.runs, end.offset)[1];
   let replacement: Paragraph | null;
   if (head !== null && tail !== null) {
-    replacement = { ...(startBlock as Paragraph), runs: normalizeRuns([...head, ...tail]) };
+    replacement = setBookmarks(
+      { ...(startBlock as Paragraph), runs: normalizeRuns([...head, ...tail]) },
+      mergedBookmarks(startBlock as Paragraph, endBlock as Paragraph, start.offset, end.offset),
+    );
   } else if (head !== null) {
-    replacement = { ...(startBlock as Paragraph), runs: normalizeRuns(head) };
+    const startPara = startBlock as Paragraph;
+    replacement = setBookmarks(
+      { ...startPara, runs: normalizeRuns(head) },
+      bookmarksAfterDelete(startPara.bookmarks, start.offset, blockLength(startPara)),
+    );
   } else if (tail !== null) {
-    replacement = { ...(endBlock as Paragraph), runs: normalizeRuns(tail) };
+    const endPara = endBlock as Paragraph;
+    replacement = setBookmarks(
+      { ...endPara, runs: normalizeRuns(tail) },
+      bookmarksAfterDelete(endPara.bookmarks, 0, end.offset),
+    );
   } else {
     replacement = null;
   }

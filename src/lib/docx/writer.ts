@@ -40,6 +40,7 @@ import type {
 import { DEFAULT_TITLE } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
+import { inlineWriteLayout, linkTargetOf } from "../links";
 import {
   childElements,
   parseRelationships,
@@ -71,7 +72,7 @@ import {
   type NumberingRef,
 } from "./numbering";
 import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
-import { planMediaWrite, takenRelIdsOf, type MediaWritePlan } from "./media";
+import { nextFreeRelId, planMediaWrite, takenRelIdsOf, type MediaWritePlan } from "./media";
 import { zip, type ZipEntryInput } from "./zipWriter";
 
 export const DOCX_MIME_TYPE =
@@ -296,32 +297,171 @@ function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): st
   return parts.length > 0 ? `<w:pPr>${parts.join("")}</w:pPr>` : "";
 }
 
-/** The paragraph's inline content: its runs, with any preserved opaque
- * inline nodes re-emitted verbatim at their anchored positions (SPEC-008).
- * `runIndex === i` places a node immediately before run i; indexes past the
- * end land after the last run. */
-function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean): string {
-  const runsXml = paragraph.runs.map(runXml);
-  const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
-  if (opaque.length === 0) {
-    return runsXml.join("");
-  }
-  let xml = "";
-  for (let i = 0; i <= runsXml.length; i++) {
-    for (const node of opaque) {
-      if (Math.min(node.runIndex, runsXml.length) === i) {
-        xml += node.xml;
+// --- hyperlinks and bookmarks (SPEC-025) -------------------------------------
+
+const HYPERLINK_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+// The `r:` attribute namespace, declared locally on each w:hyperlink the
+// same way drawing.ts declares it on a:blip.
+const R_ATTRIBUTE_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+function forEachModelParagraph(model: DocumentModel, visit: (paragraph: Paragraph) => void): void {
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      if (block.type === "table") {
+        for (const row of block.rows) {
+          for (const cell of row.cells) {
+            for (const paragraph of cell.blocks) {
+              visit(paragraph);
+            }
+          }
+        }
+      } else if (block.type === "paragraph") {
+        visit(block);
       }
     }
-    if (i < runsXml.length) {
-      xml += runsXml[i];
-    }
   }
+}
+
+export interface HyperlinkWritePlan {
+  /** The relationship id a run's external `linkHref` maps to. */
+  relIdFor(href: string): string;
+  /** `<Relationship>` elements to append to the document rels part. */
+  relationshipsXml: string;
+  /** The ids this plan claimed — seeds the media planner so the two
+   * appenders never collide. */
+  relIds: Set<string>;
+}
+
+/** One `TargetMode="External"` hyperlink relationship per distinct external
+ * link target the model references, ids allocated past `takenRelIds` — the
+ * same additive scheme as planMediaWrite, so a same-format save only ever
+ * appends to the preserved rels part. */
+export function planHyperlinkWrite(
+  model: DocumentModel,
+  takenRelIds: Set<string> = new Set(),
+): HyperlinkWritePlan {
+  const hrefs: string[] = [];
+  const seen = new Set<string>();
+  forEachModelParagraph(model, (paragraph) => {
+    for (const run of paragraph.runs) {
+      const href = run.formatting.linkHref;
+      if (href !== undefined && !seen.has(href)) {
+        seen.add(href);
+        hrefs.push(href);
+      }
+    }
+  });
+  const relIdOf = new Map<string, string>();
+  const relParts: string[] = [];
+  const taken = new Set(takenRelIds);
+  for (const href of hrefs) {
+    const relId = nextFreeRelId(taken);
+    taken.add(relId);
+    relIdOf.set(href, relId);
+    relParts.push(
+      `<Relationship Id="${relId}" Type="${HYPERLINK_RELATIONSHIP}" Target="${escapeXml(href)}" TargetMode="External"/>`,
+    );
+  }
+  return {
+    relIdFor: (href: string) => relIdOf.get(href) ?? "",
+    relationshipsXml: relParts.join(""),
+    relIds: new Set(relIdOf.values()),
+  };
+}
+
+/** Document-order numeric ids for w:bookmarkStart/End pairs (SPEC-025). */
+function bookmarkIdsFor(model: DocumentModel): Map<string, number> {
+  const ids = new Map<string, number>();
+  forEachModelParagraph(model, (paragraph) => {
+    for (const bookmark of paragraph.bookmarks ?? []) {
+      if (!ids.has(bookmark.name)) {
+        ids.set(bookmark.name, ids.size + 1);
+      }
+    }
+  });
+  return ids;
+}
+
+interface InlineWriteContext {
+  hyperlinkPlan: HyperlinkWritePlan;
+  bookmarkIds: Map<string, number>;
+}
+
+/** The paragraph's inline content: its runs, with any preserved opaque
+ * inline nodes re-emitted verbatim at their anchored positions (SPEC-008),
+ * consecutive same-target link runs grouped under one `w:hyperlink`
+ * (external targets via an r:id relationship, internal via w:anchor), and
+ * bookmarks emitted as adjacent `w:bookmarkStart`/`w:bookmarkEnd` pairs at
+ * their character offsets (SPEC-025). Emitted on cross-format saves too —
+ * links/bookmarks are modelled content, unlike opaque nodes. */
+function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: InlineWriteContext): string {
+  const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
+  const hasLinks = paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null);
+  const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
+  if (opaque.length === 0 && !hasLinks && !hasBookmarks) {
+    return paragraph.runs.map(runXml).join("");
+  }
+  const { runs, bookmarksAtBoundary, boundaryFor } = inlineWriteLayout(paragraph);
+  const opaqueAtBoundary = new Map<number, string[]>();
+  for (const node of opaque) {
+    const boundary = boundaryFor(node.runIndex);
+    const list = opaqueAtBoundary.get(boundary) ?? [];
+    list.push(node.xml);
+    opaqueAtBoundary.set(boundary, list);
+  }
+  let xml = "";
+  let openTarget: { href?: string; anchor?: string } | null = null;
+  const closeHyperlink = () => {
+    if (openTarget) {
+      xml += "</w:hyperlink>";
+      openTarget = null;
+    }
+  };
+  for (let i = 0; i <= runs.length; i++) {
+    const run = i < runs.length ? runs[i] : null;
+    const target = run ? linkTargetOf(run.formatting) : null;
+    const opaqueHere = opaqueAtBoundary.get(i) ?? [];
+    // An opaque node's XML is arbitrary — never emit it inside a hyperlink;
+    // the wrapper is split around it instead (two w:hyperlink elements with
+    // the same target are equivalent).
+    if (opaqueHere.length > 0) {
+      closeHyperlink();
+    }
+    if (
+      openTarget &&
+      (!target || target.href !== openTarget.href || target.anchor !== openTarget.anchor)
+    ) {
+      closeHyperlink();
+    }
+    xml += opaqueHere.join("");
+    for (const name of bookmarksAtBoundary.get(i) ?? []) {
+      const id = ctx.bookmarkIds.get(name) ?? 0;
+      xml += `<w:bookmarkStart w:id="${id}" w:name="${escapeXml(name)}"/><w:bookmarkEnd w:id="${id}"/>`;
+    }
+    if (!run) {
+      break;
+    }
+    if (target && !openTarget) {
+      xml +=
+        target.href !== undefined
+          ? `<w:hyperlink xmlns:r="${R_ATTRIBUTE_NAMESPACE}" r:id="${ctx.hyperlinkPlan.relIdFor(target.href)}">`
+          : `<w:hyperlink w:anchor="${escapeXml(target.anchor ?? "")}">`;
+      openTarget = target;
+    }
+    xml += runXml(run);
+  }
+  closeHyperlink();
   return xml;
 }
 
-function paragraphXml(paragraph: Paragraph, includeOpaque: boolean, numRef?: NumberingRef): string {
-  return `<w:p>${paragraphPropertiesXml(paragraph, numRef)}${inlineContentXml(paragraph, includeOpaque)}</w:p>`;
+function paragraphXml(
+  paragraph: Paragraph,
+  includeOpaque: boolean,
+  ctx: InlineWriteContext,
+  numRef?: NumberingRef,
+): string {
+  return `<w:p>${paragraphPropertiesXml(paragraph, numRef)}${inlineContentXml(paragraph, includeOpaque, ctx)}</w:p>`;
 }
 
 /** An Image block (SPEC-024): OOXML has no body-level picture element, so
@@ -543,6 +683,7 @@ function tableAlignmentXml(table: Table): string {
 function tableXml(
   table: Table,
   includeOpaque: boolean,
+  ctx: InlineWriteContext,
   cellNumRef: (row: number, col: number, cellBlock: number) => NumberingRef | undefined,
 ): string {
   const totalTwips = table.columnWidthsCm.reduce((sum, cm) => sum + cmToTwips(cm), 0);
@@ -584,7 +725,7 @@ function tableXml(
             cell.blocks.length > 0
               ? cell.blocks
                   .map((paragraph, blockIndex) =>
-                    paragraphXml(paragraph, includeOpaque, cellNumRef(rowIndex, colIndex, blockIndex)),
+                    paragraphXml(paragraph, includeOpaque, ctx, cellNumRef(rowIndex, colIndex, blockIndex)),
                   )
                   .join("")
               : "<w:p/>";
@@ -633,8 +774,10 @@ export function buildDocumentXml(
   model: DocumentModel,
   plan: NumberingPlan = planNumbering(model),
   mediaPlan: MediaWritePlan = planMediaWrite(model),
+  hyperlinkPlan: HyperlinkWritePlan = planHyperlinkWrite(model),
 ): string {
   const includeOpaque = model.format === "docx";
+  const inlineCtx: InlineWriteContext = { hyperlinkPlan, bookmarkIds: bookmarkIdsFor(model) };
   const blockXml: string[] = [];
   let docPrId = 1;
   model.sections.forEach((section, sectionIndex) => {
@@ -651,7 +794,7 @@ export function buildDocumentXml(
         const block = section.blocks[i];
         if (block.type === "table") {
           blockXml.push(
-            tableXml(block, includeOpaque, (row, col, cellBlock) =>
+            tableXml(block, includeOpaque, inlineCtx, (row, col, cellBlock) =>
               cellNumberingRefFor(plan, sectionIndex, i, row, col, cellBlock),
             ),
           );
@@ -659,7 +802,7 @@ export function buildDocumentXml(
           blockXml.push(imageParagraphXml(block, mediaPlan, docPrId++));
         } else {
           blockXml.push(
-            paragraphXml(block, includeOpaque, numberingRefFor(plan, sectionIndex, i)),
+            paragraphXml(block, includeOpaque, inlineCtx, numberingRefFor(plan, sectionIndex, i)),
           );
         }
       }
@@ -1060,18 +1203,26 @@ export async function writeDocx(
   if (preservedParts.size === 0) {
     const plan = planNumbering(model);
     // rId1 is styles.xml and (if present) rId2 is numbering.xml, both
-    // hardcoded by buildDocumentRelsXml — media ids must start past them.
-    const mediaPlan = planMediaWrite(model, new Set(plan.isEmpty ? ["rId1"] : ["rId1", "rId2"]));
+    // hardcoded by buildDocumentRelsXml — hyperlink and media ids must start
+    // past them (and past each other).
+    const baseTaken = new Set(plan.isEmpty ? ["rId1"] : ["rId1", "rId2"]);
+    const hyperlinkPlan = planHyperlinkWrite(model, baseTaken);
+    const mediaPlan = planMediaWrite(model, new Set([...baseTaken, ...hyperlinkPlan.relIds]));
     const entries: ZipEntryInput[] = [
       {
         name: "[Content_Types].xml",
         data: encoder.encode(buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions)),
       },
       { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
-      { name: "word/document.xml", data: encoder.encode(buildDocumentXml(model, plan, mediaPlan)) },
+      {
+        name: "word/document.xml",
+        data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan)),
+      },
       {
         name: "word/_rels/document.xml.rels",
-        data: encoder.encode(buildDocumentRelsXml(!plan.isEmpty, mediaPlan.relationshipsXml)),
+        data: encoder.encode(
+          buildDocumentRelsXml(!plan.isEmpty, hyperlinkPlan.relationshipsXml + mediaPlan.relationshipsXml),
+        ),
       },
       { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
       { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
@@ -1151,8 +1302,16 @@ export async function writeDocx(
   // rels part already uses, and past whatever package part names already
   // exist, so a freshly written word/media/imageN.ext can never collide.
   const mainRelsTaken = mainRelsText ? takenRelIdsOf(parseRelationships(mainRelsText).values()) : new Set<string>();
-  const mediaPlan = planMediaWrite(model, mainRelsTaken, new Set(preservedParts.keys()));
+  // Hyperlinks (SPEC-025) mint their rel ids first, past the preserved
+  // part's own ids; media ids then start past both.
+  const hyperlinkPlan = planHyperlinkWrite(model, mainRelsTaken);
+  const mediaPlan = planMediaWrite(
+    model,
+    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds]),
+    new Set(preservedParts.keys()),
+  );
   const addMediaDecls = mediaPlan.relationshipsXml.length > 0;
+  const addHyperlinkDecls = hyperlinkPlan.relationshipsXml.length > 0;
 
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
@@ -1166,10 +1325,13 @@ export async function writeDocx(
       entries.push({ name, data: encoder.encode(numberingOut) });
     } else if (patchedStyles !== null && name === stylesPartName) {
       entries.push({ name, data: encoder.encode(patchedStyles) });
-    } else if ((addNumberingDecls || addMediaDecls) && name === mainRelsName) {
+    } else if ((addNumberingDecls || addMediaDecls || addHyperlinkDecls) && name === mainRelsName) {
       let rels = mainRelsText!;
       if (addNumberingDecls) {
         rels = withNumberingRelationship(rels, "numbering.xml");
+      }
+      if (addHyperlinkDecls) {
+        rels = withMediaRelationships(rels, hyperlinkPlan.relationshipsXml);
       }
       if (addMediaDecls) {
         rels = withMediaRelationships(rels, mediaPlan.relationshipsXml);
@@ -1196,7 +1358,10 @@ export async function writeDocx(
   if (numberingOut !== null && !preservedNumbering) {
     entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
   }
-  entries.push({ name: mainPartName, data: encoder.encode(buildDocumentXml(model, plan, mediaPlan)) });
+  entries.push({
+    name: mainPartName,
+    data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan)),
+  });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
   entries.push(...mediaPlan.zipEntries);
 
