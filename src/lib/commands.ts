@@ -22,7 +22,10 @@ import {
   type ListFormatting,
   type ListMarkerStyle,
   type ListType,
+  type Margins,
+  type MeasurementUnit,
   type NamedStyle,
+  type PageSize,
   type Paragraph,
   type ParagraphAlignment,
   type ParagraphDirection,
@@ -723,6 +726,22 @@ export function toggleSpaceBefore(
   }));
 }
 
+/** Drops a stale preserved `w:sectPr` (SPEC-027): any command that changes
+ * the page size or margins must not let the writer re-emit the source
+ * .docx's original section properties over top of the new values — the
+ * same rule tables.ts's clearPreservedTable/clearPreservedCell apply to
+ * `w:tblPr`/`w:tcPr`. Absent on documents without one (.odt sources, blank
+ * documents), which is also the common case, so callers only pay for the
+ * copy when there is something to clear. */
+function clearPreservedSectPr(model: DocumentModel): DocumentModel {
+  if (model.sourceXml?.docxSectPr === undefined) {
+    return model;
+  }
+  const sourceXml = { ...model.sourceXml };
+  delete sourceXml.docxSectPr;
+  return { ...model, sourceXml };
+}
+
 /** Sets the page's left/right margins (the ruler's margin markers, AC-23).
  * Margins live on defaultStyles, not a paragraph, but the update flows
  * through the same immutable command shape so applyEdit persists it. */
@@ -738,10 +757,42 @@ export function setPageMargins(
   if (patch.rightCm !== undefined) {
     margins.rightCm = snapCm(Math.max(0, patch.rightCm));
   }
-  const next: DocumentModel = {
+  const next = clearPreservedSectPr({
     ...model,
     defaultStyles: { ...model.defaultStyles, margins },
+  });
+  const { start, end } = orderedRange(next, selection);
+  return { model: next, selection: { anchor: start, focus: end } };
+}
+
+// --- page setup (SPEC-027) ---------------------------------------------
+
+/** The Page setup dialog's OK (AC-1..7): paper size, orientation and the
+ * four margins are already resolved to a concrete `PageSize`/`Margins` by
+ * the dialog (paper-size lookup and orientation swap happen there — see
+ * lib/pageSetup.ts); this command just snaps them onto the twip grid and
+ * commits. `measurementUnit`, when given, replaces the document's
+ * preference (AC-7); omit it to leave the preference untouched. */
+export function setPageSetup(
+  model: DocumentModel,
+  selection: ModelSelection,
+  patch: { pageSize: PageSize; margins: Margins; measurementUnit?: MeasurementUnit },
+): CommandResult {
+  const pageSize: PageSize = {
+    widthCm: snapCm(patch.pageSize.widthCm),
+    heightCm: snapCm(patch.pageSize.heightCm),
   };
+  const margins: Margins = {
+    topCm: snapCm(patch.margins.topCm),
+    rightCm: snapCm(patch.margins.rightCm),
+    bottomCm: snapCm(patch.margins.bottomCm),
+    leftCm: snapCm(patch.margins.leftCm),
+  };
+  const next = clearPreservedSectPr({
+    ...model,
+    defaultStyles: { ...model.defaultStyles, pageSize, margins },
+    measurementUnit: patch.measurementUnit ?? model.measurementUnit,
+  });
   const { start, end } = orderedRange(next, selection);
   return { model: next, selection: { anchor: start, focus: end } };
 }

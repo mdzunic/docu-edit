@@ -111,8 +111,15 @@ const XML_STRING_KEYS = new Set([
 const XML_ARRAY_KEYS = new Set(["odtAutomaticStyles"]);
 
 /** Fields excluded from structural equality: `id`s are runtime-only and
- * regenerated freely; the suppression flag is UI state, not content. */
-const IGNORED_KEYS = new Set(["id", "suppressConversionReport"]);
+ * regenerated freely; the rest are UI state, not content — none of them is
+ * written to a `.docx`/`.odt` file, so a same-format round trip never
+ * carries them either way. */
+const IGNORED_KEYS = new Set([
+  "id",
+  "suppressConversionReport",
+  "measurementUnit",
+  "showRuler",
+]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
