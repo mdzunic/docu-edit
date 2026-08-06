@@ -207,7 +207,7 @@ test("the Insert-break menu is genuinely visible and offers all four breaks (AC-
   await expect(page.getByTestId("break-column")).toBeDisabled();
   await expect(page.getByTestId("break-column")).toHaveAttribute(
     "title",
-    "Requires columns (SPEC-030)",
+    "Requires columns (coming soon)",
   );
 
   // The page-break item actually works from the menu.

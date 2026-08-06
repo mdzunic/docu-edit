@@ -106,7 +106,7 @@ onBeforeUnmount(() => {
         role="menuitem"
         data-testid="break-column"
         disabled
-        title="Requires columns (SPEC-030)"
+        title="Requires columns (coming soon)"
       >
         Column break
       </button>
