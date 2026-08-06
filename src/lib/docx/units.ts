@@ -73,3 +73,18 @@ export function cssColorToOoxml(value: string | undefined): string | undefined {
   }
   return value.slice(1).toUpperCase();
 }
+
+// English Metric Units: OOXML's unit for DrawingML sizes (`wp:extent`'s
+// cx/cy, SPEC-024), 914400 per inch — the same fixed conversion twips use
+// (1440 per inch), just a different denominator.
+const EMU_PER_INCH = 914400;
+
+/** Centimetres to EMU, rounded to the nearest whole EMU. */
+export function cmToEmu(cm: number): number {
+  return Math.round((cm / CM_PER_INCH) * EMU_PER_INCH);
+}
+
+/** EMU to centimetres. */
+export function emuToCm(emu: number): number {
+  return (emu / EMU_PER_INCH) * CM_PER_INCH;
+}

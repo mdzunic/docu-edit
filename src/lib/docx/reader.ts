@@ -10,6 +10,7 @@ import type {
   CellBorders,
   CellVerticalAlign,
   DefaultStyles,
+  MediaPart,
   NamedStyle,
   OpaqueBlock,
   OpaqueInline,
@@ -38,7 +39,9 @@ import {
   wordAttr,
   WORD_NAMESPACE,
   XmlParseError,
+  type Relationship,
 } from "./xml";
+import { parseDrawing, type ParsedDrawing } from "./drawing";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
   EMPTY_NUMBERING_CATALOG,
@@ -105,6 +108,10 @@ export interface ParsedDocxDocument {
   opaque: OpaquePart[];
   /** Verbatim XML captured from modelled parts (the body-level w:sectPr). */
   sourceXml: SourceXml;
+  /** Media parts modelled Image blocks reference (SPEC-024), one per
+   * distinct source media part — deduplicated, since the same picture used
+   * twice in the document shares one relationship target. */
+  media: MediaPart[];
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -175,11 +182,23 @@ function collectRuns(
   }
 }
 
-function parseParagraph(
+/** A paragraph's block-level metadata resolved from its `w:pPr` — the parts
+ * shared by parseParagraph and parseBodyParagraphBlocks (which needs the
+ * same resolution applied to every piece a mid-paragraph image splits off,
+ * SPEC-024). */
+interface ParagraphMeta {
+  resolved: ReturnType<typeof resolveStyle>;
+  formatting: Paragraph["formatting"];
+  headingLevel: number | undefined;
+  styleId: string | undefined;
+  list: Paragraph["list"];
+}
+
+function parseParagraphMeta(
   pEl: Element,
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
-): Paragraph {
+): ParagraphMeta {
   const pPr = firstChildElement(pEl, WORD_NAMESPACE, "pPr");
   const pStyleEl = pPr ? firstChildElement(pPr, WORD_NAMESPACE, "pStyle") : undefined;
   const styleId = pStyleEl ? (wordAttr(pStyleEl, "val") ?? undefined) : undefined;
@@ -193,13 +212,9 @@ function parseParagraph(
   }
   const headingLevel = parseOutlineLevel(pPr) ?? resolved.headingLevel;
 
-  const runs: Run[] = [];
-  const opaqueInlines: OpaqueInline[] = [];
-  collectRuns(pEl, resolved.runFormatting, runs, opaqueInlines);
-
-  const paragraph: Paragraph = { type: "paragraph", runs, formatting };
   // w:numPr resolves against the numbering catalog (SPEC-018 AC-20): the
   // referenced level definition decides type, marker, start and indent.
+  let list: Paragraph["list"];
   const numPr = pPr ? firstChildElement(pPr, WORD_NAMESPACE, "numPr") : undefined;
   if (numPr) {
     const numIdEl = firstChildElement(numPr, WORD_NAMESPACE, "numId");
@@ -207,22 +222,150 @@ function parseParagraph(
     const numId = numIdEl ? wordAttr(numIdEl, "val") : null;
     const ilvl = Number((ilvlEl ? wordAttr(ilvlEl, "val") : null) ?? "0");
     if (numId !== null && Number.isInteger(ilvl) && ilvl >= 0) {
-      const list = numberingCatalog.listFormattingFor(numId, ilvl);
-      if (list) {
-        paragraph.list = list;
-      }
+      list = numberingCatalog.listFormattingFor(numId, ilvl) ?? undefined;
     }
   }
-  if (styleId) {
-    paragraph.styleId = styleId;
+
+  return { resolved, formatting, headingLevel, styleId, list };
+}
+
+function assembleParagraph(
+  meta: ParagraphMeta,
+  runs: Run[],
+  opaqueInlines: OpaqueInline[],
+  includeList: boolean,
+): Paragraph {
+  const paragraph: Paragraph = { type: "paragraph", runs, formatting: { ...meta.formatting } };
+  if (includeList && meta.list) {
+    paragraph.list = meta.list;
   }
-  if (headingLevel !== undefined) {
-    paragraph.headingLevel = headingLevel;
+  if (meta.styleId) {
+    paragraph.styleId = meta.styleId;
+  }
+  if (meta.headingLevel !== undefined) {
+    paragraph.headingLevel = meta.headingLevel;
   }
   if (opaqueInlines.length > 0) {
     paragraph.opaqueInlines = opaqueInlines;
   }
   return paragraph;
+}
+
+function parseParagraph(
+  pEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+): Paragraph {
+  const meta = parseParagraphMeta(pEl, styleCatalog, numberingCatalog);
+  const runs: Run[] = [];
+  const opaqueInlines: OpaqueInline[] = [];
+  collectRuns(pEl, meta.resolved.runFormatting, runs, opaqueInlines);
+  return assembleParagraph(meta, runs, opaqueInlines, true);
+}
+
+/** Context a body-level paragraph parse needs to resolve a `w:drawing`'s
+ * media relationship into actual bytes (SPEC-024) — threaded down from
+ * parseDocx, which already unzipped the package and read the main part's
+ * relationships for the numbering/styles lookups. */
+export interface DrawingContext {
+  mainRels: Map<string, Relationship>;
+  mainPartPath: string;
+  parts: Map<string, Uint8Array>;
+}
+
+/** A `w:r` whose only content (besides `w:rPr`) is one `w:drawing` that
+ * resolves to a modelled picture — the mid-paragraph split point
+ * parseBodyParagraphBlocks looks for. Null for every other run, including
+ * one holding a drawing this spec doesn't model (a chart, shape, ...), which
+ * keeps falling through to the ordinary opaque-inline path. */
+function imageRunDrawing(rEl: Element, ctx: DrawingContext): ParsedDrawing | null {
+  const contentChildren = Array.from(rEl.children).filter(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
+  );
+  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+    return null;
+  }
+  return parseDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
+}
+
+/** Parses one body-level `<w:p>` into one or more blocks (SPEC-024): a
+ * paragraph containing a modelled inline/floating picture splits around
+ * each image, since the document model addresses an image as its own
+ * top-level block (see documentModel.ts's Image doc comment) — mirroring
+ * how a body-level `w:tbl` already breaks the block sequence, just with the
+ * split happening here instead of being structural in the source XML. Every
+ * resulting paragraph piece keeps the source paragraph's own formatting/
+ * style/heading level; list membership (SPEC-018) is kept only on the first
+ * piece, so an image inside a list item does not fork into two items.
+ * Paragraphs with no modelled image parse exactly as parseParagraph always
+ * did — this function is a pure superset, never a behaviour change for the
+ * common case. Used only for section-level body content; table cells still
+ * go through parseTableCell -> parseParagraph, since images are not modelled
+ * inside cells. */
+interface BodyParagraphResult {
+  blocks: Block[];
+  /** Media parts the split-off Image blocks reference, in document order —
+   * the caller folds these into the document's overall media list. */
+  media: MediaPart[];
+}
+
+function parseBodyParagraphBlocks(
+  pEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+  ctx: DrawingContext,
+): BodyParagraphResult {
+  const runElements = Array.from(pEl.children).filter(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "r",
+  );
+  const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
+  if (!hasImageRun) {
+    return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog)], media: [] };
+  }
+
+  const meta = parseParagraphMeta(pEl, styleCatalog, numberingCatalog);
+  const blocks: Block[] = [];
+  const media: MediaPart[] = [];
+  let runs: Run[] = [];
+  let opaqueInlines: OpaqueInline[] = [];
+  const flush = () => {
+    if (runs.length === 0 && opaqueInlines.length === 0) {
+      return;
+    }
+    blocks.push(assembleParagraph(meta, runs, opaqueInlines, blocks.length === 0));
+    runs = [];
+    opaqueInlines = [];
+  };
+  for (const child of Array.from(pEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "pPr") {
+      continue;
+    }
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "r") {
+      const parsed = imageRunDrawing(child, ctx);
+      if (parsed) {
+        flush();
+        blocks.push(parsed.image);
+        media.push(parsed.media);
+        continue;
+      }
+      if (runHasUnmodelledContent(child)) {
+        opaqueInlines.push({ xml: serializeElement(child), runIndex: runs.length });
+        continue;
+      }
+      const run = parseRun(child, meta.resolved.runFormatting);
+      if (run) {
+        runs.push(run);
+      }
+    } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "hyperlink") {
+      collectRuns(child, meta.resolved.runFormatting, runs, opaqueInlines);
+    } else if (child.namespaceURI === WORD_NAMESPACE && TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)) {
+      // Regenerated by Word on open; deliberately not preserved.
+    } else {
+      opaqueInlines.push({ xml: serializeElement(child), runIndex: runs.length });
+    }
+  }
+  flush();
+  return { blocks, media };
 }
 
 /** OOXML `w:val`s for `w:tcBorders`' children collapse to the model's small
@@ -721,8 +864,8 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   let stylesDoc: Document | undefined;
   let numberingCatalog: NumberingCatalog = EMPTY_NUMBERING_CATALOG;
   const mainRelsText = readPart(relsPathFor(mainPartPath));
+  const mainRels: Map<string, Relationship> = mainRelsText ? parseRelationships(mainRelsText) : new Map();
   if (mainRelsText) {
-    const mainRels = parseRelationships(mainRelsText);
     const stylesRel = Array.from(mainRels.values()).find((rel) => rel.type === STYLES_RELATIONSHIP);
     if (stylesRel) {
       const stylesText = readPart(resolvePartPath(mainPartPath, stylesRel.target));
@@ -741,13 +884,24 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     }
   }
   const styleCatalog = parseStylesCatalog(stylesDoc);
+  const drawingCtx: DrawingContext = { mainRels, mainPartPath, parts };
 
   const blocks: Block[] = [];
   const opaqueBlocks: OpaqueBlock[] = [];
+  const mediaById = new Map<string, MediaPart>();
   let sectPr: Element | undefined;
   for (const child of Array.from(body.children)) {
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "p") {
-      blocks.push(parseParagraph(child, styleCatalog, numberingCatalog));
+      const { blocks: parsedBlocks, media } = parseBodyParagraphBlocks(
+        child,
+        styleCatalog,
+        numberingCatalog,
+        drawingCtx,
+      );
+      blocks.push(...parsedBlocks);
+      for (const part of media) {
+        mediaById.set(part.mediaId, part);
+      }
     } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "tbl") {
       // Regular-grid tables are modelled (SPEC-022); a table the model
       // cannot express (merged cells, nested tables, …) falls through to
@@ -783,10 +937,13 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   // Everything the pipeline above did not consume-and-rebuild is retained
   // verbatim for the lifetime of the document (SPEC-008 AC): styles.xml and
   // the relationship/content-type parts included, since a same-format save
-  // reuses them as-is.
+  // reuses them as-is. Media parts a modelled Image references (SPEC-024)
+  // are excluded here — they travel in `media` instead, not duplicated into
+  // `opaque` (the writer regenerates their relationships/content types from
+  // `media` on every save, same-format or not).
   const opaque: OpaquePart[] = [];
   for (const [name, data] of parts) {
-    if (name !== mainPartPath && name !== corePartPath) {
+    if (name !== mainPartPath && name !== corePartPath && !mediaById.has(name)) {
       opaque.push({ name, data: bytesToBase64(data) });
     }
   }
@@ -802,5 +959,6 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     styles: catalogToNamedStyles(styleCatalog),
     opaque,
     sourceXml,
+    media: Array.from(mediaById.values()),
   };
 }
