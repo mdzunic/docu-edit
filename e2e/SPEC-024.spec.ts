@@ -2,6 +2,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { deflateSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { writeFileSync, readFileSync } from "node:fs";
+import { unzip } from "../src/lib/docx/zip";
+import { createDocument as createDocumentModel } from "../src/lib/documentModel";
+import { writeDocx } from "../src/lib/docx/writer";
 
 // SPEC-024 — images: insert (file picker, drag-and-drop, paste), the
 // scaled-to-fit initial size, click-to-select with eight resize handles and
@@ -380,4 +385,190 @@ test("alt text and size survive a .docx save and re-open (AC-23, AC-25)", async 
   await openFixture(page, path!);
   await expect(images(page)).toHaveCount(1);
   await expect(images(page).first()).toHaveAttribute("alt", "Round trip photo");
+});
+
+// --- drag-and-drop (AC-1) ----------------------------------------------------
+
+test("dropping an image file onto the canvas inserts it (AC-1)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  const bytes = Array.from(SMALL_PNG);
+  await page.evaluate(async (pngBytes) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(pngBytes)], "dropped.png", { type: "image/png" }));
+    const target = document.querySelector('[data-testid="document-content"]')!;
+    const rect = target.getBoundingClientRect();
+    const opts = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: rect.x + 20, clientY: rect.y + 20 };
+    target.dispatchEvent(new DragEvent("dragenter", opts));
+    target.dispatchEvent(new DragEvent("dragover", opts));
+    target.dispatchEvent(new DragEvent("drop", opts));
+  }, bytes);
+  await expect(images(page)).toHaveCount(1);
+});
+
+// --- SVG handling: PNG for .docx, SVG for .odt (AC-2, AC-3) -----------------
+
+const SIMPLE_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="150" height="80"><rect width="150" height="80" fill="#ff6600"/></svg>',
+);
+
+test("an SVG inserted into a .docx-bound document is converted to PNG, not retained as SVG (AC-2)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  await insertViaPicker(page, SIMPLE_SVG, "vector.svg", "image/svg+xml");
+  await expect(images(page)).toHaveCount(1);
+
+  await page.getByTestId("download-menu").click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("download-docx").click(),
+  ]);
+  const bytes = readFileSync((await download.path())!);
+  const parts = await unzip(bytes);
+  const media = [...parts.keys()].filter((k) => k.startsWith("word/media/"));
+  expect(media.some((f) => f.endsWith(".png"))).toBe(true);
+  expect(media.some((f) => f.endsWith(".svg"))).toBe(false);
+});
+
+test("an SVG inserted into an .odt-bound document is stored as an SVG media part (AC-3)", async ({ page }) => {
+  // Opening an existing .odt fixture puts the document in odt-bound mode,
+  // so the insert path below stores the SVG as-is instead of converting it.
+  await openFixture(page, odtImagesFixture);
+  await content(page).click();
+  await page.keyboard.press("Control+End");
+  await insertViaPicker(page, SIMPLE_SVG, "vector.svg", "image/svg+xml");
+  await expect(images(page)).toHaveCount(3);
+
+  await page.getByTestId("download-menu").click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("download-odt").click(),
+  ]);
+  const bytes = readFileSync((await download.path())!);
+  const parts = await unzip(bytes);
+  const media = [...parts.keys()].filter((k) => k.startsWith("Pictures/"));
+  expect(media.some((f) => f.toLowerCase().endsWith(".svg"))).toBe(true);
+});
+
+// --- alt text for .odt (AC-24) ----------------------------------------------
+
+test("alt text is written to .odt as svg:desc (AC-24)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  await insertViaPicker(page, SMALL_PNG);
+  await images(page).first().click();
+  await page.getByTestId("image-options-button").click();
+  await page.getByTestId("image-options-alt-text").fill("ODT alt text");
+  await page.getByTestId("image-options-apply").click();
+
+  await page.getByTestId("download-menu").click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("download-odt").click(),
+  ]);
+  const bytes = readFileSync((await download.path())!);
+  const parts = await unzip(bytes);
+  const contentXml = new TextDecoder().decode(parts.get("content.xml"));
+  expect(contentXml).toContain("<svg:desc");
+  expect(contentXml).toContain("ODT alt text");
+});
+
+// --- media parts and content types (AC-26, AC-27) ---------------------------
+
+test("images are stored as real media parts with content types and relationships, never as base64 in the XML (AC-26, AC-27)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  await insertViaPicker(page, SMALL_PNG);
+  await page.getByTestId("download-menu").click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("download-docx").click(),
+  ]);
+  const bytes = readFileSync((await download.path())!);
+  const parts = await unzip(bytes);
+
+  const media = [...parts.keys()].filter((k) => k.startsWith("word/media/"));
+  expect(media.length).toBe(1);
+
+  const contentTypesXml = new TextDecoder().decode(parts.get("[Content_Types].xml"));
+  expect(contentTypesXml).toContain('Extension="png"');
+
+  const relsXml = new TextDecoder().decode(parts.get("word/_rels/document.xml.rels"));
+  expect(relsXml).toMatch(/Type=".*\/image"/);
+  expect(relsXml).toContain("Target=\"media/");
+
+  const docXml = new TextDecoder().decode(parts.get("word/document.xml"));
+  expect(docXml).not.toContain("base64");
+  expect(docXml).not.toContain("data:image");
+});
+
+// --- reference-counted media deletion (AC-31, AC-32) ------------------------
+
+test("deleting one of two uses of the same image keeps its media part; deleting both removes it (AC-31, AC-32)", async ({ page }) => {
+  // Two Image blocks sharing one mediaId is the "image used twice" case
+  // (see lib/documentModel.ts's Image.mediaId doc comment). There is no
+  // in-app way to duplicate an image onto a second block (copy/paste only
+  // carries text runs — lib/clipboard.ts's extractFragment works over
+  // Paragraph blocks), so real documents reach this state by having the
+  // same relationship/media referenced twice already, which is what this
+  // fixture (built through the app's own model + writer, the same
+  // dedup path AC-2's docx save always exercises) reproduces.
+  const model = createDocumentModel("dup-fixture");
+  model.title = "Duplicate Image Fixture";
+  const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADElEQVR4nGP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  model.media = [{ mediaId: "shared-media", contentType: "image/png", data: TINY_PNG_BASE64 }];
+  const imageBlock = {
+    type: "image" as const,
+    mediaId: "shared-media",
+    naturalWidthPx: 40,
+    naturalHeightPx: 40,
+    widthCm: 40 / (96 / 2.54),
+    heightCm: 40 / (96 / 2.54),
+    wrap: "inline" as const,
+  };
+  model.sections = [
+    {
+      blocks: [
+        { type: "paragraph", runs: [{ text: "first use:", formatting: {} }] },
+        { ...imageBlock },
+        { type: "paragraph", runs: [{ text: "second use:", formatting: {} }] },
+        { ...imageBlock },
+        { type: "paragraph", runs: [] },
+      ],
+    },
+  ];
+  const { bytes } = await writeDocx(model);
+  const fixturePath = join(tmpdir(), `spec024-dup-image-${Date.now()}.docx`);
+  writeFileSync(fixturePath, bytes);
+
+  await openFixture(page, fixturePath);
+  await expect(images(page)).toHaveCount(2);
+
+  // Delete one of the two uses — the media part must survive (AC-32).
+  await images(page).first().click();
+  await page.keyboard.press("Delete");
+  await expect(images(page)).toHaveCount(1);
+
+  await page.getByTestId("download-menu").click();
+  const [download1] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("download-docx").click(),
+  ]);
+  const bytes1 = readFileSync((await download1.path())!);
+  const parts1 = await unzip(bytes1);
+  expect([...parts1.keys()].filter((k) => k.startsWith("word/media/"))).toHaveLength(1);
+
+  // Delete the remaining use — now the media part must be gone (AC-31).
+  await images(page).first().click();
+  await page.keyboard.press("Delete");
+  await expect(images(page)).toHaveCount(0);
+
+  await page.getByTestId("download-menu").click();
+  const [download2] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("download-docx").click(),
+  ]);
+  const bytes2 = readFileSync((await download2.path())!);
+  const parts2 = await unzip(bytes2);
+  expect([...parts2.keys()].filter((k) => k.startsWith("word/media/"))).toHaveLength(0);
 });
