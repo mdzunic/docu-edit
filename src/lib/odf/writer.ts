@@ -29,6 +29,8 @@ import type {
   Block,
   BorderSide,
   DocumentModel,
+  Image,
+  ImageWrapMode,
   NamedStyle,
   Paragraph,
   ParagraphFormatting,
@@ -50,6 +52,8 @@ import {
 import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
 import { ODT_MIMETYPE } from "./reader";
+import { drawFrameXml, graphicStyleXml } from "./drawing";
+import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
@@ -319,6 +323,10 @@ interface AutomaticStyles {
   textNameFor(formatting: RunFormatting): string;
   listNameFor(levels: PlannedListLevel[]): string;
   tableNamesFor(table: Table, preserveNames: boolean): TableNames;
+  /** A floating image's graphic-family style (SPEC-024 AC-13, AC-14) —
+   * shared by every image with the same wrap mode; undefined for "inline",
+   * which needs no positioning style of its own (see drawFrameXml). */
+  graphicStyleNameFor(wrap: ImageWrapMode): string | undefined;
 }
 
 function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
@@ -361,6 +369,9 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
+      if (block.type === "image") {
+        continue;
+      }
       if (block.styleId) {
         takenNames.add(block.styleId);
       }
@@ -383,6 +394,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
   const paragraphNames = new Map<string, string>();
   const textNames = new Map<string, string>();
   const listNames = new Map<string, string>();
+  const graphicNames = new Map<ImageWrapMode, string>();
   const boundStyleIds = new Set<string>();
 
   const claimName = (base: string, separator: string): string => {
@@ -405,7 +417,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       if (!paragraph.styleId && propertiesXml === "") {
         return undefined;
       }
-      const key = `${paragraph.styleId ?? ""} ${propertiesXml}`;
+      const key = `${paragraph.styleId ?? ""} ${propertiesXml}`;
       const existing = paragraphNames.get(key);
       if (existing !== undefined) {
         return existing;
@@ -542,6 +554,20 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
           return name;
         },
       };
+    },
+
+    graphicStyleNameFor(wrap: ImageWrapMode): string | undefined {
+      if (wrap === "inline") {
+        return undefined;
+      }
+      const existing = graphicNames.get(wrap);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = claimName("fr", "");
+      graphicNames.set(wrap, name);
+      defs.push(graphicStyleXml(name, wrap));
+      return name;
     },
   };
 }
@@ -694,6 +720,21 @@ function isListParagraph(block: Block): boolean {
   return block.type === "paragraph" && block.list !== undefined;
 }
 
+/** An Image block (SPEC-024): ODF has no body-level picture element either,
+ * so it is wrapped the way real producers do — one `text:p` holding the
+ * `draw:frame` (see drawing.ts's drawFrameXml). Returns "" when `mediaPlan`
+ * has no href for this image's media (defensive; every referenced media id
+ * should always have one — ODF, unlike .docx, has no format it can't
+ * store). */
+function imageParagraphXml(image: Image, styles: AutomaticStyles, mediaPlan: OdtMediaWritePlan): string {
+  const href = mediaPlan.hrefFor(image.mediaId);
+  if (!href) {
+    return "";
+  }
+  const graphicStyleName = styles.graphicStyleNameFor(image.wrap);
+  return `<text:p>${drawFrameXml(image, href, graphicStyleName)}</text:p>`;
+}
+
 /** A cell's block content (SPEC-022): paragraphs, with consecutive list
  * items grouped into text:list runs exactly like body content — a cell is
  * its own list context, so runs never join one outside the table. */
@@ -813,7 +854,10 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
  * styles those nodes may reference. Cross-format models carry foreign
  * (WordprocessingML) XML in their opaque nodes, so those are excluded — the
  * writer reports them as dropped instead. */
-export function buildContentXml(model: DocumentModel): string {
+export function buildContentXml(
+  model: DocumentModel,
+  mediaPlan: OdtMediaWritePlan = planOdtMediaWrite(model),
+): string {
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
   const blockXml: string[] = [];
@@ -837,6 +881,11 @@ export function buildContentXml(model: DocumentModel): string {
       const block = blocks[i];
       if (block.type === "table") {
         blockXml.push(tableXml(block, styles, includeOpaque));
+        i++;
+        continue;
+      }
+      if (block.type === "image") {
+        blockXml.push(imageParagraphXml(block, styles, mediaPlan));
         i++;
         continue;
       }
@@ -1027,18 +1076,20 @@ export function buildSettingsXml(): string {
   return `${XML_DECLARATION}<office:document-settings xmlns:office="${OFFICE_NAMESPACE}" office:version="1.2"/>`;
 }
 
-/** META-INF/manifest.xml listing every part (AC-8). The mimetype entry is
- * not listed — per ODF its media type belongs to the "/" entry. */
-export function buildManifestXml(): string {
-  const part = (path: string) =>
-    `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="text/xml"/>`;
+/** META-INF/manifest.xml listing every part (AC-8), plus a file-entry per
+ * image media part the model references (SPEC-024 AC-26). The mimetype
+ * entry is not listed — per ODF its media type belongs to the "/" entry. */
+export function buildManifestXml(mediaEntries: OdtManifestEntry[] = []): string {
+  const part = (path: string, mediaType: string) =>
+    `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="${mediaType}"/>`;
   return (
     `${XML_DECLARATION}<manifest:manifest xmlns:manifest="${MANIFEST_NAMESPACE}" manifest:version="1.2">` +
     `<manifest:file-entry manifest:full-path="/" manifest:version="1.2" manifest:media-type="${ODT_MIMETYPE}"/>` +
-    part("content.xml") +
-    part("styles.xml") +
-    part("meta.xml") +
-    part("settings.xml") +
+    part("content.xml", "text/xml") +
+    part("styles.xml", "text/xml") +
+    part("meta.xml", "text/xml") +
+    part("settings.xml", "text/xml") +
+    mediaEntries.map((entry) => part(entry.path, entry.mediaType)).join("") +
     "</manifest:manifest>"
   );
 }
@@ -1050,16 +1101,17 @@ export interface WriteOdtOptions {
 }
 
 /** Ensures a preserved manifest lists the parts this save (re)builds —
- * needed when the source package lacked meta.xml or settings.xml. The patch
- * is textual and no-ops gracefully on producers that bound the manifest
- * namespace to another prefix (their packages carry the parts already). */
-function withManifestEntries(manifestXml: string, paths: string[]): string {
+ * needed when the source package lacked meta.xml or settings.xml, or gains
+ * image media parts (SPEC-024). The patch is textual and no-ops gracefully
+ * on producers that bound the manifest namespace to another prefix (their
+ * packages carry the parts already). */
+function withManifestEntries(manifestXml: string, entries: OdtManifestEntry[]): string {
   let out = manifestXml;
-  for (const path of paths) {
+  for (const { path, mediaType } of entries) {
     if (!out.includes(`manifest:full-path="${path}"`)) {
       out = out.replace(
         /<\/manifest:manifest>\s*$/,
-        `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="text/xml"/>` +
+        `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="${mediaType}"/>` +
           "</manifest:manifest>",
       );
     }
@@ -1086,9 +1138,14 @@ export async function writeOdt(
   const modified = options.modified ?? new Date();
   const title = model.title.trim().length > 0 ? model.title : UNTITLED_ODT_TITLE;
   const encoder = new TextEncoder();
-  const content = buildContentXml(model);
 
   const preservedParts = model.format === "odt" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
+  // Images (SPEC-024): media names start past whatever the preserved
+  // package already uses, so a freshly written Pictures/imageN.ext can
+  // never collide (mirrors docx/writer.ts's own media planning).
+  const mediaPlan = planOdtMediaWrite(model, new Set(preservedParts.keys()));
+  const content = buildContentXml(model, mediaPlan);
+
   if (preservedParts.size === 0) {
     const bytes = await zip([
       // ODF requires the mimetype entry first and STOREd so format sniffers
@@ -1098,7 +1155,8 @@ export async function writeOdt(
       { name: "styles.xml", data: encoder.encode(buildStylesXml(model)) },
       { name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) },
       { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
-      { name: "META-INF/manifest.xml", data: encoder.encode(buildManifestXml()) },
+      { name: "META-INF/manifest.xml", data: encoder.encode(buildManifestXml(mediaPlan.manifestEntries)) },
+      ...mediaPlan.zipEntries,
     ]);
     return { bytes, dropped: collectDropRecords(model, "odt") };
   }
@@ -1110,7 +1168,12 @@ export async function writeOdt(
   // (SPEC-019).
   const decoder = new TextDecoder("utf-8");
   const addSettings = !preservedParts.has("settings.xml");
-  const addedPaths = ["content.xml", "meta.xml", ...(addSettings ? ["settings.xml"] : [])];
+  const addedPaths: OdtManifestEntry[] = [
+    { path: "content.xml", mediaType: "text/xml" },
+    { path: "meta.xml", mediaType: "text/xml" },
+    ...(addSettings ? [{ path: "settings.xml", mediaType: "text/xml" }] : []),
+    ...mediaPlan.manifestEntries,
+  ];
   const preservedStyles = preservedParts.get("styles.xml");
   const patchedStyles = preservedStyles
     ? patchOdtStylesXml(model, decoder.decode(preservedStyles), content)
@@ -1133,6 +1196,7 @@ export async function writeOdt(
     }
   }
   entries.push({ name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) });
+  entries.push(...mediaPlan.zipEntries);
   if (addSettings) {
     entries.push({ name: "settings.xml", data: encoder.encode(buildSettingsXml()) });
   }

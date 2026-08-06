@@ -10,7 +10,7 @@ import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
 import { writeDocx } from "../docx/writer";
 import { unzip } from "../docx/zip";
-import { canonicalizeXml, equalBytes, firstStructuralDifference } from "../equality";
+import { equalBytes, firstStructuralDifference } from "../equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel } from "../documentModel";
 import { asParagraph } from "../documentModel";
@@ -24,7 +24,7 @@ function loadFixture(name: string): Uint8Array {
 /** Unlike SPEC-007's modelFrom, this carries the retained source package —
  * the model an opened document actually holds (see openDocument.ts). */
 function modelFrom(parsed: ParsedOdtDocument, title = "Field Report"): DocumentModel {
-  return {
+  const model: DocumentModel = {
     id: "test-doc",
     title,
     sections: parsed.sections,
@@ -33,6 +33,10 @@ function modelFrom(parsed: ParsedOdtDocument, title = "Field Report"): DocumentM
     opaque: parsed.opaque,
     sourceXml: parsed.sourceXml,
   };
+  if (parsed.media.length > 0) {
+    model.media = parsed.media;
+  }
+  return model;
 }
 
 const decoder = new TextDecoder();
@@ -40,41 +44,60 @@ const decoder = new TextDecoder();
 describe("parseOdt — opaque capture (AC-1, AC-3, AC-4)", () => {
   const fixture = loadFixture("lo-embedded.odt");
 
-  it("retains every unmodelled package part, including binary images", async () => {
+  it("retains every unmodelled package part", async () => {
     const parsed = await parseOdt(fixture);
     const names = parsed.opaque.map((part) => part.name);
-    expect(names).toContain("Pictures/image1.png");
     expect(names).toContain("styles.xml");
     expect(names).toContain("mimetype");
     expect(names).toContain("META-INF/manifest.xml");
     expect(names).toContain("settings.xml");
-    // content.xml and meta.xml are rebuilt on save, not retained.
+    // content.xml and meta.xml are rebuilt on save, not retained; the image
+    // (Pictures/image1.png) is modelled since SPEC-024 and travels in
+    // `media` instead, not `opaque` (see the "models the draw:frame" test).
     expect(names).not.toContain("content.xml");
     expect(names).not.toContain("meta.xml");
+    expect(names).not.toContain("Pictures/image1.png");
     const original = await unzip(fixture);
     for (const part of parsed.opaque) {
       expect(equalBytes(base64ToBytes(part.data), original.get(part.name)!)).toBe(true);
     }
   });
 
-  it("captures the draw:frame as an opaque inline anchored between the runs", async () => {
+  it("models the draw:frame as an Image block, splitting the paragraph around it (SPEC-024)", async () => {
     const parsed = await parseOdt(fixture);
-    const photoParagraph = asParagraph(parsed.sections[0].blocks[2]);
-    expect(photoParagraph.runs.map((run) => run.text)).toEqual(["Photo: ", "shows the site."]);
-    expect(photoParagraph.opaqueInlines).toHaveLength(1);
-    expect(photoParagraph.opaqueInlines![0].runIndex).toBe(1);
-    expect(photoParagraph.opaqueInlines![0].xml).toContain("frame");
-    expect(photoParagraph.opaqueInlines![0].xml).toContain("Pictures/image1.png");
+    // The paragraph "Photo: <frame> shows the site." splits into three
+    // blocks — the image addresses its own block, the same way SPEC-022's
+    // table does, rather than an opaque inline anchored between runs.
+    const before = asParagraph(parsed.sections[0].blocks[2]);
+    expect(before.runs.map((run) => run.text)).toEqual(["Photo: "]);
+    const image = parsed.sections[0].blocks[3];
+    expect(image.type).toBe("image");
+    if (image.type !== "image") {
+      return;
+    }
+    expect(image.wrap).toBe("inline");
+    expect(image.widthCm).toBeCloseTo(2, 5);
+    expect(image.heightCm).toBeCloseTo(2, 5);
+    expect(image.mediaId).toBe("Pictures/image1.png");
+    const after = asParagraph(parsed.sections[0].blocks[4]);
+    expect(after.runs.map((run) => run.text)).toEqual(["shows the site."]);
+    // The media bytes are modelled, not left opaque.
+    expect(parsed.media).toHaveLength(1);
+    expect(parsed.media[0].mediaId).toBe("Pictures/image1.png");
+    expect(parsed.media[0].contentType).toBe("image/png");
+    const original = await unzip(fixture);
+    expect(equalBytes(base64ToBytes(parsed.media[0].data), original.get("Pictures/image1.png")!)).toBe(true);
   });
 
   it("models the table as a Table block anchored in the body (SPEC-022)", async () => {
     const parsed = await parseOdt(fixture);
-    // Blocks: heading, intro, photo paragraph, table, closing — the table
-    // sits before the closing paragraph, as a modelled block since
-    // SPEC-022 (previously preserved as an opaque node).
-    expect(parsed.sections[0].blocks).toHaveLength(5);
+    // Blocks: heading, intro, "Photo: ", image, "shows the site.", table,
+    // closing — the table sits before the closing paragraph, as a modelled
+    // block since SPEC-022 (previously preserved as an opaque node); the
+    // photo paragraph now splits around a modelled Image block (SPEC-024).
+    expect(parsed.sections[0].blocks).toHaveLength(7);
     expect(parsed.sections[0].opaqueBlocks ?? []).toHaveLength(0);
-    const table = parsed.sections[0].blocks[3];
+    const table = parsed.sections[0].blocks[5];
     expect(table.type).toBe("table");
     if (table.type !== "table") {
       return;
@@ -183,10 +206,9 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
     expect(asParagraph(reopened.sections[0].blocks[1]).runs[0].text).toBe("Edited intro paragraph!");
     // The table block (modelled since SPEC-022) survives structurally
     // untouched — same rows, columns, widths and style references.
+    expect(firstStructuralDifference(opened.sections[0].blocks[5], reopened.sections[0].blocks[5])).toBeNull();
+    // The image block (modelled since SPEC-024) survives the same way.
     expect(firstStructuralDifference(opened.sections[0].blocks[3], reopened.sections[0].blocks[3])).toBeNull();
-    expect(canonicalizeXml(asParagraph(reopened.sections[0].blocks[2]).opaqueInlines![0].xml)).toBe(
-      canonicalizeXml(asParagraph(opened.sections[0].blocks[2]).opaqueInlines![0].xml),
-    );
 
     const editedBack = structuredClone(reopened);
     asParagraph(editedBack.sections[0].blocks[1]).runs[0].text = "Editable intro paragraph.";
@@ -197,26 +219,32 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
 describe("writeDocx — converting a .odt model reports what it drops (SPEC-008 writer API)", () => {
   const fixture = loadFixture("lo-embedded.odt");
 
-  it("lists the frame, the table and the image part with locations, skipping packaging parts", async () => {
+  it("lists the table with a location, skipping packaging parts and the image (converts losslessly)", async () => {
     const opened = await parseOdt(fixture);
     const { bytes, dropped } = await writeDocx(modelFrom(opened));
 
-    expect(dropped.some((d) => d.kind === "opaqueInline" && d.location === "paragraph 3")).toBe(true);
     // The table converts as a modelled block since SPEC-022 — it is no
     // longer reported as dropped content.
     expect(dropped.some((d) => d.kind === "opaqueBlock")).toBe(false);
-    expect(dropped.some((d) => d.kind === "opaquePart" && d.location.includes("Pictures/image1.png"))).toBe(true);
+    // The image converts as a modelled block since SPEC-024 (a PNG has a
+    // faithful .docx representation, so nothing is dropped for it either).
+    expect(dropped.some((d) => d.kind === "opaqueInline")).toBe(false);
+    expect(dropped.some((d) => d.kind === "svgImage")).toBe(false);
+    expect(dropped.some((d) => d.kind === "opaquePart" && d.location.includes("Pictures/image1.png"))).toBe(false);
     // Packaging infrastructure is not reported as dropped content.
     expect(dropped.some((d) => d.location.includes("mimetype"))).toBe(false);
     expect(dropped.some((d) => d.location.includes("styles.xml"))).toBe(false);
     expect(dropped.some((d) => d.location.includes("META-INF"))).toBe(false);
 
-    // The converted package carries no ODF opaque content.
+    // The converted package carries no ODF opaque content, but does carry
+    // the converted image as a .docx media part.
     const parts = await unzip(bytes);
     expect(parts.has("Pictures/image1.png")).toBe(false);
+    expect(parts.has("word/media/image1.png")).toBe(true);
     const documentXml = decoder.decode(parts.get("word/document.xml")!);
     expect(documentXml).not.toContain("draw:frame");
     expect(documentXml).not.toContain("table:table");
+    expect(documentXml).toContain("<w:drawing");
     // The modelled table converts to WordprocessingML (SPEC-022 AC-24).
     expect(documentXml).toContain("<w:tbl>");
     expect(documentXml).toContain("Cell A");

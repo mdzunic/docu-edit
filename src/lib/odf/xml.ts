@@ -10,6 +10,10 @@ export const TABLE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
 export const STYLE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 export const FO_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 export const SVG_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
+/** Drawing shapes/frames (SPEC-024) — `draw:frame`, `draw:image`. */
+export const DRAW_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+/** XLink (SPEC-024) — `draw:image`'s `xlink:href`. */
+export const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 
 /** Reads an `office:*` attribute regardless of the bound prefix. */
 export function officeAttr(el: Element, localName: string): string | null {
@@ -41,4 +45,14 @@ export function foAttr(el: Element, localName: string): string | null {
  * prefix. */
 export function svgAttr(el: Element, localName: string): string | null {
   return el.getAttributeNS(SVG_NAMESPACE, localName);
+}
+
+/** Reads a `draw:*` attribute regardless of the bound prefix. */
+export function drawAttr(el: Element, localName: string): string | null {
+  return el.getAttributeNS(DRAW_NAMESPACE, localName);
+}
+
+/** Reads an `xlink:*` attribute regardless of the bound prefix. */
+export function xlinkAttr(el: Element, localName: string): string | null {
+  return el.getAttributeNS(XLINK_NAMESPACE, localName);
 }
