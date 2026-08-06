@@ -10,10 +10,10 @@ import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
 import { writeDocx } from "../docx/writer";
 import { unzip } from "../docx/zip";
-import { equalBytes, firstStructuralDifference } from "../equality";
+import { equalBytes, equalStructural, firstStructuralDifference } from "../equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel } from "../documentModel";
-import { asParagraph } from "../documentModel";
+import { asParagraph, createDocument } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -213,6 +213,31 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
     const editedBack = structuredClone(reopened);
     asParagraph(editedBack.sections[0].blocks[1]).runs[0].text = "Editable intro paragraph.";
     expect(firstStructuralDifference(opened, editedBack)).toBeNull();
+  });
+});
+
+describe("writeOdt — special characters round-trip (SPEC-026 AC-46)", () => {
+  // The canonical fixture: "a b c", NON-BREAKING HYPHEN (U+2011), "d", SOFT
+  // HYPHEN (U+00AD), "e", MATHEMATICAL ITALIC SMALL X (U+1D465), "f", GRINNING
+  // FACE (U+1F600), "g" — every character representable in ODF.
+  const SPECIAL_FIXTURE = "a b c‑d­e\u{1D465}f\u{1F600}g";
+
+  function specialModel(text: string): DocumentModel {
+    const model = createDocument("spec-026");
+    model.sections[0].blocks = [{ type: "paragraph", runs: [{ text, formatting: {} }] }];
+    return model;
+  }
+
+  it("survives open -> save -> open equalStructural", async () => {
+    // The first serialise+parse yields the canonical opened model; the fixture
+    // text must survive it intact…
+    const opened = await parseOdt((await writeOdt(specialModel(SPECIAL_FIXTURE))).bytes);
+    expect(asParagraph(opened.sections[0].blocks[0]).runs.map((run) => run.text).join("")).toBe(
+      SPECIAL_FIXTURE,
+    );
+    // …and a further save+open is structurally identical.
+    const reopened = await parseOdt((await writeOdt(modelFrom(opened))).bytes);
+    expect(equalStructural(opened.sections, reopened.sections)).toBe(true);
   });
 });
 

@@ -74,7 +74,16 @@ const CORE_PROPERTIES_RELATIONSHIP =
 // nodes would freeze stale derived data into the file, so they are the one
 // deliberate exception to SPEC-008's "carry everything through" rule.
 const TRANSIENT_PARAGRAPH_CHILDREN = new Set(["proofErr"]);
-const MODELLED_RUN_CHILDREN = new Set(["rPr", "t", "tab", "br", "cr", "lastRenderedPageBreak"]);
+const MODELLED_RUN_CHILDREN = new Set([
+  "rPr",
+  "t",
+  "tab",
+  "br",
+  "cr",
+  "noBreakHyphen",
+  "softHyphen",
+  "lastRenderedPageBreak",
+]);
 
 /** True when a run carries content the model cannot express (w:drawing,
  * w:object, w:pict, field chars, …) — such a run is preserved whole as an
@@ -133,6 +142,10 @@ function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undef
       text += "\t";
     } else if (child.localName === "br" || child.localName === "cr") {
       text += "\n";
+    } else if (child.localName === "noBreakHyphen") {
+      text += "‑";
+    } else if (child.localName === "softHyphen") {
+      text += "­";
     }
   }
 

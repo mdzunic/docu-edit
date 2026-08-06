@@ -191,6 +191,22 @@ describe("parseDocx — google-docs-exported.docx", () => {
   });
 });
 
+describe("parseDocx — special characters", () => {
+  it("maps w:noBreakHyphen and w:softHyphen to U+2011 and U+00AD (AC-53)", async () => {
+    const documentXml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+      "<w:p><w:r><w:t>a</w:t><w:noBreakHyphen/><w:t>b</w:t><w:softHyphen/><w:t>c</w:t></w:r></w:p>" +
+      "</w:body></w:document>";
+    const { zip } = await import("./zipWriter");
+    const bytes = await zip([
+      { name: "word/document.xml", data: new TextEncoder().encode(documentXml) },
+    ]);
+    const parsed = await parseDocx(bytes);
+    expect(text(parsed.sections[0].blocks[0] as Paragraph)).toBe("a‑b­c");
+  });
+});
+
 describe("parseDocx — error handling", () => {
   it("rejects a file that is not a valid ZIP (AC-31)", async () => {
     const notZip = new TextEncoder().encode("not a zip file at all");

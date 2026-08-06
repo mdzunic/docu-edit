@@ -170,6 +170,40 @@ describe("writeDocx — content details", () => {
     expect(paragraphTexts(reopened)).toEqual(["  spaced out  "]);
   });
 
+  it("emits non-breaking and soft hyphens as elements, not literal characters (AC-53)", async () => {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "a‑b­c", formatting: {} }] },
+    ];
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
+    expect(documentXml).toContain("<w:noBreakHyphen/>");
+    expect(documentXml).toContain("<w:softHyphen/>");
+    // The literal U+2011/U+00AD never appear — the element forms replace them.
+    expect(documentXml).not.toContain("‑");
+    expect(documentXml).not.toContain("­");
+  });
+
+  it("emits a non-BMP character as literal UTF-8, not a surrogate numeric reference (AC-51)", async () => {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "x\u{1F600}y", formatting: {} }] },
+    ];
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
+    expect(documentXml).toContain("\u{1F600}");
+    expect(documentXml).not.toContain("&#55357;");
+    expect(documentXml).not.toContain("&#xD83D;");
+  });
+
+  it("keeps U+00A0 and U+202F as literal characters inside w:t (AC-52)", async () => {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "a b c", formatting: {} }] },
+    ];
+    const documentXml = await partText((await writeDocx(model)).bytes, "word/document.xml");
+    expect(documentXml).toContain(" ");
+    expect(documentXml).toContain(" ");
+  });
+
   it("writes explicitly-disabled run formatting as w:val='0'/'none' (AC-10)", async () => {
     const model = createDocument("id-1");
     model.sections[0].blocks = [
