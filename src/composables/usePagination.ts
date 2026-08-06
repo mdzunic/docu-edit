@@ -117,6 +117,13 @@ export function usePagination(
   let running = false;
   let stalledFrames = 0;
   let busyTimer: ReturnType<typeof setTimeout> | null = null;
+  // One `[data-section][data-block]` walk of the rendered canvas, indexed by
+  // address, so slice lookup is O(1) instead of a full-tree querySelectorAll
+  // per measured block — a large pass that way cost O(n^2) DOM walks, which
+  // blew the AC-50 2s budget at ~200 pages. Invalidated whenever a relayout
+  // assigns new pages (the only time the rendered slice set can change);
+  // within a pass the DOM is stable, so one walk serves every block.
+  let sliceIndex: Map<string, Element[]> | null = null;
   // Measurement cursor into `pending` between re-layouts: measuring does
   // not need a fresh layout every frame (elements are found in whatever is
   // currently rendered), so mid-pass re-layouts are throttled — they are
@@ -170,6 +177,7 @@ export function usePagination(
       reconciled.some((entry, index) => entry !== pages.value[index])
     ) {
       pages.value = reconciled;
+      sliceIndex = null; // The rendered slice set is about to change.
     }
     return pending.length + missingOffsets;
   }
@@ -254,11 +262,26 @@ export function usePagination(
   }
 
   function sliceElements(root: HTMLElement, section: number, block: number): Element[] {
-    return Array.from(
-      root.querySelectorAll(
-        `[data-section="${section}"][data-block="${block}"]:not([data-row])`,
-      ),
-    ).sort((a, b) => sliceStartOf(a) - sliceStartOf(b));
+    if (sliceIndex === null) {
+      // One walk, grouped by address. Row elements inside tables repeat the
+      // parent block's data-block (SPEC-022) and are not slices, so they are
+      // excluded the same way the per-address query was.
+      const index = new Map<string, Element[]>();
+      for (const el of Array.from(root.querySelectorAll("[data-section][data-block]:not([data-row])"))) {
+        const address = `${el.getAttribute("data-section")}:${el.getAttribute("data-block")}`;
+        const group = index.get(address);
+        if (group) {
+          group.push(el);
+        } else {
+          index.set(address, [el]);
+        }
+      }
+      for (const group of index.values()) {
+        group.sort((a, b) => sliceStartOf(a) - sliceStartOf(b));
+      }
+      sliceIndex = index;
+    }
+    return sliceIndex.get(`${section}:${block}`) ?? [];
   }
 
   function measureOne(root: HTMLElement, model: DocumentModel, target: PendingTarget): boolean {
