@@ -160,10 +160,11 @@ export function measureParagraphText(
 ): MeasuredParagraph | null {
   const formatting = paragraph.formatting;
   const baseFont: ResolvedFont = { family: base.family, sizePx: base.sizePx, bold: false, italic: false };
-  const strut = measurer.normalGeometryOf(baseFont);
-  if (!strut) {
+  const strutOrNull = measurer.normalGeometryOf(baseFont);
+  if (!strutOrNull) {
     return null;
   }
+  const strut: LineGeometry = strutOrNull;
 
   // Horizontal geometry, mirroring paragraphStyle: logical start/end
   // indents (a list level's indent when no direct one is set), first-line

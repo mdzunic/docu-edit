@@ -1,14 +1,27 @@
 // The pagination controller (SPEC-028): owns the measurement cache and the
 // measure → layout loop that turns the pure engine (lib/pagination) plus
-// DOM measurements (lib/pageMetrics) into the pages the canvas renders.
+// measurements into the pages the canvas renders.
 //
 // Every model change re-runs the LAYOUT synchronously (cheap math), so the
 // rendered pages always agree with the model's block indices; MEASUREMENT
 // is what stays incremental and asynchronous: metrics are cached per block
 // object (commands replace only the blocks they touch — see commands.ts),
-// so a keystroke re-measures one block, in a requestAnimationFrame batch,
-// and a 200-page document opens with estimated pages that refine over a
-// few frames without ever blocking the UI (AC-34, AC-35).
+// so a keystroke re-measures one block, and a 200-page document settles
+// within the AC-50 budget without ever blocking the UI (AC-49..51).
+//
+// Two measurement backends share the cache:
+//  - blocks rendered on a realized page are measured off their own DOM
+//    elements (lib/pageMetrics) — exact, and the only option for tables,
+//    images and break markers;
+//  - unrendered paragraphs (their pages are virtualized empty boxes — see
+//    DocumentView's realization) are measured with canvas text metrics
+//    (lib/textMetrics), which also yields their line-start offsets for
+//    free. This is what makes the bulk pass over a 200-page document cheap:
+//    no DOM is mounted to measure it.
+// Unrendered non-paragraphs keep their estimates ("deferred"): the settle
+// loop finishes once a full pass makes no progress, and DocumentView
+// re-schedules when realization changes so they are measured the moment
+// they render.
 import { ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import {
   isBreak,
@@ -16,6 +29,7 @@ import {
   isTable,
   type Block,
   type DocumentModel,
+  type Paragraph,
 } from "../lib/documentModel";
 import {
   estimateMetrics,
@@ -31,14 +45,22 @@ import {
   lineStartOffsets,
   measureBlockElement,
 } from "../lib/pageMetrics";
+import {
+  createCanvasTextMeasurer,
+  measureParagraphText,
+  type BaseFont,
+  type CanvasTextMeasurer,
+} from "../lib/textMetrics";
 import { sliceStartOf } from "../lib/domCaret";
 import { scheduleIdleWork, type IdleHandle } from "../lib/idleScheduler";
 import type { CaretPosition } from "../lib/textEditing";
 
 interface CacheEntry {
   metrics: BlockMetrics;
-  /** Character offset each line starts at — computed lazily, only for
-   * blocks the layout actually splits across pages. */
+  /** Character offset each line starts at. Known immediately for
+   * canvas-measured paragraphs (the wrap decided them); computed lazily
+   * with Range hit-testing for DOM-measured blocks the layout actually
+   * splits across pages. */
   lineOffsets?: number[];
 }
 
@@ -71,10 +93,16 @@ const IDLE_BUDGET_MS = 12;
  * e.g. a find refresh) always wins the main thread. */
 const INTERACTION_PAUSE_MS = 400;
 
-/** Per-relayout budget for resolving split blocks' line-start character
- * offsets (Range hit-testing is the most expensive read this module does —
- * a 200-page pass resolves them across several frames, not in one). */
+/** Per-relayout budget for resolving DOM-measured split blocks' line-start
+ * character offsets (Range hit-testing is the most expensive read this
+ * module does). Canvas-measured paragraphs never need this. */
 const OFFSETS_BUDGET_MS = 12;
+
+/** Full passes over the pending list with zero progress before the loop
+ * settles: what remains is deferred (unrendered non-paragraphs keeping
+ * their estimates until realization renders them). Two passes, not one, so
+ * a Vue patch that is about to render them gets a chance to land. */
+const MAX_STALLED_PASSES = 2;
 
 export interface PaginationController {
   pages: ShallowRef<PageLayout[]>;
@@ -84,8 +112,13 @@ export interface PaginationController {
    * "clean" once the layout is fully measured — the canvas exposes it as
    * data-pagination-state so tests get a positive settled signal. */
   state: Ref<"clean" | "measuring">;
+  /** Whether unrendered paragraphs can be measured without mounting them
+   * (canvas metrics available) — the gate for page virtualization: without
+   * it every page must realize so the DOM path can measure it. */
+  canMeasureOffscreen: boolean;
   /** Re-lays-out synchronously and schedules measurement of anything the
-   * cache misses. Call on every model change. */
+   * cache misses. Call on every model change (and when realization renders
+   * previously virtual pages, so their blocks get exact DOM metrics). */
   schedule: () => void;
   /** Drops every cached measurement (formatting-marks toggle, font load —
    * anything that reflows text without replacing block objects). */
@@ -116,6 +149,7 @@ export function usePagination(
   let slot: IdleHandle | null = null;
   let running = false;
   let stalledFrames = 0;
+  let stalledPasses = 0;
   let busyTimer: ReturnType<typeof setTimeout> | null = null;
   // One `[data-section][data-block]` walk of the rendered canvas, indexed by
   // address, so slice lookup is O(1) instead of a full-tree querySelectorAll
@@ -130,7 +164,28 @@ export function usePagination(
   // what makes a long pass expensive, not the measuring itself.
   let cursor = 0;
   let framesSinceLayout = 0;
+  let measuredThisPass = 0;
   let lastInteraction = 0;
+
+  // The canvas measurer's DOM probe host: the pages wrapper (the content
+  // root's parent), OUTSIDE the contenteditable root so probe text can
+  // never leak into canvas-vs-model text comparisons, but inside the app's
+  // font context.
+  const measurer: CanvasTextMeasurer | null = createCanvasTextMeasurer(
+    () => rootOf()?.parentElement ?? null,
+  );
+  let baseFont: BaseFont | null = null;
+
+  function baseFontOf(root: HTMLElement): BaseFont {
+    if (!baseFont) {
+      const style = root.ownerDocument.defaultView?.getComputedStyle(root);
+      baseFont = {
+        family: style?.fontFamily || "sans-serif",
+        sizePx: style ? Number.parseFloat(style.fontSize) || 16 : 16,
+      };
+    }
+    return baseFont;
+  }
 
   function noteInteraction(): void {
     lastInteraction = performance.now();
@@ -147,9 +202,10 @@ export function usePagination(
   }
 
   // Re-lays-out from the current cache. Returns the number of blocks still
-  // unresolved (unmeasured, or split without line offsets yet) so the
-  // measure loop knows whether the layout has fully settled.
-  function relayout(model: DocumentModel): number {
+  // unresolved (unmeasured, or split without line offsets yet) plus how
+  // many offsets this call resolved, so the measure loop can tell settled
+  // from stalled.
+  function relayout(model: DocumentModel): { unresolved: number; resolved: number } {
     pending = [];
     const seen = new Set<Block>();
     const provider: MetricsProvider = {
@@ -166,7 +222,7 @@ export function usePagination(
       },
     };
     const layout = paginate(model, provider);
-    const missingOffsets = ensureLineOffsets(model, layout);
+    const offsets = ensureLineOffsets(model, layout);
     buildPlacements(model, layout);
     const reconciled = reconcilePages(pages.value, layout);
     // Skip the assignment when nothing changed — during a long measurement
@@ -179,18 +235,23 @@ export function usePagination(
       pages.value = reconciled;
       sliceIndex = null; // The rendered slice set is about to change.
     }
-    return pending.length + missingOffsets;
+    return { unresolved: pending.length + offsets.missing, resolved: offsets.resolved };
   }
 
-  // Character offsets for every split block the new layout contains, read
-  // from the block's CURRENT rendering (whole, or sliced by the previous
-  // layout — either holds all its lines). Budgeted: Range hit-testing is
-  // expensive, so leftovers are counted and resolved on later frames — an
-  // unresolved split renders whole meanwhile (see renderEntryFor).
-  function ensureLineOffsets(model: DocumentModel, layout: PageLayout[]): number {
+  // Character offsets for every split block the new layout contains that
+  // still lacks them (DOM-measured blocks only — canvas measurement stores
+  // offsets at measure time), read from the block's CURRENT rendering
+  // (whole, or sliced by the previous layout — either holds all its
+  // lines). Budgeted: Range hit-testing is expensive, so leftovers are
+  // counted and resolved on later frames — an unresolved split renders
+  // whole meanwhile (see renderEntryFor).
+  function ensureLineOffsets(
+    model: DocumentModel,
+    layout: PageLayout[],
+  ): { missing: number; resolved: number } {
     const root = rootOf();
     if (!root) {
-      return 0;
+      return { missing: 0, resolved: 0 };
     }
     const started = performance.now();
     let missing = 0;
@@ -228,7 +289,7 @@ export function usePagination(
         resolved += 1;
       }
     }
-    return missing;
+    return { missing, resolved };
   }
 
   function buildPlacements(model: DocumentModel, layout: PageLayout[]): void {
@@ -284,27 +345,48 @@ export function usePagination(
     return sliceIndex.get(`${section}:${block}`) ?? [];
   }
 
+  function isParagraphBlock(block: Block): block is Paragraph {
+    return !isTable(block) && !isImage(block) && !isBreak(block);
+  }
+
   function measureOne(root: HTMLElement, model: DocumentModel, target: PendingTarget): boolean {
     const block = model.sections[target.section]?.blocks[target.block];
     if (block !== target.ref) {
       return true; // the model moved on; the new layout re-listed what matters
     }
-    const elements = sliceElements(root, target.section, target.block);
-    if (elements.length === 0) {
-      return false;
-    }
     const width = sectionGeometryPx(model, target.section).contentWidthPx;
-    const splittable = !isTable(block) && !isImage(block) && !isBreak(block);
-    const metrics = combineSliceMetrics(
-      elements.map((element) => measureBlockElement(element, width, splittable)),
-    );
-    cache.set(block, { metrics });
-    return true;
+    const elements = sliceElements(root, target.section, target.block);
+    if (elements.length > 0) {
+      const splittable = isParagraphBlock(block);
+      const metrics = combineSliceMetrics(
+        elements.map((element) => measureBlockElement(element, width, splittable)),
+      );
+      cache.set(block, { metrics });
+      return true;
+    }
+    // Not rendered (its page is a virtualized empty box): paragraphs are
+    // measured with canvas text metrics; anything else keeps its estimate
+    // until realization renders it.
+    if (measurer && isParagraphBlock(block)) {
+      const measured = measureParagraphText(
+        block,
+        width,
+        baseFontOf(root),
+        model.showFormattingMarks === true,
+        measurer,
+      );
+      if (measured) {
+        cache.set(block, { metrics: measured.metrics, lineOffsets: measured.lineOffsets });
+        return true;
+      }
+    }
+    return false;
   }
 
   function finish(): void {
     running = false;
     stalledFrames = 0;
+    stalledPasses = 0;
     if (busyTimer !== null) {
       clearTimeout(busyTimer);
       busyTimer = null;
@@ -315,7 +397,7 @@ export function usePagination(
 
   // Measurement runs in idle time where the browser offers it — user input
   // and rendering preempt it naturally, which is what keeps a 200-page
-  // pass from ever freezing or janking the UI (AC-34).
+  // pass from ever freezing or janking the UI (AC-49/51).
   function measureLoop(): void {
     slot = scheduleIdleWork((budgetMs) => {
       const root = rootOf();
@@ -325,9 +407,9 @@ export function usePagination(
         return;
       }
       // Bulk work yields to live interaction: while the user is typing or
-      // clicking, a large pass waits (their input owns the thread — AC-34);
-      // a tiny pass (the one block a keystroke re-measures) still runs
-      // immediately so split paragraphs update under the caret.
+      // clicking, a large pass waits (their input owns the thread); a tiny
+      // pass (the one block a keystroke re-measures) still runs immediately
+      // so split paragraphs update under the caret.
       if (
         pending.length - cursor > 3 &&
         performance.now() - lastInteraction < INTERACTION_PAUSE_MS
@@ -336,9 +418,13 @@ export function usePagination(
         return;
       }
       const started = performance.now();
+      const startCursor = cursor;
       let measured = 0;
       while (cursor < pending.length) {
-        if (measured > 0 && performance.now() - started > budgetMs) {
+        // The budget break holds regardless of progress — skipped (deferred)
+        // targets count too — so one idle slot can never turn into an
+        // unbounded walk; at least one target advances per slot.
+        if (cursor > startCursor && performance.now() - started > budgetMs) {
           break;
         }
         if (measureOne(root, model, pending[cursor])) {
@@ -346,26 +432,41 @@ export function usePagination(
         }
         cursor += 1;
       }
+      measuredThisPass += measured;
       framesSinceLayout += 1;
       // Re-layouts are the expensive part of a pass (page fill + offset
       // resolution + a render-entry rebuild downstream), so they happen
       // only when the pending list is exhausted — with a generous safety
       // valve — never every frame.
       const exhausted = cursor >= pending.length;
-      let unresolved = -1;
+      let relaidOut = false;
       if (exhausted || framesSinceLayout >= 60) {
-        unresolved = relayout(model);
+        const { unresolved, resolved } = relayout(model);
+        relaidOut = true;
         cursor = 0;
         framesSinceLayout = 0;
         if (unresolved === 0) {
           finish();
           return;
         }
+        // A full pass that neither measured a block nor resolved offsets
+        // made no progress: what's left is deferred until realization
+        // renders it. Settle rather than spin — DocumentView re-schedules
+        // when realization changes.
+        if (exhausted) {
+          stalledPasses = measuredThisPass === 0 && resolved === 0 ? stalledPasses + 1 : 0;
+          measuredThisPass = 0;
+          if (stalledPasses >= MAX_STALLED_PASSES) {
+            finish();
+            return;
+          }
+        }
       }
-      // No progress at all (elements not rendered yet, or only offsets
-      // remain and a relayout did not run this frame): retry a few frames,
-      // then give up until the next schedule() rather than spinning.
-      stalledFrames = measured === 0 && unresolved === -1 ? stalledFrames + 1 : 0;
+      // No progress at all — nothing measured, no movement through the
+      // pending list, no relayout this frame: retry a few frames, then give
+      // up until the next schedule() rather than spinning.
+      stalledFrames =
+        measured === 0 && cursor === startCursor && !relaidOut ? stalledFrames + 1 : 0;
       if (stalledFrames > 8) {
         finish();
         return;
@@ -385,6 +486,8 @@ export function usePagination(
     if (!running) {
       running = true;
       stalledFrames = 0;
+      stalledPasses = 0;
+      measuredThisPass = 0;
       measureLoop();
     }
   }
@@ -396,7 +499,7 @@ export function usePagination(
       finish();
       return;
     }
-    const unresolved = relayout(model);
+    const { unresolved } = relayout(model);
     cursor = 0;
     framesSinceLayout = 0;
     if (unresolved === 0) {
@@ -413,6 +516,8 @@ export function usePagination(
 
   function invalidateAll(): void {
     cache = new WeakMap();
+    baseFont = null;
+    measurer?.reset();
     schedule();
   }
 
@@ -462,6 +567,7 @@ export function usePagination(
     pages,
     busy,
     state,
+    canMeasureOffscreen: measurer !== null,
     schedule,
     invalidateAll,
     isMeasured,
