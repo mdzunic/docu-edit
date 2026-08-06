@@ -47,3 +47,55 @@ export function scheduleIdleWork(
     },
   };
 }
+
+// One shared channel with a FIFO of scheduled slots: each postMessage runs
+// exactly one queued slot (a cancelled slot runs as a no-op). Slots are
+// one-shot (the callback reschedules), matching scheduleIdleWork's shape.
+let eagerChannel: MessageChannel | null = null;
+const eagerQueue: Array<() => void> = [];
+
+/** Runs `callback` on the next macrotask via a MessageChannel — the
+ * highest-duty way to chain background slots: unlike requestIdleCallback
+ * there is no frame-aligned wait between slots, while input events and
+ * rendering still interleave between macrotasks. `budgetMs` is passed
+ * through as the slot's time budget; the caller sizes it to bound how long
+ * input can be delayed. Falls back to requestAnimationFrame where
+ * MessageChannel is unavailable. */
+export function scheduleEagerWork(
+  callback: (budgetMs: number) => void,
+  budgetMs: number,
+): IdleHandle {
+  if (typeof MessageChannel !== "function") {
+    const handle = window.requestAnimationFrame(() => callback(budgetMs));
+    return {
+      cancel() {
+        window.cancelAnimationFrame(handle);
+      },
+    };
+  }
+  if (!eagerChannel) {
+    eagerChannel = new MessageChannel();
+    eagerChannel.port1.addEventListener("message", () => {
+      const run = eagerQueue.shift();
+      if (run) {
+        run();
+      }
+    });
+    // addEventListener (unlike onmessage) does not start the port.
+    eagerChannel.port1.start();
+  }
+  let cancelled = false;
+  const slot = (): void => {
+    if (!cancelled) {
+      callback(budgetMs);
+    }
+  };
+  eagerQueue.push(slot);
+  // eslint-disable-next-line unicorn/require-post-message-target-origin -- MessagePort.postMessage has no targetOrigin parameter (its second argument is a transfer list).
+  eagerChannel.port2.postMessage(null);
+  return {
+    cancel() {
+      cancelled = true;
+    },
+  };
+}

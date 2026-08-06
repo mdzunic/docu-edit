@@ -21,6 +21,10 @@ const props = defineProps({
   /** Precomputed render entries (lib/pageRender.RenderEntry) — the typed
    * default seed gives the template its element type (see StylePicker). */
   entries: { type: Array, default: () => noRenderEntries() },
+  /** A virtualized page (SPEC-028): the box renders with its exact layout
+   * geometry but none of its content — the pagination controller measures
+   * its blocks off-DOM instead. */
+  virtual: { type: Boolean, default: false },
   cellRange: { type: Object, default: null },
 });
 
@@ -43,6 +47,7 @@ function componentFor(entry = noRenderEntries()[0]) {
   <div
     class="page"
     data-testid="document-page"
+    :data-virtual="virtual ? '1' : undefined"
     :style="pageStyle"
   >
     <div

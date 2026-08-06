@@ -90,6 +90,10 @@ interface FontSpan {
   font: ResolvedFont;
   start: number;
   end: number;
+  /** Precomputed per-span vertical rollup — resolved once so the wrap's
+   * per-token bookkeeping is pure arithmetic. */
+  advancePx: number;
+  inkHeightPx: number;
 }
 
 /** Measures `[from, to)` of the paragraph text, split at font boundaries so
@@ -179,47 +183,57 @@ export function measureParagraphText(
   const availWidth = Math.max(1, contentWidthPx - indentStart - indentEnd);
   const firstWidth = Math.max(1, availWidth - firstIndent);
 
+  const lineSpacingPt = formatting?.lineSpacingPt;
+  const lineSpacing = formatting?.lineSpacing;
+
   const text = paragraph.runs.map((run) => run.text).join("");
   const spans: FontSpan[] = [];
   let offset = 0;
   for (const run of paragraph.runs) {
-    const font = resolveRunFont(run.formatting, base);
-    if (run.text.length > 0) {
-      spans.push({ font, start: offset, end: offset + run.text.length });
-      offset += run.text.length;
+    if (run.text.length === 0) {
+      continue;
     }
+    const font = resolveRunFont(run.formatting, base);
+    const geometry = measurer.normalGeometryOf(font);
+    if (!geometry) {
+      return null;
+    }
+    spans.push({
+      font,
+      start: offset,
+      end: offset + run.text.length,
+      advancePx: advanceFor(font, geometry, lineSpacingPt, lineSpacing),
+      inkHeightPx: geometry.inkHeightPx,
+    });
+    offset += run.text.length;
   }
 
-  const lineSpacingPt = formatting?.lineSpacingPt;
-  const lineSpacing = formatting?.lineSpacing;
-
   // Per-line vertical rollup: every line contains the paragraph's strut,
-  // plus whatever run fonts place glyphs on it.
-  let lineAdvance = advanceFor(baseFont, strut, lineSpacingPt, lineSpacing);
+  // plus whatever run fonts place glyphs on it. Span geometry is resolved
+  // above, so this is pure arithmetic on the wrap's hot path.
+  const strutAdvance = advanceFor(baseFont, strut, lineSpacingPt, lineSpacing);
+  let lineAdvance = strutAdvance;
   let lineInk = strut.inkHeightPx;
   const advances: number[] = [];
   const inks: number[] = [];
   const offsets: number[] = [0];
-  const geometryOf = (font: ResolvedFont): LineGeometry | null => measurer.normalGeometryOf(font);
 
   function resetLineRollup(): void {
-    lineAdvance = advanceFor(baseFont, strut, lineSpacingPt, lineSpacing);
+    lineAdvance = strutAdvance;
     lineInk = strut.inkHeightPx;
   }
 
-  let rollupFailed = false;
   function registerFonts(from: number, to: number): void {
     for (const span of spans) {
       if (span.end <= from || span.start >= to) {
         continue;
       }
-      const geometry = geometryOf(span.font);
-      if (!geometry) {
-        rollupFailed = true;
-        return;
+      if (span.advancePx > lineAdvance) {
+        lineAdvance = span.advancePx;
       }
-      lineAdvance = Math.max(lineAdvance, advanceFor(span.font, geometry, lineSpacingPt, lineSpacing));
-      lineInk = Math.max(lineInk, geometry.inkHeightPx);
+      if (span.inkHeightPx > lineInk) {
+        lineInk = span.inkHeightPx;
+      }
     }
   }
 
@@ -234,13 +248,27 @@ export function measureParagraphText(
 
   const lineWidth = (): number => (advances.length === 0 ? firstWidth : availWidth);
 
+  // Fast path: most paragraphs of a bulk document fit on one line, and one
+  // whole-text measurement decides that without the per-token walk (the
+  // whole string is also the closest match to how the layout engine shapes
+  // an unbroken line). Tabs and newlines need the full walk.
+  const length = text.length;
+  const pilcrowWidth = marksOn ? measurer.widthOf("¶", baseFont) : 0;
+  if (length > 0 && !text.includes("\n") && !text.includes("\t")) {
+    const total = measureRange(text, spans, 0, length, measurer) + pilcrowWidth;
+    if (total <= firstWidth + FIT_EPS) {
+      registerFonts(0, length);
+      closeLine(null);
+      return assembleParagraph(contentWidthPx, formatting, advances, inks, offsets);
+    }
+  }
+
   let x = 0;
   // The offset a break would start the next line at — after the whitespace
   // run preceding the current word (trailing whitespace hangs past the edge
   // in pre-wrap and never wraps by itself).
   let breakAt = -1;
   let i = 0;
-  const length = text.length;
   while (i < length) {
     const ch = text[i];
     if (ch === "\n") {
@@ -292,18 +320,23 @@ export function measureParagraphText(
     // The formatting-marks pilcrow (`::after` on the paragraph, so the base
     // font) adds real inline width to the last line and can wrap to its own
     // line when a trailing space leaves a break opportunity.
-    const pilcrow = measurer.widthOf("¶", baseFont);
-    if (x + pilcrow > lineWidth() + FIT_EPS && breakAt === length && length > 0) {
+    if (x + pilcrowWidth > lineWidth() + FIT_EPS && breakAt === length && length > 0) {
       closeLine(length);
       x = 0;
     }
-    x += pilcrow;
+    x += pilcrowWidth;
   }
   closeLine(null);
-  if (rollupFailed) {
-    return null;
-  }
+  return assembleParagraph(contentWidthPx, formatting, advances, inks, offsets);
+}
 
+function assembleParagraph(
+  contentWidthPx: number,
+  formatting: Paragraph["formatting"],
+  advances: number[],
+  inks: number[],
+  offsets: number[],
+): MeasuredParagraph {
   const lines: LineBox[] = [];
   let top = 0;
   let heightPx = 0;
@@ -314,7 +347,6 @@ export function measureParagraphText(
     top += advances[line];
     heightPx += advances[line];
   }
-
   return {
     metrics: {
       contentWidthPx,
@@ -351,12 +383,6 @@ function cssFontOf(font: ResolvedFont): string {
   return `${style}${weight}${font.sizePx}px ${cssFamilies(font.family)}`;
 }
 
-function geometryKeyOf(font: ResolvedFont): string {
-  // Bold/italic do not change a font's vertical metrics in practice, but
-  // they are part of the key anyway — a synthesized face could differ.
-  return cssFontOf(font);
-}
-
 export interface CanvasTextMeasurer extends TextMeasurer {
   /** Drops cached font geometry — call when loaded web fonts change what a
    * family resolves to (the same moment block metrics are invalidated). */
@@ -385,6 +411,19 @@ export function createCanvasTextMeasurer(
   }
   let activeFont = "";
   const geometry = new Map<string, LineGeometry | null>();
+  // The canvas font shorthand per resolved-font OBJECT: widthOf runs once
+  // per token on the wrap's hot path, and rebuilding (and re-quoting) the
+  // string each time dominated bulk measurement.
+  const fontCss = new WeakMap<ResolvedFont, string>();
+
+  function cssOf(font: ResolvedFont): string {
+    let css = fontCss.get(font);
+    if (css === undefined) {
+      css = cssFontOf(font);
+      fontCss.set(font, css);
+    }
+    return css;
+  }
 
   function probeGeometry(font: ResolvedFont): LineGeometry | null {
     const host = probeHost();
@@ -432,7 +471,7 @@ export function createCanvasTextMeasurer(
 
   return {
     widthOf(textValue: string, font: ResolvedFont): number {
-      const css = cssFontOf(font);
+      const css = cssOf(font);
       if (css !== activeFont) {
         ctx!.font = css;
         activeFont = css;
@@ -440,7 +479,7 @@ export function createCanvasTextMeasurer(
       return ctx!.measureText(textValue).width;
     },
     normalGeometryOf(font: ResolvedFont): LineGeometry | null {
-      const key = geometryKeyOf(font);
+      const key = cssOf(font);
       if (!geometry.has(key)) {
         geometry.set(key, probeGeometry(font));
       }

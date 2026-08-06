@@ -132,6 +132,7 @@ import {
   noElement,
   noEventTarget,
   noTableCellTarget,
+  paragraphElementForCaret,
   setDomCaret,
   setDomSelection,
   tableCellFromEventTarget,
@@ -258,7 +259,7 @@ import {
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import { markSegments } from "../lib/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
-import { sectionGeometryPx, wholePageItem } from "../lib/pagination";
+import { PX_PER_CM, sectionGeometryPx, wholePageItem } from "../lib/pagination";
 import {
   deleteImage,
   imageAt,
@@ -897,6 +898,7 @@ function handleScroll() {
   if (scrollContainer) {
     scrollTop = scrollContainer.scrollTop;
   }
+  scheduleViewportRefresh();
   // Re-measure the (viewport-limited) highlight overlay for the new scroll
   // position; rAF-throttled inside scheduleFindMeasure (SPEC-017).
   if (findVisible.value) {
@@ -950,6 +952,7 @@ onMounted(() => {
   document.addEventListener("selectionchange", handleSelectionChange);
   document.addEventListener("keydown", handleGlobalShortcut);
   attachScrollListener();
+  refreshViewportRange();
   if (doc.value) {
     openSession(documentId.value);
   }
@@ -1406,6 +1409,16 @@ async function restoreCaretAfterRender() {
   if (!root || !caret) {
     return;
   }
+  if (!paragraphElementForCaret(root, caret)) {
+    // The caret's paragraph landed on a virtualized page (an undo/redo or
+    // command can move it far): refresh the page trackers — which realizes
+    // that page — and wait for the extra patch before placing.
+    refreshCaretPage();
+    if (selectionAnchor) {
+      anchorPage.value = pagination.pageOfCaret(selectionAnchor);
+    }
+    await nextTick();
+  }
   if (selectionAnchor) {
     setDomSelection(root, selectionAnchor, caret);
   } else {
@@ -1466,6 +1479,13 @@ async function verifyCanvasAfterRender() {
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model) {
+    return;
+  }
+  if (virtualizing.value) {
+    // Virtualized pages keep their text out of the DOM by design, so the
+    // whole-canvas equality check below cannot hold; composition commits
+    // already re-key their own paragraph (bumpBlockKey), which is the part
+    // of this belt that matters.
     return;
   }
   const expected = model.sections
@@ -2226,6 +2246,11 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   styleState.value = toolbarStyleState(model, selection);
   paragraphPagination.value = paragraphPaginationState(model, selection);
   caretSectionIndex.value = range.end.section;
+  // Both ends of a selection must stay realized (a virtualized endpoint
+  // would collapse the DOM selection); a collapsed caret pins only its own
+  // page via refreshCaretPage.
+  anchorPage.value =
+    compareCaret(range.start, range.end) === 0 ? -1 : pagination.pageOfCaret(range.start);
   refreshCaretPage();
 }
 
@@ -2243,14 +2268,26 @@ function applyCaretMove(target = noCaret(), extend = false) {
   // a native click/drag), not these app-driven ones, because `caret` is
   // already updated to match by the time their selectionchange fires.
   breakTypingGroup(documentId.value);
-  if (extend) {
-    extendDomSelection(root, target);
-  } else {
-    setDomCaret(root, target);
+  const place = () => {
+    if (extend) {
+      extendDomSelection(root, target);
+    } else {
+      setDomCaret(root, target);
+    }
+    caret = target;
+    const range = modelRangeFromSelection(root, document.getSelection());
+    updateCaretStatus(range ?? { start: target, end: target });
+  };
+  if (paragraphElementForCaret(root, target)) {
+    place();
+    return;
   }
+  // The target sits on a virtualized page: update the caret trackers first
+  // (which realizes that page) and place once the patch has rendered it.
   caret = target;
-  const range = modelRangeFromSelection(root, document.getSelection());
-  updateCaretStatus(range ?? { start: target, end: target });
+  const anchor = extend && selectionAnchor ? selectionAnchor : target;
+  updateCaretStatus({ start: anchor, end: target });
+  void nextTick().then(place);
 }
 
 /** The caret's moving end (the DOM selection's focus), which Shift+paging
@@ -2272,7 +2309,7 @@ function domFocusCaret(root = noElement()) {
 /** PageUp/PageDown: scrolls one viewport and moves the caret to the text
  * position one viewport away from where it was, snapping to the document's
  * start/end when there is nothing further to page onto. */
-function moveCaretByPage(direction = 1, extend = false) {
+async function moveCaretByPage(direction = 1, extend = false) {
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model) {
@@ -2290,6 +2327,10 @@ function moveCaretByPage(direction = 1, extend = false) {
     const before = container ? container.scrollTop : 0;
     if (container) {
       container.scrollTop = before + direction * pageHeight;
+      // The page scrolled onto may be a virtualized empty box: realize the
+      // new viewport before hit-testing for the caret's landing position.
+      refreshViewportRange();
+      await nextTick();
     }
     const scrolled = container ? container.scrollTop - before : 0;
     target = caretAtClientPoint(
@@ -3514,9 +3555,18 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       event.preventDefault();
       pendingFormat = noPendingFormat();
       const all = selectAll(model);
-      setDomSelection(root, all.anchor, all.focus);
       caret = all.focus;
       updateCaretStatus({ start: all.anchor, end: all.focus });
+      if (
+        paragraphElementForCaret(root, all.anchor) &&
+        paragraphElementForCaret(root, all.focus)
+      ) {
+        setDomSelection(root, all.anchor, all.focus);
+      } else {
+        // An endpoint sits on a virtualized page: updateCaretStatus above
+        // realizes both endpoint pages; select once they have rendered.
+        void nextTick().then(() => setDomSelection(root, all.anchor, all.focus));
+      }
       break;
     }
     case "format.bold":
@@ -3630,7 +3680,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     case "nav.pageUp":
     case "nav.pageDown":
       event.preventDefault();
-      moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
+      void moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
       break;
     case "style.normal":
     case "style.heading1":
@@ -3696,6 +3746,114 @@ const pageCount = computed(() => Math.max(1, paginationPages.value.length));
 const caretPage = ref(1);
 const caretSectionIndex = ref(0);
 const paragraphPagination = ref(emptyParagraphPaginationState());
+
+// --- page virtualization (SPEC-028 AC-49/50) --------------------------------
+// Mounting every block of a 200-page document is what used to blow the
+// settle budget: each mid-pass relayout shifted page boundaries, moving
+// most paragraphs to a different DocPage, and Vue unmounted + remounted
+// nearly the whole canvas several times per pass. Beyond a small page
+// count only pages that matter render their content — everything near the
+// viewport, the caret's / selection anchor's / current find match's page,
+// and pages already realized whose layout hasn't changed (sticky, so DOM
+// nodes on earlier pages survive edits elsewhere — AC-52/53) — while the
+// rest render as correctly-sized empty page boxes. Their blocks are
+// measured off-DOM by the pagination controller's canvas metrics, which is
+// why virtualization requires `canMeasureOffscreen`.
+
+/** Documents up to this many pages always realize fully — the exact
+ * pre-virtualization behaviour for ordinary documents. */
+const VIRTUALIZE_MIN_PAGES = 12;
+/** DocPage's inter-page margin (AC-2's visible gap), part of page-top math. */
+const PAGE_GAP_PX = 12;
+/** Extra realization margin around the viewport, px. */
+const VIEWPORT_OVERSCAN_PX = 400;
+
+const viewportPageRange = ref({ start: 0, end: Number.MAX_SAFE_INTEGER });
+/** Page-layout objects that have rendered their content once: they keep
+ * rendering while reconciliation preserves them (an unchanged page never
+ * loses its DOM), and drop out naturally when an edit replaces the page. */
+const realizedSticky = new WeakSet();
+/** The selection anchor's page (−1 for a collapsed caret): both ends of a
+ * selection must stay rendered or the DOM selection would collapse. */
+const anchorPage = ref(-1);
+
+const virtualizing = computed(
+  () =>
+    pagination.canMeasureOffscreen && paginationPages.value.length > VIRTUALIZE_MIN_PAGES,
+);
+
+/** The current find match's page: realized so the highlight overlay and
+ * scroll-into-view can measure it (SPEC-017). Reads paginationPages so it
+ * recomputes when placements do. */
+const findMatchPage = computed(() => {
+  void paginationPages.value;
+  const match = findMatchesRef.value[findCurrentIndex.value];
+  if (!match) {
+    return -1;
+  }
+  return pagination.pageOfCaret({ section: match.section, block: match.block, offset: match.start });
+});
+
+function refreshViewportRange() {
+  const container = scrollContainer;
+  const pagesEl = pageRef.value;
+  const layout = paginationPages.value;
+  if (!container || !pagesEl || layout.length === 0) {
+    return;
+  }
+  const pagesTop =
+    pagesEl.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop;
+  const viewTop = container.scrollTop - pagesTop - VIEWPORT_OVERSCAN_PX - container.clientHeight;
+  const viewBottom =
+    container.scrollTop - pagesTop + 2 * container.clientHeight + VIEWPORT_OVERSCAN_PX;
+  let top = 0;
+  let start = layout.length - 1;
+  let end = 0;
+  for (let index = 0; index < layout.length; index += 1) {
+    const bottom = top + layout[index].pageSize.heightCm * PX_PER_CM;
+    if (bottom >= viewTop && top <= viewBottom) {
+      if (index < start) {
+        start = index;
+      }
+      if (index > end) {
+        end = index;
+      }
+    }
+    top = bottom + PAGE_GAP_PX;
+  }
+  if (start > end) {
+    start = 0;
+    end = Math.min(2, layout.length - 1);
+  }
+  const current = viewportPageRange.value;
+  if (current.start !== start || current.end !== end) {
+    viewportPageRange.value = { start, end };
+  }
+}
+
+let viewportRefreshHandle = 0;
+function scheduleViewportRefresh() {
+  if (viewportRefreshHandle !== 0 || typeof window.requestAnimationFrame !== "function") {
+    return;
+  }
+  viewportRefreshHandle = window.requestAnimationFrame(() => {
+    viewportRefreshHandle = 0;
+    refreshViewportRange();
+  });
+}
+watch(paginationPages, scheduleViewportRefresh);
+
+// Newly realized pages render blocks that may only have estimated metrics
+// (tables, images — canvas metrics cover paragraphs only): re-schedule so
+// the controller measures them off their fresh DOM.
+watch([viewportPageRange, caretPage], () => {
+  if (!virtualizing.value) {
+    return;
+  }
+  void nextTick().then(() => pagination.schedule());
+});
 
 function refreshCaretPage() {
   if (caret) {
@@ -3858,6 +4016,8 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
 
 // The rendered pages: the layout's items joined with flatBlocks' per-block
 // render data, styles resolved from each page's own geometry (AC-17..19).
+// Under virtualization only realized pages build entries; the rest render
+// as empty boxes with the layout's exact geometry.
 const pagedViews = computed(() => {
   const model = doc.value;
   if (!model) {
@@ -3869,7 +4029,33 @@ const pagedViews = computed(() => {
     byAddress.set(`${entry.section}:${entry.blockIndex}`, entry);
   }
   const lastSection = model.sections.length - 1;
-  return paginationPages.value.map((page) => {
+  const virtual = virtualizing.value;
+  const range = viewportPageRange.value;
+  const caretIndex = caretPage.value - 1;
+  const anchorIndex = anchorPage.value;
+  const findIndex = findMatchPage.value;
+  return paginationPages.value.map((page, pageIndex) => {
+    const realized =
+      !virtual ||
+      (pageIndex >= range.start && pageIndex <= range.end) ||
+      pageIndex === caretIndex ||
+      pageIndex === anchorIndex ||
+      pageIndex === findIndex ||
+      realizedSticky.has(page);
+    if (!realized) {
+      return {
+        pageStyle: {
+          width: `${page.pageSize.widthCm}cm`,
+          height: `${page.pageSize.heightCm}cm`,
+        },
+        contentStyle: {
+          padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
+        },
+        entries: [],
+        virtual: true,
+      };
+    }
+    realizedSticky.add(page);
     const entries = [];
     for (const item of page.items) {
       const flatEntry = byAddress.get(`${item.sectionIndex}:${item.blockIndex}`);
@@ -3911,6 +4097,7 @@ const pagedViews = computed(() => {
         padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
       },
       entries,
+      virtual: false,
     };
   });
 });
@@ -5085,6 +5272,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             :page-style="pageView.pageStyle"
             :content-style="pageView.contentStyle"
             :entries="pageView.entries"
+            :virtual="pageView.virtual"
             :cell-range="cellSelection || undefined"
             @image-select="handleImageSelect"
           />

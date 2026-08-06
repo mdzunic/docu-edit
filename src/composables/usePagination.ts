@@ -52,7 +52,7 @@ import {
   type CanvasTextMeasurer,
 } from "../lib/textMetrics";
 import { sliceStartOf } from "../lib/domCaret";
-import { scheduleIdleWork, type IdleHandle } from "../lib/idleScheduler";
+import { scheduleEagerWork, type IdleHandle } from "../lib/idleScheduler";
 import type { CaretPosition } from "../lib/textEditing";
 
 interface CacheEntry {
@@ -82,16 +82,18 @@ interface PagePlacement {
  * brief re-measures (typing) never flash it. */
 const BUSY_DELAY_MS = 200;
 
-/** Per-slot measurement budget when no idle deadline is available. */
-const FRAME_BUDGET_MS = 4;
-
-/** Ceiling per idle slot even when the browser reports more idle time. */
-const IDLE_BUDGET_MS = 12;
+/** Per-slot measurement budget: slots chain on macrotasks (near-100% duty,
+ * which is what gets a 200-page settle inside AC-50's budget), so this is
+ * also the longest an input event can wait behind one slot. */
+const SLOT_BUDGET_MS = 24;
 
 /** How long after the user's last interaction bulk measurement stays
  * paused — their keystroke/scroll/click (and whatever work it triggers,
  * e.g. a find refresh) always wins the main thread. */
-const INTERACTION_PAUSE_MS = 400;
+const INTERACTION_PAUSE_MS = 250;
+
+/** Retry cadence while bulk work is paused for interaction. */
+const PAUSED_RETRY_MS = 50;
 
 /** Per-relayout budget for resolving DOM-measured split blocks' line-start
  * character offsets (Range hit-testing is the most expensive read this
@@ -151,6 +153,7 @@ export function usePagination(
   let stalledFrames = 0;
   let stalledPasses = 0;
   let busyTimer: ReturnType<typeof setTimeout> | null = null;
+  let pausedTimer: ReturnType<typeof setTimeout> | null = null;
   // One `[data-section][data-block]` walk of the rendered canvas, indexed by
   // address, so slice lookup is O(1) instead of a full-tree querySelectorAll
   // per measured block — a large pass that way cost O(n^2) DOM walks, which
@@ -395,11 +398,12 @@ export function usePagination(
     state.value = "clean";
   }
 
-  // Measurement runs in idle time where the browser offers it — user input
-  // and rendering preempt it naturally, which is what keeps a 200-page
-  // pass from ever freezing or janking the UI (AC-49/51).
+  // Measurement chains in budgeted macrotask slots: input events and
+  // rendering interleave between slots, which is what keeps a 200-page
+  // pass from ever freezing or janking the UI (AC-49/51), while the
+  // near-100% duty cycle keeps the settle inside AC-50's budget.
   function measureLoop(): void {
-    slot = scheduleIdleWork((budgetMs) => {
+    slot = scheduleEagerWork((budgetMs) => {
       const root = rootOf();
       const model = docOf();
       if (!root || !model) {
@@ -414,7 +418,10 @@ export function usePagination(
         pending.length - cursor > 3 &&
         performance.now() - lastInteraction < INTERACTION_PAUSE_MS
       ) {
-        measureLoop();
+        pausedTimer = setTimeout(() => {
+          pausedTimer = null;
+          measureLoop();
+        }, PAUSED_RETRY_MS);
         return;
       }
       const started = performance.now();
@@ -472,7 +479,7 @@ export function usePagination(
         return;
       }
       measureLoop();
-    }, { timeoutMs: 200, fallbackBudgetMs: FRAME_BUDGET_MS, maxBudgetMs: IDLE_BUDGET_MS });
+    }, SLOT_BUDGET_MS);
   }
 
   function startMeasuring(): void {
@@ -550,6 +557,10 @@ export function usePagination(
     }
     slot?.cancel();
     slot = null;
+    if (pausedTimer !== null) {
+      clearTimeout(pausedTimer);
+      pausedTimer = null;
+    }
     finish();
   }
 
