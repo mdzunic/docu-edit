@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { headingTag, paragraphStyle, runKey, runStyle } from "./renderFormatting";
+import {
+  headingTag,
+  paragraphStyle,
+  runKey,
+  runStyle,
+  tableCellStyle,
+  tableColumnWidth,
+  tableRowStyle,
+  tableStyle,
+} from "./renderFormatting";
+import type { Table, TableCell, TableRow } from "./documentModel";
 
 describe("headingTag", () => {
   it("returns 'p' for no heading level", () => {
@@ -157,5 +167,102 @@ describe("paragraphStyle", () => {
 describe("runKey", () => {
   it("produces a stable key from index and text length", () => {
     expect(runKey({ text: "hello", formatting: {} }, 2)).toBe("2-5");
+  });
+});
+
+describe("tableCellStyle (SPEC-023 AC-10..17)", () => {
+  it("maps each set border side and leaves unset ones alone", () => {
+    const cell: TableCell = {
+      blocks: [],
+      borders: {
+        top: { style: "single", widthPt: 1, color: "#ff0000" },
+        left: { style: "double", widthPt: 1.5, color: "#00ff00" },
+      },
+    };
+    const style = tableCellStyle(cell);
+    expect(style.borderTop).toBe("1pt solid #ff0000");
+    expect(style.borderLeft).toBe("1.5pt double #00ff00");
+    expect(style.borderBottom).toBeUndefined();
+    expect(style.borderRight).toBeUndefined();
+  });
+
+  it("renders a 'none' border explicitly so it can clear a default gridline", () => {
+    const cell: TableCell = { blocks: [], borders: { top: { style: "none", widthPt: 0, color: "#000000" } } };
+    expect(tableCellStyle(cell).borderTop).toBe("none");
+  });
+
+  it("maps shading and padding", () => {
+    const cell: TableCell = { blocks: [], shadingFill: "#eeeeee", paddingCm: 0.3 };
+    const style = tableCellStyle(cell);
+    expect(style.backgroundColor).toBe("#eeeeee");
+    expect(style.padding).toBe("0.3cm");
+  });
+
+  it("maps vertical alignment to its CSS keyword — the model's 'center' is CSS's 'middle', not the invalid 'center'", () => {
+    expect(tableCellStyle({ blocks: [], verticalAlign: "center" }).verticalAlign).toBe("middle");
+    expect(tableCellStyle({ blocks: [], verticalAlign: "top" }).verticalAlign).toBe("top");
+    expect(tableCellStyle({ blocks: [], verticalAlign: "bottom" }).verticalAlign).toBe("bottom");
+  });
+
+  it("returns an empty style for a plain cell", () => {
+    expect(tableCellStyle({ blocks: [] })).toEqual({});
+  });
+});
+
+describe("tableRowStyle (AC-4, AC-5)", () => {
+  it("maps a minimum height, a floor rather than a fixed size", () => {
+    const row: TableRow = { cells: [], minHeightCm: 1.5 };
+    expect(tableRowStyle(row)).toEqual({ height: "1.5cm" });
+  });
+
+  it("is empty without a minimum height", () => {
+    expect(tableRowStyle({ cells: [] })).toEqual({});
+  });
+});
+
+function table(overrides: Partial<Table> = {}): Table {
+  return { type: "table", rows: [], columnWidthsCm: [5, 5], ...overrides };
+}
+
+describe("tableStyle (AC-22, AC-23)", () => {
+  it("defaults to a fixed width from the column widths' sum", () => {
+    const style = tableStyle(table());
+    expect(style.tableLayout).toBe("fixed");
+    expect(style.width).toBe("10cm");
+  });
+
+  it("uses the percentage width when set to percent", () => {
+    const style = tableStyle(table({ widthMode: "percent", widthPercent: 60 }));
+    expect(style.width).toBe("60%");
+  });
+
+  it("hands sizing to the browser for auto width", () => {
+    const style = tableStyle(table({ widthMode: "auto" }));
+    expect(style.tableLayout).toBe("auto");
+    expect(style.width).toBeUndefined();
+  });
+
+  it("centres or right-aligns the table on the page", () => {
+    expect(tableStyle(table({ alignment: "center" }))).toMatchObject({ marginLeft: "auto", marginRight: "auto" });
+    expect(tableStyle(table({ alignment: "right" }))).toMatchObject({ marginLeft: "auto", marginRight: "0" });
+    expect(tableStyle(table({ alignment: "left" })).marginLeft).toBeUndefined();
+  });
+});
+
+describe("tableColumnWidth (AC-23)", () => {
+  it("uses the column's own absolute width for a fixed-width table", () => {
+    expect(tableColumnWidth(table({ columnWidthsCm: [4, 6] }), 0)).toBe("4cm");
+    expect(tableColumnWidth(table({ columnWidthsCm: [4, 6] }), 1)).toBe("6cm");
+  });
+
+  it("uses a relative share for a percent-width table, not the absolute width", () => {
+    const percentTable = table({ columnWidthsCm: [4, 6], widthMode: "percent", widthPercent: 50 });
+    expect(tableColumnWidth(percentTable, 0)).toBe("40%");
+    expect(tableColumnWidth(percentTable, 1)).toBe("60%");
+  });
+
+  it("uses a relative share for an auto-width table too", () => {
+    const autoTable = table({ columnWidthsCm: [1, 1, 2], widthMode: "auto" });
+    expect(tableColumnWidth(autoTable, 2)).toBe("50%");
   });
 });

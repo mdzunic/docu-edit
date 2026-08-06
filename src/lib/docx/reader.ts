@@ -5,6 +5,10 @@
 // section's page setup.
 import type {
   Block,
+  BorderLineStyle,
+  BorderSide,
+  CellBorders,
+  CellVerticalAlign,
   DefaultStyles,
   NamedStyle,
   OpaqueBlock,
@@ -16,8 +20,10 @@ import type {
   Section,
   SourceXml,
   Table,
+  TableAlignment,
   TableCell,
   TableRow,
+  TableWidthMode,
 } from "../documentModel";
 import { createDefaultStyles } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
@@ -47,7 +53,7 @@ import {
   parseParagraphProperties,
   parseRunProperties,
 } from "./properties";
-import { twipsToCm } from "./units";
+import { eighthPointsToPt, ooxmlColorToCss, twipsToCm } from "./units";
 
 export class DocxOpenError extends Error {}
 export class LegacyDocError extends Error {}
@@ -219,27 +225,149 @@ function parseParagraph(
   return paragraph;
 }
 
+/** OOXML `w:val`s for `w:tcBorders`' children collapse to the model's small
+ * enum (SPEC-023): the handful of dashed variants all read as "dashed",
+ * "nil"/"none" as "none", and anything else (including "thick", which the
+ * model has no separate weight class for) as a plain single line. */
+function mapBorderLineStyle(val: string): BorderLineStyle {
+  const v = val.toLowerCase();
+  if (v === "nil" || v === "none") {
+    return "none";
+  }
+  if (v === "double" || v === "triple") {
+    return "double";
+  }
+  if (v === "dotted") {
+    return "dotted";
+  }
+  if (v.startsWith("dash") || v.includes("dotdash") || v.includes("dotdotdash")) {
+    return "dashed";
+  }
+  return "single";
+}
+
+function parseBorderSide(el: Element | undefined): BorderSide | undefined {
+  if (!el) {
+    return undefined;
+  }
+  const val = wordAttr(el, "val");
+  if (!val) {
+    return undefined;
+  }
+  const style = mapBorderLineStyle(val);
+  const sz = Number(wordAttr(el, "sz") ?? "");
+  const widthPt = style !== "none" && Number.isFinite(sz) && sz > 0 ? eighthPointsToPt(sz) : 0;
+  const color = ooxmlColorToCss(wordAttr(el, "color")) ?? "auto";
+  return { style, widthPt, color };
+}
+
+/** A cell's `w:tcBorders` (SPEC-023 AC-10..12, AC-24). OOXML's logical
+ * `w:start`/`w:end` are read (falling back to the legacy `w:left`/`w:right`
+ * some producers still emit) and stored as the model's physical left/right —
+ * table RTL is out of scope, so the two coincide. */
+function parseCellBorders(tcPr: Element): CellBorders | undefined {
+  const bordersEl = firstChildElement(tcPr, WORD_NAMESPACE, "tcBorders");
+  if (!bordersEl) {
+    return undefined;
+  }
+  const top = parseBorderSide(firstChildElement(bordersEl, WORD_NAMESPACE, "top"));
+  const bottom = parseBorderSide(firstChildElement(bordersEl, WORD_NAMESPACE, "bottom"));
+  const left = parseBorderSide(
+    firstChildElement(bordersEl, WORD_NAMESPACE, "start") ??
+      firstChildElement(bordersEl, WORD_NAMESPACE, "left"),
+  );
+  const right = parseBorderSide(
+    firstChildElement(bordersEl, WORD_NAMESPACE, "end") ?? firstChildElement(bordersEl, WORD_NAMESPACE, "right"),
+  );
+  if (!top && !bottom && !left && !right) {
+    return undefined;
+  }
+  const borders: CellBorders = {};
+  if (top) {
+    borders.top = top;
+  }
+  if (bottom) {
+    borders.bottom = bottom;
+  }
+  if (left) {
+    borders.left = left;
+  }
+  if (right) {
+    borders.right = right;
+  }
+  return borders;
+}
+
+/** A cell's `w:shd` fill as CSS (SPEC-023 AC-15, AC-26): `w:fill` is the
+ * background colour; `w:color` is the pattern colour on top of it, which the
+ * model has no slot for and drops (the same simplification run shading
+ * makes, SPEC-013). */
+function parseCellShading(tcPr: Element): string | undefined {
+  const shd = firstChildElement(tcPr, WORD_NAMESPACE, "shd");
+  return shd ? ooxmlColorToCss(wordAttr(shd, "fill")) : undefined;
+}
+
+/** A cell's `w:tcMar` (SPEC-023 AC-16): the model holds one uniform padding,
+ * so the top margin stands in for all four — same-format round trips are
+ * exact because the writer re-emits all four equal to it. */
+function parseCellPadding(tcPr: Element): number | undefined {
+  const mar = firstChildElement(tcPr, WORD_NAMESPACE, "tcMar");
+  const top = mar ? firstChildElement(mar, WORD_NAMESPACE, "top") : undefined;
+  const w = top ? Number(wordAttr(top, "w") ?? "") : NaN;
+  return Number.isFinite(w) && w >= 0 ? twipsToCm(w) : undefined;
+}
+
+function parseCellVerticalAlign(tcPr: Element): CellVerticalAlign | undefined {
+  const el = firstChildElement(tcPr, WORD_NAMESPACE, "vAlign");
+  const val = el ? wordAttr(el, "val") : null;
+  return val === "top" || val === "center" || val === "bottom" ? val : undefined;
+}
+
+function parseGridSpan(tcPr: Element): number | undefined {
+  const el = firstChildElement(tcPr, WORD_NAMESPACE, "gridSpan");
+  const val = el ? Number(wordAttr(el, "val")) : NaN;
+  return Number.isInteger(val) && val > 1 ? val : undefined;
+}
+
+/** A cell's `w:vMerge`: absent (not vertically merged), "restart" (the
+ * origin of a new vertical merge — carries its own content) or "continue"
+ * (covered by the origin above; an explicit `w:val` is required for
+ * "restart", its absence defaults to "continue" per the schema). */
+type VMergeKind = "restart" | "continue" | null;
+
+function parseVMerge(tcPr: Element): VMergeKind {
+  const el = firstChildElement(tcPr, WORD_NAMESPACE, "vMerge");
+  if (!el) {
+    return null;
+  }
+  return wordAttr(el, "val") === "restart" ? "restart" : "continue";
+}
+
+/** One `w:tc`'s parse result: the cell itself plus the two attributes
+ * (SPEC-023) that decide how many grid slots it and its followers occupy —
+ * kept out of the TableCell union so pass 2 below can resolve vMerge chains
+ * before the row/table shape is finalised. */
+interface ParsedCellSlot {
+  cell: TableCell;
+  colSpan: number;
+  vMerge: VMergeKind;
+}
+
 function parseTableCell(
   tcEl: Element,
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
-): TableCell | null {
+): ParsedCellSlot | null {
   const blocks: Paragraph[] = [];
-  let tcPr: string | undefined;
+  let tcPrEl: Element | undefined;
+  let tcPrXml: string | undefined;
   for (const child of Array.from(tcEl.children)) {
     if (child.namespaceURI !== WORD_NAMESPACE) {
       return null;
     }
     if (child.localName === "tcPr") {
-      // Merged cells (SPEC-023) break the regular grid the model assumes;
-      // a table containing one is preserved verbatim instead.
-      if (
-        firstChildElement(child, WORD_NAMESPACE, "gridSpan") ||
-        firstChildElement(child, WORD_NAMESPACE, "vMerge")
-      ) {
-        return null;
-      }
-      tcPr = serializeElement(child);
+      tcPrEl = child;
+      tcPrXml = serializeElement(child);
     } else if (child.localName === "p") {
       blocks.push(parseParagraph(child, styleCatalog, numberingCatalog));
     } else {
@@ -253,66 +381,151 @@ function parseTableCell(
     blocks.push({ type: "paragraph", runs: [], formatting: {} });
   }
   const cell: TableCell = { blocks };
-  if (tcPr !== undefined) {
-    cell.docxTcPr = tcPr;
+  const colSpan = tcPrEl ? parseGridSpan(tcPrEl) : undefined;
+  if (colSpan !== undefined) {
+    cell.colSpan = colSpan;
   }
-  return cell;
+  const borders = tcPrEl ? parseCellBorders(tcPrEl) : undefined;
+  if (borders) {
+    cell.borders = borders;
+  }
+  const shadingFill = tcPrEl ? parseCellShading(tcPrEl) : undefined;
+  if (shadingFill !== undefined) {
+    cell.shadingFill = shadingFill;
+  }
+  const paddingCm = tcPrEl ? parseCellPadding(tcPrEl) : undefined;
+  if (paddingCm !== undefined) {
+    cell.paddingCm = paddingCm;
+  }
+  const verticalAlign = tcPrEl ? parseCellVerticalAlign(tcPrEl) : undefined;
+  if (verticalAlign !== undefined) {
+    cell.verticalAlign = verticalAlign;
+  }
+  if (tcPrXml !== undefined) {
+    cell.docxTcPr = tcPrXml;
+  }
+  return { cell, colSpan: colSpan ?? 1, vMerge: tcPrEl ? parseVMerge(tcPrEl) : null };
 }
 
-function parseTableRow(
+/** A `w:tc` occupies one grid column normally, or `colSpan` of them when it
+ * carries `w:gridSpan` — the extra columns have no `w:tc` of their own, so
+ * they become covered placeholder slots here to keep the model's per-row
+ * cell count equal to the table's grid column count (SPEC-023). */
+type RowSlot = { kind: "cell"; parsed: ParsedCellSlot } | { kind: "covered" };
+
+function parseTableRowSlots(
   trEl: Element,
+  gridColumns: number,
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
-): TableRow | null {
-  const cells: TableCell[] = [];
+): { slots: RowSlot[]; trPrEl?: Element; trPr?: string } | null {
+  const slots: RowSlot[] = [];
+  let trPrEl: Element | undefined;
   let trPr: string | undefined;
   for (const child of Array.from(trEl.children)) {
     if (child.namespaceURI !== WORD_NAMESPACE) {
       return null;
     }
     if (child.localName === "trPr") {
+      trPrEl = child;
       trPr = serializeElement(child);
     } else if (child.localName === "tc") {
-      const cell = parseTableCell(child, styleCatalog, numberingCatalog);
-      if (!cell) {
+      const parsed = parseTableCell(child, styleCatalog, numberingCatalog);
+      if (!parsed) {
         return null;
       }
-      cells.push(cell);
+      slots.push({ kind: "cell", parsed });
+      for (let i = 1; i < parsed.colSpan; i++) {
+        slots.push({ kind: "covered" });
+      }
     } else {
       // tblPrEx, bookmarks between cells, … — keep the table verbatim.
       return null;
     }
   }
-  if (cells.length === 0) {
+  if (slots.length === 0 || slots.length !== gridColumns) {
     return null;
   }
-  const row: TableRow = { cells };
-  if (trPr !== undefined) {
-    row.docxTrPr = trPr;
-  }
-  return row;
+  return { slots, trPrEl, trPr };
 }
 
-/** Parses a `w:tbl` into a modelled Table (SPEC-022), or null when the
- * table uses features outside the model's regular grid — merged cells,
- * nested tables, a grid that doesn't match the rows — in which case the
- * caller preserves the element verbatim as an opaque block instead
- * (SPEC-008: fidelity over feature count). */
+/** A row's minimum height from `w:trHeight` (SPEC-023 AC-4, AC-5): both
+ * `hRule="atLeast"` (an explicit minimum) and its absence (Word's own
+ * default meaning) map to the model's `minHeightCm`, which is always a
+ * floor. `hRule="exact"` (a fixed height, not modelled) is read the same
+ * way — an approximation, but a closer one than dropping the height. */
+function parseRowMinHeight(trPr: Element | undefined): number | undefined {
+  const heightEl = trPr ? firstChildElement(trPr, WORD_NAMESPACE, "trHeight") : undefined;
+  const val = heightEl ? Number(wordAttr(heightEl, "val") ?? "") : NaN;
+  return Number.isFinite(val) && val > 0 ? twipsToCm(val) : undefined;
+}
+
+/** A table's `w:tblW` (SPEC-023 AC-23, AC-27): `pct` is fiftieths of a
+ * percent (5000 = 100%), `auto` sizes to content, anything else (including
+ * no `w:tblW` at all) is a fixed width — the `columnWidthsCm` sum. */
+function parseTableWidth(tblPr: Element | undefined): { widthMode?: TableWidthMode; widthPercent?: number } {
+  const tblW = tblPr ? firstChildElement(tblPr, WORD_NAMESPACE, "tblW") : undefined;
+  if (!tblW) {
+    return {};
+  }
+  const type = wordAttr(tblW, "type");
+  if (type === "pct") {
+    const w = Number(wordAttr(tblW, "w") ?? "");
+    if (Number.isFinite(w) && w > 0) {
+      return { widthMode: "percent", widthPercent: Math.min(100, Math.max(1, Math.round(w / 50))) };
+    }
+  }
+  if (type === "auto") {
+    return { widthMode: "auto" };
+  }
+  return { widthMode: "fixed" };
+}
+
+/** A table's `w:jc` (SPEC-023 AC-22): "start" is the logical form of
+ * "left" — table RTL is out of scope, so both map to the model's "left". */
+function parseTableAlignment(tblPr: Element | undefined): TableAlignment | undefined {
+  const jc = tblPr ? firstChildElement(tblPr, WORD_NAMESPACE, "jc") : undefined;
+  const val = jc ? wordAttr(jc, "val") : null;
+  if (val === "center" || val === "right") {
+    return val;
+  }
+  if (val === "left" || val === "start") {
+    return "left";
+  }
+  return undefined;
+}
+
+/** Parses a `w:tbl` into a modelled Table (SPEC-022; merged cells and
+ * formatting SPEC-023), or null when the table uses features outside the
+ * model's regular grid — nested tables, a grid that doesn't match the rows —
+ * in which case the caller preserves the element verbatim as an opaque
+ * block instead (SPEC-008: fidelity over feature count).
+ *
+ * Merged cells keep the grid regular for indexing (every row still has
+ * `columnWidthsCm.length` cells): a `w:gridSpan` cell's extra columns and a
+ * `w:vMerge="continue"` cell both become `covered: true` placeholders, and
+ * the real cell they are covered by carries `colSpan`/`rowSpan`. Resolving
+ * `vMerge` needs a second pass over the whole table (a "continue" cell's
+ * `rowSpan` accumulates on whichever earlier row most recently started a
+ * chain at that column), so rows are parsed into slots first and only
+ * assembled into the model's `TableRow`s afterwards. */
 function parseTable(
   tblEl: Element,
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
 ): Table | null {
-  const rows: TableRow[] = [];
   const columnWidthsCm: number[] = [];
-  let tblPr: string | undefined;
+  let tblPrEl: Element | undefined;
+  let tblPrXml: string | undefined;
   let sawGrid = false;
+  const rowSlots: Array<{ slots: RowSlot[]; trPrEl?: Element; trPr?: string }> = [];
   for (const child of Array.from(tblEl.children)) {
     if (child.namespaceURI !== WORD_NAMESPACE) {
       return null;
     }
     if (child.localName === "tblPr") {
-      tblPr = serializeElement(child);
+      tblPrEl = child;
+      tblPrXml = serializeElement(child);
     } else if (child.localName === "tblGrid") {
       sawGrid = true;
       for (const col of Array.from(child.children)) {
@@ -326,24 +539,72 @@ function parseTable(
         columnWidthsCm.push(twipsToCm(w));
       }
     } else if (child.localName === "tr") {
-      const row = parseTableRow(child, styleCatalog, numberingCatalog);
-      if (!row) {
+      if (!sawGrid) {
         return null;
       }
-      rows.push(row);
+      const parsedRow = parseTableRowSlots(child, columnWidthsCm.length, styleCatalog, numberingCatalog);
+      if (!parsedRow) {
+        return null;
+      }
+      rowSlots.push(parsedRow);
     } else {
       return null;
     }
   }
-  if (!sawGrid || rows.length === 0 || columnWidthsCm.length === 0) {
+  if (!sawGrid || rowSlots.length === 0 || columnWidthsCm.length === 0) {
     return null;
   }
-  if (rows.some((row) => row.cells.length !== columnWidthsCm.length)) {
-    return null;
+
+  const rows: TableRow[] = rowSlots.map(({ slots, trPrEl, trPr }) => {
+    const cells: TableCell[] = slots.map((slot) =>
+      slot.kind === "cell" ? slot.parsed.cell : { blocks: [], covered: true },
+    );
+    const row: TableRow = { cells };
+    if (trPr !== undefined) {
+      row.docxTrPr = trPr;
+    }
+    const minHeightCm = parseRowMinHeight(trPrEl);
+    if (minHeightCm !== undefined) {
+      row.minHeightCm = minHeightCm;
+    }
+    return row;
+  });
+
+  // Pass 2: a "continue" cell's rowSpan accumulates onto whichever row most
+  // recently started (or continued) a merge at that column.
+  const openOrigin: Array<number | null> = Array.from({ length: columnWidthsCm.length }, () => null);
+  for (let r = 0; r < rowSlots.length; r++) {
+    const slots = rowSlots[r].slots;
+    for (let col = 0; col < slots.length; col++) {
+      const slot = slots[col];
+      if (slot.kind !== "cell") {
+        continue;
+      }
+      if (slot.parsed.vMerge === "continue" && openOrigin[col] !== null) {
+        const originRow = openOrigin[col] as number;
+        const originCell = rows[originRow].cells[col];
+        originCell.rowSpan = (originCell.rowSpan ?? 1) + 1;
+        rows[r].cells[col] = { blocks: [], covered: true };
+      } else {
+        openOrigin[col] = r;
+      }
+    }
   }
+
   const table: Table = { type: "table", rows, columnWidthsCm };
-  if (tblPr !== undefined) {
-    table.docxTblPr = tblPr;
+  if (tblPrXml !== undefined) {
+    table.docxTblPr = tblPrXml;
+  }
+  const width = parseTableWidth(tblPrEl);
+  if (width.widthMode !== undefined) {
+    table.widthMode = width.widthMode;
+  }
+  if (width.widthPercent !== undefined) {
+    table.widthPercent = width.widthPercent;
+  }
+  const alignment = parseTableAlignment(tblPrEl);
+  if (alignment !== undefined) {
+    table.alignment = alignment;
   }
   return table;
 }

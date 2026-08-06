@@ -72,6 +72,30 @@ export function asParagraphAlignment(value: string): ParagraphAlignment {
   return value as ParagraphAlignment;
 }
 
+/** Typed pass-through for a border line style coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asBorderLineStyle(value: string): BorderLineStyle {
+  return value as BorderLineStyle;
+}
+
+/** Typed pass-through for a cell vertical alignment coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asCellVerticalAlign(value: string): CellVerticalAlign {
+  return value as CellVerticalAlign;
+}
+
+/** Typed pass-through for a table alignment coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asTableAlignment(value: string): TableAlignment {
+  return value as TableAlignment;
+}
+
+/** Typed pass-through for a table width mode coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asTableWidthMode(value: string): TableWidthMode {
+  return value as TableWidthMode;
+}
+
 /** The smallest unit of text: a string plus the formatting applied to it.
  * Tabs and forced line breaks are preserved as literal "\t" / "\n"
  * characters in `text` — renderers use `white-space: pre-wrap` so both
@@ -231,43 +255,127 @@ export interface Paragraph {
   opaqueInlines?: OpaqueInline[];
 }
 
-// --- tables (SPEC-022) ------------------------------------------------------
+// --- tables (SPEC-022, cell/border formatting SPEC-023) ---------------------
+
+/** A border line's rendering (SPEC-023): the standard presets plus width and
+ * colour. `"none"` paints nothing, distinct from an absent `BorderSide`
+ * (unset — falls back to whatever the renderer/writer defaults to). */
+export type BorderLineStyle = "none" | "single" | "double" | "dashed" | "dotted";
+
+/** One edge of a cell's border (SPEC-023 AC-10..12): style, width in points
+ * and a CSS-ready colour ("#rrggbb", or "auto" for the source's automatic
+ * colour). */
+export interface BorderSide {
+  style: BorderLineStyle;
+  widthPt: number;
+  color: string;
+}
+
+/** A cell's four borders, each independently set or left unset (SPEC-023).
+ * Table-wide and per-selected-cell border operations (AC-13, AC-14) both
+ * write into this same per-cell shape — "apply to the whole table" is just
+ * "apply to every cell" (see lib/tables.ts's border-preset commands), which
+ * is also why the round trip is always per-cell (`w:tcBorders` /
+ * .odt cell styles — AC-25, AC-29), never a table-level default. */
+export interface CellBorders {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+}
+
+/** A cell's content vertical alignment within its (possibly taller, due to
+ * sibling cells) row (SPEC-023 AC-17). */
+export type CellVerticalAlign = "top" | "center" | "bottom";
 
 /** One table cell: a nested block container holding paragraphs only (nested
- * tables are out of scope until further notice — SPEC-022). Always at least
- * one paragraph, so a caret can land in any cell. */
+ * tables are out of scope — SPEC-022). A real (non-covered) cell always has
+ * at least one paragraph, so a caret can land in it. */
 export interface TableCell {
   blocks: Paragraph[];
+  /** Grid columns this cell spans rightward, including itself; absent means
+   * 1 (SPEC-023 AC-6, AC-24, AC-28). */
+  colSpan?: number;
+  /** Grid rows this cell spans downward, including itself; absent means 1
+   * (SPEC-023 AC-6, AC-24, AC-28). */
+  rowSpan?: number;
+  /** True when this grid slot is covered by a neighbouring cell's
+   * `colSpan`/`rowSpan` (SPEC-023): the slot has no content of its own
+   * (`blocks` is empty) and is never an editing/navigation target — the
+   * spanning cell's own `<td>` (or `w:tc`/`table:covered-table-cell`) covers
+   * it visually and on disk. */
+  covered?: boolean;
+  /** This cell's own border overrides (SPEC-023 AC-10..14). */
+  borders?: CellBorders;
+  /** Background shading as a CSS-ready "#rrggbb" (SPEC-023 AC-15). */
+  shadingFill?: string;
+  /** Cell padding in cm, all four sides (SPEC-023 AC-16); absent uses the
+   * renderer/writer's own default padding. */
+  paddingCm?: number;
+  /** Content's vertical alignment within the cell (SPEC-023 AC-17). */
+  verticalAlign?: CellVerticalAlign;
   /** Verbatim `w:tcPr` from a .docx source, re-emitted on a same-format
-   * save so unmodelled cell properties (borders, shading, …) survive
-   * (SPEC-008's fidelity rule). Absent on cells created in the editor. */
+   * save so unmodelled cell properties survive (SPEC-008's fidelity rule).
+   * Cleared by any SPEC-023 command that edits this cell's modelled
+   * properties, so the writer regenerates `w:tcPr` from them instead of
+   * reproducing stale XML. Absent on cells created/edited in the editor. */
   docxTcPr?: string;
   /** `table:style-name` of the source .odt cell — re-emitted so the
    * preserved automatic style (sourceXml.odtAutomaticStyles) applies
-   * again. */
+   * again. Cleared the same way as `docxTcPr` when a command edits the
+   * cell's modelled properties. */
   odtStyleName?: string;
 }
 
-/** One table row. Rows carry no modelled formatting yet (SPEC-023); the
- * source formats' row properties are preserved verbatim per format. */
+/** One table row. */
 export interface TableRow {
   cells: TableCell[];
+  /** The row's minimum height in cm (SPEC-023 AC-4, AC-5): dragging a row
+   * boundary sets this floor, but the row still grows taller to fit its
+   * content — it is never a fixed height. */
+  minHeightCm?: number;
   /** Verbatim `w:trPr` from a .docx source (row height, header flag, …). */
   docxTrPr?: string;
   /** `table:style-name` of the source .odt row. */
   odtStyleName?: string;
 }
 
-/** A table block (SPEC-022): a rectangular grid of cells. Every row has
- * `columnWidthsCm.length` cells — merged cells are out of scope (SPEC-023),
- * so the grid is always regular. */
+/** Table alignment on the page (SPEC-023 AC-22). */
+export type TableAlignment = "left" | "center" | "right";
+
+/** How a table's overall width is determined (SPEC-023 AC-23): `"fixed"`
+ * (absent also means fixed, for models saved before SPEC-023) uses the
+ * `columnWidthsCm` sum as-is; `"percent"` scales `widthPercent`% of the
+ * text area, redistributing `columnWidthsCm` proportionally; `"auto"` sizes
+ * the table to its content, ignoring `columnWidthsCm` for layout (the field
+ * is kept as the last explicit widths, reused if the mode changes back). */
+export type TableWidthMode = "auto" | "fixed" | "percent";
+
+/** A table block (SPEC-022, formatting SPEC-023): a rectangular grid of
+ * cells. Every row has exactly `columnWidthsCm.length` cells — a merged
+ * cell's covered neighbours are present as placeholder (`covered: true`)
+ * cells, so the grid stays regular for indexing purposes even though it
+ * renders and saves as merged. */
 export interface Table {
   type: "table";
   rows: TableRow[];
   /** Column widths in cm, one per column — the `w:tblGrid` / ODF
    * table-column definitions both readers resolve and both writers emit. */
   columnWidthsCm: number[];
-  /** Verbatim `w:tblPr` from a .docx source (table borders, style ref, …). */
+  /** The table's alignment on the page (SPEC-023 AC-22); absent means left
+   * (both formats' default). */
+  alignment?: TableAlignment;
+  /** How the table's width is determined (SPEC-023 AC-23); absent means
+   * `"fixed"`. */
+  widthMode?: TableWidthMode;
+  /** Percentage (0..100) of the text area the table spans; meaningful only
+   * when `widthMode` is `"percent"` (SPEC-023 AC-23). */
+  widthPercent?: number;
+  /** Verbatim `w:tblPr` from a .docx source (table style ref, look flags,
+   * …); re-emitted on a same-format save for whatever SPEC-023 does not
+   * model. Cleared by any command that edits `alignment`/`widthMode`/
+   * `widthPercent`, so the writer regenerates the affected parts of
+   * `w:tblPr` instead of reproducing stale XML. */
   docxTblPr?: string;
   /** `table:name` of the source .odt table (user-facing table name). */
   odtName?: string;

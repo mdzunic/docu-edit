@@ -27,6 +27,7 @@
 //    consecutive, after a tab or line break) are emitted as text:s.
 import type {
   Block,
+  BorderSide,
   DocumentModel,
   NamedStyle,
   Paragraph,
@@ -34,6 +35,8 @@ import type {
   Run,
   RunFormatting,
   Table,
+  TableCell,
+  TableRow,
 } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
@@ -247,20 +250,66 @@ function listLevelXml(level: number, def: PlannedListLevel): string {
  * paragraphs get "P<n>" and runs share "T<n>" styles per distinct
  * formatting; list runs share "L<n>" list styles per distinct level set
  * (SPEC-018). */
+/** A `BorderSide` as ODF's `fo:border`-family shorthand ("0.5pt solid
+ * #ff0000", or "none"); SPEC-023's border style enum maps onto ODF's CSS2-
+ * derived keywords one for one except "single", which ODF calls "solid". */
+function borderShorthand(side: BorderSide): string {
+  if (side.style === "none") {
+    return "none";
+  }
+  const styleWord = side.style === "single" ? "solid" : side.style;
+  const color = side.color !== "auto" ? side.color : "#000000";
+  return `${ptToOdfLength(Math.max(0.25, side.widthPt))} ${styleWord} ${color}`;
+}
+
+/** A cell's `style:table-cell-properties` attributes (SPEC-023 AC-10..12,
+ * AC-15..17, AC-29, AC-30): borders, background shading, padding, vertical
+ * alignment. Empty when the cell sets none of these — such a cell gets no
+ * generated style at all (cellStyleName below), rather than a synthesised
+ * default: unlike .docx's table-level `w:tblBorders` fallback (invisible to
+ * the per-cell model), any per-cell default this writer invented would be
+ * indistinguishable from real user/source data on the next parse and would
+ * make an untouched save-and-reopen see borders that were never set. */
+function cellStylePropertiesXml(cell: TableCell): string {
+  const parts: string[] = [];
+  const borders = cell.borders;
+  if (borders?.top) {
+    parts.push(`fo:border-top="${borderShorthand(borders.top)}"`);
+  }
+  if (borders?.bottom) {
+    parts.push(`fo:border-bottom="${borderShorthand(borders.bottom)}"`);
+  }
+  if (borders?.left) {
+    parts.push(`fo:border-left="${borderShorthand(borders.left)}"`);
+  }
+  if (borders?.right) {
+    parts.push(`fo:border-right="${borderShorthand(borders.right)}"`);
+  }
+  if (cell.shadingFill !== undefined) {
+    parts.push(`fo:background-color="${cell.shadingFill}"`);
+  }
+  if (cell.paddingCm !== undefined) {
+    parts.push(`fo:padding="${cmToOdfLength(cell.paddingCm)}"`);
+  }
+  if (cell.verticalAlign !== undefined) {
+    const value = cell.verticalAlign === "center" ? "middle" : cell.verticalAlign;
+    parts.push(`style:vertical-align="${value}"`);
+  }
+  return parts.join(" ");
+}
+
 /** The names a serialised table references: its `table:name`, its
- * table-family style, one table-column style per column, and the style
- * generated cells share. `cellStyleName` is a lazy accessor so a table
- * whose cells all carry preserved names never emits an unreferenced
- * definition. */
+ * table-family style, one table-column style per column, and per-cell/
+ * per-row styles for whichever cells/rows need one. `cellStyleName`/
+ * `rowStyleName` are lazy and dedupe by the properties they'd emit, so two
+ * cells with the same formatting (including "none", SPEC-023's default
+ * look) share one definition. */
 interface TableNames {
   name: string;
   styleName: string;
   columnStyleNames: string[];
-  /** True when the table re-uses its source's own style name — its cells
-   * then keep exactly the style references they came with (possibly none),
-   * so a same-format save reproduces the source. */
-  preserved: boolean;
-  cellStyleName(): string;
+  cellStyleName(cell: TableCell): string | undefined;
+  rowStyleName(row: TableRow): string | undefined;
 }
 
 interface AutomaticStyles {
@@ -413,17 +462,23 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
     tableNamesFor(table: Table, preserveNames: boolean): TableNames {
       // With preserveNames (a same-format save), the source's own style
       // names are re-emitted — their definitions travel in the preserved
-      // automatic styles — and only nameless parts (added in the editor)
-      // get generated styles. A cross-format save generates everything.
+      // automatic styles — and only nameless parts (added or edited in the
+      // editor) get generated styles. A cross-format save generates
+      // everything.
       const totalCm = table.columnWidthsCm.reduce((sum, cm) => sum + cm, 0);
       let styleName = preserveNames ? table.odtStyleName : undefined;
       let base: string;
       if (styleName === undefined) {
         base = claimName("Table", "");
         styleName = base;
+        // style:rel-width (SPEC-023 AC-23, AC-31) alongside the absolute
+        // width: a percentage-of-text-area table still needs a fallback
+        // absolute size for a consumer that ignores rel-width.
+        const relWidth =
+          table.widthMode === "percent" ? ` style:rel-width="${Math.round(table.widthPercent ?? 100)}%"` : "";
         defs.push(
           `<style:style style:name="${escapeXml(base)}" style:family="table">` +
-            `<style:table-properties style:width="${cmToOdfLength(totalCm)}"/>` +
+            `<style:table-properties style:width="${cmToOdfLength(totalCm)}"${relWidth}/>` +
             "</style:style>",
         );
       } else {
@@ -442,27 +497,49 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         );
         return columnName;
       });
-      // One shared style for cells without a preserved name — LibreOffice's
-      // default cell look (hairline border, small padding) so an inserted
-      // table is visibly a table in any consumer. Lazy: claimed only when a
-      // cell actually needs it, so a fully preserved table's styles are
-      // byte-identical to its source.
-      let generatedCellStyleName: string | undefined;
+      // Cell/row styles are generated lazily, one per distinct set of
+      // properties, so two cells/rows with the same formatting share a
+      // definition and a cell/row with nothing to say never claims one.
+      const cellStyleNames = new Map<string, string>();
+      const rowStyleNames = new Map<number, string>();
       return {
         name: table.odtName ?? base,
         styleName,
         columnStyleNames,
-        preserved: preserveNames && table.odtStyleName !== undefined,
-        cellStyleName(): string {
-          if (generatedCellStyleName === undefined) {
-            generatedCellStyleName = claimName(base, ".Cell");
-            defs.push(
-              `<style:style style:name="${escapeXml(generatedCellStyleName)}" style:family="table-cell">` +
-                '<style:table-cell-properties fo:padding="0.097cm" fo:border="0.05pt solid #000000"/>' +
-                "</style:style>",
-            );
+        cellStyleName(cell: TableCell): string | undefined {
+          const propsXml = cellStylePropertiesXml(cell);
+          if (propsXml === "") {
+            return undefined;
           }
-          return generatedCellStyleName;
+          const existing = cellStyleNames.get(propsXml);
+          if (existing !== undefined) {
+            return existing;
+          }
+          const name = claimName(base, ".Cell");
+          cellStyleNames.set(propsXml, name);
+          defs.push(
+            `<style:style style:name="${escapeXml(name)}" style:family="table-cell">` +
+              `<style:table-cell-properties ${propsXml}/>` +
+              "</style:style>",
+          );
+          return name;
+        },
+        rowStyleName(row: TableRow): string | undefined {
+          if (row.minHeightCm === undefined) {
+            return undefined;
+          }
+          const existing = rowStyleNames.get(row.minHeightCm);
+          if (existing !== undefined) {
+            return existing;
+          }
+          const name = claimName(base, ".Row");
+          rowStyleNames.set(row.minHeightCm, name);
+          defs.push(
+            `<style:style style:name="${escapeXml(name)}" style:family="table-row">` +
+              `<style:table-row-properties style:min-row-height="${cmToOdfLength(row.minHeightCm)}"/>` +
+              "</style:style>",
+          );
+          return name;
         },
       };
     },
@@ -639,42 +716,89 @@ function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpa
   return xml.length > 0 ? xml : "<text:p/>";
 }
 
-/** One table block as table:table markup (SPEC-022): column definitions
- * referencing width-carrying styles, then rows of string-typed cells. The
- * table: namespace is declared on the element itself — see TABLE_XMLNS. */
+/** A grid slot's owning real cell — the writer's own mirror of the same
+ * concept in lib/tables.ts and docx/writer.ts (SPEC-023): every slot a
+ * merged cell covers becomes `<table:covered-table-cell/>`, ODF's explicit
+ * per-slot placeholder (no gridSpan-style inference needed, unlike .docx). */
+interface CellOwner {
+  originRow: number;
+  originCol: number;
+  rowSpan: number;
+  colSpan: number;
+}
+
+function computeOwnerGrid(table: Table): CellOwner[][] {
+  const rowCount = table.rows.length;
+  const colCount = table.columnWidthsCm.length;
+  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
+  for (let r = 0; r < rowCount; r++) {
+    for (let c = 0; c < colCount; c++) {
+      if (grid[r][c]) {
+        continue;
+      }
+      const cell = table.rows[r].cells[c];
+      const owner: CellOwner = {
+        originRow: r,
+        originCol: c,
+        rowSpan: cell.rowSpan ?? 1,
+        colSpan: cell.colSpan ?? 1,
+      };
+      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
+        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
+          grid[r + dr][c + dc] = owner;
+        }
+      }
+    }
+  }
+  return grid;
+}
+
+/** One table block as table:table markup (SPEC-022; formatting and merged
+ * cells SPEC-023): column definitions referencing width-carrying styles,
+ * then rows of cells. The table: namespace is declared on the element
+ * itself — see TABLE_XMLNS.
+ *
+ * A grid slot a merged cell covers (SPEC-023 AC-28) emits
+ * `<table:covered-table-cell/>` instead of `<table:table-cell>`; the real
+ * cell carries `table:number-columns-spanned`/`table:number-rows-spanned`. */
 function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean): string {
   const names = styles.tableNamesFor(table, includeOpaque);
+  const alignAttr = table.alignment !== undefined ? ` table:align="${table.alignment}"` : "";
   let xml =
     `<table:table${TABLE_XMLNS} table:name="${escapeXml(names.name)}"` +
-    ` table:style-name="${escapeXml(names.styleName)}">`;
+    ` table:style-name="${escapeXml(names.styleName)}"${alignAttr}>`;
   for (const columnName of names.columnStyleNames) {
     xml += `<table:table-column table:style-name="${escapeXml(columnName)}"/>`;
   }
-  for (const row of table.rows) {
-    const rowStyle =
-      includeOpaque && row.odtStyleName !== undefined
-        ? ` table:style-name="${escapeXml(row.odtStyleName)}"`
-        : "";
-    xml += `<table:table-row${rowStyle}>`;
-    for (const cell of row.cells) {
-      // A preserved table's cells keep exactly the style references they
-      // came with — including none at all; only a table this writer styles
-      // itself gets the generated bordered cell style.
+  const ownerGrid = computeOwnerGrid(table);
+  table.rows.forEach((row, rowIndex) => {
+    const rowStyleName =
+      includeOpaque && row.odtStyleName !== undefined ? row.odtStyleName : names.rowStyleName(row);
+    const rowStyleAttr = rowStyleName !== undefined ? ` table:style-name="${escapeXml(rowStyleName)}"` : "";
+    xml += `<table:table-row${rowStyleAttr}>`;
+    for (let colIndex = 0; colIndex < table.columnWidthsCm.length; colIndex++) {
+      const owner = ownerGrid[rowIndex][colIndex];
+      if (owner.originRow !== rowIndex || owner.originCol !== colIndex) {
+        xml += "<table:covered-table-cell/>";
+        continue;
+      }
+      const cell = row.cells[colIndex];
+      // A preserved cell keeps exactly the style reference it came with —
+      // including none at all; anything else gets a style generated from
+      // its own SPEC-023 properties, or no style at all if it sets none.
       const cellStyleName =
-        includeOpaque && cell.odtStyleName !== undefined
-          ? cell.odtStyleName
-          : names.preserved
-            ? undefined
-            : names.cellStyleName();
-      const cellStyleAttr =
-        cellStyleName !== undefined ? ` table:style-name="${escapeXml(cellStyleName)}"` : "";
+        includeOpaque && cell.odtStyleName !== undefined ? cell.odtStyleName : names.cellStyleName(cell);
+      const cellStyleAttr = cellStyleName !== undefined ? ` table:style-name="${escapeXml(cellStyleName)}"` : "";
+      const spanAttrs =
+        (owner.colSpan > 1 ? ` table:number-columns-spanned="${owner.colSpan}"` : "") +
+        (owner.rowSpan > 1 ? ` table:number-rows-spanned="${owner.rowSpan}"` : "");
       xml +=
-        `<table:table-cell${cellStyleAttr} office:value-type="string">` +
+        `<table:table-cell${cellStyleAttr}${spanAttrs} office:value-type="string">` +
         cellContentXml(cell.blocks, styles, includeOpaque) +
         "</table:table-cell>";
     }
     xml += "</table:table-row>";
-  }
+  });
   return `${xml}</table:table>`;
 }
 

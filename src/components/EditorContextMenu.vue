@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // The editor's context menu (SPEC-016 AC-4..6): Cut, Copy and Paste at the
 // right-click point — plus, when opened inside a table cell, the
-// row/column section (SPEC-022 AC-17..19). Emits the chosen action only —
-// the editor owns the clipboard and table work. Dismissed by a click
-// anywhere outside or Escape.
+// row/column section (SPEC-022 AC-17..19) and cell formatting section
+// (SPEC-023 AC-6, AC-8, AC-10..23). Emits the chosen action only — the
+// editor owns the clipboard and table work. Dismissed by a click anywhere
+// outside or Escape.
 import { onBeforeUnmount, onMounted } from "vue";
 import { modifierKeyLabel } from "../lib/platform";
 
@@ -14,6 +15,9 @@ const props = defineProps({
   /** True when the right-click landed inside a table cell — shows the
    * row/column section (SPEC-022 AC-17..19). */
   tableActions: { type: Boolean, default: false },
+  /** True when the active cell-range selection spans more than one cell —
+   * shows "Merge cells" (SPEC-023 AC-6). */
+  canMergeCells: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["cut", "copy", "paste", "table-action", "dismiss"]);
@@ -28,6 +32,14 @@ const TABLE_ACTIONS = [
   { key: "delete-row", label: "Delete row" },
   { key: "delete-col", label: "Delete column" },
   { key: "delete-table", label: "Delete table" },
+];
+
+// The cell-formatting section's entries (SPEC-023 AC-8, AC-10..23), always
+// offered inside a table; "Merge cells" only when a multi-cell range is
+// active (AC-6).
+const CELL_ACTIONS = [
+  { key: "split-cell", label: "Split cell…" },
+  { key: "table-properties", label: "Table properties…" },
 ];
 
 const mod = modifierKeyLabel();
@@ -103,6 +115,31 @@ onBeforeUnmount(() => {
       />
       <button
         v-for="action in TABLE_ACTIONS"
+        :key="action.key"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :data-testid="`context-menu-${action.key}`"
+        @click="emit('table-action', action.key)"
+      >
+        <span>{{ action.label }}</span>
+      </button>
+      <div
+        class="context-menu-separator"
+        role="separator"
+      />
+      <button
+        v-if="canMergeCells"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        data-testid="context-menu-merge-cells"
+        @click="emit('table-action', 'merge-cells')"
+      >
+        <span>Merge cells</span>
+      </button>
+      <button
+        v-for="action in CELL_ACTIONS"
         :key="action.key"
         type="button"
         class="context-menu-item"

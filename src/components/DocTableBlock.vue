@@ -1,14 +1,23 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
-import { asCellRange, isCellInRange } from "../lib/tables";
+import {
+  headingTag,
+  paragraphStyle,
+  runKey,
+  runStyle,
+  tableCellDisplayStyle,
+  tableColumnWidth,
+  tableRowStyle,
+  tableStyle,
+} from "../lib/renderFormatting";
+import { asCellRange, asTable, isCellInRange, visibleRowCells } from "../lib/tables";
 
-// One table block on the canvas (SPEC-022). Cell paragraphs render exactly
-// like top-level ones (same classes, styles and marker attributes) and
-// carry the full cell address in data attributes — that is the contract
-// lib/domCaret resolves carets through. Runtime prop declarations, not the
-// defineProps<{...}>() generics — see AppShell.vue's comment on the same
-// espree constraint.
+// One table block on the canvas (SPEC-022; formatting and merged cells
+// SPEC-023). Cell paragraphs render exactly like top-level ones (same
+// classes, styles and marker attributes) and carry the full cell address in
+// data attributes — that is the contract lib/domCaret resolves carets
+// through. Runtime prop declarations, not the defineProps<{...}>()
+// generics — see AppShell.vue's comment on the same espree constraint.
 const props = defineProps({
   /** The Table block (documentModel.Table). */
   block: { type: Object, required: true },
@@ -19,19 +28,10 @@ const props = defineProps({
   cellRange: { type: Object, default: null },
 });
 
-/** The table's overall width: the column widths' sum. */
-function tableWidthCm() {
-  let total = 0;
-  for (const width of props.block.columnWidthsCm) {
-    total += width;
-  }
-  return total;
-}
-
-/** Derived list markers for one cell's own block list (SPEC-018 semantics,
- * scoped to the cell — SPEC-022). */
-function cellMarkers(cell = { blocks: [] }) {
-  return markersForBlocks(cell.blocks);
+/** A cell's colspan/rowspan attribute value: undefined (the HTML default,
+ * 1) below its own span field's default of 1. */
+function spanAttr(span = 1) {
+  return span > 1 ? span : undefined;
 }
 </script>
 
@@ -40,41 +40,47 @@ function cellMarkers(cell = { blocks: [] }) {
     class="doc-table"
     data-testid="doc-table"
     :class="{ 'cell-selecting': cellRange && cellRange.section === section && cellRange.block === blockIndex }"
-    :style="{ width: `${tableWidthCm()}cm` }"
+    :style="tableStyle(asTable(block))"
   >
     <colgroup>
       <col
         v-for="(widthCm, colIndex) in block.columnWidthsCm"
         :key="colIndex"
-        :style="{ width: `${widthCm}cm` }"
+        :style="{ width: tableColumnWidth(asTable(block), colIndex) }"
       >
     </colgroup>
     <tbody>
       <tr
         v-for="(row, rowIndex) in block.rows"
         :key="rowIndex"
+        :style="tableRowStyle(row)"
       >
         <td
-          v-for="(cell, colIndex) in row.cells"
-          :key="colIndex"
+          v-for="entry in visibleRowCells(row)"
+          :key="entry.colIndex"
           class="doc-table-cell"
-          :class="{ 'cell-selected': isCellInRange(asCellRange(cellRange), section, blockIndex, rowIndex, colIndex) }"
+          :class="{
+            'cell-selected': isCellInRange(asCellRange(cellRange), section, blockIndex, rowIndex, entry.colIndex),
+          }"
+          :style="tableCellDisplayStyle(entry.cell, isCellInRange(asCellRange(cellRange), section, blockIndex, rowIndex, entry.colIndex))"
+          :colspan="spanAttr(entry.cell.colSpan)"
+          :rowspan="spanAttr(entry.cell.rowSpan)"
           :data-row="rowIndex"
-          :data-col="colIndex"
-          :data-testid="`table-cell-${rowIndex}-${colIndex}`"
+          :data-col="entry.colIndex"
+          :data-testid="`table-cell-${rowIndex}-${entry.colIndex}`"
         >
           <component
             :is="headingTag(paragraph.headingLevel)"
-            v-for="(paragraph, cellBlockIndex) in cell.blocks"
+            v-for="(paragraph, cellBlockIndex) in entry.cell.blocks"
             :key="cellBlockIndex"
             class="doc-paragraph"
             :style="paragraphStyle(paragraph)"
             :data-section="section"
             :data-block="blockIndex"
             :data-row="rowIndex"
-            :data-col="colIndex"
+            :data-col="entry.colIndex"
             :data-cell-block="cellBlockIndex"
-            :data-list-marker="cellMarkers(cell)[cellBlockIndex] || undefined"
+            :data-list-marker="markersForBlocks(entry.cell.blocks)[cellBlockIndex] || undefined"
             :data-list-level="paragraph.list ? paragraph.list.level : undefined"
           >
             <template v-if="paragraph.runs.length > 0">
