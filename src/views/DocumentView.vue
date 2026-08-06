@@ -5,10 +5,14 @@ import AppShell from "../components/AppShell.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
+import DocImageBlock from "../components/DocImageBlock.vue";
 import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
+import ImageInsertControl from "../components/ImageInsertControl.vue";
+import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
+import ImageToolbar from "../components/ImageToolbar.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import TableInsertControl from "../components/TableInsertControl.vue";
 import FindBar from "../components/FindBar.vue";
@@ -39,6 +43,8 @@ import {
   asBorderLineStyle,
   asCellVerticalAlign,
   asCharacterFormatKey,
+  asImage,
+  asImageWrapMode,
   asListMarkerStyle,
   asListType,
   asParagraphAlignment,
@@ -46,6 +52,7 @@ import {
   asTableAlignment,
   asTableWidthMode,
   DEFAULT_TITLE,
+  isImage,
   isTable,
 } from "../lib/documentModel";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
@@ -111,7 +118,9 @@ import {
   caretClientRect,
   caretNearClientPoint,
   caretOnBoundaryLine,
+  measureImageGeometry,
   measureTableHandles,
+  noImageHandleGeometry,
   noTableHandleGeometry,
 } from "../lib/caretGeometry";
 import {
@@ -197,6 +206,27 @@ import {
   verticalAlignState,
 } from "../lib/commands";
 import { headingTag, paragraphStyle, runKey, runStyle } from "../lib/renderFormatting";
+import {
+  deleteImage,
+  imageAt,
+  insertImage,
+  isAcceptedImageType,
+  mediaDataUri,
+  noImageCommand,
+  noImageLocation,
+  pxToCm,
+  setImageAltText,
+  setImageSize,
+  setImageWrap,
+} from "../lib/images";
+import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
+import {
+  asImageHandle,
+  IMAGE_HANDLES,
+  noImageResizeDrag,
+  previewImageSize,
+  resizedImageSize,
+} from "../lib/imageResize";
 import {
   headingStyleId,
   NORMAL_STYLE_ID,
@@ -322,6 +352,242 @@ let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // height on release. Null when no drag is active.
 let columnResizeDrag = noColumnResizeDrag();
 let rowResizeDrag = noRowResizeDrag();
+
+// --- images (SPEC-024) -------------------------------------------------------
+// The selected image (AC-7): set by clicking one, cleared by any edit
+// (applyEdit) or a mousedown elsewhere on the canvas — mirrors cellSelection.
+const imageSelection = ref(noImageLocation());
+// The selected image's measured geometry (AC-8, AC-9): page-relative
+// rectangle for the resize handles, recomputed on select/scroll/resize. Null
+// hides the handles/floating toolbar.
+const imageHandles = ref(noImageHandleGeometry());
+const imageOptionsOpen = ref(false);
+const imageOptionsInitial = ref({});
+let imageResizeDrag = noImageResizeDrag();
+let imageDragMoved = false;
+
+function clearImageSelection() {
+  if (imageSelection.value) {
+    imageSelection.value = null;
+    imageHandles.value = null;
+  }
+}
+
+/** The document's own effective save format (the same rule DownloadMenu's
+ * default and handleDownload use) — decides whether an inserted SVG is
+ * converted to PNG (AC-2) or kept as-is (AC-3). */
+function effectiveFormat() {
+  return doc.value && doc.value.format === "odt" ? "odt" : "docx";
+}
+
+function remeasureImageHandles() {
+  const location = imageSelection.value;
+  const pageEl = pageRef.value;
+  const root = contentRoot.value;
+  if (!location || !pageEl || !root) {
+    return;
+  }
+  const imageEl = root.querySelector(
+    `.doc-image-anchor[data-section="${location.section}"][data-block="${location.block}"]`,
+  );
+  imageHandles.value = imageEl ? measureImageGeometry(pageEl, imageEl) : null;
+}
+
+function handleImageSelect(section = 0, block = 0) {
+  clearCellSelection();
+  imageSelection.value = { section, block };
+  void nextTick().then(remeasureImageHandles);
+}
+
+const HANDLE_SIZE = 8;
+
+/** One resize handle's page-relative position, centred on its edge/corner
+ * of the measured image rect (AC-8). */
+function imageHandleStyle(handle = "se") {
+  const geometry = imageHandles.value;
+  if (!geometry) {
+    return {};
+  }
+  const xFrac = handle.includes("w") ? 0 : handle.includes("e") ? 1 : 0.5;
+  const yFrac = handle.includes("n") ? 0 : handle.includes("s") ? 1 : 0.5;
+  return {
+    left: `${geometry.left + geometry.width * xFrac - HANDLE_SIZE / 2}px`,
+    top: `${geometry.top + geometry.height * yFrac - HANDLE_SIZE / 2}px`,
+    cursor: `${handle}-resize`,
+  };
+}
+
+/** The floating image toolbar's fixed (viewport) position (AC-9): above the
+ * image when there's room, otherwise just below it. */
+function imageToolbarStyle() {
+  const geometry = imageHandles.value;
+  const pageEl = pageRef.value;
+  if (!geometry || !pageEl) {
+    return { left: 0, top: 0 };
+  }
+  const pageRect = pageEl.getBoundingClientRect();
+  const viewportTop = pageRect.top + geometry.top;
+  const above = viewportTop - 40;
+  return {
+    left: pageRect.left + geometry.left,
+    top: above >= 0 ? above : pageRect.top + geometry.top + geometry.height + 8,
+  };
+}
+
+/** Runs an image command (setImageWrap/setImageSize/…) against the
+ * currently selected image and commits it — the shared apply step every
+ * image toolbar/dialog/resize action funnels through. */
+function applyImageEdit(mutate = noImageCommand(), label = "") {
+  const model = doc.value;
+  const root = contentRoot.value;
+  const location = imageSelection.value;
+  if (!mutate || !model || !root || !location) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  const result = mutate(model, selection, location);
+  applyEdit(result, selection, label);
+}
+
+function handleImageWrap(wrap = "inline") {
+  const location = imageSelection.value;
+  if (!location) {
+    return;
+  }
+  applyImageEdit((model, selection) => setImageWrap(model, selection, location, asImageWrapMode(wrap)), "wrap image");
+}
+
+function handleImageDelete() {
+  const location = imageSelection.value;
+  if (!location) {
+    return;
+  }
+  applyImageEdit((model, selection) => deleteImage(model, selection, location), "delete image");
+  clearImageSelection();
+}
+
+function openImageOptions() {
+  const model = doc.value;
+  const location = imageSelection.value;
+  const image = model && location ? imageAt(model, location) : null;
+  if (!image) {
+    return;
+  }
+  imageOptionsInitial.value = {
+    altText: image.altText || "",
+    widthCm: Number(image.widthCm.toFixed(2)),
+    heightCm: Number(image.heightCm.toFixed(2)),
+    naturalWidthCm: Number(pxToCm(image.naturalWidthPx).toFixed(2)),
+    naturalHeightCm: Number(pxToCm(image.naturalHeightPx).toFixed(2)),
+  };
+  imageOptionsOpen.value = true;
+}
+
+function handleImageOptionsApply(payload = { altText: "", widthCm: 0, heightCm: 0 }) {
+  imageOptionsOpen.value = false;
+  const location = imageSelection.value;
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!location || !model || !root) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  let result = setImageAltText(model, selection, location, payload.altText);
+  result = setImageSize(result.model, result.selection, location, payload.widthCm, payload.heightCm);
+  applyEdit(result, selection, "image options");
+  root.focus();
+}
+
+/** Reads a File chosen/dropped/pasted and inserts it at the caret (AC-1),
+ * showing validation/conversion failures as a toast — never the console
+ * (AC-34). */
+async function insertImageFromFile(file = new File([], ""), atSelection = noSelection()) {
+  const model = doc.value;
+  const root = contentRoot.value;
+  const selection = atSelection ?? (root ? currentSelection(root) : null) ?? (model ? caretSelection(caret ?? documentStart()) : null);
+  if (!model || !selection) {
+    return;
+  }
+  let prepared;
+  try {
+    prepared = await prepareImageInsert(file, effectiveFormat());
+  } catch (error) {
+    if (error instanceof ImageInsertError) {
+      addToast(error.message);
+      return;
+    }
+    throw error;
+  }
+  const current = doc.value;
+  if (!current) {
+    return;
+  }
+  const result = insertImage(current, selection, prepared.media, prepared.naturalWidthPx, prepared.naturalHeightPx);
+  applyEdit(result, selection, "insert image");
+}
+
+function handleInsertImageFile(file = new File([], "")) {
+  void insertImageFromFile(file);
+}
+
+// --- image resize handles (SPEC-024 AC-8, AC-10..12) ------------------------
+
+function startImageResize(event = new MouseEvent("mousedown"), handle = "se") {
+  const location = imageSelection.value;
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!location || !model || !root || !editable.value) {
+    return;
+  }
+  const image = imageAt(model, location);
+  const imageEl = root.querySelector(
+    `.doc-image-anchor[data-section="${location.section}"][data-block="${location.block}"] .doc-image`,
+  );
+  if (!image || !(imageEl instanceof HTMLElement)) {
+    return;
+  }
+  event.preventDefault();
+  imageDragMoved = false;
+  imageResizeDrag = {
+    section: location.section,
+    block: location.block,
+    handle: asImageHandle(handle),
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    start: { widthCm: image.widthCm, heightCm: image.heightCm },
+    imageEl,
+  };
+  window.addEventListener("mousemove", handleImageResizeMove);
+  window.addEventListener("mouseup", finishImageResize);
+}
+
+function handleImageResizeMove(event = new MouseEvent("mousemove")) {
+  const drag = imageResizeDrag;
+  if (!drag) {
+    return;
+  }
+  imageDragMoved = true;
+  const deltaXCm = (event.clientX - drag.startClientX) * CM_PER_PX;
+  const deltaYCm = (event.clientY - drag.startClientY) * CM_PER_PX;
+  const size = resizedImageSize(drag.start, drag.handle, deltaXCm, deltaYCm, event.shiftKey);
+  previewImageSize(drag.imageEl, size.widthCm, size.heightCm);
+}
+
+/** Release (AC-10..12): the live-previewed size becomes the one model
+ * update this whole drag makes — mirrors finishColumnResize's contract. */
+function finishImageResize() {
+  window.removeEventListener("mousemove", handleImageResizeMove);
+  window.removeEventListener("mouseup", finishImageResize);
+  const drag = imageResizeDrag;
+  imageResizeDrag = null;
+  if (!drag || !imageDragMoved) {
+    return;
+  }
+  const widthCm = parseFloat(drag.imageEl.style.width) || drag.start.widthCm;
+  const heightCm = parseFloat(drag.imageEl.style.height) || drag.start.heightCm;
+  const location = { section: drag.section, block: drag.block };
+  applyImageEdit((model, selection) => setImageSize(model, selection, location, widthCm, heightCm), "resize image");
+}
 
 /** Whether the active cell-range selection spans more than one cell — the
  * context menu's "Merge cells" gate (SPEC-023 AC-6). */
@@ -662,9 +928,15 @@ function applyEdit(
     dismissPasteChip();
   }
   // An edit invalidates the cell-range highlight and the hover handles'
-  // measured geometry (SPEC-022).
+  // measured geometry (SPEC-022). The selected image (SPEC-024) is
+  // re-selected below if the same location still holds an image after the
+  // edit — true for the image's own toolbar/resize/options actions, so the
+  // toolbar stays open across them; false for an edit elsewhere (typing,
+  // deleting the image, …), which deselects as SPEC-022's table handles do.
   clearCellSelection();
   tableHover.value = null;
+  const priorImageSelection = imageSelection.value;
+  clearImageSelection();
   const before = doc.value;
   if (before) {
     recordHistoryEdit(documentId.value, {
@@ -681,6 +953,13 @@ function applyEdit(
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
   void restoreCaretAfterRender();
+  if (
+    priorImageSelection &&
+    isImage(doc.value.sections[priorImageSelection.section]?.blocks[priorImageSelection.block])
+  ) {
+    imageSelection.value = priorImageSelection;
+    void nextTick().then(remeasureImageHandles);
+  }
   // An edit made with the find bar open shifts match positions; refresh off
   // the keystroke path so typing stays responsive (SPEC-017 AC-31).
   scheduleFindRefresh();
@@ -987,6 +1266,23 @@ function clipboardHasImage(data = new DataTransfer()) {
 /** Ctrl/Cmd+V and the native menu's Paste (AC-3, AC-6): reads the flavours
  * off the event and routes them through performPaste. Always prevented —
  * the browser must never splice its own HTML into the canvas. */
+/** The first clipboard file item of an accepted image type, or null — read
+ * synchronously off the paste event (SPEC-024 AC-1), the one point a raw
+ * image File is reachable without the async Clipboard API's permission
+ * prompt. */
+function clipboardImageFile(data = new DataTransfer()) {
+  const items = data.items;
+  if (!items) {
+    return null;
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" && isAcceptedImageType(items[i].type) && typeof items[i].getAsFile === "function") {
+      return items[i].getAsFile();
+    }
+  }
+  return null;
+}
+
 function handlePaste(event = new ClipboardEvent("paste")) {
   const root = contentRoot.value;
   const model = doc.value;
@@ -1002,6 +1298,11 @@ function handlePaste(event = new ClipboardEvent("paste")) {
   plainPasteNext = false;
   const selection = currentSelection(root);
   if (!selection) {
+    return;
+  }
+  const imageFile = clipboardImageFile(data);
+  if (imageFile) {
+    void insertImageFromFile(imageFile, selection);
     return;
   }
   performPaste(
@@ -1468,6 +1769,12 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   mouseButtonDown = true;
   clearCellSelection();
   cellDragOrigin = editable.value ? tableCellAtTarget(event.target) : null;
+  // A click outside a selected image deselects it (SPEC-024) — a click on
+  // one is handled by DocImageBlock's own @select, which fires afterward.
+  const imageTarget = event.target instanceof Element ? event.target.closest(".doc-image-anchor") : null;
+  if (!imageTarget) {
+    clearImageSelection();
+  }
 }
 
 /** Mousemove with the primary button down: entering a different cell of the
@@ -1511,6 +1818,56 @@ function handleCanvasMouseUp() {
     mouseButtonDown = false;
     maybeApplyPainter();
   }
+}
+
+/** Whether a drag carries a file of an accepted image type — checked from
+ * `dataTransfer.items` (available during dragenter/dragover, unlike the
+ * actual file, which only `drop` exposes). Used to steal the drag away from
+ * AppShell's window-level "drop to open a document" handling (SPEC-009) only
+ * when it is actually an image (AC-1); anything else — including a .docx/
+ * .odt file dragged over the canvas — falls through to that existing
+ * behaviour untouched. */
+function isImageDrag(event = new DragEvent("dragover")) {
+  const items = event.dataTransfer?.items;
+  if (!items) {
+    return false;
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" && isAcceptedImageType(items[i].type)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function handleCanvasDragEnter(event = new DragEvent("dragenter")) {
+  if (editable.value && isImageDrag(event)) {
+    event.stopPropagation();
+  }
+}
+
+function handleCanvasDragOver(event = new DragEvent("dragover")) {
+  if (editable.value && isImageDrag(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
+/** Drag-and-drop onto the canvas (AC-1): inserts at the caret nearest the
+ * drop point. */
+function handleCanvasDrop(event = new DragEvent("drop")) {
+  if (!editable.value) {
+    return;
+  }
+  const file = event.dataTransfer?.files?.[0];
+  if (!file || !isAcceptedImageType(file.type)) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  const root = contentRoot.value;
+  const dropCaret = root ? caretAtClientPoint(root, event.clientX, event.clientY) : null;
+  void insertImageFromFile(file, dropCaret ? caretSelection(dropCaret) : null);
 }
 
 /** Mouseover anywhere on the page: hovering a table measures its geometry
@@ -2339,11 +2696,21 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (event.key === "Escape") {
     // Escape dismisses the paste options chip, the context menu, the
     // cell-range selection (SPEC-022) and the format painter (SPEC-020
-    // AC-15, AC-17).
+    // AC-15, AC-17); also the selected image (SPEC-024).
     dismissPasteChip();
     closeContextMenu();
     clearCellSelection();
     disarmPainter();
+    clearImageSelection();
+    return;
+  }
+  if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+    // Deleting a selected image (SPEC-024 AC-30) is a dedicated keydown
+    // path, not the native beforeinput deletion flow: an image click never
+    // places a DOM caret/selection inside the contenteditable region for
+    // that flow to act on.
+    event.preventDefault();
+    handleImageDelete();
     return;
   }
   if (
@@ -2609,26 +2976,37 @@ const flatBlocks = computed(() => {
   // same way (SPEC-022 AC-16): the highlighted table's block object never
   // changes when the drag extends.
   const range = cellSelection.value;
+  // The selected image (SPEC-024) joins its own entry's v-memo key the same
+  // way, so a wrap-mode/selection change re-renders it.
+  const selectedImage = imageSelection.value;
+  const media = doc.value.media ?? [];
   return doc.value.sections.flatMap((section, sectionIndex) =>
     section.blocks.map((block, blockIndex) => {
       const address = `${sectionIndex}:${blockIndex}`;
       const suffix = bump.key === address ? `:${bump.count}` : "";
       const table = isTable(block);
+      const image = isImage(block);
       const cellSel =
         table && range && range.section === sectionIndex && range.block === blockIndex
           ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
           : "";
+      const imgSelected =
+        image && !!selectedImage && selectedImage.section === sectionIndex && selectedImage.block === blockIndex;
       return {
         key: `${bump.epoch}:${address}${suffix}`,
         block,
         // The paragraph-branch view of the block — see asParagraphBlock;
-        // the template's table branch never reads it.
+        // the template's table/image branches never read it.
         paragraph: asParagraphBlock(block),
         isTable: table,
+        isImage: image,
+        imageSrc: image ? mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)) : "",
+        imageSelected: imgSelected,
         section: sectionIndex,
         blockIndex,
         marker: markers[sectionIndex][blockIndex],
         cellSel,
+        imgSel: imgSelected ? "1" : "",
       };
     }),
   );
@@ -3286,6 +3664,10 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         @insert="handleInsertTable"
         @open-dialog="insertTableDialogOpen = true"
       />
+      <ImageInsertControl
+        v-if="editable"
+        @insert-file="handleInsertImageFile"
+      />
       <TextColorPicker
         v-if="editable"
         :value="formatValues.color"
@@ -3539,6 +3921,20 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
           />
         </div>
         <div
+          v-if="imageHandles"
+          class="image-handles"
+          data-testid="image-handles"
+        >
+          <div
+            v-for="handle in IMAGE_HANDLES"
+            :key="handle"
+            class="image-resize-handle"
+            :data-testid="`image-resize-${handle}`"
+            :style="imageHandleStyle(handle)"
+            @mousedown="startImageResize($event, handle)"
+          />
+        </div>
+        <div
           class="page-margin"
           data-testid="page-margin"
           :style="marginStyle"
@@ -3565,31 +3961,37 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             @mousedown="handleCanvasMouseDown"
             @mousemove="handleCanvasMouseMove"
             @mouseup="handleCanvasMouseUp"
+            @dragenter="handleCanvasDragEnter"
+            @dragover="handleCanvasDragOver"
+            @drop="handleCanvasDrop"
           >
             <component
-              :is="entry.isTable ? DocTableBlock : headingTag(entry.paragraph.headingLevel)"
+              :is="entry.isTable ? DocTableBlock : entry.isImage ? DocImageBlock : headingTag(entry.paragraph.headingLevel)"
               v-for="entry in flatBlocks"
               :key="entry.key"
-              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker, entry.cellSel]"
-              :class="entry.isTable ? undefined : 'doc-paragraph'"
-              :style="entry.isTable ? undefined : paragraphStyle(entry.paragraph)"
-              :data-section="entry.isTable ? undefined : entry.section"
-              :data-block="entry.isTable ? undefined : entry.blockIndex"
-              :data-list-marker="entry.isTable ? undefined : (entry.marker || undefined)"
-              :data-list-level="!entry.isTable && entry.paragraph.list ? entry.paragraph.list.level : undefined"
-              :block="entry.isTable ? entry.block : undefined"
-              :section="entry.isTable ? entry.section : undefined"
-              :block-index="entry.isTable ? entry.blockIndex : undefined"
+              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker, entry.cellSel, entry.imgSel]"
+              :class="entry.isTable || entry.isImage ? undefined : 'doc-paragraph'"
+              :style="entry.isTable || entry.isImage ? undefined : paragraphStyle(entry.paragraph)"
+              :data-section="entry.isTable || entry.isImage ? undefined : entry.section"
+              :data-block="entry.isTable || entry.isImage ? undefined : entry.blockIndex"
+              :data-list-marker="entry.isTable || entry.isImage ? undefined : (entry.marker || undefined)"
+              :data-list-level="!entry.isTable && !entry.isImage && entry.paragraph.list ? entry.paragraph.list.level : undefined"
+              :block="entry.isTable || entry.isImage ? entry.block : undefined"
+              :section="entry.isTable || entry.isImage ? entry.section : undefined"
+              :block-index="entry.isTable || entry.isImage ? entry.blockIndex : undefined"
               :cell-range="entry.isTable ? cellSelection : undefined"
+              :src="entry.isImage ? entry.imageSrc : undefined"
+              :selected="entry.isImage ? entry.imageSelected : undefined"
+              @select="entry.isImage ? handleImageSelect(entry.section, entry.blockIndex) : undefined"
             >
-              <template v-if="!entry.isTable && entry.paragraph.runs.length > 0">
+              <template v-if="!entry.isTable && !entry.isImage && entry.paragraph.runs.length > 0">
                 <span
                   v-for="(run, runIndex) in entry.paragraph.runs"
                   :key="runKey(run, runIndex)"
                   :style="runStyle(run.formatting)"
                 >{{ run.text }}</span>
               </template>
-              <br v-else-if="!entry.isTable">
+              <br v-else-if="!entry.isTable && !entry.isImage">
             </component>
           </div>
         </div>
@@ -3628,6 +4030,15 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       @select="handlePasteOption"
       @dismiss="dismissPasteChip"
     />
+    <ImageToolbar
+      v-if="imageSelection && imageHandles"
+      :left="imageToolbarStyle().left"
+      :top="imageToolbarStyle().top"
+      :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
+      @wrap="handleImageWrap"
+      @options="openImageOptions"
+      @delete="handleImageDelete"
+    />
     <EditorContextMenu
       v-if="contextMenu.visible"
       :left="contextMenu.left"
@@ -3655,6 +4066,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       v-if="insertTableDialogOpen"
       @apply="handleInsertTable"
       @cancel="insertTableDialogOpen = false"
+    />
+    <ImageOptionsDialog
+      v-if="imageOptionsOpen"
+      :initial="imageOptionsInitial"
+      @apply="handleImageOptionsApply"
+      @cancel="imageOptionsOpen = false"
     />
   </AppShell>
   <AppShell
@@ -3882,6 +4299,27 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
 
 .table-resize-handle:hover {
   background: rgb(26 115 232 / 0.35);
+}
+
+/* The selected image's eight resize handles (SPEC-024 AC-8, AC-10..12) —
+   same page-relative overlay layer as .table-handles, positioned per handle
+   by imageHandleStyle(). */
+.image-handles {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.image-resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  width: 8px;
+  height: 8px;
+  border: 1px solid #1a73e8;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
 /* Off-screen but rendered, so the aria-live caret announcements reach
