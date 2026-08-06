@@ -190,6 +190,30 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
     formatting.direction = bidi ? "rtl" : "ltr";
   }
 
+  // The SPEC-028 pagination flags, all ST_OnOff toggles. Like w:bidi above,
+  // the non-canonical value (an explicit off on the keeps, an explicit on
+  // for widow control) is recorded here so it can override a style chain
+  // during merging; the reader normalises it away before the model is
+  // assembled — the model only ever holds keepNext/keepLines/
+  // pageBreakBefore as true and widowControl as false (absent means on,
+  // both file formats' default; see ParagraphFormatting).
+  const keepNext = parseBooleanToggle(firstChildElement(pPr, WORD_NAMESPACE, "keepNext"));
+  if (keepNext !== undefined) {
+    formatting.keepNext = keepNext;
+  }
+  const keepLines = parseBooleanToggle(firstChildElement(pPr, WORD_NAMESPACE, "keepLines"));
+  if (keepLines !== undefined) {
+    formatting.keepLines = keepLines;
+  }
+  const pageBreakBefore = parseBooleanToggle(firstChildElement(pPr, WORD_NAMESPACE, "pageBreakBefore"));
+  if (pageBreakBefore !== undefined) {
+    formatting.pageBreakBefore = pageBreakBefore;
+  }
+  const widowControl = parseBooleanToggle(firstChildElement(pPr, WORD_NAMESPACE, "widowControl"));
+  if (widowControl !== undefined) {
+    formatting.widowControl = widowControl;
+  }
+
   return formatting;
 }
 

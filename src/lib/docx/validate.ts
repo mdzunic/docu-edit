@@ -61,11 +61,15 @@ const NUM_FMT_VALUES = new Set([
 // Sequence order of the CT_PPr / CT_RPr / CT_SectPr children the writer
 // emits, per the ECMA-376 Transitional schema. Order within each list is
 // the schema's required document order.
-const PPR_SEQUENCE = ["pStyle", "numPr", "bidi", "spacing", "ind", "jc", "outlineLvl"];
+const PPR_SEQUENCE = [
+  "pStyle", "keepNext", "keepLines", "pageBreakBefore", "widowControl",
+  "numPr", "bidi", "spacing", "ind", "jc", "outlineLvl", "sectPr",
+];
 // CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
 // fitText, vertAlign", so shd follows u and vertAlign follows shd.
 const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];
-const SECTPR_SEQUENCE = ["pgSz", "pgMar"];
+// CT_SectPr puts w:type before the page geometry (SPEC-028 AC-31).
+const SECTPR_SEQUENCE = ["type", "pgSz", "pgMar"];
 const STYLE_SEQUENCE = ["name", "basedOn", "pPr", "rPr"];
 
 const INTEGER_PATTERN = /^-?\d+$/;
@@ -189,6 +193,20 @@ function checkParagraphProperties(pPr: Element, context: string, violations: str
       case "pStyle":
         checkAttr(child, "val", (v) => v.length > 0, "a non-empty style id", context, violations);
         break;
+      case "keepNext":
+      case "keepLines":
+      case "pageBreakBefore":
+      case "widowControl":
+        // The SPEC-028 pagination toggles: w:val, when present, must be an
+        // ST_OnOff value (same rule as the rPr b/i/strike toggles).
+        checkAttr(child, "val", (v) => ["0", "1", "true", "false", "on", "off"].includes(v),
+          "an ST_OnOff value", context, violations, false);
+        break;
+      case "sectPr":
+        // A paragraph-level sectPr ends a non-final section (SPEC-028
+        // AC-31) — same shape as the body-level one.
+        checkSectionProperties(child, `${context}/w:sectPr`, violations);
+        break;
       case "numPr":
         checkSequence(Array.from(child.children), ["ilvl", "numId"], `${context}/w:numPr`, violations);
         for (const numChild of Array.from(child.children)) {
@@ -310,7 +328,13 @@ function checkSectionProperties(sectPr: Element, context: string, violations: st
     if (!isWordElement(child)) {
       continue;
     }
-    if (child.localName === "pgSz") {
+    if (child.localName === "type") {
+      // ST_SectionMark (SPEC-028): the writer only ever emits "continuous",
+      // but the full value space is legal in preserved source sectPrs.
+      checkAttr(child, "val",
+        (v) => ["continuous", "nextPage", "nextColumn", "evenPage", "oddPage"].includes(v),
+        "an ST_SectionMark value", context, violations, false);
+    } else if (child.localName === "pgSz") {
       checkAttr(child, "w", (v) => UNSIGNED_PATTERN.test(v) && Number(v) > 0,
         "a positive page width in twips", context, violations);
       checkAttr(child, "h", (v) => UNSIGNED_PATTERN.test(v) && Number(v) > 0,

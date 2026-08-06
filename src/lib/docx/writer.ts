@@ -24,20 +24,22 @@ import type {
   BorderSide,
   CellBorders,
   CellVerticalAlign,
-  DefaultStyles,
   DocumentModel,
   Image,
+  Margins,
   NamedStyle,
+  PageSize,
   Paragraph,
   ParagraphAlignment,
   ParagraphFormatting,
   Run,
   RunFormatting,
+  SectionStart,
   Table,
   TableCell,
   TableRow,
 } from "../documentModel";
-import { DEFAULT_TITLE } from "../documentModel";
+import { DEFAULT_TITLE, sectionMargins, sectionPageSize } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
@@ -278,13 +280,32 @@ function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   return parts;
 }
 
-function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): string {
+function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef, sectPr?: string): string {
   const parts: string[] = [];
+  const formatting = paragraph.formatting ?? {};
 
-  // Emitted in CT_PPr sequence order: pStyle, numPr, then the shared
-  // formatting parts, then outlineLvl.
+  // Emitted in CT_PPr sequence order: pStyle, keepNext, keepLines,
+  // pageBreakBefore, widowControl, numPr, then the shared formatting parts,
+  // then outlineLvl — with a section-ending w:sectPr (SPEC-028 AC-31) last.
   if (paragraph.styleId !== undefined) {
     parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
+  }
+
+  // The SPEC-028 pagination toggles, mirroring the model's canonical form:
+  // the keeps and pageBreakBefore only when on (empty on-toggles), widow
+  // control only when explicitly off — absent means on in both the model
+  // and OOXML, so nothing is written for the default.
+  if (formatting.keepNext === true) {
+    parts.push("<w:keepNext/>");
+  }
+  if (formatting.keepLines === true) {
+    parts.push("<w:keepLines/>");
+  }
+  if (formatting.pageBreakBefore === true) {
+    parts.push("<w:pageBreakBefore/>");
+  }
+  if (formatting.widowControl === false) {
+    parts.push('<w:widowControl w:val="0"/>');
   }
 
   // The list reference (SPEC-018 AC-18): the numbering plan assigned this
@@ -295,9 +316,12 @@ function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef): st
     );
   }
 
-  parts.push(...paragraphFormattingParts(paragraph.formatting ?? {}));
+  parts.push(...paragraphFormattingParts(formatting));
   if (paragraph.headingLevel !== undefined) {
     parts.push(`<w:outlineLvl w:val="${paragraph.headingLevel - 1}"/>`);
+  }
+  if (sectPr !== undefined) {
+    parts.push(sectPr);
   }
 
   return parts.length > 0 ? `<w:pPr>${parts.join("")}</w:pPr>` : "";
@@ -466,8 +490,9 @@ function paragraphXml(
   includeOpaque: boolean,
   ctx: InlineWriteContext,
   numRef?: NumberingRef,
+  sectPr?: string,
 ): string {
-  return `<w:p>${paragraphPropertiesXml(paragraph, numRef)}${inlineContentXml(paragraph, includeOpaque, ctx)}</w:p>`;
+  return `<w:p>${paragraphPropertiesXml(paragraph, numRef, sectPr)}${inlineContentXml(paragraph, includeOpaque, ctx)}</w:p>`;
 }
 
 /** An Image block (SPEC-024): OOXML has no body-level picture element, so
@@ -750,13 +775,21 @@ function tableXml(
   return `<w:tbl>${tblPr}${grid}${rows}</w:tbl>`;
 }
 
-function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
-  const width = cmToTwips(defaultStyles.pageSize.widthCm);
-  const height = cmToTwips(defaultStyles.pageSize.heightCm);
+/** A `w:sectPr` generated from modelled section geometry, in CT_SectPr
+ * sequence order: w:type (continuous starts only — nextPage is OOXML's own
+ * default, matching the model's absent `start`), then the required
+ * w:pgSz/w:pgMar. Shared by the body-level sectPr describing the final
+ * section and the paragraph-level sectPr every non-final section is written
+ * as (SPEC-028 AC-31). */
+function sectionPropertiesXml(pageSize: PageSize, margins: Margins, start?: SectionStart): string {
+  const width = cmToTwips(pageSize.widthCm);
+  const height = cmToTwips(pageSize.heightCm);
   const orient = width > height ? ' w:orient="landscape"' : "";
-  const { topCm, rightCm, bottomCm, leftCm } = defaultStyles.margins;
+  const type = start === "continuous" ? '<w:type w:val="continuous"/>' : "";
+  const { topCm, rightCm, bottomCm, leftCm } = margins;
   return (
     "<w:sectPr>" +
+    type +
     `<w:pgSz w:w="${width}" w:h="${height}"${orient}/>` +
     `<w:pgMar w:top="${cmToTwips(topCm)}" w:right="${cmToTwips(rightCm)}"` +
     ` w:bottom="${cmToTwips(bottomCm)}" w:left="${cmToTwips(leftCm)}"` +
@@ -765,10 +798,15 @@ function sectionPropertiesXml(defaultStyles: DefaultStyles): string {
   );
 }
 
-/** The main document part. Page setup lives on the model's `defaultStyles`
- * (not per section), so all sections' blocks are written in order under one
- * body-level w:sectPr. An empty document still gets one w:p — a body whose
- * only child is w:sectPr triggers Word's repair prompt (AC-24).
+/** The main document part. Every non-final section ends with a w:sectPr
+ * inside its last paragraph's w:pPr (SPEC-028 AC-31) — the section's own
+ * preserved XML when the source provided one, else generated from its
+ * modelled geometry; a section whose last block is not a paragraph gets an
+ * extra empty section-break paragraph to host it. The final section is the
+ * body-level w:sectPr, exactly as before SPEC-028 — from its geometry,
+ * which for a single-section document is `defaultStyles` unchanged. An
+ * empty document still gets one w:p — a body whose only child is w:sectPr
+ * triggers Word's repair prompt (AC-24).
  *
  * SPEC-008: when the model came from a .docx, preserved opaque blocks and
  * inlines are re-emitted verbatim at their anchored positions, and the
@@ -787,6 +825,18 @@ export function buildDocumentXml(
   const blockXml: string[] = [];
   let docPrId = 1;
   model.sections.forEach((section, sectionIndex) => {
+    const isFinal = sectionIndex === model.sections.length - 1;
+    const sectPrXml = isFinal
+      ? undefined
+      : includeOpaque && section.docxSectPr !== undefined
+        ? section.docxSectPr
+        : sectionPropertiesXml(
+            sectionPageSize(model, sectionIndex),
+            sectionMargins(model, sectionIndex),
+            section.start,
+          );
+    const lastBlock = section.blocks[section.blocks.length - 1];
+    const embedSectPr = sectPrXml !== undefined && lastBlock?.type === "paragraph";
     const opaqueBlocks = includeOpaque
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
       : [];
@@ -813,17 +863,35 @@ export function buildDocumentXml(
           blockXml.push(`<w:p><w:r><w:br w:type="${block.kind}"/></w:r></w:p>`);
         } else {
           blockXml.push(
-            paragraphXml(block, includeOpaque, inlineCtx, numberingRefFor(plan, sectionIndex, i)),
+            paragraphXml(
+              block,
+              includeOpaque,
+              inlineCtx,
+              numberingRefFor(plan, sectionIndex, i),
+              embedSectPr && i === section.blocks.length - 1 ? sectPrXml : undefined,
+            ),
           );
         }
       }
     }
+    if (sectPrXml !== undefined && !embedSectPr) {
+      // No paragraph to end the section on (a table/image/break last, or an
+      // empty section): the section break needs a paragraph mark to live
+      // on, so an empty one is appended — the same shape Word itself uses
+      // after a section-ending table.
+      blockXml.push(`<w:p><w:pPr>${sectPrXml}</w:pPr></w:p>`);
+    }
   });
   const body = blockXml.length > 0 ? blockXml.join("") : "<w:p/>";
+  const lastSection = model.sections.length - 1;
   const sectPr =
     includeOpaque && model.sourceXml?.docxSectPr !== undefined
       ? model.sourceXml.docxSectPr
-      : sectionPropertiesXml(model.defaultStyles);
+      : sectionPropertiesXml(
+          sectionPageSize(model, lastSection),
+          sectionMargins(model, lastSection),
+          model.sections[lastSection]?.start,
+        );
   return (
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
     `<w:body>${body}${sectPr}</w:body></w:document>`
