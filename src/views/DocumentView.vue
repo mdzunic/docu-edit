@@ -855,6 +855,11 @@ function closeSession() {
   lockState.value = "pending";
   caret = noCaret();
   scrollTop = 0;
+  // The next document opens scrolled to the top: realize only its head
+  // until the viewport refresh sees the real scroll position.
+  viewportPageRange.value = { start: 0, end: 2 };
+  anchorPage.value = -1;
+  caretPage.value = 1;
   dismissPasteChip();
   closeContextMenu();
   resetFindState();
@@ -3768,7 +3773,10 @@ const PAGE_GAP_PX = 12;
 /** Extra realization margin around the viewport, px. */
 const VIEWPORT_OVERSCAN_PX = 400;
 
-const viewportPageRange = ref({ start: 0, end: Number.MAX_SAFE_INTEGER });
+// Starts narrow: a large document's first render (opening lands before any
+// scroll/mount refresh) must realize only the top pages, not all of them —
+// refreshViewportRange corrects the range from the real viewport.
+const viewportPageRange = ref({ start: 0, end: 2 });
 /** Page-layout objects that have rendered their content once: they keep
  * rendering while reconciliation preserves them (an unchanged page never
  * loses its DOM), and drop out naturally when an edit replaces the page. */

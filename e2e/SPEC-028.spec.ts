@@ -598,6 +598,16 @@ test("a large document paginates without freezing and mid-document edits keep ea
   expect(total).toBeGreaterThan(40);
   await expect(page.getByTestId("page-indicator")).toContainText(`of ${total}`);
 
+  // Far pages are virtualized (AC-49/50's mechanism): most page boxes are
+  // empty geometry, so the DOM holds a small fraction of the document's
+  // 3000 blocks — mounting them all is what used to blow the settle budget.
+  const virtualCount = await page.locator("[data-virtual]").count();
+  expect(virtualCount).toBeGreaterThan(total / 2);
+  const domBlocks = await page
+    .locator('[data-testid="document-page"] [data-section][data-block]')
+    .count();
+  expect(domBlocks).toBeLessThan(1000);
+
   // Tag page 1's first paragraph element, edit at the end, and require the
   // exact same connected DOM node afterwards — earlier pages were not
   // re-rendered (AC-52, AC-53).
@@ -621,4 +631,30 @@ test("a large document paginates without freezing and mid-document edits keep ea
   });
   expect(intact).toBe(true);
   await expect(content(page)).toContainText("tail edit");
+
+  // Scrolling to the middle realizes those pages: what the user can see is
+  // always real content, never an empty virtualized box.
+  await page.evaluate(() => {
+    const main = document.querySelector("main")!;
+    main.scrollTop = main.scrollHeight / 2;
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const main = document.querySelector("main")!;
+        const view = main.getBoundingClientRect();
+        const boxes = Array.from(document.querySelectorAll('[data-testid="document-page"]'));
+        const visible = boxes.filter((box) => {
+          const rect = box.getBoundingClientRect();
+          return rect.bottom > view.top && rect.top < view.bottom;
+        });
+        return (
+          visible.length > 0 &&
+          visible.every(
+            (box) => !box.hasAttribute("data-virtual") && (box.textContent ?? "").length > 0,
+          )
+        );
+      }),
+    )
+    .toBe(true);
 });
