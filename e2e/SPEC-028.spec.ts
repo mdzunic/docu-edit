@@ -134,8 +134,9 @@ test("content flows across pages with a visible gap between them (AC-1, AC-2)", 
   const first = (await pages(page).nth(0).boundingBox())!;
   const second = (await pages(page).nth(1).boundingBox())!;
   const gap = second.y - (first.y + first.height);
-  expect(gap).toBeGreaterThanOrEqual(20);
-  expect(gap).toBeLessThanOrEqual(28);
+  // AC-2: a 12px gap between consecutive page containers.
+  expect(gap).toBeGreaterThanOrEqual(11);
+  expect(gap).toBeLessThanOrEqual(13);
   await expect(pages(page).nth(0)).toContainText("Paragraph 0 ");
 });
 
@@ -151,7 +152,7 @@ test("the status bar shows Page N of M following the caret (AC-3)", async ({ pag
   await expect(page.getByTestId("page-indicator")).toHaveText(`Page ${total} of ${total}`);
 });
 
-test("Ctrl/Cmd+Enter inserts a manual page break at the caret (AC-4, AC-5)", async ({ page }) => {
+test("Ctrl/Cmd+Enter inserts a manual page break at the caret (AC-5, AC-7)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("HelloWorld");
@@ -167,7 +168,7 @@ test("Ctrl/Cmd+Enter inserts a manual page break at the caret (AC-4, AC-5)", asy
   await expect(pages(page).nth(1)).toContainText("World");
 });
 
-test("the Insert-break menu is genuinely visible and offers all four breaks (AC-6..9)", async ({
+test("the Insert-break menu is genuinely visible and offers all four breaks (AC-8, AC-9)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -176,10 +177,10 @@ test("the Insert-break menu is genuinely visible and offers all four breaks (AC-
   await expect(menu).toBeVisible();
 
   const items = [
-    { id: "break-page", label: "Page break" },
-    { id: "break-column", label: "Column break" },
-    { id: "break-section-next", label: "Section break (next page)" },
-    { id: "break-section-continuous", label: "Section break (continuous)" },
+    { id: "break-page", label: "Page Break" },
+    { id: "break-column", label: "Column Break" },
+    { id: "break-section-next", label: "Section Break (Next Page)" },
+    { id: "break-section-continuous", label: "Section Break (Continuous)" },
   ];
   const viewport = page.viewportSize()!;
   for (const item of items) {
@@ -203,12 +204,11 @@ test("the Insert-break menu is genuinely visible and offers all four breaks (AC-
     );
     expect(hit).toBe(true);
   }
-  // Column break is offered but disabled until columns exist (SPEC-030).
-  await expect(page.getByTestId("break-column")).toBeDisabled();
-  await expect(page.getByTestId("break-column")).toHaveAttribute(
-    "title",
-    "Requires columns (coming soon)",
-  );
+  // All four items are enabled — the column break inserts a real node even
+  // though its layout effect waits for columns (AC-10, AC-12; SPEC-030).
+  for (const item of items) {
+    await expect(page.getByTestId(item.id)).toBeEnabled();
+  }
 
   // The page-break item actually works from the menu.
   await content(page).click();
@@ -223,7 +223,33 @@ test("the Insert-break menu is genuinely visible and offers all four breaks (AC-
   await expect(pages(page)).toHaveCount(2);
 });
 
-test("a section break (next page) forces a page; continuous does not (AC-8, AC-9)", async ({
+test("Column Break inserts a stored node with no visible layout effect (AC-10, AC-12)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("AlphaOmega");
+  for (let i = 0; i < 5; i += 1) {
+    await page.keyboard.press("ArrowLeft");
+  }
+  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("break-column").click();
+  await waitForPagination(page);
+  // The break node is in the document model and rendered flow...
+  const marker = page.locator('[data-break-kind="column"]');
+  await expect(marker).toHaveCount(1);
+  // ...but has no layout effect: still one page, nothing visible while
+  // formatting marks are off (AC-12).
+  await expect(pages(page)).toHaveCount(1);
+  await expect(marker).not.toBeVisible();
+  // With formatting marks on it shows a labelled marker (AC-19).
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await expect(marker).toBeVisible();
+  const label = await marker.evaluate((el) => getComputedStyle(el, "::before").content);
+  expect(label).toContain("Column Break");
+});
+
+test("a section break (next page) forces a page; continuous does not (AC-13, AC-15)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -243,7 +269,7 @@ test("a section break (next page) forces a page; continuous does not (AC-8, AC-9
   await expect(pages(page)).toHaveCount(2);
 });
 
-test("deleting a manual break rejoins the content flow (AC-10)", async ({ page }) => {
+test("deleting a manual break rejoins the content flow (AC-17, AC-18)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("HelloWorld");
@@ -263,7 +289,7 @@ test("deleting a manual break rejoins the content flow (AC-10)", async ({ page }
   await expect(content(page)).toHaveText("HelloWorld");
 });
 
-test("Ctrl/Cmd+Shift+P shows paragraph marks, spaces, tabs and break markers (AC-11..16)", async ({
+test("Ctrl/Cmd+Shift+P shows paragraph marks, spaces, tabs and break markers (AC-19..23)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -324,7 +350,7 @@ test("Ctrl/Cmd+Shift+P shows paragraph marks, spaces, tabs and break markers (AC
   await expect(page.locator('[data-break-kind="page"]').first()).not.toBeVisible();
 });
 
-test("a section holds its own page size, orientation and margins via Apply to (AC-17..21)", async ({
+test("a section holds its own page size, orientation and margins via Apply to (AC-24..29)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -336,7 +362,7 @@ test("a section holds its own page size, orientation and margins via Apply to (A
   await waitForPagination(page);
   await expect(pages(page)).toHaveCount(2);
 
-  // The Apply to control offers exactly the two scopes (AC-20, AC-21).
+  // The Apply to control offers exactly the two scopes (AC-27).
   await page.getByTestId("page-setup-button").click();
   const applyTo = page.getByTestId("page-setup-apply-to");
   await expect(applyTo).toBeVisible();
@@ -372,7 +398,7 @@ test("a section holds its own page size, orientation and margins via Apply to (A
     });
   expect(Number.parseFloat(padTop)).toBeCloseTo(1, 2);
 
-  // Whole document: both sections follow the new size (AC-21).
+  // Whole document: both sections follow the new size (AC-29).
   await page.getByTestId("page-setup-button").click();
   await page.getByTestId("page-setup-apply-to").selectOption("wholeDocument");
   await page.getByTestId("page-setup-paper-size").selectOption("Letter");
@@ -383,7 +409,7 @@ test("a section holds its own page size, orientation and margins via Apply to (A
   expect(await styleOf(1, "height")).toBeCloseTo(27.94, 1);
 });
 
-test("paragraph pagination options are settable; widow/orphan is on by default (AC-22, AC-24, AC-26, AC-28)", async ({
+test("paragraph pagination options are settable; widow/orphan is on by default (AC-30, AC-32, AC-34, AC-36, AC-40)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -398,7 +424,7 @@ test("paragraph pagination options are settable; widow/orphan is on by default (
     "aria-checked",
     "false",
   );
-  // AC-28: widow/orphan control defaults ON.
+  // AC-36: widow/orphan control defaults ON (AC-40: toggleable off below).
   await expect(page.getByTestId("pagination-widowControl")).toHaveAttribute("aria-checked", "true");
 
   await page.getByTestId("pagination-keepNext").click();
@@ -410,7 +436,7 @@ test("paragraph pagination options are settable; widow/orphan is on by default (
   );
 });
 
-test("page break before forces its paragraph onto a new page (AC-26, AC-27)", async ({ page }) => {
+test("page break before forces its paragraph onto a new page (AC-34, AC-35)", async ({ page }) => {
   await createDocument(page);
   await pasteText(page, "Intro\nChapter start");
   await waitForPagination(page);
@@ -424,7 +450,7 @@ test("page break before forces its paragraph onto a new page (AC-26, AC-27)", as
   await expect(pages(page).nth(0)).not.toContainText("Chapter start");
 });
 
-test("a long paragraph splits across pages (2+ lines each side) and keep-lines-together moves it whole (AC-23..25, AC-29)", async ({
+test("a long paragraph splits across pages (2+ lines each side) and keep-lines-together moves it whole (AC-31, AC-33, AC-37..39)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -435,7 +461,7 @@ test("a long paragraph splits across pages (2+ lines each side) and keep-lines-t
   await expect(pages(page).nth(1)).toBeVisible();
 
   // The long paragraph straddles the page boundary: two slices of one
-  // block, each rendering at least 2 lines (widow/orphan, AC-29).
+  // block, each rendering at least 2 lines (widow/orphan, AC-37..39).
   const slices = page.locator('[data-section="0"][data-block="40"]');
   await expect(slices).toHaveCount(2);
   expect(await countLines(slices.nth(0))).toBeGreaterThanOrEqual(2);
@@ -444,7 +470,7 @@ test("a long paragraph splits across pages (2+ lines each side) and keep-lines-t
   await expect(pages(page).nth(1)).toContainText("SPLITEND");
 
   // Keep lines together: the paragraph moves to the next page whole
-  // (AC-24, AC-25).
+  // (AC-33).
   await page.getByText("SPLITSTART").click();
   await page.getByTestId("paragraph-pagination-button").click();
   await page.getByTestId("pagination-keepLines").click();
@@ -453,7 +479,7 @@ test("a long paragraph splits across pages (2+ lines each side) and keep-lines-t
   await expect(pages(page).nth(0)).not.toContainText("SPLITSTART");
   await expect(pages(page).nth(1)).toContainText("SPLITSTART");
 
-  // Keep with next (AC-22, AC-23): the last paragraph of page 1 follows
+  // Keep with next (AC-31): the last paragraph of page 1 follows
   // its successor onto page 2 once keep-with-next is set on it.
   await page.keyboard.press("Escape");
   const lastOnPageOne = pages(page)
@@ -469,7 +495,7 @@ test("a long paragraph splits across pages (2+ lines each side) and keep-lines-t
   await expect(pages(page).nth(0)).not.toContainText(lastText.slice(0, 20));
 });
 
-test("manual breaks and section properties round-trip through .docx (AC-30, AC-31)", async ({
+test("manual breaks and section properties round-trip through .docx (AC-11, AC-41, AC-43)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -480,22 +506,31 @@ test("manual breaks and section properties round-trip through .docx (AC-30, AC-3
   await page.getByTestId("insert-break-button").click();
   await page.getByTestId("break-section-continuous").click();
   await page.keyboard.type("Gamma");
+  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("break-column").click();
+  await page.keyboard.type("Delta");
   await waitForPagination(page);
 
   const path = await download(page, "docx");
   const documentXml = unzipParts(readFileSync(path)).get("word/document.xml")!.toString("utf8");
   expect(documentXml).toContain('<w:br w:type="page"/>');
+  expect(documentXml).toContain('<w:br w:type="column"/>');
   expect(documentXml).toContain("<w:sectPr");
   expect(documentXml).toContain('<w:type w:val="continuous"/>');
 
   await openFixture(page, path);
   await waitForPagination(page);
   await expect(page.locator('[data-break-kind="page"]')).toHaveCount(1);
+  // The column break survives the cycle without affecting the page count.
+  await expect(page.locator('[data-break-kind="column"]')).toHaveCount(1);
   await expect(pages(page)).toHaveCount(2);
   await expect(content(page)).toContainText("Gamma");
+  await expect(content(page)).toContainText("Delta");
 });
 
-test("breaks and section properties round-trip through .odt (AC-32, AC-33)", async ({ page }) => {
+test("breaks and section properties round-trip through .odt (AC-11, AC-42, AC-44)", async ({
+  page,
+}) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Alpha");
@@ -504,6 +539,9 @@ test("breaks and section properties round-trip through .odt (AC-32, AC-33)", asy
   await page.getByTestId("insert-break-button").click();
   await page.getByTestId("break-section-next").click();
   await page.keyboard.type("Gamma");
+  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("break-column").click();
+  await page.keyboard.type("Delta");
   await waitForPagination(page);
   // Give the new section its own page size so the master page carries
   // something distinctive.
@@ -518,12 +556,14 @@ test("breaks and section properties round-trip through .odt (AC-32, AC-33)", asy
   const contentXml = parts.get("content.xml")!.toString("utf8");
   const stylesXml = parts.get("styles.xml")!.toString("utf8");
   expect(contentXml).toContain('fo:break-before="page"');
+  expect(contentXml).toContain('fo:break-before="column"');
   expect(contentXml).toContain("style:master-page-name=");
   expect(stylesXml).toContain("SectionMaster");
 
   await openFixture(page, path);
   await waitForPagination(page);
   await expect(page.locator('[data-break-kind="page"]')).toHaveCount(1);
+  await expect(page.locator('[data-break-kind="column"]')).toHaveCount(1);
   const count = await pages(page).count();
   expect(count).toBeGreaterThanOrEqual(3);
   const lastHeight = await pages(page)
@@ -532,7 +572,17 @@ test("breaks and section properties round-trip through .odt (AC-32, AC-33)", asy
   expect(Number.parseFloat(lastHeight)).toBeCloseTo(21, 1);
 });
 
-test("a large document paginates without freezing and mid-document edits keep earlier pages (AC-34, AC-35)", async ({
+test("a new empty document renders one page reading Page 1 of 1 (AC-55, AC-56)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await waitForPagination(page);
+  await expect(pages(page)).toHaveCount(1);
+  await content(page).click();
+  await expect(page.getByTestId("page-indicator")).toHaveText("Page 1 of 1");
+});
+
+test("a large document paginates without freezing and mid-document edits keep earlier pages (AC-49..54)", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -550,7 +600,7 @@ test("a large document paginates without freezing and mid-document edits keep ea
 
   // Tag page 1's first paragraph element, edit at the end, and require the
   // exact same connected DOM node afterwards — earlier pages were not
-  // re-rendered (AC-35).
+  // re-rendered (AC-52, AC-53).
   await page.evaluate(() => {
     const first = document
       .querySelector('[data-testid="document-page"]')!
