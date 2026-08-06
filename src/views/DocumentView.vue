@@ -26,6 +26,7 @@ import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
+import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
@@ -53,6 +54,7 @@ import {
   asImageWrapMode,
   asListMarkerStyle,
   asListType,
+  asMeasurementUnit,
   asParagraphAlignment,
   asParagraphBlock,
   asTableAlignment,
@@ -226,6 +228,7 @@ import {
   setAlignment,
   setListMarker,
   setPageMargins,
+  setPageSetup,
   splitBlock,
   toggleFormat,
   toggleList,
@@ -707,6 +710,14 @@ const styleEntries = computed(() => (doc.value ? stylePickerEntries(doc.value) :
 // from the first touched paragraph at the moment it opens.
 const customSpacingOpen = ref(false);
 const customSpacingInitial = ref({ mode: "multiple", value: 1, beforePt: 0, afterPt: 0 });
+// The Page setup dialog (SPEC-027 AC-1..7): open flag plus the prefill
+// taken from the document's own page geometry/unit at the moment it opens.
+const pageSetupOpen = ref(false);
+const pageSetupInitial = ref({
+  pageSize: { widthCm: 21, heightCm: 29.7 },
+  margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
+  measurementUnit: "cm",
+});
 // Recently applied text colours, shared across documents (SPEC-013 AC).
 const recentColors = ref(loadRecentColors());
 // The families used by the open document, for the dropdown's "Fonts in
@@ -3286,6 +3297,71 @@ function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
   }
 }
 
+// --- page setup and ruler visibility (SPEC-027) -----------------------
+
+/** Opens the Page setup dialog prefilled from the document's own page
+ * geometry and measurement-unit preference (AC-8; absent unit reads as
+ * "cm", createDefaultStyles's own convention). */
+function openPageSetup() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  pageSetupInitial.value = {
+    pageSize: { ...model.defaultStyles.pageSize },
+    margins: { ...model.defaultStyles.margins },
+    measurementUnit: model.measurementUnit ?? "cm",
+  };
+  pageSetupOpen.value = true;
+}
+
+/** The dialog's OK (AC-5): one combined edit — page size, margins and the
+ * measurement-unit preference — applied as a single undo step, which
+ * re-renders the page and re-flows text immediately (doc.value's
+ * replacement is what drives pageStyle/marginStyle's recompute). */
+function handlePageSetupApply(
+  payload = {
+    pageSize: { widthCm: 21, heightCm: 29.7 },
+    margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
+    measurementUnit: "cm",
+  },
+) {
+  pageSetupOpen.value = false;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(
+    setPageSetup(model, selection, {
+      pageSize: payload.pageSize,
+      margins: payload.margins,
+      measurementUnit: asMeasurementUnit(payload.measurementUnit),
+    }),
+    selection,
+    "page setup",
+  );
+  root.focus();
+}
+
+/** The "Show/hide ruler" toggle (AC-14): a view preference, not an
+ * undo-able content edit — same direct-mutation + touchDocument pattern as
+ * handleTitleUpdate, and triggerRef is required for the same reason (doc is
+ * a shallowRef; mutating a field on its current value alone doesn't
+ * re-render). */
+function toggleRuler() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  // Absent reads as shown (documentModel.ts's own convention), so the flip
+  // is "was it explicitly false" rather than a plain `!model.showRuler`.
+  model.showRuler = model.showRuler === false;
+  triggerRef(doc);
+  touchDocument(model.id);
+}
+
 // Every key this handler acts on is looked up in the SPEC-021 registry
 // (AC-2) rather than compared against literal key/modifier checks — the
 // registry in lib/shortcuts.ts is the only place that spells out which key
@@ -4386,6 +4462,30 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         v-if="editable"
         type="button"
         class="toolbar-button"
+        data-testid="page-setup-button"
+        title="Page setup"
+        aria-label="Page setup"
+        @mousedown.prevent
+        @click="openPageSetup"
+      >
+        Page setup
+      </button>
+      <button
+        type="button"
+        class="toolbar-button"
+        data-testid="toggle-ruler-button"
+        title="Show/hide ruler"
+        aria-label="Show/hide ruler"
+        :aria-pressed="doc.showRuler !== false"
+        @mousedown.prevent
+        @click="toggleRuler"
+      >
+        Ruler
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
         data-testid="delete-document"
         @click="confirmingDelete = true"
       >
@@ -4455,6 +4555,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         />
       </div>
       <DocumentRuler
+        v-if="doc.showRuler !== false"
         :page-width-cm="doc.defaultStyles.pageSize.widthCm"
         :margin-left-cm="doc.defaultStyles.margins.leftCm"
         :margin-right-cm="doc.defaultStyles.margins.rightCm"
@@ -4784,6 +4885,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       :initial="tablePropertiesInitial"
       @apply="handleTablePropertiesApply"
       @cancel="tablePropertiesOpen = false"
+    />
+    <PageSetupDialog
+      v-if="pageSetupOpen"
+      :initial="pageSetupInitial"
+      @apply="handlePageSetupApply"
+      @cancel="pageSetupOpen = false"
     />
     <InsertTableDialog
       v-if="insertTableDialogOpen"
