@@ -480,13 +480,16 @@ test.describe("context menu", () => {
     await selectRange(page, 0, 6);
     await page.keyboard.press("Control+b");
     await selectRange(page, 0, 6);
-    await content(page).click({ button: "right", position: { x: 30, y: 10 } });
+    // Right-click the paragraphs themselves: since SPEC-028 the editable
+    // root wraps whole pages, so content-relative coordinates no longer
+    // land in the text area.
+    await page.locator('[data-section="0"][data-block="0"]').click({ button: "right" });
     await page.getByTestId("context-menu-copy").click();
     await expect(content(page)).toHaveText("styled");
 
     await page.keyboard.press("Control+End");
     await page.keyboard.press("Enter");
-    await content(page).click({ button: "right", position: { x: 30, y: 40 } });
+    await page.locator('[data-section="0"][data-block="1"]').click({ button: "right" });
     await page.getByTestId("context-menu-paste").click();
     await expect(content(page)).toHaveText("styledstyled");
     await waitForSaved(page);

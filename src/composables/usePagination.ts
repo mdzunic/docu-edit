@@ -32,6 +32,7 @@ import {
   measureBlockElement,
 } from "../lib/pageMetrics";
 import { sliceStartOf } from "../lib/domCaret";
+import { scheduleIdleWork, type IdleHandle } from "../lib/idleScheduler";
 import type { CaretPosition } from "../lib/textEditing";
 
 interface CacheEntry {
@@ -59,9 +60,21 @@ interface PagePlacement {
  * brief re-measures (typing) never flash it. */
 const BUSY_DELAY_MS = 200;
 
-/** Per-frame measurement budget: long enough to make fast progress on a
- * 200-page open, short enough to leave the frame responsive (AC-34). */
-const FRAME_BUDGET_MS = 8;
+/** Per-slot measurement budget when no idle deadline is available. */
+const FRAME_BUDGET_MS = 4;
+
+/** Ceiling per idle slot even when the browser reports more idle time. */
+const IDLE_BUDGET_MS = 12;
+
+/** How long after the user's last interaction bulk measurement stays
+ * paused — their keystroke/scroll/click (and whatever work it triggers,
+ * e.g. a find refresh) always wins the main thread. */
+const INTERACTION_PAUSE_MS = 400;
+
+/** Per-relayout budget for resolving split blocks' line-start character
+ * offsets (Range hit-testing is the most expensive read this module does —
+ * a 200-page pass resolves them across several frames, not in one). */
+const OFFSETS_BUDGET_MS = 12;
 
 export interface PaginationController {
   pages: ShallowRef<PageLayout[]>;
@@ -100,17 +113,36 @@ export function usePagination(
   let cache = new WeakMap<Block, CacheEntry>();
   let pending: PendingTarget[] = [];
   let placements = new Map<string, PagePlacement[]>();
-  let rafHandle = 0;
+  let slot: IdleHandle | null = null;
   let running = false;
   let stalledFrames = 0;
   let busyTimer: ReturnType<typeof setTimeout> | null = null;
+  // Measurement cursor into `pending` between re-layouts: measuring does
+  // not need a fresh layout every frame (elements are found in whatever is
+  // currently rendered), so mid-pass re-layouts are throttled — they are
+  // what makes a long pass expensive, not the measuring itself.
+  let cursor = 0;
+  let framesSinceLayout = 0;
+  let lastInteraction = 0;
+
+  function noteInteraction(): void {
+    lastInteraction = performance.now();
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("keydown", noteInteraction, { capture: true, passive: true });
+    document.addEventListener("pointerdown", noteInteraction, { capture: true, passive: true });
+    document.addEventListener("input", noteInteraction, { capture: true, passive: true });
+  }
 
   function entryFor(block: Block, contentWidthPx: number): CacheEntry | null {
     const entry = cache.get(block);
     return entry && Math.abs(entry.metrics.contentWidthPx - contentWidthPx) < 0.5 ? entry : null;
   }
 
-  function relayout(model: DocumentModel): void {
+  // Re-lays-out from the current cache. Returns the number of blocks still
+  // unresolved (unmeasured, or split without line offsets yet) so the
+  // measure loop knows whether the layout has fully settled.
+  function relayout(model: DocumentModel): number {
     pending = [];
     const seen = new Set<Block>();
     const provider: MetricsProvider = {
@@ -127,19 +159,34 @@ export function usePagination(
       },
     };
     const layout = paginate(model, provider);
-    ensureLineOffsets(model, layout);
+    const missingOffsets = ensureLineOffsets(model, layout);
     buildPlacements(model, layout);
-    pages.value = reconcilePages(pages.value, layout);
+    const reconciled = reconcilePages(pages.value, layout);
+    // Skip the assignment when nothing changed — during a long measurement
+    // pass most re-layouts refine only later pages, and every assignment
+    // costs a full render-entry rebuild downstream.
+    if (
+      reconciled.length !== pages.value.length ||
+      reconciled.some((entry, index) => entry !== pages.value[index])
+    ) {
+      pages.value = reconciled;
+    }
+    return pending.length + missingOffsets;
   }
 
   // Character offsets for every split block the new layout contains, read
   // from the block's CURRENT rendering (whole, or sliced by the previous
-  // layout — either holds all its lines).
-  function ensureLineOffsets(model: DocumentModel, layout: PageLayout[]): void {
+  // layout — either holds all its lines). Budgeted: Range hit-testing is
+  // expensive, so leftovers are counted and resolved on later frames — an
+  // unresolved split renders whole meanwhile (see renderEntryFor).
+  function ensureLineOffsets(model: DocumentModel, layout: PageLayout[]): number {
     const root = rootOf();
     if (!root) {
-      return;
+      return 0;
     }
+    const started = performance.now();
+    let missing = 0;
+    let resolved = 0;
     for (const page of layout) {
       for (const item of page.items) {
         if (item.startLine === undefined && item.endLine === undefined) {
@@ -151,6 +198,10 @@ export function usePagination(
         }
         const entry = cache.get(block);
         if (!entry || entry.lineOffsets) {
+          continue;
+        }
+        if (resolved > 0 && performance.now() - started > OFFSETS_BUDGET_MS) {
+          missing += 1;
           continue;
         }
         const slices = sliceElements(root, item.sectionIndex, item.blockIndex);
@@ -166,8 +217,10 @@ export function usePagination(
           }
         }
         entry.lineOffsets = offsets;
+        resolved += 1;
       }
     }
+    return missing;
   }
 
   function buildPlacements(model: DocumentModel, layout: PageLayout[]): void {
@@ -237,39 +290,65 @@ export function usePagination(
     state.value = "clean";
   }
 
+  // Measurement runs in idle time where the browser offers it — user input
+  // and rendering preempt it naturally, which is what keeps a 200-page
+  // pass from ever freezing or janking the UI (AC-34).
   function measureLoop(): void {
-    rafHandle = requestAnimationFrame(() => {
+    slot = scheduleIdleWork((budgetMs) => {
       const root = rootOf();
       const model = docOf();
       if (!root || !model) {
         finish();
         return;
       }
-      const started = performance.now();
-      let measured = 0;
-      for (const target of pending) {
-        if (measured > 0 && performance.now() - started > FRAME_BUDGET_MS) {
-          break;
-        }
-        if (measureOne(root, model, target)) {
-          measured += 1;
-        }
-      }
-      relayout(model);
-      if (pending.length === 0) {
-        finish();
+      // Bulk work yields to live interaction: while the user is typing or
+      // clicking, a large pass waits (their input owns the thread — AC-34);
+      // a tiny pass (the one block a keystroke re-measures) still runs
+      // immediately so split paragraphs update under the caret.
+      if (
+        pending.length - cursor > 3 &&
+        performance.now() - lastInteraction < INTERACTION_PAUSE_MS
+      ) {
+        measureLoop();
         return;
       }
-      // No element found for anything pending (render not flushed yet):
-      // retry a few frames, then give up until the next schedule() rather
-      // than spinning forever.
-      stalledFrames = measured === 0 ? stalledFrames + 1 : 0;
-      if (stalledFrames > 5) {
+      const started = performance.now();
+      let measured = 0;
+      while (cursor < pending.length) {
+        if (measured > 0 && performance.now() - started > budgetMs) {
+          break;
+        }
+        if (measureOne(root, model, pending[cursor])) {
+          measured += 1;
+        }
+        cursor += 1;
+      }
+      framesSinceLayout += 1;
+      // Re-layouts are the expensive part of a pass (page fill + offset
+      // resolution + a render-entry rebuild downstream), so they happen
+      // only when the pending list is exhausted — with a generous safety
+      // valve — never every frame.
+      const exhausted = cursor >= pending.length;
+      let unresolved = -1;
+      if (exhausted || framesSinceLayout >= 60) {
+        unresolved = relayout(model);
+        cursor = 0;
+        framesSinceLayout = 0;
+        if (unresolved === 0) {
+          finish();
+          return;
+        }
+      }
+      // No progress at all (elements not rendered yet, or only offsets
+      // remain and a relayout did not run this frame): retry a few frames,
+      // then give up until the next schedule() rather than spinning.
+      stalledFrames = measured === 0 && unresolved === -1 ? stalledFrames + 1 : 0;
+      if (stalledFrames > 8) {
         finish();
         return;
       }
       measureLoop();
-    });
+    }, { timeoutMs: 200, fallbackBudgetMs: FRAME_BUDGET_MS, maxBudgetMs: IDLE_BUDGET_MS });
   }
 
   function startMeasuring(): void {
@@ -294,8 +373,10 @@ export function usePagination(
       finish();
       return;
     }
-    relayout(model);
-    if (pending.length === 0) {
+    const unresolved = relayout(model);
+    cursor = 0;
+    framesSinceLayout = 0;
+    if (unresolved === 0) {
       finish();
       return;
     }
@@ -334,9 +415,13 @@ export function usePagination(
   }
 
   function stop(): void {
-    if (rafHandle && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(rafHandle);
+    if (typeof document !== "undefined") {
+      document.removeEventListener("keydown", noteInteraction, { capture: true });
+      document.removeEventListener("pointerdown", noteInteraction, { capture: true });
+      document.removeEventListener("input", noteInteraction, { capture: true });
     }
+    slot?.cancel();
+    slot = null;
     finish();
   }
 

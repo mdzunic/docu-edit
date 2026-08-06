@@ -257,6 +257,7 @@ import {
 } from "../lib/commands";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import { markSegments } from "../lib/marks";
+import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
 import { sectionGeometryPx, wholePageItem } from "../lib/pagination";
 import {
   deleteImage,
@@ -4122,7 +4123,7 @@ const pageRef = useTemplateRef("pageRef");
 // the DOM lib, so 0 is a safe "nothing scheduled" sentinel.
 let caretBeforeFind = noCaret();
 let findMatchesByBlock = new Map();
-let findRafId = 0;
+let findIdleHandle = noIdleHandle();
 let findDebounceTimer = 0;
 let findHintTimer = 0;
 
@@ -4426,13 +4427,20 @@ function scheduleFindRefresh() {
 }
 
 function scheduleFindMeasure() {
-  if (findRafId !== 0) {
+  if (findIdleHandle) {
     return;
   }
-  findRafId = window.requestAnimationFrame(() => {
-    findRafId = 0;
-    measureFindHighlights();
-  });
+  // Highlight measurement forces a full reflow — on a 200-page canvas
+  // (SPEC-028) that is the most expensive read in the find path, and the
+  // match COUNT never depends on it. Idle scheduling keeps it out of the
+  // keystroke-to-first-result window (SPEC-017 AC-30/31).
+  findIdleHandle = scheduleIdleWork(
+    () => {
+      findIdleHandle = null;
+      measureFindHighlights();
+    },
+    { timeoutMs: 150, fallbackBudgetMs: 8, maxBudgetMs: 16 },
+  );
 }
 
 function scheduleScrollCurrentIntoView() {
@@ -4440,9 +4448,9 @@ function scheduleScrollCurrentIntoView() {
 }
 
 function cancelFindScheduled() {
-  if (findRafId !== 0) {
-    window.cancelAnimationFrame(findRafId);
-    findRafId = 0;
+  if (findIdleHandle) {
+    findIdleHandle.cancel();
+    findIdleHandle = null;
   }
   window.clearTimeout(findDebounceTimer);
   window.clearTimeout(findHintTimer);
@@ -4457,19 +4465,36 @@ function findViewportBounds() {
 }
 
 /** The set of "section:block" keys for paragraphs currently on (or just off)
- * screen — the only ones whose matches are worth measuring. */
+ * screen — the only ones whose matches are worth measuring. Walks pages
+ * first (SPEC-028): off-screen pages are skipped whole, so a 200-page
+ * document reads a few hundred rects here, not one per paragraph. */
 function visibleFindBlockKeys(root = noElement(), bounds = { top: 0, bottom: 0 }) {
   const keys = new Set();
   if (!root) {
     return keys;
   }
   const margin = 200;
-  for (const element of root.querySelectorAll(BLOCK_SELECTOR)) {
-    const rect = element.getBoundingClientRect();
-    if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
-      continue;
+  const pageElements = root.querySelectorAll('[data-testid="document-page"]');
+  const scopes = [];
+  if (pageElements.length > 0) {
+    for (const pageElement of pageElements) {
+      const rect = pageElement.getBoundingClientRect();
+      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+        continue;
+      }
+      scopes.push(pageElement);
     }
-    keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
+  } else {
+    scopes.push(root);
+  }
+  for (const scope of scopes) {
+    for (const element of scope.querySelectorAll(BLOCK_SELECTOR)) {
+      const rect = element.getBoundingClientRect();
+      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+        continue;
+      }
+      keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
+    }
   }
   return keys;
 }
