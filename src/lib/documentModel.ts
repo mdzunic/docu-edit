@@ -552,6 +552,19 @@ export interface Margins {
   leftCm: number;
 }
 
+/** The unit the Page setup dialog displays sizes/margins in (SPEC-027
+ * AC-4, AC-6). The model itself always stores cm — this only controls
+ * display/entry — so no reader/writer maps it to anything in a `.docx` or
+ * `.odt` file; it is a document-level app preference persisted the same way
+ * as `suppressConversionReport`. */
+export type MeasurementUnit = "cm" | "mm" | "in" | "pt";
+
+/** Typed pass-through for a measurement unit coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asMeasurementUnit(value: string): MeasurementUnit {
+  return value as MeasurementUnit;
+}
+
 /** Document-wide defaults new content is created with. */
 export interface DefaultStyles {
   pageSize: PageSize;
@@ -615,6 +628,13 @@ export interface DocumentModel {
   /** True once the user ticked "Don't show again for this document" on the
    * conversion report dialog (SPEC-008); persisted with the document. */
   suppressConversionReport?: boolean;
+  /** The Page setup dialog's measurement-unit preference (SPEC-027 AC-6,
+   * AC-7); absent means "cm", the product default. */
+  measurementUnit?: MeasurementUnit;
+  /** Whether the horizontal ruler is shown (SPEC-027 AC-14); absent means
+   * shown — the ruler predates this toggle (SPEC-014) and was always
+   * visible, so an unset field must keep reading as visible. */
+  showRuler?: boolean;
 }
 
 export const DEFAULT_TITLE = "Untitled document";
