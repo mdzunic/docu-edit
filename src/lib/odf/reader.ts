@@ -53,11 +53,13 @@ import {
 } from "./xml";
 import {
   catalogToNamedStyles,
+  paragraphAutoStyleSignals,
   parseOdfStyleCatalog,
   resolveListLevel,
   resolveParagraphStyle,
   resolveTextStyle,
   type OdfListLevelDef,
+  type OdfMasterPageLayout,
   type OdfStyleCatalog,
 } from "./styles";
 
@@ -1026,16 +1028,67 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
 
   const drawingCtx: OdfDrawingContext = { parts, graphicWrapStyles: collectGraphicWrapStyles(contentDoc, stylesDoc) };
   const mediaById = new Map<string, MediaPart>();
-  const blocks: Block[] = [];
-  const opaqueBlocks: OpaqueBlock[] = [];
+  const sections: Section[] = [];
+  let blocks: Block[] = [];
+  let opaqueBlocks: OpaqueBlock[] = [];
+  // The geometry of the master page the CURRENT section's first paragraph
+  // switched to (SPEC-028 AC-33); undefined for the first section, whose
+  // master is the document default folded into defaultStyles below.
+  let sectionGeometry: OdfMasterPageLayout | undefined;
+  const finishSection = () => {
+    const section: Section = { blocks };
+    if (opaqueBlocks.length > 0) {
+      section.opaqueBlocks = opaqueBlocks;
+    }
+    // Explicit geometry on every later section — the master page pins it,
+    // so it must not float with a later defaultStyles edit. `start` stays
+    // absent: ODF's master-page switch is always a page break (nextPage).
+    if (sectionGeometry?.pageSize) {
+      section.pageSize = { ...sectionGeometry.pageSize };
+    }
+    if (sectionGeometry?.margins) {
+      section.margins = { ...sectionGeometry.margins };
+    }
+    sections.push(section);
+  };
   for (const child of Array.from(textRoot.children)) {
     if (child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h")) {
+      const signals = paragraphAutoStyleSignals(catalog, textAttr(child, "style-name") ?? undefined);
+      // A style:master-page-name on the paragraph's automatic style starts
+      // a new section here (SPEC-028 AC-33) — except on the document's very
+      // first block, where the first master page already applies (it is
+      // folded into defaultStyles, keeping single-section documents exactly
+      // as before).
+      if (signals.masterPageName !== undefined && !(sections.length === 0 && blocks.length === 0)) {
+        finishSection();
+        blocks = [];
+        opaqueBlocks = [];
+        sectionGeometry = catalog.masterPageLayouts.get(signals.masterPageName);
+      }
+      // fo:break-before="page" on the AUTOMATIC style materialises a manual
+      // BreakBlock before the paragraph, and the flag is dropped from the
+      // paragraph's own formatting (SPEC-028 AC-26/32). ODF has one channel
+      // for both the manual break and the pageBreakBefore formatting flag,
+      // so .odt import canonicalises the ambiguity to the break block —
+      // what the writer's fo:break-before actually stood for; only a NAMED
+      // style's break-before stays pure formatting (see
+      // paragraphAutoStyleSignals).
+      if (signals.pageBreakBefore) {
+        blocks.push({ type: "break", kind: "page" });
+      }
       const { blocks: parsedBlocks, media } = parseBodyTextBlockOrSplit(
         child,
         catalog,
         child.localName === "h",
         drawingCtx,
       );
+      if (signals.pageBreakBefore) {
+        for (const parsed of parsedBlocks) {
+          if (parsed.type === "paragraph" && parsed.formatting) {
+            delete parsed.formatting.pageBreakBefore;
+          }
+        }
+      }
       blocks.push(...parsedBlocks);
       for (const part of media) {
         mediaById.set(part.mediaId, part);
@@ -1059,6 +1112,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
       opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
     }
   }
+  finishSection();
 
   const fallback = createDefaultStyles();
   const defaultStyles: DefaultStyles = {
@@ -1067,11 +1121,6 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     fontFamily: catalog.defaultRunFormatting.fontFamily ?? fallback.fontFamily,
     fontSizePt: catalog.defaultRunFormatting.fontSizePt ?? fallback.fontSizePt,
   };
-
-  const section: Section = { blocks };
-  if (opaqueBlocks.length > 0) {
-    section.opaqueBlocks = opaqueBlocks;
-  }
 
   // content.xml and meta.xml are rebuilt on save (body/title/timestamp);
   // everything else — mimetype, styles.xml, the manifest, settings,
@@ -1115,7 +1164,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   }
 
   return {
-    sections: [section],
+    sections,
     defaultStyles,
     styles: catalogToNamedStyles(catalog),
     opaque,

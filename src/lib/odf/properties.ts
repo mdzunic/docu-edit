@@ -279,6 +279,34 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
     }
   }
 
+  // Pagination flags (SPEC-028 AC-22..29). Only the "on" values are stored:
+  // ODF's own defaults ("auto" keeps, non-zero widows/orphans) read as
+  // absent, so LibreOffice's routine fo:keep-with-next="auto" adds no model
+  // noise — the model's absent value already means the same thing.
+  if (foAttr(paragraphPropsEl, "keep-with-next") === "always") {
+    formatting.keepNext = true;
+  }
+  if (foAttr(paragraphPropsEl, "keep-together") === "always") {
+    formatting.keepLines = true;
+  }
+  // Only "page" maps; fo:break-before="column" is ignored until columns
+  // exist (SPEC-030), and fo:break-after is out of scope. Whether a "page"
+  // value materialises a BreakBlock or stays this formatting flag is the
+  // reader's call (SPEC-028 AC-26/32, see reader.ts) — this parser reports
+  // what the properties element says.
+  if (foAttr(paragraphPropsEl, "break-before") === "page") {
+    formatting.pageBreakBefore = true;
+  }
+  // Widow/orphan control is off only when BOTH minimums are an explicit 0
+  // (AC-28/29) — the shape the writer emits for widowControl: false; any
+  // other value keeps the model's absent-means-on default.
+  if (
+    foAttr(paragraphPropsEl, "widows")?.trim() === "0" &&
+    foAttr(paragraphPropsEl, "orphans")?.trim() === "0"
+  ) {
+    formatting.widowControl = false;
+  }
+
   return formatting;
 }
 

@@ -37,6 +37,10 @@ interface OdfStyleDefinition {
   textProperties: OdfTextProperties;
   /** `style:default-outline-level` — makes the style a heading style. */
   outlineLevel?: number;
+  /** `style:master-page-name` on the style:style element itself — a
+   * paragraph using the style starts on a new page under that master page,
+   * i.e. it begins a new section (SPEC-028 AC-33). */
+  masterPageName?: string;
 }
 
 /** Styles of one family ("paragraph" or "text"). Automatic and named styles
@@ -59,6 +63,15 @@ export interface OdfListLevelDef {
 /** A named `text:list-style`'s levels, keyed by 1-based level. */
 export type OdfListStyle = Map<number, OdfListLevelDef>;
 
+/** One master page's page geometry, resolved through its
+ * `style:page-layout-name` (SPEC-028 AC-33). Either field may be absent
+ * when the layout omits it — the section then falls back to the document
+ * defaults. */
+export interface OdfMasterPageLayout {
+  pageSize?: PageSize;
+  margins?: Margins;
+}
+
 export interface OdfStyleCatalog {
   paragraphStyles: StyleFamily;
   textStyles: StyleFamily;
@@ -72,6 +85,12 @@ export interface OdfStyleCatalog {
   /** From the first `style:master-page`'s `style:page-layout` in styles.xml. */
   pageSize?: PageSize;
   margins?: Margins;
+  /** Every `style:master-page`'s resolved geometry by master-page name
+   * (SPEC-028 AC-33) — the lookup a section-starting paragraph's
+   * `style:master-page-name` reference resolves against. The first master
+   * page also stays folded into `pageSize`/`margins` above, keeping
+   * single-section documents exactly as before. */
+  masterPageLayouts: Map<string, OdfMasterPageLayout>;
 }
 
 function emptyFamily(): StyleFamily {
@@ -120,6 +139,10 @@ function parseStyleDefinition(styleEl: Element, fontFaces: FontFaceMap): OdfStyl
     if (Number.isInteger(level) && level > 0) {
       definition.outlineLevel = level;
     }
+  }
+  const masterPageName = styleAttr(styleEl, "master-page-name");
+  if (masterPageName) {
+    definition.masterPageName = masterPageName;
   }
   return definition;
 }
@@ -230,6 +253,33 @@ function collectListStyles(container: Element | undefined, catalog: OdfStyleCata
   }
 }
 
+/** A `style:page-layout-properties` element's page geometry — width/height
+ * (with the defensive landscape swap) and margins. */
+function parsePageLayoutProperties(props: Element): OdfMasterPageLayout {
+  const layout: OdfMasterPageLayout = {};
+
+  let widthCm = odfLengthToCm(foAttr(props, "page-width"));
+  let heightCm = odfLengthToCm(foAttr(props, "page-height"));
+  if (widthCm !== undefined && heightCm !== undefined) {
+    // ODF stores landscape pages with width/height already swapped;
+    // normalise defensively like the .docx reader does for w:orient.
+    if (styleAttr(props, "print-orientation")?.toLowerCase() === "landscape" && widthCm < heightCm) {
+      [widthCm, heightCm] = [heightCm, widthCm];
+    }
+    layout.pageSize = { widthCm, heightCm };
+  }
+
+  const sharedMargin = odfLengthToCm(foAttr(props, "margin"));
+  const topCm = odfLengthToCm(foAttr(props, "margin-top")) ?? sharedMargin;
+  const rightCm = odfLengthToCm(foAttr(props, "margin-right")) ?? sharedMargin;
+  const bottomCm = odfLengthToCm(foAttr(props, "margin-bottom")) ?? sharedMargin;
+  const leftCm = odfLengthToCm(foAttr(props, "margin-left")) ?? sharedMargin;
+  if (topCm !== undefined && rightCm !== undefined && bottomCm !== undefined && leftCm !== undefined) {
+    layout.margins = { topCm, rightCm, bottomCm, leftCm };
+  }
+  return layout;
+}
+
 function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
   const automaticStyles = firstChildElement(stylesRoot, OFFICE_NAMESPACE, "automatic-styles");
   const masterStyles = firstChildElement(stylesRoot, OFFICE_NAMESPACE, "master-styles");
@@ -245,34 +295,30 @@ function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
     }
   }
 
-  // The first master page is the one body text starts on — the ODF
-  // equivalent of the body-level sectPr the .docx reader applies.
-  const masterPage = firstChildElement(masterStyles, STYLE_NAMESPACE, "master-page");
-  const layoutName = masterPage ? styleAttr(masterPage, "page-layout-name") : null;
-  const layout = layoutName ? layouts.get(layoutName) : undefined;
-  const props = layout ? firstChildElement(layout, STYLE_NAMESPACE, "page-layout-properties") : undefined;
-  if (!props) {
-    return;
-  }
-
-  let widthCm = odfLengthToCm(foAttr(props, "page-width"));
-  let heightCm = odfLengthToCm(foAttr(props, "page-height"));
-  if (widthCm !== undefined && heightCm !== undefined) {
-    // ODF stores landscape pages with width/height already swapped;
-    // normalise defensively like the .docx reader does for w:orient.
-    if (styleAttr(props, "print-orientation")?.toLowerCase() === "landscape" && widthCm < heightCm) {
-      [widthCm, heightCm] = [heightCm, widthCm];
+  // Every master page's geometry is catalogued by name — the lookup a
+  // section-starting style:master-page-name resolves (SPEC-028 AC-33). The
+  // FIRST master page is the one body text starts on — the ODF equivalent
+  // of the body-level sectPr the .docx reader applies — and stays folded
+  // into the catalog's document-level pageSize/margins exactly as before.
+  let first = true;
+  for (const masterPage of childElements(masterStyles, STYLE_NAMESPACE, "master-page")) {
+    const masterName = styleAttr(masterPage, "name");
+    const layoutName = styleAttr(masterPage, "page-layout-name");
+    const layout = layoutName ? layouts.get(layoutName) : undefined;
+    const props = layout ? firstChildElement(layout, STYLE_NAMESPACE, "page-layout-properties") : undefined;
+    const geometry = props ? parsePageLayoutProperties(props) : {};
+    if (masterName) {
+      catalog.masterPageLayouts.set(masterName, geometry);
     }
-    catalog.pageSize = { widthCm, heightCm };
-  }
-
-  const sharedMargin = odfLengthToCm(foAttr(props, "margin"));
-  const topCm = odfLengthToCm(foAttr(props, "margin-top")) ?? sharedMargin;
-  const rightCm = odfLengthToCm(foAttr(props, "margin-right")) ?? sharedMargin;
-  const bottomCm = odfLengthToCm(foAttr(props, "margin-bottom")) ?? sharedMargin;
-  const leftCm = odfLengthToCm(foAttr(props, "margin-left")) ?? sharedMargin;
-  if (topCm !== undefined && rightCm !== undefined && bottomCm !== undefined && leftCm !== undefined) {
-    catalog.margins = { topCm, rightCm, bottomCm, leftCm };
+    if (first) {
+      first = false;
+      if (geometry.pageSize) {
+        catalog.pageSize = geometry.pageSize;
+      }
+      if (geometry.margins) {
+        catalog.margins = geometry.margins;
+      }
+    }
   }
 }
 
@@ -286,6 +332,7 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
     listStyles: new Map(),
     defaultParagraphFormatting: {},
     defaultRunFormatting: {},
+    masterPageLayouts: new Map(),
   };
 
   const fontFaces: FontFaceMap = new Map();
@@ -468,6 +515,30 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
     styles.push(style);
   }
   return styles;
+}
+
+/** SPEC-028: the two paragraph-anchored break/section signals a body
+ * paragraph's AUTOMATIC style may carry — `fo:break-before="page"` (a manual
+ * page break, AC-32) and `style:master-page-name` (a section start, AC-33).
+ * Automatic styles only, deliberately: they are the paragraph's direct
+ * formatting, so a break-before there is the manual break the writer
+ * emitted; the same attribute on a NAMED style (e.g. a heading style that
+ * always starts a page) is style formatting and stays the model's
+ * `pageBreakBefore` flag via ordinary chain resolution. */
+export interface OdfParagraphSignals {
+  pageBreakBefore: boolean;
+  masterPageName?: string;
+}
+
+export function paragraphAutoStyleSignals(
+  catalog: OdfStyleCatalog,
+  styleName: string | undefined,
+): OdfParagraphSignals {
+  const definition = styleName ? catalog.paragraphStyles.automatic.get(styleName) : undefined;
+  return {
+    pageBreakBefore: definition?.paragraphFormatting.pageBreakBefore === true,
+    masterPageName: definition?.masterPageName,
+  };
 }
 
 /** Resolves a span's `text:style-name` (family "text") over the formatting

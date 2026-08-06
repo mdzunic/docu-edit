@@ -241,6 +241,64 @@ describe("writeOdt — special characters round-trip (SPEC-026 AC-46)", () => {
   });
 });
 
+describe("writeOdt — sections through a same-format save (SPEC-028 AC-33)", () => {
+  const modified = new Date("2026-08-03T12:34:56Z");
+
+  it("patches the generated master page into the PRESERVED styles.xml; the next save is byte-stable", async () => {
+    // Split an opened fixture into two sections — the same-format save must
+    // keep every preserved part (SPEC-008) while adding the SectionMaster2
+    // definition content.xml now references.
+    const opened = await parseOdt(loadFixture("libreoffice-writer.odt"));
+    const model = modelFrom(opened, "Sectioned");
+    const blocks = model.sections[0].blocks;
+    model.sections = [{ blocks: blocks.slice(0, 4) }, { blocks: blocks.slice(4) }];
+
+    const first = await writeOdt(model, { modified });
+    const firstParts = await unzip(first.bytes);
+    const stylesXml = new TextDecoder().decode(firstParts.get("styles.xml")!);
+    // Patched, not rebuilt: the source's named styles survive alongside the
+    // new pair.
+    expect(stylesXml).toContain('style:name="Heading_20_1"');
+    expect(stylesXml).toContain('style:name="SectionMaster2"');
+    expect(stylesXml).toContain('style:name="pm2"');
+    expect(new TextDecoder().decode(firstParts.get("content.xml")!)).toContain(
+      'style:master-page-name="SectionMaster2"',
+    );
+
+    const reopened = await parseOdt(first.bytes);
+    expect(reopened.sections).toHaveLength(2);
+    // The section had no geometry of its own, so the master pinned the then-
+    // effective document defaults — explicit on re-open.
+    expect(reopened.sections[1].pageSize).toEqual(reopened.defaultStyles.pageSize);
+    expect(reopened.sections[1].margins).toEqual(reopened.defaultStyles.margins);
+
+    // Second save: the preserved styles.xml already defines SectionMaster2
+    // exactly, so the patch no-ops and the part stays byte-identical.
+    const second = await writeOdt(modelFrom(reopened, "Sectioned"), { modified });
+    const secondParts = await unzip(second.bytes);
+    expect(equalBytes(secondParts.get("styles.xml")!, firstParts.get("styles.xml")!)).toBe(true);
+    const reopenedAgain = await parseOdt(second.bytes);
+    expect(firstStructuralDifference(reopened.sections, reopenedAgain.sections)).toBeNull();
+  });
+
+  it("replaces a stale generated master page when the section's geometry was edited", async () => {
+    const opened = await parseOdt(loadFixture("libreoffice-writer.odt"));
+    const model = modelFrom(opened, "Sectioned");
+    const blocks = model.sections[0].blocks;
+    model.sections = [{ blocks: blocks.slice(0, 4) }, { blocks: blocks.slice(4) }];
+    const reopened = await parseOdt((await writeOdt(model, { modified })).bytes);
+
+    const edited = modelFrom(reopened, "Sectioned");
+    edited.sections[1].pageSize = { widthCm: 14.8, heightCm: 21 };
+    const { bytes } = await writeOdt(edited, { modified });
+    const stylesXml = new TextDecoder().decode((await unzip(bytes)).get("styles.xml")!);
+    expect(stylesXml).toContain('fo:page-width="14.8cm"');
+
+    const reopenedEdited = await parseOdt(bytes);
+    expect(reopenedEdited.sections[1].pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+  });
+});
+
 describe("writeDocx — converting a .odt model reports what it drops (SPEC-008 writer API)", () => {
   const fixture = loadFixture("lo-embedded.odt");
 
