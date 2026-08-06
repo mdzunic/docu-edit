@@ -118,6 +118,14 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     bindings: [{ key: "PageDown", shiftOptional: true }],
   },
 
+  // Insert (SPEC-026)
+  {
+    id: "insert.nonBreakingSpace",
+    label: "Insert non-breaking space",
+    category: "Insert",
+    bindings: [{ key: " ", mod: true, shift: true }],
+  },
+
   // File
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },
 

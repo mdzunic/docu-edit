@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import AutocorrectMenu from "../components/AutocorrectMenu.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
@@ -14,6 +15,7 @@ import ImageInsertControl from "../components/ImageInsertControl.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
+import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import TableInsertControl from "../components/TableInsertControl.vue";
 import FindBar from "../components/FindBar.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
@@ -51,6 +53,7 @@ import {
   asParagraphBlock,
   asTableAlignment,
   asTableWidthMode,
+  createDocument,
   DEFAULT_TITLE,
   isImage,
   isTable,
@@ -140,6 +143,14 @@ import {
   paragraphAt,
   paragraphAtCaret,
 } from "../lib/textEditing";
+import {
+  dashSubstitution,
+  decadeSubstitution,
+  isDigit,
+  loadAutocorrectSettings,
+  saveAutocorrectSettings,
+  smartQuote,
+} from "../lib/autocorrect";
 import {
   asPasteMode,
   clipboardFlavours,
@@ -336,6 +347,20 @@ let contextMenuTableCell = noTableCellTarget();
 const tableHover = ref(noTableHandleGeometry());
 // The "Insert table…" dialog for sizes beyond the 10×10 picker (AC-2).
 const insertTableDialogOpen = ref(false);
+
+// --- special characters and autocorrect (SPEC-026) --------------------------
+// The "Insert → Special characters" picker dialog.
+const specialCharacterDialogOpen = ref(false);
+// Smart-quote/dash autocorrect settings, persisted in localStorage.
+const autocorrectSettings = ref(loadAutocorrectSettings());
+// Tracking state for the follow-up substitutions: the caret offset just after
+// an en dash / opening single quote THIS feature produced (or -1 for none),
+// and a caret offset at which a just-undone substitution must not re-fire
+// until the caret moves (SPEC-026 undo behaviour). These are plain lets, not
+// refs — they never drive rendering, only the next keystroke's decision.
+let producedEnDashAt = -1;
+let producedOpenSingleAt = -1;
+let autocorrectSuppressedAt = -1;
 
 // --- table formatting (SPEC-023) --------------------------------------------
 // "Split cell…" and the table properties dialog both act on the cell/table
@@ -772,6 +797,9 @@ function closeSession() {
   cellDragOrigin = null;
   tableHover.value = null;
   insertTableDialogOpen.value = false;
+  specialCharacterDialogOpen.value = false;
+  producedEnDashAt = -1;
+  producedOpenSingleAt = -1;
   plainPasteNext = false;
   // AC-19: the undo/redo history does not outlive the document being open.
   if (sessionDocId) {
@@ -997,12 +1025,190 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   caret = snapshot.selection.focus;
   selectionAnchor = isCollapsed(snapshot.selection) ? noCaret() : snapshot.selection.anchor;
   pendingFormat = noPendingFormat();
+  // Undo/redo moves the caret and rewrites text, so a pending substitution
+  // follow-up context (en dash / opening quote) can no longer apply — clearing
+  // it stops a stale trigger firing after an undo (SPEC-026 AC-22).
+  producedEnDashAt = -1;
+  producedOpenSingleAt = -1;
   autosave.markDirty();
   updateCaretStatus({ start: snapshot.selection.anchor, end: snapshot.selection.focus });
   refreshUndoRedoState();
   root.focus();
   void restoreCaretAfterRender();
   scheduleFindRefresh();
+}
+
+/** Inserts a literal string at the current caret WITHOUT running autocorrect
+ * — the character picker (AC-30) and the non-breaking-space shortcut (AC-11)
+ * both go through here, never the typed-input path. */
+function insertSpecialCharacter(text = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value || !text) {
+    return;
+  }
+  const selection =
+    currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    insertText(model, selection, text, pendingFormat),
+    selection,
+    "insert character",
+    false,
+  );
+  // A deliberate insert is not a substitution follow-up context.
+  producedEnDashAt = -1;
+  producedOpenSingleAt = -1;
+}
+
+function openSpecialCharacters() {
+  specialCharacterDialogOpen.value = true;
+}
+
+function handleSpecialCharacterInsert(text = "") {
+  insertSpecialCharacter(text);
+}
+
+function toggleAutocorrectSmartQuotes() {
+  const next = {
+    ...autocorrectSettings.value,
+    smartQuotes: !autocorrectSettings.value.smartQuotes,
+  };
+  autocorrectSettings.value = next;
+  saveAutocorrectSettings(next);
+}
+
+function toggleAutocorrectDashes() {
+  const next = {
+    ...autocorrectSettings.value,
+    dashes: !autocorrectSettings.value.dashes,
+  };
+  autocorrectSettings.value = next;
+  saveAutocorrectSettings(next);
+}
+
+/** The code point immediately before `index` in `text`, as a string (a full
+ * surrogate pair when it is a non-BMP character), or null at the start. */
+function codePointBefore(text = "", index = 0) {
+  if (index <= 0) {
+    return null;
+  }
+  const code = text.charCodeAt(index - 1);
+  if (code >= 0xdc00 && code <= 0xdfff && index >= 2) {
+    return text.slice(index - 2, index);
+  }
+  return text[index - 1];
+}
+
+/** Replaces [replacement.start, replacement.end) within the caret's paragraph
+ * with replacement.text, returning a CommandResult whose caret sits after the
+ * inserted text. Used to record a substitution as its own edit. */
+function replaceInParagraph(
+  model = createDocument(""),
+  atCaret = documentStart(),
+  replacement = { start: 0, end: 0, text: "" },
+) {
+  const deleted = deleteRange(model, {
+    anchor: { ...atCaret, offset: replacement.start },
+    focus: { ...atCaret, offset: replacement.end },
+  });
+  return insertText(deleted.model, deleted.selection, replacement.text, null);
+}
+
+/** Runs the smart-quote/dash/decade substitutions after a single character was
+ * plain-inserted (SPEC-026). `plainResult` is that plain insert. Returns true
+ * when it recorded its own undo entries (the caller must then stop); false to
+ * let the caller apply the plain insert normally. Only ever reached from the
+ * typed-input branch below (AC-27..31). */
+function applyAutocorrect(
+  selection = noSelection(),
+  typed = "",
+  plainResult = noCommandResult(),
+) {
+  if (!selection || !plainResult) {
+    return false;
+  }
+  const settings = autocorrectSettings.value;
+  const caretAfter = plainResult.selection.focus;
+  const blockAfter = paragraphAtCaret(plainResult.model, caretAfter);
+  if (!blockAfter) {
+    return false;
+  }
+  const text = blockText(blockAfter);
+  const off = caretAfter.offset;
+
+  // Decade idiom (AC-50): a digit typed right after our opening single quote
+  // flips it to a closing quote as part of the digit's OWN edit, so one undo
+  // removes the digit and reverts the flip together.
+  if (isDigit(typed) && producedOpenSingleAt >= 0) {
+    const rep = decadeSubstitution(text, off, typed, producedOpenSingleAt);
+    if (rep) {
+      const flipped = replaceInParagraph(plainResult.model, caretAfter, rep);
+      applyEdit(
+        { model: flipped.model, selection: caretSelection(caretAfter) },
+        selection,
+        "typing",
+        true,
+      );
+      producedOpenSingleAt = -1;
+      producedEnDashAt = -1;
+      return true;
+    }
+  }
+
+  // Smart quotes (AC-18, AC-19): plain insert first, then the curly quote as a
+  // separate undo entry so one Ctrl/Cmd+Z restores the straight quote (AC-21).
+  if (settings.smartQuotes && (typed === "'" || typed === '"')) {
+    const quote = smartQuote(typed, codePointBefore(text, off - 1));
+    if (quote) {
+      applyEdit(plainResult, selection, "typing", true);
+      breakTypingGroup(documentId.value);
+      const subResult = replaceInParagraph(plainResult.model, caretAfter, {
+        start: off - 1,
+        end: off,
+        text: quote,
+      });
+      applyEdit(subResult, caretSelection(caretAfter), "smart quote", false);
+      producedOpenSingleAt =
+        quote === "‘" ? subResult.selection.focus.offset : -1;
+      producedEnDashAt = -1;
+      return true;
+    }
+  }
+
+  // Dash substitution (AC-16, AC-17): same two-step undo shape.
+  if (settings.dashes && typed === "-") {
+    const sub = dashSubstitution(
+      text,
+      off,
+      producedEnDashAt >= 0 ? producedEnDashAt : null,
+    );
+    if (sub) {
+      applyEdit(plainResult, selection, "typing", true);
+      breakTypingGroup(documentId.value);
+      const subResult = replaceInParagraph(
+        plainResult.model,
+        caretAfter,
+        sub.replacement,
+      );
+      applyEdit(
+        subResult,
+        caretSelection(caretAfter),
+        sub.producesEnDash ? "en dash" : "em dash",
+        false,
+      );
+      producedEnDashAt = sub.producesEnDash
+        ? subResult.selection.focus.offset
+        : -1;
+      producedOpenSingleAt = -1;
+      return true;
+    }
+  }
+
+  // An ordinary typed character with no substitution invalidates any pending
+  // follow-up context.
+  producedEnDashAt = -1;
+  producedOpenSingleAt = -1;
+  return false;
 }
 
 function handleBeforeInput(event = new InputEvent("beforeinput")) {
@@ -1061,6 +1267,15 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
             autoformatType === "bullet" ? "bulleted list" : "numbered list",
             false,
           );
+          return;
+        }
+      }
+      // Autocorrect substitutions run on typed input only (SPEC-026 AC-27):
+      // a single typed character may become a smart quote, an en/em dash, or
+      // trigger the decade-idiom flip. Never on paste (this branch also
+      // handles insertFromPaste, hence the type guard), the picker or load.
+      if (type === "insertText" && text.length === 1) {
+        if (applyAutocorrect(selection, text, result)) {
           return;
         }
       }
@@ -2771,6 +2986,12 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       // only that event can hand us the clipboard's contents.
       plainPasteNext = true;
       break;
+    case "insert.nonBreakingSpace":
+      // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
+      // insert, not typed input, so autocorrect never sees it.
+      event.preventDefault();
+      insertSpecialCharacter("\u00A0");
+      break;
     case "edit.selectAll": {
       // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
       event.preventDefault();
@@ -3668,6 +3889,25 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         v-if="editable"
         @insert-file="handleInsertImageFile"
       />
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
+        data-testid="insert-special-character-button"
+        title="Special characters"
+        aria-label="Insert special character"
+        @mousedown.prevent
+        @click="openSpecialCharacters"
+      >
+        Ω
+      </button>
+      <AutocorrectMenu
+        v-if="editable"
+        :smart-quotes="autocorrectSettings.smartQuotes"
+        :dashes="autocorrectSettings.dashes"
+        @toggle-smart-quotes="toggleAutocorrectSmartQuotes"
+        @toggle-dashes="toggleAutocorrectDashes"
+      />
       <TextColorPicker
         v-if="editable"
         :value="formatValues.color"
@@ -4066,6 +4306,11 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       v-if="insertTableDialogOpen"
       @apply="handleInsertTable"
       @cancel="insertTableDialogOpen = false"
+    />
+    <SpecialCharacterDialog
+      v-if="specialCharacterDialogOpen"
+      @insert="handleSpecialCharacterInsert"
+      @cancel="specialCharacterDialogOpen = false"
     />
     <ImageOptionsDialog
       v-if="imageOptionsOpen"
