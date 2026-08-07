@@ -783,7 +783,8 @@ function parseListElement(
             listId: instance.listId,
           };
           if (firstParagraphOfItem) {
-            const startValue = Number(textAttr(item, "start-value") ?? "");
+            const startAttr = textAttr(item, "start-value");
+            const startValue = startAttr !== null ? Number(startAttr) : NaN;
             if (Number.isInteger(startValue) && startValue >= 0) {
               list.startAt = startValue;
             }
