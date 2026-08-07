@@ -1057,6 +1057,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     if (sectionGeometry?.margins) {
       section.margins = { ...sectionGeometry.margins };
     }
+    if (sectionGeometry?.columns) {
+      section.columns = { ...sectionGeometry.columns };
+    }
     sections.push(section);
   };
   for (const child of Array.from(textRoot.children)) {
@@ -1157,6 +1160,12 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   }
   if (leadingSection && leadingGeometry?.margins) {
     leadingSection.margins = { ...leadingGeometry.margins };
+  }
+  // The leading section's columns come from the master it names, else the
+  // first-listed master folded into the catalog (the single-section case).
+  const leadingColumns = leadingGeometry?.columns ?? catalog.columns;
+  if (leadingSection && leadingColumns) {
+    leadingSection.columns = { ...leadingColumns };
   }
   const defaultStyles: DefaultStyles = {
     pageSize: leadingGeometry?.pageSize ?? catalog.pageSize ?? fallback.pageSize,

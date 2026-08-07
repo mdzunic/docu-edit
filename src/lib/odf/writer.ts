@@ -39,11 +39,12 @@ import type {
   ParagraphFormatting,
   Run,
   RunFormatting,
+  SectionColumns,
   Table,
   TableCell,
   TableRow,
 } from "../documentModel";
-import { sectionMargins, sectionPageSize } from "../documentModel";
+import { resolveColumnWidthsCm, sectionMargins, sectionPageSize } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import {
@@ -1280,22 +1281,51 @@ function planOdtSectionNames(
   return { masters, layouts };
 }
 
+// The `style:columns` element of a page layout (SPEC-030 AC-17):
+// `fo:column-count`/`fo:column-gap`, a `style:column-sep` when "line between"
+// is on, and — for unequal columns — a `style:column` per column carrying its
+// proportional `style:rel-width` (a relative weight, `*`-suffixed).
+function columnsElementXml(columns: SectionColumns, contentWidthCm: number): string {
+  const gap = ` fo:column-gap="${cmToOdfLength(Math.max(0, columns.gapCm))}"`;
+  const sep = columns.separator
+    ? '<style:column-sep style:width="0.002cm" style:color="#000000"/>'
+    : "";
+  if (columns.equalWidth || !columns.widthsCm || columns.widthsCm.length !== columns.count) {
+    return `<style:columns fo:column-count="${columns.count}"${gap}>${sep}</style:columns>`;
+  }
+  const widths = resolveColumnWidthsCm(columns, contentWidthCm);
+  // rel-width is a relative weight; twip-scale keeps integers stable and their
+  // ratios exact.
+  const cols = widths
+    .map((width) => `<style:column style:rel-width="${Math.max(1, Math.round(width * 1000))}*"/>`)
+    .join("");
+  return `<style:columns fo:column-count="${columns.count}"${gap}>${cols}${sep}</style:columns>`;
+}
+
 /** One style:page-layout carrying a page geometry — the shape the reader's
  * parsePageLayoutProperties parses back. */
-function pageLayoutXml(name: string, pageSize: PageSize, margins: Margins): string {
+function pageLayoutXml(
+  name: string,
+  pageSize: PageSize,
+  margins: Margins,
+  columns?: SectionColumns,
+): string {
   // ODF stores landscape pages with width/height already swapped; the
   // orientation attribute just marks them, mirroring the .docx writer's
   // w:orient.
   const orientation =
     pageSize.widthCm > pageSize.heightCm ? ' style:print-orientation="landscape"' : "";
-  return (
-    `<style:page-layout style:name="${escapeXml(name)}">` +
+  const props =
     `<style:page-layout-properties fo:page-width="${cmToOdfLength(pageSize.widthCm)}"` +
     ` fo:page-height="${cmToOdfLength(pageSize.heightCm)}"${orientation}` +
     ` fo:margin-top="${cmToOdfLength(margins.topCm)}" fo:margin-right="${cmToOdfLength(margins.rightCm)}"` +
-    ` fo:margin-bottom="${cmToOdfLength(margins.bottomCm)}" fo:margin-left="${cmToOdfLength(margins.leftCm)}"/>` +
-    "</style:page-layout>"
-  );
+    ` fo:margin-bottom="${cmToOdfLength(margins.bottomCm)}" fo:margin-left="${cmToOdfLength(margins.leftCm)}"`;
+  const columnsXml =
+    columns && columns.count > 1
+      ? columnsElementXml(columns, Math.max(0.1, pageSize.widthCm - margins.leftCm - margins.rightCm))
+      : "";
+  const propsElement = columnsXml ? `${props}>${columnsXml}</style:page-layout-properties>` : `${props}/>`;
+  return `<style:page-layout style:name="${escapeXml(name)}">${propsElement}</style:page-layout>`;
 }
 
 function masterPageXml(name: string, layoutName: string): string {
@@ -1315,7 +1345,9 @@ export function buildStylesXml(model: DocumentModel): string {
     .map(namedStyleDefinitionXml)
     .join("");
   const pageLayouts = model.sections
-    .map((_, index) => pageLayoutXml(sectionLayoutName(index), sectionPageSize(model, index), sectionMargins(model, index)))
+    .map((section, index) =>
+      pageLayoutXml(sectionLayoutName(index), sectionPageSize(model, index), sectionMargins(model, index), section.columns),
+    )
     .join("");
   const masterPages = model.sections
     .map((_, index) => masterPageXml(sectionMasterName(index), sectionLayoutName(index)))
@@ -1477,7 +1509,7 @@ export function patchOdtSectionMasterPages(
       "automatic-styles",
       "page-layout",
       layoutName,
-      pageLayoutXml(layoutName, sectionPageSize(model, index), sectionMargins(model, index)),
+      pageLayoutXml(layoutName, sectionPageSize(model, index), sectionMargins(model, index), model.sections[index]?.columns),
     );
     upsert(
       "master-styles",

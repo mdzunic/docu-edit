@@ -11,7 +11,9 @@ import type {
   PageSize,
   ParagraphFormatting,
   RunFormatting,
+  SectionColumns,
 } from "../documentModel";
+import { DEFAULT_COLUMN_GAP_CM, MAX_COLUMN_COUNT } from "../documentModel";
 import { childElements, firstChildElement } from "../docx/xml";
 import { mergeParagraphFormatting, mergeRunFormatting } from "../docx/properties";
 import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../lists";
@@ -76,6 +78,9 @@ export type OdfListStyle = Map<number, OdfListLevelDef>;
 export interface OdfMasterPageLayout {
   pageSize?: PageSize;
   margins?: Margins;
+  /** The page layout's `style:columns` as a section column layout
+   * (SPEC-030); absent for a single-column page. */
+  columns?: SectionColumns;
 }
 
 export interface OdfStyleCatalog {
@@ -91,6 +96,9 @@ export interface OdfStyleCatalog {
   /** From the first `style:master-page`'s `style:page-layout` in styles.xml. */
   pageSize?: PageSize;
   margins?: Margins;
+  /** The first master page's `style:columns` (SPEC-030) — the leading
+   * section's column layout when it names no master of its own. */
+  columns?: SectionColumns;
   /** Every `style:master-page`'s resolved geometry by master-page name
    * (SPEC-028 AC-33) — the lookup a section-starting paragraph's
    * `style:master-page-name` reference resolves against. The first master
@@ -287,7 +295,51 @@ function parsePageLayoutProperties(props: Element): OdfMasterPageLayout {
   if (topCm !== undefined && rightCm !== undefined && bottomCm !== undefined && leftCm !== undefined) {
     layout.margins = { topCm, rightCm, bottomCm, leftCm };
   }
+
+  const columns = parsePageColumns(props, layout);
+  if (columns) {
+    layout.columns = columns;
+  }
   return layout;
+}
+
+/** `style:columns` inside a page layout (SPEC-030 AC-17): `fo:column-count`,
+ * `fo:column-gap`, and `style:column` children whose `style:rel-width`
+ * relative weights fix the unequal columns' proportions. A `style:column-sep`
+ * child marks "line between columns". Single-column (count ≤ 1) or absent is
+ * left unmodelled. */
+function parsePageColumns(props: Element, layout: OdfMasterPageLayout): SectionColumns | undefined {
+  const cols = firstChildElement(props, STYLE_NAMESPACE, "columns");
+  if (!cols) {
+    return undefined;
+  }
+  const rawCount = Number(foAttr(cols, "column-count") ?? "1");
+  const count = Number.isFinite(rawCount)
+    ? Math.max(1, Math.min(MAX_COLUMN_COUNT, Math.round(rawCount)))
+    : 1;
+  if (count <= 1) {
+    return undefined;
+  }
+  const gapCm = odfLengthToCm(foAttr(cols, "column-gap")) ?? DEFAULT_COLUMN_GAP_CM;
+  const separator = firstChildElement(cols, STYLE_NAMESPACE, "column-sep") !== undefined;
+  const columnEls = childElements(cols, STYLE_NAMESPACE, "column");
+  if (columnEls.length === count) {
+    const weights = columnEls.map((col) => {
+      const raw = styleAttr(col, "rel-width") ?? "";
+      const value = Number.parseFloat(raw.replace(/\*$/, ""));
+      return Number.isFinite(value) ? value : 0;
+    });
+    const total = weights.reduce((sum, w) => sum + w, 0);
+    const contentWidthCm =
+      layout.pageSize && layout.margins
+        ? layout.pageSize.widthCm - layout.margins.leftCm - layout.margins.rightCm - gapCm * (count - 1)
+        : undefined;
+    if (weights.every((w) => w > 0) && total > 0 && contentWidthCm && contentWidthCm > 0) {
+      const widthsCm = weights.map((w) => (w / total) * contentWidthCm);
+      return { count, equalWidth: false, gapCm, separator, widthsCm };
+    }
+  }
+  return { count, equalWidth: true, gapCm, separator };
 }
 
 function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
@@ -327,6 +379,9 @@ function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
       }
       if (geometry.margins) {
         catalog.margins = geometry.margins;
+      }
+      if (geometry.columns) {
+        catalog.columns = geometry.columns;
       }
     }
   }
