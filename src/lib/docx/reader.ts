@@ -21,6 +21,7 @@ import type {
   Run,
   RunFormatting,
   Section,
+  SectionColumns,
   SectionStart,
   SourceXml,
   Table,
@@ -29,11 +30,12 @@ import type {
   TableRow,
   TableWidthMode,
 } from "../documentModel";
-import { createDefaultStyles } from "../documentModel";
+import { createDefaultStyles, DEFAULT_COLUMN_GAP_CM, MAX_COLUMN_COUNT } from "../documentModel";
 import { sanitizeHref } from "../links";
 import { bytesToBase64 } from "../opaque";
 import { ZipError, unzip } from "./zip";
 import {
+  childElements,
   firstChildElement,
   parseRelationships,
   parseXml,
@@ -961,6 +963,43 @@ function parseSectionStart(sectPr: Element | undefined): SectionStart | undefine
   return typeEl && wordAttr(typeEl, "val") === "continuous" ? "continuous" : undefined;
 }
 
+function boolAttr(value: string | null | undefined): boolean {
+  return value === "1" || value === "true" || value === "on";
+}
+
+/** A sectPr's `w:cols` as the model's multi-column layout (SPEC-030
+ * AC-16/AC-16a): `w:num`/`w:space`/`w:sep`, plus explicit `w:col` children
+ * (each `w:w` a column width, `w:space` its trailing gutter) for unequal
+ * columns. A single column (num ≤ 1) or an absent `w:cols` is left unmodelled
+ * (an ordinary single-column section). */
+function parseColumns(sectPr: Element | undefined): SectionColumns | undefined {
+  const cols = sectPr ? firstChildElement(sectPr, WORD_NAMESPACE, "cols") : undefined;
+  if (!cols) {
+    return undefined;
+  }
+  const num = Number(wordAttr(cols, "num") ?? "1");
+  const count = Number.isFinite(num) ? Math.max(1, Math.min(MAX_COLUMN_COUNT, Math.round(num))) : 1;
+  if (count <= 1) {
+    return undefined;
+  }
+  const spaceTwips = Number(wordAttr(cols, "space") ?? "");
+  const gapCm = Number.isFinite(spaceTwips) ? twipsToCm(spaceTwips) : DEFAULT_COLUMN_GAP_CM;
+  const separator = boolAttr(wordAttr(cols, "sep"));
+  const colChildren = childElements(cols, WORD_NAMESPACE, "col");
+  if (colChildren.length === count) {
+    const widthsCm = colChildren.map((col) => {
+      const w = Number(wordAttr(col, "w") ?? "");
+      return Number.isFinite(w) ? twipsToCm(w) : 0;
+    });
+    if (widthsCm.every((w) => w > 0)) {
+      const firstGap = Number(wordAttr(colChildren[0], "space") ?? "");
+      const gutter = Number.isFinite(firstGap) ? twipsToCm(firstGap) : gapCm;
+      return { count, equalWidth: false, gapCm: gutter, separator, widthsCm };
+    }
+  }
+  return { count, equalWidth: true, gapCm, separator };
+}
+
 function applySectionProperties(sectPr: Element | undefined, base: DefaultStyles): DefaultStyles {
   if (!sectPr) {
     return base;
@@ -1202,6 +1241,19 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       }
     });
   }
+
+  // SPEC-030: column layouts, read for every document (single- and
+  // multi-section). A non-final section reads its own sectPr; the final
+  // section reads the body-level sectPr — the same source split the geometry
+  // above uses.
+  sections.forEach((section, index) => {
+    const isFinal = index === sections.length - 1;
+    const sectPrEl = rawSections[index]?.sectPrEl ?? (isFinal ? sectPr : undefined);
+    const columns = parseColumns(sectPrEl);
+    if (columns) {
+      section.columns = columns;
+    }
+  });
 
   // Everything the pipeline above did not consume-and-rebuild is retained
   // verbatim for the lifetime of the document (SPEC-008 AC): styles.xml and

@@ -68,8 +68,9 @@ const PPR_SEQUENCE = [
 // CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
 // fitText, vertAlign", so shd follows u and vertAlign follows shd.
 const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];
-// CT_SectPr puts w:type before the page geometry (SPEC-028 AC-31).
-const SECTPR_SEQUENCE = ["type", "pgSz", "pgMar"];
+// CT_SectPr puts w:type before the page geometry (SPEC-028 AC-31); w:cols
+// follows w:pgMar in the schema (SPEC-030).
+const SECTPR_SEQUENCE = ["type", "pgSz", "pgMar", "cols"];
 const STYLE_SEQUENCE = ["name", "basedOn", "pPr", "rPr"];
 
 const INTEGER_PATTERN = /^-?\d+$/;
@@ -350,6 +351,24 @@ function checkSectionProperties(sectPr: Element, context: string, violations: st
       for (const attr of ["header", "footer", "gutter"]) {
         checkAttr(child, attr, (v) => UNSIGNED_PATTERN.test(v),
           "a non-negative twip measurement", context, violations);
+      }
+    } else if (child.localName === "cols") {
+      // CT_Columns (SPEC-030): w:num a positive column count, w:space a
+      // non-negative gutter, w:sep an on/off flag; each w:col child a
+      // positive width. All optional in the schema, so absent is legal.
+      checkAttr(child, "num", (v) => UNSIGNED_PATTERN.test(v) && Number(v) > 0,
+        "a positive column count", context, violations, false);
+      checkAttr(child, "space", (v) => UNSIGNED_PATTERN.test(v),
+        "a non-negative twip gutter", context, violations, false);
+      checkAttr(child, "sep", (v) => ["0", "1", "true", "false", "on", "off"].includes(v),
+        "an ST_OnOff value", context, violations, false);
+      for (const col of Array.from(child.children)) {
+        if (isWordElement(col) && col.localName === "col") {
+          checkAttr(col, "w", (v) => UNSIGNED_PATTERN.test(v) && Number(v) > 0,
+            "a positive column width in twips", context, violations);
+          checkAttr(col, "space", (v) => UNSIGNED_PATTERN.test(v),
+            "a non-negative twip gutter", context, violations, false);
+        }
       }
     }
   }
