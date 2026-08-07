@@ -212,9 +212,13 @@ export interface ParagraphFormatting {
    * formats default it on, so only the explicit-off (`false`) and an
    * explicit re-enable after an off (`true`) are ever stored. */
   widowControl?: boolean;
+  /** Custom tab stops (SPEC-032 AC-19..25), ordered by position. Absent
+   * means the default tab grid only. Round-trips as `w:tabs` (.docx) and
+   * `style:tab-stops` (.odt). */
+  tabStops?: TabStop[];
 }
 
-// --- lists (SPEC-018) -------------------------------------------------------
+// --- lists (SPEC-018; multilevel definitions SPEC-032) ----------------------
 
 export type ListType = "bullet" | "number";
 
@@ -251,6 +255,115 @@ export interface ListFormatting {
    * definition (AC-20, AC-21); absent means the editor default
    * (level × 1.27 cm, see lists.ts). */
   indentCm?: number;
+  /** References a `DocumentModel.listDefinitions` entry (SPEC-032).
+   * Presence makes this a *defined* list item: its marker text, per-level
+   * styles and indents all come from the definition, and its numbering is
+   * counted per (defId, listId) instance rather than by adjacency.
+   * Deliberately not named `id` (see BookmarkAnchor for the equality.ts
+   * IGNORED_KEYS rule). */
+  defId?: string;
+  /** The numbering instance this item counts in (SPEC-032): items sharing
+   * (defId, listId) form one sequence that continues across interruptions;
+   * a fresh listId is what "Restart numbering" mints. Meaningless without
+   * `defId`. */
+  listId?: string;
+}
+
+/** How a defined level's number is aligned within its marker box (SPEC-032
+ * AC "alignment"; `w:lvlJc` / `fo:text-align` on the level). */
+export type ListLevelAlignment = "left" | "center" | "right";
+
+/** One level (1..9) of a multilevel list definition (SPEC-032). Every field
+ * except `style` is optional with a documented default, so a definition
+ * only stores what differs — which keeps save/re-open fixed points exact. */
+export interface ListLevelDefinition {
+  /** The level's marker style: a number format or a bullet glyph. */
+  style: ListMarkerStyle;
+  /** Literal text before the number (e.g. "("); absent means "". */
+  prefix?: string;
+  /** Literal text after the number (e.g. ")" or "."); absent means "". */
+  suffix?: string;
+  /** How many level components the number shows, ending at this level
+   * (AC-8's "1.1" vs "1"): 3 at level 3 renders "1.1.1"; absent means 1. */
+  includeLevels?: number;
+  /** The level's start value; absent means 1. */
+  startAt?: number;
+  /** Number alignment; absent means "left". */
+  alignment?: ListLevelAlignment;
+  /** The marker's position (indent) in cm; absent means the editor default
+   * (text position − 0.635 cm, see lib/listDefinitions.ts). */
+  numberIndentCm?: number;
+  /** The item text's position in cm; absent means level × 1.27 cm. */
+  textIndentCm?: number;
+}
+
+/** A multilevel list definition (SPEC-032): nine levels of numbering
+ * format, referenced by `ListFormatting.defId`. Each list owns its own
+ * definition (gallery presets are copied on apply), which is what makes
+ * editing a level's format update that list only (AC-17, AC-18). */
+export interface ListDefinition {
+  /** Identity referenced by `ListFormatting.defId` — not named `id` for
+   * the same equality.ts reason as `BookmarkAnchor.name`. */
+  defId: string;
+  /** Exactly MAX_LIST_LEVEL entries, level 1 first. */
+  levels: ListLevelDefinition[];
+  /** Paragraph styles linked to this definition's levels (AC-13):
+   * `styleId -> level`. Applying a linked style makes the paragraph a
+   * defined item of this definition at that level automatically. */
+  styleLinks?: Record<string, number>;
+}
+
+/** Typed pass-through for a `ListLevelDefinition[]` arriving from a `.vue`
+ * component's untyped Array prop (same espree constraint as
+ * asCharacterFormatKey). */
+export function asListLevelDefinitions(value: unknown): ListLevelDefinition[] {
+  return value as ListLevelDefinition[];
+}
+
+/** Typed pass-through for a `ListDefinition[]` prop (espree constraint). */
+export function asListDefinitions(value: unknown): ListDefinition[] {
+  return value as ListDefinition[];
+}
+
+/** Typed empty seed for list-definition arrays in `.vue` scripts. */
+export function noListDefinitions(): ListDefinition[] {
+  return [];
+}
+
+// --- tab stops (SPEC-032) ---------------------------------------------------
+
+/** A custom tab stop's alignment (AC-19..22): where the tabbed text sits
+ * relative to the stop — "decimal" aligns on the decimal separator. */
+export type TabStopAlignment = "left" | "right" | "center" | "decimal";
+
+/** The leader drawn in the space a tab jumps over (AC-23); absent means
+ * none. */
+export type TabLeader = "dot" | "hyphen" | "underscore";
+
+/** One custom tab stop on a paragraph (SPEC-032 AC-19..25). `positionCm`
+ * is measured from the text area's start edge (the left margin for LTR),
+ * matching `w:tab/@w:pos` and ODF's `style:position`. */
+export interface TabStop {
+  positionCm: number;
+  alignment: TabStopAlignment;
+  leader?: TabLeader;
+}
+
+/** Typed pass-through for a `TabStop[]` arriving from a `.vue` component's
+ * untyped Array prop (same espree constraint as asCharacterFormatKey). */
+export function asTabStops(value: unknown): TabStop[] {
+  return value as TabStop[];
+}
+
+/** Typed empty seed for tab-stop arrays in `.vue` scripts. */
+export function noTabStops(): TabStop[] {
+  return [];
+}
+
+/** Typed pass-through for a tab alignment coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asTabStopAlignment(value: string): TabStopAlignment {
+  return value as TabStopAlignment;
 }
 
 /** Typed pass-through for a list type coming from a `.vue` template's plain
@@ -897,6 +1010,9 @@ export interface DocumentModel {
    * opened file's styles.xml. Absent for blank documents — the picker then
    * offers the built-in set from lib/styles.ts. */
   styles?: NamedStyle[];
+  /** Multilevel list definitions (SPEC-032) referenced by
+   * `ListFormatting.defId`. Absent when the document has none. */
+  listDefinitions?: ListDefinition[];
   format?: DocumentFormat;
   /** Image bytes referenced by `Image.mediaId` (SPEC-024), deduplicated —
    * one entry per distinct image regardless of how many times it is used. */

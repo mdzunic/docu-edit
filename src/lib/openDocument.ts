@@ -5,7 +5,7 @@
 // errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
 // propagate unchanged — the caller only mutates app state once this
 // resolves, so a rejected file leaves the previous state untouched.
-import type { DocumentFormat, DocumentModel, MediaPart, NamedStyle, OpaquePart, SourceXml } from "./documentModel";
+import type { DocumentFormat, DocumentModel, ListDefinition, MediaPart, NamedStyle, OpaquePart, SourceXml } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
 
@@ -53,6 +53,7 @@ function buildModel(
     opaque: OpaquePart[];
     sourceXml: SourceXml;
     media: MediaPart[];
+    listDefinitions?: ListDefinition[];
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -66,6 +67,10 @@ function buildModel(
   // and the writers re-declare on save.
   if (parsed.styles.length > 0) {
     model.styles = parsed.styles;
+  }
+  // Multilevel list definitions (SPEC-032) the document's lists reference.
+  if (parsed.listDefinitions && parsed.listDefinitions.length > 0) {
+    model.listDefinitions = parsed.listDefinitions;
   }
   // SPEC-008: the retained source package travels with the document for its
   // lifetime, so a later same-format save can round-trip it.

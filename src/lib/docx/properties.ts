@@ -2,7 +2,14 @@
 // onto the document model's `RunFormatting`/`ParagraphFormatting`. Shared by
 // the style-catalog parser (styles.xml carries the same properties on each
 // named style) and the document-body parser (direct formatting on `w:r`/`w:p`).
-import type { ParagraphAlignment, ParagraphFormatting, RunFormatting } from "../documentModel";
+import type {
+  ParagraphAlignment,
+  ParagraphFormatting,
+  RunFormatting,
+  TabLeader,
+  TabStop,
+  TabStopAlignment,
+} from "../documentModel";
 import { HIGHLIGHT_NAMES } from "../odf/properties";
 import { firstChildElement, wordAttr as attr, WORD_NAMESPACE } from "./xml";
 import { halfPointsToPt, ooxmlColorToCss, twentiethsOfPointToPt, twipsToCm } from "./units";
@@ -117,6 +124,22 @@ const ALIGNMENT_MAP: Record<string, ParagraphAlignment> = {
   distribute: "justify",
 };
 
+const TAB_ALIGNMENT_MAP: Record<string, TabStopAlignment> = {
+  left: "left",
+  start: "left",
+  right: "right",
+  end: "right",
+  center: "center",
+  decimal: "decimal",
+};
+
+const TAB_LEADER_MAP: Record<string, TabLeader> = {
+  dot: "dot",
+  middledot: "dot",
+  hyphen: "hyphen",
+  underscore: "underscore",
+};
+
 export function parseParagraphProperties(pPr: Element | undefined): ParagraphFormatting {
   if (!pPr) {
     return {};
@@ -151,6 +174,33 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
       formatting.indentFirstLineCm = twipsToCm(Number(firstLine));
     } else if (hanging) {
       formatting.indentFirstLineCm = -twipsToCm(Number(hanging));
+    }
+  }
+
+  // Custom tab stops (SPEC-032 AC-19..25). `clear`/`bar`/`num` stops have
+  // no model equivalent and are skipped; `start`/`end` are the strict-schema
+  // names for left/right.
+  const tabsEl = firstChildElement(pPr, WORD_NAMESPACE, "tabs");
+  if (tabsEl) {
+    const stops: TabStop[] = [];
+    for (const tabEl of Array.from(tabsEl.children)) {
+      if (tabEl.namespaceURI !== WORD_NAMESPACE || tabEl.localName !== "tab") {
+        continue;
+      }
+      const alignment = TAB_ALIGNMENT_MAP[(attr(tabEl, "val") ?? "").toLowerCase()];
+      const pos = Number(attr(tabEl, "pos"));
+      if (!alignment || !Number.isFinite(pos) || pos < 0) {
+        continue;
+      }
+      const stop: TabStop = { positionCm: twipsToCm(pos), alignment };
+      const leader = TAB_LEADER_MAP[(attr(tabEl, "leader") ?? "").toLowerCase()];
+      if (leader) {
+        stop.leader = leader;
+      }
+      stops.push(stop);
+    }
+    if (stops.length > 0) {
+      formatting.tabStops = stops.sort((a, b) => a.positionCm - b.positionCm);
     }
   }
 

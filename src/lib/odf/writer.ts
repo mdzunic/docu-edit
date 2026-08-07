@@ -33,6 +33,7 @@ import type {
   FieldSpec,
   Image,
   ImageWrapMode,
+  ListDefinition,
   Margins,
   NamedStyle,
   PageNumberFormat,
@@ -58,10 +59,12 @@ import { equalStructural } from "../equality";
 import {
   BULLET_CHARS,
   clampListLevel,
+  isBulletStyle,
   LIST_MARKER_WIDTH_CM,
   planListLevels,
   type PlannedListLevel,
 } from "../lists";
+import { definedNumberIndentCm, definedTextIndentCm } from "../listDefinitions";
 import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
 import { ODT_MIMETYPE } from "./reader";
@@ -263,7 +266,40 @@ function paragraphPropertiesXml(
   if (pageNumberStart !== undefined) {
     attrs.push(`style:page-number="${pageNumberStart}"`);
   }
-  return attrs.length > 0 ? `<style:paragraph-properties ${attrs.join(" ")}/>` : "";
+  // Custom tab stops (SPEC-032 AC-19..25): a style:tab-stops child. The
+  // leader is written BOTH as style:leader-style and style:leader-text so
+  // either form recovers it on read — including foreign files that carry
+  // only the style keyword.
+  let tabStops = "";
+  if (formatting.tabStops !== undefined && formatting.tabStops.length > 0) {
+    tabStops = formatting.tabStops
+      .map((stop) => {
+        let stopAttrs = `style:position="${cmToOdfLength(stop.positionCm)}"`;
+        if (stop.alignment === "decimal") {
+          stopAttrs += ' style:type="char" style:char="."';
+        } else if (stop.alignment !== "left") {
+          stopAttrs += ` style:type="${stop.alignment}"`;
+        }
+        if (stop.leader === "dot") {
+          stopAttrs += ' style:leader-style="dotted" style:leader-text="."';
+        } else if (stop.leader === "hyphen") {
+          stopAttrs += ' style:leader-style="dash" style:leader-text="-"';
+        } else if (stop.leader === "underscore") {
+          stopAttrs += ' style:leader-style="solid" style:leader-text="_"';
+        }
+        return `<style:tab-stop ${stopAttrs}/>`;
+      })
+      .join("");
+    tabStops = `<style:tab-stops>${tabStops}</style:tab-stops>`;
+  }
+  if (attrs.length === 0 && tabStops === "") {
+    return "";
+  }
+  const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+  if (tabStops === "") {
+    return `<style:paragraph-properties${attrText}/>`;
+  }
+  return `<style:paragraph-properties${attrText}>${tabStops}</style:paragraph-properties>`;
 }
 
 // style:num-format values for the number marker styles (ODF 19.500) — the
@@ -297,6 +333,49 @@ function listLevelXml(level: number, def: PlannedListLevel): string {
   return (
     `<text:list-level-style-number text:level="${level}"` +
     ` style:num-format="${NUM_FORMAT_BY_STYLE[def.style]}" style:num-suffix="."${start}>` +
+    `${props}</text:list-level-style-number>`
+  );
+}
+
+/** One level of a SPEC-032 definition's text:list-style (AC-27). Unlike the
+ * SPEC-018 form above, `text:display-levels` is ALWAYS written (even at its
+ * default of 1): its presence is the reader's marker that the style is a
+ * full multilevel definition, so a re-opened definition keeps its identity
+ * instead of degrading into an adjacency list. */
+function definedListLevelXml(def: ListDefinition, level: number): string {
+  const levelDef = def.levels[level - 1] ?? { style: "decimal" };
+  const textIndentCm = definedTextIndentCm(def, level);
+  const numberIndentCm = definedNumberIndentCm(def, level);
+  const alignment = levelDef.alignment ?? "left";
+  const props =
+    '<style:list-level-properties text:list-level-position-and-space-mode="label-alignment"' +
+    (alignment !== "left" ? ` fo:text-align="${alignment}"` : "") +
+    ">" +
+    '<style:list-level-label-alignment text:label-followed-by="listtab"' +
+    ` fo:margin-left="${cmToOdfLength(textIndentCm)}"` +
+    ` fo:text-indent="-${cmToOdfLength(Math.max(0, textIndentCm - numberIndentCm))}"/>` +
+    "</style:list-level-properties>";
+  const prefix =
+    levelDef.prefix !== undefined && levelDef.prefix !== ""
+      ? ` style:num-prefix="${escapeXml(levelDef.prefix)}"`
+      : "";
+  const suffix =
+    levelDef.suffix !== undefined && levelDef.suffix !== ""
+      ? ` style:num-suffix="${escapeXml(levelDef.suffix)}"`
+      : "";
+  if (isBulletStyle(levelDef.style)) {
+    return (
+      `<text:list-level-style-bullet text:level="${level}"${prefix}${suffix}` +
+      ` text:bullet-char="${BULLET_CHARS[levelDef.style]}">` +
+      `${props}</text:list-level-style-bullet>`
+    );
+  }
+  const include = Math.min(Math.max(Math.round(levelDef.includeLevels ?? 1), 1), level);
+  const start = (levelDef.startAt ?? 1) !== 1 ? ` text:start-value="${levelDef.startAt}"` : "";
+  return (
+    `<text:list-level-style-number text:level="${level}"${prefix}${suffix}` +
+    ` style:num-format="${NUM_FORMAT_BY_STYLE[levelDef.style]}"` +
+    ` text:display-levels="${include}"${start}>` +
     `${props}</text:list-level-style-number>`
   );
 }
@@ -390,6 +469,13 @@ interface AutomaticStyles {
   paragraphNameFor(paragraph: Paragraph, options?: ParagraphStyleOptions): string | undefined;
   textNameFor(formatting: RunFormatting): string;
   listNameFor(levels: PlannedListLevel[]): string;
+  /** A SPEC-032 definition's own text:list-style (AC-27), one per defId. */
+  definedListNameFor(def: ListDefinition): string;
+  /** Resolves a paragraph's defId against the model's definitions. */
+  listDefinitionFor(defId: string): ListDefinition | undefined;
+  /** A fresh xml:id for one written text:list segment — document-unique, so
+   * text:continue-list references stay unambiguous across cells/sections. */
+  nextListXmlId(): string;
   tableNamesFor(table: Table, preserveNames: boolean): TableNames;
   /** A floating image's graphic-family style (SPEC-024 AC-13, AC-14) —
    * shared by every image with the same wrap mode; undefined for "inline",
@@ -462,8 +548,10 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
   const paragraphNames = new Map<string, string>();
   const textNames = new Map<string, string>();
   const listNames = new Map<string, string>();
+  const definedListNames = new Map<string, string>();
   const graphicNames = new Map<ImageWrapMode, string>();
   const boundStyleIds = new Set<string>();
+  let listXmlIdCounter = 0;
 
   const claimName = (base: string, separator: string): string => {
     for (let n = 1; ; n++) {
@@ -545,6 +633,30 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       listNames.set(levelsXml, name);
       defs.push(`<text:list-style style:name="${name}">${levelsXml}</text:list-style>`);
       return name;
+    },
+
+    definedListNameFor(def: ListDefinition): string {
+      const existing = definedListNames.get(def.defId);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = claimName("LD", "");
+      definedListNames.set(def.defId, name);
+      let levelsXml = "";
+      for (let level = 1; level <= 9; level++) {
+        levelsXml += definedListLevelXml(def, level);
+      }
+      defs.push(`<text:list-style style:name="${name}">${levelsXml}</text:list-style>`);
+      return name;
+    },
+
+    listDefinitionFor(defId: string): ListDefinition | undefined {
+      return model.listDefinitions?.find((entry) => entry.defId === defId);
+    },
+
+    nextListXmlId(): string {
+      listXmlIdCounter += 1;
+      return `list${listXmlIdCounter}`;
     },
 
     tableNamesFor(table: Table, preserveNames: boolean): TableNames {
@@ -688,6 +800,122 @@ function listRunXml(
   while (depth > 0) {
     xml += "</text:list-item></text:list>";
     depth--;
+  }
+  return xml;
+}
+
+/** One segment of a DEFINED list instance (SPEC-032 AC-27, AC-28) as a
+ * text:list: same nested structure as listRunXml, but the outer element
+ * carries the definition's list style, a document-unique xml:id, and — when
+ * an earlier segment of the same instance was already written —
+ * text:continue-list/text:continue-numbering, so ODF's own numbering
+ * continues the interrupted sequence. A segment WITHOUT the continue
+ * attributes restarts, which is exactly how a restarted instance
+ * serialises. An item's explicit start value ("Set numbering value…")
+ * rides on its own text:list-item as text:start-value. */
+function definedListRunXml(
+  paragraphs: Paragraph[],
+  def: ListDefinition,
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+  styleOptions: ParagraphStyleOptions | undefined,
+  segment: { xmlId: string; continueFrom?: string },
+): string {
+  const styleName = styles.definedListNameFor(def);
+  const continueAttrs =
+    segment.continueFrom !== undefined
+      ? ` text:continue-list="${escapeXml(segment.continueFrom)}" text:continue-numbering="true"`
+      : "";
+  const listOpen =
+    `<text:list text:style-name="${escapeXml(styleName)}"` +
+    ` xml:id="${escapeXml(segment.xmlId)}"${continueAttrs}>`;
+  let xml = "";
+  let depth = 0;
+  let first = true;
+  for (const paragraph of paragraphs) {
+    const list = paragraph.list!;
+    const level = clampListLevel(list.level);
+    const startAttr =
+      list.startAt !== undefined ? ` text:start-value="${list.startAt}"` : "";
+    // The start value belongs on the item at the paragraph's OWN level, not
+    // on the ancestor items opened on the way down.
+    const itemAttr = (atLevel: number) => (atLevel === level ? startAttr : "");
+    if (depth === 0) {
+      xml += `${listOpen}<text:list-item${itemAttr(1)}>`;
+      depth = 1;
+    } else if (level <= depth) {
+      while (depth > level) {
+        xml += "</text:list-item></text:list>";
+        depth--;
+      }
+      xml += `</text:list-item><text:list-item${itemAttr(level)}>`;
+    }
+    while (depth < level) {
+      depth++;
+      xml += `<text:list><text:list-item${itemAttr(depth)}>`;
+    }
+    xml += paragraphXml(paragraph, styles, includeOpaque, first ? styleOptions : undefined);
+    first = false;
+  }
+  while (depth > 0) {
+    xml += "</text:list-item></text:list>";
+    depth--;
+  }
+  return xml;
+}
+
+/** A defined paragraph's instance signature, or null for a SPEC-018 item
+ * (or a dangling defId, which degrades to the ad-hoc path — mirroring the
+ * renderer's fallback). */
+function instanceSignatureOf(paragraph: Paragraph, styles: AutomaticStyles): string | null {
+  const list = paragraph.list;
+  if (list?.defId === undefined || styles.listDefinitionFor(list.defId) === undefined) {
+    return null;
+  }
+  return `${list.defId} ${list.listId ?? ""}`;
+}
+
+/** A contiguous run of list paragraphs, split into per-instance segments
+ * (SPEC-032): consecutive items of the SAME (defId, listId) share one
+ * text:list; an instance change mid-run — a restart, "Set numbering
+ * value…", or two independent lists that happen to touch — starts a new
+ * one. This split is what the previous attempt lost restarts to: grouping
+ * a whole run under the first paragraph's instance let ODF renumber a
+ * restarted item as a continuation. `continuity` maps instance signatures
+ * to the xml:id of their last written segment, one map per numbering
+ * context (the body; each table cell). */
+function listRunsXml(
+  paragraphs: Paragraph[],
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+  styleOptions: ParagraphStyleOptions | undefined,
+  continuity: Map<string, string>,
+): string {
+  let xml = "";
+  let i = 0;
+  let first = true;
+  while (i < paragraphs.length) {
+    const signature = instanceSignatureOf(paragraphs[i], styles);
+    let end = i + 1;
+    while (end < paragraphs.length && instanceSignatureOf(paragraphs[end], styles) === signature) {
+      end++;
+    }
+    const segment = paragraphs.slice(i, end);
+    const options = first ? styleOptions : undefined;
+    if (signature === null) {
+      xml += listRunXml(segment, styles, includeOpaque, options);
+    } else {
+      const def = styles.listDefinitionFor(segment[0].list!.defId!)!;
+      const xmlId = styles.nextListXmlId();
+      const continueFrom = continuity.get(signature);
+      continuity.set(signature, xmlId);
+      xml += definedListRunXml(segment, def, styles, includeOpaque, options, {
+        xmlId,
+        continueFrom,
+      });
+    }
+    first = false;
+    i = end;
   }
   return xml;
 }
@@ -914,6 +1142,9 @@ function imageParagraphXml(
  * items grouped into text:list runs exactly like body content — a cell is
  * its own list context, so runs never join one outside the table. */
 function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpaque: boolean): string {
+  // The cell is its own numbering context (SPEC-022), so instance
+  // continuity never crosses the cell boundary — a fresh map per cell.
+  const continuity = new Map<string, string>();
   let xml = "";
   let i = 0;
   while (i < blocks.length) {
@@ -926,7 +1157,7 @@ function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpa
     while (end < blocks.length && blocks[end].list) {
       end++;
     }
-    xml += listRunXml(blocks.slice(i, end), styles, includeOpaque);
+    xml += listRunsXml(blocks.slice(i, end), styles, includeOpaque, undefined, continuity);
     i = end;
   }
   return xml.length > 0 ? xml : "<text:p/>";
@@ -1037,6 +1268,10 @@ export function buildContentXml(
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
   const blockXml: string[] = [];
+  // Defined-list instance continuity for the whole body (SPEC-032): one map
+  // across every section, so an instance interrupted by a section break
+  // still writes text:continue-list on its later segments.
+  const bodyListContinuity = new Map<string, string>();
   // SPEC-028 AC-32: ODF has no standalone break element — a BreakBlock
   // becomes fo:break-before on the NEXT emitted paragraph's automatic
   // style, so the break is held pending until that paragraph is reached.
@@ -1135,7 +1370,15 @@ export function buildContentXml(
       while (end < blocks.length && isListParagraph(blocks[end]) && anchorsAt(end).length === 0) {
         end++;
       }
-      blockXml.push(listRunXml(blocks.slice(i, end) as Paragraph[], styles, includeOpaque, takeStyleOptions()));
+      blockXml.push(
+        listRunsXml(
+          blocks.slice(i, end) as Paragraph[],
+          styles,
+          includeOpaque,
+          takeStyleOptions(),
+          bodyListContinuity,
+        ),
+      );
       i = end;
     }
     if (pendingMaster !== undefined || pendingPageNumberStart !== undefined) {
@@ -1404,6 +1647,17 @@ function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
       return name;
     },
     listNameFor(): string {
+      throw new Error("lists are not supported in header/footer content (SPEC-029)");
+    },
+    definedListNameFor(): string {
+      throw new Error("lists are not supported in header/footer content (SPEC-029)");
+    },
+    listDefinitionFor(): ListDefinition | undefined {
+      // Header/footer paragraphs never render as defined list items; their
+      // writer strips list formatting before it reaches a list run.
+      return undefined;
+    },
+    nextListXmlId(): string {
       throw new Error("lists are not supported in header/footer content (SPEC-029)");
     },
     tableNamesFor(): TableNames {

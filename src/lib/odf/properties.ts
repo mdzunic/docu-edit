@@ -3,7 +3,14 @@
 // .docx reader produces, so nothing downstream cares which format a document
 // came from. Shared by the style-catalog parser (named and automatic styles
 // carry the same property elements) and used for every resolved style chain.
-import type { ParagraphAlignment, ParagraphFormatting, RunFormatting } from "../documentModel";
+import type {
+  ParagraphAlignment,
+  ParagraphFormatting,
+  RunFormatting,
+  TabLeader,
+  TabStop,
+  TabStopAlignment,
+} from "../documentModel";
 import { firstChildElement } from "../docx/xml";
 import { foAttr, styleAttr, STYLE_NAMESPACE } from "./xml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
@@ -310,7 +317,63 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
     formatting.widowControl = false;
   }
 
+  // Custom tab stops (SPEC-032 AC-19..25): style:tab-stops/style:tab-stop.
+  // "char" is ODF's decimal alignment; the leader is recovered from
+  // style:leader-text when present, else from style:leader-style, so
+  // foreign files that only write the keyword keep their leaders too.
+  const tabStopsEl = firstChildElement(paragraphPropsEl, STYLE_NAMESPACE, "tab-stops");
+  if (tabStopsEl) {
+    const stops: TabStop[] = [];
+    for (const stopEl of Array.from(tabStopsEl.children)) {
+      if (stopEl.namespaceURI !== STYLE_NAMESPACE || stopEl.localName !== "tab-stop") {
+        continue;
+      }
+      const positionCm = odfLengthToCm(styleAttr(stopEl, "position"));
+      if (positionCm === undefined || positionCm < 0) {
+        continue;
+      }
+      const type = styleAttr(stopEl, "type") ?? "left";
+      const alignment: TabStopAlignment =
+        type === "char"
+          ? "decimal"
+          : type === "right" || type === "center"
+            ? type
+            : "left";
+      const stop: TabStop = { positionCm, alignment };
+      const leader = tabLeaderOf(styleAttr(stopEl, "leader-text"), styleAttr(stopEl, "leader-style"));
+      if (leader) {
+        stop.leader = leader;
+      }
+      stops.push(stop);
+    }
+    if (stops.length > 0) {
+      formatting.tabStops = stops.sort((a, b) => a.positionCm - b.positionCm);
+    }
+  }
+
   return formatting;
+}
+
+function tabLeaderOf(leaderText: string | null, leaderStyle: string | null): TabLeader | undefined {
+  if (leaderText === ".") {
+    return "dot";
+  }
+  if (leaderText === "-") {
+    return "hyphen";
+  }
+  if (leaderText === "_") {
+    return "underscore";
+  }
+  if (leaderStyle === "dotted") {
+    return "dot";
+  }
+  if (leaderStyle === "dash" || leaderStyle === "long-dash") {
+    return "hyphen";
+  }
+  if (leaderStyle === "solid") {
+    return "underscore";
+  }
+  return undefined;
 }
 
 /** The `style:text-properties` child of a style definition element. */

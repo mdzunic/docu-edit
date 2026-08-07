@@ -4,6 +4,7 @@
 // and resolves a style name's `style:parent-style-name` chain into effective
 // paragraph/run formatting, the ODF counterpart of docx/styles.ts.
 import type {
+  ListDefinition,
   ListMarkerStyle,
   ListType,
   Margins,
@@ -66,12 +67,27 @@ interface StyleFamily {
 }
 
 /** One level of a `text:list-style` (SPEC-018): the marker it draws and
- * the text indent its list-level properties define. */
+ * the text indent its list-level properties define. SPEC-032 widens it with
+ * the multilevel-definition fields (prefix/suffix, display levels,
+ * alignment, marker position) — see listStyleIsComposite. */
 export interface OdfListLevelDef {
   type: ListType;
   marker: ListMarkerStyle;
   startAt: number;
   indentCm?: number;
+  /** style:num-prefix, when present and non-empty. */
+  prefix?: string;
+  /** style:num-suffix, when present and non-empty. */
+  suffix?: string;
+  /** text:display-levels — stored whenever the ATTRIBUTE is present, even
+   * at its default of 1: our own SPEC-032 writer always emits it, which is
+   * the discriminator that keeps a re-opened definition composite. */
+  displayLevels?: number;
+  /** fo:text-align on the level's list-level-properties. */
+  alignment?: "left" | "center" | "right";
+  /** The marker's own position (label-alignment margin-left + text-indent),
+   * in cm. */
+  numberIndentCm?: number;
 }
 
 /** A named `text:list-style`'s levels, keyed by 1-based level. */
@@ -100,12 +116,25 @@ export interface OdfMasterPageLayout {
   footerLeftEl?: Element;
 }
 
+/** SPEC-032 read state the reader threads through the parse via the
+ * catalog (the one object every parsing helper already receives): the
+ * document-wide list-instance id mint and the ListDefinition registry
+ * composite list styles reconstruct into. Absent on catalogs that never
+ * parse body content (the styles.xml-scoped one). */
+export interface OdfListReadState {
+  nextListId(): string;
+  definitionFor(styleName: string | undefined): ListDefinition;
+  definitions: ListDefinition[];
+}
+
 export interface OdfStyleCatalog {
   paragraphStyles: StyleFamily;
   textStyles: StyleFamily;
   /** `text:list-style` definitions by name — named styles from styles.xml,
    * shadowed by automatic ones from content.xml (SPEC-018). */
   listStyles: Map<string, OdfListStyle>;
+  /** SPEC-032 list-instance read state; see OdfListReadState. */
+  listRead?: OdfListReadState;
   /** From `style:default-style` (family "paragraph") in styles.xml — the
    * base of every resolution chain, like docx's docDefaults. */
   defaultParagraphFormatting: ParagraphFormatting;
@@ -247,6 +276,26 @@ function parseListLevelIndent(levelEl: Element): number | undefined {
   return (spaceBefore ?? 0) + (minLabelWidth ?? 0);
 }
 
+/** The level's marker position from `style:list-level-properties`: the
+ * label-alignment form's margin-left + text-indent (the indent is negative
+ * for the usual hanging marker). */
+function parseListLevelNumberIndent(levelEl: Element): number | undefined {
+  const props = firstChildElement(levelEl, STYLE_NAMESPACE, "list-level-properties");
+  if (!props) {
+    return undefined;
+  }
+  const labelAlignment = firstChildElement(props, STYLE_NAMESPACE, "list-level-label-alignment");
+  if (!labelAlignment) {
+    return undefined;
+  }
+  const marginLeft = odfLengthToCm(foAttr(labelAlignment, "margin-left"));
+  const textIndent = odfLengthToCm(foAttr(labelAlignment, "text-indent"));
+  if (marginLeft === undefined || textIndent === undefined) {
+    return undefined;
+  }
+  return Math.max(0, marginLeft + textIndent);
+}
+
 /** Parses one `text:list-style` element's bullet/number levels. Image
  * levels (and anything else) are skipped — an undefined level falls back
  * to defaults at the use site. */
@@ -277,18 +326,67 @@ function parseListStyle(listStyleEl: Element): OdfListStyle {
         marker: NUMBER_STYLE_BY_FORMAT[format] ?? "decimal",
         startAt: Number.isFinite(start) && start >= 0 ? start : 1,
       };
+      const displayLevels = textAttr(levelEl, "display-levels");
+      if (displayLevels !== null) {
+        const parsed = Number(displayLevels);
+        if (Number.isInteger(parsed) && parsed >= 1) {
+          def.displayLevels = Math.min(parsed, level);
+        }
+      }
     } else {
       continue;
+    }
+    const prefix = styleAttr(levelEl, "num-prefix");
+    if (prefix !== null && prefix !== "") {
+      def.prefix = prefix;
+    }
+    const suffix = styleAttr(levelEl, "num-suffix");
+    if (suffix !== null && suffix !== "") {
+      def.suffix = suffix;
+    }
+    const props = firstChildElement(levelEl, STYLE_NAMESPACE, "list-level-properties");
+    const align = props ? foAttr(props, "text-align") : null;
+    if (align === "center" || align === "right") {
+      def.alignment = align;
     }
     const indentCm = parseListLevelIndent(levelEl);
     if (indentCm !== undefined) {
       def.indentCm = indentCm;
+    }
+    const numberIndentCm = parseListLevelNumberIndent(levelEl);
+    if (numberIndentCm !== undefined) {
+      def.numberIndentCm = numberIndentCm;
     }
     if (!levels.has(level)) {
       levels.set(level, def);
     }
   }
   return levels;
+}
+
+/** Whether a list style is a full multilevel definition (SPEC-032) rather
+ * than SPEC-018's simple per-level markers. Keyed on the fields SPEC-018's
+ * own writer never produces: text:display-levels (our defined writer emits
+ * it on every number level, default included, precisely as this marker),
+ * any prefix, a number suffix other than ".", or any bullet suffix. Simple
+ * styles keep importing as adjacency lists, so pre-SPEC-032 documents are
+ * read exactly as before. */
+export function listStyleIsComposite(style: OdfListStyle | undefined): boolean {
+  if (!style) {
+    return false;
+  }
+  for (const def of style.values()) {
+    if (def.displayLevels !== undefined || def.prefix !== undefined || def.alignment !== undefined) {
+      return true;
+    }
+    if (def.type === "number" && def.suffix !== undefined && def.suffix !== ".") {
+      return true;
+    }
+    if (def.type === "bullet" && def.suffix !== undefined) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function collectListStyles(container: Element | undefined, catalog: OdfStyleCatalog): void {

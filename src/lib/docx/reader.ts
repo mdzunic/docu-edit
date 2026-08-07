@@ -15,6 +15,7 @@ import type {
   FieldKind,
   HeaderFooterKind,
   HeaderFooterPart,
+  ListDefinition,
   MediaPart,
   NamedStyle,
   OpaqueBlock,
@@ -143,6 +144,9 @@ export interface ParsedDocxDocument {
    * distinct source media part — deduplicated, since the same picture used
    * twice in the document shares one relationship target. */
   media: MediaPart[];
+  /** Multilevel list definitions (SPEC-032) reconstructed from composite
+   * abstractNums the body actually references; empty when there are none. */
+  listDefinitions: ListDefinition[];
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -1526,5 +1530,8 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     opaque,
     sourceXml,
     media: Array.from(mediaById.values()),
+    // Multilevel definitions (SPEC-032) the resolved w:numPr references
+    // actually used — reconstructed from their composite abstractNums.
+    listDefinitions: numberingCatalog.definitionsUsed(),
   };
 }
