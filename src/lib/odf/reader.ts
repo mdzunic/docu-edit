@@ -1167,6 +1167,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     if (sectionGeometry?.margins) {
       section.margins = { ...sectionGeometry.margins };
     }
+    if (sectionGeometry?.columns) {
+      section.columns = { ...sectionGeometry.columns };
+    }
     applyHeaderFooterLayout(section, sectionGeometry, stylesScopedCatalog);
     if (sectionPageNumberStart !== undefined) {
       section.pageNumberStart = sectionPageNumberStart;
@@ -1279,6 +1282,12 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   }
   if (leadingSection && leadingGeometry?.margins) {
     leadingSection.margins = { ...leadingGeometry.margins };
+  }
+  // The leading section's columns come from the master it names, else the
+  // first-listed master folded into the catalog (the single-section case).
+  const leadingColumns = leadingGeometry?.columns ?? catalog.columns;
+  if (leadingSection && leadingColumns) {
+    leadingSection.columns = { ...leadingColumns };
   }
   // Header/footer content (SPEC-029): the master the first paragraph
   // explicitly named, or — the common case — whichever master is first in

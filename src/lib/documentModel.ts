@@ -668,6 +668,97 @@ export function asBreakKind(value: string): BreakKind {
   return value as BreakKind;
 }
 
+/** A section's multi-column layout (SPEC-030). `count` is 1..6; a `count`
+ * of 1 (or an absent `columns`) is an ordinary single-column section and
+ * behaves exactly as before this spec. Widths and the gutter are stored in
+ * cm; when `equalWidth` is true (AC-3a) the per-column widths are computed
+ * evenly from the section's content width and `widthsCm` is ignored. */
+export interface SectionColumns {
+  /** Number of columns, 1..6 (AC-2). */
+  count: number;
+  /** Whether the columns share one computed width (AC-3a). When false,
+   * `widthsCm` gives each column's own width. */
+  equalWidth: boolean;
+  /** The gutter (spacing) between adjacent columns, in cm (AC-3). Uniform
+   * across gutters — the dialog and ruler both treat it as one value. */
+  gapCm: number;
+  /** "Line between columns" (AC-4): a vertical rule drawn in each gutter. */
+  separator: boolean;
+  /** Per-column widths in cm when `equalWidth` is false (AC-3); one entry
+   * per column. Ignored (and normally absent) for equal columns. */
+  widthsCm?: number[];
+}
+
+/** The inclusive column-count bounds the Columns dialog accepts (AC-2). */
+export const MIN_COLUMN_COUNT = 1;
+export const MAX_COLUMN_COUNT = 6;
+
+/** Word's default column gutter (0.5", 720 twips ≈ 1.27cm) — the spacing a
+ * freshly applied multi-column layout starts with (AC-3). */
+export const DEFAULT_COLUMN_GAP_CM = 1.27;
+
+/** The smallest width a section column may be dragged/entered to (AC-14, and
+ * the dialog's per-column validation). */
+export const MIN_SECTION_COLUMN_WIDTH_CM = 1.27;
+
+/** A section's effective column layout: its own, else a single column. */
+export function sectionColumns(model: DocumentModel, sectionIndex: number): SectionColumns {
+  return (
+    model.sections[sectionIndex]?.columns ?? {
+      count: 1,
+      equalWidth: true,
+      gapCm: DEFAULT_COLUMN_GAP_CM,
+      separator: false,
+    }
+  );
+}
+
+/** The content width (cm) available to a section's text: its page width less
+ * its horizontal margins. */
+export function sectionContentWidthCm(model: DocumentModel, sectionIndex: number): number {
+  const pageSize = sectionPageSize(model, sectionIndex);
+  const margins = sectionMargins(model, sectionIndex);
+  return Math.max(0.1, pageSize.widthCm - margins.leftCm - margins.rightCm);
+}
+
+/** The resolved width (cm) of every column in a layout, given the section's
+ * content width. Equal columns split the content width (minus gutters)
+ * evenly; unequal columns keep their stored proportions rescaled to fill the
+ * content width exactly, so the total is always preserved (AC-14) even after
+ * a page-size or margin change. */
+export function resolveColumnWidthsCm(
+  columns: SectionColumns,
+  contentWidthCm: number,
+): number[] {
+  const count = Math.max(1, Math.min(MAX_COLUMN_COUNT, Math.round(columns.count)));
+  const gutters = Math.max(0, columns.gapCm) * (count - 1);
+  const available = Math.max(0.1, contentWidthCm - gutters);
+  if (columns.equalWidth || !columns.widthsCm || columns.widthsCm.length !== count) {
+    const each = available / count;
+    return Array.from({ length: count }, () => each);
+  }
+  const total = columns.widthsCm.reduce((sum, w) => sum + Math.max(0, w), 0) || 1;
+  return columns.widthsCm.map((w) => (Math.max(0, w) / total) * available);
+}
+
+/** The width (cm) of a section's caret column for content sized to fit a
+ * single column — the smallest column, so new tables/images fit any column
+ * (AC-13, AC-15). For a single-column section this is just the content
+ * width. */
+export function sectionColumnWidthCm(model: DocumentModel, sectionIndex: number): number {
+  const columns = sectionColumns(model, sectionIndex);
+  if (columns.count <= 1) {
+    return sectionContentWidthCm(model, sectionIndex);
+  }
+  return Math.min(...resolveColumnWidthsCm(columns, sectionContentWidthCm(model, sectionIndex)));
+}
+
+/** Typed pass-through for a SectionColumns arriving from a `.vue` template as
+ * a runtime-declared Object (same espree constraint as asParagraphBlock). */
+export function asSectionColumns(value: unknown): SectionColumns {
+  return value as SectionColumns;
+}
+
 /** Block-level children of a section: paragraphs, tables (SPEC-022),
  * images (SPEC-024) and manual breaks (SPEC-028). */
 export type Block = Paragraph | Table | Image | BreakBlock;
@@ -690,6 +781,9 @@ export interface Section {
   /** This section's own margins; absent falls back to
    * `defaultStyles.margins` (SPEC-028 AC-19). */
   margins?: Margins;
+  /** This section's multi-column layout (SPEC-030); absent means a single
+   * column. Round-trips as `w:cols` (.docx) / `style:columns` (.odt). */
+  columns?: SectionColumns;
   /** Verbatim `w:sectPr` of a non-final .docx section (SPEC-028) — the one
    * inside its last paragraph's `w:pPr` — re-emitted on a same-format save
    * so unmodelled section properties survive (the SPEC-008 fidelity rule;

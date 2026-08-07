@@ -11,6 +11,9 @@ import {
   isBreak,
   isImage,
   isTable,
+  resolveColumnWidthsCm,
+  sectionColumns,
+  sectionContentWidthCm,
   sectionMargins,
   sectionPageSize,
   type Block,
@@ -69,6 +72,27 @@ export interface PageItem {
   startLine?: number;
   /** One past the last line rendered on this page; absent = to the end. */
   endLine?: number;
+  /** Which column of a multi-column page this item flows into (SPEC-030);
+   * absent for single-column pages, so single-column layouts are byte-for-
+   * byte identical to pre-SPEC-030 output. */
+  columnIndex?: number;
+}
+
+/** One resolved column of a multi-column page: its width and left offset (cm)
+ * within the content area, so the renderer positions it with no model
+ * lookups. */
+export interface PageColumn {
+  widthCm: number;
+  offsetCm: number;
+}
+
+/** A page's multi-column geometry (SPEC-030); present only when the page has
+ * more than one column. */
+export interface PageColumns {
+  count: number;
+  gapCm: number;
+  separator: boolean;
+  columns: PageColumn[];
 }
 
 /** One laid-out page: the geometry it renders at (resolved from its opening
@@ -78,6 +102,8 @@ export interface PageLayout {
   pageSize: PageSize;
   margins: Margins;
   items: PageItem[];
+  /** Multi-column geometry (SPEC-030); absent = a single full-width column. */
+  columns?: PageColumns;
 }
 
 /** A section's page/content geometry in px. */
@@ -98,6 +124,60 @@ export function sectionGeometryPx(
   };
 }
 
+/** A section's resolved column geometry in px (SPEC-030): the per-column
+ * widths/offsets the engine flows into and the renderer paints, plus the
+ * single width every block in the section is measured at. */
+export interface SectionColumnGeometryPx {
+  count: number;
+  gapCm: number;
+  separator: boolean;
+  contentHeightPx: number;
+  /** The width blocks are measured at — the smallest column, so a block
+   * measured once fits (never overflows) whichever column it flows into
+   * (AC-15). For equal columns every column is this width, so the layout is
+   * exact. */
+  flowWidthPx: number;
+  widthsCm: number[];
+  offsetsCm: number[];
+  columnsPx: { widthPx: number; offsetPx: number }[];
+}
+
+export function sectionColumnGeometryPx(
+  model: DocumentModel,
+  sectionIndex: number,
+): SectionColumnGeometryPx {
+  const columns = sectionColumns(model, sectionIndex);
+  const contentWidthCm = sectionContentWidthCm(model, sectionIndex);
+  const geometry = sectionGeometryPx(model, sectionIndex);
+  const widthsCm = resolveColumnWidthsCm(columns, contentWidthCm);
+  const gapCm = Math.max(0, columns.gapCm);
+  const offsetsCm: number[] = [];
+  const columnsPx: { widthPx: number; offsetPx: number }[] = [];
+  let offsetCm = 0;
+  for (const widthCm of widthsCm) {
+    offsetsCm.push(offsetCm);
+    columnsPx.push({ widthPx: Math.max(1, widthCm * PX_PER_CM), offsetPx: offsetCm * PX_PER_CM });
+    offsetCm += widthCm + gapCm;
+  }
+  return {
+    count: widthsCm.length,
+    gapCm,
+    separator: columns.separator === true,
+    contentHeightPx: geometry.contentHeightPx,
+    flowWidthPx: Math.max(1, Math.min(...widthsCm) * PX_PER_CM),
+    widthsCm,
+    offsetsCm,
+    columnsPx,
+  };
+}
+
+/** The width (px) every block in a section is measured/laid out at — the
+ * section's (smallest) column width. The measurement controller and the
+ * renderer's slice logic both read this so they agree with the engine. */
+export function sectionColumnFlowWidthPx(model: DocumentModel, sectionIndex: number): number {
+  return sectionColumnGeometryPx(model, sectionIndex).flowWidthPx;
+}
+
 // Sub-pixel measurement noise must never flip a fit decision into an
 // off-by-one-line oscillation between layout passes.
 const EPS = 0.5;
@@ -107,13 +187,28 @@ const EPS = 0.5;
 // pages or loop (AC-23's "honoured" never requires moving whole pages).
 const MAX_KEEP_NEXT_CHAIN = 8;
 
-interface OpenPage {
-  layout: PageLayout;
-  /** Bottom edge (px, content-relative) of the last placed item. */
+// One column of one page — the unit content flows into (SPEC-030). A
+// single-column page has exactly one frame, so the fill logic below is the
+// same math it always was; multi-column pages have `columnCount` frames that
+// fill left-to-right, and only the last one filling opens a new page.
+interface Frame {
+  page: PageLayout;
+  /** The section that opened this frame's page (for keep-with-next scoping). */
+  sectionIndex: number;
+  columnIndex: number;
+  columnCount: number;
+  /** Width every block on this page is measured at (the section's smallest
+   * column) — shared by all the page's frames so measurement stays cached
+   * per block regardless of which column a block lands in. */
+  flowWidthPx: number;
+  /** Content height available in the column. */
+  heightPx: number;
+  /** Bottom edge (px, column-relative) of the last placed item. */
   cursor: number;
   /** The last item's collapsible bottom margin. */
   pendingMargin: number;
-  geometry: SectionGeometryPx;
+  /** Items placed in THIS column (page.items is shared across columns). */
+  count: number;
 }
 
 function paragraphOf(block: Block): Paragraph | null {
@@ -133,15 +228,36 @@ function sliceHeight(metrics: BlockMetrics, startLine: number, endLine: number):
   return last.top + last.height - top;
 }
 
-function placeWhole(page: OpenPage, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {
-  const gap = page.layout.items.length === 0 ? m.marginTopPx : Math.max(page.pendingMargin, m.marginTopPx);
-  page.layout.items.push({ sectionIndex, blockIndex });
-  page.cursor += gap + m.heightPx;
-  page.pendingMargin = m.marginBottomPx;
+// Builds a page item, tagging its column only on multi-column pages so
+// single-column layouts stay identical to pre-SPEC-030 output.
+function frameItem(
+  frame: Frame,
+  sectionIndex: number,
+  blockIndex: number,
+  startLine?: number,
+  endLine?: number,
+): PageItem {
+  const item: PageItem = { sectionIndex, blockIndex };
+  if (startLine !== undefined) {
+    item.startLine = startLine;
+    item.endLine = endLine;
+  }
+  if (frame.columnCount > 1) {
+    item.columnIndex = frame.columnIndex;
+  }
+  return item;
+}
+
+function placeWhole(frame: Frame, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {
+  const gap = frame.count === 0 ? m.marginTopPx : Math.max(frame.pendingMargin, m.marginTopPx);
+  frame.page.items.push(frameItem(frame, sectionIndex, blockIndex));
+  frame.cursor += gap + m.heightPx;
+  frame.pendingMargin = m.marginBottomPx;
+  frame.count += 1;
 }
 
 function placeSlice(
-  page: OpenPage,
+  frame: Frame,
   sectionIndex: number,
   blockIndex: number,
   m: BlockMetrics,
@@ -150,10 +266,11 @@ function placeSlice(
 ): void {
   // A continuation slice renders with its top margin stripped.
   const marginTop = startLine === 0 ? m.marginTopPx : 0;
-  const gap = page.layout.items.length === 0 ? marginTop : Math.max(page.pendingMargin, marginTop);
-  page.layout.items.push({ sectionIndex, blockIndex, startLine, endLine });
-  page.cursor += gap + sliceHeight(m, startLine, endLine);
-  page.pendingMargin = endLine >= m.lines.length ? m.marginBottomPx : 0;
+  const gap = frame.count === 0 ? marginTop : Math.max(frame.pendingMargin, marginTop);
+  frame.page.items.push(frameItem(frame, sectionIndex, blockIndex, startLine, endLine));
+  frame.cursor += gap + sliceHeight(m, startLine, endLine);
+  frame.pendingMargin = endLine >= m.lines.length ? m.marginBottomPx : 0;
+  frame.count += 1;
 }
 
 // How many of the block's lines from `startLine` on fit within `available`
@@ -175,40 +292,84 @@ function linesFitting(m: BlockMetrics, startLine: number, available: number): nu
 /** Lays the whole document out onto pages. */
 export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLayout[] {
   const pages: PageLayout[] = [];
-  let current: OpenPage | null = null;
+  // Every column of every page, in fill order. `fi` is the frame being
+  // filled; it only ever moves forward, so frames of earlier pages are never
+  // revisited (their keep-with-next tail is still reachable at `fi - 1`).
+  const frames: Frame[] = [];
+  let fi = -1;
 
-  function openPage(sectionIndex: number): OpenPage {
+  function currentFrame(): Frame | null {
+    return fi >= 0 ? frames[fi] : null;
+  }
+
+  function openPage(sectionIndex: number): Frame {
+    const geometry = sectionColumnGeometryPx(model, sectionIndex);
     const layout: PageLayout = {
       sectionIndex,
       pageSize: { ...sectionPageSize(model, sectionIndex) },
       margins: { ...sectionMargins(model, sectionIndex) },
       items: [],
     };
+    if (geometry.count > 1) {
+      layout.columns = {
+        count: geometry.count,
+        gapCm: geometry.gapCm,
+        separator: geometry.separator,
+        columns: geometry.widthsCm.map((widthCm, index) => ({
+          widthCm,
+          offsetCm: geometry.offsetsCm[index],
+        })),
+      };
+    }
     pages.push(layout);
-    current = {
-      layout,
-      cursor: 0,
-      pendingMargin: 0,
-      geometry: sectionGeometryPx(model, sectionIndex),
-    };
-    return current;
+    const base = frames.length;
+    for (let c = 0; c < geometry.count; c += 1) {
+      frames.push({
+        page: layout,
+        sectionIndex,
+        columnIndex: c,
+        columnCount: geometry.count,
+        flowWidthPx: geometry.flowWidthPx,
+        heightPx: geometry.contentHeightPx,
+        cursor: 0,
+        pendingMargin: 0,
+        count: 0,
+      });
+    }
+    fi = base;
+    return frames[fi];
   }
 
-  function breakPage(sectionIndex: number): OpenPage {
+  function breakPage(sectionIndex: number): Frame {
     return openPage(sectionIndex);
   }
 
-  // Moves a trailing chain of whole keep-with-next paragraphs from the page
-  // before `page` onto `page` (AC-23). Called when a block naturally starts
-  // a fresh page; abandons over-long, cross-section or page-emptying chains.
-  function pullKeepNextChain(page: OpenPage, sectionIndex: number): void {
-    const prev = pages[pages.length - 2];
-    if (!prev || page.layout.items.length > 0) {
+  // Advances to the next column of the current page, or opens a new page when
+  // the current column is the last (AC-9/AC-11: overflow past the last column
+  // continues at the top of the first column of the next page).
+  function advanceFrame(): Frame {
+    const frame = frames[fi];
+    if (frame.columnIndex + 1 < frame.columnCount) {
+      fi += 1;
+      return frames[fi];
+    }
+    return openPage(frame.sectionIndex);
+  }
+
+  // Moves a trailing chain of whole keep-with-next paragraphs from the frame
+  // before `frame` onto it (AC-23). Called when a block naturally starts a
+  // fresh frame (column or page); abandons over-long, cross-section or
+  // frame-emptying chains. Because columns fill left-to-right, the previous
+  // frame's items are always the tail of its page's shared item list.
+  function pullKeepNextChain(frame: Frame, sectionIndex: number): void {
+    const prev = frames[fi - 1];
+    if (!prev || frame.count > 0) {
       return;
     }
+    const prevItems = prev.page.items;
     const chain: PageItem[] = [];
-    for (let i = prev.items.length - 1; i >= 0; i -= 1) {
-      const item = prev.items[i];
+    for (let i = prevItems.length - 1; i >= 0; i -= 1) {
+      const item = prevItems[i];
       if (item.startLine !== undefined || item.endLine !== undefined) {
         break; // a split paragraph is already "with" its continuation
       }
@@ -225,48 +386,39 @@ export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLa
         return; // runaway chain: leave everything where it is
       }
     }
-    if (chain.length === 0 || chain.length >= prev.items.length) {
-      return; // nothing to move, or moving would empty the previous page
+    if (chain.length === 0 || chain.length >= prev.count) {
+      return; // nothing to move, or moving would empty the previous frame
     }
     let height = 0;
     for (const item of chain) {
       const block = model.sections[item.sectionIndex].blocks[item.blockIndex];
-      const m = metrics.metricsFor(
-        item.sectionIndex,
-        item.blockIndex,
-        block,
-        page.geometry.contentWidthPx,
-      );
+      const m = metrics.metricsFor(item.sectionIndex, item.blockIndex, block, frame.flowWidthPx);
       height += m.heightPx + m.marginTopPx;
     }
-    if (height > page.geometry.contentHeightPx * 0.9) {
-      return; // the chain alone would (nearly) fill the page: abandon
+    if (height > frame.heightPx * 0.9) {
+      return; // the chain alone would (nearly) fill the column: abandon
     }
-    prev.items.splice(prev.items.length - chain.length, chain.length);
+    prevItems.splice(prevItems.length - chain.length, chain.length);
+    prev.count -= chain.length;
     for (const item of chain) {
       const block = model.sections[item.sectionIndex].blocks[item.blockIndex];
-      const m = metrics.metricsFor(
-        item.sectionIndex,
-        item.blockIndex,
-        block,
-        page.geometry.contentWidthPx,
-      );
-      placeWhole(page, item.sectionIndex, item.blockIndex, m);
+      const m = metrics.metricsFor(item.sectionIndex, item.blockIndex, block, frame.flowWidthPx);
+      placeWhole(frame, item.sectionIndex, item.blockIndex, m);
     }
   }
 
   function placeBlock(sectionIndex: number, blockIndex: number, block: Block): void {
-    let page = current ?? openPage(sectionIndex);
-    const m = metrics.metricsFor(sectionIndex, blockIndex, block, page.geometry.contentWidthPx);
+    let frame = currentFrame() ?? openPage(sectionIndex);
+    const m = metrics.metricsFor(sectionIndex, blockIndex, block, frame.flowWidthPx);
     const paragraph = paragraphOf(block);
     const formatting = paragraph?.formatting;
     const widow = formatting?.widowControl !== false;
 
-    if (formatting?.pageBreakBefore && page.layout.items.length > 0) {
-      page = breakPage(sectionIndex);
+    if (formatting?.pageBreakBefore && frame.count > 0) {
+      frame = breakPage(sectionIndex);
     }
     // An explicit break before this block separates it from what precedes;
-    // only natural page starts may pull a keep-with-next tail after them —
+    // only natural frame starts may pull a keep-with-next tail after them —
     // and only once per block, so a chain can never chase a block that
     // keeps deferring (loop safety).
     let mayPull = formatting?.pageBreakBefore !== true;
@@ -274,31 +426,31 @@ export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLa
     let startLine = 0;
     const lineCount = m.lines.length;
     for (;;) {
-      if (page.layout.items.length === 0 && startLine === 0 && mayPull) {
+      if (frame.count === 0 && startLine === 0 && mayPull) {
         mayPull = false;
-        pullKeepNextChain(page, sectionIndex);
+        pullKeepNextChain(frame, sectionIndex);
       }
-      const empty = page.layout.items.length === 0;
+      const empty = frame.count === 0;
       const marginTop = startLine === 0 ? m.marginTopPx : 0;
-      const top = page.cursor + (empty ? marginTop : Math.max(page.pendingMargin, marginTop));
-      const available = page.geometry.contentHeightPx - top;
+      const top = frame.cursor + (empty ? marginTop : Math.max(frame.pendingMargin, marginTop));
+      const available = frame.heightPx - top;
       const remaining = startLine === 0 ? m.heightPx : sliceHeight(m, startLine, lineCount);
 
       if (remaining <= available + EPS) {
         if (startLine === 0) {
-          placeWhole(page, sectionIndex, blockIndex, m);
+          placeWhole(frame, sectionIndex, blockIndex, m);
         } else {
-          placeSlice(page, sectionIndex, blockIndex, m, startLine, lineCount);
+          placeSlice(frame, sectionIndex, blockIndex, m, startLine, lineCount);
         }
         return;
       }
 
-      // Does not fit. Decide how many lines stay on this page.
+      // Does not fit. Decide how many lines stay in this column.
       const cannotSplit = lineCount <= 1 || formatting?.keepLines === true;
       let fit = cannotSplit ? 0 : linesFitting(m, startLine, available);
       if (!cannotSplit && widow) {
         if (lineCount - startLine - fit === 1 && fit > 0) {
-          fit -= 1; // never strand a single last line on the next page (widow)
+          fit -= 1; // never strand a single last line in the next column (widow)
         }
         if (startLine === 0 && fit === 1) {
           fit = 0; // never leave a single first line behind (orphan)
@@ -307,57 +459,67 @@ export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLa
 
       if (fit <= 0) {
         if (empty) {
-          // Nothing fits even on an empty page: force progress — place at
+          // Nothing fits even in an empty column: force progress — place at
           // least one line (split) or the whole unsplittable block
-          // (overflow is clipped by the page).
+          // (overflow is clipped by the column).
           if (cannotSplit) {
-            placeWhole(page, sectionIndex, blockIndex, m);
+            placeWhole(frame, sectionIndex, blockIndex, m);
             return;
           }
           fit = Math.max(1, linesFitting(m, startLine, available));
-          placeSlice(page, sectionIndex, blockIndex, m, startLine, startLine + fit);
+          placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit);
           startLine += fit;
-          page = breakPage(sectionIndex);
+          frame = advanceFrame();
           continue;
         }
-        // Defer the whole (remaining) block to a fresh page.
-        page = breakPage(sectionIndex);
+        // Defer the whole (remaining) block to a fresh column.
+        frame = advanceFrame();
         continue;
       }
 
-      placeSlice(page, sectionIndex, blockIndex, m, startLine, startLine + fit);
+      placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit);
       startLine += fit;
-      page = breakPage(sectionIndex);
+      frame = advanceFrame();
     }
   }
 
   for (let s = 0; s < model.sections.length; s += 1) {
     const section = model.sections[s];
+    const current = currentFrame();
     if (current === null) {
       openPage(s);
     } else if (section.start !== "continuous") {
       breakPage(s);
     } else {
-      // A continuous section keeps filling the current page — unless its
-      // content width differs from the page's (blocks are measured at their
-      // own section's width, so mixed widths on one page cannot render).
-      const geometry = sectionGeometryPx(model, s);
-      const active: OpenPage = current;
-      if (Math.abs(geometry.contentWidthPx - active.geometry.contentWidthPx) > EPS) {
+      // A continuous section keeps filling the current page only when both it
+      // and the current page are single-column of the same width — blocks are
+      // measured at one width, so mixed widths (or a column-count change)
+      // cannot share a page and force a break instead.
+      const geometry = sectionColumnGeometryPx(model, s);
+      const sameSingleColumn =
+        geometry.count === 1 &&
+        current.columnCount === 1 &&
+        Math.abs(geometry.flowWidthPx - current.flowWidthPx) <= EPS;
+      if (!sameSingleColumn) {
         breakPage(s);
       }
     }
     for (let b = 0; b < section.blocks.length; b += 1) {
       const block = section.blocks[b];
       if (isBreak(block)) {
-        // The break block itself sits on the page it ends (its marker is
-        // visible there when formatting marks are on); a page break then
-        // opens the next page. Column breaks are inert until SPEC-030.
-        const page: OpenPage = current ?? openPage(s);
-        const m = metrics.metricsFor(s, b, block, page.geometry.contentWidthPx);
-        placeWhole(page, s, b, m);
+        // The break marker sits on the frame it ends (visible when formatting
+        // marks are on). A page break then opens the next page; a column
+        // break advances to the next column — but only in a multi-column
+        // section, so in a single column it is inert (AC-12: a break with no
+        // column to move to produces no visible break, page break or line
+        // break).
+        const frame = currentFrame() ?? openPage(s);
+        const m = metrics.metricsFor(s, b, block, frame.flowWidthPx);
+        placeWhole(frame, s, b, m);
         if (block.kind === "page") {
           breakPage(s);
+        } else if (block.kind === "column" && frame.columnCount > 1) {
+          advanceFrame();
         }
         continue;
       }
@@ -375,7 +537,27 @@ function sameItem(a: PageItem, b: PageItem): boolean {
     a.sectionIndex === b.sectionIndex &&
     a.blockIndex === b.blockIndex &&
     a.startLine === b.startLine &&
-    a.endLine === b.endLine
+    a.endLine === b.endLine &&
+    a.columnIndex === b.columnIndex
+  );
+}
+
+function sameColumns(a: PageColumns | undefined, b: PageColumns | undefined): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return (
+    a.count === b.count &&
+    a.gapCm === b.gapCm &&
+    a.separator === b.separator &&
+    a.columns.length === b.columns.length &&
+    a.columns.every(
+      (col, index) =>
+        col.widthCm === b.columns[index].widthCm && col.offsetCm === b.columns[index].offsetCm,
+    )
   );
 }
 
@@ -388,6 +570,7 @@ function samePage(a: PageLayout, b: PageLayout): boolean {
     a.margins.rightCm === b.margins.rightCm &&
     a.margins.bottomCm === b.margins.bottomCm &&
     a.margins.leftCm === b.margins.leftCm &&
+    sameColumns(a.columns, b.columns) &&
     a.items.length === b.items.length &&
     a.items.every((item, index) => sameItem(item, b.items[index]))
   );

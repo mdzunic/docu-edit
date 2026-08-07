@@ -21,6 +21,7 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import InsertBreakMenu from "../components/InsertBreakMenu.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
+import ColumnsDialog from "../components/ColumnsDialog.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
@@ -77,6 +78,9 @@ import {
   isTable,
   noActiveHeaderFooter,
   noBlocks,
+  resolveColumnWidthsCm,
+  sectionColumns,
+  sectionContentWidthCm,
   sectionMargins,
   sectionPageSize,
 } from "../lib/documentModel";
@@ -128,6 +132,11 @@ import {
   splitCell,
   tableAt,
 } from "../lib/tables";
+import {
+  applyColumns,
+  asColumnsScope,
+  setColumnBoundary,
+} from "../lib/columns";
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
@@ -271,7 +280,7 @@ import {
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import { markSegments } from "../lib/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
-import { PX_PER_CM, sectionGeometryPx, wholePageItem } from "../lib/pagination";
+import { PX_PER_CM, sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
 import {
   computePageNumbers,
   fieldValueText,
@@ -1092,6 +1101,14 @@ const pageSetupInitial = ref({
   margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
   measurementUnit: "cm",
   applyTo: "wholeDocument",
+});
+// The Format → Columns dialog (SPEC-030): open flag plus the prefill taken
+// from the caret's section columns and content width at the moment it opens.
+const columnsDialogOpen = ref(false);
+const columnsDialogInitial = ref({
+  columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false },
+  contentWidthCm: 16,
+  applyTo: "thisSection",
 });
 // Recently applied text colours, shared across documents (SPEC-013 AC).
 const recentColors = ref(loadRecentColors());
@@ -2912,6 +2929,137 @@ function scheduleTableArrowFallback(key = "") {
   }, 0);
 }
 
+// --- cross-column caret navigation (SPEC-030 AC-20/AC-21) -------------------
+
+// The block-level children of a rendered column box (skipping zero-height
+// section markers, which are not navigation targets).
+function columnBlockChildren(columnEl = noElement()) {
+  if (!columnEl) {
+    return [];
+  }
+  return Array.from(columnEl.children).filter((child) => child.hasAttribute("data-section"));
+}
+
+// Where the caret should land when a vertical arrow crosses a column boundary,
+// or null when it should not (more lines remain in the column, the caret is
+// not in a column, or there is no adjacent column). Down at the bottom of a
+// column targets the top of the next column (or the first column of the next
+// page); Up at the top targets the bottom of the previous column (or the last
+// column of the previous page).
+function columnEscapeTarget(root = noElement(), focus = noCaret(), direction = "down") {
+  if (!root || !focus) {
+    return null;
+  }
+  const paragraphEl = paragraphElementForCaret(root, focus);
+  const columnEl = paragraphEl?.closest(".doc-column") ?? null;
+  const pageEl = columnEl?.closest(".page") ?? null;
+  if (!paragraphEl || !columnEl || !pageEl) {
+    return null;
+  }
+  const children = columnBlockChildren(columnEl);
+  const dataCol = Number(columnEl.getAttribute("data-column"));
+  if (direction === "down") {
+    if (paragraphEl !== children[children.length - 1] || !caretOnBoundaryLine(root, focus, "last")) {
+      return null;
+    }
+    let targetCol = pageEl.querySelector(`.doc-column[data-column="${dataCol + 1}"]`);
+    if (!targetCol) {
+      targetCol = pageEl.nextElementSibling?.querySelector('.doc-column[data-column="0"]') ?? null;
+    }
+    const first = targetCol ? columnBlockChildren(targetCol)[0] : null;
+    // The top of the next column: the start of its first block (AC-20/21).
+    return first ? caretAtBlockEdge(first, "start") : null;
+  }
+  if (paragraphEl !== children[0] || !caretOnBoundaryLine(root, focus, "first")) {
+    return null;
+  }
+  let targetCol = null;
+  if (dataCol > 0) {
+    targetCol = pageEl.querySelector(`.doc-column[data-column="${dataCol - 1}"]`);
+  } else {
+    const prevCols = pageEl.previousElementSibling?.querySelectorAll(".doc-column");
+    targetCol = prevCols && prevCols.length > 0 ? prevCols[prevCols.length - 1] : null;
+  }
+  const blocks = targetCol ? columnBlockChildren(targetCol) : [];
+  const last = blocks[blocks.length - 1] ?? null;
+  // The bottom of the previous column: the end of its last block.
+  return last ? caretAtBlockEdge(last, "end") : null;
+}
+
+// The model caret at the start or end of a rendered block element, read from
+// its data-section/data-block/data-slice-start attributes — deterministic,
+// unlike a geometry hit test that cannot tell same-height lines of adjacent
+// columns apart.
+function caretAtBlockEdge(blockEl = noElement(), edge = "start") {
+  if (!blockEl) {
+    return null;
+  }
+  const section = Number(blockEl.getAttribute("data-section"));
+  const block = Number(blockEl.getAttribute("data-block"));
+  if (!Number.isInteger(section) || !Number.isInteger(block)) {
+    return null;
+  }
+  const sliceStart = Number(blockEl.getAttribute("data-slice-start") ?? "0");
+  const offset = edge === "start" ? sliceStart : sliceStart + (blockEl.textContent ?? "").length;
+  return { section, block, offset };
+}
+
+/** Deterministic cross-column arrows (AC-20/AC-21): Down at the bottom line of
+ * a column jumps to the top of the next column (or next page's first column),
+ * Up at the top line jumps to the bottom of the previous column. Returns true
+ * when the event was consumed. */
+function handleColumnArrowKey(event = new KeyboardEvent("keydown")) {
+  const root = contentRoot.value;
+  if (!root || !editable.value || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) {
+    return false;
+  }
+  const selection = currentSelection(root);
+  if (!selection || !isCollapsed(selection) || selection.focus.cell) {
+    return false;
+  }
+  const target = columnEscapeTarget(root, selection.focus, event.key === "ArrowDown" ? "down" : "up");
+  if (!target) {
+    return false;
+  }
+  event.preventDefault();
+  applyCaretMove(target);
+  return true;
+}
+
+// After a native vertical arrow with a collapsed caret in a column made no
+// progress, cross the column boundary — the guarantee columns cannot trap the
+// caret, mirroring scheduleTableArrowFallback.
+function scheduleColumnArrowFallback(key = "") {
+  const root = contentRoot.value;
+  if (!root || !editable.value || (key !== "ArrowUp" && key !== "ArrowDown")) {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection || !isCollapsed(selection) || selection.focus.cell) {
+    return;
+  }
+  const paragraphEl = paragraphElementForCaret(root, selection.focus);
+  if (!paragraphEl?.closest(".doc-column")) {
+    return;
+  }
+  const before = selection.focus;
+  const direction = key === "ArrowDown" ? "down" : "up";
+  window.setTimeout(() => {
+    const currentRoot = contentRoot.value;
+    if (!currentRoot || !editable.value) {
+      return;
+    }
+    const after = currentSelection(currentRoot);
+    if (!after || !isCollapsed(after) || compareCaret(after.focus, before) !== 0) {
+      return;
+    }
+    const target = columnEscapeTarget(currentRoot, before, direction);
+    if (target && compareCaret(target, before) !== 0) {
+      applyCaretMove(target);
+    }
+  }, 0);
+}
+
 // Tracks the primary button across a text-selection drag (SPEC-020): the
 // format painter must not paint a partial selection mid-drag, only the
 // range the user settles on at mouseup — see maybeApplyPainter.
@@ -3904,7 +4052,7 @@ function handleCustomSpacingApply(payload = { mode: "multiple", value: 1, before
 /** A ruler marker drag (AC-23): indent updates go to every touched
  * paragraph as logical values; margin updates go to the page margins. No
  * refocus — grabbing focus mid-drag would break the pointer capture. */
-function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
+function handleRulerUpdate(update = { kind: "", valueCm: 0, boundary: 0, deltaCm: 0 }) {
   const valueCm = update.valueCm;
   if (update.kind === "indentStartCm") {
     applyParagraphCommand(
@@ -3934,6 +4082,14 @@ function handleRulerUpdate(update = { kind: "", valueCm: 0 }) {
     applyParagraphCommand(
       (model, selection) => setPageMargins(model, selection, { rightCm: valueCm }),
       "margins",
+      false,
+    );
+  } else if (update.kind === "column-boundary") {
+    const boundary = update.boundary ?? 0;
+    const deltaCm = update.deltaCm ?? 0;
+    applyParagraphCommand(
+      (model, selection) => setColumnBoundary(model, selection, boundary, deltaCm),
+      "column width",
       false,
     );
   }
@@ -3993,6 +4149,45 @@ function handlePageSetupApply(
     ),
     selection,
     "page setup",
+  );
+  root.focus();
+}
+
+/** Format → Columns (SPEC-030 AC-1..AC-5): prefilled from the caret's
+ * section columns and its content width. */
+function openColumnsDialog() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
+  columnsDialogInitial.value = {
+    columns: { ...sectionColumns(model, sectionIndex) },
+    contentWidthCm: sectionContentWidthCm(model, sectionIndex),
+    applyTo: "thisSection",
+  };
+  columnsDialogOpen.value = true;
+}
+
+/** The Columns dialog's OK (AC-6/AC-7): applies the layout to the caret's
+ * section or wraps the selection in a continuous section, as one undo step. */
+function handleColumnsApply(
+  payload = {
+    columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false, widthsCm: undefined },
+    applyTo: "thisSection",
+  },
+) {
+  columnsDialogOpen.value = false;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(
+    applyColumns(model, selection, payload.columns, asColumnsScope(payload.applyTo ?? "thisSection")),
+    selection,
+    "columns",
   );
   root.focus();
 }
@@ -4076,6 +4271,12 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       return;
     }
     scheduleTableArrowFallback(event.key);
+    // Cross-column caret navigation (SPEC-030 AC-20/AC-21), the same
+    // deterministic-then-fallback shape as the table arrows above.
+    if (handleColumnArrowKey(event)) {
+      return;
+    }
+    scheduleColumnArrowFallback(event.key);
   }
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "v") {
     // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
@@ -4499,6 +4700,28 @@ const rulerMarginLeftCm = computed(() =>
 const rulerMarginRightCm = computed(() =>
   doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).rightCm : 2.54,
 );
+// The caret section's column boundaries for the ruler (SPEC-030 AC-14): each
+// gutter's centre, measured from the content area's start; null when the
+// section has a single column (no boundary handles).
+const rulerColumns = computed(() => {
+  const model = doc.value;
+  if (!model) {
+    return undefined;
+  }
+  const columns = sectionColumns(model, rulerSectionIndex.value);
+  if (columns.count <= 1) {
+    return undefined;
+  }
+  const widthsCm = resolveColumnWidthsCm(columns, sectionContentWidthCm(model, rulerSectionIndex.value));
+  const boundaries = [];
+  let offset = 0;
+  for (let i = 0; i < widthsCm.length - 1; i += 1) {
+    offset += widthsCm[i];
+    boundaries.push({ index: i, centerCm: offset + columns.gapCm / 2 });
+    offset += columns.gapCm;
+  }
+  return { boundaries };
+});
 
 const SECTION_MARKER_LABELS = {
   continuous: "Section Break (Continuous)",
@@ -4520,10 +4743,11 @@ function noFlatEntry() {
  * (it renders whole at its first slice until measured). */
 function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = wholePageItem(0, 0), marks = false) {
   const block = flatEntry.block;
+  const column = item.columnIndex;
   if (isBreak(block)) {
     return {
       key: flatEntry.key,
-      memo: [block, flatEntry.section, flatEntry.blockIndex, marks],
+      memo: [block, flatEntry.section, flatEntry.blockIndex, marks, column],
       kind: "break",
       tag: "div",
       className: "doc-break",
@@ -4532,25 +4756,27 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
       dataBlock: flatEntry.blockIndex,
       breakKind: block.kind,
       markerLabel: BREAK_LABELS[block.kind] ?? "Break",
+      column,
     };
   }
   if (flatEntry.isTable || flatEntry.isImage) {
     return {
       key: flatEntry.key,
-      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel],
+      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel, column],
       kind: flatEntry.isTable ? "table" : "image",
       blockProp: block,
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
+      column,
     };
   }
   const paragraph = flatEntry.paragraph;
   let sliceStart;
   let sliceEnd;
   if (item.startLine !== undefined) {
-    const widthPx = sectionGeometryPx(model, item.sectionIndex).contentWidthPx;
+    const widthPx = sectionColumnFlowWidthPx(model, item.sectionIndex);
     const offsets = pagination.isMeasured(block, widthPx) ? pagination.lineOffsetsFor(block) : null;
     if (!offsets) {
       if (item.startLine > 0) {
@@ -4604,7 +4830,7 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
   });
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
-    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks],
+    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks, column],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
     className: "doc-paragraph",
@@ -4617,6 +4843,7 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
     listLevel: paragraph.list ? paragraph.list.level : undefined,
     runs: renderRuns,
     needsBr: runs.length === 0,
+    column,
   };
 }
 
@@ -4744,6 +4971,7 @@ const pagedViews = computed(() => {
           padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
         },
         entries: [],
+        columns: page.columns,
         virtual: true,
         // The header/footer bands still need real geometry even on a
         // virtualized page (SPEC-029): they are what double-clicking the
@@ -4785,6 +5013,7 @@ const pagedViews = computed(() => {
           uneditable: true,
           sectionMarker: kind,
           markerLabel: SECTION_MARKER_LABELS[kind],
+          column: entry.column,
         });
       }
     }
@@ -4807,6 +5036,7 @@ const pagedViews = computed(() => {
         padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
       },
       entries,
+      columns: page.columns,
       virtual: false,
       dimmed: !!active,
       headerEditable,
@@ -5727,6 +5957,18 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         Page setup
       </button>
       <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
+        data-testid="columns-button"
+        title="Columns"
+        aria-label="Columns"
+        @mousedown.prevent
+        @click="openColumnsDialog"
+      >
+        Columns
+      </button>
+      <button
         type="button"
         class="toolbar-button"
         data-testid="toggle-ruler-button"
@@ -5816,6 +6058,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         :margin-left-cm="rulerMarginLeftCm"
         :margin-right-cm="rulerMarginRightCm"
         :formatting="paragraphFormatting"
+        :columns="rulerColumns"
         :disabled="!editable"
         @update="handleRulerUpdate"
       />
@@ -5999,6 +6242,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             :page-style="pageView.pageStyle"
             :content-style="pageView.contentStyle"
             :entries="pageView.entries"
+            :columns="pageView.columns"
             :virtual="pageView.virtual"
             :cell-range="cellSelection || undefined"
             :dimmed="pageView.dimmed"
@@ -6132,6 +6376,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       :initial="pageSetupInitial"
       @apply="handlePageSetupApply"
       @cancel="pageSetupOpen = false"
+    />
+    <ColumnsDialog
+      v-if="columnsDialogOpen"
+      :initial="columnsDialogInitial"
+      @apply="handleColumnsApply"
+      @cancel="columnsDialogOpen = false"
     />
     <InsertTableDialog
       v-if="insertTableDialogOpen"

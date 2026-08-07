@@ -16,6 +16,10 @@ const props = defineProps({
   /** The first touched paragraph's formatting — indents plus direction,
    * which mirrors the ruler for RTL paragraphs (AC-25). */
   formatting: { type: Object, required: true },
+  /** The caret section's column boundaries (SPEC-030 AC-14), or null when it
+   * has a single column: `{ boundaries: [{ index, centerCm }] }` with each
+   * gutter centre measured from the content area's start. */
+  columns: { type: Object, default: null },
   disabled: { type: Boolean, default: false },
 });
 
@@ -25,6 +29,24 @@ const root = useTemplateRef("root");
 
 /** The marker kind being dragged, or "" while idle. */
 const dragging = ref("");
+
+/** The column boundary index being dragged, or -1 while idle. */
+const columnDragging = ref(-1);
+
+/** The section's column boundary markers (SPEC-030), positioned on the page:
+ * a gutter centre is measured from the content area, so its page position adds
+ * the left margin. */
+const columnBoundaries = computed(() => {
+  const columns = props.columns;
+  if (!columns || !Array.isArray(columns.boundaries)) {
+    return [];
+  }
+  return columns.boundaries.map((boundary = { index: 0, centerCm: 0 }) => ({
+    index: boundary.index,
+    pageCm: props.marginLeftCm + boundary.centerCm,
+    centerCm: boundary.centerCm,
+  }));
+});
 
 const context = computed(() => ({
   pageWidthCm: props.pageWidthCm,
@@ -114,6 +136,40 @@ function endDrag(kind = "", event = new PointerEvent("pointerup")) {
     }
   }
 }
+
+// --- column boundary drag (SPEC-030 AC-14) ---------------------------------
+
+function startColumnDrag(index = 0, event = new PointerEvent("pointerdown")) {
+  if (props.disabled || !(event.target instanceof Element)) {
+    return;
+  }
+  event.preventDefault();
+  columnDragging.value = index;
+  event.target.setPointerCapture(event.pointerId);
+}
+
+function moveColumnDrag(index = 0, event = new PointerEvent("pointermove")) {
+  if (columnDragging.value !== index) {
+    return;
+  }
+  const boundary = columnBoundaries.value.find((entry) => entry.index === index);
+  if (!boundary) {
+    return;
+  }
+  // The gutter centre moves with the boundary, so the drag delta is the
+  // pointer's content-relative position minus the boundary's current centre.
+  const contentCm = positionCmFromEvent(event) - props.marginLeftCm;
+  emit("update", { kind: "column-boundary", boundary: index, deltaCm: contentCm - boundary.centerCm });
+}
+
+function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
+  if (columnDragging.value === index) {
+    columnDragging.value = -1;
+    if (event.target instanceof Element && event.target.hasPointerCapture(event.pointerId)) {
+      event.target.releasePointerCapture(event.pointerId);
+    }
+  }
+}
 </script>
 
 <template>
@@ -157,6 +213,23 @@ function endDrag(kind = "", event = new PointerEvent("pointerup")) {
       @pointermove="moveDrag(marker.kind, $event)"
       @pointerup="endDrag(marker.kind, $event)"
       @pointercancel="endDrag(marker.kind, $event)"
+    />
+    <!-- Column boundary handles (SPEC-030 AC-14): one per gutter of a
+         multi-column section; dragging resizes the two adjacent columns. -->
+    <button
+      v-for="boundary in columnBoundaries"
+      :key="`column-${boundary.index}`"
+      type="button"
+      class="marker marker-column-boundary"
+      :data-testid="`ruler-column-boundary-${boundary.index}`"
+      :style="{ left: `${boundary.pageCm}cm` }"
+      title="Column boundary"
+      aria-label="Column boundary"
+      :disabled="disabled"
+      @pointerdown="startColumnDrag(boundary.index, $event)"
+      @pointermove="moveColumnDrag(boundary.index, $event)"
+      @pointerup="endColumnDrag(boundary.index, $event)"
+      @pointercancel="endColumnDrag(boundary.index, $event)"
     />
   </div>
 </template>
@@ -237,5 +310,15 @@ function endDrag(kind = "", event = new PointerEvent("pointerup")) {
   width: 0.25rem;
   background: #80868b;
   opacity: 0.7;
+}
+
+/* Column boundary handle: a full-height bar centred in the gutter. */
+.marker-column-boundary {
+  top: 0;
+  bottom: 0;
+  height: auto;
+  width: 0.3125rem;
+  background: #34a853;
+  border-radius: 2px;
 }
 </style>

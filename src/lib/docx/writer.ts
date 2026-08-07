@@ -40,12 +40,18 @@ import type {
   Run,
   RunFormatting,
   Section,
+  SectionColumns,
   SectionStart,
   Table,
   TableCell,
   TableRow,
 } from "../documentModel";
-import { DEFAULT_TITLE, sectionMargins, sectionPageSize } from "../documentModel";
+import {
+  DEFAULT_TITLE,
+  resolveColumnWidthsCm,
+  sectionMargins,
+  sectionPageSize,
+} from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
@@ -1031,13 +1037,34 @@ export function patchSettingsXml(evenAndOddHeaders: boolean, originalXml: string
   return originalXml.replace(/<[\w:]*evenAndOddHeaders\s*\/>/, "");
 }
 
+// The section's `w:cols` (SPEC-030 AC-16/AC-16a): equal columns emit just
+// `w:num`/`w:space` (no children); unequal columns emit an explicit `w:col`
+// per column carrying its width in twips and — for all but the last — its
+// trailing gutter. Widths are resolved against the section's content width so
+// they add up exactly.
+function columnsXml(columns: SectionColumns, contentWidthCm: number): string {
+  const space = cmToTwips(Math.max(0, columns.gapCm));
+  const sep = columns.separator ? ' w:sep="1"' : "";
+  if (columns.equalWidth || !columns.widthsCm || columns.widthsCm.length !== columns.count) {
+    return `<w:cols w:num="${columns.count}" w:space="${space}"${sep}/>`;
+  }
+  const widths = resolveColumnWidthsCm(columns, contentWidthCm);
+  const children = widths
+    .map((width, index) => {
+      const trailing = index < widths.length - 1 ? ` w:space="${space}"` : "";
+      return `<w:col w:w="${cmToTwips(width)}"${trailing}/>`;
+    })
+    .join("");
+  return `<w:cols w:num="${columns.count}" w:space="${space}"${sep}>${children}</w:cols>`;
+}
+
 /** A `w:sectPr` generated from modelled section geometry, in CT_SectPr
  * sequence order: header/footer references (SPEC-029), w:type (continuous
  * starts only — nextPage is OOXML's own default, matching the model's
  * absent `start`), the required w:pgSz/w:pgMar, then w:pgNumType (SPEC-029
- * AC-22) and w:titlePg (AC-11). Shared by the body-level sectPr describing
- * the final section and the paragraph-level sectPr every non-final section
- * is written as (SPEC-028 AC-31). */
+ * AC-22), w:cols (SPEC-030) and w:titlePg (AC-11). Shared by the body-level
+ * sectPr describing the final section and the paragraph-level sectPr every
+ * non-final section is written as (SPEC-028 AC-31). */
 function sectionPropertiesXml(
   pageSize: PageSize,
   margins: Margins,
@@ -1045,12 +1072,17 @@ function sectionPropertiesXml(
   headerFooter: SectionHeaderFooterPlan,
   titlePage: boolean,
   pageNumberStart: number | undefined,
+  columns?: SectionColumns,
 ): string {
   const width = cmToTwips(pageSize.widthCm);
   const height = cmToTwips(pageSize.heightCm);
   const orient = width > height ? ' w:orient="landscape"' : "";
   const type = start === "continuous" ? '<w:type w:val="continuous"/>' : "";
   const { topCm, rightCm, bottomCm, leftCm } = margins;
+  const cols =
+    columns && columns.count > 1
+      ? columnsXml(columns, Math.max(0.1, pageSize.widthCm - leftCm - rightCm))
+      : "";
   const headerRefs = headerFooter.headers
     .map((ref) => `<w:headerReference w:type="${ref.kind}" r:id="${ref.relId}"/>`)
     .join("");
@@ -1073,6 +1105,7 @@ function sectionPropertiesXml(
     ` w:bottom="${cmToTwips(bottomCm)}" w:left="${cmToTwips(leftCm)}"` +
     ` w:header="${HEADER_FOOTER_TWIPS}" w:footer="${HEADER_FOOTER_TWIPS}" w:gutter="0"/>` +
     pgNumType +
+    cols +
     titlePg +
     "</w:sectPr>"
   );
@@ -1136,6 +1169,7 @@ export function buildDocumentXml(
             sectionHeaderFooterOf(sectionIndex),
             section.titlePage === true,
             section.pageNumberStart,
+            section.columns,
           );
     const lastBlock = section.blocks[section.blocks.length - 1];
     const embedSectPr = sectPrXml !== undefined && lastBlock?.type === "paragraph";
@@ -1199,6 +1233,7 @@ export function buildDocumentXml(
           sectionHeaderFooterOf(lastSection),
           lastSectionModel?.titlePage === true,
           lastSectionModel?.pageNumberStart,
+          lastSectionModel?.columns,
         );
   return (
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +

@@ -13,6 +13,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  sectionColumnWidthCm,
   type BorderSide,
   type CellBorders,
   type CellVerticalAlign,
@@ -70,13 +71,32 @@ function snapCm(cm: number): number {
   return twipsToCm(cmToTwips(cm));
 }
 
-/** Equal column widths spanning the text area (AC-3): the page width minus
- * the horizontal margins, split evenly and snapped to the twip grid. */
+/** Equal column widths spanning `availableCm`, split evenly and snapped to
+ * the twip grid. */
+function equalWidthsAcross(availableCm: number, columns: number): number[] {
+  const width = snapCm(Math.max(0.1, availableCm) / columns);
+  return Array.from({ length: columns }, () => width);
+}
+
+/** Equal column widths spanning the document's text area (AC-3): the page
+ * width minus the horizontal margins, split evenly and snapped to the twip
+ * grid. */
 export function equalColumnWidthsCm(model: DocumentModel, columns: number): number[] {
   const { pageSize, margins } = model.defaultStyles;
-  const textAreaCm = Math.max(1, pageSize.widthCm - margins.leftCm - margins.rightCm);
-  const width = snapCm(textAreaCm / columns);
-  return Array.from({ length: columns }, () => width);
+  return equalWidthsAcross(pageSize.widthCm - margins.leftCm - margins.rightCm, columns);
+}
+
+/** Equal column widths for a table inserted into `sectionIndex` (SPEC-030
+ * AC-13/AC-15): a table in a multi-column section must fit within one text
+ * column, not the whole page text area, or it overflows the column and is
+ * clipped. Falls back to the section's full content width for single-column
+ * sections. */
+export function tableColumnWidthsCm(
+  model: DocumentModel,
+  sectionIndex: number,
+  columns: number,
+): number[] {
+  return equalWidthsAcross(sectionColumnWidthCm(model, sectionIndex), columns);
 }
 
 /** The table a caret's block addresses, or null. */
@@ -143,7 +163,7 @@ export function insertTable(
   const table: Table = {
     type: "table",
     rows: Array.from({ length: rows }, () => emptyRow(cols)),
-    columnWidthsCm: equalColumnWidthsCm(next, cols),
+    columnWidthsCm: tableColumnWidthsCm(next, at.section, cols),
   };
   if (isTable(target) || isImage(target) || isBreak(target)) {
     return { model: next, selection: caretSelection(at) };
