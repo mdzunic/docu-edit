@@ -283,13 +283,17 @@ describe("parseOdt — error handling", () => {
   });
 });
 
-async function makeOdt(contentXml: string): Promise<Uint8Array> {
+async function makeOdt(contentXml: string, stylesXml?: string): Promise<Uint8Array> {
   const { zip } = await import("../docx/zipWriter");
   const encoder = new TextEncoder();
-  return zip([
+  const entries = [
     { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.text"), store: true },
     { name: "content.xml", data: encoder.encode(contentXml) },
-  ]);
+  ];
+  if (stylesXml !== undefined) {
+    entries.push({ name: "styles.xml", data: encoder.encode(stylesXml) });
+  }
+  return zip(entries);
 }
 
 describe("parseOdt — RTL paragraphs (SPEC-014 AC-24, AC-25)", () => {
@@ -333,5 +337,213 @@ describe("parseOdt — RTL paragraphs (SPEC-014 AC-24, AC-25)", () => {
     const parsed = await parseOdt(await makeOdt(RTL_CONTENT));
     const formatting = (parsed.sections[0].blocks[1] as Paragraph).formatting;
     expect(formatting?.direction).toBeUndefined();
+  });
+});
+
+// Hand-built to the markup this project's own writer and LibreOffice emit
+// for SPEC-028's pagination properties (same provenance note as the RTL
+// fixture above).
+function spec028Content(automaticStyles: string, body: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3">
+ <office:automatic-styles>${automaticStyles}</office:automatic-styles>
+ <office:body><office:text>${body}</office:text></office:body>
+</office:document-content>`;
+}
+
+describe("parseOdt — pagination flags (SPEC-028 AC-22..29)", () => {
+  it("maps keep-with-next, keep-together and zero widows/orphans onto the model flags", async () => {
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph">' +
+            '<style:paragraph-properties fo:keep-with-next="always" fo:keep-together="always"' +
+            ' fo:widows="0" fo:orphans="0"/></style:style>',
+          '<text:p text:style-name="P1">flags</text:p>',
+        ),
+      ),
+    );
+    const formatting = asParagraph(parsed.sections[0].blocks[0]).formatting;
+    expect(formatting?.keepNext).toBe(true);
+    expect(formatting?.keepLines).toBe(true);
+    expect(formatting?.widowControl).toBe(false);
+  });
+
+  it("reads ODF's default values (auto keeps, non-zero widows/orphans) as absent — no model noise", async () => {
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph">' +
+            '<style:paragraph-properties fo:keep-with-next="auto" fo:keep-together="auto"' +
+            ' fo:widows="2" fo:orphans="2"/></style:style>',
+          '<text:p text:style-name="P1">defaults</text:p>',
+        ),
+      ),
+    );
+    const formatting = asParagraph(parsed.sections[0].blocks[0]).formatting;
+    expect(formatting?.keepNext).toBeUndefined();
+    expect(formatting?.keepLines).toBeUndefined();
+    expect(formatting?.widowControl).toBeUndefined();
+  });
+});
+
+describe("parseOdt — manual page breaks (SPEC-028 AC-32)", () => {
+  it("materialises fo:break-before='page' on an AUTOMATIC style as a BreakBlock, dropping the flag", async () => {
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph">' +
+            '<style:paragraph-properties fo:break-before="page"/></style:style>',
+          '<text:p>before</text:p><text:p text:style-name="P1">after</text:p>',
+        ),
+      ),
+    );
+    const blocks = parsed.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "page" });
+    // The paragraph's own formatting must NOT also carry pageBreakBefore —
+    // one channel, canonicalised to the break block.
+    expect(asParagraph(blocks[2]).formatting?.pageBreakBefore).toBeUndefined();
+  });
+
+  it("keeps fo:break-before='page' from a NAMED style as pure pageBreakBefore formatting", async () => {
+    const styles =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"' +
+      ' xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"' +
+      ' xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">' +
+      "<office:styles>" +
+      '<style:style style:name="PageStart" style:family="paragraph">' +
+      '<style:paragraph-properties fo:break-before="page"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content("", '<text:p>before</text:p><text:p text:style-name="PageStart">after</text:p>'),
+        styles,
+      ),
+    );
+    const blocks = parsed.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "paragraph"]);
+    expect(asParagraph(blocks[1]).formatting?.pageBreakBefore).toBe(true);
+  });
+
+  it("materialises fo:break-before='column' from an AUTOMATIC style as a column break (AC-10/11)", async () => {
+    // The refined spec stores column breaks for round-trip even though they
+    // have no layout effect until columns exist (SPEC-030, AC-12).
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph">' +
+            '<style:paragraph-properties fo:break-before="column"/></style:style>',
+          '<text:p>before</text:p><text:p text:style-name="P1">after</text:p>',
+        ),
+      ),
+    );
+    const blocks = parsed.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "column" });
+    // No formatting residue: the model has no column-break formatting flag.
+    expect(asParagraph(blocks[2]).formatting?.pageBreakBefore).toBeUndefined();
+  });
+
+  it("keeps fo:break-before='column' from a NAMED style unmodelled — no break block", async () => {
+    const styles =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"' +
+      ' xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"' +
+      ' xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">' +
+      "<office:styles>" +
+      '<style:style style:name="ColStart" style:family="paragraph">' +
+      '<style:paragraph-properties fo:break-before="column"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content("", '<text:p>before</text:p><text:p text:style-name="ColStart">after</text:p>'),
+        styles,
+      ),
+    );
+    const blocks = parsed.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "paragraph"]);
+    expect(asParagraph(blocks[1]).formatting?.pageBreakBefore).toBeUndefined();
+  });
+});
+
+describe("parseOdt — sections via master pages (SPEC-028 AC-33)", () => {
+  const SECTION_STYLES =
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"' +
+    ' xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"' +
+    ' xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">' +
+    "<office:automatic-styles>" +
+    '<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm"' +
+    ' fo:page-height="29.7cm" fo:margin-top="2cm" fo:margin-right="2cm" fo:margin-bottom="2cm"' +
+    ' fo:margin-left="2cm"/></style:page-layout>' +
+    '<style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="14.8cm"' +
+    ' fo:page-height="21cm" fo:margin-top="1cm" fo:margin-right="1cm" fo:margin-bottom="1cm"' +
+    ' fo:margin-left="1cm"/></style:page-layout>' +
+    "</office:automatic-styles>" +
+    "<office:master-styles>" +
+    '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>' +
+    '<style:master-page style:name="A5Master" style:page-layout-name="pm2"/>' +
+    "</office:master-styles></office:document-styles>";
+
+  it("starts a new section at a paragraph whose automatic style names a master page", async () => {
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/>',
+          '<text:p>first</text:p><text:p text:style-name="P1">second</text:p>',
+        ),
+        SECTION_STYLES,
+      ),
+    );
+    expect(parsed.sections).toHaveLength(2);
+    expect(text(asParagraph(parsed.sections[0].blocks[0]))).toBe("first");
+    expect(text(asParagraph(parsed.sections[1].blocks[0]))).toBe("second");
+    // The new section pins the master page's geometry explicitly; `start`
+    // stays absent (a master-page switch is always a page break).
+    expect(parsed.sections[1].pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+    expect(parsed.sections[1].margins).toEqual({ topCm: 1, rightCm: 1, bottomCm: 1, leftCm: 1 });
+    expect(parsed.sections[1].start).toBeUndefined();
+    // The FIRST master page stays folded into the document defaults.
+    expect(parsed.defaultStyles.pageSize).toEqual({ widthCm: 21, heightCm: 29.7 });
+    expect(parsed.defaultStyles.margins).toEqual({ topCm: 2, rightCm: 2, bottomCm: 2, leftCm: 2 });
+  });
+
+  it("never opens an empty leading section for a master reference on the very first paragraph", async () => {
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/>',
+          '<text:p text:style-name="P1">only</text:p>',
+        ),
+        SECTION_STYLES,
+      ),
+    );
+    expect(parsed.sections).toHaveLength(1);
+    expect(text(asParagraph(parsed.sections[0].blocks[0]))).toBe("only");
+  });
+
+  it("folds the geometry of the master the FIRST paragraph names — not the first-listed one (review #55 bug)", async () => {
+    // SECTION_STYLES lists Standard/pm1 (21x29.7) BEFORE A5Master/pm2
+    // (14.8x21). The very first body paragraph references A5Master — the
+    // master the body actually starts on. The document default and the
+    // single section must report A5, never the first-LISTED Standard.
+    const parsed = await parseOdt(
+      await makeOdt(
+        spec028Content(
+          '<style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/>',
+          '<text:p text:style-name="P1">starts-on-a5</text:p>',
+        ),
+        SECTION_STYLES,
+      ),
+    );
+    expect(parsed.sections).toHaveLength(1);
+    expect(parsed.defaultStyles.pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+    expect(parsed.defaultStyles.margins).toEqual({ topCm: 1, rightCm: 1, bottomCm: 1, leftCm: 1 });
+    // The leading section pins the referenced master's geometry explicitly,
+    // the same way later sections that switch masters do (AC-17/18/19).
+    expect(parsed.sections[0].pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+    expect(parsed.sections[0].margins).toEqual({ topCm: 1, rightCm: 1, bottomCm: 1, leftCm: 1 });
   });
 });

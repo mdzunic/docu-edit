@@ -105,9 +105,10 @@ test("equal column widths span the text area (AC-3)", async ({ page }) => {
   await expect(cols).toHaveCount(4);
   const widths = await cols.evaluateAll((els) => els.map((el) => (el as HTMLElement).style.width));
   expect(new Set(widths).size).toBe(1);
-  // The table spans (approximately) the full text area.
+  // The table spans (approximately) the full text area (the page-margin
+  // box — since SPEC-028 the editable root wraps whole pages).
   const tableWidth = (await table(page).boundingBox())!.width;
-  const contentWidth = (await content(page).boundingBox())!.width;
+  const contentWidth = (await page.getByTestId("page-margin").boundingBox())!.width;
   expect(Math.abs(tableWidth - contentWidth)).toBeLessThan(8);
 });
 

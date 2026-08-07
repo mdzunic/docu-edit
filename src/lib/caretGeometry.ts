@@ -9,6 +9,7 @@ import {
   cellPathOf,
   domPointForCaret,
   paragraphElementForCaret,
+  sliceStartOf,
   type DomPoint,
 } from "./domCaret";
 import type { CaretPosition } from "./textEditing";
@@ -96,7 +97,9 @@ export function caretNearClientPoint(
   const caret: CaretPosition = {
     section,
     block,
-    offset: pastEnd ? (best.textContent ?? "").length : 0,
+    // A page slice's own text is a window into the block (SPEC-028): its
+    // start offset shifts both edges.
+    offset: sliceStartOf(best) + (pastEnd ? (best.textContent ?? "").length : 0),
   };
   const cell = best.hasAttribute("data-row") ? cellPathOf(best) : undefined;
   if (cell) {

@@ -28,10 +28,13 @@
 import type {
   Block,
   BorderSide,
+  BreakKind,
   DocumentModel,
   Image,
   ImageWrapMode,
+  Margins,
   NamedStyle,
+  PageSize,
   Paragraph,
   ParagraphFormatting,
   Run,
@@ -40,6 +43,7 @@ import type {
   TableCell,
   TableRow,
 } from "../documentModel";
+import { sectionMargins, sectionPageSize } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import {
@@ -56,7 +60,7 @@ import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, styleAttr } from "./xml";
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
@@ -171,8 +175,12 @@ function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number):
 }
 
 /** A style:paragraph-properties element for the paragraph formatting, or ""
- * when there is nothing to say. */
-function paragraphPropertiesXml(formatting: ParagraphFormatting): string {
+ * when there is nothing to say. `forcedBreakBefore` is the manual-break case
+ * (SPEC-028 AC-32): ODF has no standalone break element, so a BreakBlock
+ * becomes fo:break-before on the FOLLOWING paragraph's automatic style —
+ * the same attribute the pageBreakBefore formatting flag emits, ODF's one
+ * channel for both (the reader canonicalises it back to a BreakBlock). */
+function paragraphPropertiesXml(formatting: ParagraphFormatting, forcedBreakBefore?: BreakKind): string {
   const attrs: string[] = [];
   if (formatting.alignment !== undefined) {
     // The model's alignment values are all legal fo:text-align keywords.
@@ -213,6 +221,25 @@ function paragraphPropertiesXml(formatting: ParagraphFormatting): string {
     );
   } else if (formatting.lineSpacing !== undefined) {
     attrs.push(`fo:line-height="${multiplierToOdfPercentage(formatting.lineSpacing)}"`);
+  }
+  // Pagination flags (SPEC-028 AC-22..29) — only the non-default states are
+  // written, the exact inverse of parseParagraphProperties. A manual break
+  // forces fo:break-before even though this paragraph's own formatting
+  // lacks pageBreakBefore (AC-32, see forcedBreakBefore above); a "column"
+  // break is written for real ODF consumers but dropped on re-open until
+  // columns exist (SPEC-030).
+  const breakBefore = forcedBreakBefore ?? (formatting.pageBreakBefore ? "page" : undefined);
+  if (breakBefore !== undefined) {
+    attrs.push(`fo:break-before="${breakBefore}"`);
+  }
+  if (formatting.keepNext) {
+    attrs.push('fo:keep-with-next="always"');
+  }
+  if (formatting.keepLines) {
+    attrs.push('fo:keep-together="always"');
+  }
+  if (formatting.widowControl === false) {
+    attrs.push('fo:widows="0"', 'fo:orphans="0"');
   }
   if (rtl) {
     attrs.push('style:writing-mode="rl-tb"');
@@ -323,10 +350,22 @@ interface TableNames {
   rowStyleName(row: TableRow): string | undefined;
 }
 
+/** Position-dependent extras a paragraph's automatic style carries
+ * (SPEC-028): a manual BreakBlock immediately before the paragraph (AC-32,
+ * forced fo:break-before) and/or the master page the paragraph switches to
+ * because it starts a section (AC-33, style:master-page-name — an attribute
+ * of the style:style element itself, not of paragraph-properties). Both are
+ * part of the style-dedup key: a section-starting paragraph must never
+ * share its style with an identical paragraph elsewhere. */
+interface ParagraphStyleOptions {
+  breakBefore?: BreakKind;
+  masterPageName?: string;
+}
+
 interface AutomaticStyles {
   /** Serialised style:style elements, in first-use order. */
   defs: string[];
-  paragraphNameFor(paragraph: Paragraph): string | undefined;
+  paragraphNameFor(paragraph: Paragraph, options?: ParagraphStyleOptions): string | undefined;
   textNameFor(formatting: RunFormatting): string;
   listNameFor(levels: PlannedListLevel[]): string;
   tableNamesFor(table: Table, preserveNames: boolean): TableNames;
@@ -376,7 +415,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
-      if (block.type === "image") {
+      if (block.type === "image" || block.type === "break") {
         continue;
       }
       if (block.styleId) {
@@ -417,14 +456,18 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
   return {
     defs,
 
-    paragraphNameFor(paragraph: Paragraph): string | undefined {
-      const propertiesXml = paragraphPropertiesXml(paragraph.formatting ?? {});
+    paragraphNameFor(paragraph: Paragraph, options?: ParagraphStyleOptions): string | undefined {
+      const propertiesXml = paragraphPropertiesXml(paragraph.formatting ?? {}, options?.breakBefore);
+      const masterAttr =
+        options?.masterPageName !== undefined
+          ? ` style:master-page-name="${escapeXml(options.masterPageName)}"`
+          : "";
       // Nothing to reference and nothing to say: emit no style at all, so
       // the paragraph re-opens without a styleId, matching the model.
-      if (!paragraph.styleId && propertiesXml === "") {
+      if (!paragraph.styleId && propertiesXml === "" && masterAttr === "") {
         return undefined;
       }
-      const key = `${paragraph.styleId ?? ""} ${propertiesXml}`;
+      const key = `${paragraph.styleId ?? ""} ${masterAttr} ${propertiesXml}`;
       const existing = paragraphNames.get(key);
       if (existing !== undefined) {
         return existing;
@@ -444,8 +487,8 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       paragraphNames.set(key, name);
       defs.push(
         propertiesXml === ""
-          ? `<style:style style:name="${escapeXml(name)}" style:family="paragraph"/>`
-          : `<style:style style:name="${escapeXml(name)}" style:family="paragraph">${propertiesXml}</style:style>`,
+          ? `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${masterAttr}/>`
+          : `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${masterAttr}>${propertiesXml}</style:style>`,
       );
       return name;
     },
@@ -589,10 +632,12 @@ function listRunXml(
   paragraphs: Paragraph[],
   styles: AutomaticStyles,
   includeOpaque: boolean,
+  styleOptions?: ParagraphStyleOptions,
 ): string {
   const styleName = styles.listNameFor(planListLevels(paragraphs.map((p) => p.list!)));
   let xml = "";
   let depth = 0;
+  let first = true;
   for (const paragraph of paragraphs) {
     const level = clampListLevel(paragraph.list!.level);
     if (depth === 0) {
@@ -609,7 +654,10 @@ function listRunXml(
       xml += "<text:list><text:list-item>";
       depth++;
     }
-    xml += paragraphXml(paragraph, styles, includeOpaque);
+    // A pending break/section start (SPEC-028) binds to the run's FIRST
+    // paragraph — the one the source break/boundary sat before.
+    xml += paragraphXml(paragraph, styles, includeOpaque, first ? styleOptions : undefined);
+    first = false;
   }
   while (depth > 0) {
     xml += "</text:list-item></text:list>";
@@ -754,8 +802,13 @@ function inlineContentXml(
 /** A paragraph as text:p — or text:h with text:outline-level when the model
  * carries a heading level, so the level survives re-opening regardless of
  * the style's definition. */
-function paragraphXml(paragraph: Paragraph, styles: AutomaticStyles, includeOpaque: boolean): string {
-  const styleName = styles.paragraphNameFor(paragraph);
+function paragraphXml(
+  paragraph: Paragraph,
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+  styleOptions?: ParagraphStyleOptions,
+): string {
+  const styleName = styles.paragraphNameFor(paragraph, styleOptions);
   const tag = paragraph.headingLevel !== undefined ? "text:h" : "text:p";
   let attrs = styleName !== undefined ? ` text:style-name="${escapeXml(styleName)}"` : "";
   if (paragraph.headingLevel !== undefined) {
@@ -772,19 +825,42 @@ function isListParagraph(block: Block): boolean {
   return block.type === "paragraph" && block.list !== undefined;
 }
 
+/** An empty paragraph the sole purpose of which is to carry a SPEC-028
+ * style: a trailing manual break (nothing follows to attach fo:break-before
+ * to) or a break/section boundary immediately before a table (table:table
+ * takes no paragraph style). Re-opens as the break/section boundary plus an
+ * empty paragraph — a documented convergence; the second cycle is a fixed
+ * point. */
+function carrierParagraphXml(styles: AutomaticStyles, styleOptions: ParagraphStyleOptions): string {
+  const name = styles.paragraphNameFor({ type: "paragraph", runs: [] }, styleOptions);
+  return name !== undefined ? `<text:p text:style-name="${escapeXml(name)}"/>` : "<text:p/>";
+}
+
 /** An Image block (SPEC-024): ODF has no body-level picture element either,
  * so it is wrapped the way real producers do — one `text:p` holding the
  * `draw:frame` (see drawing.ts's drawFrameXml). Returns "" when `mediaPlan`
  * has no href for this image's media (defensive; every referenced media id
  * should always have one — ODF, unlike .docx, has no format it can't
- * store). */
-function imageParagraphXml(image: Image, styles: AutomaticStyles, mediaPlan: OdtMediaWritePlan): string {
+ * store). A pending break/section start (SPEC-028) rides on the wrapper
+ * paragraph's style, so it round-trips without an extra carrier paragraph
+ * (the wrapper contributes no paragraph of its own on re-open). */
+function imageParagraphXml(
+  image: Image,
+  styles: AutomaticStyles,
+  mediaPlan: OdtMediaWritePlan,
+  styleOptions?: ParagraphStyleOptions,
+): string {
   const href = mediaPlan.hrefFor(image.mediaId);
   if (!href) {
-    return "";
+    // Keep the break/section boundary alive even without the image.
+    return styleOptions ? carrierParagraphXml(styles, styleOptions) : "";
   }
+  const wrapperName = styleOptions
+    ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, styleOptions)
+    : undefined;
+  const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
   const graphicStyleName = styles.graphicStyleNameFor(image.wrap);
-  return `<text:p>${drawFrameXml(image, href, graphicStyleName)}</text:p>`;
+  return `<text:p${wrapperAttr}>${drawFrameXml(image, href, graphicStyleName)}</text:p>`;
 }
 
 /** A cell's block content (SPEC-022): paragraphs, with consecutive list
@@ -909,11 +985,47 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
 export function buildContentXml(
   model: DocumentModel,
   mediaPlan: OdtMediaWritePlan = planOdtMediaWrite(model),
+  masterNames?: (string | null)[],
 ): string {
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
   const blockXml: string[] = [];
-  for (const section of model.sections) {
+  // SPEC-028 AC-32: ODF has no standalone break element — a BreakBlock
+  // becomes fo:break-before on the NEXT emitted paragraph's automatic
+  // style, so the break is held pending until that paragraph is reached.
+  let pendingBreak: BreakKind | undefined;
+  model.sections.forEach((section, sectionIndex) => {
+    // SPEC-028 AC-33: every section after the first switches to its own
+    // master page via style:master-page-name on its first paragraph's
+    // automatic style — in ODF that reference IS the section break (page
+    // break + layout switch). Emitted for every later section regardless of
+    // `start`: ODF has no continuous-section concept, so a "continuous"
+    // section re-opens as nextPage — a documented fidelity loss that keeps
+    // the section boundary itself alive.
+    // The plan is authoritative when given: a null entry means the section's
+    // generated master collided with a foreign definition and was skipped by
+    // the patch, so content.xml must not reference it either.
+    let pendingMaster =
+      sectionIndex > 0
+        ? masterNames
+          ? (masterNames[sectionIndex] ?? undefined)
+          : sectionMasterName(sectionIndex)
+        : undefined;
+    const takeStyleOptions = (): ParagraphStyleOptions | undefined => {
+      if (pendingBreak === undefined && pendingMaster === undefined) {
+        return undefined;
+      }
+      const options: ParagraphStyleOptions = {};
+      if (pendingBreak !== undefined) {
+        options.breakBefore = pendingBreak;
+      }
+      if (pendingMaster !== undefined) {
+        options.masterPageName = pendingMaster;
+      }
+      pendingBreak = undefined;
+      pendingMaster = undefined;
+      return options;
+    };
     const opaqueBlocks = includeOpaque
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
       : [];
@@ -932,17 +1044,30 @@ export function buildContentXml(
       // register each automatic style on first use.
       const block = blocks[i];
       if (block.type === "table") {
+        // table:table takes no paragraph style, so a pending break/section
+        // boundary needs an empty carrier paragraph before it (SPEC-028).
+        const options = takeStyleOptions();
+        if (options) {
+          blockXml.push(carrierParagraphXml(styles, options));
+        }
         blockXml.push(tableXml(block, styles, includeOpaque));
         i++;
         continue;
       }
       if (block.type === "image") {
-        blockXml.push(imageParagraphXml(block, styles, mediaPlan));
+        blockXml.push(imageParagraphXml(block, styles, mediaPlan, takeStyleOptions()));
+        i++;
+        continue;
+      }
+      if (block.type === "break") {
+        // SPEC-028 AC-32: held until the next paragraph (see pendingBreak);
+        // the break block itself emits nothing here.
+        pendingBreak = block.kind;
         i++;
         continue;
       }
       if (!block.list) {
-        blockXml.push(paragraphXml(block, styles, includeOpaque));
+        blockXml.push(paragraphXml(block, styles, includeOpaque, takeStyleOptions()));
         i++;
         continue;
       }
@@ -954,9 +1079,22 @@ export function buildContentXml(
       while (end < blocks.length && isListParagraph(blocks[end]) && anchorsAt(end).length === 0) {
         end++;
       }
-      blockXml.push(listRunXml(blocks.slice(i, end) as Paragraph[], styles, includeOpaque));
+      blockXml.push(listRunXml(blocks.slice(i, end) as Paragraph[], styles, includeOpaque, takeStyleOptions()));
       i = end;
     }
+    if (pendingMaster !== undefined) {
+      // A section with no paragraph to carry its master-page reference
+      // (empty, or tables/breaks only): an empty carrier paragraph keeps
+      // the section boundary alive (SPEC-028 AC-33).
+      blockXml.push(carrierParagraphXml(styles, takeStyleOptions()!));
+    }
+  });
+  if (pendingBreak !== undefined) {
+    // A manual break as the LAST block: nothing follows to carry
+    // fo:break-before, so an empty carrier paragraph holds it (SPEC-028
+    // AC-32 — re-opens as the break plus an empty paragraph; the second
+    // cycle is a fixed point).
+    blockXml.push(carrierParagraphXml(styles, { breakBefore: pendingBreak }));
   }
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
   const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
@@ -994,21 +1132,194 @@ function namedStyleDefinitionXml(definition: NamedStyle): string {
     : `<style:style ${attrs}/>`;
 }
 
-/** The styles part: a paragraph default-style carrying the model's default
- * font (the reader's source for defaultStyles.fontFamily/fontSizePt), the
- * model's named paragraph styles (SPEC-019), and the page layout applied
- * through the first master page (AC-15). */
-export function buildStylesXml(model: DocumentModel): string {
-  const { fontFamily, fontSizePt, pageSize, margins } = model.defaultStyles;
-  const namedStyles = (model.styles ?? [])
-    .filter((style) => style.name !== undefined)
-    .map(namedStyleDefinitionXml)
-    .join("");
+// --- section master pages (SPEC-028 AC-33) ----------------------------------
+
+/** The master-page name section `index` (0-based) is referenced by: the
+ * first section keeps ODF's conventional "Standard"; every later one gets a
+ * deterministic generated name, shared between content.xml (the reference)
+ * and styles.xml (the definition). */
+function sectionMasterName(index: number): string {
+  return index === 0 ? "Standard" : `SectionMaster${index + 1}`;
+}
+
+function sectionLayoutName(index: number): string {
+  return `pm${index + 1}`;
+}
+
+interface OdtStyleNamesByName {
+  layouts: Map<string, Element>;
+  masters: Map<string, Element>;
+}
+
+/** Collects every page-layout and master-page the preserved styles part
+ * already defines, keyed by style:name — the uniqueness ground a same-format
+ * save checks before deciding which generated names it may use. */
+function collectOdtStyleNames(root: Element): OdtStyleNamesByName {
+  const layouts = new Map<string, Element>();
+  const masters = new Map<string, Element>();
+  const collect = (parentName: string, localName: string, into: Map<string, Element>) => {
+    const parent = firstChildElement(root, OFFICE_NAMESPACE, parentName);
+    if (!parent) {
+      return;
+    }
+    for (const el of Array.from(parent.children)) {
+      if (el.namespaceURI === STYLE_NAMESPACE && el.localName === localName) {
+        const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+        if (name) {
+          into.set(name, el);
+        }
+      }
+    }
+  };
+  collect("automatic-styles", "page-layout", layouts);
+  collect("master-styles", "master-page", masters);
+  return { layouts, masters };
+}
+
+/** The page-layout name the writer uses for the section at `index` (>=1) on
+ * a same-format save. The conventional `pm${index+1}` (e.g. pm2) is
+ * OpenOffice/older-LibreOffice's own running numbering for automatic
+ * page-layouts, so a foreign doc's second section is literally "pm2" —
+ * colliding with the factory's generated layout. To honour SPEC-008 (never
+ * displace a definition the source owns) the writer scans for a name that
+ * either does not exist in the preserved styles at all, or already exists
+ * AND is referenced by the writer's OWN master page for that section — the
+ * marker that it came from a previous factory save. Anything else is a
+ * foreign definition and is skipped, never overwritten. Returns null when
+ * every candidate is taken by someone else's styles. */
+function usableLayoutName(
+  index: number,
+  names: OdtStyleNamesByName,
+  preferredMasterName: string,
+): string | null {
+  const preferred = sectionLayoutName(index);
+  for (let n = 0; n < 64; n++) {
+    const candidate = n === 0 ? preferred : `${preferred}-${n + 1}`;
+    if (!names.layouts.has(candidate)) {
+      return candidate; // Free — safe to add.
+    }
+    const master = names.masters.get(preferredMasterName);
+    if (master && styleAttr(master, "page-layout-name") === candidate) {
+      return candidate; // Ours from a previous factory save — safe to reuse.
+    }
+  }
+  return null; // Every candidate collides with a foreign definition.
+}
+
+/** The master-page name the writer uses for the section at `index` (>=1),
+ * given the page-layout name that section's generated master page will
+ * reference. The conventional `SectionMaster${index+1}` is factory-specific,
+ * but a stored definition under that name that references a DIFFERENT layout
+ * belongs to the source — never displace it. Returns null when every
+ * candidate is someone else's. */
+function usableMasterName(
+  index: number,
+  names: OdtStyleNamesByName,
+  layoutName: string,
+): string | null {
+  const preferred = sectionMasterName(index);
+  for (let n = 0; n < 64; n++) {
+    const candidate = n === 0 ? preferred : `SectionMaster${index + 1}-${n + 1}`;
+    if (!names.masters.has(candidate)) {
+      return candidate;
+    }
+    const master = names.masters.get(candidate);
+    if (master && styleAttr(master, "page-layout-name") === layoutName) {
+      return candidate; // Ours from a previous factory save.
+    }
+  }
+  return null;
+}
+
+/** The per-section master-page/page-layout names a save will emit, aligned
+ * with `model.sections` (index 0 keeps the conventional Standard/pm1 pair
+ * that every single-section document uses). When a preserved styles.xml is
+ * given, names are resolved collision-free against it (see usableLayoutName
+ * / usableMasterName); otherwise — fresh documents — the conventional names
+ * are used, which buildStylesXml also emits. content.xml's master-page
+ * references and the styles patch are built from the SAME plan, so the
+ * referenced and defined names always agree. */
+function planOdtSectionNames(
+  model: DocumentModel,
+  originalStylesXml: string | undefined,
+): { masters: (string | null)[]; layouts: (string | null)[] } {
+  const n = model.sections.length;
+  const masters: (string | null)[] = Array.from({ length: n }, (_, i) => sectionMasterName(i));
+  const layouts: (string | null)[] = Array.from({ length: n }, (_, i) => sectionLayoutName(i));
+  if (n <= 1 || !originalStylesXml) {
+    return { masters, layouts };
+  }
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return { masters, layouts };
+  }
+  const names = collectOdtStyleNames(stylesDoc.documentElement);
+  for (let index = 1; index < n; index++) {
+    const layoutName = usableLayoutName(index, names, sectionMasterName(index));
+    if (layoutName === null) {
+      // Every candidate is foreign — mark the pair unusable so the patch
+      // skips this section rather than clobber.
+      masters[index] = null;
+      layouts[index] = null;
+      continue;
+    }
+    const masterName = usableMasterName(index, names, layoutName);
+    if (masterName === null) {
+      masters[index] = null;
+      layouts[index] = null;
+      continue;
+    }
+    layouts[index] = layoutName;
+    masters[index] = masterName;
+    // Register both chosen names so later sections never re-pick them.
+    names.layouts.set(layoutName, stylesDoc.documentElement);
+    names.masters.set(masterName, stylesDoc.documentElement);
+  }
+  return { masters, layouts };
+}
+
+/** One style:page-layout carrying a page geometry — the shape the reader's
+ * parsePageLayoutProperties parses back. */
+function pageLayoutXml(name: string, pageSize: PageSize, margins: Margins): string {
   // ODF stores landscape pages with width/height already swapped; the
   // orientation attribute just marks them, mirroring the .docx writer's
   // w:orient.
   const orientation =
     pageSize.widthCm > pageSize.heightCm ? ' style:print-orientation="landscape"' : "";
+  return (
+    `<style:page-layout style:name="${escapeXml(name)}">` +
+    `<style:page-layout-properties fo:page-width="${cmToOdfLength(pageSize.widthCm)}"` +
+    ` fo:page-height="${cmToOdfLength(pageSize.heightCm)}"${orientation}` +
+    ` fo:margin-top="${cmToOdfLength(margins.topCm)}" fo:margin-right="${cmToOdfLength(margins.rightCm)}"` +
+    ` fo:margin-bottom="${cmToOdfLength(margins.bottomCm)}" fo:margin-left="${cmToOdfLength(margins.leftCm)}"/>` +
+    "</style:page-layout>"
+  );
+}
+
+function masterPageXml(name: string, layoutName: string): string {
+  return `<style:master-page style:name="${escapeXml(name)}" style:page-layout-name="${escapeXml(layoutName)}"/>`;
+}
+
+/** The styles part: a paragraph default-style carrying the model's default
+ * font (the reader's source for defaultStyles.fontFamily/fontSizePt), the
+ * model's named paragraph styles (SPEC-019), and one page layout + master
+ * page per section (SPEC-007 AC-15; SPEC-028 AC-33) — the first section's
+ * pair keeps the "pm1"/"Standard" names every single-section document
+ * always used, so those stay byte-identical. */
+export function buildStylesXml(model: DocumentModel): string {
+  const { fontFamily, fontSizePt } = model.defaultStyles;
+  const namedStyles = (model.styles ?? [])
+    .filter((style) => style.name !== undefined)
+    .map(namedStyleDefinitionXml)
+    .join("");
+  const pageLayouts = model.sections
+    .map((_, index) => pageLayoutXml(sectionLayoutName(index), sectionPageSize(model, index), sectionMargins(model, index)))
+    .join("");
+  const masterPages = model.sections
+    .map((_, index) => masterPageXml(sectionMasterName(index), sectionLayoutName(index)))
+    .join("");
   return (
     `${XML_DECLARATION}<office:document-styles${DOCUMENT_XMLNS} office:version="1.2">` +
     "<office:styles>" +
@@ -1018,15 +1329,10 @@ export function buildStylesXml(model: DocumentModel): string {
     namedStyles +
     "</office:styles>" +
     "<office:automatic-styles>" +
-    '<style:page-layout style:name="pm1">' +
-    `<style:page-layout-properties fo:page-width="${cmToOdfLength(pageSize.widthCm)}"` +
-    ` fo:page-height="${cmToOdfLength(pageSize.heightCm)}"${orientation}` +
-    ` fo:margin-top="${cmToOdfLength(margins.topCm)}" fo:margin-right="${cmToOdfLength(margins.rightCm)}"` +
-    ` fo:margin-bottom="${cmToOdfLength(margins.bottomCm)}" fo:margin-left="${cmToOdfLength(margins.leftCm)}"/>` +
-    "</style:page-layout>" +
+    pageLayouts +
     "</office:automatic-styles>" +
     "<office:master-styles>" +
-    '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>' +
+    masterPages +
     "</office:master-styles>" +
     "</office:document-styles>"
   );
@@ -1101,6 +1407,86 @@ export function patchOdtStylesXml(
     }
   }
   return `${XML_DECLARATION}${serializeElement(root)}`;
+}
+
+/** A preserved styles.xml with the per-section master pages and page
+ * layouts content.xml references upserted (SPEC-028 AC-33), or null when it
+ * already defines them all exactly — a same-format save of an unedited
+ * multi-section document then keeps the part byte-identical (the
+ * patchOdtStylesXml contract). The source's own master pages are left
+ * untouched; only the resolved generated pairs from `sectionNames` (the
+ * plan planOdtSectionNames computed against the preserved part) are managed,
+ * so a foreign definition that shares a conventional "pmN" name is never
+ * displaced (SPEC-008) while a definition a previous factory save wrote is
+ * replaced in place when its geometry was edited. */
+export function patchOdtSectionMasterPages(
+  model: DocumentModel,
+  originalStylesXml: string,
+  sectionNames?: { masters: (string | null)[]; layouts: (string | null)[] },
+): string | null {
+  if (model.sections.length <= 1) {
+    return null;
+  }
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return null;
+  }
+  const root = stylesDoc.documentElement;
+  const names = sectionNames ?? planOdtSectionNames(model, originalStylesXml);
+  let changed = false;
+  const upsert = (parentName: string, localName: string, styleName: string, xml: string) => {
+    let parent = firstChildElement(root, OFFICE_NAMESPACE, parentName);
+    if (!parent) {
+      // Degenerate packages only — any real producer writes both
+      // containers. office:master-styles must stay last per the schema.
+      parent = stylesDoc.createElementNS(OFFICE_NAMESPACE, `office:${parentName}`);
+      const masterStyles =
+        parentName === "master-styles" ? null : firstChildElement(root, OFFICE_NAMESPACE, "master-styles");
+      root.insertBefore(parent, masterStyles ?? null);
+    }
+    const wrapper = parseXml(`<office:document-styles${DOCUMENT_XMLNS}>${xml}</office:document-styles>`);
+    const imported = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    const existing = Array.from(parent.children).find(
+      (el) =>
+        el.namespaceURI === STYLE_NAMESPACE &&
+        el.localName === localName &&
+        el.getAttributeNS(STYLE_NAMESPACE, "name") === styleName,
+    );
+    if (existing) {
+      if (serializeElement(existing) === serializeElement(imported)) {
+        return; // Already up to date — nothing to change.
+      }
+      parent.replaceChild(imported, existing);
+    } else {
+      parent.appendChild(imported);
+    }
+    changed = true;
+  };
+  for (let index = 1; index < model.sections.length; index++) {
+    const masterName = names.masters[index];
+    const layoutName = names.layouts[index];
+    if (layoutName === null || masterName === null) {
+      // Every generated name collided with a foreign definition — the master
+      // this save would define belongs to someone else's styles. Refuse to
+      // clobber; the reader will fall back to the document default layout.
+      continue;
+    }
+    upsert(
+      "automatic-styles",
+      "page-layout",
+      layoutName,
+      pageLayoutXml(layoutName, sectionPageSize(model, index), sectionMargins(model, index)),
+    );
+    upsert(
+      "master-styles",
+      "master-page",
+      masterName,
+      masterPageXml(masterName, layoutName),
+    );
+  }
+  return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
 }
 
 /** A timestamp in the W3CDTF profile ODF metadata uses (whole seconds,
@@ -1196,7 +1582,17 @@ export async function writeOdt(
   // package already uses, so a freshly written Pictures/imageN.ext can
   // never collide (mirrors docx/writer.ts's own media planning).
   const mediaPlan = planOdtMediaWrite(model, new Set(preservedParts.keys()));
-  const content = buildContentXml(model, mediaPlan);
+  const decoder = new TextDecoder("utf-8");
+  const originalStyles = preservedParts.get("styles.xml")
+    ? decoder.decode(preservedParts.get("styles.xml")!)
+    : undefined;
+  // Resolve the per-section master-page/page-layout names once, against the
+  // preserved styles.xml (SPEC-028 AC-33). content.xml (the reference) and
+  // the styles patch (the definition) must agree; when no styles.xml is
+  // preserved the conventional SectionMasterN/pmN names are used, matching
+  // buildStylesXml.
+  const sectionNames = planOdtSectionNames(model, originalStyles);
+  const content = buildContentXml(model, mediaPlan, sectionNames.masters);
 
   if (preservedParts.size === 0) {
     const bytes = await zip([
@@ -1218,7 +1614,6 @@ export async function writeOdt(
   // package had none (the manifest is patched to match), and styles.xml
   // patched only when the model's style catalogue diverges from it
   // (SPEC-019).
-  const decoder = new TextDecoder("utf-8");
   const addSettings = !preservedParts.has("settings.xml");
   const addedPaths: OdtManifestEntry[] = [
     { path: "content.xml", mediaType: "text/xml" },
@@ -1226,10 +1621,17 @@ export async function writeOdt(
     ...(addSettings ? [{ path: "settings.xml", mediaType: "text/xml" }] : []),
     ...mediaPlan.manifestEntries,
   ];
+  // Named-style changes (SPEC-019) first, then the per-section master pages
+  // content.xml references (SPEC-028 AC-33) — layered so an unedited save
+  // still leaves the part byte-identical (both patches return null then).
   const preservedStyles = preservedParts.get("styles.xml");
-  const patchedStyles = preservedStyles
-    ? patchOdtStylesXml(model, decoder.decode(preservedStyles), content)
-    : null;
+  let patchedStyles: string | null = null;
+  if (preservedStyles) {
+    const originalStyles = decoder.decode(preservedStyles);
+    patchedStyles = patchOdtStylesXml(model, originalStyles, content);
+    patchedStyles =
+      patchOdtSectionMasterPages(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
+  }
 
   const entries: ZipEntryInput[] = [
     { name: "mimetype", data: preservedParts.get("mimetype") ?? encoder.encode(ODT_MIMETYPE), store: true },

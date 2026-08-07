@@ -17,6 +17,8 @@
 // re-rendering untouched paragraphs.
 import {
   isTable,
+  type BreakBlock,
+  type BreakKind,
   type CharacterFormatKey,
   type DocumentModel,
   type ListFormatting,
@@ -32,6 +34,8 @@ import {
   type ParagraphFormatting,
   type PendingFormat,
   type RunFormatting,
+  type Section,
+  type SectionStart,
   type VerticalAlignment,
 } from "./documentModel";
 import { cmToTwips, twipsToCm } from "./docx/units";
@@ -207,6 +211,119 @@ export function splitBlock(
     ? start
     : deleteRangeInPlace(next, start, end);
   return result(next, splitParagraphInPlace(next, base));
+}
+
+// --- manual breaks and section breaks (SPEC-028) ----------------------------
+
+/** Inserts a manual break at the selection (SPEC-028 AC-4..7): the caret's
+ * paragraph is split around a new break block, so the content after the
+ * caret starts a new page (AC-5). At a paragraph start no split happens —
+ * the break lands before the paragraph, leaving no stray empty half. A
+ * non-collapsed selection is deleted first. Inert inside a table cell:
+ * breaks are top-level blocks, and there is no page flow to break inside a
+ * cell. The caret ends up at the start of the content after the break. */
+export function insertBreak(
+  model: DocumentModel,
+  selection: ModelSelection,
+  kind: BreakKind,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  const base = isCollapsed(selection) ? start : deleteRangeInPlace(next, start, end);
+  if (base.cell) {
+    return result(next, base);
+  }
+  const breakBlock: BreakBlock = { type: "break", kind };
+  const blocks = next.sections[base.section].blocks;
+  if (paragraphAt(next, base)) {
+    if (base.offset === 0) {
+      blocks.splice(base.block, 0, breakBlock);
+      return result(next, { section: base.section, block: base.block + 1, offset: 0 });
+    }
+    const after = splitParagraphInPlace(next, base);
+    next.sections[after.section].blocks.splice(after.block, 0, breakBlock);
+    return result(next, { section: after.section, block: after.block + 1, offset: 0 });
+  }
+  // Atom caret (table/image/break edge): the break lands on the side of the
+  // atom the caret addresses; a paragraph is created after it when nothing
+  // follows, so the caret has a home on the new page.
+  const at = base.offset >= 1 ? base.block + 1 : base.block;
+  blocks.splice(at, 0, breakBlock);
+  if (at + 1 >= blocks.length) {
+    blocks.push({ type: "paragraph", runs: [] });
+  }
+  return result(next, { section: base.section, block: at + 1, offset: 0 });
+}
+
+/** Inserts a section break at the selection (SPEC-028 AC-8/9): the caret's
+ * section is split in two at the caret (the paragraph splits too, unless
+ * the caret sits at its start), and the new section — everything from the
+ * caret on — begins per `sectionStart` ("nextPage" or "continuous"). The
+ * new section inherits the split section's own page setup, so inserting
+ * then deleting a break restores the original state. Inert inside a table
+ * cell. The caret ends up at the start of the new section. */
+export function insertSectionBreak(
+  model: DocumentModel,
+  selection: ModelSelection,
+  sectionStart: SectionStart,
+): CommandResult {
+  const next = cloneContainers(model);
+  const { start, end } = orderedRange(next, selection);
+  const base = isCollapsed(selection) ? start : deleteRangeInPlace(next, start, end);
+  if (base.cell) {
+    return result(next, base);
+  }
+  const section = next.sections[base.section];
+  let boundary: number;
+  if (paragraphAt(next, base) && base.offset > 0) {
+    boundary = splitParagraphInPlace(next, base).block;
+  } else if (!paragraphAt(next, base) && base.offset >= 1) {
+    boundary = base.block + 1;
+  } else {
+    boundary = base.block;
+  }
+  const before = section.blocks.slice(0, boundary);
+  const after = section.blocks.slice(boundary);
+  if (before.length === 0) {
+    before.push({ type: "paragraph", runs: [] });
+  }
+  if (after.length === 0) {
+    after.push({ type: "paragraph", runs: [] });
+  }
+  const created: Section = { blocks: after, start: sectionStart };
+  if (section.pageSize) {
+    created.pageSize = { ...section.pageSize };
+  }
+  if (section.margins) {
+    created.margins = { ...section.margins };
+  }
+  // The first half keeps the original's preserved sectPr (it still begins
+  // the way the original did); the created section's sectPr is regenerated
+  // from its modelled geometry so its own `w:type` (sectionStart) is
+  // emitted, never a stale copy. Splitting the final section moves the
+  // preserved body-level sectPr onto the now-non-final first half.
+  if (base.section === next.sections.length - 1 && next.sourceXml?.docxSectPr !== undefined) {
+    section.docxSectPr = next.sourceXml.docxSectPr;
+    const sourceXml = { ...next.sourceXml };
+    delete sourceXml.docxSectPr;
+    next.sourceXml = sourceXml;
+  }
+  const opaque = section.opaqueBlocks ?? [];
+  const movedOpaque = opaque
+    .filter((entry) => entry.blockIndex >= boundary)
+    .map((entry) => ({ ...entry, blockIndex: entry.blockIndex - boundary }));
+  if (movedOpaque.length > 0) {
+    created.opaqueBlocks = movedOpaque;
+    const kept = opaque.filter((entry) => entry.blockIndex < boundary);
+    if (kept.length > 0) {
+      section.opaqueBlocks = kept;
+    } else {
+      delete section.opaqueBlocks;
+    }
+  }
+  section.blocks = before;
+  next.sections.splice(base.section + 1, 0, created);
+  return result(next, { section: base.section + 1, block: 0, offset: 0 });
 }
 
 /** Deletes the selection's range. Deleting across a paragraph boundary
@@ -605,6 +722,14 @@ export interface ParagraphFormatPatch {
   lineSpacingPt?: number | null;
   lineSpacingRule?: "exact" | null;
   direction?: ParagraphDirection;
+  /** SPEC-028 pagination flags. `false` removes keepNext/keepLines/
+   * pageBreakBefore (absent already means off), while `true` removes
+   * widowControl (absent means ON — see ParagraphFormatting), so the model
+   * only ever stores the non-default value of each. */
+  keepNext?: boolean;
+  keepLines?: boolean;
+  pageBreakBefore?: boolean;
+  widowControl?: boolean;
 }
 
 type NumericParagraphKey =
@@ -651,6 +776,24 @@ export function applyParagraphFormat(
         delete nextFormatting.lineSpacingRule;
       } else {
         nextFormatting.lineSpacingRule = patch.lineSpacingRule;
+      }
+    }
+    for (const key of ["keepNext", "keepLines", "pageBreakBefore"] as const) {
+      const value = patch[key];
+      if (value === undefined) {
+        continue;
+      }
+      if (value) {
+        nextFormatting[key] = true;
+      } else {
+        delete nextFormatting[key];
+      }
+    }
+    if (patch.widowControl !== undefined) {
+      if (patch.widowControl) {
+        delete nextFormatting.widowControl;
+      } else {
+        nextFormatting.widowControl = false;
       }
     }
     for (const key of Object.keys(PATCH_SNAPPERS) as NumericParagraphKey[]) {
@@ -726,6 +869,35 @@ export function toggleSpaceBefore(
   }));
 }
 
+/** What the paragraph pagination menu reflects (SPEC-028 AC-22..28): the
+ * first touched paragraph's four pagination flags, with widow/orphan
+ * control reading as ON when unset (the AC-28 default). */
+export interface ParagraphPaginationState {
+  keepNext: boolean;
+  keepLines: boolean;
+  pageBreakBefore: boolean;
+  widowControl: boolean;
+}
+
+/** The initial/no-document state — a typed seed for `.vue` refs (espree
+ * bars the annotation, same constraint as noSelection). */
+export function emptyParagraphPaginationState(): ParagraphPaginationState {
+  return { keepNext: false, keepLines: false, pageBreakBefore: false, widowControl: true };
+}
+
+export function paragraphPaginationState(
+  model: DocumentModel,
+  selection: ModelSelection,
+): ParagraphPaginationState {
+  const formatting = firstTouchedFormatting(model, selection);
+  return {
+    keepNext: formatting.keepNext === true,
+    keepLines: formatting.keepLines === true,
+    pageBreakBefore: formatting.pageBreakBefore === true,
+    widowControl: formatting.widowControl !== false,
+  };
+}
+
 /** Drops a stale preserved `w:sectPr` (SPEC-027): any command that changes
  * the page size or margins must not let the writer re-emit the source
  * .docx's original section properties over top of the new values — the
@@ -742,41 +914,83 @@ function clearPreservedSectPr(model: DocumentModel): DocumentModel {
   return { ...model, sourceXml };
 }
 
+/** A section rewritten with new page geometry, its preserved sectPr dropped
+ * so the writer regenerates it from the new values (SPEC-028) — the section
+ * -level sibling of clearPreservedSectPr. */
+function withSectionGeometry(
+  section: Section,
+  geometry: { pageSize?: PageSize; margins?: Margins },
+): Section {
+  const updated: Section = { ...section, ...geometry };
+  delete updated.docxSectPr;
+  return updated;
+}
+
 /** Sets the page's left/right margins (the ruler's margin markers, AC-23).
- * Margins live on defaultStyles, not a paragraph, but the update flows
- * through the same immutable command shape so applyEdit persists it. */
+ * When the caret's section carries its own margins (SPEC-028), the drag
+ * edits that section; otherwise it edits the document defaults, exactly as
+ * before sections could diverge. */
 export function setPageMargins(
   model: DocumentModel,
   selection: ModelSelection,
   patch: { leftCm?: number; rightCm?: number },
 ): CommandResult {
-  const margins = { ...model.defaultStyles.margins };
+  const { start } = orderedRange(model, selection);
+  const section = model.sections[start.section];
+  const margins = { ...(section.margins ?? model.defaultStyles.margins) };
   if (patch.leftCm !== undefined) {
     margins.leftCm = snapCm(Math.max(0, patch.leftCm));
   }
   if (patch.rightCm !== undefined) {
     margins.rightCm = snapCm(Math.max(0, patch.rightCm));
   }
-  const next = clearPreservedSectPr({
-    ...model,
-    defaultStyles: { ...model.defaultStyles, margins },
-  });
-  const { start, end } = orderedRange(next, selection);
-  return { model: next, selection: { anchor: start, focus: end } };
+  let next: DocumentModel;
+  if (section.margins) {
+    next = {
+      ...model,
+      sections: model.sections.map((entry, index) =>
+        index === start.section ? withSectionGeometry(entry, { margins }) : entry,
+      ),
+    };
+    if (start.section === model.sections.length - 1) {
+      next = clearPreservedSectPr(next);
+    }
+  } else {
+    next = clearPreservedSectPr({
+      ...model,
+      defaultStyles: { ...model.defaultStyles, margins },
+    });
+  }
+  const range = orderedRange(next, selection);
+  return { model: next, selection: { anchor: range.start, focus: range.end } };
 }
 
 // --- page setup (SPEC-027) ---------------------------------------------
 
-/** The Page setup dialog's OK (AC-1..7): paper size, orientation and the
- * four margins are already resolved to a concrete `PageSize`/`Margins` by
- * the dialog (paper-size lookup and orientation swap happen there — see
- * lib/pageSetup.ts); this command just snaps them onto the twip grid and
- * commits. `measurementUnit`, when given, replaces the document's
- * preference (AC-7); omit it to leave the preference untouched. */
+/** What a Page setup apply targets (SPEC-028 AC-20/21): the caret's section
+ * or the whole document. */
+export type PageSetupScope = "thisSection" | "wholeDocument";
+
+/** Typed pass-through for a scope coming from a `.vue` template's plain
+ * string (see documentModel.asCharacterFormatKey for the espree constraint). */
+export function asPageSetupScope(value: string): PageSetupScope {
+  return value as PageSetupScope;
+}
+
+/** The Page setup dialog's OK (SPEC-027 AC-1..7, SPEC-028 AC-20/21): paper
+ * size, orientation and the four margins are already resolved to a concrete
+ * `PageSize`/`Margins` by the dialog (paper-size lookup and orientation
+ * swap happen there — see lib/pageSetup.ts); this command just snaps them
+ * onto the twip grid and commits. `applyTo` picks the target: the caret's
+ * section (`"thisSection"`), or the document defaults (`"wholeDocument"`,
+ * which also drops every section's own override so the whole document
+ * genuinely follows the new values). `measurementUnit`, when given,
+ * replaces the document's preference (AC-7). */
 export function setPageSetup(
   model: DocumentModel,
   selection: ModelSelection,
   patch: { pageSize: PageSize; margins: Margins; measurementUnit?: MeasurementUnit },
+  applyTo: PageSetupScope = "wholeDocument",
 ): CommandResult {
   const pageSize: PageSize = {
     widthCm: snapCm(patch.pageSize.widthCm),
@@ -788,11 +1002,40 @@ export function setPageSetup(
     bottomCm: snapCm(patch.margins.bottomCm),
     leftCm: snapCm(patch.margins.leftCm),
   };
-  const next = clearPreservedSectPr({
-    ...model,
-    defaultStyles: { ...model.defaultStyles, pageSize, margins },
-    measurementUnit: patch.measurementUnit ?? model.measurementUnit,
-  });
+  let next: DocumentModel;
+  if (applyTo === "thisSection") {
+    const target = orderedRange(model, selection).start.section;
+    next = {
+      ...model,
+      sections: model.sections.map((section, index) =>
+        index === target ? withSectionGeometry(section, { pageSize, margins }) : section,
+      ),
+      measurementUnit: patch.measurementUnit ?? model.measurementUnit,
+    };
+    if (target === model.sections.length - 1) {
+      next = clearPreservedSectPr(next);
+    }
+  } else {
+    next = clearPreservedSectPr({
+      ...model,
+      defaultStyles: { ...model.defaultStyles, pageSize, margins },
+      sections: model.sections.map((section) => {
+        if (
+          section.pageSize === undefined &&
+          section.margins === undefined &&
+          section.docxSectPr === undefined
+        ) {
+          return section;
+        }
+        const updated = { ...section };
+        delete updated.pageSize;
+        delete updated.margins;
+        delete updated.docxSectPr;
+        return updated;
+      }),
+      measurementUnit: patch.measurementUnit ?? model.measurementUnit,
+    });
+  }
   const { start, end } = orderedRange(next, selection);
   return { model: next, selection: { anchor: start, focus: end } };
 }

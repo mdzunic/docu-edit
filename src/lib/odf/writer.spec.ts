@@ -539,3 +539,180 @@ describe("writeOdt — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
     expect(atLeast.formatting?.lineSpacingRule).toBeUndefined();
   });
 });
+
+function textParagraph(text: string): Paragraph {
+  return { type: "paragraph", runs: [{ text, formatting: {} }] };
+}
+
+/** open(save(model)) — the canonical opened form — followed by a further
+ * save+open; SPEC-028's odt mappings must make the second cycle a fixed
+ * point even where the first canonicalises (break blocks, carrier
+ * paragraphs, explicit section geometry). */
+async function expectSecondCycleFixedPoint(model: DocumentModel) {
+  const opened = await parseOdt((await writeOdt(model)).bytes);
+  const openedModel = { ...createDocument(model.id), sections: opened.sections, defaultStyles: opened.defaultStyles };
+  const reopened = await parseOdt((await writeOdt(openedModel)).bytes);
+  expect(firstStructuralDifference(opened.sections, reopened.sections)).toBeNull();
+  expect(reopened.defaultStyles).toEqual(opened.defaultStyles);
+  return opened;
+}
+
+describe("writeOdt — pagination flags (SPEC-028 AC-22..29)", () => {
+  function flaggedModel(): DocumentModel {
+    const model = createDocument("flags");
+    model.sections[0].blocks = [
+      {
+        ...textParagraph("keep me"),
+        formatting: { keepNext: true, keepLines: true, widowControl: false },
+      },
+    ];
+    return model;
+  }
+
+  it("emits the flags as fo: attributes on the automatic paragraph style", async () => {
+    const contentXml = await partText((await writeOdt(flaggedModel())).bytes, "content.xml");
+    expect(contentXml).toContain('fo:keep-with-next="always"');
+    expect(contentXml).toContain('fo:keep-together="always"');
+    expect(contentXml).toContain('fo:widows="0"');
+    expect(contentXml).toContain('fo:orphans="0"');
+  });
+
+  it("round-trips keepNext, keepLines and widowControl; second cycle is a fixed point", async () => {
+    const opened = await expectSecondCycleFixedPoint(flaggedModel());
+    const formatting = asParagraph(opened.sections[0].blocks[0]).formatting;
+    expect(formatting?.keepNext).toBe(true);
+    expect(formatting?.keepLines).toBe(true);
+    expect(formatting?.widowControl).toBe(false);
+    expect(formatting?.pageBreakBefore).toBeUndefined();
+  });
+});
+
+describe("writeOdt — manual breaks (SPEC-028 AC-32)", () => {
+  it("writes a BreakBlock as fo:break-before='page' on the next paragraph's style, no extra block", async () => {
+    const model = createDocument("break");
+    model.sections[0].blocks = [
+      textParagraph("before"),
+      { type: "break", kind: "page" },
+      textParagraph("after"),
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    expect(contentXml).toContain('fo:break-before="page"');
+
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    const blocks = opened.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "page" });
+    // The break came back as the block, not as pageBreakBefore residue.
+    expect(asParagraph(blocks[2]).formatting?.pageBreakBefore).toBeUndefined();
+    await expectSecondCycleFixedPoint(model);
+  });
+
+  it("round-trips a column BreakBlock as fo:break-before='column' (AC-10/11)", async () => {
+    const model = createDocument("column-break");
+    model.sections[0].blocks = [
+      textParagraph("before"),
+      { type: "break", kind: "column" },
+      textParagraph("after"),
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    expect(contentXml).toContain('fo:break-before="column"');
+
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    const blocks = opened.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "column" });
+    await expectSecondCycleFixedPoint(model);
+  });
+
+  it("canonicalises pageBreakBefore FORMATTING to a break block through .odt (documented convergence)", async () => {
+    // ODF has one channel for both concepts (fo:break-before), so a direct
+    // pageBreakBefore flag re-opens as a manual BreakBlock — identical
+    // pagination, and the second cycle is a fixed point.
+    const model = createDocument("break-formatting");
+    model.sections[0].blocks = [
+      textParagraph("first"),
+      { ...textParagraph("second"), formatting: { pageBreakBefore: true } },
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    expect(contentXml).toContain('fo:break-before="page"');
+
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    const blocks = opened.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(asParagraph(blocks[2]).formatting?.pageBreakBefore).toBeUndefined();
+    await expectSecondCycleFixedPoint(model);
+  });
+
+  it("keeps a trailing break alive via an empty carrier paragraph", async () => {
+    const model = createDocument("trailing-break");
+    model.sections[0].blocks = [textParagraph("body"), { type: "break", kind: "page" }];
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    const blocks = opened.sections[0].blocks;
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph"]);
+    expect(asParagraph(blocks[2]).runs).toEqual([]);
+    await expectSecondCycleFixedPoint(model);
+  });
+
+  it("carries a break before a table on an empty carrier paragraph", async () => {
+    const model = createDocument("break-table");
+    model.sections[0].blocks = [
+      textParagraph("before"),
+      { type: "break", kind: "page" },
+      {
+        type: "table",
+        rows: [{ cells: [{ blocks: [textParagraph("cell")] }] }],
+        columnWidthsCm: [5],
+      },
+    ];
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    const blocks = opened.sections[0].blocks;
+    // The carrier re-opens as an empty paragraph between break and table —
+    // the documented convergence for a break directly before a table.
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "break", "paragraph", "table"]);
+    expect(blocks[1]).toEqual({ type: "break", kind: "page" });
+  });
+});
+
+describe("writeOdt — sections via master pages (SPEC-028 AC-33)", () => {
+  function twoSectionModel(): DocumentModel {
+    const model = createDocument("sections");
+    model.sections = [
+      { blocks: [textParagraph("first section")] },
+      { blocks: [textParagraph("second section")], pageSize: { widthCm: 14.8, heightCm: 21 } },
+    ];
+    return model;
+  }
+
+  it("emits a page layout + master page per later section, referenced from its first paragraph", async () => {
+    const bytes = (await writeOdt(twoSectionModel())).bytes;
+    const stylesXml = await partText(bytes, "styles.xml");
+    expect(stylesXml).toContain('<style:master-page style:name="SectionMaster2" style:page-layout-name="pm2"/>');
+    expect(stylesXml).toContain('<style:page-layout style:name="pm2">');
+    expect(stylesXml).toContain('fo:page-width="14.8cm"');
+    // The first section keeps the conventional pair.
+    expect(stylesXml).toContain('<style:master-page style:name="Standard" style:page-layout-name="pm1"/>');
+    const contentXml = await partText(bytes, "content.xml");
+    expect(contentXml).toContain('style:master-page-name="SectionMaster2"');
+  });
+
+  it("re-opens as two sections, the second with its own explicit A5 geometry", async () => {
+    const opened = await parseOdt((await writeOdt(twoSectionModel())).bytes);
+    expect(opened.sections).toHaveLength(2);
+    expect(asParagraph(opened.sections[0].blocks[0]).runs[0].text).toBe("first section");
+    expect(asParagraph(opened.sections[1].blocks[0]).runs[0].text).toBe("second section");
+    expect(opened.sections[1].pageSize).toEqual({ widthCm: 14.8, heightCm: 21 });
+    // Margins were inherited at write time, so the master pinned the then-
+    // effective values — explicit on re-open.
+    expect(opened.sections[1].margins).toEqual(opened.defaultStyles.margins);
+    expect(opened.sections[0].pageSize).toBeUndefined();
+    await expectSecondCycleFixedPoint(twoSectionModel());
+  });
+
+  it("re-opens a continuous section as nextPage — ODF has no continuous concept (documented loss)", async () => {
+    const model = twoSectionModel();
+    model.sections[1].start = "continuous";
+    const opened = await parseOdt((await writeOdt(model)).bytes);
+    expect(opened.sections).toHaveLength(2);
+    expect(opened.sections[1].start).toBeUndefined();
+  });
+});

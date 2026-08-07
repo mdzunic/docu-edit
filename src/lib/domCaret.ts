@@ -3,11 +3,43 @@
 // `data-block` attributes; the character offset within a paragraph is the
 // length of the text between the paragraph's start and the DOM point, which
 // a Range computes for us regardless of how the runs are split into spans.
-// Framework-free on purpose: it needs a DOM, but no Vue.
+// A paragraph split across pages (SPEC-028) renders as several elements
+// sharing one address, each carrying `data-slice-start` — the character
+// offset its own text begins at — so both directions of the mapping add or
+// subtract that base. Framework-free on purpose: it needs a DOM, but no Vue.
 import type { CaretPosition } from "./textEditing";
 
 /** Selects the canvas's paragraph elements (shared with caretGeometry). */
 export const BLOCK_SELECTOR = "[data-section][data-block]";
+
+/** The character offset a rendered element's text starts at within its
+ * block — 0 unless the paragraph is split across pages (SPEC-028). */
+export function sliceStartOf(element: Element): number {
+  const value = Number(element.getAttribute("data-slice-start"));
+  return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+// All rendered slices of a block address in document order, with each
+// slice's character window; a whole (unsplit) block is its own single
+// entry.
+function slicesFor(root: Element, address: string): Element[] {
+  return Array.from(root.querySelectorAll(`${address}:not([data-row])`)).sort(
+    (a, b) => sliceStartOf(a) - sliceStartOf(b),
+  );
+}
+
+// The slice whose character window contains `offset`: the first slice the
+// offset falls strictly inside, preferring the LATER slice at an exact
+// boundary (the caret at a page-split boundary belongs to the line that
+// starts the next page), and the last slice for an offset past the end.
+function sliceForOffset(slices: Element[], offset: number): Element {
+  for (let i = slices.length - 1; i >= 0; i -= 1) {
+    if (offset >= sliceStartOf(slices[i])) {
+      return slices[i];
+    }
+  }
+  return slices[0];
+}
 
 /** Typed `null` seed for element variables in `.vue` scripts, which espree
  * bars from writing the `Element | null` annotation themselves. */
@@ -105,7 +137,11 @@ export function caretFromDomPoint(
   } catch {
     return null;
   }
-  const caret: CaretPosition = { section, block, offset: range.toString().length };
+  const caret: CaretPosition = {
+    section,
+    block,
+    offset: sliceStartOf(paragraph) + range.toString().length,
+  };
   const cell = paragraph.hasAttribute("data-row") ? cellPathOf(paragraph) : undefined;
   if (cell) {
     caret.cell = cell;
@@ -158,7 +194,8 @@ export function domPointForCaret(
     // top-level lookup must exclude them. When the address itself is a
     // table (an atom caret at its edge), resolve to the first or last cell
     // paragraph instead — offset 0 is the position before the table.
-    paragraph = root.querySelector(`${address}:not([data-row])`);
+    const slices = slicesFor(root, address);
+    paragraph = slices.length > 0 ? sliceForOffset(slices, caret.offset) : null;
     if (!paragraph) {
       const cellParagraphs = root.querySelectorAll(`${address}[data-row]`);
       if (cellParagraphs.length === 0) {
@@ -178,7 +215,7 @@ export function domPointForCaret(
     paragraph,
     NodeFilter.SHOW_TEXT,
   );
-  let remaining = atomOffset ?? caret.offset;
+  let remaining = atomOffset ?? Math.max(0, caret.offset - sliceStartOf(paragraph));
   let lastText: Text | null = null;
   while (walker.nextNode()) {
     const text = walker.currentNode as Text;
@@ -208,7 +245,8 @@ export function paragraphElementForCaret(
         `[data-cell-block="${caret.cell.block}"]`,
     );
   }
-  return root.querySelector(`${address}:not([data-row])`);
+  const slices = slicesFor(root, address);
+  return slices.length > 0 ? sliceForOffset(slices, caret.offset) : null;
 }
 
 function selectionFor(root: Element): Selection | null {

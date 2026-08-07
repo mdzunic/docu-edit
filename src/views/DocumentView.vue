@@ -9,6 +9,7 @@ import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
 import DocImageBlock from "../components/DocImageBlock.vue";
+import DocPage from "../components/DocPage.vue";
 import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
@@ -16,6 +17,7 @@ import EditorContextMenu from "../components/EditorContextMenu.vue";
 import ImageInsertControl from "../components/ImageInsertControl.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
+import InsertBreakMenu from "../components/InsertBreakMenu.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
@@ -35,6 +37,7 @@ import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
+import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { documentExists } from "../lib/documents";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
@@ -57,12 +60,17 @@ import {
   asMeasurementUnit,
   asParagraphAlignment,
   asParagraphBlock,
+  asBreakKind,
+  asSectionStart,
   asTableAlignment,
   asTableWidthMode,
   createDocument,
   DEFAULT_TITLE,
+  isBreak,
   isImage,
   isTable,
+  sectionMargins,
+  sectionPageSize,
 } from "../lib/documentModel";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
 import {
@@ -124,6 +132,7 @@ import {
   noElement,
   noEventTarget,
   noTableCellTarget,
+  paragraphElementForCaret,
   setDomCaret,
   setDomSelection,
   tableCellFromEventTarget,
@@ -165,6 +174,7 @@ import {
   noCaret,
   paragraphAt,
   paragraphAtCaret,
+  splitRuns,
 } from "../lib/textEditing";
 import {
   dashSubstitution,
@@ -195,6 +205,7 @@ import {
   applyPainterFormat,
   applyParagraphFormat,
   applyParagraphStyle,
+  asPageSetupScope,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
@@ -207,6 +218,7 @@ import {
   documentEnd,
   documentStart,
   emptyParagraphFormatting,
+  emptyParagraphPaginationState,
   emptyToolbarFormatValues,
   emptyToolbarListState,
   emptyToolbarStyleState,
@@ -214,7 +226,9 @@ import {
   formatState,
   hasSpaceBefore,
   INDENT_STEP_CM,
+  insertBreak,
   insertLineBreak,
+  insertSectionBreak,
   insertText,
   isCollapsed,
   noCommandResult,
@@ -222,6 +236,7 @@ import {
   noParagraphCommand,
   noPendingFormat,
   noSelection,
+  paragraphPaginationState,
   removeListFormat,
   resetParagraphStyle,
   selectAll,
@@ -242,6 +257,9 @@ import {
   verticalAlignState,
 } from "../lib/commands";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
+import { markSegments } from "../lib/marks";
+import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
+import { PX_PER_CM, sectionGeometryPx, wholePageItem } from "../lib/pagination";
 import {
   deleteImage,
   imageAt,
@@ -717,6 +735,7 @@ const pageSetupInitial = ref({
   pageSize: { widthCm: 21, heightCm: 29.7 },
   margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
   measurementUnit: "cm",
+  applyTo: "wholeDocument",
 });
 // Recently applied text colours, shared across documents (SPEC-013 AC).
 const recentColors = ref(loadRecentColors());
@@ -836,6 +855,11 @@ function closeSession() {
   lockState.value = "pending";
   caret = noCaret();
   scrollTop = 0;
+  // The next document opens scrolled to the top: realize only its head
+  // until the viewport refresh sees the real scroll position.
+  viewportPageRange.value = { start: 0, end: 2 };
+  anchorPage.value = -1;
+  caretPage.value = 1;
   dismissPasteChip();
   closeContextMenu();
   resetFindState();
@@ -879,6 +903,7 @@ function handleScroll() {
   if (scrollContainer) {
     scrollTop = scrollContainer.scrollTop;
   }
+  scheduleViewportRefresh();
   // Re-measure the (viewport-limited) highlight overlay for the new scroll
   // position; rAF-throttled inside scheduleFindMeasure (SPEC-017).
   if (findVisible.value) {
@@ -932,6 +957,7 @@ onMounted(() => {
   document.addEventListener("selectionchange", handleSelectionChange);
   document.addEventListener("keydown", handleGlobalShortcut);
   attachScrollListener();
+  refreshViewportRange();
   if (doc.value) {
     openSession(documentId.value);
   }
@@ -1388,6 +1414,16 @@ async function restoreCaretAfterRender() {
   if (!root || !caret) {
     return;
   }
+  if (!paragraphElementForCaret(root, caret)) {
+    // The caret's paragraph landed on a virtualized page (an undo/redo or
+    // command can move it far): refresh the page trackers — which realizes
+    // that page — and wait for the extra patch before placing.
+    refreshCaretPage();
+    if (selectionAnchor) {
+      anchorPage.value = pagination.pageOfCaret(selectionAnchor);
+    }
+    await nextTick();
+  }
   if (selectionAnchor) {
     setDomSelection(root, selectionAnchor, caret);
   } else {
@@ -1448,6 +1484,13 @@ async function verifyCanvasAfterRender() {
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model) {
+    return;
+  }
+  if (virtualizing.value) {
+    // Virtualized pages keep their text out of the DOM by design, so the
+    // whole-canvas equality check below cannot hold; composition commits
+    // already re-key their own paragraph (bumpBlockKey), which is the part
+    // of this belt that matters.
     return;
   }
   const expected = model.sections
@@ -2173,6 +2216,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
     paragraphFormatting.value = emptyParagraphFormatting();
     listState.value = emptyToolbarListState();
     styleState.value = emptyToolbarStyleState();
+    paragraphPagination.value = emptyParagraphPaginationState();
     return;
   }
   const total = blockCount(model);
@@ -2205,6 +2249,14 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   };
   listState.value = toolbarListState(model, selection);
   styleState.value = toolbarStyleState(model, selection);
+  paragraphPagination.value = paragraphPaginationState(model, selection);
+  caretSectionIndex.value = range.end.section;
+  // Both ends of a selection must stay realized (a virtualized endpoint
+  // would collapse the DOM selection); a collapsed caret pins only its own
+  // page via refreshCaretPage.
+  anchorPage.value =
+    compareCaret(range.start, range.end) === 0 ? -1 : pagination.pageOfCaret(range.start);
+  refreshCaretPage();
 }
 
 /** Moves the caret (or, with extend, the selection's focus end) to a model
@@ -2221,14 +2273,26 @@ function applyCaretMove(target = noCaret(), extend = false) {
   // a native click/drag), not these app-driven ones, because `caret` is
   // already updated to match by the time their selectionchange fires.
   breakTypingGroup(documentId.value);
-  if (extend) {
-    extendDomSelection(root, target);
-  } else {
-    setDomCaret(root, target);
+  const place = () => {
+    if (extend) {
+      extendDomSelection(root, target);
+    } else {
+      setDomCaret(root, target);
+    }
+    caret = target;
+    const range = modelRangeFromSelection(root, document.getSelection());
+    updateCaretStatus(range ?? { start: target, end: target });
+  };
+  if (paragraphElementForCaret(root, target)) {
+    place();
+    return;
   }
+  // The target sits on a virtualized page: update the caret trackers first
+  // (which realizes that page) and place once the patch has rendered it.
   caret = target;
-  const range = modelRangeFromSelection(root, document.getSelection());
-  updateCaretStatus(range ?? { start: target, end: target });
+  const anchor = extend && selectionAnchor ? selectionAnchor : target;
+  updateCaretStatus({ start: anchor, end: target });
+  void nextTick().then(place);
 }
 
 /** The caret's moving end (the DOM selection's focus), which Shift+paging
@@ -2250,7 +2314,7 @@ function domFocusCaret(root = noElement()) {
 /** PageUp/PageDown: scrolls one viewport and moves the caret to the text
  * position one viewport away from where it was, snapping to the document's
  * start/end when there is nothing further to page onto. */
-function moveCaretByPage(direction = 1, extend = false) {
+async function moveCaretByPage(direction = 1, extend = false) {
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model) {
@@ -2268,6 +2332,10 @@ function moveCaretByPage(direction = 1, extend = false) {
     const before = container ? container.scrollTop : 0;
     if (container) {
       container.scrollTop = before + direction * pageHeight;
+      // The page scrolled onto may be a virtualized empty box: realize the
+      // new viewport before hit-testing for the caret's landing position.
+      refreshViewportRange();
+      await nextTick();
     }
     const scrolled = container ? container.scrollTop - before : 0;
     target = caretAtClientPoint(
@@ -3307,10 +3375,14 @@ function openPageSetup() {
   if (!model) {
     return;
   }
+  // Prefilled from the caret's section (SPEC-028 AC-20): with per-section
+  // page setup, "what the dialog shows" is the geometry under the caret.
+  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
   pageSetupInitial.value = {
-    pageSize: { ...model.defaultStyles.pageSize },
-    margins: { ...model.defaultStyles.margins },
+    pageSize: { ...sectionPageSize(model, sectionIndex) },
+    margins: { ...sectionMargins(model, sectionIndex) },
     measurementUnit: model.measurementUnit ?? "cm",
+    applyTo: "wholeDocument",
   };
   pageSetupOpen.value = true;
 }
@@ -3324,6 +3396,7 @@ function handlePageSetupApply(
     pageSize: { widthCm: 21, heightCm: 29.7 },
     margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
     measurementUnit: "cm",
+    applyTo: "wholeDocument",
   },
 ) {
   pageSetupOpen.value = false;
@@ -3334,11 +3407,16 @@ function handlePageSetupApply(
   }
   const selection = paragraphSelection(root);
   applyEdit(
-    setPageSetup(model, selection, {
-      pageSize: payload.pageSize,
-      margins: payload.margins,
-      measurementUnit: asMeasurementUnit(payload.measurementUnit),
-    }),
+    setPageSetup(
+      model,
+      selection,
+      {
+        pageSize: payload.pageSize,
+        margins: payload.margins,
+        measurementUnit: asMeasurementUnit(payload.measurementUnit),
+      },
+      asPageSetupScope(payload.applyTo ?? "wholeDocument"),
+    ),
     selection,
     "page setup",
   );
@@ -3431,6 +3509,19 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     return;
   }
   switch (shortcut.id) {
+    case "insert.pageBreak": {
+      // Ctrl/Cmd+Enter (AC-4): a manual page break at the caret.
+      event.preventDefault();
+      const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+      applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
+      break;
+    }
+    case "view.formattingMarks": {
+      // Ctrl/Cmd+Shift+P (AC-12).
+      event.preventDefault();
+      toggleFormattingMarks();
+      break;
+    }
     case "nav.documentStart":
     case "nav.documentEnd": {
       // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
@@ -3469,9 +3560,18 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       event.preventDefault();
       pendingFormat = noPendingFormat();
       const all = selectAll(model);
-      setDomSelection(root, all.anchor, all.focus);
       caret = all.focus;
       updateCaretStatus({ start: all.anchor, end: all.focus });
+      if (
+        paragraphElementForCaret(root, all.anchor) &&
+        paragraphElementForCaret(root, all.focus)
+      ) {
+        setDomSelection(root, all.anchor, all.focus);
+      } else {
+        // An endpoint sits on a virtualized page: updateCaretStatus above
+        // realizes both endpoint pages; select once they have rendered.
+        void nextTick().then(() => setDomSelection(root, all.anchor, all.focus));
+      }
       break;
     }
     case "format.bold":
@@ -3585,7 +3685,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     case "nav.pageUp":
     case "nav.pageDown":
       event.preventDefault();
-      moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
+      void moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
       break;
     case "style.normal":
     case "style.heading1":
@@ -3629,26 +3729,432 @@ function handlePageMouseDown(event = new MouseEvent("mousedown")) {
 
 // ---------------------------------------------------------------------------
 
-const pageStyle = computed(() => {
-  if (!doc.value) {
-    return {};
+// --- pagination (SPEC-028) --------------------------------------------------
+// The controller owns measurement; every doc.value replacement re-lays-out
+// synchronously (flush: "sync") so the rendered pages always agree with the
+// new model's block indices before Vue patches the canvas.
+
+const pagination = usePagination(
+  () => doc.value,
+  () => contentRoot.value,
+);
+const paginationPages = pagination.pages;
+const paginationBusy = pagination.busy;
+const paginationState = pagination.state;
+
+watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
+onMounted(() => pagination.schedule());
+onBeforeUnmount(() => pagination.stop());
+
+const marksOn = computed(() => doc.value?.showFormattingMarks === true);
+const pageCount = computed(() => Math.max(1, paginationPages.value.length));
+const caretPage = ref(1);
+const caretSectionIndex = ref(0);
+const paragraphPagination = ref(emptyParagraphPaginationState());
+
+// --- page virtualization (SPEC-028 AC-49/50) --------------------------------
+// Mounting every block of a 200-page document is what used to blow the
+// settle budget: each mid-pass relayout shifted page boundaries, moving
+// most paragraphs to a different DocPage, and Vue unmounted + remounted
+// nearly the whole canvas several times per pass. Beyond a small page
+// count only pages that matter render their content — everything near the
+// viewport, the caret's / selection anchor's / current find match's page,
+// and pages already realized whose layout hasn't changed (sticky, so DOM
+// nodes on earlier pages survive edits elsewhere — AC-52/53) — while the
+// rest render as correctly-sized empty page boxes. Their blocks are
+// measured off-DOM by the pagination controller's canvas metrics, which is
+// why virtualization requires `canMeasureOffscreen`.
+
+/** Documents up to this many pages always realize fully — the exact
+ * pre-virtualization behaviour for ordinary documents. */
+const VIRTUALIZE_MIN_PAGES = 12;
+/** DocPage's inter-page margin (AC-2's visible gap), part of page-top math. */
+const PAGE_GAP_PX = 12;
+/** Extra realization margin around the viewport, px. */
+const VIEWPORT_OVERSCAN_PX = 400;
+
+// Starts narrow: a large document's first render (opening lands before any
+// scroll/mount refresh) must realize only the top pages, not all of them —
+// refreshViewportRange corrects the range from the real viewport.
+const viewportPageRange = ref({ start: 0, end: 2 });
+/** Page-layout objects that have rendered their content once: they keep
+ * rendering while reconciliation preserves them (an unchanged page never
+ * loses its DOM), and drop out naturally when an edit replaces the page. */
+const realizedSticky = new WeakSet();
+/** The selection anchor's page (−1 for a collapsed caret): both ends of a
+ * selection must stay rendered or the DOM selection would collapse. */
+const anchorPage = ref(-1);
+
+const virtualizing = computed(
+  () =>
+    pagination.canMeasureOffscreen && paginationPages.value.length > VIRTUALIZE_MIN_PAGES,
+);
+
+/** The current find match's page: realized so the highlight overlay and
+ * scroll-into-view can measure it (SPEC-017). Reads paginationPages so it
+ * recomputes when placements do. */
+const findMatchPage = computed(() => {
+  void paginationPages.value;
+  const match = findMatchesRef.value[findCurrentIndex.value];
+  if (!match) {
+    return -1;
   }
-  const { widthCm, heightCm } = doc.value.defaultStyles.pageSize;
-  return { width: `${widthCm}cm`, height: `${heightCm}cm` };
+  return pagination.pageOfCaret({ section: match.section, block: match.block, offset: match.start });
 });
 
-const marginStyle = computed(() => {
-  if (!doc.value) {
-    return {};
+function refreshViewportRange() {
+  const container = scrollContainer;
+  const pagesEl = pageRef.value;
+  const layout = paginationPages.value;
+  if (!container || !pagesEl || layout.length === 0) {
+    return;
   }
-  const { topCm, rightCm, bottomCm, leftCm } = doc.value.defaultStyles.margins;
-  return {
-    top: `${topCm}cm`,
-    right: `${rightCm}cm`,
-    bottom: `${bottomCm}cm`,
-    left: `${leftCm}cm`,
-  };
+  const pagesTop =
+    pagesEl.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop;
+  const viewTop = container.scrollTop - pagesTop - VIEWPORT_OVERSCAN_PX - container.clientHeight;
+  const viewBottom =
+    container.scrollTop - pagesTop + 2 * container.clientHeight + VIEWPORT_OVERSCAN_PX;
+  let top = 0;
+  let start = layout.length - 1;
+  let end = 0;
+  for (let index = 0; index < layout.length; index += 1) {
+    const bottom = top + layout[index].pageSize.heightCm * PX_PER_CM;
+    if (bottom >= viewTop && top <= viewBottom) {
+      if (index < start) {
+        start = index;
+      }
+      if (index > end) {
+        end = index;
+      }
+    }
+    top = bottom + PAGE_GAP_PX;
+  }
+  if (start > end) {
+    start = 0;
+    end = Math.min(2, layout.length - 1);
+  }
+  const current = viewportPageRange.value;
+  if (current.start !== start || current.end !== end) {
+    viewportPageRange.value = { start, end };
+  }
+}
+
+let viewportRefreshHandle = 0;
+function scheduleViewportRefresh() {
+  if (viewportRefreshHandle !== 0 || typeof window.requestAnimationFrame !== "function") {
+    return;
+  }
+  viewportRefreshHandle = window.requestAnimationFrame(() => {
+    viewportRefreshHandle = 0;
+    refreshViewportRange();
+  });
+}
+watch(paginationPages, scheduleViewportRefresh);
+
+// Newly realized pages render blocks that may only have estimated metrics
+// (tables, images — canvas metrics cover paragraphs only): re-schedule so
+// the controller measures them off their fresh DOM.
+watch([viewportPageRange, caretPage], () => {
+  if (!virtualizing.value) {
+    return;
+  }
+  void nextTick().then(() => pagination.schedule());
 });
+
+function refreshCaretPage() {
+  if (caret) {
+    caretPage.value = pagination.pageOfCaret(caret) + 1;
+  } else if (caretPage.value > pageCount.value) {
+    caretPage.value = pageCount.value;
+  }
+}
+watch(paginationPages, refreshCaretPage);
+
+/** The "Show formatting marks" toggle (AC-12): a view preference like the
+ * ruler's, persisted with the document — and a re-measure trigger, because
+ * the pilcrow pseudo-element can change where full lines wrap. */
+function toggleFormattingMarks() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  model.showFormattingMarks = model.showFormattingMarks !== true;
+  triggerRef(doc);
+  touchDocument(model.id);
+  pagination.invalidateAll();
+}
+
+// The ruler and the Page setup dialog follow the caret's section (AC-17..21)
+// so a per-section page setup is edited where the caret sits.
+const rulerSectionIndex = computed(() => {
+  const model = doc.value;
+  return model ? Math.min(caretSectionIndex.value, model.sections.length - 1) : 0;
+});
+const rulerPageWidthCm = computed(() =>
+  doc.value ? sectionPageSize(doc.value, rulerSectionIndex.value).widthCm : 21,
+);
+const rulerMarginLeftCm = computed(() =>
+  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).leftCm : 2.54,
+);
+const rulerMarginRightCm = computed(() =>
+  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).rightCm : 2.54,
+);
+
+const SECTION_MARKER_LABELS = {
+  continuous: "Section Break (Continuous)",
+  nextPage: "Section Break (Next Page)",
+};
+const BREAK_LABELS = { page: "Page Break", column: "Column Break" };
+
+// Typed-null seeds for renderEntryFor's espree-style defaults (never hit:
+// pagedViews always passes real values).
+function noDocument() {
+  return createDocument("unused");
+}
+function noFlatEntry() {
+  return flatBlocks.value[0];
+}
+
+/** One page item's precomputed render entry for DocPage — or null for the
+ * continuation slice of a block whose real metrics have not arrived yet
+ * (it renders whole at its first slice until measured). */
+function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = wholePageItem(0, 0), marks = false) {
+  const block = flatEntry.block;
+  if (isBreak(block)) {
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, marks],
+      kind: "break",
+      tag: "div",
+      className: "doc-break",
+      uneditable: true,
+      dataSection: flatEntry.section,
+      dataBlock: flatEntry.blockIndex,
+      breakKind: block.kind,
+      markerLabel: BREAK_LABELS[block.kind] ?? "Break",
+    };
+  }
+  if (flatEntry.isTable || flatEntry.isImage) {
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel],
+      kind: flatEntry.isTable ? "table" : "image",
+      blockProp: block,
+      sectionProp: flatEntry.section,
+      blockIndexProp: flatEntry.blockIndex,
+      imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
+      imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
+    };
+  }
+  const paragraph = flatEntry.paragraph;
+  let sliceStart;
+  let sliceEnd;
+  if (item.startLine !== undefined) {
+    const widthPx = sectionGeometryPx(model, item.sectionIndex).contentWidthPx;
+    const offsets = pagination.isMeasured(block, widthPx) ? pagination.lineOffsetsFor(block) : null;
+    if (!offsets) {
+      if (item.startLine > 0) {
+        return null;
+      }
+    } else {
+      sliceStart = offsets[item.startLine] ?? 0;
+      sliceEnd =
+        item.endLine !== undefined && item.endLine < offsets.length
+          ? offsets[item.endLine]
+          : undefined;
+      if (sliceStart === 0 && sliceEnd === undefined) {
+        sliceStart = undefined;
+      }
+    }
+  }
+  let runs = paragraph.runs;
+  if (sliceStart !== undefined || sliceEnd !== undefined) {
+    const from = sliceStart ?? 0;
+    const tail = splitRuns(paragraph.runs, from)[1];
+    runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
+  }
+  const styleObj = { ...paragraphStyle(paragraph) };
+  const continuation = sliceStart !== undefined && sliceStart > 0;
+  if (continuation) {
+    // A continuation slice starts mid-paragraph: no space-before, no
+    // first-line indent, no repeated list marker.
+    styleObj.marginTop = "0";
+    styleObj.textIndent = "0";
+  }
+  if (sliceEnd !== undefined) {
+    styleObj.marginBottom = "0";
+  }
+  const sliceSig = `${sliceStart ?? ""}:${sliceEnd ?? ""}`;
+  const renderRuns = runs.map((run, runIndex) => {
+    const href = runLinkHref(run.formatting);
+    const external = href ? isExternalLink(run.formatting) : false;
+    // Segments only when the run actually holds a space/tab to mark — the
+    // plain variant keeps the span's single-text-node DOM shape.
+    const segments = marks ? markSegments(run.text) : null;
+    const marked = segments && segments.some((segment) => segment.kind !== "text");
+    return {
+      key: runKey(run, runIndex),
+      href: href || "",
+      target: external ? "_blank" : undefined,
+      rel: external ? "noopener noreferrer" : undefined,
+      styleObj: runStyle(run.formatting),
+      text: run.text,
+      segments: marked ? segments : null,
+    };
+  });
+  return {
+    key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
+    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks],
+    kind: "paragraph",
+    tag: headingTag(paragraph.headingLevel),
+    className: "doc-paragraph",
+    styleObj,
+    dataSection: flatEntry.section,
+    dataBlock: flatEntry.blockIndex,
+    sliceStart: continuation ? String(sliceStart) : undefined,
+    sliceMore: sliceEnd !== undefined ? "1" : undefined,
+    listMarker: continuation ? undefined : flatEntry.marker || undefined,
+    listLevel: paragraph.list ? paragraph.list.level : undefined,
+    runs: renderRuns,
+    needsBr: runs.length === 0,
+  };
+}
+
+// The rendered pages: the layout's items joined with flatBlocks' per-block
+// render data, styles resolved from each page's own geometry (AC-17..19).
+// Under virtualization only realized pages build entries; the rest render
+// as empty boxes with the layout's exact geometry.
+const pagedViews = computed(() => {
+  const model = doc.value;
+  if (!model) {
+    return [];
+  }
+  const marks = marksOn.value;
+  const byAddress = new Map();
+  for (const entry of flatBlocks.value) {
+    byAddress.set(`${entry.section}:${entry.blockIndex}`, entry);
+  }
+  const lastSection = model.sections.length - 1;
+  const virtual = virtualizing.value;
+  const range = viewportPageRange.value;
+  const caretIndex = caretPage.value - 1;
+  const anchorIndex = anchorPage.value;
+  const findIndex = findMatchPage.value;
+  return paginationPages.value.map((page, pageIndex) => {
+    const realized =
+      !virtual ||
+      (pageIndex >= range.start && pageIndex <= range.end) ||
+      pageIndex === caretIndex ||
+      pageIndex === anchorIndex ||
+      pageIndex === findIndex ||
+      realizedSticky.has(page);
+    if (!realized) {
+      return {
+        pageStyle: {
+          width: `${page.pageSize.widthCm}cm`,
+          height: `${page.pageSize.heightCm}cm`,
+        },
+        contentStyle: {
+          padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
+        },
+        entries: [],
+        virtual: true,
+      };
+    }
+    realizedSticky.add(page);
+    const entries = [];
+    for (const item of page.items) {
+      const flatEntry = byAddress.get(`${item.sectionIndex}:${item.blockIndex}`);
+      if (!flatEntry) {
+        continue;
+      }
+      const entry = renderEntryFor(model, flatEntry, item, marks);
+      if (!entry) {
+        continue;
+      }
+      entries.push(entry);
+      const sectionBlocks = model.sections[item.sectionIndex].blocks;
+      if (
+        marks &&
+        item.sectionIndex < lastSection &&
+        item.blockIndex === sectionBlocks.length - 1 &&
+        entry.sliceMore === undefined
+      ) {
+        const kind =
+          model.sections[item.sectionIndex + 1].start === "continuous" ? "continuous" : "nextPage";
+        entries.push({
+          key: `${flatEntry.key}:marker`,
+          memo: [kind, marks, flatEntry.key],
+          kind: "marker",
+          tag: "div",
+          className: "doc-section-marker",
+          uneditable: true,
+          sectionMarker: kind,
+          markerLabel: SECTION_MARKER_LABELS[kind],
+        });
+      }
+    }
+    return {
+      pageStyle: {
+        width: `${page.pageSize.widthCm}cm`,
+        height: `${page.pageSize.heightCm}cm`,
+      },
+      contentStyle: {
+        padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
+      },
+      entries,
+      virtual: false,
+    };
+  });
+});
+
+/** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
+function handleInsertBreak(kind = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(insertBreak(model, selection, asBreakKind(kind)), selection, "insert break");
+  root.focus();
+}
+
+function handleInsertSectionBreak(start = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(
+    insertSectionBreak(model, selection, asSectionStart(start)),
+    selection,
+    "insert section break",
+  );
+  root.focus();
+}
+
+/** The paragraph pagination menu's toggles (AC-22..28): each key flips
+ * against the first touched paragraph's current state, applied to every
+ * touched paragraph. */
+function handleTogglePagination(key = "") {
+  applyParagraphCommand((model, selection) => {
+    const state = paragraphPaginationState(model, selection);
+    if (key === "keepNext") {
+      return applyParagraphFormat(model, selection, { keepNext: !state.keepNext });
+    }
+    if (key === "keepLines") {
+      return applyParagraphFormat(model, selection, { keepLines: !state.keepLines });
+    }
+    if (key === "pageBreakBefore") {
+      return applyParagraphFormat(model, selection, { pageBreakBefore: !state.pageBreakBefore });
+    }
+    return applyParagraphFormat(model, selection, { widowControl: !state.widowControl });
+  }, "paragraph pagination");
+}
 
 const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
 
@@ -3812,7 +4318,7 @@ const pageRef = useTemplateRef("pageRef");
 // the DOM lib, so 0 is a safe "nothing scheduled" sentinel.
 let caretBeforeFind = noCaret();
 let findMatchesByBlock = new Map();
-let findRafId = 0;
+let findIdleHandle = noIdleHandle();
 let findDebounceTimer = 0;
 let findHintTimer = 0;
 
@@ -4116,13 +4622,20 @@ function scheduleFindRefresh() {
 }
 
 function scheduleFindMeasure() {
-  if (findRafId !== 0) {
+  if (findIdleHandle) {
     return;
   }
-  findRafId = window.requestAnimationFrame(() => {
-    findRafId = 0;
-    measureFindHighlights();
-  });
+  // Highlight measurement forces a full reflow — on a 200-page canvas
+  // (SPEC-028) that is the most expensive read in the find path, and the
+  // match COUNT never depends on it. Idle scheduling keeps it out of the
+  // keystroke-to-first-result window (SPEC-017 AC-30/31).
+  findIdleHandle = scheduleIdleWork(
+    () => {
+      findIdleHandle = null;
+      measureFindHighlights();
+    },
+    { timeoutMs: 150, fallbackBudgetMs: 8, maxBudgetMs: 16 },
+  );
 }
 
 function scheduleScrollCurrentIntoView() {
@@ -4130,9 +4643,9 @@ function scheduleScrollCurrentIntoView() {
 }
 
 function cancelFindScheduled() {
-  if (findRafId !== 0) {
-    window.cancelAnimationFrame(findRafId);
-    findRafId = 0;
+  if (findIdleHandle) {
+    findIdleHandle.cancel();
+    findIdleHandle = null;
   }
   window.clearTimeout(findDebounceTimer);
   window.clearTimeout(findHintTimer);
@@ -4147,19 +4660,36 @@ function findViewportBounds() {
 }
 
 /** The set of "section:block" keys for paragraphs currently on (or just off)
- * screen — the only ones whose matches are worth measuring. */
+ * screen — the only ones whose matches are worth measuring. Walks pages
+ * first (SPEC-028): off-screen pages are skipped whole, so a 200-page
+ * document reads a few hundred rects here, not one per paragraph. */
 function visibleFindBlockKeys(root = noElement(), bounds = { top: 0, bottom: 0 }) {
   const keys = new Set();
   if (!root) {
     return keys;
   }
   const margin = 200;
-  for (const element of root.querySelectorAll(BLOCK_SELECTOR)) {
-    const rect = element.getBoundingClientRect();
-    if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
-      continue;
+  const pageElements = root.querySelectorAll('[data-testid="document-page"]');
+  const scopes = [];
+  if (pageElements.length > 0) {
+    for (const pageElement of pageElements) {
+      const rect = pageElement.getBoundingClientRect();
+      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+        continue;
+      }
+      scopes.push(pageElement);
     }
-    keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
+  } else {
+    scopes.push(root);
+  }
+  for (const scope of scopes) {
+    for (const element of scope.querySelectorAll(BLOCK_SELECTOR)) {
+      const rect = element.getBoundingClientRect();
+      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+        continue;
+      }
+      keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
+    }
   }
   return keys;
 }
@@ -4348,6 +4878,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         :bulleted="listState.bulleted"
         :numbered="listState.numbered"
         :list-marker="listState.marker"
+        :pagination="paragraphPagination"
         @align="handleAlign"
         @indent="handleIndent"
         @spacing-preset="handleSpacingPreset"
@@ -4356,11 +4887,17 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         @toggle-direction="handleToggleDirection"
         @toggle-list="handleToggleList"
         @list-marker="handleListMarker"
+        @toggle-pagination="handleTogglePagination"
       />
       <TableInsertControl
         v-if="editable"
         @insert="handleInsertTable"
         @open-dialog="insertTableDialogOpen = true"
+      />
+      <InsertBreakMenu
+        v-if="editable"
+        @insert-break="handleInsertBreak"
+        @insert-section-break="handleInsertSectionBreak"
       />
       <ImageInsertControl
         v-if="editable"
@@ -4556,18 +5093,18 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       </div>
       <DocumentRuler
         v-if="doc.showRuler !== false"
-        :page-width-cm="doc.defaultStyles.pageSize.widthCm"
-        :margin-left-cm="doc.defaultStyles.margins.leftCm"
-        :margin-right-cm="doc.defaultStyles.margins.rightCm"
+        :page-width-cm="rulerPageWidthCm"
+        :margin-left-cm="rulerMarginLeftCm"
+        :margin-right-cm="rulerMarginRightCm"
         :formatting="paragraphFormatting"
         :disabled="!editable"
         @update="handleRulerUpdate"
       />
       <div
         ref="pageRef"
-        class="page"
-        data-testid="document-page"
-        :style="pageStyle"
+        class="pages"
+        data-testid="document-pages"
+        :data-pagination-state="paginationState"
         @mousedown="handlePageMouseDown"
         @mouseover="handlePageMouseOver"
       >
@@ -4711,78 +5248,42 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
           />
         </div>
         <div
-          class="page-margin"
-          data-testid="page-margin"
-          :style="marginStyle"
+          ref="contentRoot"
+          class="document-content"
+          :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksOn }"
+          data-testid="document-content"
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Document content"
+          :aria-readonly="editable ? undefined : 'true'"
+          :contenteditable="editable"
+          spellcheck="false"
+          @beforeinput="handleBeforeInput"
+          @keydown="handleKeyDown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
+          @copy="handleCopy"
+          @cut="handleCut"
+          @paste="handlePaste"
+          @contextmenu="handleContextMenu"
+          @mousedown="handleCanvasMouseDown"
+          @mousemove="handleCanvasMouseMove"
+          @mouseup="handleCanvasMouseUp"
+          @click="handleContentClick"
+          @dragenter="handleCanvasDragEnter"
+          @dragover="handleCanvasDragOver"
+          @drop="handleCanvasDrop"
         >
-          <div
-            ref="contentRoot"
-            class="document-content"
-            :class="{ 'painter-armed': painterMode !== '' }"
-            data-testid="document-content"
-            role="textbox"
-            aria-multiline="true"
-            aria-label="Document content"
-            :aria-readonly="editable ? undefined : 'true'"
-            :contenteditable="editable"
-            spellcheck="false"
-            @beforeinput="handleBeforeInput"
-            @keydown="handleKeyDown"
-            @compositionstart="handleCompositionStart"
-            @compositionend="handleCompositionEnd"
-            @copy="handleCopy"
-            @cut="handleCut"
-            @paste="handlePaste"
-            @contextmenu="handleContextMenu"
-            @mousedown="handleCanvasMouseDown"
-            @mousemove="handleCanvasMouseMove"
-            @mouseup="handleCanvasMouseUp"
-            @click="handleContentClick"
-            @dragenter="handleCanvasDragEnter"
-            @dragover="handleCanvasDragOver"
-            @drop="handleCanvasDrop"
-          >
-            <component
-              :is="entry.isTable ? DocTableBlock : entry.isImage ? DocImageBlock : headingTag(entry.paragraph.headingLevel)"
-              v-for="entry in flatBlocks"
-              :key="entry.key"
-              v-memo="[entry.block, entry.section, entry.blockIndex, entry.marker, entry.cellSel, entry.imgSel]"
-              :class="entry.isTable || entry.isImage ? undefined : 'doc-paragraph'"
-              :style="entry.isTable || entry.isImage ? undefined : paragraphStyle(entry.paragraph)"
-              :data-section="entry.isTable || entry.isImage ? undefined : entry.section"
-              :data-block="entry.isTable || entry.isImage ? undefined : entry.blockIndex"
-              :data-list-marker="entry.isTable || entry.isImage ? undefined : (entry.marker || undefined)"
-              :data-list-level="!entry.isTable && !entry.isImage && entry.paragraph.list ? entry.paragraph.list.level : undefined"
-              :block="entry.isTable || entry.isImage ? entry.block : undefined"
-              :section="entry.isTable || entry.isImage ? entry.section : undefined"
-              :block-index="entry.isTable || entry.isImage ? entry.blockIndex : undefined"
-              :cell-range="entry.isTable ? cellSelection : undefined"
-              :src="entry.isImage ? entry.imageSrc : undefined"
-              :selected="entry.isImage ? entry.imageSelected : undefined"
-              @select="entry.isImage ? handleImageSelect(entry.section, entry.blockIndex) : undefined"
-            >
-              <template v-if="!entry.isTable && !entry.isImage && entry.paragraph.runs.length > 0">
-                <template
-                  v-for="(run, runIndex) in entry.paragraph.runs"
-                  :key="runKey(run, runIndex)"
-                >
-                  <a
-                    v-if="runLinkHref(run.formatting)"
-                    data-doc-link=""
-                    :href="runLinkHref(run.formatting)"
-                    :target="isExternalLink(run.formatting) ? '_blank' : undefined"
-                    :rel="isExternalLink(run.formatting) ? 'noopener noreferrer' : undefined"
-                    :style="runStyle(run.formatting)"
-                  >{{ run.text }}</a>
-                  <span
-                    v-else
-                    :style="runStyle(run.formatting)"
-                  >{{ run.text }}</span>
-                </template>
-              </template>
-              <br v-else-if="!entry.isTable && !entry.isImage">
-            </component>
-          </div>
+          <DocPage
+            v-for="(pageView, pageIndex) in pagedViews"
+            :key="pageIndex"
+            :page-style="pageView.pageStyle"
+            :content-style="pageView.contentStyle"
+            :entries="pageView.entries"
+            :virtual="pageView.virtual"
+            :cell-range="cellSelection || undefined"
+            @image-select="handleImageSelect"
+          />
         </div>
       </div>
       <div
@@ -4794,6 +5295,13 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         {{ caretStatus }}
       </div>
     </div>
+    <template #status-bar>
+      <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
+      <span
+        v-if="paginationBusy"
+        data-testid="pagination-busy"
+      >Paginating…</span>
+    </template>
     <LinkChip
       v-if="linkChip.visible"
       :left="linkChip.left"
@@ -5024,25 +5532,15 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
   outline: 1px solid #f57c00;
 }
 
-/* A page-shaped surface sized to the document's own defaultStyles (in real
-   centimetres via CSS's absolute cm unit) — later specs render content onto
-   it. .page-margin marks where the page margins end and content begins. */
-.page {
+/* The paginated canvas (SPEC-028): one relative wrapper hosting every page
+   box plus the page-relative overlays (find highlights, table/image
+   handles), so overlay coordinates keep working across pages. The page
+   surfaces themselves live in DocPage.vue. */
+.pages {
   position: relative;
-  margin: 0 auto;
-  background: #fff;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
-  box-sizing: border-box;
-}
-
-.page-margin {
-  position: absolute;
-  border: 1px dashed #c8c8c8;
 }
 
 .document-content {
-  height: 100%;
-  overflow: hidden;
   color: #202124;
   outline: none;
 }
@@ -5052,26 +5550,6 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
    cursor usage (DocumentRuler's resize handles, etc.). */
 .document-content.painter-armed {
   cursor: copy;
-}
-
-.doc-paragraph {
-  margin: 0;
-  font-weight: normal;
-  font-size: inherit;
-}
-
-/* The list marker (SPEC-018): painted from the derived data-list-marker
-   attribute, never part of the editable text — caret offsets and the
-   model/DOM text equality check stay untouched. The inline-block with a
-   negative logical margin hangs it in the 0.635 cm box before the item's
-   text (which paragraphStyle indents per level); wrapped lines align at
-   the text edge. */
-.doc-paragraph[data-list-marker]::before {
-  content: attr(data-list-marker);
-  display: inline-block;
-  min-width: 0.635cm;
-  margin-inline-start: -0.635cm;
-  white-space: nowrap;
 }
 
 /* The table hover handles (SPEC-022 AC-20, AC-21): a page-relative overlay

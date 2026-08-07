@@ -147,6 +147,20 @@ export interface ParagraphFormatting {
    * SPEC-014 keep their meaning. Meaningless without `lineSpacingPt`. */
   lineSpacingRule?: "exact";
   direction?: ParagraphDirection;
+  /** Keep this paragraph on the same page as the start of the next block
+   * (SPEC-028 AC-22/23, `w:keepNext` / `fo:keep-with-next`). */
+  keepNext?: boolean;
+  /** Never split this paragraph's lines across a page boundary (SPEC-028
+   * AC-24/25, `w:keepLines` / `style:keep-together`). */
+  keepLines?: boolean;
+  /** Start a new page before this paragraph (SPEC-028 AC-26/27,
+   * `w:pageBreakBefore` / `fo:break-before` on the paragraph style). This is
+   * paragraph formatting, distinct from a manual break (BreakBlock). */
+  pageBreakBefore?: boolean;
+  /** Widow/orphan control (SPEC-028 AC-28/29). Absent means ON — both file
+   * formats default it on, so only the explicit-off (`false`) and an
+   * explicit re-enable after an off (`true`) are ever stored. */
+  widowControl?: boolean;
 }
 
 // --- lists (SPEC-018) -------------------------------------------------------
@@ -524,11 +538,56 @@ export interface OpaqueBlock {
   blockIndex: number;
 }
 
-/** Block-level children of a section: paragraphs, tables (SPEC-022) and
- * images (SPEC-024). */
-export type Block = Paragraph | Table | Image;
+// --- breaks and sections (SPEC-028) -----------------------------------------
 
-/** A section groups block-level content; documents have one or more. */
+/** The manual break kinds Insert → Break offers (SPEC-028 AC-9/10). Column
+ * breaks are stored and round-tripped but have no layout effect — they sit
+ * inertly in the flow (marker visible when formatting marks are on) until
+ * columns exist (SPEC-030). */
+export type BreakKind = "page" | "column";
+
+/** A manual break (SPEC-028): a block-level atom (blockLength 1, like Image)
+ * sitting between the content before and after it. Pagination ends the
+ * current page at a `"page"` break. Round-trips as a `w:br w:type="page"`
+ * run (.docx) / `fo:break-before` on the following paragraph (.odt); a
+ * source break in the middle of a paragraph splits the paragraph on open,
+ * mirroring how inline images become blocks (see Image). */
+export interface BreakBlock {
+  type: "break";
+  kind: BreakKind;
+}
+
+/** Whether a block is a manual break — the isTable-style narrowing helper
+ * (also usable from espree-parsed `.vue` scripts). */
+export function isBreak(block: Block | undefined): block is BreakBlock {
+  return block?.type === "break";
+}
+
+/** How a section begins relative to the previous one (SPEC-028 AC-8/9):
+ * `"nextPage"` starts on a fresh page, `"continuous"` continues on the same
+ * page. Mirrors OOXML's `w:type` inside the section's own `w:sectPr`.
+ * Meaningless on a document's first section. */
+export type SectionStart = "nextPage" | "continuous";
+
+/** Typed pass-through for a section start coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asSectionStart(value: string): SectionStart {
+  return value as SectionStart;
+}
+
+/** Typed pass-through for a break kind coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asBreakKind(value: string): BreakKind {
+  return value as BreakKind;
+}
+
+/** Block-level children of a section: paragraphs, tables (SPEC-022),
+ * images (SPEC-024) and manual breaks (SPEC-028). */
+export type Block = Paragraph | Table | Image | BreakBlock;
+
+/** A section groups block-level content; documents have one or more. A
+ * section boundary IS the section break (SPEC-028): inserting a section
+ * break splits a section in two, deleting one merges neighbours back. */
 export interface Section {
   blocks: Block[];
   /** Unmodelled block-level XML preserved through a same-format save
@@ -536,6 +595,21 @@ export interface Section {
    * stays renderable/editable without narrowing; order follows
    * `blockIndex`. */
   opaqueBlocks?: OpaqueBlock[];
+  /** How this section begins (SPEC-028); absent means `"nextPage"`. */
+  start?: SectionStart;
+  /** This section's own page size; absent falls back to
+   * `defaultStyles.pageSize` (SPEC-028 AC-17/18). */
+  pageSize?: PageSize;
+  /** This section's own margins; absent falls back to
+   * `defaultStyles.margins` (SPEC-028 AC-19). */
+  margins?: Margins;
+  /** Verbatim `w:sectPr` of a non-final .docx section (SPEC-028) — the one
+   * inside its last paragraph's `w:pPr` — re-emitted on a same-format save
+   * so unmodelled section properties survive (the SPEC-008 fidelity rule;
+   * the final section's sectPr lives in `SourceXml.docxSectPr`). Cleared by
+   * any command that edits this section's modelled page setup, so the
+   * writer regenerates it instead of reproducing stale XML. */
+  docxSectPr?: string;
 }
 
 /** Page dimensions in centimetres. */
@@ -635,6 +709,11 @@ export interface DocumentModel {
    * shown — the ruler predates this toggle (SPEC-014) and was always
    * visible, so an unset field must keep reading as visible. */
   showRuler?: boolean;
+  /** Whether formatting marks (¶, spaces, tabs, break markers) are shown
+   * (SPEC-028 AC-12..16); absent means hidden, the product default. A
+   * document-level app preference persisted like `showRuler` — neither
+   * reader/writer maps it to anything in a `.docx`/`.odt`. */
+  showFormattingMarks?: boolean;
 }
 
 export const DEFAULT_TITLE = "Untitled document";
@@ -663,6 +742,18 @@ export function createDefaultStyles(): DefaultStyles {
     fontFamily: DEFAULT_FONT_FAMILY,
     fontSizePt: DEFAULT_FONT_SIZE_PT,
   };
+}
+
+/** A section's effective page size: its own, else the document default
+ * (SPEC-028 AC-17/18). */
+export function sectionPageSize(model: DocumentModel, sectionIndex: number): PageSize {
+  return model.sections[sectionIndex]?.pageSize ?? model.defaultStyles.pageSize;
+}
+
+/** A section's effective margins: its own, else the document default
+ * (SPEC-028 AC-19). */
+export function sectionMargins(model: DocumentModel, sectionIndex: number): Margins {
+  return model.sections[sectionIndex]?.margins ?? model.defaultStyles.margins;
 }
 
 function createEmptyParagraph(): Paragraph {

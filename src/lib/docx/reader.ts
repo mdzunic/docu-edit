@@ -8,6 +8,7 @@ import type {
   BookmarkAnchor,
   BorderLineStyle,
   BorderSide,
+  BreakKind,
   CellBorders,
   CellVerticalAlign,
   DefaultStyles,
@@ -20,6 +21,7 @@ import type {
   Run,
   RunFormatting,
   Section,
+  SectionStart,
   SourceXml,
   Table,
   TableAlignment,
@@ -141,25 +143,57 @@ function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
+/** The literal text a modelled run child contributes to the run's `text` —
+ * "\t" for w:tab, "\n" for w:br/w:cr, the hyphen characters for their
+ * elements — or "" for the non-text children (w:rPr,
+ * w:lastRenderedPageBreak). Shared by parseRun and the typed-break run
+ * split in parseBodyParagraphBlocks (SPEC-028). */
+function runChildText(child: Element): string {
+  switch (child.localName) {
+    case "t":
+      return child.textContent ?? "";
+    case "tab":
+      return "\t";
+    case "br":
+    case "cr":
+      return "\n";
+    case "noBreakHyphen":
+      return "‑";
+    case "softHyphen":
+      return "­";
+    default:
+      return "";
+  }
+}
+
+/** The block-level kind of a `w:br` (SPEC-028 AC-30): a page or column break
+ * splits the enclosing paragraph into blocks; every other w:br (no w:type,
+ * or "textWrapping") stays an inline "\n". Null for non-br elements. */
+function typedBreakKind(el: Element): BreakKind | null {
+  if (el.namespaceURI !== WORD_NAMESPACE || el.localName !== "br") {
+    return null;
+  }
+  const type = wordAttr(el, "type");
+  return type === "page" || type === "column" ? type : null;
+}
+
+function runHasTypedBreak(rEl: Element): boolean {
+  return Array.from(rEl.children).some((child) => typedBreakKind(child) !== null);
+}
+
+/** Note: any `w:br` folds to "\n" here — parseRun serves the contexts where
+ * a block-level break cannot exist (table cells, hyperlink children), so a
+ * typed break degrades to a line break there. Body-level paragraphs go
+ * through parseBodyParagraphBlocks, which splits around typed breaks
+ * instead (SPEC-028 AC-30). */
 function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undefined {
   const rPr = firstChildElement(rEl, WORD_NAMESPACE, "rPr");
   const formatting = mergeRunFormatting(inheritedFormatting, parseRunProperties(rPr));
 
   let text = "";
   for (const child of Array.from(rEl.children)) {
-    if (child.namespaceURI !== WORD_NAMESPACE) {
-      continue;
-    }
-    if (child.localName === "t") {
-      text += child.textContent ?? "";
-    } else if (child.localName === "tab") {
-      text += "\t";
-    } else if (child.localName === "br" || child.localName === "cr") {
-      text += "\n";
-    } else if (child.localName === "noBreakHyphen") {
-      text += "‑";
-    } else if (child.localName === "softHyphen") {
-      text += "­";
+    if (child.namespaceURI === WORD_NAMESPACE) {
+      text += runChildText(child);
     }
   }
 
@@ -294,6 +328,22 @@ function parseParagraphMeta(
   if (formatting.direction === "ltr") {
     delete formatting.direction;
   }
+  // Same normalisation for the SPEC-028 pagination toggles: the parse keeps
+  // the non-canonical values only so direct formatting can override a style
+  // chain; the model stores keeps/pageBreakBefore only when on and
+  // widowControl only when explicitly off (absent means on).
+  if (formatting.keepNext === false) {
+    delete formatting.keepNext;
+  }
+  if (formatting.keepLines === false) {
+    delete formatting.keepLines;
+  }
+  if (formatting.pageBreakBefore === false) {
+    delete formatting.pageBreakBefore;
+  }
+  if (formatting.widowControl === true) {
+    delete formatting.widowControl;
+  }
   const headingLevel = parseOutlineLevel(pPr) ?? resolved.headingLevel;
 
   // w:numPr resolves against the numbering catalog (SPEC-018 AC-20): the
@@ -378,10 +428,12 @@ function imageRunDrawing(rEl: Element, ctx: DrawingContext): ParsedDrawing | nul
   return parseDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
 }
 
-/** Parses one body-level `<w:p>` into one or more blocks (SPEC-024): a
- * paragraph containing a modelled inline/floating picture splits around
- * each image, since the document model addresses an image as its own
- * top-level block (see documentModel.ts's Image doc comment) — mirroring
+/** Parses one body-level `<w:p>` into one or more blocks (SPEC-024, breaks
+ * SPEC-028): a paragraph containing a modelled inline/floating picture
+ * splits around each image — and one containing a typed `w:br` (page/column)
+ * splits around the break the same way (AC-30) — since the document model
+ * addresses both as their own top-level blocks (see documentModel.ts's
+ * Image and BreakBlock doc comments) — mirroring
  * how a body-level `w:tbl` already breaks the block sequence, just with the
  * split happening here instead of being structural in the source XML. Every
  * resulting paragraph piece keeps the source paragraph's own formatting/
@@ -410,7 +462,14 @@ function parseBodyParagraphBlocks(
     (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "r",
   );
   const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
-  if (!hasImageRun) {
+  // A typed w:br in an otherwise-modelled run splits the paragraph the same
+  // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
+  // of that run's verbatim XML — splitting an unmodelled run could not
+  // round-trip.
+  const hasBreakRun = runElements.some(
+    (r) => !runHasUnmodelledContent(r) && runHasTypedBreak(r),
+  );
+  if (!hasImageRun && !hasBreakRun) {
     return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog, links)], media: [] };
   }
 
@@ -443,6 +502,40 @@ function parseBodyParagraphBlocks(
       }
       if (runHasUnmodelledContent(child)) {
         opaqueInlines.push({ xml: serializeElement(child), runIndex: runs.length });
+        continue;
+      }
+      if (runHasTypedBreak(child)) {
+        // Split the run around each typed break (SPEC-028 AC-30): the text
+        // before it ends the current paragraph piece, the break becomes a
+        // BreakBlock, the text after starts the next piece. A paragraph
+        // whose only content is the break yields just the BreakBlock — the
+        // writer's own break shape reads back as a fixed point.
+        const rPrEl = firstChildElement(child, WORD_NAMESPACE, "rPr");
+        const breakRunFormatting = mergeRunFormatting(
+          meta.resolved.runFormatting,
+          parseRunProperties(rPrEl),
+        );
+        let text = "";
+        const pushText = () => {
+          if (text.length > 0) {
+            runs.push({ text, formatting: breakRunFormatting });
+            text = "";
+          }
+        };
+        for (const runChild of Array.from(child.children)) {
+          if (runChild.namespaceURI !== WORD_NAMESPACE) {
+            continue;
+          }
+          const kind = typedBreakKind(runChild);
+          if (kind !== null) {
+            pushText();
+            flush();
+            blocks.push({ type: "break", kind });
+          } else {
+            text += runChildText(runChild);
+          }
+        }
+        pushText();
         continue;
       }
       const run = parseRun(child, meta.resolved.runFormatting);
@@ -860,6 +953,14 @@ function parseTable(
   return table;
 }
 
+/** A sectPr's `w:type` as the model's SectionStart (SPEC-028 AC-31): only
+ * "continuous" is stored — an absent `start` already means "nextPage", and
+ * the odd/even-page variants collapse to it (unmodelled distinctions). */
+function parseSectionStart(sectPr: Element | undefined): SectionStart | undefined {
+  const typeEl = sectPr ? firstChildElement(sectPr, WORD_NAMESPACE, "type") : undefined;
+  return typeEl && wordAttr(typeEl, "val") === "continuous" ? "continuous" : undefined;
+}
+
 function applySectionProperties(sectPr: Element | undefined, base: DefaultStyles): DefaultStyles {
   if (!sectPr) {
     return base;
@@ -1003,8 +1104,19 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     },
   };
 
-  const blocks: Block[] = [];
-  const opaqueBlocks: OpaqueBlock[] = [];
+  // Sections (SPEC-028 AC-31): a w:sectPr inside a paragraph's w:pPr ends a
+  // section — that paragraph is the section's last block and the sectPr
+  // describes the section just closed; subsequent body children accumulate
+  // into the next one. Opaque-block anchors are per section, so each
+  // accumulator carries its own list. The body-level sectPr (last body
+  // child) describes the final section, exactly as before SPEC-028.
+  interface RawSection {
+    blocks: Block[];
+    opaqueBlocks: OpaqueBlock[];
+    sectPrEl?: Element;
+  }
+  const rawSections: RawSection[] = [{ blocks: [], opaqueBlocks: [] }];
+  let current = rawSections[0];
   const mediaById = new Map<string, MediaPart>();
   let sectPr: Element | undefined;
   for (const child of Array.from(body.children)) {
@@ -1016,9 +1128,16 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
         drawingCtx,
         linkContext,
       );
-      blocks.push(...parsedBlocks);
+      current.blocks.push(...parsedBlocks);
       for (const part of media) {
         mediaById.set(part.mediaId, part);
+      }
+      const pPr = firstChildElement(child, WORD_NAMESPACE, "pPr");
+      const paragraphSectPr = pPr ? firstChildElement(pPr, WORD_NAMESPACE, "sectPr") : undefined;
+      if (paragraphSectPr) {
+        current.sectPrEl = paragraphSectPr;
+        current = { blocks: [], opaqueBlocks: [] };
+        rawSections.push(current);
       }
     } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "tbl") {
       // Regular-grid tables are modelled (SPEC-022); a table the model
@@ -1026,9 +1145,9 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       // the opaque path below.
       const table = parseTable(child, styleCatalog, numberingCatalog, linkContext);
       if (table) {
-        blocks.push(table);
+        current.blocks.push(table);
       } else {
-        opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
+        current.opaqueBlocks.push({ xml: serializeElement(child), blockIndex: current.blocks.length });
       }
     } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "sectPr") {
       sectPr = child;
@@ -1036,7 +1155,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       // Block-level content controls, bookmarks, anything from another
       // namespace: unmodelled body children are preserved verbatim,
       // anchored to their position among the paragraphs (SPEC-008).
-      opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
+      current.opaqueBlocks.push({ xml: serializeElement(child), blockIndex: current.blocks.length });
     }
   }
 
@@ -1047,9 +1166,41 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     fontSizePt: styleCatalog.docDefaultRunFormatting.fontSizePt ?? fallbackStyles.fontSizePt,
   });
 
-  const section: Section = { blocks };
-  if (opaqueBlocks.length > 0) {
-    section.opaqueBlocks = opaqueBlocks;
+  const sections: Section[] = rawSections.map((raw) => {
+    const section: Section = { blocks: raw.blocks };
+    if (raw.opaqueBlocks.length > 0) {
+      section.opaqueBlocks = raw.opaqueBlocks;
+    }
+    return section;
+  });
+  // A single-section document keeps its geometry on defaultStyles alone —
+  // the pre-SPEC-028 model shape, unchanged. A multi-section one puts
+  // explicit geometry on every non-final section (its own sectPr's values,
+  // falling back to the body-adjusted defaults for anything it omits, the
+  // same rule applySectionProperties applies to its base), leaving the
+  // final section on defaultStyles as before.
+  if (sections.length > 1) {
+    rawSections.forEach((raw, index) => {
+      const section = sections[index];
+      if (raw.sectPrEl) {
+        const resolved = applySectionProperties(raw.sectPrEl, defaultStyles);
+        section.pageSize = { ...resolved.pageSize };
+        section.margins = { ...resolved.margins };
+        const start = parseSectionStart(raw.sectPrEl);
+        if (start !== undefined) {
+          section.start = start;
+        }
+        // Preserved verbatim so unmodelled section properties survive a
+        // same-format save (SPEC-008) — the per-section counterpart of
+        // sourceXml.docxSectPr below.
+        section.docxSectPr = serializeElement(raw.sectPrEl);
+      } else {
+        const start = parseSectionStart(sectPr);
+        if (start !== undefined) {
+          section.start = start;
+        }
+      }
+    });
   }
 
   // Everything the pipeline above did not consume-and-rebuild is retained
@@ -1072,7 +1223,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   }
 
   return {
-    sections: [section],
+    sections,
     defaultStyles,
     styles: catalogToNamedStyles(styleCatalog),
     opaque,

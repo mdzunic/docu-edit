@@ -5,6 +5,7 @@
 // cloneContainers copy, so commands.undo.spec.ts's completeness guard stays
 // scoped to commands.ts (see that file's comment on the same split).
 import {
+  isBreak,
   isImage,
   isTable,
   type DocumentModel,
@@ -453,7 +454,7 @@ function forEachParagraph(
             });
           });
         });
-      } else if (!isImage(block)) {
+      } else if (!isImage(block) && !isBreak(block)) {
         visit(block, { section: sectionIndex, block: blockIndex });
       }
     });

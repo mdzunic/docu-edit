@@ -60,6 +60,8 @@ describe("PageSetupDialog (SPEC-027 AC-1..9)", () => {
       pageSize: { widthCm: 29.7, heightCm: 21 },
       margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
       measurementUnit: "cm",
+      // SPEC-028 AC-20/21: the dialog reports what the edit targets.
+      applyTo: "wholeDocument",
     });
   });
 

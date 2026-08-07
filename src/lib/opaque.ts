@@ -6,7 +6,7 @@
 // an item is and that it cannot be represented in the target format, so the
 // conversion report dialog and the tests both read the writer's `dropped`
 // array rather than diffing models.
-import { isImage, type DocumentFormat, type DocumentModel } from "./documentModel";
+import { isBreak, isImage, type DocumentFormat, type DocumentModel } from "./documentModel";
 import { parseXml, XmlParseError } from "./docx/xml";
 
 // --- base64 ----------------------------------------------------------------
@@ -248,6 +248,10 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
           if (target === "docx" && media?.contentType === "image/svg+xml") {
             dropped.push(record("svgImage", `paragraph ${paragraphNumber}`, target));
           }
+          continue;
+        }
+        if (isBreak(blockAt)) {
+          // A break block carries no content and no unmodelled XML.
           continue;
         }
         // A table's cell paragraphs are inspected too (SPEC-022); their

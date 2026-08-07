@@ -53,11 +53,13 @@ import {
 } from "./xml";
 import {
   catalogToNamedStyles,
+  paragraphAutoStyleSignals,
   parseOdfStyleCatalog,
   resolveListLevel,
   resolveParagraphStyle,
   resolveTextStyle,
   type OdfListLevelDef,
+  type OdfMasterPageLayout,
   type OdfStyleCatalog,
 } from "./styles";
 
@@ -1026,16 +1028,87 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
 
   const drawingCtx: OdfDrawingContext = { parts, graphicWrapStyles: collectGraphicWrapStyles(contentDoc, stylesDoc) };
   const mediaById = new Map<string, MediaPart>();
-  const blocks: Block[] = [];
-  const opaqueBlocks: OpaqueBlock[] = [];
+  const sections: Section[] = [];
+  let blocks: Block[] = [];
+  let opaqueBlocks: OpaqueBlock[] = [];
+  // The geometry of the master page the CURRENT section's first paragraph
+  // switched to (SPEC-028 AC-33); undefined for the first section, whose
+  // master is the document default folded into defaultStyles below.
+  let sectionGeometry: OdfMasterPageLayout | undefined;
+  // The master page named by the document's very FIRST body paragraph. The
+  // reader never opens an empty leading section for such a reference (see
+  // the guard below) — but that master, not the first-listed one, is the one
+  // the body actually starts on, so it must supply the document defaults and
+  // the first section's geometry (SPEC-028 AC-17/18/19/33). Undefined when
+  // the first paragraph names no master: the first-listed master stays the
+  // default, exactly as before.
+  let leadingMasterName: string | undefined;
+  const finishSection = () => {
+    const section: Section = { blocks };
+    if (opaqueBlocks.length > 0) {
+      section.opaqueBlocks = opaqueBlocks;
+    }
+    // Explicit geometry on every later section — the master page pins it,
+    // so it must not float with a later defaultStyles edit. `start` stays
+    // absent: ODF's master-page switch is always a page break (nextPage).
+    if (sectionGeometry?.pageSize) {
+      section.pageSize = { ...sectionGeometry.pageSize };
+    }
+    if (sectionGeometry?.margins) {
+      section.margins = { ...sectionGeometry.margins };
+    }
+    sections.push(section);
+  };
   for (const child of Array.from(textRoot.children)) {
     if (child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h")) {
+      const signals = paragraphAutoStyleSignals(catalog, textAttr(child, "style-name") ?? undefined);
+      // A style:master-page-name on the paragraph's automatic style starts
+      // a new section here (SPEC-028 AC-33) — except on the document's very
+      // first block, where opening an empty leading section would be wrong.
+      // But "first master page" is then the one this paragraph actually
+      // names — NOT whichever is listed first in master-styles (a foreign
+      // doc can list Standard first and have the body start on A5Master) —
+      // so record it and let it provide the document defaults below.
+      if (signals.masterPageName !== undefined) {
+        if (sections.length === 0 && blocks.length === 0) {
+          leadingMasterName = signals.masterPageName;
+        } else {
+          finishSection();
+          blocks = [];
+          opaqueBlocks = [];
+          sectionGeometry = catalog.masterPageLayouts.get(signals.masterPageName);
+        }
+      }
+      // fo:break-before="page" on the AUTOMATIC style materialises a manual
+      // BreakBlock before the paragraph, and the flag is dropped from the
+      // paragraph's own formatting (SPEC-028 AC-26/32). ODF has one channel
+      // for both the manual break and the pageBreakBefore formatting flag,
+      // so .odt import canonicalises the ambiguity to the break block —
+      // what the writer's fo:break-before actually stood for; only a NAMED
+      // style's break-before stays pure formatting (see
+      // paragraphAutoStyleSignals).
+      if (signals.pageBreakBefore) {
+        blocks.push({ type: "break", kind: "page" });
+      } else if (signals.columnBreakBefore) {
+        // fo:break-before="column" (one attribute — mutually exclusive with
+        // "page") likewise materialises a column BreakBlock (AC-10/11); no
+        // formatting flag to strip afterwards, since the model has no
+        // column counterpart of pageBreakBefore (SPEC-030).
+        blocks.push({ type: "break", kind: "column" });
+      }
       const { blocks: parsedBlocks, media } = parseBodyTextBlockOrSplit(
         child,
         catalog,
         child.localName === "h",
         drawingCtx,
       );
+      if (signals.pageBreakBefore) {
+        for (const parsed of parsedBlocks) {
+          if (parsed.type === "paragraph" && parsed.formatting) {
+            delete parsed.formatting.pageBreakBefore;
+          }
+        }
+      }
       blocks.push(...parsedBlocks);
       for (const part of media) {
         mediaById.set(part.mediaId, part);
@@ -1059,19 +1132,38 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
       opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
     }
   }
+  finishSection();
 
   const fallback = createDefaultStyles();
+  // The document default page geometry is the master the body actually
+  // starts on: the master named by the first body paragraph when there is
+  // one, else the first-listed master folded into catalog.pageSize/margins.
+  // parsePageLayout folds the first-listed master for the no-lead case; when
+  // a lead exists it wins (SPEC-028 AC-17/18/19/33 — a foreign doc must read
+  // back the geometry it actually starts on, not whichever master happens to
+  // be listed first).
+  const leadingGeometry = leadingMasterName
+    ? catalog.masterPageLayouts.get(leadingMasterName)
+    : undefined;
+  // The leading section's geometry is the master the very first paragraph
+  // named, so it carries explicit pageSize/margins like every later section
+  // that switches masters — reported by AC-17/18/19/33 and rendered/round-
+  // tripped correctly rather than silently inheriting the first-LISTED
+  // master. A document whose first paragraph names no master keeps the
+  // first-listed master folded into defaults exactly as before.
+  const leadingSection = sections[0];
+  if (leadingSection && leadingGeometry?.pageSize) {
+    leadingSection.pageSize = { ...leadingGeometry.pageSize };
+  }
+  if (leadingSection && leadingGeometry?.margins) {
+    leadingSection.margins = { ...leadingGeometry.margins };
+  }
   const defaultStyles: DefaultStyles = {
-    pageSize: catalog.pageSize ?? fallback.pageSize,
-    margins: catalog.margins ?? fallback.margins,
+    pageSize: leadingGeometry?.pageSize ?? catalog.pageSize ?? fallback.pageSize,
+    margins: leadingGeometry?.margins ?? catalog.margins ?? fallback.margins,
     fontFamily: catalog.defaultRunFormatting.fontFamily ?? fallback.fontFamily,
     fontSizePt: catalog.defaultRunFormatting.fontSizePt ?? fallback.fontSizePt,
   };
-
-  const section: Section = { blocks };
-  if (opaqueBlocks.length > 0) {
-    section.opaqueBlocks = opaqueBlocks;
-  }
 
   // content.xml and meta.xml are rebuilt on save (body/title/timestamp);
   // everything else — mimetype, styles.xml, the manifest, settings,
@@ -1115,7 +1207,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   }
 
   return {
-    sections: [section],
+    sections,
     defaultStyles,
     styles: catalogToNamedStyles(catalog),
     opaque,

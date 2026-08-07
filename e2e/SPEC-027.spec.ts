@@ -60,6 +60,17 @@ async function styleCm(locator: Locator, prop: string): Promise<number> {
 }
 
 const page_ = (page: Page) => page.getByTestId("document-page");
+
+/** SPEC-028 moved the page margins onto the page content box's padding
+ * (the page-margin element now marks the resulting content area), so the
+ * specified margin value lives on the parent's padding-<side>. */
+async function marginStyleCm(page: Page, side: string): Promise<number> {
+  const raw = await pageMargin(page).evaluate(
+    (el, s) => ((el as HTMLElement).parentElement as HTMLElement).style.getPropertyValue(`padding-${s}`),
+    side,
+  );
+  return Number.parseFloat(raw);
+}
 const pageMargin = (page: Page) => page.getByTestId("page-margin");
 
 /** Minimal central-directory walk over a downloaded archive — same helper
@@ -149,15 +160,16 @@ test("OK sets the four margins, which render exactly and the text wraps inside t
   await page.getByTestId("page-setup-margin-left").fill("1.27");
   await apply(page);
 
-  expect(await styleCm(pageMargin(page), "top")).toBeCloseTo(2.54, 2);
-  expect(await styleCm(pageMargin(page), "right")).toBeCloseTo(5.08, 2);
-  expect(await styleCm(pageMargin(page), "bottom")).toBeCloseTo(2.54, 2);
-  expect(await styleCm(pageMargin(page), "left")).toBeCloseTo(1.27, 2);
+  expect(await marginStyleCm(page, "top")).toBeCloseTo(2.54, 2);
+  expect(await marginStyleCm(page, "right")).toBeCloseTo(5.08, 2);
+  expect(await marginStyleCm(page, "bottom")).toBeCloseTo(2.54, 2);
+  expect(await marginStyleCm(page, "left")).toBeCloseTo(1.27, 2);
 
-  // Content starts exactly at the top margin: the editable area's top edge
-  // coincides with the margin box's top edge (AC-12).
+  // Content starts exactly at the top margin: the first paragraph's top
+  // edge coincides with the margin box's top edge (AC-12; the editable
+  // root itself wraps whole pages since SPEC-028).
   const marginBox = (await pageMargin(page).boundingBox())!;
-  const contentBox = (await content(page).boundingBox())!;
+  const contentBox = (await page.locator('[data-section="0"][data-block="0"]').first().boundingBox())!;
   expect(Math.abs(contentBox.y - marginBox.y)).toBeLessThanOrEqual(1);
   expect(Math.abs(contentBox.x - marginBox.x)).toBeLessThanOrEqual(1);
 
@@ -173,7 +185,9 @@ test("OK sets the four margins, which render exactly and the text wraps inside t
     return range.getClientRects().length;
   });
   expect(lineCount).toBeGreaterThan(1);
-  const textBox = (await content(page).boundingBox())!;
+  // The wrapped paragraph never overflows the margin box (the editable
+  // root itself wraps whole pages since SPEC-028, so measure the block).
+  const textBox = (await page.locator('[data-section="0"][data-block="0"]').first().boundingBox())!;
   expect(textBox.width).toBeLessThanOrEqual(marginBox.width + 1);
 });
 
@@ -232,7 +246,7 @@ test("margins that leave under 1cm of text area are rejected with the exact mess
   // The rejected values never reach the model — the page keeps its old
   // (valid) margins.
   await page.getByTestId("page-setup-cancel").click();
-  expect(await styleCm(pageMargin(page), "left")).toBeCloseTo(2.54, 1);
+  expect(await marginStyleCm(page, "left")).toBeCloseTo(2.54, 1);
 });
 
 test("page setup round-trips through .docx (w:pgSz, w:pgMar) with no unit drift (AC-10)", async ({ page }) => {
@@ -258,7 +272,7 @@ test("page setup round-trips through .docx (w:pgSz, w:pgMar) with no unit drift 
   await openFixture(page, path);
   expect(await styleCm(page_(page), "width")).toBeCloseTo(20.32, 2);
   expect(await styleCm(page_(page), "height")).toBeCloseTo(25.4, 2);
-  expect(await styleCm(pageMargin(page), "top")).toBeCloseTo(2.54, 2);
+  expect(await marginStyleCm(page, "top")).toBeCloseTo(2.54, 2);
 });
 
 test("page setup round-trips through .odt (style:page-layout-properties) with no unit drift (AC-11)", async ({
@@ -288,7 +302,7 @@ test("page setup round-trips through .odt (style:page-layout-properties) with no
   await openFixture(page, path);
   expect(await styleCm(page_(page), "width")).toBeCloseTo(14.8, 2);
   expect(await styleCm(page_(page), "height")).toBeCloseTo(21, 2);
-  expect(await styleCm(pageMargin(page), "top")).toBeCloseTo(1.5, 2);
+  expect(await marginStyleCm(page, "top")).toBeCloseTo(1.5, 2);
 });
 
 test("the Show/hide ruler toggle displays and hides the ruler (AC-14)", async ({ page }) => {

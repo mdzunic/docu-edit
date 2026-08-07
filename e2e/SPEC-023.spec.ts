@@ -269,7 +269,9 @@ test("the dialog sets cell shading, padding and vertical alignment (AC-15..17)",
 test("the dialog sets table alignment and width (AC-22, AC-23)", async ({ page }) => {
   await createDocument(page);
   await insertViaPicker(page, 1, 2);
-  const contentBox = (await content(page).boundingBox())!;
+  // The text area is the page-margin box (since SPEC-028 the editable root
+  // wraps whole pages).
+  const contentBox = (await page.getByTestId("page-margin").boundingBox())!;
   await cellAt(page, 0, 0).click({ button: "right" });
   await page.getByTestId("context-menu-table-properties").click();
   await page.getByTestId("table-props-width-mode").selectOption("percent");

@@ -227,6 +227,12 @@ onUnmounted(() => {
     >
       <slot />
     </main>
+    <div
+      class="status-bar"
+      data-testid="status-bar"
+    >
+      <slot name="status-bar" />
+    </div>
     <ToastHost />
     <ShortcutsDialog
       v-if="shortcutsOpen"
@@ -335,6 +341,22 @@ h1.document-title[role="button"] {
   min-height: 0;
   overflow-y: auto;
   background: #e8eaed;
+}
+
+/* The status bar (SPEC-028 AC-3): a slim strip under the canvas the view
+   fills with the caret's page indicator. Present even when the slot is
+   empty so the layout never jumps. */
+.status-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 1.5rem;
+  padding: 0.125rem 1rem;
+  border-top: 1px solid #dadce0;
+  background: #f8f9fa;
+  color: #5f6368;
+  font-size: 0.75rem;
 }
 
 .drop-overlay {

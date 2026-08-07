@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { parseXml } from "../docx/xml";
-import { parseOdfStyleCatalog, resolveParagraphStyle, resolveTextStyle } from "./styles";
+import {
+  paragraphAutoStyleSignals,
+  parseOdfStyleCatalog,
+  resolveParagraphStyle,
+  resolveTextStyle,
+} from "./styles";
 
 const NS =
   'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
@@ -77,6 +82,79 @@ describe("resolveParagraphStyle", () => {
         </style:style>`),
     );
     expect(resolveParagraphStyle(catalog, "Mono").runFormatting.fontFamily).toBe("Courier New");
+  });
+});
+
+describe("parseOdfStyleCatalog — master pages (SPEC-028 AC-33)", () => {
+  const FULL_STYLES = parseXml(
+    `<office:document-styles ${NS}>` +
+      "<office:automatic-styles>" +
+      '<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm"' +
+      ' fo:page-height="29.7cm" fo:margin-top="2cm" fo:margin-right="2cm" fo:margin-bottom="2cm"' +
+      ' fo:margin-left="2cm"/></style:page-layout>' +
+      '<style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="14.8cm"' +
+      ' fo:page-height="21cm" fo:margin-top="1cm" fo:margin-right="1cm" fo:margin-bottom="1cm"' +
+      ' fo:margin-left="1cm"/></style:page-layout>' +
+      "</office:automatic-styles>" +
+      "<office:master-styles>" +
+      '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>' +
+      '<style:master-page style:name="A5Master" style:page-layout-name="pm2"/>' +
+      "</office:master-styles></office:document-styles>",
+  );
+
+  it("catalogues every master page's geometry by name", () => {
+    const catalog = parseOdfStyleCatalog(contentDoc(""), FULL_STYLES);
+    expect(catalog.masterPageLayouts.get("A5Master")).toEqual({
+      pageSize: { widthCm: 14.8, heightCm: 21 },
+      margins: { topCm: 1, rightCm: 1, bottomCm: 1, leftCm: 1 },
+    });
+    // The first master page also stays the document-level default, exactly
+    // as before SPEC-028.
+    expect(catalog.masterPageLayouts.get("Standard")?.pageSize).toEqual(catalog.pageSize);
+    expect(catalog.pageSize).toEqual({ widthCm: 21, heightCm: 29.7 });
+    expect(catalog.margins).toEqual({ topCm: 2, rightCm: 2, bottomCm: 2, leftCm: 2 });
+  });
+});
+
+describe("paragraphAutoStyleSignals (SPEC-028)", () => {
+  const catalog = parseOdfStyleCatalog(
+    contentDoc(`
+      <style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master">
+        <style:paragraph-properties fo:break-before="page"/>
+      </style:style>
+      <style:style style:name="P2" style:family="paragraph">
+        <style:paragraph-properties fo:break-before="column"/>
+      </style:style>`),
+    stylesDoc(`
+      <style:style style:name="PageStart" style:family="paragraph">
+        <style:paragraph-properties fo:break-before="page"/>
+      </style:style>
+      <style:style style:name="ColStart" style:family="paragraph">
+        <style:paragraph-properties fo:break-before="column"/>
+      </style:style>`),
+  );
+
+  it("reports the break/master signals of an automatic style", () => {
+    expect(paragraphAutoStyleSignals(catalog, "P1")).toEqual({
+      pageBreakBefore: true,
+      columnBreakBefore: false,
+      masterPageName: "A5Master",
+    });
+  });
+
+  it("reports fo:break-before='column' on an automatic style (AC-10/11)", () => {
+    expect(paragraphAutoStyleSignals(catalog, "P2")).toEqual({
+      pageBreakBefore: false,
+      columnBreakBefore: true,
+      masterPageName: undefined,
+    });
+  });
+
+  it("never reports signals from a NAMED style — its break-before stays formatting", () => {
+    expect(paragraphAutoStyleSignals(catalog, "PageStart").pageBreakBefore).toBe(false);
+    expect(paragraphAutoStyleSignals(catalog, "ColStart").columnBreakBefore).toBe(false);
+    expect(paragraphAutoStyleSignals(catalog, "PageStart").masterPageName).toBeUndefined();
+    expect(paragraphAutoStyleSignals(catalog, undefined).pageBreakBefore).toBe(false);
   });
 });
 
