@@ -260,11 +260,31 @@ function runXml(run: Run): string {
   return inner;
 }
 
+// w:tab/@w:leader values for the model's tab leaders (SPEC-032 AC-23).
+const TAB_LEADER_VALUES: Record<string, string> = {
+  dot: "dot",
+  hyphen: "hyphen",
+  underscore: "underscore",
+};
+
 /** The pPr children a bare ParagraphFormatting produces — the shared tail
  * of a paragraph's own w:pPr and a style definition's (SPEC-019), in CT_PPr
- * sequence order: bidi, spacing, ind, jc. */
+ * sequence order: tabs, bidi, spacing, ind, jc. */
 function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   const parts: string[] = [];
+
+  // Custom tab stops (SPEC-032 AC-19..25): one w:tab per stop, positions in
+  // twips from the leading text margin.
+  if (formatting.tabStops !== undefined && formatting.tabStops.length > 0) {
+    const tabs = formatting.tabStops
+      .map((stop) => {
+        const leader =
+          stop.leader !== undefined ? ` w:leader="${TAB_LEADER_VALUES[stop.leader]}"` : "";
+        return `<w:tab w:val="${stop.alignment}"${leader} w:pos="${cmToTwips(stop.positionCm)}"/>`;
+      })
+      .join("");
+    parts.push(`<w:tabs>${tabs}</w:tabs>`);
+  }
 
   // The model's indents are logical start/end values, exactly what w:ind's
   // left/right mean, so RTL needs only the w:bidi flag — the indent values

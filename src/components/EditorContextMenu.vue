@@ -18,9 +18,21 @@ const props = defineProps({
   /** True when the active cell-range selection spans more than one cell —
    * shows "Merge cells" (SPEC-023 AC-6). */
   canMergeCells: { type: Boolean, default: false },
+  /** True when the right-click landed on a list paragraph — shows the
+   * numbering-control section (SPEC-032 AC-14..16). */
+  listActions: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["cut", "copy", "paste", "table-action", "dismiss"]);
+const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "dismiss"]);
+
+// The numbering-control section's entries (SPEC-032 AC-14..16). The key
+// doubles as the emitted action id and the testid suffix, like
+// TABLE_ACTIONS.
+const LIST_ACTIONS = [
+  { key: "restart-numbering", label: "Restart numbering at 1" },
+  { key: "continue-numbering", label: "Continue previous numbering" },
+  { key: "set-numbering-value", label: "Set numbering value…" },
+];
 
 // The table section's entries, in menu order (SPEC-022 AC-17..19). The key
 // doubles as the emitted action id and the testid suffix.
@@ -108,6 +120,23 @@ onBeforeUnmount(() => {
       <span>Paste</span>
       <span class="context-menu-shortcut">{{ mod }}+V</span>
     </button>
+    <template v-if="listActions">
+      <div
+        class="context-menu-separator"
+        role="separator"
+      />
+      <button
+        v-for="action in LIST_ACTIONS"
+        :key="action.key"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :data-testid="`context-menu-${action.key}`"
+        @click="emit('list-action', action.key)"
+      >
+        <span>{{ action.label }}</span>
+      </button>
+    </template>
     <template v-if="tableActions">
       <div
         class="context-menu-separator"

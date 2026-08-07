@@ -14,7 +14,9 @@ import type {
   FieldKind,
   FieldSpec,
   ImageWrapMode,
+  ListDefinition,
   ListFormatting,
+  ListLevelDefinition,
   MediaPart,
   NamedStyle,
   OpaqueBlock,
@@ -39,7 +41,13 @@ import { ZipError, unzip } from "../docx/zip";
 import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { sanitizeHref } from "../links";
-import { clampListLevel, defaultMarkerStyle } from "../lists";
+import {
+  clampListLevel,
+  defaultMarkerStyle,
+  isBulletStyle,
+  LIST_INDENT_STEP_CM,
+  LIST_MARKER_WIDTH_CM,
+} from "../lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import {
@@ -56,12 +64,14 @@ import {
 } from "./xml";
 import {
   catalogToNamedStyles,
+  listStyleIsComposite,
   paragraphAutoStyleSignals,
   parseOdfStyleCatalog,
   resolveListLevel,
   resolveParagraphStyle,
   resolveTextStyle,
   type OdfListLevelDef,
+  type OdfListStyle,
   type OdfMasterPageLayout,
   type OdfStyleCatalog,
 } from "./styles";
@@ -92,6 +102,9 @@ export interface ParsedOdtDocument {
   /** Media parts modelled Image blocks reference (SPEC-024), one per
    * distinct source media part. */
   media: MediaPart[];
+  /** Multilevel list definitions (SPEC-032) reconstructed from composite
+   * text:list-styles the body actually references; empty when none. */
+  listDefinitions: ListDefinition[];
 }
 
 // Transient markup LibreOffice regenerates on every open (rendered
@@ -529,10 +542,211 @@ function buildListFormatting(def: OdfListLevelDef | undefined, level: number): L
   return list;
 }
 
+// --- multilevel definitions and list instances (SPEC-032) -------------------
+
+const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
+
+/** The instance a top-level `text:list` was assigned by planListInstances:
+ * whether it parses as a DEFINED list (instance-numbered, SPEC-032) or the
+ * SPEC-018 adjacency form, and — when defined — which listId its items
+ * share. */
+interface PlannedListInstance {
+  defined: boolean;
+  listId: string;
+}
+
+/** Installs the SPEC-032 read state on the catalog — the document-wide
+ * list-instance id mint and the ListDefinition registry composite list
+ * styles reconstruct into. */
+function installListReadState(catalog: OdfStyleCatalog): void {
+  const defsByStyle = new Map<string, ListDefinition>();
+  const definitions: ListDefinition[] = [];
+  let counter = 0;
+  catalog.listRead = {
+    nextListId(): string {
+      counter += 1;
+      return `l${counter}`;
+    },
+    definitionFor(styleName: string | undefined): ListDefinition {
+      const key = styleName ?? "";
+      let def = defsByStyle.get(key);
+      if (!def) {
+        def = definitionFromOdfListStyle(
+          styleName,
+          styleName ? catalog.listStyles.get(styleName) : undefined,
+        );
+        defsByStyle.set(key, def);
+        definitions.push(def);
+      }
+      return def;
+    },
+    definitions,
+  };
+}
+
+/** Reconstructs a ListDefinition from a text:list-style's levels — the
+ * inverse of the writer's definedListLevelXml, with the same default
+ * elision as commands.normalizeDefinitionLevels so a save/re-open cycle is
+ * a fixed point. */
+function definitionFromOdfListStyle(
+  styleName: string | undefined,
+  style: OdfListStyle | undefined,
+): ListDefinition {
+  const levels: ListLevelDefinition[] = [];
+  for (let level = 1; level <= 9; level++) {
+    const raw = style?.get(level);
+    const resolved = raw ?? resolveListLevel(style, level);
+    const levelDef: ListLevelDefinition = {
+      style: resolved?.marker ?? defaultMarkerStyle("number", level),
+    };
+    if (resolved?.prefix !== undefined) {
+      levelDef.prefix = resolved.prefix;
+    }
+    if (resolved?.suffix !== undefined) {
+      levelDef.suffix = resolved.suffix;
+    }
+    if (resolved !== undefined && resolved.type === "number" && resolved.startAt !== 1) {
+      levelDef.startAt = resolved.startAt;
+    }
+    if (raw?.displayLevels !== undefined && raw.displayLevels > 1) {
+      levelDef.includeLevels = Math.min(raw.displayLevels, level);
+    }
+    if (raw?.alignment !== undefined) {
+      levelDef.alignment = raw.alignment;
+    }
+    const textIndentCm = raw?.indentCm;
+    if (
+      textIndentCm !== undefined &&
+      cmToTwips(textIndentCm) !== cmToTwips(level * LIST_INDENT_STEP_CM)
+    ) {
+      levelDef.textIndentCm = textIndentCm;
+    }
+    const effectiveText = levelDef.textIndentCm ?? level * LIST_INDENT_STEP_CM;
+    if (
+      raw?.numberIndentCm !== undefined &&
+      cmToTwips(raw.numberIndentCm) !== cmToTwips(Math.max(0, effectiveText - LIST_MARKER_WIDTH_CM))
+    ) {
+      levelDef.numberIndentCm = raw.numberIndentCm;
+    }
+    levels.push(levelDef);
+  }
+  return { defId: styleName !== undefined && styleName !== "" ? styleName : "list", levels };
+}
+
+/** Plans list instances for one container's top-level `text:list` children
+ * BEFORE they are parsed — a continuation may reference a list that has to
+ * become instance-numbered retroactively, so a single forward parse cannot
+ * decide. Chains link through text:continue-list (by xml:id) or
+ * text:continue-numbering (previous list of the same style); every chain
+ * shares one listId. A list parses as DEFINED when its style is a full
+ * multilevel definition, when its chain has more than one segment (an
+ * interrupted instance), or when it touches another list directly (two
+ * instances back to back — the restart case the previous attempt lost,
+ * AC-28). Isolated simple lists keep the SPEC-018 adjacency form, so
+ * pre-SPEC-032 documents read exactly as before. */
+function planListInstances(
+  container: Element,
+  catalog: OdfStyleCatalog,
+): Map<Element, PlannedListInstance> {
+  const plan = new Map<Element, PlannedListInstance>();
+  const listRead = catalog.listRead;
+  if (!listRead) {
+    return plan;
+  }
+  interface ListInfo {
+    el: Element;
+    styleName: string;
+    token: number;
+    adjacent: boolean;
+  }
+  const infos: ListInfo[] = [];
+  const tokenSizes: number[] = [];
+  const tokenByXmlId = new Map<string, number>();
+  const lastTokenByStyle = new Map<string, number>();
+  let previous: ListInfo | null = null;
+  for (const child of Array.from(container.children)) {
+    if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "sequence-decls") {
+      continue; // Leading declarations, not content.
+    }
+    if (child.namespaceURI !== TEXT_NAMESPACE || child.localName !== "list") {
+      previous = null;
+      continue;
+    }
+    const styleName = textAttr(child, "style-name") ?? "";
+    const continueList = textAttr(child, "continue-list");
+    const continueNumbering = textAttr(child, "continue-numbering") === "true";
+    let token: number | undefined;
+    if (continueList !== null && tokenByXmlId.has(continueList)) {
+      token = tokenByXmlId.get(continueList);
+    } else if (continueNumbering && lastTokenByStyle.has(styleName)) {
+      token = lastTokenByStyle.get(styleName);
+    }
+    if (token === undefined) {
+      token = tokenSizes.length;
+      tokenSizes.push(0);
+    }
+    tokenSizes[token] += 1;
+    const info: ListInfo = { el: child, styleName, token, adjacent: previous !== null };
+    if (previous !== null) {
+      previous.adjacent = true;
+    }
+    infos.push(info);
+    const xmlId = child.getAttributeNS(XML_NAMESPACE, "id") ?? child.getAttribute("xml:id");
+    if (xmlId) {
+      tokenByXmlId.set(xmlId, token);
+    }
+    lastTokenByStyle.set(styleName, token);
+    previous = info;
+  }
+  // Defined-ness is per chain: any qualifying segment upgrades the whole
+  // chain (its earlier segments must carry the same instance).
+  const tokenDefined = new Map<number, boolean>();
+  for (const info of infos) {
+    const composite = listStyleIsComposite(
+      info.styleName !== "" ? catalog.listStyles.get(info.styleName) : undefined,
+    );
+    if (composite || info.adjacent || tokenSizes[info.token] > 1) {
+      tokenDefined.set(info.token, true);
+    }
+  }
+  const tokenListIds = new Map<number, string>();
+  for (const info of infos) {
+    if (tokenDefined.get(info.token) !== true) {
+      plan.set(info.el, { defined: false, listId: "" });
+      continue;
+    }
+    let listId = tokenListIds.get(info.token);
+    if (listId === undefined) {
+      listId = listRead.nextListId();
+      tokenListIds.set(info.token, listId);
+    }
+    plan.set(info.el, { defined: true, listId });
+  }
+  return plan;
+}
+
+/** The instance parameter a planned top-level list parses under, or
+ * undefined for the SPEC-018 path. */
+function definedInstanceFor(
+  listEl: Element,
+  plan: Map<Element, PlannedListInstance>,
+  catalog: OdfStyleCatalog,
+): { def: ListDefinition; listId: string } | undefined {
+  const planned = plan.get(listEl);
+  if (!planned?.defined || !catalog.listRead) {
+    return undefined;
+  }
+  const styleName = textAttr(listEl, "style-name") ?? undefined;
+  return { def: catalog.listRead.definitionFor(styleName), listId: planned.listId };
+}
+
 /** Parses a `text:list` (and its nested sub-lists) into consecutive list
  * paragraphs (AC-21): nesting depth is the model's level, and the list's
  * `text:list-style` levels supply type, marker, start and indent. Nested
- * lists without their own style name inherit the ancestor's, per ODF. */
+ * lists without their own style name inherit the ancestor's, per ODF.
+ * Under an `instance` (SPEC-032), items become defined members of the
+ * instance's definition instead, with a `text:start-value` restart carried
+ * on the item's first paragraph. */
 function parseListElement(
   listEl: Element,
   catalog: OdfStyleCatalog,
@@ -540,6 +754,7 @@ function parseListElement(
   inheritedStyleName: string | undefined,
   blocks: Block[],
   opaqueBlocks: OpaqueBlock[],
+  instance?: { def: ListDefinition; listId: string },
 ): void {
   const styleName = textAttr(listEl, "style-name") ?? inheritedStyleName;
   const level = clampListLevel(depth);
@@ -551,19 +766,40 @@ function parseListElement(
       opaqueBlocks.push({ xml: serializeElement(item), blockIndex: blocks.length });
       continue;
     }
+    let firstParagraphOfItem = true;
     for (const child of Array.from(item.children)) {
       if (
         child.namespaceURI === TEXT_NAMESPACE &&
         (child.localName === "p" || child.localName === "h")
       ) {
         const paragraph = parseTextBlock(child, catalog, child.localName === "h");
-        paragraph.list = buildListFormatting(
-          resolveListLevel(styleName ? catalog.listStyles.get(styleName) : undefined, level),
-          level,
-        );
+        if (instance) {
+          const list: ListFormatting = {
+            type: isBulletStyle(instance.def.levels[level - 1]?.style ?? "decimal")
+              ? "bullet"
+              : "number",
+            level,
+            defId: instance.def.defId,
+            listId: instance.listId,
+          };
+          if (firstParagraphOfItem) {
+            const startAttr = textAttr(item, "start-value");
+            const startValue = startAttr !== null ? Number(startAttr) : NaN;
+            if (Number.isInteger(startValue) && startValue >= 0) {
+              list.startAt = startValue;
+            }
+          }
+          paragraph.list = list;
+        } else {
+          paragraph.list = buildListFormatting(
+            resolveListLevel(styleName ? catalog.listStyles.get(styleName) : undefined, level),
+            level,
+          );
+        }
+        firstParagraphOfItem = false;
         blocks.push(paragraph);
       } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
-        parseListElement(child, catalog, depth + 1, styleName, blocks, opaqueBlocks);
+        parseListElement(child, catalog, depth + 1, styleName, blocks, opaqueBlocks, instance);
       } else {
         // Unmodelled list-item content (tables, frames, …) is preserved at
         // the body level, anchored where the item sat (SPEC-008).
@@ -827,13 +1063,24 @@ function parseTableCellElement(
 ): TableCell | null {
   const blocks: Block[] = [];
   const strayOpaque: OpaqueBlock[] = [];
+  // The cell is its own numbering context (SPEC-022), so its lists get
+  // their own instance plan (SPEC-032).
+  const listPlan = planListInstances(cellEl, catalog);
   for (const child of Array.from(cellEl.children)) {
     if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "p") {
       blocks.push(parseTextBlock(child, catalog, false));
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "h") {
       blocks.push(parseTextBlock(child, catalog, true));
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
-      parseListElement(child, catalog, 1, undefined, blocks, strayOpaque);
+      parseListElement(
+        child,
+        catalog,
+        1,
+        undefined,
+        blocks,
+        strayOpaque,
+        definedInstanceFor(child, listPlan, catalog),
+      );
     } else {
       // Nested tables, frames, … — outside the model's cell shape.
       return null;
@@ -1110,6 +1357,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   const stylesDoc = stylesBytes ? parsePart(decodeUtf8(stylesBytes)) : undefined;
 
   const catalog = parseOdfStyleCatalog(contentDoc, stylesDoc);
+  // SPEC-032: the list-instance mint and definition registry the body's
+  // (and each cell's) instance plans draw from.
+  installListReadState(catalog);
   // Header/footer paragraphs (SPEC-029) live in styles.xml and can only
   // reference automatic styles styles.xml itself declares — a scope
   // parseOdfStyleCatalog never folds in for the main `catalog` above (which
@@ -1176,6 +1426,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     }
     sections.push(section);
   };
+  // SPEC-032: which top-level lists parse as defined instances, planned
+  // before the walk (continuations need lookahead).
+  const bodyListPlan = planListInstances(textRoot, catalog);
   for (const child of Array.from(textRoot.children)) {
     if (child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h")) {
       const signals = paragraphAutoStyleSignals(catalog, textAttr(child, "style-name") ?? undefined);
@@ -1239,8 +1492,16 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
         mediaById.set(part.mediaId, part);
       }
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "list") {
-      // Bulleted/numbered lists (SPEC-018 AC-21).
-      parseListElement(child, catalog, 1, undefined, blocks, opaqueBlocks);
+      // Bulleted/numbered lists (SPEC-018 AC-21; instances SPEC-032).
+      parseListElement(
+        child,
+        catalog,
+        1,
+        undefined,
+        blocks,
+        opaqueBlocks,
+        definedInstanceFor(child, bodyListPlan, catalog),
+      );
     } else if (child.namespaceURI === TABLE_NAMESPACE && child.localName === "table") {
       // Regular-grid tables are modelled (SPEC-022); anything the model
       // cannot express falls through to the opaque path below.
@@ -1357,5 +1618,6 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     opaque,
     sourceXml,
     media: Array.from(mediaById.values()),
+    listDefinitions: catalog.listRead?.definitions ?? [],
   };
 }

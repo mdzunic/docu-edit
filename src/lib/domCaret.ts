@@ -97,6 +97,44 @@ export function tableCellFromEventTarget(
   return { section, block, row, col };
 }
 
+/** A paragraph's model address under an event target (SPEC-032): the
+ * section/block the element's data attributes carry, descending through
+ * `cell` for a paragraph inside a table. What the context menu's
+ * numbering-control entries target — the right-click point, which need not
+ * be where the caret is. */
+export interface ParagraphTarget {
+  section: number;
+  block: number;
+  cell?: { row: number; col: number; block: number };
+}
+
+/** Typed `null` seed for paragraph-target variables in `.vue` scripts
+ * (espree bars the annotation, same constraint as noElement). */
+export function noParagraphTarget(): ParagraphTarget | null {
+  return null;
+}
+
+export function paragraphFromEventTarget(
+  root: Element,
+  target: EventTarget | null,
+): ParagraphTarget | null {
+  if (!(target instanceof Node)) {
+    return null;
+  }
+  const element = target instanceof Element ? target : target.parentElement;
+  const paragraph = element?.closest("[data-section][data-block]");
+  if (!paragraph || !root.contains(paragraph)) {
+    return null;
+  }
+  const section = Number(paragraph.getAttribute("data-section"));
+  const block = Number(paragraph.getAttribute("data-block"));
+  if (!Number.isInteger(section) || !Number.isInteger(block)) {
+    return null;
+  }
+  const cell = cellPathOf(paragraph);
+  return cell ? { section, block, cell } : { section, block };
+}
+
 /** The cell path a canvas paragraph element carries (SPEC-022): cell
  * paragraphs hold their table's section/block address plus
  * data-row/data-col/data-cell-block; top-level paragraphs have no

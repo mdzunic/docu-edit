@@ -10,11 +10,17 @@ import {
   isTable,
   type Block,
   type DocumentModel,
+  type ListDefinition,
   type ListFormatting,
   type ListMarkerStyle,
   type ListType,
   type Paragraph,
 } from "./documentModel";
+import {
+  createDefinedListCounters,
+  markerForDefinedItem,
+  type DefinedListCounters,
+} from "./listDefinitions";
 
 /** Levels run 1..9 (AC-3: Tab at level 9 has no effect). */
 export const MAX_LIST_LEVEL = 9;
@@ -184,16 +190,37 @@ function listOf(block: Block | undefined): ListFormatting | undefined {
  * counter (AC-11), and returning to a shallower level resets the deeper
  * counters, so a later sub-list numbers from its start again. Shared by the
  * section canvas and each table cell's own block list (SPEC-022 — each cell
- * is its own numbering context). */
-export function markersForBlocks(blocks: readonly Block[]): string[] {
+ * is its own numbering context).
+ *
+ * SPEC-032 widens the scan: an item referencing a list *definition*
+ * (`list.defId`) is numbered from its (defId, listId) instance's counters
+ * in `defined` instead — those counters survive interruptions (that is what
+ * "Continue previous numbering" relies on) and are shared across a whole
+ * numbering context via the optional `defined` parameter (lib/lists's
+ * listMarkers threads one across all sections). A defined item still ends
+ * any adjacent SPEC-018 run: it is a different list that happens to touch. */
+export function markersForBlocks(
+  blocks: readonly Block[],
+  definitions: readonly ListDefinition[] = [],
+  defined: DefinedListCounters = createDefinedListCounters(),
+): string[] {
   // counters[level] is the last ordinal used at that level within the
-  // current uninterrupted run of list paragraphs.
+  // current uninterrupted run of (ad-hoc) list paragraphs.
   let counters: Array<number | undefined> = [];
   return blocks.map((block) => {
     const list = listOf(block);
     if (!list) {
       counters = [];
       return "";
+    }
+    if (list.defId !== undefined) {
+      counters = [];
+      const def = definitions.find((entry) => entry.defId === list.defId);
+      if (def) {
+        return markerForDefinedItem(def, list, defined);
+      }
+      // A dangling defId (definition removed): fall through to the ad-hoc
+      // rendering below rather than dropping the marker entirely.
     }
     const level = clampListLevel(list.level);
     for (let deeper = level + 1; deeper < counters.length; deeper++) {
@@ -209,9 +236,15 @@ export function markersForBlocks(blocks: readonly Block[]): string[] {
   });
 }
 
-/** Every top-level block's displayed marker, per section, in block order. */
+/** Every top-level block's displayed marker, per section, in block order.
+ * One defined-instance counter set spans all sections (SPEC-032): a defined
+ * list interrupted by a section break continues its numbering. */
 export function listMarkers(model: DocumentModel): string[][] {
-  return model.sections.map((section) => markersForBlocks(section.blocks));
+  const defined = createDefinedListCounters();
+  const definitions = model.listDefinitions ?? [];
+  return model.sections.map((section) =>
+    markersForBlocks(section.blocks, definitions, defined),
+  );
 }
 
 export function clampListLevel(level: number): number {

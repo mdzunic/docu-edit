@@ -3,8 +3,9 @@
 // split out of DocumentView.vue because that file's <script setup> is
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
-import type { BorderSide, Image, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
+import type { BorderSide, Image, ListDefinition, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
 import { listIndentCm } from "./lists";
+import { definedTextIndentCm } from "./listDefinitions";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
 // name as-is.
@@ -91,15 +92,26 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
   return style;
 }
 
-export function paragraphStyle(paragraph: Paragraph): Record<string, string> {
+export function paragraphStyle(
+  paragraph: Paragraph,
+  listDefinitions: readonly ListDefinition[] = [],
+): Record<string, string> {
   const formatting = paragraph.formatting;
   const style: Record<string, string> = { whiteSpace: "pre-wrap" };
   // A list item's text sits at the level's indent (SPEC-018 AC-5's per-level
   // indents); the marker itself hangs before it via the canvas's ::before
   // rule. A direct start indent on the paragraph wins, matching how both
   // file formats let direct indentation override the list definition's.
+  // A defined item (SPEC-032) takes its level's text position from its
+  // definition instead.
   if (paragraph.list && formatting?.indentStartCm === undefined) {
-    style.marginInlineStart = `${listIndentCm(paragraph.list)}cm`;
+    const def =
+      paragraph.list.defId !== undefined
+        ? listDefinitions.find((entry) => entry.defId === paragraph.list?.defId)
+        : undefined;
+    style.marginInlineStart = def
+      ? `${definedTextIndentCm(def, paragraph.list.level)}cm`
+      : `${listIndentCm(paragraph.list)}cm`;
   }
   if (!formatting) {
     return style;

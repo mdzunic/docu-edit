@@ -116,6 +116,25 @@ const REGISTRY: Record<string, Scenario> = {
       format: "decimal",
       pageXofY: false,
     }),
+  // SPEC-032: multilevel lists, numbering control and custom tab stops.
+  applyMultilevelPreset: (model) =>
+    commands.applyMultilevelPreset(model, caretSelection(caret(0, 0)), "decimal"),
+  applyListDefinition: (model) =>
+    commands.applyListDefinition(model, caretSelection(caret(0, 0)), [
+      { style: "upperRoman", suffix: ")" },
+    ]),
+  linkHeadingNumbering: (model) =>
+    commands.linkHeadingNumbering(model, caretSelection(caret(0, 0))),
+  restartListNumbering: (model) =>
+    commands.restartListNumbering(model, caretSelection(caret(2, 0))),
+  continueListNumbering: (model) =>
+    commands.continueListNumbering(model, caretSelection(caret(2, 0))),
+  setListNumberingValue: (model) =>
+    commands.setListNumberingValue(model, caretSelection(caret(2, 0)), 5),
+  setTabStops: (model) =>
+    commands.setTabStops(model, caretSelection(caret(0, 0)), [
+      { positionCm: 4, alignment: "right", leader: "dot" },
+    ]),
 };
 
 const QUERIES = new Set([
@@ -160,6 +179,12 @@ const QUERIES = new Set([
   "withHeaderFooterModel",
   "commitHeaderFooterModel",
   "insertPageNumber",
+  // SPEC-032: pure reads and the levels normaliser the two definition
+  // commands are built from (applyListDefinition normalises through it; it
+  // never touches a model itself).
+  "normalizeDefinitionLevels",
+  "selectionListDefinitionLevels",
+  "selectionTabStops",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {

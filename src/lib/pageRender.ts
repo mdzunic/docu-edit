@@ -3,7 +3,7 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import type { Block } from "./documentModel";
+import type { Block, ListDefinition } from "./documentModel";
 import type { MarkSegment } from "./marks";
 import type { PageColumns } from "./pagination";
 
@@ -48,6 +48,9 @@ export interface RenderEntry {
   blockProp?: Block;
   sectionProp?: number;
   blockIndexProp?: number;
+  /** The model's multilevel definitions (SPEC-032) a table entry's cell
+   * paragraphs derive defined-list markers/indents from. */
+  listDefinitions?: ListDefinition[];
   imageSrc?: string;
   imageSelected?: boolean;
   runs?: RenderRun[];

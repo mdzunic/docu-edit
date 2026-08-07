@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef } from "vue";
 import { markerPositions, valueFromMarkerPosition } from "../lib/ruler";
+import { asTabStops } from "../lib/documentModel";
 
 // The horizontal ruler above the page (SPEC-014 AC-22, AC-23): cm ticks
 // across the page width, plus draggable markers for the current paragraph's
@@ -20,10 +21,13 @@ const props = defineProps({
    * has a single column: `{ boundaries: [{ index, centerCm }] }` with each
    * gutter centre measured from the content area's start. */
   columns: { type: Object, default: null },
+  /** The first touched paragraph's custom tab stops (SPEC-032 AC-24),
+   * positions measured from the text area's start. */
+  tabStops: { type: Array, default: () => [] },
   disabled: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["update"]);
+const emit = defineEmits(["update", "open-tabs-dialog"]);
 
 const root = useTemplateRef("root");
 
@@ -137,6 +141,102 @@ function endDrag(kind = "", event = new PointerEvent("pointerup")) {
   }
 }
 
+// --- custom tab stops (SPEC-032 AC-24) --------------------------------------
+
+/** The alignment the tab-type selector currently arms; clicking the lane
+ * lays a stop of this type. */
+const tabType = ref("left");
+
+const TAB_TYPE_CYCLE = ["left", "center", "right", "decimal"];
+
+const TAB_TYPE_GLYPHS = {
+  left: "L",
+  center: "⊥",
+  right: "⌐",
+  decimal: "⊥.",
+};
+
+const TAB_TYPE_LABELS = {
+  left: "Left tab",
+  center: "Centre tab",
+  right: "Right tab",
+  decimal: "Decimal tab",
+};
+
+function tabTypeGlyph(kind = "left") {
+  if (kind === "center") {
+    return TAB_TYPE_GLYPHS.center;
+  }
+  if (kind === "right") {
+    return TAB_TYPE_GLYPHS.right;
+  }
+  if (kind === "decimal") {
+    return TAB_TYPE_GLYPHS.decimal;
+  }
+  return TAB_TYPE_GLYPHS.left;
+}
+
+function tabTypeLabel(kind = "left") {
+  if (kind === "center") {
+    return TAB_TYPE_LABELS.center;
+  }
+  if (kind === "right") {
+    return TAB_TYPE_LABELS.right;
+  }
+  if (kind === "decimal") {
+    return TAB_TYPE_LABELS.decimal;
+  }
+  return TAB_TYPE_LABELS.left;
+}
+
+/** Click cycles the armed type; double-click opens the Tabs dialog. */
+function cycleTabType() {
+  if (props.disabled) {
+    return;
+  }
+  const index = TAB_TYPE_CYCLE.indexOf(tabType.value);
+  tabType.value = TAB_TYPE_CYCLE[(index + 1) % TAB_TYPE_CYCLE.length];
+}
+
+function openTabsDialog() {
+  if (!props.disabled) {
+    emit("open-tabs-dialog");
+  }
+}
+
+/** The rendered handles: each stop positioned at margin + position. */
+const tabHandles = computed(() =>
+  asTabStops(props.tabStops).map((stop, index) => ({
+    index,
+    alignment: stop.alignment,
+    positionCm: stop.positionCm,
+    pageCm: props.marginLeftCm + stop.positionCm,
+  })),
+);
+
+/** A click on the free lane lays a new stop of the armed type at the
+ * clicked position (SPEC-032 AC-24), snapped like the drag markers. */
+function handleTabLaneClick(event = new MouseEvent("click")) {
+  if (props.disabled) {
+    return;
+  }
+  const positionCm = positionCmFromEvent(
+    new PointerEvent("pointermove", { clientX: event.clientX }),
+  );
+  const relativeCm = Math.round(((positionCm - props.marginLeftCm) / 0.05)) * 0.05;
+  if (relativeCm <= 0) {
+    return;
+  }
+  emit("update", { kind: "add-tab", positionCm: relativeCm, alignment: tabType.value });
+}
+
+/** Clicking an existing handle removes its stop (the lane toggle). */
+function handleTabHandleClick(index = 0) {
+  if (!props.disabled) {
+    emit("update", { kind: "remove-tab", index });
+  }
+}
+
 // --- column boundary drag (SPEC-030 AC-14) ---------------------------------
 
 function startColumnDrag(index = 0, event = new PointerEvent("pointerdown")) {
@@ -198,6 +298,43 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
     >
       <span class="tick-label">{{ cm }}</span>
     </div>
+    <!-- Custom tab stops (SPEC-032 AC-24): the free lane lays a stop of the
+         armed type on click; clicking a laid handle removes it; the corner
+         selector cycles the type (double-click opens the Tabs dialog). -->
+    <div
+      class="tab-lane"
+      data-testid="ruler-tab-lane"
+      :style="{ left: `${marginLeftCm}cm`, right: `${marginRightCm}cm` }"
+      @click="handleTabLaneClick"
+    />
+    <button
+      type="button"
+      class="tab-type-selector"
+      data-testid="ruler-tab-selector"
+      :disabled="disabled"
+      :title="`${tabTypeLabel(tabType)} — click to change, double-click for the Tabs dialog`"
+      :aria-label="`Tab stop type: ${tabTypeLabel(tabType)}`"
+      :data-tab-type="tabType"
+      @click="cycleTabType"
+      @dblclick="openTabsDialog"
+    >
+      {{ tabTypeGlyph(tabType) }}
+    </button>
+    <button
+      v-for="handle in tabHandles"
+      :key="`tab-${handle.index}`"
+      type="button"
+      class="tab-handle"
+      :data-testid="`ruler-tab-stop-${handle.index}`"
+      :data-tab-alignment="handle.alignment"
+      :style="{ left: `${handle.pageCm}cm` }"
+      :title="`${handle.alignment} tab stop — click to remove`"
+      :aria-label="`${handle.alignment} tab stop at ${handle.positionCm} cm`"
+      :disabled="disabled"
+      @click.stop="handleTabHandleClick(handle.index)"
+    >
+      {{ tabTypeGlyph(handle.alignment) }}
+    </button>
     <button
       v-for="marker in MARKERS"
       :key="marker.kind"
@@ -310,6 +447,56 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   width: 0.25rem;
   background: #80868b;
   opacity: 0.7;
+}
+
+/* The tab lane (SPEC-032): the printable area's lower half, catching lane
+   clicks under the indent markers (which sit above it in the DOM). */
+.tab-lane {
+  position: absolute;
+  bottom: 0;
+  height: 55%;
+  cursor: copy;
+}
+
+/* The tab-type corner selector, at the ruler's left edge. */
+.tab-type-selector {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  font-size: 0.5625rem;
+  line-height: 1;
+  border: 1px solid #9aa0a6;
+  border-radius: 2px;
+  background: #fff;
+  color: #3c4043;
+  cursor: pointer;
+}
+
+/* A laid tab stop's handle in the lane. */
+.tab-handle {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 0.75rem;
+  height: 0.75rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1a73e8;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tab-type-selector:disabled,
+.tab-handle:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Column boundary handle: a full-height bar centred in the gutter. */
