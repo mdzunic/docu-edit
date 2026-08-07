@@ -7,8 +7,9 @@ import { MOD } from "./keys";
 
 // SPEC-029 — headers, footers and page numbers: entering/exiting header and
 // footer editing (double-click the margin, Insert -> Header/Footer, Escape,
-// double-click the body), text/formatting inside headers/footers, per-
-// section "different first page"/"different odd and even pages", the
+// double-click the body), text/formatting/tables/images inside headers and
+// footers, per-section "different first page"/"different odd and even
+// pages", the
 // "Insert page number" control's position/format options and "Page X of Y",
 // live page-number rendering, "start numbering at", and round-tripping
 // through .docx (header1.xml/footer1.xml, PAGE/NUMPAGES fields) and .odt
@@ -128,6 +129,31 @@ test("header content supports text and formatting like body content (AC-3, AC-4)
   await page.getByTitle(/^Bold/).click();
   await expect(headerBand(page)).toContainText("Confidential");
   await expect(headerBand(page).locator("[style*='font-weight']").first()).toBeVisible();
+});
+
+test("header content supports tables like body content (AC-5)", async ({ page }) => {
+  await createDocument(page);
+  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("hf-menu-header").click();
+  await page.getByTestId("insert-table-button").click();
+  await page.getByTestId("table-grid-cell-2-2").click();
+  await expect(headerBand(page).locator("table.doc-table")).toHaveCount(1);
+});
+
+test("header content supports images like body content (AC-6)", async ({ page }) => {
+  await createDocument(page);
+  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("hf-menu-header").click();
+  await page.getByTestId("insert-image-file-input").setInputFiles({
+    name: "photo.png",
+    mimeType: "image/png",
+    // 1x1 transparent PNG.
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await expect(headerBand(page).locator("img")).toHaveCount(1);
 });
 
 test("Escape returns to body editing (AC-7)", async ({ page }) => {
