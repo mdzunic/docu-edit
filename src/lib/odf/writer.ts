@@ -30,20 +30,23 @@ import type {
   BorderSide,
   BreakKind,
   DocumentModel,
+  FieldSpec,
   Image,
   ImageWrapMode,
   Margins,
   NamedStyle,
+  PageNumberFormat,
   PageSize,
   Paragraph,
   ParagraphFormatting,
   Run,
   RunFormatting,
+  Section,
   Table,
   TableCell,
   TableRow,
 } from "../documentModel";
-import { sectionMargins, sectionPageSize } from "../documentModel";
+import { FIELD_PLACEHOLDER_TEXT, sectionMargins, sectionPageSize } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import {
@@ -180,7 +183,11 @@ function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number):
  * becomes fo:break-before on the FOLLOWING paragraph's automatic style —
  * the same attribute the pageBreakBefore formatting flag emits, ODF's one
  * channel for both (the reader canonicalises it back to a BreakBlock). */
-function paragraphPropertiesXml(formatting: ParagraphFormatting, forcedBreakBefore?: BreakKind): string {
+function paragraphPropertiesXml(
+  formatting: ParagraphFormatting,
+  forcedBreakBefore?: BreakKind,
+  pageNumberStart?: number,
+): string {
   const attrs: string[] = [];
   if (formatting.alignment !== undefined) {
     // The model's alignment values are all legal fo:text-align keywords.
@@ -243,6 +250,12 @@ function paragraphPropertiesXml(formatting: ParagraphFormatting, forcedBreakBefo
   }
   if (rtl) {
     attrs.push('style:writing-mode="rl-tb"');
+  }
+  // "Start numbering at" (SPEC-029 AC-22) — the section-starting
+  // paragraph's own restart value; absent means "continue from the
+  // previous section", which needs no attribute at all.
+  if (pageNumberStart !== undefined) {
+    attrs.push(`style:page-number="${pageNumberStart}"`);
   }
   return attrs.length > 0 ? `<style:paragraph-properties ${attrs.join(" ")}/>` : "";
 }
@@ -360,6 +373,9 @@ interface TableNames {
 interface ParagraphStyleOptions {
   breakBefore?: BreakKind;
   masterPageName?: string;
+  /** "Start numbering at" (SPEC-029 AC-22) — style:page-number on
+   * paragraph-properties. */
+  pageNumberStart?: number;
 }
 
 interface AutomaticStyles {
@@ -457,7 +473,11 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
     defs,
 
     paragraphNameFor(paragraph: Paragraph, options?: ParagraphStyleOptions): string | undefined {
-      const propertiesXml = paragraphPropertiesXml(paragraph.formatting ?? {}, options?.breakBefore);
+      const propertiesXml = paragraphPropertiesXml(
+        paragraph.formatting ?? {},
+        options?.breakBefore,
+        options?.pageNumberStart,
+      );
       const masterAttr =
         options?.masterPageName !== undefined
           ? ` style:master-page-name="${escapeXml(options.masterPageName)}"`
@@ -724,8 +744,29 @@ function runContentXml(text: string, state: WhitespaceState): string {
   return xml;
 }
 
+// style:num-format for a page-number/page-count field (SPEC-029 AC-16..18)
+// — absent (decimal) needs none, ODF's own default.
+const FIELD_NUM_FORMAT: Record<PageNumberFormat, string> = {
+  decimal: "",
+  lowerRoman: ' style:num-format="i"',
+  lowerAlpha: ' style:num-format="a"',
+};
+
+/** A page-number/page-count field (SPEC-029 AC-25, AC-26): the placeholder
+ * text is the field's cached display value, exactly the shape a real ODF
+ * producer's own field elements carry (their content is the last-rendered
+ * result, recomputed live by the consuming application). */
+function fieldContentXml(field: FieldSpec): string {
+  const tag = field.kind === "page" ? "page-number" : "page-count";
+  return `<text:${tag}${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:${tag}>`;
+}
+
 function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): string {
   const styleName = styles.textNameFor(run.formatting);
+  if (run.field) {
+    state.lastChar = FIELD_PLACEHOLDER_TEXT;
+    return `<text:span text:style-name="${styleName}">${fieldContentXml(run.field)}</text:span>`;
+  }
   return `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
 }
 
@@ -1011,8 +1052,13 @@ export function buildContentXml(
           ? (masterNames[sectionIndex] ?? undefined)
           : sectionMasterName(sectionIndex)
         : undefined;
+    // SPEC-029 AC-22: a section's own restart value rides on the same
+    // first-paragraph carrier as its master-page switch — for section 0,
+    // which never switches master, it is the ONLY reason that paragraph's
+    // automatic style would carry anything section-related at all.
+    let pendingPageNumberStart = section.pageNumberStart;
     const takeStyleOptions = (): ParagraphStyleOptions | undefined => {
-      if (pendingBreak === undefined && pendingMaster === undefined) {
+      if (pendingBreak === undefined && pendingMaster === undefined && pendingPageNumberStart === undefined) {
         return undefined;
       }
       const options: ParagraphStyleOptions = {};
@@ -1022,8 +1068,12 @@ export function buildContentXml(
       if (pendingMaster !== undefined) {
         options.masterPageName = pendingMaster;
       }
+      if (pendingPageNumberStart !== undefined) {
+        options.pageNumberStart = pendingPageNumberStart;
+      }
       pendingBreak = undefined;
       pendingMaster = undefined;
+      pendingPageNumberStart = undefined;
       return options;
     };
     const opaqueBlocks = includeOpaque
@@ -1082,10 +1132,10 @@ export function buildContentXml(
       blockXml.push(listRunXml(blocks.slice(i, end) as Paragraph[], styles, includeOpaque, takeStyleOptions()));
       i = end;
     }
-    if (pendingMaster !== undefined) {
-      // A section with no paragraph to carry its master-page reference
-      // (empty, or tables/breaks only): an empty carrier paragraph keeps
-      // the section boundary alive (SPEC-028 AC-33).
+    if (pendingMaster !== undefined || pendingPageNumberStart !== undefined) {
+      // A section with no paragraph to carry its master-page reference or
+      // restart value (empty): an empty carrier paragraph keeps it alive
+      // (SPEC-028 AC-33, SPEC-029 AC-22).
       blockXml.push(carrierParagraphXml(styles, takeStyleOptions()!));
     }
   });
@@ -1280,6 +1330,120 @@ function planOdtSectionNames(
   return { masters, layouts };
 }
 
+// --- headers, footers and page numbers (SPEC-029) ---------------------------
+
+/** A minimal AutomaticStyles for header/footer content: mints simply-named,
+ * always-unique styles (`${prefix}P1`/`${prefix}T1`, ...) rather than
+ * reusing createAutomaticStyles' whole-model dedup index — header/footer
+ * content is small enough that dedup buys nothing, and a per-part prefix is
+ * what keeps several header/footer parts' styles from colliding once they
+ * all land in the same styles.xml automatic-styles block. Tables, images
+ * and lists are out of scope for header/footer content (SPEC-029) — a
+ * paragraph carrying list formatting (possible only via a .docx source) is
+ * rendered as plain text, and those three methods are never called. */
+function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
+  const defs: string[] = [];
+  const paragraphNames = new Map<string, string>();
+  const textNames = new Map<string, string>();
+  return {
+    defs,
+    paragraphNameFor(paragraph: Paragraph): string | undefined {
+      const propertiesXml = paragraphPropertiesXml(paragraph.formatting ?? {});
+      if (propertiesXml === "") {
+        return undefined;
+      }
+      const existing = paragraphNames.get(propertiesXml);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = `${prefix}P${paragraphNames.size + 1}`;
+      paragraphNames.set(propertiesXml, name);
+      defs.push(`<style:style style:name="${name}" style:family="paragraph">${propertiesXml}</style:style>`);
+      return name;
+    },
+    textNameFor(formatting: RunFormatting): string {
+      const propertiesXml = textPropertiesXml(formatting);
+      const existing = textNames.get(propertiesXml);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = `${prefix}T${textNames.size + 1}`;
+      textNames.set(propertiesXml, name);
+      defs.push(
+        propertiesXml === ""
+          ? `<style:style style:name="${name}" style:family="text"/>`
+          : `<style:style style:name="${name}" style:family="text">${propertiesXml}</style:style>`,
+      );
+      return name;
+    },
+    listNameFor(): string {
+      throw new Error("lists are not supported in header/footer content (SPEC-029)");
+    },
+    tableNamesFor(): TableNames {
+      throw new Error("tables are not supported in header/footer content (SPEC-029)");
+    },
+    graphicStyleNameFor(): string | undefined {
+      throw new Error("images are not supported in header/footer content (SPEC-029)");
+    },
+  };
+}
+
+interface HeaderFooterMasterContent {
+  headerXml: string;
+  headerLeftXml: string;
+  footerXml: string;
+  footerLeftXml: string;
+  /** style:style defs the content above referenced — added to styles.xml's
+   * own office:automatic-styles, a separate scope from content.xml's. */
+  defsXml: string;
+}
+
+const EMPTY_HEADER_FOOTER_MASTER_CONTENT: HeaderFooterMasterContent = {
+  headerXml: "",
+  headerLeftXml: "",
+  footerXml: "",
+  footerLeftXml: "",
+  defsXml: "",
+};
+
+/** A section's header/footer content as `<style:master-page>` children
+ * (SPEC-029 AC-9, AC-24, AC-26): `style:header`/`style:footer` for the
+ * default kind, `style:header-left`/`style:footer-left` for "even" —
+ * emitted only when the section actually wants different odd/even pages
+ * (AC-12), matching the reader's "the -left variant's mere presence turns
+ * it on" contract. Paragraphs only (no tables/images — see
+ * createHeaderFooterAutomaticStyles); `namePrefix` keeps this section's
+ * generated style names from colliding with another section's in the same
+ * styles.xml. */
+function headerFooterMasterContent(
+  section: Section,
+  namePrefix: string,
+  includeOpaque: boolean,
+): HeaderFooterMasterContent {
+  const map = { header: section.headers, footer: section.footers };
+  if (!map.header && !map.footer) {
+    return EMPTY_HEADER_FOOTER_MASTER_CONTENT;
+  }
+  const styles = createHeaderFooterAutomaticStyles(namePrefix);
+  const build = (content: { blocks: Block[] } | undefined, tag: string): string => {
+    if (!content) {
+      return "";
+    }
+    const body = content.blocks
+      .map((block) => (block.type === "paragraph" ? paragraphXml(block, styles, includeOpaque) : ""))
+      .join("");
+    return `<style:${tag}>${body.length > 0 ? body : "<text:p/>"}</style:${tag}>`;
+  };
+  const evenAndOdd = section.evenAndOddHeaders === true;
+  return {
+    headerXml: build(map.header?.default, "header"),
+    headerLeftXml: evenAndOdd ? build(map.header?.even, "header-left") : "",
+    footerXml: build(map.footer?.default, "footer"),
+    footerLeftXml: evenAndOdd ? build(map.footer?.even, "footer-left") : "",
+    defsXml: styles.defs.join(""),
+  };
+}
+
 /** One style:page-layout carrying a page geometry — the shape the reader's
  * parsePageLayoutProperties parses back. */
 function pageLayoutXml(name: string, pageSize: PageSize, margins: Margins): string {
@@ -1298,8 +1462,16 @@ function pageLayoutXml(name: string, pageSize: PageSize, margins: Margins): stri
   );
 }
 
-function masterPageXml(name: string, layoutName: string): string {
-  return `<style:master-page style:name="${escapeXml(name)}" style:page-layout-name="${escapeXml(layoutName)}"/>`;
+function masterPageXml(name: string, layoutName: string, headerFooter?: HeaderFooterMasterContent): string {
+  const children =
+    (headerFooter?.headerXml ?? "") +
+    (headerFooter?.headerLeftXml ?? "") +
+    (headerFooter?.footerXml ?? "") +
+    (headerFooter?.footerLeftXml ?? "");
+  const attrs = `style:name="${escapeXml(name)}" style:page-layout-name="${escapeXml(layoutName)}"`;
+  return children.length > 0
+    ? `<style:master-page ${attrs}>${children}</style:master-page>`
+    : `<style:master-page ${attrs}/>`;
 }
 
 /** The styles part: a paragraph default-style carrying the model's default
@@ -1310,6 +1482,7 @@ function masterPageXml(name: string, layoutName: string): string {
  * always used, so those stay byte-identical. */
 export function buildStylesXml(model: DocumentModel): string {
   const { fontFamily, fontSizePt } = model.defaultStyles;
+  const includeOpaque = model.format === "odt";
   const namedStyles = (model.styles ?? [])
     .filter((style) => style.name !== undefined)
     .map(namedStyleDefinitionXml)
@@ -1317,9 +1490,16 @@ export function buildStylesXml(model: DocumentModel): string {
   const pageLayouts = model.sections
     .map((_, index) => pageLayoutXml(sectionLayoutName(index), sectionPageSize(model, index), sectionMargins(model, index)))
     .join("");
+  // Header/footer content (SPEC-029): each section's own automatic styles
+  // (namePrefix keyed by index, so no two sections' generated style names
+  // collide) alongside its master page.
+  const headerFooterContents = model.sections.map((section, index) =>
+    headerFooterMasterContent(section, `HF${index + 1}`, includeOpaque),
+  );
   const masterPages = model.sections
-    .map((_, index) => masterPageXml(sectionMasterName(index), sectionLayoutName(index)))
+    .map((_, index) => masterPageXml(sectionMasterName(index), sectionLayoutName(index), headerFooterContents[index]))
     .join("");
+  const headerFooterDefs = headerFooterContents.map((content) => content.defsXml).join("");
   return (
     `${XML_DECLARATION}<office:document-styles${DOCUMENT_XMLNS} office:version="1.2">` +
     "<office:styles>" +
@@ -1330,6 +1510,7 @@ export function buildStylesXml(model: DocumentModel): string {
     "</office:styles>" +
     "<office:automatic-styles>" +
     pageLayouts +
+    headerFooterDefs +
     "</office:automatic-styles>" +
     "<office:master-styles>" +
     masterPages +
@@ -1489,6 +1670,124 @@ export function patchOdtSectionMasterPages(
   return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
 }
 
+/** A preserved styles.xml with every section's header/footer content
+ * upserted into its master page (SPEC-029), or null when nothing changed.
+ * Unlike patchOdtSectionMasterPages (page geometry, sections 1+ only —
+ * section 0 keeps whatever "Standard" the source already defines), this
+ * runs for EVERY section including 0: header/footer content is new,
+ * user-editable content with nowhere else to live, so section 0's existing
+ * "Standard" master page is itself augmented in place rather than left
+ * alone. A section whose generated master name collided with a foreign
+ * definition (per `sectionNames`) has no master-page element resolved by
+ * the plan; a section with content that has no such element to upsert
+ * INTO at all (e.g. "Standard" is missing from a degenerate package) is
+ * silently skipped rather than fabricating a master page — this function
+ * only ever augments existing master pages. */
+export function patchOdtSectionHeaderFooters(
+  model: DocumentModel,
+  originalStylesXml: string,
+  sectionNames?: { masters: (string | null)[]; layouts: (string | null)[] },
+): string | null {
+  const includeOpaque = model.format === "odt";
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return null;
+  }
+  const root = stylesDoc.documentElement;
+  const masterStyles = firstChildElement(root, OFFICE_NAMESPACE, "master-styles");
+  if (!masterStyles) {
+    return null;
+  }
+  const names = model.sections.length > 1 ? (sectionNames ?? planOdtSectionNames(model, originalStylesXml)) : null;
+  let changed = false;
+
+  const findMasterPage = (name: string): Element | undefined =>
+    Array.from(masterStyles.children).find(
+      (el) =>
+        el.namespaceURI === STYLE_NAMESPACE &&
+        el.localName === "master-page" &&
+        el.getAttributeNS(STYLE_NAMESPACE, "name") === name,
+    );
+
+  const upsertDefs = (prefix: string, defsXml: string) => {
+    let automaticStyles = firstChildElement(root, OFFICE_NAMESPACE, "automatic-styles");
+    if (!automaticStyles && defsXml === "") {
+      return;
+    }
+    if (!automaticStyles) {
+      automaticStyles = stylesDoc.createElementNS(OFFICE_NAMESPACE, "office:automatic-styles");
+      root.insertBefore(automaticStyles, masterStyles);
+    }
+    // Deterministic prefixed names (see buildStylesXml) — drop every style
+    // this section minted on a PREVIOUS save before adding the current set,
+    // so removed/changed header-footer content never leaves orphaned defs.
+    for (const el of Array.from(automaticStyles.children)) {
+      if (
+        el.namespaceURI === STYLE_NAMESPACE &&
+        el.localName === "style" &&
+        el.getAttributeNS(STYLE_NAMESPACE, "name")?.startsWith(prefix)
+      ) {
+        automaticStyles.removeChild(el);
+        changed = true;
+      }
+    }
+    if (defsXml === "") {
+      return;
+    }
+    const wrapper = parseXml(`<office:document-styles${DOCUMENT_XMLNS}><office:automatic-styles>${defsXml}</office:automatic-styles></office:document-styles>`);
+    for (const def of Array.from(wrapper.documentElement.firstElementChild!.children)) {
+      automaticStyles.appendChild(stylesDoc.importNode(def, true));
+    }
+    changed = true;
+  };
+
+  const upsertHeaderFooterChild = (masterPage: Element, localName: string, xml: string) => {
+    const existing = Array.from(masterPage.children).find(
+      (el) => el.namespaceURI === STYLE_NAMESPACE && el.localName === localName,
+    );
+    if (xml === "") {
+      if (existing) {
+        masterPage.removeChild(existing);
+        changed = true;
+      }
+      return;
+    }
+    const wrapper = parseXml(`<office:document-styles${DOCUMENT_XMLNS}>${xml}</office:document-styles>`);
+    const imported = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    if (existing) {
+      if (serializeElement(existing) === serializeElement(imported)) {
+        return;
+      }
+      masterPage.replaceChild(imported, existing);
+    } else {
+      masterPage.appendChild(imported);
+    }
+    changed = true;
+  };
+
+  model.sections.forEach((section, index) => {
+    const masterName = index === 0 ? "Standard" : (names?.masters[index] ?? null);
+    if (masterName === null) {
+      return;
+    }
+    const masterPage = findMasterPage(masterName);
+    if (!masterPage) {
+      return;
+    }
+    const prefix = `HF${index + 1}`;
+    const content = headerFooterMasterContent(section, prefix, includeOpaque);
+    upsertHeaderFooterChild(masterPage, "header", content.headerXml);
+    upsertHeaderFooterChild(masterPage, "header-left", content.headerLeftXml);
+    upsertHeaderFooterChild(masterPage, "footer", content.footerXml);
+    upsertHeaderFooterChild(masterPage, "footer-left", content.footerLeftXml);
+    upsertDefs(prefix, content.defsXml);
+  });
+
+  return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
+}
+
 /** A timestamp in the W3CDTF profile ODF metadata uses (whole seconds,
  * UTC), e.g. "2026-08-03T12:00:00Z". */
 function toW3CDTF(date: Date): string {
@@ -1622,8 +1921,9 @@ export async function writeOdt(
     ...mediaPlan.manifestEntries,
   ];
   // Named-style changes (SPEC-019) first, then the per-section master pages
-  // content.xml references (SPEC-028 AC-33) — layered so an unedited save
-  // still leaves the part byte-identical (both patches return null then).
+  // content.xml references (SPEC-028 AC-33), then header/footer content
+  // (SPEC-029) — layered so an unedited save still leaves the part
+  // byte-identical (every patch returns null then).
   const preservedStyles = preservedParts.get("styles.xml");
   let patchedStyles: string | null = null;
   if (preservedStyles) {
@@ -1631,6 +1931,8 @@ export async function writeOdt(
     patchedStyles = patchOdtStylesXml(model, originalStyles, content);
     patchedStyles =
       patchOdtSectionMasterPages(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
+    patchedStyles =
+      patchOdtSectionHeaderFooters(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
   }
 
   const entries: ZipEntryInput[] = [
