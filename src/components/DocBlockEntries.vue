@@ -1,0 +1,220 @@
+<script setup lang="ts">
+// The shared block-entry renderer (SPEC-028, split out for SPEC-029): the
+// `v-for` DocPage's body content renders, factored out so header/footer
+// bands (SPEC-029) can render the exact same paragraph/table/image markup
+// without a second copy of it. Entries arrive fully precomputed (tag, style
+// objects, run render lists) — this component holds no document logic of
+// its own, same as DocPage before the split. Runtime prop/emit
+// declarations, not the generic form — this script is parsed by espree.
+import { computed } from "vue";
+import DocImageBlock from "./DocImageBlock.vue";
+import DocTableBlock from "./DocTableBlock.vue";
+import { asRenderEntries, noRenderEntries } from "../lib/pageRender";
+
+const props = defineProps({
+  entries: { type: Array, default: () => noRenderEntries() },
+  cellRange: { type: Object, default: null },
+});
+
+defineEmits(["image-select"]);
+
+const renderEntries = computed(() => asRenderEntries(props.entries));
+
+function componentFor(entry = noRenderEntries()[0]) {
+  if (entry.kind === "table") {
+    return DocTableBlock;
+  }
+  if (entry.kind === "image") {
+    return DocImageBlock;
+  }
+  return entry.tag || "div";
+}
+</script>
+
+<template>
+  <component
+    :is="componentFor(entry)"
+    v-for="entry in renderEntries"
+    :key="entry.key"
+    v-memo="entry.memo"
+    :class="entry.className"
+    :style="entry.styleObj"
+    :contenteditable="entry.uneditable ? 'false' : undefined"
+    :data-section="entry.dataSection"
+    :data-block="entry.dataBlock"
+    :data-slice-start="entry.sliceStart"
+    :data-slice-more="entry.sliceMore"
+    :data-break-kind="entry.breakKind"
+    :data-section-marker="entry.sectionMarker"
+    :data-marker-label="entry.markerLabel"
+    :data-list-marker="entry.listMarker"
+    :data-list-level="entry.listLevel"
+    :block="entry.blockProp"
+    :section="entry.sectionProp"
+    :block-index="entry.blockIndexProp"
+    :cell-range="entry.kind === 'table' ? cellRange : undefined"
+    :src="entry.imageSrc"
+    :selected="entry.imageSelected"
+    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : undefined"
+  >
+    <template v-if="entry.runs && entry.runs.length > 0">
+      <template
+        v-for="run in entry.runs"
+        :key="run.key"
+      >
+        <!-- The plain (no-marks) variants keep a single text child, so
+             the span's firstChild stays the run's own text node — DOM
+             shapes older specs' tests and tooling rely on. -->
+        <a
+          v-if="run.href && !run.segments"
+          data-doc-link=""
+          :href="run.href"
+          :target="run.target"
+          :rel="run.rel"
+          :style="run.styleObj"
+        >{{ run.text }}</a>
+        <a
+          v-else-if="run.href"
+          data-doc-link=""
+          :href="run.href"
+          :target="run.target"
+          :rel="run.rel"
+          :style="run.styleObj"
+        ><template
+          v-for="(segment, segmentIndex) in run.segments"
+          :key="segmentIndex"
+        ><span
+          v-if="segment.kind !== 'text'"
+          :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
+        >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></a>
+        <span
+          v-else-if="run.segments"
+          :style="run.styleObj"
+        ><template
+          v-for="(segment, segmentIndex) in run.segments"
+          :key="segmentIndex"
+        ><span
+          v-if="segment.kind !== 'text'"
+          :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
+        >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></span>
+        <span
+          v-else
+          :style="run.styleObj"
+        >{{ run.text }}</span>
+      </template>
+    </template>
+    <br v-else-if="entry.needsBr">
+  </component>
+</template>
+
+<style scoped>
+/* These rules moved here from DocPage.vue when its per-entry markup did
+ * (SPEC-029): Vue's scoped CSS only scopes the rightmost compound selector,
+ * so `.marks-on .doc-paragraph::after` still matches across the
+ * DocumentView -> DocPage boundary (`.marks-on` lives on DocumentView's own
+ * root) but only when `.doc-paragraph` itself is an element THIS component
+ * owns — it stopped being one of DocPage's own elements the moment the
+ * entries `v-for` moved here, so these rules have to live wherever the
+ * entries actually render now. */
+.doc-paragraph {
+  margin: 0;
+  font-weight: normal;
+  font-size: inherit;
+}
+
+/* The list marker (SPEC-018): painted from the derived data-list-marker
+   attribute, never part of the editable text — caret offsets and the
+   model/DOM text equality check stay untouched. */
+.doc-paragraph[data-list-marker]::before {
+  content: attr(data-list-marker);
+  display: inline-block;
+  min-width: 0.635cm;
+  margin-inline-start: -0.635cm;
+  white-space: nowrap;
+}
+
+/* A manual break block (SPEC-028): always in the DOM (it is content the
+   caret can delete), invisible until formatting marks are shown, then a
+   labelled dashed rule (AC-11, AC-16). The label is a pseudo-element so
+   the canvas text stays byte-identical to the model. */
+.doc-break {
+  display: block;
+  height: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+.marks-on .doc-break {
+  height: auto;
+  overflow: visible;
+  margin: 2px 0;
+  border-top: 1px dashed #9aa0a6;
+  color: #5f6368;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.marks-on .doc-break::before {
+  content: attr(data-marker-label);
+}
+
+/* A section break's marker (SPEC-028 AC-16): rendered only while marks are
+   on, and absolutely positioned with zero flow height so showing marks
+   never re-paginates the section boundary itself. */
+.doc-section-marker {
+  display: block;
+  position: relative;
+  height: 0;
+  overflow: visible;
+  user-select: none;
+}
+
+.marks-on .doc-section-marker::before {
+  content: attr(data-marker-label);
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  border-top: 1px dashed #9aa0a6;
+  color: #5f6368;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* Space/tab marks (AC-14, AC-15): the real characters render (selection,
+   caret math and copy all see the model text); the visible mark paints
+   over them from a pseudo-element. */
+.mark-space {
+  position: relative;
+}
+
+.mark-space::before {
+  content: "·";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #80868b;
+  pointer-events: none;
+}
+
+.mark-tab {
+  position: relative;
+}
+
+.mark-tab::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: #80868b;
+  pointer-events: none;
+}
+
+/* The pilcrow (AC-13) — suppressed on a slice that continues onto the next
+   page: the paragraph has not ended there. */
+.marks-on .doc-paragraph:not([data-slice-more])::after {
+  content: "¶";
+  color: #80868b;
+}
+</style>

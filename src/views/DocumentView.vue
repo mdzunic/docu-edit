@@ -14,6 +14,8 @@ import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
+import HeaderFooterMenu from "../components/HeaderFooterMenu.vue";
+import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
 import ImageInsertControl from "../components/ImageInsertControl.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
@@ -28,6 +30,7 @@ import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
+import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
@@ -53,11 +56,13 @@ import {
   asBorderLineStyle,
   asCellVerticalAlign,
   asCharacterFormatKey,
+  asHeaderFooterPart,
   asImage,
   asImageWrapMode,
   asListMarkerStyle,
   asListType,
   asMeasurementUnit,
+  asPageNumberFormat,
   asParagraphAlignment,
   asParagraphBlock,
   asBreakKind,
@@ -65,10 +70,13 @@ import {
   asTableAlignment,
   asTableWidthMode,
   createDocument,
+  createEmptyHeaderFooterContent,
   DEFAULT_TITLE,
   isBreak,
   isImage,
   isTable,
+  noActiveHeaderFooter,
+  noBlocks,
   sectionMargins,
   sectionPageSize,
 } from "../lib/documentModel";
@@ -212,6 +220,7 @@ import {
   caretSelection,
   changeListLevel,
   clearFormatting,
+  commitHeaderFooterModel,
   deleteBackward,
   deleteForward,
   deleteRange,
@@ -228,6 +237,7 @@ import {
   INDENT_STEP_CM,
   insertBreak,
   insertLineBreak,
+  insertPageNumberCommand,
   insertSectionBreak,
   insertText,
   isCollapsed,
@@ -241,6 +251,7 @@ import {
   resetParagraphStyle,
   selectAll,
   setAlignment,
+  setHeaderFooterOptions,
   setListMarker,
   setPageMargins,
   setPageSetup,
@@ -255,11 +266,19 @@ import {
   touchedBlocks,
   updateStyleFromSelection,
   verticalAlignState,
+  withHeaderFooterModel,
 } from "../lib/commands";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import { markSegments } from "../lib/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
 import { PX_PER_CM, sectionGeometryPx, wholePageItem } from "../lib/pagination";
+import {
+  computePageNumbers,
+  fieldValueText,
+  headerFooterForPage,
+  resolveHeaderFooterKind,
+} from "../lib/pageNumbering";
+import { noRenderEntries } from "../lib/pageRender";
 import {
   deleteImage,
   imageAt,
@@ -444,6 +463,327 @@ function clearImageSelection() {
   }
 }
 
+// --- headers, footers and page numbers (SPEC-029) ---------------------------
+// The section/part/kind currently being edited, or null while editing the
+// body (AC-1, AC-2, AC-7, AC-8) — set by double-clicking a header/footer
+// band or "Insert -> Header/Footer", cleared by Escape or double-clicking
+// the body. Exactly one page's band ever renders as the live contenteditable
+// surface at a time (see hfRootEl); every other page of the same section
+// renders the identical content read-only, which is how "edits apply to
+// every page in the section at once" (AC-10) falls out for free — they all
+// read the same model content, not a per-page copy.
+const activeHeaderFooter = ref(noActiveHeaderFooter());
+// Caret/selection inside the active header/footer's own content, addressed
+// in the same synthetic single-section coordinates withHeaderFooterModel
+// builds (section 0) — plain variables like the body's own caret/
+// selectionAnchor, since nothing renders from them directly.
+let hfCaret = noCaret();
+let hfSelectionAnchor = noCaret();
+// A collapsed hf caret's not-yet-typed format override, mirroring the
+// body's own pendingFormat (SPEC-012/013).
+let hfPendingFormat = noPendingFormat();
+let hfComposing = false;
+let hfCompositionRange = noSelection();
+// Forces the header/footer band's entries to remount after a composition
+// commit (mirrors the body's bumpBlockKey/remount, scoped down since a
+// header/footer's content is small enough to always remount whole rather
+// than track individual block addresses).
+const hfRemountEpoch = ref(0);
+const headerFooterOptionsOpen = ref(false);
+const headerFooterOptionsInitial = ref({});
+const pageNumberDialogOpen = ref(false);
+
+/** The one DOM element currently rendering as an editable header/footer
+ * band, if any — set by DocPage's `data-hf-editable` attribute on whichever
+ * page's band `activeHeaderFooter` addresses (see DocPage.vue's
+ * headerEditable/footerEditable props). A plain query instead of a Vue
+ * template ref because the band lives inside one of many `v-for`-repeated
+ * DocPage instances — at most one exists in the DOM at a time. */
+function hfRootEl() {
+  const found = contentRoot.value?.querySelector("[data-hf-editable]");
+  return found instanceof HTMLElement ? found : null;
+}
+
+/** The header/footer content's live selection, mirroring the body's
+ * currentSelection(root) — falls back to the tracked hfCaret/
+ * hfSelectionAnchor when the DOM selection is not inside the band (a
+ * toolbar control just took focus, SPEC-013's own pattern). */
+function currentHfSelection() {
+  const root = hfRootEl();
+  if (root) {
+    const range = modelRangeFromSelection(root, document.getSelection());
+    if (range) {
+      return { anchor: range.start, focus: range.end };
+    }
+  }
+  return hfCaret ? { anchor: hfSelectionAnchor ?? hfCaret, focus: hfCaret } : null;
+}
+
+/** Leaves header/footer editing and returns focus to the body (AC-7, AC-8). */
+function exitHeaderFooterEditing() {
+  if (!activeHeaderFooter.value) {
+    return;
+  }
+  activeHeaderFooter.value = null;
+  hfCaret = noCaret();
+  hfSelectionAnchor = noCaret();
+  void nextTick().then(() => contentRoot.value?.focus());
+}
+
+/** Enters header/footer editing for the given page's band (AC-1, AC-2):
+ * resolves which kind (default/first/even) that page actually renders —
+ * the same resolution headerFooterForPage uses for read-only display — so
+ * typing lands in the content the user is looking at. */
+function enterHeaderFooterEditing(pageIndex = 0, part = asHeaderFooterPart("header")) {
+  const model = doc.value;
+  if (!model || !editable.value) {
+    return;
+  }
+  const pages = paginationPages.value;
+  const page = pages[pageIndex];
+  if (!page) {
+    return;
+  }
+  const pageNumber = pageNumbers.value[pageIndex] ?? 1;
+  const kind = resolveHeaderFooterKind(model, pages, pageIndex, pageNumber);
+  clearCellSelection();
+  clearImageSelection();
+  activeHeaderFooter.value = { sectionIndex: page.sectionIndex, part, kind, pageIndex };
+  hfCaret = { section: 0, block: 0, offset: 0 };
+  hfSelectionAnchor = noCaret();
+  void nextTick().then(() => {
+    const root = hfRootEl();
+    if (root) {
+      root.focus();
+      setDomCaret(root, hfCaret ?? { section: 0, block: 0, offset: 0 });
+    }
+  });
+}
+
+function handleDblclickHeader(pageIndex = 0) {
+  enterHeaderFooterEditing(pageIndex, "header");
+}
+
+function handleDblclickFooter(pageIndex = 0) {
+  enterHeaderFooterEditing(pageIndex, "footer");
+}
+
+function handleDblclickBody() {
+  exitHeaderFooterEditing();
+}
+
+/** Opens "Insert -> Header/Footer" (AC-2): enters editing the caret's own
+ * section, defaulting to the header. */
+function openInsertHeaderFooter(part = asHeaderFooterPart("header")) {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  const pages = paginationPages.value;
+  const pageIndex = caret ? pagination.pageOfCaret(caret) : 0;
+  enterHeaderFooterEditing(pageIndex, part);
+  void pages;
+}
+
+/** Folds a header/footer command's result (built against the synthetic
+ * single-section model, see withHeaderFooterModel) back into the real
+ * document and commits it — applyEdit's header/footer sibling. Undo is
+ * recorded against a body-caret filler selection (the body caret does not
+ * move for a header/footer edit) so Ctrl/Cmd+Z still restores the prior
+ * document content; the "currently editing this band" indicator itself is
+ * not part of the undo history. */
+function applyHeaderFooterEdit(resultModel = noDocument(), resultSelection = noSelection(), label = "") {
+  const active = activeHeaderFooter.value;
+  const before = doc.value;
+  if (!active || !before || !resultSelection) {
+    return;
+  }
+  const nextModel = commitHeaderFooterModel(before, active.sectionIndex, active.part, active.kind, resultModel);
+  const bodyFiller = caretSelection(caret ?? documentStart());
+  recordHistoryEdit(documentId.value, {
+    before: { model: before, selection: bodyFiller },
+    after: { model: nextModel, selection: bodyFiller },
+    label,
+    groupable: false,
+  });
+  doc.value = replaceDocumentModel(documentId.value, nextModel);
+  hfCaret = resultSelection.focus;
+  hfSelectionAnchor = isCollapsed(resultSelection) ? noCaret() : resultSelection.anchor;
+  autosave.markDirty();
+  refreshUndoRedoState();
+  void nextTick().then(() => {
+    const root = hfRootEl();
+    if (!root || !hfCaret) {
+      return;
+    }
+    if (hfSelectionAnchor) {
+      setDomSelection(root, hfSelectionAnchor, hfCaret);
+    } else {
+      setDomCaret(root, hfCaret);
+    }
+  });
+}
+
+function handleHfBeforeInput(event = new InputEvent("beforeinput")) {
+  const type = event.inputType;
+  if (hfComposing || event.isComposing || type === "insertCompositionText") {
+    return;
+  }
+  event.preventDefault();
+  const active = activeHeaderFooter.value;
+  const model = doc.value;
+  if (!active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentHfSelection();
+  if (!selection) {
+    return;
+  }
+  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+  let result = null;
+  let label = "";
+  if (type === "insertText" || type === "insertFromPaste") {
+    const text = event.data ?? (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
+    if (text) {
+      result = insertText(synthetic, selection, text, hfPendingFormat);
+      label = "typing";
+    }
+  } else if (type === "insertParagraph") {
+    result = splitBlock(synthetic, selection);
+    label = "new paragraph";
+  } else if (type === "insertLineBreak") {
+    result = insertLineBreak(synthetic, selection);
+    label = "line break";
+  } else if (type === "deleteContentBackward") {
+    result = deleteBackward(synthetic, selection);
+    label = "delete";
+  } else if (type === "deleteContentForward") {
+    result = deleteForward(synthetic, selection);
+    label = "delete";
+  } else if (type === "deleteByCut" || type === "deleteContent") {
+    result = isCollapsed(selection) ? null : deleteRange(synthetic, selection);
+    label = "delete";
+  }
+  if (result) {
+    applyHeaderFooterEdit(result.model, result.selection, label);
+  }
+}
+
+function handleHfKeyDown(event = new KeyboardEvent("keydown")) {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    exitHeaderFooterEditing();
+  }
+}
+
+function handleHfCompositionStart() {
+  const root = hfRootEl();
+  if (!root || !editable.value) {
+    return;
+  }
+  hfComposing = true;
+  hfCompositionRange = currentHfSelection();
+}
+
+function handleHfCompositionEnd(event = new CompositionEvent("compositionend")) {
+  hfComposing = false;
+  const range = hfCompositionRange;
+  hfCompositionRange = null;
+  const active = activeHeaderFooter.value;
+  const model = doc.value;
+  if (!active || !model || !editable.value || !range) {
+    return;
+  }
+  const data = event.data ?? "";
+  if (!data) {
+    return;
+  }
+  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+  const result = insertText(synthetic, range, data, null);
+  applyHeaderFooterEdit(result.model, result.selection, "typing");
+  hfRemountEpoch.value += 1;
+}
+
+/** "Header/footer options" (AC-11, AC-12, AC-22, AC-23): prefilled from the
+ * section currently being edited, or the caret's section when opened from
+ * the menu without an active header/footer. */
+function openHeaderFooterOptions() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  const sectionIndex = activeHeaderFooter.value?.sectionIndex ?? caretSectionIndex.value;
+  const section = model.sections[sectionIndex];
+  headerFooterOptionsInitial.value = {
+    sectionIndex,
+    titlePage: section?.titlePage === true,
+    evenAndOddHeaders: section?.evenAndOddHeaders === true,
+    pageNumberStart: section?.pageNumberStart ?? null,
+  };
+  headerFooterOptionsOpen.value = true;
+}
+
+function handleHeaderFooterOptionsApply(
+  payload = { sectionIndex: 0, titlePage: false, evenAndOddHeaders: false, pageNumberStart: null },
+) {
+  headerFooterOptionsOpen.value = false;
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!model || !root) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    setHeaderFooterOptions(model, selection, payload.sectionIndex, {
+      titlePage: payload.titlePage,
+      evenAndOddHeaders: payload.evenAndOddHeaders,
+      pageNumberStart: payload.pageNumberStart,
+    }),
+    selection,
+    "header/footer options",
+  );
+}
+
+function handleHeaderFooterOptionsCancel() {
+  headerFooterOptionsOpen.value = false;
+}
+
+/** "Insert page number" (AC-14..19): targets the section currently being
+ * edited if a header/footer is active, else the caret's own section. */
+function openPageNumberDialog() {
+  if (!doc.value) {
+    return;
+  }
+  pageNumberDialogOpen.value = true;
+}
+
+function handlePageNumberInsert(
+  options = { part: "footer", position: "center", format: "decimal", pageXofY: false },
+) {
+  pageNumberDialogOpen.value = false;
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!model || !root) {
+    return;
+  }
+  const sectionIndex = activeHeaderFooter.value?.sectionIndex ?? caretSectionIndex.value;
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    insertPageNumberCommand(model, selection, sectionIndex, {
+      part: asHeaderFooterPart(options.part),
+      position: asParagraphAlignment(options.position),
+      format: asPageNumberFormat(options.format),
+      pageXofY: !!options.pageXofY,
+    }),
+    selection,
+    "insert page number",
+  );
+}
+
+function handlePageNumberCancel() {
+  pageNumberDialogOpen.value = false;
+}
+
 /** The document's own effective save format (the same rule DownloadMenu's
  * default and handleDownload use) — decides whether an inserted SVG is
  * converted to PNG (AC-2) or kept as-is (AC-3). */
@@ -573,9 +913,12 @@ function handleImageOptionsApply(payload = { altText: "", widthCm: 0, heightCm: 
  * showing validation/conversion failures as a toast — never the console
  * (AC-34). */
 async function insertImageFromFile(file = new File([], ""), atSelection = noSelection()) {
+  const active = activeHeaderFooter.value;
   const model = doc.value;
   const root = contentRoot.value;
-  const selection = atSelection ?? (root ? currentSelection(root) : null) ?? (model ? caretSelection(caret ?? documentStart()) : null);
+  const selection = active
+    ? (atSelection ?? currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 }))
+    : (atSelection ?? (root ? currentSelection(root) : null) ?? (model ? caretSelection(caret ?? documentStart()) : null));
   if (!model || !selection) {
     return;
   }
@@ -591,6 +934,16 @@ async function insertImageFromFile(file = new File([], ""), atSelection = noSele
   }
   const current = doc.value;
   if (!current) {
+    return;
+  }
+  if (active) {
+    // Header/footer images (SPEC-029 AC-6): inserted into the active band's
+    // synthetic model — insertImage's own media-dedup writes into that
+    // model's `media`, which commitHeaderFooterModel keeps (see its own
+    // doc comment) exactly like any other model-level side effect.
+    const synthetic = withHeaderFooterModel(current, active.sectionIndex, active.part, active.kind);
+    const result = insertImage(synthetic, selection, prepared.media, prepared.naturalWidthPx, prepared.naturalHeightPx);
+    applyHeaderFooterEdit(result.model, result.selection, "insert image");
     return;
   }
   const result = insertImage(current, selection, prepared.media, prepared.naturalWidthPx, prepared.naturalHeightPx);
@@ -3080,8 +3433,27 @@ function handleTablePropertiesApply(
  * nested tables are out of scope (SPEC-022). */
 function handleInsertTable(size = { rows: 0, cols: 0 }) {
   insertTableDialogOpen.value = false;
-  const root = contentRoot.value;
+  const active = activeHeaderFooter.value;
   const model = doc.value;
+  if (active) {
+    // Header/footer tables (SPEC-029 AC-5): same insertTable command, run
+    // against the active band's synthetic model.
+    if (!model || !editable.value) {
+      return;
+    }
+    const selection = currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
+    if (selection.focus.cell) {
+      addToast("Tables can't be inserted inside a table");
+      hfRootEl()?.focus();
+      return;
+    }
+    const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+    const result = insertTable(synthetic, selection, size.rows, size.cols);
+    applyHeaderFooterEdit(result.model, result.selection, "insert table");
+    hfRootEl()?.focus();
+    return;
+  }
+  const root = contentRoot.value;
   if (!root || !model || !editable.value) {
     return;
   }
@@ -3097,12 +3469,90 @@ function handleInsertTable(size = { rows: 0, cols: 0 }) {
 
 // --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
 
+/** The character-formatting toolbar's header/footer counterpart (SPEC-029
+ * AC-4): identical bold/italic/… and subscript/superscript logic to
+ * toggleCharacterFormat, just against the active band's synthetic model
+ * and its own pending-format/caret state. */
+function toggleHfCharacterFormat(key = "") {
+  const active = activeHeaderFooter.value;
+  const model = doc.value;
+  if (!active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentHfSelection();
+  if (!selection) {
+    return;
+  }
+  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+  if (key === "subscript" || key === "superscript") {
+    if (isCollapsed(selection)) {
+      const on = verticalAlignState(synthetic, selection, key, hfPendingFormat) === "on";
+      hfPendingFormat = { ...hfPendingFormat, vertAlign: on ? false : key };
+    } else {
+      const result = toggleVerticalAlign(synthetic, selection, key);
+      applyHeaderFooterEdit(result.model, result.selection, key);
+    }
+    hfRootEl()?.focus();
+    return;
+  }
+  const formatKey = asCharacterFormatKey(key);
+  if (isCollapsed(selection)) {
+    const next = formatState(synthetic, selection, formatKey, hfPendingFormat) !== "on";
+    hfPendingFormat = { ...hfPendingFormat, [formatKey]: next };
+  } else {
+    const result = toggleFormat(synthetic, selection, formatKey);
+    applyHeaderFooterEdit(result.model, result.selection, formatKey);
+  }
+  hfRootEl()?.focus();
+}
+
+/** applyRunFormatPatch's header/footer counterpart (SPEC-029 AC-4). */
+function applyHfRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
+  const active = activeHeaderFooter.value;
+  const model = doc.value;
+  if (!patch || !active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentHfSelection();
+  if (!selection) {
+    return;
+  }
+  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+  if (isCollapsed(selection)) {
+    hfPendingFormat = { ...hfPendingFormat, ...patch };
+  } else {
+    const result = applyFormat(synthetic, selection, patch);
+    applyHeaderFooterEdit(result.model, result.selection, label);
+  }
+  hfRootEl()?.focus();
+}
+
+/** applyParagraphCommand's header/footer counterpart (SPEC-029 AC-4): the
+ * same chokepoint alignment/indent/list/style toolbar actions run through
+ * for body content, redirected at the active band's synthetic model. */
+function applyHfParagraphCommand(command = noParagraphCommand(), label = "formatting") {
+  const active = activeHeaderFooter.value;
+  const model = doc.value;
+  if (!command || !active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
+  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+  const result = command(synthetic, selection);
+  applyHeaderFooterEdit(result.model, result.selection, label);
+  hfRootEl()?.focus();
+}
+
 /** Bold/italic/underline/strikethrough (SPEC-012 AC-3..6, AC-16, AC-17)
  * and subscript/superscript (SPEC-013): a real selection is formatted
  * through the command API (which keeps the selection live, see applyEdit);
  * a collapsed caret instead sets/flips the pending format the next typed
  * text will carry (AC-9, AC-10). */
 function toggleCharacterFormat(key = "") {
+  if (activeHeaderFooter.value) {
+    toggleHfCharacterFormat(key);
+    return;
+  }
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model || !editable.value) {
@@ -3140,6 +3590,10 @@ function toggleCharacterFormat(key = "") {
  * caret merges the patch into the pending format the next typed text
  * carries, exactly like the boolean toggles. */
 function applyRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
+  if (activeHeaderFooter.value) {
+    applyHfRunFormatPatch(patch, label);
+    return;
+  }
   const root = contentRoot.value;
   const model = doc.value;
   if (!patch || !root || !model || !editable.value) {
@@ -3199,6 +3653,10 @@ function paragraphSelection(root = noElement()) {
  * focus to the canvas (skipped for ruler drags, which would tear down the
  * pointer capture mid-drag). */
 function applyParagraphCommand(command = noParagraphCommand(), label = "formatting", refocus = true) {
+  if (activeHeaderFooter.value) {
+    applyHfParagraphCommand(command, label);
+    return;
+  }
   const root = contentRoot.value;
   const model = doc.value;
   if (!command || !root || !model || !editable.value) {
@@ -3576,13 +4034,15 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (event.key === "Escape") {
     // Escape dismisses the paste options chip, the context menu, the
     // cell-range selection (SPEC-022) and the format painter (SPEC-020
-    // AC-15, AC-17); also the selected image (SPEC-024).
+    // AC-15, AC-17); also the selected image (SPEC-024) and header/footer
+    // editing (SPEC-029 AC-7).
     dismissPasteChip();
     dismissLinkChip();
     closeContextMenu();
     clearCellSelection();
     disarmPainter();
     clearImageSelection();
+    exitHeaderFooterEditing();
     return;
   }
   if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
@@ -3832,13 +4292,22 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
 
 /** Clicking anywhere on the page canvas outside the text (margins, empty
  * space) places the caret at the nearest text position. Clicks inside the
- * editable content keep the browser's native precise placement. */
+ * editable content keep the browser's native precise placement — except a
+ * read-only header/footer band (SPEC-029): it is a `contenteditable="false"`
+ * island inside the editable root, so the browser treats it as an atomic
+ * non-editable unit rather than falling through to nearby text the way an
+ * ordinary margin click does, and needs the same explicit fallback a click
+ * outside the root entirely gets. */
 function handlePageMouseDown(event = new MouseEvent("mousedown")) {
   const root = contentRoot.value;
   if (!root || !editable.value) {
     return;
   }
-  if (event.target instanceof Node && root.contains(event.target)) {
+  const targetEl = event.target instanceof Element ? event.target : null;
+  const inReadOnlyBand = !!targetEl?.closest(
+    ".page-header-band:not([data-hf-editable]), .page-footer-band:not([data-hf-editable])",
+  );
+  if (!inReadOnlyBand && event.target instanceof Node && root.contains(event.target)) {
     return;
   }
   const target = caretNearClientPoint(root, event.clientX, event.clientY);
@@ -3871,6 +4340,12 @@ onBeforeUnmount(() => pagination.stop());
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
 const pageCount = computed(() => Math.max(1, paginationPages.value.length));
+// The displayed page number of every laid-out page (SPEC-029 AC-20..23),
+// recomputed whenever pagination or a section's numbering options change.
+const pageNumbers = computed(() => {
+  const model = doc.value;
+  return model ? computePageNumbers(paginationPages.value, model) : [];
+});
 const caretPage = ref(1);
 const caretSectionIndex = ref(0);
 const paragraphPagination = ref(emptyParagraphPaginationState());
@@ -4145,6 +4620,89 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
   };
 }
 
+/** A header/footer's content rendered as DocPage entries (SPEC-029 AC-3..6,
+ * AC-20, AC-21): the same paragraph/table/image shapes renderEntryFor
+ * builds for body content, minus line-slicing (header/footer content never
+ * splits across pages) and with any page-number/page-count field run
+ * substituted for its live value on this specific page. Addressed with
+ * section 0 (dataSection/dataBlock), matching withHeaderFooterModel's
+ * synthetic single-section convention — only meaningful while this exact
+ * band is the active editable one; read-only mirror bands ignore it. */
+function headerFooterRenderEntries(blocks = noBlocks(), pageNumber = 1, totalPages = 1, marks = false) {
+  const media = doc.value?.media ?? [];
+  const entries = noRenderEntries();
+  blocks.forEach((block, blockIndex) => {
+    if (isTable(block)) {
+      entries.push({
+        key: `hf:${blockIndex}`,
+        memo: [block, blockIndex, marks],
+        kind: "table",
+        blockProp: block,
+        sectionProp: 0,
+        blockIndexProp: blockIndex,
+      });
+      return;
+    }
+    if (isImage(block)) {
+      entries.push({
+        key: `hf:${blockIndex}`,
+        memo: [block, blockIndex],
+        kind: "image",
+        blockProp: block,
+        sectionProp: 0,
+        blockIndexProp: blockIndex,
+        imageSrc: mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)),
+        imageSelected: false,
+      });
+      return;
+    }
+    const paragraph = asParagraphBlock(block);
+    const styleObj = { ...paragraphStyle(paragraph) };
+    const renderRuns = paragraph.runs.map((run, runIndex) => {
+      const text = run.field
+        ? fieldValueText(run.field.kind, run.field.format, pageNumber, totalPages)
+        : run.text;
+      const segments = marks ? markSegments(text) : null;
+      const marked = segments && segments.some((segment) => segment.kind !== "text");
+      return {
+        key: runKey(run, runIndex),
+        href: "",
+        styleObj: runStyle(run.formatting),
+        text,
+        segments: marked ? segments : null,
+      };
+    });
+    entries.push({
+      key: `hf:${blockIndex}`,
+      memo: [block, blockIndex, pageNumber, totalPages, marks, hfRemountEpoch.value],
+      kind: "paragraph",
+      tag: headingTag(paragraph.headingLevel),
+      className: "doc-paragraph",
+      styleObj,
+      dataSection: 0,
+      dataBlock: blockIndex,
+      runs: renderRuns,
+      needsBr: renderRuns.length === 0,
+    });
+  });
+  return entries;
+}
+
+/** The header/footer band geometry for a page (SPEC-029): positioned
+ * within the section's own top/bottom margin so it never competes with the
+ * body content box (which still starts exactly at the margin, unchanged by
+ * SPEC-029). Null when nothing should render there — the read-only mirror
+ * bands of an unedited, content-free header/footer stay entirely out of
+ * the DOM. */
+function headerFooterBandStyle(margins = { topCm: 0, rightCm: 0, bottomCm: 0, leftCm: 0 }, part = "header") {
+  const left = `${margins.leftCm}cm`;
+  const right = `${margins.rightCm}cm`;
+  if (part === "header") {
+    return { left, right, height: `${margins.topCm}cm`, top: "0" };
+  }
+  return { left, right, height: `${margins.bottomCm}cm`, bottom: "0" };
+}
+
 // The rendered pages: the layout's items joined with flatBlocks' per-block
 // render data, styles resolved from each page's own geometry (AC-17..19).
 // Under virtualization only realized pages build entries; the rest render
@@ -4165,6 +4723,9 @@ const pagedViews = computed(() => {
   const caretIndex = caretPage.value - 1;
   const anchorIndex = anchorPage.value;
   const findIndex = findMatchPage.value;
+  const active = activeHeaderFooter.value;
+  const numbers = pageNumbers.value;
+  const totalPages = paginationPages.value.length;
   return paginationPages.value.map((page, pageIndex) => {
     const realized =
       !virtual ||
@@ -4184,6 +4745,14 @@ const pagedViews = computed(() => {
         },
         entries: [],
         virtual: true,
+        // The header/footer bands still need real geometry even on a
+        // virtualized page (SPEC-029): they are what double-clicking the
+        // margin hit-tests against (AC-1) — a virtual page still occupies
+        // its full on-screen box, just without body content mounted.
+        headerStyle: headerFooterBandStyle(page.margins, "header"),
+        footerStyle: headerFooterBandStyle(page.margins, "footer"),
+        headerEntries: [],
+        footerEntries: [],
       };
     }
     realizedSticky.add(page);
@@ -4219,6 +4788,16 @@ const pagedViews = computed(() => {
         });
       }
     }
+    // Header/footer bands (SPEC-029 AC-9, AC-10): every page of a section
+    // renders the same resolved content — the one page `active` addresses
+    // renders it as the live editable surface, every other page read-only.
+    const pageNumber = numbers[pageIndex] ?? pageIndex + 1;
+    const headerEditable = !!active && active.part === "header" && active.pageIndex === pageIndex;
+    const footerEditable = !!active && active.part === "footer" && active.pageIndex === pageIndex;
+    const headerContent = headerFooterForPage(model, paginationPages.value, pageIndex, pageNumber, "header");
+    const footerContent = headerFooterForPage(model, paginationPages.value, pageIndex, pageNumber, "footer");
+    const headerBlocks = headerContent?.blocks ?? (headerEditable ? createEmptyHeaderFooterContent().blocks : null);
+    const footerBlocks = footerContent?.blocks ?? (footerEditable ? createEmptyHeaderFooterContent().blocks : null);
     return {
       pageStyle: {
         width: `${page.pageSize.widthCm}cm`,
@@ -4229,6 +4808,13 @@ const pagedViews = computed(() => {
       },
       entries,
       virtual: false,
+      dimmed: !!active,
+      headerEditable,
+      footerEditable,
+      headerStyle: headerFooterBandStyle(page.margins, "header"),
+      footerStyle: headerFooterBandStyle(page.margins, "footer"),
+      headerEntries: headerBlocks ? headerFooterRenderEntries(headerBlocks, pageNumber, totalPages, marks) : [],
+      footerEntries: footerBlocks ? headerFooterRenderEntries(footerBlocks, pageNumber, totalPages, marks) : [],
     };
   });
 });
@@ -5028,6 +5614,14 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         v-if="editable"
         @insert-file="handleInsertImageFile"
       />
+      <HeaderFooterMenu
+        v-if="editable"
+        data-testid="header-footer-menu-wrapper"
+        @insert-header="openInsertHeaderFooter('header')"
+        @insert-footer="openInsertHeaderFooter('footer')"
+        @insert-page-number="openPageNumberDialog"
+        @options="openHeaderFooterOptions"
+      />
       <button
         v-if="editable"
         type="button"
@@ -5381,7 +5975,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
           aria-multiline="true"
           aria-label="Document content"
           :aria-readonly="editable ? undefined : 'true'"
-          :contenteditable="editable"
+          :contenteditable="editable && !activeHeaderFooter"
           spellcheck="false"
           @beforeinput="handleBeforeInput"
           @keydown="handleKeyDown"
@@ -5407,7 +6001,21 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             :entries="pageView.entries"
             :virtual="pageView.virtual"
             :cell-range="cellSelection || undefined"
+            :dimmed="pageView.dimmed"
+            :header-style="pageView.headerStyle ?? undefined"
+            :footer-style="pageView.footerStyle ?? undefined"
+            :header-entries="pageView.headerEntries"
+            :footer-entries="pageView.footerEntries"
+            :header-editable="pageView.headerEditable"
+            :footer-editable="pageView.footerEditable"
             @image-select="handleImageSelect"
+            @dblclick-header="handleDblclickHeader(pageIndex)"
+            @dblclick-footer="handleDblclickFooter(pageIndex)"
+            @dblclick-body="handleDblclickBody"
+            @hf-beforeinput="handleHfBeforeInput"
+            @hf-keydown="handleHfKeyDown"
+            @hf-compositionstart="handleHfCompositionStart"
+            @hf-compositionend="handleHfCompositionEnd"
           />
         </div>
       </div>
@@ -5529,6 +6137,18 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       v-if="insertTableDialogOpen"
       @apply="handleInsertTable"
       @cancel="insertTableDialogOpen = false"
+    />
+    <PageNumberDialog
+      v-if="pageNumberDialogOpen"
+      :initial="{ part: activeHeaderFooter?.part ?? 'header' }"
+      @apply="handlePageNumberInsert"
+      @cancel="handlePageNumberCancel"
+    />
+    <HeaderFooterOptionsDialog
+      v-if="headerFooterOptionsOpen"
+      :initial="headerFooterOptionsInitial"
+      @apply="handleHeaderFooterOptionsApply"
+      @cancel="handleHeaderFooterOptionsCancel"
     />
     <SpecialCharacterDialog
       v-if="specialCharacterDialogOpen"

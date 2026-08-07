@@ -20,13 +20,18 @@
 //    sequence order (see validate.ts), which is what Word's strict reader
 //    checks before offering to "repair" a file.
 import type {
+  Block,
   BorderLineStyle,
   BorderSide,
   CellBorders,
   CellVerticalAlign,
   DocumentModel,
+  FieldSpec,
+  HeaderFooterKind,
+  HeaderFooterPart,
   Image,
   Margins,
+  PageNumberFormat,
   NamedStyle,
   PageSize,
   Paragraph,
@@ -34,6 +39,7 @@ import type {
   ParagraphFormatting,
   Run,
   RunFormatting,
+  Section,
   SectionStart,
   Table,
   TableCell,
@@ -74,7 +80,13 @@ import {
   type NumberingRef,
 } from "./numbering";
 import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
-import { nextFreeRelId, planMediaWrite, takenRelIdsOf, type MediaWritePlan } from "./media";
+import {
+  nextFreeRelId,
+  planMediaWrite,
+  planMediaWriteForBlocks,
+  takenRelIdsOf,
+  type MediaWritePlan,
+} from "./media";
 import { zip, type ZipEntryInput } from "./zipWriter";
 
 export const DOCX_MIME_TYPE =
@@ -216,8 +228,30 @@ function runContentXml(text: string): string {
   return xml;
 }
 
+// The field-instruction switch for each numbering format (SPEC-029
+// AC-16..18) — absent (decimal) needs none, OOXML's own default.
+const FIELD_FORMAT_SWITCH: Record<PageNumberFormat, string> = {
+  decimal: "",
+  lowerRoman: " \\* roman",
+  lowerAlpha: " \\* alphabetic",
+};
+
+function fieldInstr(field: FieldSpec): string {
+  const kind = field.kind === "page" ? "PAGE" : "NUMPAGES";
+  return `${kind}${FIELD_FORMAT_SWITCH[field.format]}`;
+}
+
+/** A run, or — when it carries a field spec (SPEC-029) — a `w:fldSimple`
+ * wrapping one: `w:fldSimple` schema-wraps a cached-result run the same
+ * shape an ordinary run would be, so the run's own formatting/placeholder
+ * text still goes through runPropertiesXml/runContentXml unchanged; only
+ * the instruction wrapper differs. */
 function runXml(run: Run): string {
-  return `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
+  const inner = `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
+  if (run.field) {
+    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${inner}</w:fldSimple>`;
+  }
+  return inner;
 }
 
 /** The pPr children a bare ParagraphFormatting produces — the shared tail
@@ -335,21 +369,28 @@ const HYPERLINK_RELATIONSHIP =
 // same way drawing.ts declares it on a:blip.
 const R_ATTRIBUTE_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-function forEachModelParagraph(model: DocumentModel, visit: (paragraph: Paragraph) => void): void {
-  for (const section of model.sections) {
-    for (const block of section.blocks) {
-      if (block.type === "table") {
-        for (const row of block.rows) {
-          for (const cell of row.cells) {
-            for (const paragraph of cell.blocks) {
-              visit(paragraph);
-            }
+/** Visits every paragraph reachable from a block list, descending into table
+ * cells — the shared iteration `forEachModelParagraph` (the whole model)
+ * and SPEC-029's per-header/footer-part planning (one Block[]) both need. */
+function forEachParagraphIn(blocks: Block[], visit: (paragraph: Paragraph) => void): void {
+  for (const block of blocks) {
+    if (block.type === "table") {
+      for (const row of block.rows) {
+        for (const cell of row.cells) {
+          for (const paragraph of cell.blocks) {
+            visit(paragraph);
           }
         }
-      } else if (block.type === "paragraph") {
-        visit(block);
       }
+    } else if (block.type === "paragraph") {
+      visit(block);
     }
+  }
+}
+
+function forEachModelParagraph(model: DocumentModel, visit: (paragraph: Paragraph) => void): void {
+  for (const section of model.sections) {
+    forEachParagraphIn(section.blocks, visit);
   }
 }
 
@@ -364,16 +405,15 @@ export interface HyperlinkWritePlan {
 }
 
 /** One `TargetMode="External"` hyperlink relationship per distinct external
- * link target the model references, ids allocated past `takenRelIds` — the
- * same additive scheme as planMediaWrite, so a same-format save only ever
- * appends to the preserved rels part. */
-export function planHyperlinkWrite(
-  model: DocumentModel,
-  takenRelIds: Set<string> = new Set(),
-): HyperlinkWritePlan {
+ * link target a block list references, ids allocated past `takenRelIds` —
+ * the same additive scheme as planMediaWrite, so a same-format save only
+ * ever appends to the preserved rels part. The engine `planHyperlinkWrite`
+ * (the whole model) and SPEC-029's per-header/footer-part planning (one
+ * Block[], its own independent rels file) both call this. */
+function planHyperlinkWriteFor(blocks: Block[], takenRelIds: Set<string>): HyperlinkWritePlan {
   const hrefs: string[] = [];
   const seen = new Set<string>();
-  forEachModelParagraph(model, (paragraph) => {
+  forEachParagraphIn(blocks, (paragraph) => {
     for (const run of paragraph.runs) {
       const href = run.formatting.linkHref;
       if (href !== undefined && !seen.has(href)) {
@@ -398,6 +438,16 @@ export function planHyperlinkWrite(
     relationshipsXml: relParts.join(""),
     relIds: new Set(relIdOf.values()),
   };
+}
+
+export function planHyperlinkWrite(
+  model: DocumentModel,
+  takenRelIds: Set<string> = new Set(),
+): HyperlinkWritePlan {
+  return planHyperlinkWriteFor(
+    model.sections.flatMap((section) => section.blocks),
+    takenRelIds,
+  );
 }
 
 /** Document-order numeric ids for w:bookmarkStart/End pairs (SPEC-025). */
@@ -775,25 +825,255 @@ function tableXml(
   return `<w:tbl>${tblPr}${grid}${rows}</w:tbl>`;
 }
 
+// --- headers, footers and page numbers (SPEC-029) ---------------------------
+
+export const HEADER_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+export const FOOTER_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const HEADER_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const FOOTER_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+const SETTINGS_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+const SETTINGS_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
+
+interface HeaderFooterPlanEntry {
+  kind: HeaderFooterKind;
+  relId: string;
+}
+
+interface SectionHeaderFooterPlan {
+  headers: HeaderFooterPlanEntry[];
+  footers: HeaderFooterPlanEntry[];
+}
+
+interface HeaderFooterPartPlan {
+  partName: string;
+  blocks: Block[];
+  mediaPlan: MediaWritePlan;
+  hyperlinkPlan: HyperlinkWritePlan;
+}
+
+export interface HeaderFooterWritePlan {
+  /** Per section (by index), the header/footer references its own sectPr
+   * needs — empty for a section with no header/footer content. */
+  bySection: SectionHeaderFooterPlan[];
+  /** Every header1.xml/footer1.xml-shaped part this plan mints, with the
+   * content and (part-scoped, own-rels-file) media/hyperlink plans it needs
+   * to serialise. */
+  parts: HeaderFooterPartPlan[];
+  /** `<Relationship>` elements for word/_rels/document.xml.rels. */
+  relationshipsXml: string;
+  /** `<Override>` elements for `[Content_Types].xml`. */
+  contentTypesXml: string;
+  /** True when any section wants different odd/even pages — OOXML only
+   * has one document-wide flag for this (`w:evenAndOddHeaders` in
+   * word/settings.xml), so every section's own toggle is OR'd together. */
+  evenAndOddHeaders: boolean;
+}
+
+/** The header/footer kinds a section actually needs a part for — a kind
+ * with no content (an unedited "first"/"even" the section's toggle merely
+ * enabled) needs none, matching resolveHeaderFooterKind's "genuinely
+ * blank" contract on the read side. */
+function neededHeaderFooterKinds(section: Section, part: HeaderFooterPart): HeaderFooterKind[] {
+  const map = part === "header" ? section.headers : section.footers;
+  if (!map) {
+    return [];
+  }
+  return (Object.keys(map) as HeaderFooterKind[]).filter((kind) => map[kind] !== undefined);
+}
+
+/** Plans every header1.xml/footer1.xml-shaped part a save needs (SPEC-029):
+ * headers/footers are always regenerated fresh from the model — never
+ * preserved-then-patched the way styles.xml/numbering.xml are — since their
+ * content is now fully modelled, so this mints a brand new part name/
+ * relationship id for every one regardless of same-format vs. from-scratch.
+ * `existingMediaPartNames` is shared with the caller's own body-image
+ * MediaWritePlan (mutated in place by planMediaWriteForBlocks) so a
+ * header's images can never collide with the document's own
+ * `word/media/imageN.ext` names. */
+function planHeaderFooterWrite(
+  model: DocumentModel,
+  takenRelIds: Set<string>,
+  existingMediaPartNames: Set<string>,
+  existingPartNames: Set<string> = new Set(),
+): HeaderFooterWritePlan {
+  const bySection: SectionHeaderFooterPlan[] = [];
+  const parts: HeaderFooterPartPlan[] = [];
+  const relParts: string[] = [];
+  const overrideParts: string[] = [];
+  const taken = new Set(takenRelIds);
+  let headerCount = 0;
+  let footerCount = 0;
+  let evenAndOddHeaders = false;
+
+  function planOne(
+    part: HeaderFooterPart,
+    kind: HeaderFooterKind,
+    blocks: Block[],
+    count: number,
+  ): HeaderFooterPlanEntry {
+    let n = count;
+    let fileName = `${part}${n}.xml`;
+    let partName = `word/${fileName}`;
+    // A source package can carry an orphaned word/headerN.xml the reader
+    // never consumed (unreferenced by any current sectPr) — never overwrite
+    // it, the same collision-avoidance planMediaWrite gives images.
+    while (existingPartNames.has(partName)) {
+      n++;
+      fileName = `${part}${n}.xml`;
+      partName = `word/${fileName}`;
+    }
+    const relId = nextFreeRelId(taken);
+    taken.add(relId);
+    const mediaPlan = planMediaWriteForBlocks(blocks, model.media, existingMediaPartNames, 1);
+    const hyperlinkPlan = planHyperlinkWriteFor(blocks, new Set());
+    parts.push({ partName, blocks, mediaPlan, hyperlinkPlan });
+    const relType = part === "header" ? HEADER_RELATIONSHIP : FOOTER_RELATIONSHIP;
+    relParts.push(`<Relationship Id="${relId}" Type="${relType}" Target="${fileName}"/>`);
+    const contentType = part === "header" ? HEADER_CONTENT_TYPE : FOOTER_CONTENT_TYPE;
+    overrideParts.push(`<Override PartName="/${partName}" ContentType="${contentType}"/>`);
+    return { kind, relId };
+  }
+
+  for (const section of model.sections) {
+    if (section.evenAndOddHeaders) {
+      evenAndOddHeaders = true;
+    }
+    const headers: HeaderFooterPlanEntry[] = [];
+    for (const kind of neededHeaderFooterKinds(section, "header")) {
+      headerCount += 1;
+      headers.push(planOne("header", kind, section.headers![kind]!.blocks, headerCount));
+    }
+    const footers: HeaderFooterPlanEntry[] = [];
+    for (const kind of neededHeaderFooterKinds(section, "footer")) {
+      footerCount += 1;
+      footers.push(planOne("footer", kind, section.footers![kind]!.blocks, footerCount));
+    }
+    bySection.push({ headers, footers });
+  }
+
+  return {
+    bySection,
+    parts,
+    relationshipsXml: relParts.join(""),
+    contentTypesXml: overrideParts.join(""),
+    evenAndOddHeaders,
+  };
+}
+
+/** One header/footer part's full XML (SPEC-029 AC-3..6, AC-24): its own
+ * paragraphs/tables/images, sharing the exact same per-block serialisation
+ * body content uses (paragraphXml/tableXml/imageParagraphXml) rather than a
+ * second copy of it — resolved against the part's OWN hyperlink/media
+ * plans (its own independent rels file, never the main document's). */
+function headerFooterPartXml(
+  rootTag: "hdr" | "ftr",
+  includeOpaque: boolean,
+  plan: HeaderFooterPartPlan,
+): string {
+  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map() };
+  let docPrId = 1;
+  const body = plan.blocks
+    .map((block) => {
+      if (block.type === "table") {
+        return tableXml(block, includeOpaque, inlineCtx, () => undefined);
+      }
+      if (block.type === "image") {
+        return imageParagraphXml(block, plan.mediaPlan, docPrId++);
+      }
+      if (block.type === "break") {
+        return "";
+      }
+      return paragraphXml(block, includeOpaque, inlineCtx);
+    })
+    .join("");
+  return (
+    `${XML_DECLARATION}<w:${rootTag} xmlns:w="${WORD_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}">` +
+    (body.length > 0 ? body : "<w:p/>") +
+    `</w:${rootTag}>`
+  );
+}
+
+/** A header/footer part's own `_rels/*.rels` — null when it references no
+ * media/hyperlinks (most header/footer parts), so the caller adds no part
+ * for it at all. */
+function headerFooterPartRelsXml(plan: HeaderFooterPartPlan): string | null {
+  const relXml = plan.mediaPlan.relationshipsXml + plan.hyperlinkPlan.relationshipsXml;
+  if (relXml.length === 0) {
+    return null;
+  }
+  return `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${relXml}</Relationships>`;
+}
+
+/** A from-scratch word/settings.xml (SPEC-029): only ever created when a
+ * section wants different odd/even headers — OOXML's only representation
+ * of that is this one document-wide flag, so a document that never asked
+ * for it never gains a settings part at all. */
+function buildSettingsXml(): string {
+  return `${XML_DECLARATION}<w:settings xmlns:w="${WORD_NAMESPACE}"><w:evenAndOddHeaders/></w:settings>`;
+}
+
+/** Adds or removes `w:evenAndOddHeaders` on a preserved settings.xml
+ * (SPEC-029) — "patch, don't regenerate", like patchStylesXml, since
+ * settings.xml carries many other unmodelled document-wide flags this spec
+ * must not disturb. Returns null when the flag already matches. */
+export function patchSettingsXml(evenAndOddHeaders: boolean, originalXml: string): string | null {
+  const hasFlag = /<[\w:]*evenAndOddHeaders\b/.test(originalXml);
+  if (evenAndOddHeaders === hasFlag) {
+    return null;
+  }
+  if (evenAndOddHeaders) {
+    return originalXml.replace(/(<w:settings[^>]*>)/, "$1<w:evenAndOddHeaders/>");
+  }
+  return originalXml.replace(/<[\w:]*evenAndOddHeaders\s*\/>/, "");
+}
+
 /** A `w:sectPr` generated from modelled section geometry, in CT_SectPr
- * sequence order: w:type (continuous starts only — nextPage is OOXML's own
- * default, matching the model's absent `start`), then the required
- * w:pgSz/w:pgMar. Shared by the body-level sectPr describing the final
- * section and the paragraph-level sectPr every non-final section is written
- * as (SPEC-028 AC-31). */
-function sectionPropertiesXml(pageSize: PageSize, margins: Margins, start?: SectionStart): string {
+ * sequence order: header/footer references (SPEC-029), w:type (continuous
+ * starts only — nextPage is OOXML's own default, matching the model's
+ * absent `start`), the required w:pgSz/w:pgMar, then w:pgNumType (SPEC-029
+ * AC-22) and w:titlePg (AC-11). Shared by the body-level sectPr describing
+ * the final section and the paragraph-level sectPr every non-final section
+ * is written as (SPEC-028 AC-31). */
+function sectionPropertiesXml(
+  pageSize: PageSize,
+  margins: Margins,
+  start: SectionStart | undefined,
+  headerFooter: SectionHeaderFooterPlan,
+  titlePage: boolean,
+  pageNumberStart: number | undefined,
+): string {
   const width = cmToTwips(pageSize.widthCm);
   const height = cmToTwips(pageSize.heightCm);
   const orient = width > height ? ' w:orient="landscape"' : "";
   const type = start === "continuous" ? '<w:type w:val="continuous"/>' : "";
   const { topCm, rightCm, bottomCm, leftCm } = margins;
+  const headerRefs = headerFooter.headers
+    .map((ref) => `<w:headerReference w:type="${ref.kind}" r:id="${ref.relId}"/>`)
+    .join("");
+  const footerRefs = headerFooter.footers
+    .map((ref) => `<w:footerReference w:type="${ref.kind}" r:id="${ref.relId}"/>`)
+    .join("");
+  // xmlns:r is only ever needed when a reference's r:id attribute is
+  // present — declared locally here rather than on the document root, the
+  // same minimal-declaration convention w:hyperlink already follows.
+  const needsR = headerRefs.length > 0 || footerRefs.length > 0;
+  const pgNumType = pageNumberStart !== undefined ? `<w:pgNumType w:start="${pageNumberStart}"/>` : "";
+  const titlePg = titlePage ? "<w:titlePg/>" : "";
   return (
-    "<w:sectPr>" +
+    `<w:sectPr${needsR ? ` xmlns:r="${R_ATTRIBUTE_NAMESPACE}"` : ""}>` +
+    headerRefs +
+    footerRefs +
     type +
     `<w:pgSz w:w="${width}" w:h="${height}"${orient}/>` +
     `<w:pgMar w:top="${cmToTwips(topCm)}" w:right="${cmToTwips(rightCm)}"` +
     ` w:bottom="${cmToTwips(bottomCm)}" w:left="${cmToTwips(leftCm)}"` +
     ` w:header="${HEADER_FOOTER_TWIPS}" w:footer="${HEADER_FOOTER_TWIPS}" w:gutter="0"/>` +
+    pgNumType +
+    titlePg +
     "</w:sectPr>"
   );
 }
@@ -819,21 +1099,43 @@ export function buildDocumentXml(
   plan: NumberingPlan = planNumbering(model),
   mediaPlan: MediaWritePlan = planMediaWrite(model),
   hyperlinkPlan: HyperlinkWritePlan = planHyperlinkWrite(model),
+  headerFooterPlan: HeaderFooterWritePlan = planHeaderFooterWrite(model, new Set(), new Set()),
 ): string {
   const includeOpaque = model.format === "docx";
   const inlineCtx: InlineWriteContext = { hyperlinkPlan, bookmarkIds: bookmarkIdsFor(model) };
   const blockXml: string[] = [];
   let docPrId = 1;
+  // A section with any header/footer reference, title page or explicit
+  // page-number start must never reuse a preserved verbatim sectPr
+  // (SPEC-029): the writer mints fresh relationship ids for regenerated
+  // header/footer parts every save, so a stale preserved sectPr's r:id
+  // values would dangle — sectionHeaderFooterOf's bySection entry (built
+  // from the *current* model, not whatever the source file had) is always
+  // the source of truth for whether that applies.
+  const sectionHeaderFooterOf = (index: number): SectionHeaderFooterPlan =>
+    headerFooterPlan.bySection[index] ?? { headers: [], footers: [] };
+  const sectionNeedsFreshSectPr = (section: Section, index: number): boolean => {
+    const hf = sectionHeaderFooterOf(index);
+    return (
+      hf.headers.length > 0 ||
+      hf.footers.length > 0 ||
+      section.titlePage === true ||
+      section.pageNumberStart !== undefined
+    );
+  };
   model.sections.forEach((section, sectionIndex) => {
     const isFinal = sectionIndex === model.sections.length - 1;
     const sectPrXml = isFinal
       ? undefined
-      : includeOpaque && section.docxSectPr !== undefined
+      : includeOpaque && section.docxSectPr !== undefined && !sectionNeedsFreshSectPr(section, sectionIndex)
         ? section.docxSectPr
         : sectionPropertiesXml(
             sectionPageSize(model, sectionIndex),
             sectionMargins(model, sectionIndex),
             section.start,
+            sectionHeaderFooterOf(sectionIndex),
+            section.titlePage === true,
+            section.pageNumberStart,
           );
     const lastBlock = section.blocks[section.blocks.length - 1];
     const embedSectPr = sectPrXml !== undefined && lastBlock?.type === "paragraph";
@@ -884,13 +1186,19 @@ export function buildDocumentXml(
   });
   const body = blockXml.length > 0 ? blockXml.join("") : "<w:p/>";
   const lastSection = model.sections.length - 1;
+  const lastSectionModel = model.sections[lastSection];
   const sectPr =
-    includeOpaque && model.sourceXml?.docxSectPr !== undefined
+    includeOpaque &&
+    model.sourceXml?.docxSectPr !== undefined &&
+    !(lastSectionModel && sectionNeedsFreshSectPr(lastSectionModel, lastSection))
       ? model.sourceXml.docxSectPr
       : sectionPropertiesXml(
           sectionPageSize(model, lastSection),
           sectionMargins(model, lastSection),
-          model.sections[lastSection]?.start,
+          lastSectionModel?.start,
+          sectionHeaderFooterOf(lastSection),
+          lastSectionModel?.titlePage === true,
+          lastSectionModel?.pageNumberStart,
         );
   return (
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
@@ -1286,21 +1594,41 @@ export async function writeDocx(
     // past them (and past each other).
     const baseTaken = new Set(plan.isEmpty ? ["rId1"] : ["rId1", "rId2"]);
     const hyperlinkPlan = planHyperlinkWrite(model, baseTaken);
-    const mediaPlan = planMediaWrite(model, new Set([...baseTaken, ...hyperlinkPlan.relIds]));
+    const existingMediaPartNames = new Set<string>();
+    const mediaPlan = planMediaWrite(
+      model,
+      new Set([...baseTaken, ...hyperlinkPlan.relIds]),
+      existingMediaPartNames,
+    );
+    // Header/footer parts (SPEC-029) mint relationship ids past everything
+    // above, and their own images share the same word/media/imageN.ext
+    // naming pool (existingMediaPartNames, mutated by planMediaWrite above).
+    const headerFooterPlan = planHeaderFooterWrite(
+      model,
+      new Set([...baseTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]),
+      existingMediaPartNames,
+    );
+    const settingsOverride = headerFooterPlan.evenAndOddHeaders
+      ? `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/>`
+      : "";
+    const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
+      /<\/Types>\s*$/,
+      `${headerFooterPlan.contentTypesXml}${settingsOverride}</Types>`,
+    );
     const entries: ZipEntryInput[] = [
-      {
-        name: "[Content_Types].xml",
-        data: encoder.encode(buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions)),
-      },
+      { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
       { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
       {
         name: "word/document.xml",
-        data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan)),
+        data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan)),
       },
       {
         name: "word/_rels/document.xml.rels",
         data: encoder.encode(
-          buildDocumentRelsXml(!plan.isEmpty, hyperlinkPlan.relationshipsXml + mediaPlan.relationshipsXml),
+          buildDocumentRelsXml(
+            !plan.isEmpty,
+            hyperlinkPlan.relationshipsXml + mediaPlan.relationshipsXml + headerFooterPlan.relationshipsXml,
+          ),
         ),
       },
       { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
@@ -1312,6 +1640,21 @@ export async function writeDocx(
         name: "word/numbering.xml",
         data: encoder.encode(buildNumberingXml(plan)),
       });
+    }
+    if (headerFooterPlan.evenAndOddHeaders) {
+      entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml()) });
+    }
+    for (const partPlan of headerFooterPlan.parts) {
+      const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";
+      entries.push({
+        name: partPlan.partName,
+        data: encoder.encode(headerFooterPartXml(rootTag, model.format === "docx", partPlan)),
+      });
+      entries.push(...partPlan.mediaPlan.zipEntries);
+      const relsXml = headerFooterPartRelsXml(partPlan);
+      if (relsXml !== null) {
+        entries.push({ name: relsPathFor(partPlan.partName), data: encoder.encode(relsXml) });
+      }
     }
     const bytes = await zip(entries);
     return { bytes, dropped: collectDropRecords(model, "docx") };
@@ -1384,13 +1727,39 @@ export async function writeDocx(
   // Hyperlinks (SPEC-025) mint their rel ids first, past the preserved
   // part's own ids; media ids then start past both.
   const hyperlinkPlan = planHyperlinkWrite(model, mainRelsTaken);
+  const existingPartNames = new Set(preservedParts.keys());
   const mediaPlan = planMediaWrite(
     model,
     new Set([...mainRelsTaken, ...hyperlinkPlan.relIds]),
-    new Set(preservedParts.keys()),
+    existingPartNames,
   );
   const addMediaDecls = mediaPlan.relationshipsXml.length > 0;
   const addHyperlinkDecls = hyperlinkPlan.relationshipsXml.length > 0;
+
+  // Headers, footers and page numbering (SPEC-029): relationship ids mint
+  // past everything above; header/footer part names and their own images
+  // avoid every preserved/already-minted name the same way media does.
+  const headerFooterPlan = planHeaderFooterWrite(
+    model,
+    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]),
+    existingPartNames,
+    existingPartNames,
+  );
+  const addHeaderFooterDecls = headerFooterPlan.relationshipsXml.length > 0;
+
+  // word/settings.xml (SPEC-029): patched in place when present (it carries
+  // many other unmodelled document-wide flags), created fresh only when the
+  // model wants different odd/even headers and the source had no settings
+  // part at all.
+  const settingsRel = mainRelsText
+    ? Array.from(parseRelationships(mainRelsText).values()).find((rel) => rel.type === SETTINGS_RELATIONSHIP)
+    : undefined;
+  const settingsPartName = settingsRel ? resolvePartPath(mainPartName, settingsRel.target) : `${mainDir}settings.xml`;
+  const preservedSettings = preservedParts.get(settingsPartName);
+  const patchedSettings = preservedSettings
+    ? patchSettingsXml(headerFooterPlan.evenAndOddHeaders, decoder.decode(preservedSettings))
+    : null;
+  const addSettingsPart = !preservedSettings && headerFooterPlan.evenAndOddHeaders;
 
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
@@ -1404,7 +1773,12 @@ export async function writeDocx(
       entries.push({ name, data: encoder.encode(numberingOut) });
     } else if (patchedStyles !== null && name === stylesPartName) {
       entries.push({ name, data: encoder.encode(patchedStyles) });
-    } else if ((addNumberingDecls || addMediaDecls || addHyperlinkDecls) && name === mainRelsName) {
+    } else if (patchedSettings !== null && name === settingsPartName) {
+      entries.push({ name, data: encoder.encode(patchedSettings) });
+    } else if (
+      (addNumberingDecls || addMediaDecls || addHyperlinkDecls || addHeaderFooterDecls || addSettingsPart) &&
+      name === mainRelsName
+    ) {
       let rels = mainRelsText!;
       if (addNumberingDecls) {
         rels = withNumberingRelationship(rels, "numbering.xml");
@@ -1415,10 +1789,22 @@ export async function writeDocx(
       if (addMediaDecls) {
         rels = withMediaRelationships(rels, mediaPlan.relationshipsXml);
       }
+      if (addHeaderFooterDecls) {
+        rels = withMediaRelationships(rels, headerFooterPlan.relationshipsXml);
+      }
+      if (addSettingsPart) {
+        rels = withMediaRelationships(
+          rels,
+          `<Relationship Id="${nextFreeRelId(new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]))}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
+        );
+      }
       entries.push({ name, data: encoder.encode(rels) });
     } else if (!coreRel && name === "_rels/.rels") {
       entries.push({ name, data: encoder.encode(withCoreRelationship(relsText)) });
-    } else if (name === "[Content_Types].xml" && (!coreRel || addNumberingDecls || addMediaDecls)) {
+    } else if (
+      name === "[Content_Types].xml" &&
+      (!coreRel || addNumberingDecls || addMediaDecls || addHeaderFooterDecls || addSettingsPart)
+    ) {
       let contentTypes = decoder.decode(data);
       if (!coreRel) {
         contentTypes = withCoreContentType(contentTypes);
@@ -1429,6 +1815,15 @@ export async function writeDocx(
       if (addMediaDecls) {
         contentTypes = withImageContentTypes(contentTypes, mediaPlan.extensions);
       }
+      if (addHeaderFooterDecls) {
+        contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${headerFooterPlan.contentTypesXml}</Types>`);
+      }
+      if (addSettingsPart) {
+        contentTypes = contentTypes.replace(
+          /<\/Types>\s*$/,
+          `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/></Types>`,
+        );
+      }
       entries.push({ name, data: encoder.encode(contentTypes) });
     } else {
       entries.push({ name, data });
@@ -1437,9 +1832,24 @@ export async function writeDocx(
   if (numberingOut !== null && !preservedNumbering) {
     entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
   }
+  if (addSettingsPart) {
+    entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml()) });
+  }
+  for (const partPlan of headerFooterPlan.parts) {
+    const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";
+    entries.push({
+      name: partPlan.partName,
+      data: encoder.encode(headerFooterPartXml(rootTag, model.format === "docx", partPlan)),
+    });
+    entries.push(...partPlan.mediaPlan.zipEntries);
+    const relsXml = headerFooterPartRelsXml(partPlan);
+    if (relsXml !== null) {
+      entries.push({ name: relsPathFor(partPlan.partName), data: encoder.encode(relsXml) });
+    }
+  }
   entries.push({
     name: mainPartName,
-    data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan)),
+    data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan)),
   });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
   entries.push(...mediaPlan.zipEntries);
