@@ -46,14 +46,13 @@ function draftsFrom(initial = asListLevelDefinitions([])) {
       includeLevels: String(source.includeLevels ?? 1),
       startAt: String(source.startAt ?? 1),
       alignment: source.alignment ?? "left",
-      numberPositionCm:
-        source.numberIndentCm !== undefined
-          ? String(source.numberIndentCm)
-          : (Math.round((level * 1.27 - 0.635) * 1000) / 1000).toString(),
-      textPositionCm:
-        source.textIndentCm !== undefined
-          ? String(source.textIndentCm)
-          : (Math.round(level * 1.27 * 1000) / 1000).toString(),
+      // Stored positions sit on the twip grid (1.4993… for an entered 1.5);
+      // two decimals is the user's own value again, and re-applying it
+      // re-snaps to the identical stored value.
+      numberPositionCm: String(
+        Math.round((source.numberIndentCm ?? level * 1.27 - 0.635) * 100) / 100,
+      ),
+      textPositionCm: String(Math.round((source.textIndentCm ?? level * 1.27) * 100) / 100),
     });
   }
   return drafts;
