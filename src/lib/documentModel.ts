@@ -104,6 +104,37 @@ export function asTableWidthMode(value: string): TableWidthMode {
   return value as TableWidthMode;
 }
 
+/** The page-number field kinds Insert → Page number offers (SPEC-029
+ * AC-14, AC-19): "page" is the current page's number, "numpages" the
+ * document's total page count. "Page X of Y" is two field runs (one of
+ * each kind) either side of a literal " of " text run, not a composite
+ * field. Round-trips as `PAGE`/`NUMPAGES` fields (.docx) and
+ * `text:page-number`/`text:page-count` (.odt). */
+export type FieldKind = "page" | "numpages";
+
+/** The numbering formats Insert → Page number offers (SPEC-029 AC-16..18)
+ * — deliberately the same vocabulary as lib/lists.ts's `ListMarkerStyle`
+ * (its `formatOrdinal` is reused to render a field's value), just narrowed
+ * to the three the dialog actually offers. */
+export type PageNumberFormat = "decimal" | "lowerRoman" | "lowerAlpha";
+
+/** Typed pass-through for a page-number format coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asPageNumberFormat(value: string): PageNumberFormat {
+  return value as PageNumberFormat;
+}
+
+/** A run that renders as a computed value instead of literal text
+ * (SPEC-029): the current page number or the document's total page count.
+ * `Run.text` still holds a one-character placeholder so the field behaves
+ * like a normal single-character atom for caret/selection arithmetic
+ * (blockLength, splitRuns, …) — every renderer substitutes the live value
+ * at paint time instead of reading it. */
+export interface FieldSpec {
+  kind: FieldKind;
+  format: PageNumberFormat;
+}
+
 /** The smallest unit of text: a string plus the formatting applied to it.
  * Tabs and forced line breaks are preserved as literal "\t" / "\n"
  * characters in `text` — renderers use `white-space: pre-wrap` so both
@@ -111,6 +142,26 @@ export function asTableWidthMode(value: string): TableWidthMode {
 export interface Run {
   text: string;
   formatting: RunFormatting;
+  /** Marks this run as a computed page-number/page-count field (SPEC-029)
+   * rather than literal text; see FieldSpec. */
+  field?: FieldSpec;
+}
+
+/** A field run's placeholder text — a single character so it occupies
+ * exactly one caret position, like Image/BreakBlock's length-1 atom
+ * convention, while still sitting inline mid-paragraph. */
+export const FIELD_PLACEHOLDER_TEXT = "1";
+
+/** Builds a page-number/page-count field run (SPEC-029): the "Insert page
+ * number" dialog's per-format insertion and the .docx/.odt readers' PAGE /
+ * NUMPAGES / text:page-number / text:page-count parsing both create runs
+ * this way, so every field run in the model has the same placeholder text. */
+export function createFieldRun(
+  kind: FieldKind,
+  format: PageNumberFormat,
+  formatting: RunFormatting = {},
+): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, field: { kind, format } };
 }
 
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
@@ -563,6 +614,42 @@ export function isBreak(block: Block | undefined): block is BreakBlock {
   return block?.type === "break";
 }
 
+/** Which header/footer variant a section stores content for (SPEC-029
+ * AC-11..13): `"default"` applies to every page unless overridden;
+ * `"first"` applies to the section's first page (only consulted when
+ * `Section.titlePage` is set) and `"even"` to even-numbered pages (only
+ * consulted when `Section.evenAndOddHeaders` is set). Mirrors OOXML's
+ * `w:headerReference`/`w:footerReference` `w:type` values; ODF represents
+ * the same split as separate master-page header/footer elements. */
+export type HeaderFooterKind = "default" | "first" | "even";
+
+/** Typed pass-through for a header/footer kind coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asHeaderFooterKind(value: string): HeaderFooterKind {
+  return value as HeaderFooterKind;
+}
+
+/** Which band a header/footer command addresses (SPEC-029). */
+export type HeaderFooterPart = "header" | "footer";
+
+/** Typed pass-through for a header/footer part coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asHeaderFooterPart(value: string): HeaderFooterPart {
+  return value as HeaderFooterPart;
+}
+
+/** One header or footer's content: a block flow like a section's own body
+ * (SPEC-029 AC-3..6 — text, formatting, tables and images all reuse the
+ * same `Block` union) — minus manual breaks, since header/footer content
+ * never paginates. Absent for a kind that has never been edited: distinct
+ * from an explicit empty content the user cleared, and from "this kind
+ * does not apply" (see resolveHeaderFooterKind in lib/pageNumbering.ts) —
+ * a section with `titlePage` set but no `headers.first` entry shows a
+ * genuinely blank first-page header, matching Word's own behaviour. */
+export interface HeaderFooterContent {
+  blocks: Block[];
+}
+
 /** How a section begins relative to the previous one (SPEC-028 AC-8/9):
  * `"nextPage"` starts on a fresh page, `"continuous"` continues on the same
  * page. Mirrors OOXML's `w:type` inside the section's own `w:sectPr`.
@@ -610,6 +697,31 @@ export interface Section {
    * any command that edits this section's modelled page setup, so the
    * writer regenerates it instead of reproducing stale XML. */
   docxSectPr?: string;
+  /** This section's header content, by kind (SPEC-029). */
+  headers?: Partial<Record<HeaderFooterKind, HeaderFooterContent>>;
+  /** This section's footer content, by kind (SPEC-029). */
+  footers?: Partial<Record<HeaderFooterKind, HeaderFooterContent>>;
+  /** "Different first page" (SPEC-029 AC-11, AC-13): when set, the
+   * section's first page uses `headers.first`/`footers.first` instead of
+   * `headers.default`/`footers.default`. Round-trips as `w:titlePg`
+   * (.docx) — a separate master page referenced by the section's first
+   * paragraph (.odt). */
+  titlePage?: boolean;
+  /** "Different odd and even pages" (SPEC-029 AC-12, AC-13): when set,
+   * even-numbered pages (other than a title page) use
+   * `headers.even`/`footers.even` instead of the default. OOXML only
+   * models this as the document-wide `w:evenAndOddHeaders` setting; the
+   * writer ORs every section's flag together into that one setting and
+   * every reader section reads back the same document-wide value (see
+   * SPEC-029's docx writer/reader). */
+  evenAndOddHeaders?: boolean;
+  /** "Start numbering at" (SPEC-029 AC-22, AC-23): the displayed page
+   * number of this section's first page. Presence restarts numbering at
+   * this value; absence continues counting from the previous section (the
+   * document's first section always continues from 1 when absent).
+   * Mirrors `w:pgNumType/@w:start` (.docx) and an explicit
+   * `style:page-number` on the section's first paragraph (.odt). */
+  pageNumberStart?: number;
 }
 
 /** Page dimensions in centimetres. */
@@ -756,8 +868,55 @@ export function sectionMargins(model: DocumentModel, sectionIndex: number): Marg
   return model.sections[sectionIndex]?.margins ?? model.defaultStyles.margins;
 }
 
+/** A section's header/footer content for one kind, or undefined when that
+ * kind has never been given content (SPEC-029) — see HeaderFooterContent's
+ * "absent means genuinely blank" contract. There is deliberately no
+ * fallback to `"default"` here: resolveHeaderFooterKind already decides
+ * which kind applies to a given page. */
+export function sectionHeaderFooter(
+  model: DocumentModel,
+  sectionIndex: number,
+  part: HeaderFooterPart,
+  kind: HeaderFooterKind,
+): HeaderFooterContent | undefined {
+  const section = model.sections[sectionIndex];
+  return (part === "header" ? section?.headers : section?.footers)?.[kind];
+}
+
 function createEmptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
+}
+
+/** A new, empty header/footer content — the seed used the first time a
+ * section's header/footer kind is edited (SPEC-029). */
+export function createEmptyHeaderFooterContent(): HeaderFooterContent {
+  return { blocks: [createEmptyParagraph()] };
+}
+
+/** Typed empty seed for a `Block[]` default parameter in `.vue` scripts
+ * (same espree constraint as asCharacterFormatKey). */
+export function noBlocks(): Block[] {
+  return [];
+}
+
+/** Which header/footer band DocumentView is currently editing (SPEC-029) —
+ * UI state, not part of the document model itself; declared here purely so
+ * `.vue` scripts (espree-parsed, no inline type annotations) get a typed
+ * `ref()` seed the same way noImageLocation/noCaret do elsewhere. */
+export interface ActiveHeaderFooterTarget {
+  sectionIndex: number;
+  part: HeaderFooterPart;
+  kind: HeaderFooterKind;
+  /** The page (0-based, into DocumentView's pagedViews) whose band is the
+   * live editable one — every other page of the section mirrors the same
+   * content read-only. */
+  pageIndex: number;
+}
+
+/** Typed `null` seed for activeHeaderFooter refs in `.vue` scripts (same
+ * espree constraint as asCharacterFormatKey). */
+export function noActiveHeaderFooter(): ActiveHeaderFooterTarget | null {
+  return null;
 }
 
 /** Creates a new blank document: one section, one empty paragraph, and the

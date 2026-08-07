@@ -107,6 +107,15 @@ const REGISTRY: Record<string, Scenario> = {
     commands.clearFormatting(model, range(caret(0, 0), caret(0, 5))),
   applyPainterFormat: (model) =>
     commands.applyPainterFormat(model, range(caret(1, 0), caret(1, 6)), { run: { italic: true } }),
+  setHeaderFooterOptions: (model) =>
+    commands.setHeaderFooterOptions(model, caretSelection(caret(0, 0)), 0, { titlePage: true }),
+  insertPageNumberCommand: (model) =>
+    commands.insertPageNumberCommand(model, caretSelection(caret(0, 0)), 0, {
+      part: "footer",
+      position: "center",
+      format: "decimal",
+      pageXofY: false,
+    }),
 };
 
 const QUERIES = new Set([
@@ -143,6 +152,14 @@ const QUERIES = new Set([
   "noPainterFormat",
   "isWholeParagraphSelected",
   "capturePainterFormat",
+  // SPEC-029: helpers the two registered commands (setHeaderFooterOptions,
+  // insertPageNumberCommand) are built from — not commands of their own
+  // (insertPageNumber returns a bare model, and withHeaderFooterModel/
+  // commitHeaderFooterModel address a section's header/footer content as a
+  // throwaway single-section model, never mutating the input either).
+  "withHeaderFooterModel",
+  "commitHeaderFooterModel",
+  "insertPageNumber",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {
