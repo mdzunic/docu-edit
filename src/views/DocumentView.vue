@@ -8,6 +8,7 @@ import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
+import DefineListDialog from "../components/DefineListDialog.vue";
 import DocImageBlock from "../components/DocImageBlock.vue";
 import DocPage from "../components/DocPage.vue";
 import DocTableBlock from "../components/DocTableBlock.vue";
@@ -31,6 +32,7 @@ import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
+import MultilevelListMenu from "../components/MultilevelListMenu.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -38,6 +40,7 @@ import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
+import TabStopsDialog from "../components/TabStopsDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
@@ -60,9 +63,12 @@ import {
   asHeaderFooterPart,
   asImage,
   asImageWrapMode,
+  asListLevelDefinitions,
   asListMarkerStyle,
   asListType,
   asMeasurementUnit,
+  asTabStopAlignment,
+  asTabStops,
   asPageNumberFormat,
   asParagraphAlignment,
   asParagraphBlock,
@@ -148,8 +154,10 @@ import {
   modelRangeFromSelection,
   noElement,
   noEventTarget,
+  noParagraphTarget,
   noTableCellTarget,
   paragraphElementForCaret,
+  paragraphFromEventTarget,
   setDomCaret,
   setDomSelection,
   tableCellFromEventTarget,
@@ -219,10 +227,13 @@ import {
   adjustIndent,
   applyFormat,
   applyListAutoformat,
+  applyListDefinition,
+  applyMultilevelPreset,
   applyPainterFormat,
   applyParagraphFormat,
   applyParagraphStyle,
   asPageSetupScope,
+  continueListNumbering,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
@@ -250,6 +261,7 @@ import {
   insertSectionBreak,
   insertText,
   isCollapsed,
+  linkHeadingNumbering,
   noCommandResult,
   noPainterFormat,
   noParagraphCommand,
@@ -258,12 +270,17 @@ import {
   paragraphPaginationState,
   removeListFormat,
   resetParagraphStyle,
+  restartListNumbering,
   selectAll,
+  selectionListDefinitionLevels,
+  selectionTabStops,
   setAlignment,
   setHeaderFooterOptions,
   setListMarker,
+  setListNumberingValue,
   setPageMargins,
   setPageSetup,
+  setTabStops,
   splitBlock,
   toggleFormat,
   toggleList,
@@ -415,6 +432,11 @@ let cellDragOrigin = noTableCellTarget();
 // The cell a right-click opened the context menu in — the target of the
 // menu's table actions (AC-17..19).
 let contextMenuTableCell = noTableCellTarget();
+// The list paragraph a right-click opened the context menu on — the target
+// of the menu's numbering-control actions (SPEC-032 AC-14..16). Like
+// contextMenuTableCell, set before the menu's visible ref flips so the
+// template's render reads the fresh value.
+let contextMenuListTarget = noParagraphTarget();
 // The hover handles' measured geometry (AC-20, AC-21): page-relative
 // rectangles for the hovered table, its columns and its rows. Null hides
 // the overlay.
@@ -1093,6 +1115,15 @@ const styleEntries = computed(() => (doc.value ? stylePickerEntries(doc.value) :
 // from the first touched paragraph at the moment it opens.
 const customSpacingOpen = ref(false);
 const customSpacingInitial = ref({ mode: "multiple", value: 1, beforePt: 0, afterPt: 0 });
+// --- multilevel lists and tab stops (SPEC-032) ------------------------------
+// The "Define new multilevel list…" dialog: open flag plus the nine level
+// definitions it prefills from (the selection's own definition, or the
+// decimal preset).
+const defineListOpen = ref(false);
+const defineListInitial = ref(asListLevelDefinitions([]));
+// The Tabs dialog (AC-25): open flag plus the selection's current stops.
+const tabsDialogOpen = ref(false);
+const tabsDialogInitial = ref(asTabStops([]));
 // The Page setup dialog (SPEC-027 AC-1..7): open flag plus the prefill
 // taken from the document's own page geometry/unit at the moment it opens.
 const pageSetupOpen = ref(false);
@@ -2534,7 +2565,25 @@ function handleContextMenu(event = new MouseEvent("contextmenu")) {
   // A right-click inside a table cell adds the row/column section to the
   // menu, targeted at that cell (SPEC-022 AC-17..19).
   contextMenuTableCell = tableCellAtTarget(event.target);
+  // A right-click on a list paragraph adds the numbering-control section,
+  // targeted at that paragraph (SPEC-032 AC-14..16).
+  contextMenuListTarget = listParagraphAtTarget(event.target);
   contextMenu.value = { visible: true, left: event.clientX, top: event.clientY };
+}
+
+/** The list paragraph under a right-click, or null when the click landed
+ * outside a list item (SPEC-032). */
+function listParagraphAtTarget(eventTarget = noEventTarget()) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model) {
+    return null;
+  }
+  const target = paragraphFromEventTarget(root, eventTarget);
+  if (!target) {
+    return null;
+  }
+  return paragraphAt(model, target)?.list ? target : null;
 }
 
 function closeContextMenu() {
@@ -2542,6 +2591,35 @@ function closeContextMenu() {
     contextMenu.value = { visible: false, left: 0, top: 0 };
   }
   contextMenuTableCell = null;
+  contextMenuListTarget = null;
+}
+
+/** A numbering-control entry picked from the context menu (SPEC-032
+ * AC-14..16), applied at the right-clicked paragraph. "Set numbering
+ * value…" prompts for the ordinal; cancelling the prompt changes nothing. */
+function handleContextMenuListAction(action = "") {
+  const target = contextMenuListTarget;
+  closeContextMenu();
+  const model = doc.value;
+  if (!target || !model || !editable.value) {
+    return;
+  }
+  const selection = caretSelection({ ...target, offset: 0 });
+  if (action === "restart-numbering") {
+    applyEdit(restartListNumbering(model, selection), selection, "restart numbering");
+  } else if (action === "continue-numbering") {
+    applyEdit(continueListNumbering(model, selection), selection, "continue numbering");
+  } else if (action === "set-numbering-value") {
+    const raw = window.prompt("Set numbering value", "1");
+    if (raw === null) {
+      return;
+    }
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) {
+      return;
+    }
+    applyEdit(setListNumberingValue(model, selection, value), selection, "set numbering value");
+  }
 }
 
 /** Menu Cut/Copy synthesise a real cut/copy via execCommand — the only
@@ -3996,6 +4074,63 @@ function handleListMarker(style = "") {
   );
 }
 
+// --- multilevel lists and custom tab stops (SPEC-032) -----------------------
+
+/** A gallery preset picked from the Multilevel list menu (AC-1..4). */
+function handleMultilevelPreset(key = "") {
+  applyParagraphCommand(
+    (model, selection) => applyMultilevelPreset(model, selection, key),
+    "multilevel list",
+  );
+}
+
+/** "Number headings 1–3" (AC-13). */
+function handleLinkHeadingNumbering() {
+  applyParagraphCommand(
+    (model, selection) => linkHeadingNumbering(model, selection),
+    "number headings",
+  );
+}
+
+/** "Define new multilevel list…" (AC-5..12): prefilled from the selection's
+ * own definition when it sits in a defined list. */
+function openDefineList() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model) {
+    return;
+  }
+  defineListInitial.value = selectionListDefinitionLevels(model, paragraphSelection(root));
+  defineListOpen.value = true;
+}
+
+function handleDefineListApply(levels = asListLevelDefinitions([])) {
+  defineListOpen.value = false;
+  applyParagraphCommand(
+    (model, selection) => applyListDefinition(model, selection, asListLevelDefinitions(levels)),
+    "list definition",
+  );
+}
+
+/** The Tabs dialog (AC-25), prefilled from the first touched paragraph. */
+function openTabsDialog() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model) {
+    return;
+  }
+  tabsDialogInitial.value = selectionTabStops(model, paragraphSelection(root));
+  tabsDialogOpen.value = true;
+}
+
+function handleTabsApply(stops = asTabStops([])) {
+  tabsDialogOpen.value = false;
+  applyParagraphCommand(
+    (model, selection) => setTabStops(model, selection, asTabStops(stops)),
+    "tab stops",
+  );
+}
+
 function handleToggleDirection() {
   const rtl = paragraphState.value.direction !== "rtl";
   applyParagraphCommand(
@@ -4052,7 +4187,9 @@ function handleCustomSpacingApply(payload = { mode: "multiple", value: 1, before
 /** A ruler marker drag (AC-23): indent updates go to every touched
  * paragraph as logical values; margin updates go to the page margins. No
  * refocus — grabbing focus mid-drag would break the pointer capture. */
-function handleRulerUpdate(update = { kind: "", valueCm: 0, boundary: 0, deltaCm: 0 }) {
+function handleRulerUpdate(
+  update = { kind: "", valueCm: 0, boundary: 0, deltaCm: 0, positionCm: 0, alignment: "left", index: 0 },
+) {
   const valueCm = update.valueCm;
   if (update.kind === "indentStartCm") {
     applyParagraphCommand(
@@ -4090,6 +4227,32 @@ function handleRulerUpdate(update = { kind: "", valueCm: 0, boundary: 0, deltaCm
     applyParagraphCommand(
       (model, selection) => setColumnBoundary(model, selection, boundary, deltaCm),
       "column width",
+      false,
+    );
+  } else if (update.kind === "add-tab") {
+    // A click in the ruler's tab lane lays a stop of the armed type
+    // (SPEC-032 AC-24).
+    const positionCm = update.positionCm ?? 0;
+    const alignment = asTabStopAlignment(update.alignment ?? "left");
+    applyParagraphCommand(
+      (model, selection) =>
+        setTabStops(model, selection, [
+          ...selectionTabStops(model, selection),
+          { positionCm, alignment },
+        ]),
+      "tab stops",
+      false,
+    );
+  } else if (update.kind === "remove-tab") {
+    // Clicking a laid handle removes its stop (SPEC-032 AC-24).
+    const index = update.index ?? 0;
+    applyParagraphCommand(
+      (model, selection) => {
+        const stops = selectionTabStops(model, selection);
+        stops.splice(index, 1);
+        return setTabStops(model, selection, stops);
+      },
+      "tab stops",
       false,
     );
   }
@@ -4762,11 +4925,14 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
   if (flatEntry.isTable || flatEntry.isImage) {
     return {
       key: flatEntry.key,
-      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel, column],
+      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel, column, model.listDefinitions],
       kind: flatEntry.isTable ? "table" : "image",
       blockProp: block,
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
+      // SPEC-032: cell paragraphs derive defined-list markers/indents from
+      // the model's definitions (DocTableBlock).
+      listDefinitions: flatEntry.isTable ? model.listDefinitions ?? [] : undefined,
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       column,
@@ -4799,7 +4965,7 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
     const tail = splitRuns(paragraph.runs, from)[1];
     runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
   }
-  const styleObj = { ...paragraphStyle(paragraph) };
+  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? []) };
   const continuation = sliceStart !== undefined && sliceStart > 0;
   if (continuation) {
     // A continuation slice starts mid-paragraph: no space-before, no
@@ -5830,6 +5996,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         @list-marker="handleListMarker"
         @toggle-pagination="handleTogglePagination"
       />
+      <MultilevelListMenu
+        v-if="editable"
+        @preset="handleMultilevelPreset"
+        @link-headings="handleLinkHeadingNumbering"
+        @define="openDefineList"
+      />
       <TableInsertControl
         v-if="editable"
         @insert="handleInsertTable"
@@ -6059,8 +6231,10 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         :margin-right-cm="rulerMarginRightCm"
         :formatting="paragraphFormatting"
         :columns="rulerColumns"
+        :tab-stops="paragraphFormatting.tabStops || []"
         :disabled="!editable"
         @update="handleRulerUpdate"
+        @open-tabs-dialog="openTabsDialog"
       />
       <div
         ref="pageRef"
@@ -6331,6 +6505,18 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       @apply="handleCustomSpacingApply"
       @cancel="customSpacingOpen = false"
     />
+    <DefineListDialog
+      v-if="defineListOpen"
+      :initial="defineListInitial"
+      @apply="handleDefineListApply"
+      @cancel="defineListOpen = false"
+    />
+    <TabStopsDialog
+      v-if="tabsDialogOpen"
+      :initial="tabsDialogInitial"
+      @apply="handleTabsApply"
+      @cancel="tabsDialogOpen = false"
+    />
     <PasteOptionsChip
       v-if="pasteChip.visible"
       :left="pasteChip.left"
@@ -6354,10 +6540,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       :top="contextMenu.top"
       :table-actions="!!contextMenuTableCell"
       :can-merge-cells="canMergeCells"
+      :list-actions="!!contextMenuListTarget"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
       @table-action="handleContextMenuTableAction"
+      @list-action="handleContextMenuListAction"
       @dismiss="closeContextMenu"
     />
     <SplitCellDialog

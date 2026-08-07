@@ -70,8 +70,14 @@ function qaScenario(): DocumentModel {
 
 describe("levelTemplate <-> parseLevelTemplate", () => {
   it("composes and parses back prefix/components/suffix", () => {
-    const def = { defId: "d", levels: [{ style: "decimal" as const }] };
-    def.levels[2] = { style: "decimal" as const, prefix: "(", suffix: ")", includeLevels: 3 };
+    const def: import("../documentModel").ListDefinition = {
+      defId: "d",
+      levels: [
+        { style: "decimal" },
+        { style: "decimal" },
+        { style: "decimal", prefix: "(", suffix: ")", includeLevels: 3 },
+      ],
+    };
     const template = levelTemplate(def, 3);
     expect(template).toBe("(%1.%2.%3)");
     expect(parseLevelTemplate(template)).toEqual({ prefix: "(", suffix: ")", includeLevels: 3 });

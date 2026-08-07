@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
+import { asListDefinitions } from "../lib/documentModel";
 import {
   headingTag,
   paragraphStyle,
@@ -26,6 +27,9 @@ const props = defineProps({
   /** The active rectangular cell selection (lib/tables.CellRange), if any —
    * drives the per-cell highlight (AC-15, AC-16). */
   cellRange: { type: Object, default: null },
+  /** The model's multilevel list definitions (SPEC-032) — cell paragraphs
+   * derive defined-list markers and indents from them. */
+  listDefinitions: { type: Array, default: () => [] },
 });
 
 /** A cell's colspan/rowspan attribute value: undefined (the HTML default,
@@ -74,13 +78,13 @@ function spanAttr(span = 1) {
             v-for="(paragraph, cellBlockIndex) in entry.cell.blocks"
             :key="cellBlockIndex"
             class="doc-paragraph"
-            :style="paragraphStyle(paragraph)"
+            :style="paragraphStyle(paragraph, asListDefinitions(listDefinitions))"
             :data-section="section"
             :data-block="blockIndex"
             :data-row="rowIndex"
             :data-col="entry.colIndex"
             :data-cell-block="cellBlockIndex"
-            :data-list-marker="markersForBlocks(entry.cell.blocks)[cellBlockIndex] || undefined"
+            :data-list-marker="markersForBlocks(entry.cell.blocks, asListDefinitions(listDefinitions))[cellBlockIndex] || undefined"
             :data-list-level="paragraph.list ? paragraph.list.level : undefined"
           >
             <template v-if="paragraph.runs.length > 0">
