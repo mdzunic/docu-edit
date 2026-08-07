@@ -49,6 +49,12 @@ interface OdfStyleDefinition {
    * a column BreakBlock on open instead (SPEC-028 AC-10/11); on a named
    * style it stays unmodelled. */
   columnBreakBefore?: boolean;
+  /** `style:page-number` on the style's paragraph-properties (SPEC-029
+   * AC-22): an explicit positive integer restarts page numbering at this
+   * paragraph; "auto" (continue) and absent both leave this unset. Like
+   * `masterPageName`, only meaningful on an AUTOMATIC style — the section-
+   * starting paragraph's own. */
+  pageNumberStart?: number;
 }
 
 /** Styles of one family ("paragraph" or "text"). Automatic and named styles
@@ -81,6 +87,17 @@ export interface OdfMasterPageLayout {
   /** The page layout's `style:columns` as a section column layout
    * (SPEC-030); absent for a single-column page. */
   columns?: SectionColumns;
+  /** `<style:header>`/`<style:header-left>`/`<style:footer>`/
+   * `<style:footer-left>` — direct children of `<style:master-page>`
+   * (SPEC-029 AC-9, AC-26). The `-left` variants are ODF's own
+   * representation of "different odd and even pages" (their mere presence
+   * means it is on, AC-12) — there is no separate boolean flag to read.
+   * Content parsing happens in reader.ts (parseTextBlock et al.), not here,
+   * to avoid a styles.ts -> reader.ts import cycle. */
+  headerEl?: Element;
+  headerLeftEl?: Element;
+  footerEl?: Element;
+  footerLeftEl?: Element;
 }
 
 export interface OdfStyleCatalog {
@@ -105,6 +122,12 @@ export interface OdfStyleCatalog {
    * page also stays folded into `pageSize`/`margins` above, keeping
    * single-section documents exactly as before. */
   masterPageLayouts: Map<string, OdfMasterPageLayout>;
+  /** The first `style:master-page`'s own name (SPEC-029) — the lookup key
+   * into `masterPageLayouts` for the document's own header/footer content
+   * when no paragraph names a master explicitly (the common single-section
+   * case; `pageSize`/`margins` fold that master's geometry in already, but
+   * its header/footer elements need the object itself). */
+  firstMasterName?: string;
 }
 
 function emptyFamily(): StyleFamily {
@@ -161,6 +184,15 @@ function parseStyleDefinition(styleEl: Element, fontFaces: FontFaceMap): OdfStyl
   const masterPageName = styleAttr(styleEl, "master-page-name");
   if (masterPageName) {
     definition.masterPageName = masterPageName;
+  }
+  if (paragraphProps) {
+    const pageNumber = styleAttr(paragraphProps, "page-number");
+    if (pageNumber !== null && pageNumber !== "auto") {
+      const parsed = Number(pageNumber);
+      if (Number.isInteger(parsed) && parsed >= 0) {
+        definition.pageNumberStart = parsed;
+      }
+    }
   }
   return definition;
 }
@@ -368,7 +400,11 @@ function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
     const layoutName = styleAttr(masterPage, "page-layout-name");
     const layout = layoutName ? layouts.get(layoutName) : undefined;
     const props = layout ? firstChildElement(layout, STYLE_NAMESPACE, "page-layout-properties") : undefined;
-    const geometry = props ? parsePageLayoutProperties(props) : {};
+    const geometry: OdfMasterPageLayout = props ? parsePageLayoutProperties(props) : {};
+    geometry.headerEl = firstChildElement(masterPage, STYLE_NAMESPACE, "header");
+    geometry.headerLeftEl = firstChildElement(masterPage, STYLE_NAMESPACE, "header-left");
+    geometry.footerEl = firstChildElement(masterPage, STYLE_NAMESPACE, "footer");
+    geometry.footerLeftEl = firstChildElement(masterPage, STYLE_NAMESPACE, "footer-left");
     if (masterName) {
       catalog.masterPageLayouts.set(masterName, geometry);
     }
@@ -383,6 +419,7 @@ function parsePageLayout(stylesRoot: Element, catalog: OdfStyleCatalog): void {
       if (geometry.columns) {
         catalog.columns = geometry.columns;
       }
+      catalog.firstMasterName = masterName ?? undefined;
     }
   }
 }
@@ -598,6 +635,8 @@ export interface OdfParagraphSignals {
    * to canonicalise into (columns are SPEC-030). */
   columnBreakBefore: boolean;
   masterPageName?: string;
+  /** `style:page-number` (SPEC-029 AC-22) — see OdfStyleDefinition. */
+  pageNumberStart?: number;
 }
 
 export function paragraphAutoStyleSignals(
@@ -609,6 +648,7 @@ export function paragraphAutoStyleSignals(
     pageBreakBefore: definition?.paragraphFormatting.pageBreakBefore === true,
     columnBreakBefore: definition?.columnBreakBefore === true,
     masterPageName: definition?.masterPageName,
+    pageNumberStart: definition?.pageNumberStart,
   };
 }
 

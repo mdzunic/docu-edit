@@ -10,7 +10,18 @@
 // slice windows) from DocumentView's pagedViews computed, so this component
 // holds no document logic of its own. Runtime prop/emit declarations, not
 // the generic form — this script is parsed by espree (see AppShell.vue).
+//
+// Header/footer bands (SPEC-029): two more entry lists, rendered as
+// absolutely-positioned bands inside the same page box rather than folded
+// into the body's content flow — a header/footer never affects pagination
+// (lib/pagination.ts is untouched by SPEC-029), it just repeats within the
+// page's own top/bottom margin. `headerEditable`/`footerEditable` mark the
+// one page currently being edited (only one at a time, see DocumentView's
+// activeHeaderFooter) — every other page renders the identical content
+// read-only, which is how "edits apply to every page in the section at
+// once" (AC-10) falls out for free: they all read the same model content.
 import { computed } from "vue";
+import DocBlockEntries from "./DocBlockEntries.vue";
 import DocPageBlock from "./DocPageBlock.vue";
 import { asPageColumns, asRenderEntries, noRenderEntries } from "../lib/pageRender";
 
@@ -28,9 +39,26 @@ const props = defineProps({
    * its blocks off-DOM instead. */
   virtual: { type: Boolean, default: false },
   cellRange: { type: Object, default: null },
+  headerEntries: { type: Array, default: () => noRenderEntries() },
+  footerEntries: { type: Array, default: () => noRenderEntries() },
+  headerStyle: { type: Object, default: null },
+  footerStyle: { type: Object, default: null },
+  headerEditable: { type: Boolean, default: false },
+  footerEditable: { type: Boolean, default: false },
+  /** Body content dims while a header/footer is being edited (AC-1, AC-2). */
+  dimmed: { type: Boolean, default: false },
 });
 
-defineEmits(["image-select"]);
+defineEmits([
+  "image-select",
+  "dblclick-header",
+  "dblclick-footer",
+  "dblclick-body",
+  "hf-beforeinput",
+  "hf-keydown",
+  "hf-compositionstart",
+  "hf-compositionend",
+]);
 
 const renderEntries = computed(() => asRenderEntries(props.entries));
 
@@ -70,13 +98,29 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
     :style="pageStyle"
   >
     <div
+      class="page-header-band"
+      data-testid="page-header-band"
+      :style="headerStyle"
+      :contenteditable="headerEditable"
+      :data-hf-editable="headerEditable ? '1' : undefined"
+      spellcheck="false"
+      @dblclick="$emit('dblclick-header')"
+      @beforeinput.stop="headerEditable ? $emit('hf-beforeinput', $event) : undefined"
+      @keydown.stop="headerEditable ? $emit('hf-keydown', $event) : undefined"
+      @compositionstart.stop="headerEditable ? $emit('hf-compositionstart') : undefined"
+      @compositionend.stop="headerEditable ? $emit('hf-compositionend', $event) : undefined"
+    >
+      <DocBlockEntries :entries="headerEntries" />
+    </div>
+    <div
       class="page-content"
       :style="contentStyle"
+      @dblclick="$emit('dblclick-body')"
     >
       <div
         class="page-margin"
-        :class="{ 'has-columns': hasColumns }"
         data-testid="page-margin"
+        :class="{ 'has-columns': hasColumns, 'page-margin-dimmed': dimmed }"
       >
         <!-- Multi-column pages (SPEC-030): each column is a positioned box the
              engine's per-column flow filled; "line between" rules sit in the
@@ -111,16 +155,28 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
         </template>
         <!-- Single-column page: unchanged from SPEC-028. -->
         <template v-else>
-          <DocPageBlock
-            v-for="entry in renderEntries"
-            :key="entry.key"
-            v-memo="entry.memo"
-            :entry="entry"
+          <DocBlockEntries
+            :entries="entries"
             :cell-range="cellRange"
-            @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
+            @image-select="(section, block) => $emit('image-select', section, block)"
           />
         </template>
       </div>
+    </div>
+    <div
+      class="page-footer-band"
+      data-testid="page-footer-band"
+      :style="footerStyle"
+      :contenteditable="footerEditable"
+      :data-hf-editable="footerEditable ? '1' : undefined"
+      spellcheck="false"
+      @dblclick="$emit('dblclick-footer')"
+      @beforeinput.stop="footerEditable ? $emit('hf-beforeinput', $event) : undefined"
+      @keydown.stop="footerEditable ? $emit('hf-keydown', $event) : undefined"
+      @compositionstart.stop="footerEditable ? $emit('hf-compositionstart') : undefined"
+      @compositionend.stop="footerEditable ? $emit('hf-compositionend', $event) : undefined"
+    >
+      <DocBlockEntries :entries="footerEntries" />
     </div>
   </div>
 </template>
@@ -148,6 +204,51 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 .page-content {
   box-sizing: border-box;
   height: 100%;
+}
+
+/* Body content dims while a header/footer is being edited (SPEC-029
+ * AC-1, AC-2) — opacity, not visibility, so the dimmed text stays a
+ * legible reading reference the way Word's own dimming does.
+ * `pointer-events: none` sits on the margin box (the entries' own
+ * container), not `.page-content` itself, so a double-click still lands on
+ * `.page-content`'s own dblclick-body listener above it in the DOM and
+ * exits editing (AC-8) instead of being swallowed by the dimmed area. */
+.page-margin-dimmed {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Header/footer bands (SPEC-029): positioned within the page's own
+   top/bottom margin — inline top/left/right/bottom come from
+   DocumentView's headerStyle/footerStyle, computed from the section's
+   margins and a fixed header/footer distance from the page edge. */
+.page-header-band,
+.page-footer-band {
+  position: absolute;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header text sits at the bottom of the top margin, just above the body
+   text's own top edge; footer text sits at the top of the bottom margin,
+   just below the body text's own bottom edge — matching where Word
+   positions header/footer content within the margin band. */
+.page-header-band {
+  justify-content: flex-end;
+  padding-bottom: 0.2cm;
+}
+
+.page-footer-band {
+  justify-content: flex-start;
+  padding-top: 0.2cm;
+}
+
+.page-header-band[data-hf-editable],
+.page-footer-band[data-hf-editable] {
+  outline: 1px dashed #1a73e8;
+  outline-offset: 2px;
 }
 
 /* Marks where the page margins end and content begins — an outline, not a
@@ -187,6 +288,11 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
   pointer-events: none;
 }
 
+/* DocPageBlock (used for the multi-column path above) has no <style> of its
+   own — the SPEC-030 branch relies on Vue scoping the parent's data-v
+   attribute onto a child component's root element, so these rules (kept in
+   sync with DocBlockEntries.vue, which the single-column path below uses
+   instead) still have to live here too. */
 .doc-paragraph {
   margin: 0;
   font-weight: normal;
