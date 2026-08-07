@@ -301,6 +301,7 @@ import {
   undoLabel as undoDocumentLabel,
 } from "../lib/undoHistory";
 import { findShortcut, isOutsideDocumentInput, shortcutLabel } from "../lib/shortcuts";
+import { isMacPlatform } from "../lib/platform";
 
 const route = useRoute();
 const router = useRouter();
@@ -360,9 +361,11 @@ function refreshUndoRedoState() {
 }
 
 // --- clipboard (SPEC-016) ---------------------------------------------------
-// `plainPasteNext` is armed by the Ctrl/Cmd+Shift+V keydown (AC-27): the
-// browser still fires a `paste` event for that combination, and the flag
-// routes it down the plain-text path. `pastePayload`/`pastePendingFormat`
+// `plainPasteNext` is armed by the Ctrl/Cmd+Shift+V keydown (AC-27): where
+// the browser fires a `paste` event for that combination the flag routes it
+// down the plain-text path, and where it does not (macOS — see
+// schedulePlainPasteFallback) the flag survives long enough for the fallback
+// to notice. `pastePayload`/`pastePendingFormat`
 // describe the last applied paste so the options chip can re-interpret it;
 // `lastCopy` is the local snapshot backing the context menu's async paste
 // (see ClipboardSnapshot in lib/clipboard.ts). Plain variables — nothing
@@ -1054,6 +1057,7 @@ function applyEdit(
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
   void restoreCaretAfterRender();
+  void keepCaretVisible();
   void refreshLinkChip();
   if (
     priorImageSelection &&
@@ -1634,6 +1638,45 @@ function handlePaste(event = new ClipboardEvent("paste")) {
   );
 }
 
+/** Ctrl/Cmd+Shift+V's fallback path. Chromium only turns that combination
+ * into a clipboard command on Windows/Linux, where it is a native paste
+ * variant; on macOS it belongs to the application menu and never reaches
+ * the page, so the armed flag would sit there and the command would
+ * silently do nothing. Once the event has had its chance, read the
+ * clipboard's text ourselves — plain text is the only flavour this command
+ * wants, and the only one navigator.clipboard exposes. A refused
+ * permission or an empty clipboard leaves the document untouched, exactly
+ * as before. */
+function schedulePlainPasteFallback() {
+  window.setTimeout(() => {
+    if (!plainPasteNext) {
+      // The paste event arrived and consumed the flag.
+      return;
+    }
+    plainPasteNext = false;
+    void pastePlainFromClipboard();
+  }, 0);
+}
+
+async function pastePlainFromClipboard() {
+  let text = "";
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    return;
+  }
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value || text === "") {
+    return;
+  }
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  performPaste({ internal: "", html: "", text, hasImage: false }, selection, true);
+}
+
 /** One paste, whatever triggered it: the internal payload wins (exact
  * editor-to-editor fidelity, AC-10..13), then the sanitised HTML import
  * (AC-14..26), then plain text; `plainOnly` (Ctrl/Cmd+Shift+V, AC-27)
@@ -1912,7 +1955,13 @@ function jumpToAnchor(anchor = "") {
   void scrollModelCaretIntoView(position);
 }
 
-async function scrollModelCaretIntoView(position = noCaret()) {
+/** Brings a model position into view and settles it a third of the way down
+ * the canvas — a deliberate move to somewhere else in the document (a
+ * bookmark jump, the page a break just started), where landing on the
+ * viewport's very edge would show the destination without its context.
+ * `always` skips the "only when it is off-screen" test, for callers that
+ * know the caret changed page and want that page framed either way. */
+async function scrollModelCaretIntoView(position = noCaret(), always = false) {
   await nextTick();
   const root = contentRoot.value;
   if (!root || !position || !scrollContainer) {
@@ -1923,8 +1972,33 @@ async function scrollModelCaretIntoView(position = noCaret()) {
     return;
   }
   const containerRect = scrollContainer.getBoundingClientRect();
-  if (rect.top < containerRect.top || rect.bottom > containerRect.bottom) {
+  if (always || rect.top < containerRect.top || rect.bottom > containerRect.bottom) {
     scrollContainer.scrollTop += rect.top - containerRect.top - containerRect.height / 3;
+  }
+}
+
+/** Keeps the caret on screen after an edit, moving the view as little as
+ * possible. An edit must never leave the user typing somewhere they cannot
+ * see — filling a page pushes the caret past the fold, and until this ran
+ * the canvas simply stayed put — but scrolling further than the line just
+ * written would lose their place in its own way, so this nudges rather than
+ * reframes (contrast scrollModelCaretIntoView above). */
+async function keepCaretVisible() {
+  await nextTick();
+  const root = contentRoot.value;
+  if (!root || !caret || !scrollContainer) {
+    return;
+  }
+  const rect = caretClientRect(root, caret);
+  if (!rect) {
+    return;
+  }
+  const view = scrollContainer.getBoundingClientRect();
+  const pad = 24;
+  if (rect.top < view.top + pad) {
+    scrollContainer.scrollTop -= view.top + pad - rect.top;
+  } else if (rect.bottom > view.bottom - pad) {
+    scrollContainer.scrollTop += rect.bottom - (view.bottom - pad);
   }
 }
 
@@ -2355,6 +2429,44 @@ async function moveCaretByPage(direction = 1, extend = false) {
     target = direction > 0 ? documentEnd(model) : documentStart();
   }
   applyCaretMove(target, extend);
+}
+
+/** Home/End — the start and end of the caret's *visual* line, so a wrapped
+ * paragraph stops at the wrap and not at the paragraph's ends (SPEC-011
+ * AC-12). Windows and Linux browsers bind these themselves and the native
+ * move is left alone; macOS binds them to scrolling the view instead, which
+ * moves no caret at all, so there the editor has to do it. Hit-testing the
+ * caret's own line at the paragraph's left/right edge is what makes it
+ * visual: the browser resolves the point to the nearest position on that
+ * line, wherever the text happens to wrap. Returns true when consumed. */
+function handleLineEdgeKey(event = new KeyboardEvent("keydown")) {
+  const root = contentRoot.value;
+  if (!root || !isMacPlatform() || (event.key !== "Home" && event.key !== "End")) {
+    return false;
+  }
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    // Cmd+Home/End is the document-start/end command in the registry.
+    return false;
+  }
+  const from = domFocusCaret(root);
+  const rect = from ? caretClientRect(root, from) : null;
+  const paragraph = from ? paragraphElementForCaret(root, from) : null;
+  if (!from || !rect || !paragraph) {
+    return false;
+  }
+  const bounds = paragraph.getBoundingClientRect();
+  const toStart = event.key === "Home";
+  const target = caretAtClientPoint(
+    root,
+    toStart ? bounds.left + 1 : bounds.right - 1,
+    rect.top + rect.height / 2,
+  );
+  if (!target) {
+    return false;
+  }
+  event.preventDefault();
+  applyCaretMove(target, event.shiftKey);
+  return true;
 }
 
 // --- tables: arrow fallback, drag selection, handles (SPEC-022) -------------
@@ -3482,6 +3594,9 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     handleImageDelete();
     return;
   }
+  if (handleLineEdgeKey(event)) {
+    return;
+  }
   if (
     !event.ctrlKey &&
     !event.metaKey &&
@@ -3520,7 +3635,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
       // The caret moved to the top of a page that is very likely below the
       // fold: follow it, or the user types onto a page they cannot see.
-      void scrollModelCaretIntoView(caret);
+      void scrollModelCaretIntoView(caret, true);
       break;
     }
     case "view.formattingMarks": {
@@ -3552,9 +3667,10 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       break;
     case "edit.pastePlain":
       // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
-      // the browser fire the paste event it still produces for this combo —
-      // only that event can hand us the clipboard's contents.
+      // the browser fire the paste event it produces for this combo — that
+      // event hands us every clipboard flavour at once.
       plainPasteNext = true;
+      schedulePlainPasteFallback();
       break;
     case "insert.nonBreakingSpace":
       // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
@@ -4127,7 +4243,7 @@ function handleInsertBreak(kind = "") {
   const selection = paragraphSelection(root);
   applyEdit(insertBreak(model, selection, asBreakKind(kind)), selection, "insert break");
   root.focus();
-  void scrollModelCaretIntoView(caret);
+  void scrollModelCaretIntoView(caret, true);
 }
 
 function handleInsertSectionBreak(start = "") {
@@ -4143,7 +4259,7 @@ function handleInsertSectionBreak(start = "") {
     "insert section break",
   );
   root.focus();
-  void scrollModelCaretIntoView(caret);
+  void scrollModelCaretIntoView(caret, true);
 }
 
 /** The paragraph pagination menu's toggles (AC-22..28): each key flips

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_END } from "./keys";
+import { LINE_END, MOD } from "./keys";
 
 // SPEC-026 — the special-character picker, search, the Recent row and its
 // persistence, the autocorrect toggle, undo of a substitution, and non-BMP
@@ -97,7 +97,7 @@ test.describe("autocorrect", () => {
     await focusCaret(page);
     await page.keyboard.type("a--");
     expect(await paraText(page)).toBe("a–");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press(`${MOD}+z`);
     expect(await paraText(page)).toBe("a--");
   });
 
@@ -165,7 +165,7 @@ test.describe("non-BMP characters", () => {
     expect(await paraText(page)).toBe("a😀");
     // One Backspace removes the whole surrogate pair, not half of it.
     await focusCaret(page);
-    await page.keyboard.press("End");
+    await page.keyboard.press(LINE_END);
     await page.keyboard.press("Backspace");
     expect(await paraText(page)).toBe("a");
   });

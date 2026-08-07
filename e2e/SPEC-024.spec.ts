@@ -7,6 +7,7 @@ import { writeFileSync, readFileSync } from "node:fs";
 import { unzip } from "../src/lib/docx/zip";
 import { createDocument as createDocumentModel } from "../src/lib/documentModel";
 import { writeDocx } from "../src/lib/docx/writer";
+import { LINE_START, MOD } from "./keys";
 
 // SPEC-024 — images: insert (file picker, drag-and-drop, paste), the
 // scaled-to-fit initial size, click-to-select with eight resize handles and
@@ -109,7 +110,7 @@ test("inserts a PNG at the caret via the file picker, at its natural size (AC-1,
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("before after");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < 6; i++) {
     await page.keyboard.press("ArrowRight");
   }
@@ -435,7 +436,7 @@ test("an SVG inserted into an .odt-bound document is stored as an SVG media part
   // so the insert path below stores the SVG as-is instead of converting it.
   await openFixture(page, odtImagesFixture);
   await content(page).click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await insertViaPicker(page, SIMPLE_SVG, "vector.svg", "image/svg+xml");
   await expect(images(page)).toHaveCount(3);
 

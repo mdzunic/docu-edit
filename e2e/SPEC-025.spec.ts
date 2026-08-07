@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LINE_START, MOD } from "./keys";
 
 // SPEC-025 — hyperlinks and bookmarks: the Ctrl/Cmd+K link dialog, autolink
 // on space/Enter with single-step undo, the link chip (open/edit/copy/
@@ -7,8 +8,6 @@ import { test, expect, type Page } from "@playwright/test";
 // createDocument/content follow e2e/SPEC-021.spec.ts; the synthetic paste
 // dispatch follows e2e/SPEC-016.spec.ts.
 
-const mac = process.platform === "darwin";
-const MOD = mac ? "Meta" : "Control";
 
 async function createDocument(page: Page): Promise<void> {
   await page.goto("/");
@@ -29,7 +28,7 @@ const linkChip = (page: Page) => page.getByTestId("link-chip");
 
 /** Selects [from, to) of the first paragraph with the keyboard. */
 async function selectRange(page: Page, from: number, to: number): Promise<void> {
-  await page.keyboard.press(mac ? "Meta+ArrowLeft" : "Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < from; i++) {
     await page.keyboard.press("ArrowRight");
   }
@@ -237,7 +236,7 @@ test("Ctrl/Cmd+click opens the target in a new tab with rel noopener noreferrer 
 
   const [popup] = await Promise.all([
     page.context().waitForEvent("page"),
-    link.click({ modifiers: [mac ? "Meta" : "Control"] }),
+    link.click({ modifiers: [MOD] }),
   ]);
   await popup.waitForLoadState("domcontentloaded");
   expect(popup.url().startsWith(origin)).toBe(true);
@@ -298,9 +297,9 @@ test("the dialog lists headings and bookmarks, and a heading link jumps to the h
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Chapter One");
-  await page.keyboard.press(mac ? "Alt+Meta+1" : "Control+Alt+1");
+  await page.keyboard.press(`${MOD}+Alt+1`);
   await page.keyboard.press("Enter");
-  await page.keyboard.press(mac ? "Alt+Meta+0" : "Control+Alt+0");
+  await page.keyboard.press(`${MOD}+Alt+0`);
   await page.keyboard.type("body text goes here");
 
   // A bookmark at the current caret, so the dialog has one of each kind.
@@ -365,7 +364,7 @@ test("the bookmark manager lists, jumps to and deletes bookmarks (AC-23..25)", a
   await content(page).click();
   await page.keyboard.type("Hello world");
   // Bookmark after "Hello" (offset 5).
-  await page.keyboard.press(mac ? "Meta+ArrowLeft" : "Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < 5; i++) {
     await page.keyboard.press("ArrowRight");
   }

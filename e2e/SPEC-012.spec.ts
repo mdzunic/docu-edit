@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START } from "./keys";
+import { MOD, LINE_START } from "./keys";
 
 // SPEC-012 — character formatting: bold, italic, underline, strikethrough.
 // Builds on SPEC-011's editing engine, so selection/caret setup here follows
@@ -98,7 +98,7 @@ test("Ctrl+B formats exactly the selection, splitting runs at the boundaries (AC
   await content(page).click();
   await page.keyboard.type("Hello world");
   await selectRange(page, 6, 11);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
 
   const runs = firstParagraphRuns(await readLatestModel(page, id));
@@ -115,11 +115,11 @@ test("Ctrl+I, Ctrl+U and Ctrl+Shift+X apply italic, underline and strikethrough 
   await content(page).click();
   await page.keyboard.type("Styled");
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+i");
+  await page.keyboard.press(`${MOD}+i`);
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+u");
+  await page.keyboard.press(`${MOD}+u`);
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+Shift+x");
+  await page.keyboard.press(`${MOD}+Shift+x`);
   await waitForSaved(page);
 
   const runs = firstParagraphRuns(await readLatestModel(page, id));
@@ -135,7 +135,7 @@ test("a mixed selection shows indeterminate; the same selection's first click bo
   await content(page).click();
   await page.keyboard.type("bold and plain");
   await selectRange(page, 0, 4);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
 
   const bold = formatButton(page, "bold");
   await selectRange(page, 0, "bold and plain".length);
@@ -171,7 +171,7 @@ test("a collapsed caret sets a pending format the next typed characters carry, d
 
   const bold = formatButton(page, "bold");
   await expect(bold).toHaveAttribute("aria-pressed", "false");
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await expect(bold).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.type("AB");
   await expect(content(page)).toHaveText("hello ABworld");
@@ -198,7 +198,7 @@ test("bold round-trips through the .docx and .odt writers (apply, save, re-open 
   await content(page).click();
   await page.keyboard.type("Hello world");
   await selectRange(page, 6, 11);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
 
   await page.getByTestId("download-menu").click();

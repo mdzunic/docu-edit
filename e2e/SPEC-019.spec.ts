@@ -2,7 +2,7 @@ import { test, expect, type Download, type Page } from "@playwright/test";
 import { inflateRawSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extend, WORD_LEFT } from "./keys";
+import { extend, LINE_END, LINE_START, MOD, WORD_LEFT } from "./keys";
 
 // SPEC-019 — paragraph styles and the style picker: the current style name
 // in the toolbar, the built-in and document style lists with previews,
@@ -14,8 +14,6 @@ const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const docxFixture = join(fixturesDir, "styles.docx");
 const odtFixture = join(fixturesDir, "styles.odt");
 
-// Ctrl on Windows/Linux, Cmd on macOS — the platform running the browser.
-const mod = process.platform === "darwin" ? "Meta" : "Control";
 
 async function createDocument(page: Page): Promise<void> {
   await page.goto("/");
@@ -176,7 +174,7 @@ test("Ctrl/Cmd+Alt+1..6 apply Heading 1-6 (AC-5)", async ({ page }) => {
   await content(page).click();
   await page.keyboard.type("shortcut styled");
   for (const level of [1, 3, 6]) {
-    await page.keyboard.press(`${mod}+Alt+${level}`);
+    await page.keyboard.press(`${MOD}+Alt+${level}`);
     expect(await tagNameAt(page, 0)).toBe(`H${level}`);
     await expect(pickerCurrent(page)).toHaveText(`Heading ${level}`);
   }
@@ -186,10 +184,10 @@ test("Ctrl/Cmd+Alt+0 applies Normal (AC-6)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("back to body");
-  await page.keyboard.press(`${mod}+Alt+1`);
+  await page.keyboard.press(`${MOD}+Alt+1`);
   expect(await tagNameAt(page, 0)).toBe("H1");
 
-  await page.keyboard.press(`${mod}+Alt+0`);
+  await page.keyboard.press(`${MOD}+Alt+0`);
   expect(await tagNameAt(page, 0)).toBe("P");
   await expect(pickerCurrent(page)).toHaveText("Normal");
   await expect(paragraphAt(page, 0).locator("span").first()).toHaveCSS("font-weight", "400");
@@ -230,9 +228,9 @@ test("direct formatting layered on a styled paragraph wins in rendering (AC-9, A
   await page.keyboard.type("Chapter one");
   await applyStyle(page, "Heading1");
   // Select the last word and italicise it directly.
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press(extend(WORD_LEFT));
-  await page.keyboard.press(`${mod}+i`);
+  await page.keyboard.press(`${MOD}+i`);
 
   const spans = paragraphAt(page, 0).locator("span");
   await expect(spans.last()).toHaveCSS("font-style", "italic");
@@ -248,9 +246,9 @@ test("style and layered direct formatting both survive a .docx save (AC-11, AC-1
   await content(page).click();
   await page.keyboard.type("Chapter one");
   await applyStyle(page, "Heading1");
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press(extend(WORD_LEFT));
-  await page.keyboard.press(`${mod}+i`);
+  await page.keyboard.press(`${MOD}+i`);
 
   const documentXml = await downloadedPart(page, "docx", "word/document.xml");
   // A real heading: w:pStyle referencing the built-in heading style id.
@@ -269,9 +267,9 @@ test("an applied heading saves to .odt as text:h with the outline level (AC-11, 
   await content(page).click();
   await page.keyboard.type("Chapter one");
   await applyStyle(page, "Heading3");
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press(extend(WORD_LEFT));
-  await page.keyboard.press(`${mod}+i`);
+  await page.keyboard.press(`${MOD}+i`);
 
   const contentXml = await downloadedPart(page, "odt", "content.xml");
   expect(contentXml).toContain("<text:h");
@@ -288,16 +286,16 @@ test("Update <style> to match redefines the style and re-renders every user (AC-
   await page.keyboard.press("Enter");
   await page.keyboard.type("beta");
   // Make both paragraphs Heading 1.
-  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press(`${MOD}+a`);
   await applyStyle(page, "Heading1");
   expect(await tagNameAt(page, 0)).toBe("H1");
   expect(await tagNameAt(page, 1)).toBe("H1");
 
   // Italicise the whole first paragraph directly.
   await paragraphAt(page, 0).click();
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Shift+End");
-  await page.keyboard.press(`${mod}+i`);
+  await page.keyboard.press(LINE_START);
+  await page.keyboard.press(extend(LINE_END));
+  await page.keyboard.press(`${MOD}+i`);
   await expect(paragraphAt(page, 0).locator("span").first()).toHaveCSS("font-style", "italic");
   await expect(paragraphAt(page, 1).locator("span").first()).toHaveCSS("font-style", "normal");
 
@@ -322,9 +320,9 @@ test("Reset style removes direct formatting, leaving the style's own (AC-14)", a
   await expect(paragraphAt(page, 0).locator("span").first()).toHaveCSS("font-style", "italic");
 
   // Layer direct bold over the whole paragraph.
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Shift+End");
-  await page.keyboard.press(`${mod}+b`);
+  await page.keyboard.press(LINE_START);
+  await page.keyboard.press(extend(LINE_END));
+  await page.keyboard.press(`${MOD}+b`);
   await expect(paragraphAt(page, 0).locator("span").first()).toHaveCSS("font-weight", "700");
 
   await openPicker(page);
@@ -343,7 +341,7 @@ test("rendered headings expose real h1-h6 semantics to assistive technology (AC-
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Accessible heading");
-  await page.keyboard.press(`${mod}+Alt+2`);
+  await page.keyboard.press(`${MOD}+Alt+2`);
   await expect(page.getByRole("heading", { level: 2 })).toHaveText("Accessible heading");
 
   await openFixture(page, docxFixture);
@@ -374,7 +372,7 @@ test("an opened .odt lists its named styles with display names and inheritance (
 test("a heading applied to an opened .odt saves back as text:h (AC-15, AC-16)", async ({ page }) => {
   await openFixture(page, odtFixture);
   await paragraphAt(page, 0).click();
-  await page.keyboard.press(`${mod}+Alt+2`);
+  await page.keyboard.press(`${MOD}+Alt+2`);
   expect(await tagNameAt(page, 0)).toBe("H2");
 
   const contentXml = await downloadedPart(page, "odt", "content.xml");

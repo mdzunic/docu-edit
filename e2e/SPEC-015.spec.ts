@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START } from "./keys";
+import { MOD, MOD_LABEL, LINE_START } from "./keys";
 
 // SPEC-015 — undo/redo: shortcuts, toolbar buttons, typing grouped into one
 // step and broken by a caret move / pause / non-typing command, formatting
@@ -36,13 +36,13 @@ test("Undo/Redo start disabled with a generic tooltip, and enable once there is 
   await createDocument(page);
   await expect(undoButton(page)).toBeDisabled();
   await expect(redoButton(page)).toBeDisabled();
-  await expect(undoButton(page)).toHaveAttribute("title", "Undo (Ctrl+Z)");
-  await expect(redoButton(page)).toHaveAttribute("title", "Redo (Ctrl+Shift+Z)");
+  await expect(undoButton(page)).toHaveAttribute("title", `Undo (${MOD_LABEL}+Z)`);
+  await expect(redoButton(page)).toHaveAttribute("title", `Redo (${MOD_LABEL}+Shift+Z)`);
 
   await content(page).click();
   await page.keyboard.type("hello");
   await expect(undoButton(page)).toBeEnabled();
-  await expect(undoButton(page)).toHaveAttribute("title", "Undo typing (Ctrl+Z)");
+  await expect(undoButton(page)).toHaveAttribute("title", `Undo typing (${MOD_LABEL}+Z)`);
   await expect(redoButton(page)).toBeDisabled();
 });
 
@@ -52,15 +52,15 @@ test("Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo (AC-1, AC-2, AC-3)", async ({ 
   await page.keyboard.type("abc");
   await expect(content(page)).toHaveText("abc");
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("");
 
-  await page.keyboard.press("Control+Shift+z");
+  await page.keyboard.press(`${MOD}+Shift+z`);
   await expect(content(page)).toHaveText("abc");
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("");
-  await page.keyboard.press("Control+y");
+  await page.keyboard.press(`${MOD}+y`);
   await expect(content(page)).toHaveText("abc");
 });
 
@@ -85,19 +85,19 @@ test("consecutive typed characters group into one undo step, broken by a caret m
   await expect(content(page)).toHaveText("hello");
 
   // One undo removes the whole run of consecutive typing.
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("");
 
-  await page.keyboard.press("Control+Shift+z");
+  await page.keyboard.press(`${MOD}+Shift+z`);
   await page.keyboard.press(LINE_START);
   await page.keyboard.type("X");
   await expect(content(page)).toHaveText("Xhello");
 
   // The caret move before typing "X" broke the group: one undo removes only
   // "X", a second is needed for the original "hello" run.
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("hello");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("");
 });
 
@@ -109,9 +109,9 @@ test("a pause of 2 s breaks the typing group (AC-11)", async ({ page }) => {
   await page.keyboard.type("cd");
   await expect(content(page)).toHaveText("abcd");
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("ab");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("");
 });
 
@@ -122,17 +122,17 @@ test("a formatting command breaks the typing group and is always its own undo st
   await content(page).click();
   await page.keyboard.type("hi");
   await selectRange(page, 0, 2);
-  await page.keyboard.press("Control+b");
-  await expect(undoButton(page)).toHaveAttribute("title", "Undo bold (Ctrl+Z)");
+  await page.keyboard.press(`${MOD}+b`);
+  await expect(undoButton(page)).toHaveAttribute("title", `Undo bold (${MOD_LABEL}+Z)`);
   await selectRange(page, 0, 2);
-  await page.keyboard.press("Control+i");
-  await expect(undoButton(page)).toHaveAttribute("title", "Undo italic (Ctrl+Z)");
+  await page.keyboard.press(`${MOD}+i`);
+  await expect(undoButton(page)).toHaveAttribute("title", `Undo italic (${MOD_LABEL}+Z)`);
 
   // Bold and italic never merge, even applied over the same selection.
-  await page.keyboard.press("Control+z");
-  await expect(undoButton(page)).toHaveAttribute("title", "Undo bold (Ctrl+Z)");
-  await page.keyboard.press("Control+z");
-  await expect(undoButton(page)).toHaveAttribute("title", "Undo typing (Ctrl+Z)");
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(undoButton(page)).toHaveAttribute("title", `Undo bold (${MOD_LABEL}+Z)`);
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(undoButton(page)).toHaveAttribute("title", `Undo typing (${MOD_LABEL}+Z)`);
 });
 
 test("undo restores the selection that was replaced (AC-14)", async ({ page }) => {
@@ -143,7 +143,7 @@ test("undo restores the selection that was replaced (AC-14)", async ({ page }) =
   await page.keyboard.type("X");
   await expect(content(page)).toHaveText("Hello X");
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("Hello world");
   // The restored selection covers "world" again, so typing over it replaces
   // it rather than inserting at a bare caret.
@@ -155,7 +155,7 @@ test("a new edit after undo clears the redo stack (AC-15)", async ({ page }) => 
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("abc");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(redoButton(page)).toBeEnabled();
 
   await page.keyboard.type("x");

@@ -1,5 +1,5 @@
 import { test, expect, type Download, type Page } from "@playwright/test";
-import { LINE_END, LINE_START } from "./keys";
+import { MOD, LINE_END, LINE_START } from "./keys";
 import { inflateRawSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -88,7 +88,7 @@ test("the bulleted toggle applies to every paragraph in the selection and toggle
   await page.keyboard.type("one");
   await page.keyboard.press("Enter");
   await page.keyboard.type("two");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("list-bulleted").click();
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "•");
   await expect(paragraphAt(page, 1)).toHaveAttribute("data-list-marker", "•");
@@ -112,7 +112,7 @@ test("toggling with only some paragraphs bulleted applies to all (AC-1)", async 
   await expect(paragraphAt(page, 1)).toHaveAttribute("data-list-marker", "•");
   await expect(paragraphAt(page, 0)).not.toHaveAttribute("data-list-marker");
   // Some-but-not-all: the toggle applies to the whole selection.
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("list-bulleted").click();
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "•");
   await expect(paragraphAt(page, 1)).toHaveAttribute("data-list-marker", "•");
@@ -124,7 +124,7 @@ test("the numbered toggle numbers the selection and toggles off with the same se
   await page.keyboard.type("first");
   await page.keyboard.press("Enter");
   await page.keyboard.type("second");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("list-numbered").click();
   // Continuous numbering across consecutive items (AC-10).
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "1.");
@@ -259,7 +259,7 @@ test("a non-list paragraph between items restarts the numbering after it (AC-11)
   await page.keyboard.type("middle");
   await page.keyboard.press("Enter");
   await page.keyboard.type("three");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("list-numbered").click();
   await expect(paragraphAt(page, 2)).toHaveAttribute("data-list-marker", "3.");
 
@@ -302,7 +302,7 @@ test("picking a marker style re-renders every item at the current level immediat
   await page.keyboard.type("second");
   await page.keyboard.press("Enter");
   await page.keyboard.type("sub");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("list-numbered").click();
   await content(page).click();
   await paragraphAt(page, 2).click();
@@ -370,15 +370,15 @@ test("Ctrl+Z immediately after an autoformat restores the literal typed prefix (
   await content(page).click();
   await page.keyboard.type("- ");
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "•");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(paragraphAt(page, 0)).not.toHaveAttribute("data-list-marker");
   await expect(paragraphAt(page, 0)).toHaveText("- ");
 
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.keyboard.press("Delete");
   await page.keyboard.type("1. ");
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "1.");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(paragraphAt(page, 0)).not.toHaveAttribute("data-list-marker");
   await expect(paragraphAt(page, 0)).toHaveText("1. ");
 });
@@ -404,7 +404,7 @@ async function buildListsDocument(page: Page): Promise<void> {
   await page.keyboard.type("First");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Nested");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("list-numbered").click();
   await content(page).click();
   await paragraphAt(page, 1).click();

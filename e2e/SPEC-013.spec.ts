@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START } from "./keys";
+import { MOD, LINE_START } from "./keys";
 import { readFileSync } from "node:fs";
 import { unzip } from "../src/lib/docx/zip";
 
@@ -184,6 +184,19 @@ test("the size control accepts 0.5 pt steps, has +/- buttons, and clamps out-of-
   await input.press("Enter");
   await expect(page.getByTestId("font-size-tooltip")).toBeVisible();
   await expect(page.getByTestId("font-size-tooltip")).toContainText("between 1 and 409");
+  // …and genuinely on screen. toBeVisible() ignores clipping by an
+  // ancestor's overflow, which is exactly how this hint used to be lost:
+  // it hung below a toolbar strip that clips on overflow-y, so the user's
+  // input was silently corrected with no explanation. Hit-test it.
+  const reached = await page.evaluate(() => {
+    const tip = document.querySelector('[data-testid="font-size-tooltip"]')!.getBoundingClientRect();
+    const at = document.elementFromPoint(
+      Math.round(tip.left + tip.width / 2),
+      Math.round(tip.top + tip.height / 2),
+    );
+    return !!at?.closest('[data-testid="font-size-tooltip"]');
+  });
+  expect(reached).toBe(true);
   await expect(input).toHaveValue("409");
   await waitForSaved(page);
   expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
@@ -297,7 +310,7 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+, /
   await page.keyboard.type("H2O");
   await selectRange(page, 1, 2);
 
-  await page.keyboard.press("Control+Comma");
+  await page.keyboard.press(`${MOD}+Comma`);
   await waitForSaved(page);
   expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
     { text: "H", formatting: {} },
@@ -307,7 +320,7 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+, /
   await expect(page.getByTestId("format-subscript")).toHaveAttribute("aria-pressed", "true");
 
   // Superscript replaces the subscript — mutually exclusive (AC-25).
-  await page.keyboard.press("Control+Period");
+  await page.keyboard.press(`${MOD}+Period`);
   await waitForSaved(page);
   expect(firstParagraphRuns(await readLatestModel(page, id))[1]).toEqual({
     text: "2",
@@ -344,7 +357,7 @@ test("font, size, colour, highlight and superscript round-trip through .docx and
   await page.getByTestId("highlight-button").click();
   await page.locator('[data-testid="highlight-swatch"][data-color="yellow"]').click();
   await selectRange(page, 7, 11);
-  await page.keyboard.press("Control+Period");
+  await page.keyboard.press(`${MOD}+Period`);
   await waitForSaved(page);
 
   const docxPath = await download(page, "docx");

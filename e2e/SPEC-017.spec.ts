@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { MOD } from "./keys";
 
 // SPEC-017 — find and replace: the find bar (open/close shortcuts, match
 // count, navigation, wrap hint, highlight overlay), the replace row (expand
@@ -36,7 +37,7 @@ test("Ctrl/Cmd+F opens the find bar with a focused query field, previous/next an
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await expect(findBar(page)).toBeVisible();
   await expect(findQuery(page)).toBeFocused();
   await expect(page.getByTestId("find-prev")).toBeVisible();
@@ -50,7 +51,7 @@ test("typing highlights every match, the current one distinctly, with a live cou
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await findQuery(page).fill("the");
   await expect(findCount(page)).toHaveText("1 of 5");
   await expect(highlights(page)).toHaveCount(5);
@@ -63,7 +64,7 @@ test("Enter/Shift+Enter step through matches and wrap with a 'Wrapped to top' hi
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await findQuery(page).fill("the");
   await expect(findCount(page)).toHaveText("1 of 5");
 
@@ -89,10 +90,10 @@ test("Escape closes the bar, clears highlights and restores the caret (AC-11, AC
   await seedDocument(page);
 
   await content(page).click();
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   const caretBefore = await page.getByTestId("caret-status").textContent();
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await findQuery(page).fill("dog");
   await expect(findCount(page)).toHaveText("1 of 2");
 
@@ -108,7 +109,7 @@ test("Ctrl/Cmd+H and the expand toggle both reveal the replace row with Replace 
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+h");
+  await page.keyboard.press(`${MOD}+h`);
   await expect(page.getByTestId("find-replace-row")).toBeVisible();
   await expect(page.getByTestId("find-replace-input")).toBeVisible();
   await expect(page.getByTestId("find-replace")).toBeVisible();
@@ -124,7 +125,7 @@ test("Replace all reports the count via a toast and is a single undo step (AC-18
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+h");
+  await page.keyboard.press(`${MOD}+h`);
   await findQuery(page).fill("dog");
   await expect(findCount(page)).toHaveText("1 of 2");
   await page.getByTestId("find-replace-input").fill("wolf");
@@ -135,7 +136,7 @@ test("Replace all reports the count via a toast and is a single undo step (AC-18
   await expect(content(page)).not.toContainText(/\bdog\b/);
 
   await content(page).click();
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toContainText("dog");
   await expect(content(page)).not.toContainText("wolf");
 });
@@ -146,7 +147,7 @@ test("Match case, whole words and regex narrow the results, and persist for the 
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
 
   // Match case: "THE" case-insensitively matches all 5 "the"-like substrings;
   // case-sensitively only the literal "THE" ("THE cat sleeps...").
@@ -173,7 +174,7 @@ test("Match case, whole words and regex narrow the results, and persist for the 
 
   // Persist for the session: closing and reopening the bar keeps regex mode on.
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await expect(page.getByTestId("find-regex")).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -183,7 +184,7 @@ test("an invalid regular expression shows an inline error and does not run the s
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await page.getByTestId("find-regex").click();
   await findQuery(page).fill("(unterminated");
 
@@ -196,11 +197,11 @@ test("a replacement takes the formatting of the first run it replaced (AC-26)", 
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("plain text then ");
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await page.keyboard.type("boldword");
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
 
-  await page.keyboard.press("Control+h");
+  await page.keyboard.press(`${MOD}+h`);
   await findQuery(page).fill("boldword");
   await page.getByTestId("find-replace-input").fill("shinyword");
   await page.getByTestId("find-replace").click();
@@ -214,7 +215,7 @@ test("search covers only body text and states its scope (AC-27, AC-28, AC-29)", 
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await findQuery(page).fill("fox");
   await expect(findCount(page)).toHaveText("1 of 1");
 
@@ -282,7 +283,7 @@ test("a 200-page document returns first results within 300ms and typing stays re
   await expect(content(page).locator(".doc-paragraph").first()).toBeVisible();
   await content(page).click();
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   const start = Date.now();
   await findQuery(page).fill("needle");
   await expect(findCount(page)).not.toHaveText("0 of 0", { timeout: 2000 });

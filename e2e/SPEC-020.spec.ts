@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START, LINE_END, extend } from "./keys";
+import { MOD, LINE_START, LINE_END, extend } from "./keys";
 
 // SPEC-020 — clear formatting and the format painter. Selection setup and
 // model reads follow the same patterns as e2e/SPEC-012.spec.ts and
@@ -109,14 +109,14 @@ test("the Clear formatting button and Ctrl+\\ strip character formatting and res
   await page.keyboard.type("Styled list item");
   await page.getByTestId("list-bulleted").click();
   await selectWholeLine(page);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+i");
-  await page.keyboard.press("Control+Alt+1"); // Heading 1 (SPEC-019)
+  await page.keyboard.press(`${MOD}+i`);
+  await page.keyboard.press(`${MOD}+Alt+1`); // Heading 1 (SPEC-019)
   await expect(pickerCurrent(page)).toHaveText("Heading 1");
 
   await selectWholeLine(page);
-  await page.keyboard.press("Control+\\");
+  await page.keyboard.press(`${MOD}+\\`);
   await waitForSaved(page);
 
   await expect(pickerCurrent(page)).toHaveText("Normal");
@@ -133,7 +133,7 @@ test("the Clear formatting button performs the same action as Ctrl+\\ (button cl
   await content(page).click();
   await page.keyboard.type("Bold text");
   await selectWholeLine(page);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await selectWholeLine(page);
   await clearFormattingButton(page).click();
   await waitForSaved(page);
@@ -147,14 +147,14 @@ test("Clear formatting is a single undo step (AC-18)", async ({ page }) => {
   await content(page).click();
   await page.keyboard.type("Bold text");
   await selectWholeLine(page);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
   await selectWholeLine(page);
-  await page.keyboard.press("Control+\\");
+  await page.keyboard.press(`${MOD}+\\`);
   await waitForSaved(page);
   expect(block(await readLatestModel(page, id), 0).runs[0].formatting).toEqual({});
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await waitForSaved(page);
   expect(block(await readLatestModel(page, id), 0).runs[0].formatting).toEqual({ bold: true });
 });
@@ -167,14 +167,14 @@ test("a single click arms the painter (cursor + pressed state) and applies once 
   await page.keyboard.type("Source bold");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Target plain");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await page.keyboard.press("ArrowUp");
   await selectWholeLine(page);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
 
   // Caret inside the bold source paragraph, then arm the painter.
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await expect(painterButton(page)).toHaveAttribute("aria-pressed", "false");
   await painterButton(page).click();
   await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
@@ -200,12 +200,12 @@ test("double-clicking the painter keeps it armed for repeated application until 
   await page.keyboard.type("Target one");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Target two");
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await selectWholeLine(page);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
 
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await painterButton(page).dblclick();
   await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
 
@@ -215,7 +215,7 @@ test("double-clicking the painter keeps it armed for repeated application until 
   await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
 
   await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await selectWholeLine(page);
   await waitForSaved(page);
   await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
@@ -244,12 +244,12 @@ test("copies paragraph formatting only when a whole paragraph is selected (AC-10
   await page.keyboard.type("Centered source");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Target line");
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await page.getByTestId("align-center").click();
   await waitForSaved(page);
 
   // Whole-paragraph selection: paragraph formatting is copied too.
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await selectWholeLine(page);
   await painterButton(page).click();
   await page.keyboard.press("ArrowDown");
@@ -265,19 +265,19 @@ test("format painter application is a single undo step (AC-19)", async ({ page }
   await page.keyboard.type("Source bold");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Target plain");
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await selectWholeLine(page);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
 
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await painterButton(page).click();
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
   await waitForSaved(page);
   expect(block(await readLatestModel(page, id), 1).runs[0].formatting).toEqual({ bold: true });
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await waitForSaved(page);
   expect(block(await readLatestModel(page, id), 1).runs[0].formatting).toEqual({});
 });

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { MOD, MOD_LABEL } from "./keys";
 
 // SPEC-021 — the consolidated keyboard-shortcut registry: the searchable
 // "Keyboard shortcuts" dialog (Ctrl/Cmd+/), toolbar tooltips read from the
@@ -26,12 +27,12 @@ test("Ctrl/Cmd+/ opens the searchable Keyboard shortcuts dialog, listing every r
 }) => {
   await createDocument(page);
 
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press(`${MOD}+/`);
   await expect(shortcutsDialog(page)).toBeVisible();
   await expect(page.getByTestId("shortcuts-search")).toBeFocused();
 
-  await expect(page.getByTestId("shortcut-row-format.bold")).toContainText("Ctrl+B");
-  await expect(page.getByTestId("shortcut-row-edit.undo")).toContainText("Ctrl+Z");
+  await expect(page.getByTestId("shortcut-row-format.bold")).toContainText(`${MOD_LABEL}+B`);
+  await expect(page.getByTestId("shortcut-row-edit.undo")).toContainText(`${MOD_LABEL}+Z`);
   await expect(shortcutsDialog(page)).toContainText("Formatting");
   await expect(shortcutsDialog(page)).toContainText("Navigation");
 
@@ -45,7 +46,7 @@ test("the dialog documents the browser shortcuts it deliberately overrides (AC-1
 }) => {
   await createDocument(page);
 
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press(`${MOD}+/`);
   await expect(page.getByTestId("shortcut-row-format.bold")).toContainText("overrides browser default");
   await expect(page.getByTestId("shortcut-row-edit.undo")).not.toContainText("overrides browser default");
   await expect(page.getByTestId("shortcuts-reserved-note")).toContainText("Ctrl/Cmd+T");
@@ -56,7 +57,7 @@ test("the dialog documents the browser shortcuts it deliberately overrides (AC-1
 test("the dialog is keyboard-navigable and closes with Escape (AC-8, AC-9)", async ({ page }) => {
   await createDocument(page);
 
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press(`${MOD}+/`);
   await expect(shortcutsDialog(page)).toBeVisible();
 
   const firstRow = page.locator('[role="option"]').first();
@@ -71,16 +72,16 @@ test("the dialog is keyboard-navigable and closes with Escape (AC-8, AC-9)", asy
 test("toolbar tooltips show the shortcut read from the registry (AC-15, AC-16)", async ({ page }) => {
   await createDocument(page);
 
-  await expect(page.getByTestId("format-bold")).toHaveAttribute("title", "Bold (Ctrl+B)");
-  await expect(page.getByTestId("align-left")).toHaveAttribute("title", "Align left (Ctrl+L)");
-  await expect(page.getByTestId("undo-button")).toHaveAttribute("title", "Undo (Ctrl+Z)");
+  await expect(page.getByTestId("format-bold")).toHaveAttribute("title", `Bold (${MOD_LABEL}+B)`);
+  await expect(page.getByTestId("align-left")).toHaveAttribute("title", `Align left (${MOD_LABEL}+L)`);
+  await expect(page.getByTestId("undo-button")).toHaveAttribute("title", `Undo (${MOD_LABEL}+Z)`);
 });
 
 test("registry shortcuts do not fire while focus is in a dialog's text input (AC-12, AC-14)", async ({ page }) => {
   await createDocument(page);
   await seedDocument(page);
   await content(page).click();
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
 
   await page.getByTestId("line-spacing-button").click();
   await page.getByTestId("line-spacing-custom").click();
@@ -89,8 +90,8 @@ test("registry shortcuts do not fire while focus is in a dialog's text input (AC
 
   // Ctrl+B and Ctrl+/ target the dialog's input, not the document — neither
   // should act while it's focused.
-  await page.keyboard.press("Control+b");
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press(`${MOD}+b`);
+  await page.keyboard.press(`${MOD}+/`);
   await expect(shortcutsDialog(page)).toBeHidden();
 
   await page.keyboard.press("Escape");
@@ -102,11 +103,11 @@ test("registry shortcuts do not fire while focus is in the find bar (AC-13)", as
   await createDocument(page);
   await seedDocument(page);
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await expect(page.getByTestId("find-bar")).toBeVisible();
   await expect(page.getByTestId("find-query")).toBeFocused();
 
-  await page.keyboard.press("Control+/");
+  await page.keyboard.press(`${MOD}+/`);
   await expect(shortcutsDialog(page)).toBeHidden();
   await expect(page.getByTestId("find-bar")).toBeVisible();
 });
@@ -122,7 +123,7 @@ test("Ctrl/Cmd+P prints instead of opening the browser's print dialog (AC-10)", 
   await seedDocument(page);
   await content(page).click();
 
-  await page.keyboard.press("Control+p");
+  await page.keyboard.press(`${MOD}+p`);
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls))
     .toBe(1);

@@ -1,6 +1,7 @@
 import { test, expect, type Download, type Locator, type Page } from "@playwright/test";
 import { inflateRawSync } from "node:zlib";
 import { readFileSync } from "node:fs";
+import { MOD } from "./keys";
 
 // SPEC-028 — page and section breaks: content flows across rendered pages
 // with a visible gap, the status bar tracks the caret's page, manual
@@ -11,7 +12,6 @@ import { readFileSync } from "node:fs";
 // and sections round-trip through .docx/.odt, and pagination stays
 // responsive on large documents.
 
-const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
 const content = (page: Page) => page.getByTestId("document-content");
 const pages = (page: Page) => page.getByTestId("document-page");
@@ -168,6 +168,25 @@ test("Ctrl/Cmd+Enter inserts a manual page break at the caret (AC-5, AC-7)", asy
   await expect(pages(page).nth(1)).toContainText("World");
 });
 
+/** Asserts the caret's own paragraph is inside the scrolling canvas. It has
+ * to be the paragraph element, not `startContainer.parentElement`: a caret
+ * in an empty paragraph reports the paragraph itself as its container, so
+ * that shortcut measures the whole page box and passes wherever the page
+ * happens to be. */
+async function expectCaretOnScreen(page: Page): Promise<void> {
+  const box = await page.evaluate(() => {
+    const node = getSelection()!.getRangeAt(0).startContainer;
+    const paragraph = (node instanceof Element ? node : node.parentElement)!.closest(
+      "[data-section][data-block]",
+    )!;
+    const rect = paragraph.getBoundingClientRect();
+    const view = document.querySelector("main")!.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, viewTop: view.top, viewBottom: view.bottom };
+  });
+  expect(box.top).toBeGreaterThanOrEqual(box.viewTop);
+  expect(box.bottom).toBeLessThanOrEqual(box.viewBottom);
+}
+
 test("inserting a page break scrolls the new page into view (AC-5)", async ({ page }) => {
   await createDocument(page);
   await pasteText(page, paragraphLines(150));
@@ -179,16 +198,20 @@ test("inserting a page break scrolls the new page into view (AC-5)", async ({ pa
   // The caret is now at the top of page 2 — a page the user must be able to
   // see, or the text they type next lands somewhere off-screen.
   await expect(page.getByTestId("page-indicator")).toContainText("Page 2 of");
-  const caretBox = await page.evaluate(() => {
-    const selection = getSelection()!;
-    const range = selection.getRangeAt(0).cloneRange();
-    range.selectNodeContents(range.startContainer.parentElement!);
-    const rect = range.getBoundingClientRect();
-    const view = document.querySelector("main")!.getBoundingClientRect();
-    return { top: rect.top, bottom: rect.bottom, viewTop: view.top, viewBottom: view.bottom };
-  });
-  expect(caretBox.top).toBeGreaterThanOrEqual(caretBox.viewTop);
-  expect(caretBox.bottom).toBeLessThanOrEqual(caretBox.viewBottom);
+  await expectCaretOnScreen(page);
+});
+
+test("typing that runs past the fold keeps the caret on screen (AC-1)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  // Enough lines to fill the visible canvas and then some: an edit must
+  // never leave the user typing somewhere they cannot see.
+  for (let i = 0; i < 40; i += 1) {
+    await page.keyboard.type(`Line ${i} of text long enough to occupy a whole line of the page.`);
+    await page.keyboard.press("Enter");
+  }
+  await waitForPagination(page);
+  await expectCaretOnScreen(page);
 });
 
 test("the page a break ends keeps a paragraph the caret can reach (AC-5)", async ({ page }) => {

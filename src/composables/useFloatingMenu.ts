@@ -12,6 +12,10 @@ export interface UseFloatingMenuOptions {
   offsetY?: number;
   /** Minimum distance to keep to the viewport's left/right edges, in px. */
   margin?: number;
+  /** Horizontal placement: flush with the anchor's left edge (the default,
+   * how a dropdown menu hangs off its button) or centred under it (how a
+   * tooltip points at its control). */
+  align?: "start" | "center";
 }
 
 /** Anchors a position:fixed popup below its trigger. The toolbar that hosts
@@ -25,6 +29,7 @@ export function useFloatingMenu({
   menu,
   offsetY = 4,
   margin = 8,
+  align = "start",
 }: UseFloatingMenuOptions) {
   // `position: fixed` from the very first render, before any measurement:
   // the popup must never take part in the toolbar's flow, or opening it
@@ -45,7 +50,11 @@ export function useFloatingMenu({
     const menuEl = menu();
     const menuWidth = menuEl ? menuEl.getBoundingClientRect().width : 0;
     const maxLeft = window.innerWidth - menuWidth - margin;
-    const left = Math.max(margin, Math.min(anchorRect.left, maxLeft));
+    const wanted =
+      align === "center"
+        ? anchorRect.left + anchorRect.width / 2 - menuWidth / 2
+        : anchorRect.left;
+    const left = Math.max(margin, Math.min(wanted, maxLeft));
     menuStyle.value = {
       position: "fixed",
       left: `${left}px`,

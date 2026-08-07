@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START } from "./keys";
+import { MOD, LINE_START } from "./keys";
 
 // SPEC-016 — cut, copy and paste: keyboard shortcuts and context menu
 // entries, the three clipboard flavours, exact internal round-trip paste,
@@ -125,19 +125,19 @@ test("Ctrl+X cuts in one undo step and Ctrl+V pastes the cut content back (AC-1,
   await content(page).click();
   await page.keyboard.type("hello world");
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+x");
+  await page.keyboard.press(`${MOD}+x`);
   await expect(content(page)).toHaveText("world");
   await expect(page.getByTestId("undo-button")).toHaveAttribute("title", /Undo cut/);
 
   // The removed content is on the clipboard (AC-37): paste it at the end.
-  await page.keyboard.press("Control+End");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.press(`${MOD}+v`);
   await expect(content(page)).toHaveText("worldhello ");
 
   // The cut was a single step (AC-38): two undos (paste, then cut) restore.
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("world");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("hello world");
 });
 
@@ -148,8 +148,8 @@ test("copying puts plain text, HTML and the internal payload on the clipboard (A
   await content(page).click();
   await page.keyboard.type("hello world");
   await selectRange(page, 6, 11);
-  await page.keyboard.press("Control+b");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+b`);
+  await page.keyboard.press(`${MOD}+a`);
   await page.evaluate((mime) => {
     document.addEventListener("copy", (event) => {
       const data = (event as ClipboardEvent).clipboardData;
@@ -162,7 +162,7 @@ test("copying puts plain text, HTML and the internal payload on the clipboard (A
         : null;
     });
   }, DOC_MODEL_MIME);
-  await page.keyboard.press("Control+c");
+  await page.keyboard.press(`${MOD}+c`);
   const flavours = await page.evaluate(
     () => (window as unknown as Record<string, unknown>).__flavours,
   ) as { text: string; html: string; internal: string };
@@ -189,17 +189,17 @@ test("pasting the editor's own copy restores formatting and structure exactly (A
   await content(page).click();
   await page.keyboard.type("Alpha");
   await page.getByTestId("align-center").click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   await page.keyboard.type("bold line");
   await selectRange(page, 0, 9);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
 
-  await page.keyboard.press("Control+a");
-  await page.keyboard.press("Control+c");
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+a`);
+  await page.keyboard.press(`${MOD}+c`);
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press(`${MOD}+v`);
   await expect(content(page)).toHaveText("Alphabold lineAlphabold line");
   // The chip appears after the paste (AC-29).
   await expect(page.getByTestId("paste-options-chip")).toBeVisible();
@@ -317,20 +317,27 @@ test("hostile HTML is sanitised: scripts, styles, handlers, iframes, remote imag
 
 test("Ctrl+Shift+V pastes as plain text with the caret paragraph's formatting (AC-27, AC-28)", async ({
   page,
+  context,
 }) => {
+  // Where the browser turns this combination into a paste event (Windows,
+  // Linux) the event path runs and the permission is never consulted; where
+  // it does not (macOS, where the combination belongs to the application
+  // menu) the editor reads the clipboard itself, which is the grant a real
+  // user gives at the prompt.
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const id = await createDocument(page);
   await content(page).click();
   await page.keyboard.type("styled");
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press(`${MOD}+b`);
   await selectRange(page, 0, 6);
-  await page.keyboard.press("Control+c");
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+c`);
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   // The new paragraph starts unformatted (fresh Enter at the end of a bold
   // run keeps the bold run behind, but typing position formatting comes
   // from the empty paragraph) — paste plain and type context around it.
-  await page.keyboard.press("Control+Shift+v");
+  await page.keyboard.press(`${MOD}+Shift+v`);
   await expect(content(page)).toHaveText("styledstyled");
   await waitForSaved(page);
   const all = blocks(await readLatestModel(page, id));
@@ -401,7 +408,7 @@ test("the paste chip offers the three options and re-applies as one undo step (A
 
   // The paste and its re-applications are ONE undo step (AC-33): a single
   // undo returns to the pre-paste document.
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page)).toHaveText("seed");
 });
 
@@ -466,8 +473,8 @@ test.describe("context menu", () => {
     await page.getByTestId("context-menu-cut").click();
     await expect(page.getByTestId("editor-context-menu")).toBeHidden();
     await expect(content(page)).toHaveText("world");
-    await page.keyboard.press("Control+End");
-    await page.keyboard.press("Control+v");
+    await page.keyboard.press(`${MOD}+End`);
+    await page.keyboard.press(`${MOD}+v`);
     await expect(content(page)).toHaveText("worldhello ");
   });
 
@@ -478,7 +485,7 @@ test.describe("context menu", () => {
     await content(page).click();
     await page.keyboard.type("styled");
     await selectRange(page, 0, 6);
-    await page.keyboard.press("Control+b");
+    await page.keyboard.press(`${MOD}+b`);
     await selectRange(page, 0, 6);
     // Right-click the paragraphs themselves: since SPEC-028 the editable
     // root wraps whole pages, so content-relative coordinates no longer
@@ -487,7 +494,7 @@ test.describe("context menu", () => {
     await page.getByTestId("context-menu-copy").click();
     await expect(content(page)).toHaveText("styled");
 
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press(`${MOD}+End`);
     await page.keyboard.press("Enter");
     await page.locator('[data-section="0"][data-block="1"]').click({ button: "right" });
     await page.getByTestId("context-menu-paste").click();

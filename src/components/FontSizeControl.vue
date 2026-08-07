@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, useTemplateRef, watch } from "vue";
 import {
   FONT_SIZE_RANGE_MESSAGE,
   parseFontSizeInput,
   stepFontSize,
 } from "../lib/fonts";
+import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -31,6 +32,20 @@ watch(
 // next edit or after a few seconds.
 const clampMessage = ref("");
 let clampTimer = 0;
+const root = useTemplateRef("root");
+const tooltip = useTemplateRef("tooltip");
+
+// A fixed-position tooltip, like the toolbar's menus: .toolbar clips on
+// overflow-y, and this hint hangs below the control — absolutely positioned
+// it was cut off at the strip's edge, leaving the user's out-of-range input
+// silently corrected with no explanation.
+const { menuStyle } = useFloatingMenu({
+  open: () => clampMessage.value !== "",
+  anchor: () => root.value,
+  menu: () => tooltip.value,
+  offsetY: 6,
+  align: "center",
+});
 
 function showClampTooltip() {
   clampMessage.value = FONT_SIZE_RANGE_MESSAGE;
@@ -82,6 +97,7 @@ function step(direction = 1) {
 
 <template>
   <div
+    ref="root"
     class="font-size-control"
     role="group"
     aria-label="Font size"
@@ -125,16 +141,17 @@ function step(direction = 1) {
     </button>
     <span
       v-if="clampMessage"
+      ref="tooltip"
       class="clamp-tooltip"
       role="tooltip"
       data-testid="font-size-tooltip"
+      :style="menuStyle"
     >{{ clampMessage }}</span>
   </div>
 </template>
 
 <style scoped>
 .font-size-control {
-  position: relative;
   display: inline-flex;
   align-items: center;
 }
@@ -182,11 +199,8 @@ function step(direction = 1) {
   border-radius: 0 4px 4px 0;
 }
 
+/* position/left/top come inline from useFloatingMenu's menuStyle. */
 .clamp-tooltip {
-  position: absolute;
-  top: calc(100% + 0.375rem);
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 30;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;

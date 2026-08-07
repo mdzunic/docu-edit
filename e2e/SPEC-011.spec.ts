@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START, LINE_END, WORD_RIGHT, extend } from "./keys";
+import { MOD, LINE_START, LINE_END, WORD_RIGHT, extend } from "./keys";
 
 // SPEC-011 — the rich text editing core: caret placement, keyboard and
 // mouse selection, mutation through the command API, IME composition and
@@ -292,7 +292,7 @@ test("arrow keys, Home/End and word jumps move the caret; Shift extends (AC-11, 
 }) => {
   await createDocument(page);
   await typeTwoParagraphs(page);
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await expect(status(page)).toHaveText("Paragraph 1 of 2, character 1");
 
   await page.keyboard.press("ArrowRight");
@@ -317,6 +317,30 @@ test("arrow keys, Home/End and word jumps move the caret; Shift extends (AC-11, 
   expect(await selectionText(page)).toMatch(/delta$/);
 });
 
+test("the Home and End keys themselves move the caret to the line's edges (AC-12)", async ({
+  page,
+}) => {
+  // LINE_START/LINE_END above use whatever combination the platform binds,
+  // which on macOS is Cmd+Arrow. This covers the literal Home and End keys,
+  // which AC-12 names: the Mac browser binds them to scrolling the view and
+  // moves no caret at all, so the editor has to.
+  await createDocument(page);
+  await typeTwoParagraphs(page);
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.press("ArrowDown");
+  await expect(status(page)).toContainText("Paragraph 2 of 2");
+
+  await page.keyboard.press("End");
+  await expect(status(page)).toHaveText("Paragraph 2 of 2, character 12");
+  await page.keyboard.press("Home");
+  await expect(status(page)).toHaveText("Paragraph 2 of 2, character 1");
+
+  // Shift+End extends to the line's end rather than replacing the caret.
+  await page.keyboard.press("Shift+End");
+  await expect(status(page)).toContainText("Selected from paragraph 2");
+  expect(await selectionText(page)).toMatch(/delta$/);
+});
+
 test("Ctrl+Home/End and PageUp/PageDown traverse a long document (AC-13, AC-14, AC-15)", async ({
   page,
 }) => {
@@ -331,10 +355,10 @@ test("Ctrl+Home/End and PageUp/PageDown traverse a long document (AC-13, AC-14, 
   await content(page).first().waitFor();
   await content(page).click();
 
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await expect(status(page)).toContainText("Paragraph 60 of 60");
 
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await expect(status(page)).toHaveText("Paragraph 1 of 60, character 1");
 
   // PageDown moves the caret (and the view) about a viewport forward.
@@ -350,7 +374,7 @@ test("Ctrl+Home/End and PageUp/PageDown traverse a long document (AC-13, AC-14, 
   await expect.poll(() => caretParagraph(page)).toBeLessThan(afterPageDown);
 
   // Shift+PageDown extends a selection while paging (AC-15).
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await page.keyboard.press("Shift+PageDown");
   await expect(status(page)).toContainText("Selected from paragraph 1");
 });
@@ -370,7 +394,7 @@ test("double-click selects a word, triple-click a paragraph, Ctrl+A the document
   });
   expect((await selectionText(page)).trim()).toBe("alpha beta");
 
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await expect(status(page)).toHaveText(
     "Selected from paragraph 1, character 1 to paragraph 2, character 12",
   );

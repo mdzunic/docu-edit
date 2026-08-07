@@ -1,6 +1,7 @@
 import { test, expect, type Download, type Page } from "@playwright/test";
 import { inflateRawSync } from "node:zlib";
 import { readFileSync } from "node:fs";
+import { MOD } from "./keys";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -110,7 +111,7 @@ test("dragging a column boundary resizes columns live, enforces a minimum and co
   expect(secondColWidth).toBeGreaterThan(0);
   expect(secondColWidth).toBeLessThan(1);
   // One undo step reverts the whole drag (AC-3, AC-34).
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   const after = await table(page).locator("col").first().evaluate((el) => (el as HTMLElement).style.width);
   expect(after).toBe(before);
 });
@@ -157,7 +158,7 @@ test("selecting a range and choosing Merge cells produces one cell with content 
   await expect(cellAt(page, 0, 0).locator(".doc-paragraph").nth(0)).toHaveText("A1");
   await expect(cellAt(page, 0, 0).locator(".doc-paragraph").nth(1)).toHaveText("B1");
   // Single undo step (AC-34).
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(table(page).locator("tr").first().locator("td")).toHaveCount(2);
 });
 
@@ -178,7 +179,7 @@ test("Split cell… asks for rows/columns and splits the cell accordingly (AC-8,
   await expect(cellParagraph(page, 0, 1)).toHaveText("");
   await expect(cellParagraph(page, 1, 0)).toHaveText("");
   // Single undo step (AC-34).
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(table(page).locator("tr")).toHaveCount(1);
   await expect(table(page).locator("tr").first().locator("td")).toHaveCount(1);
   await expect(cellParagraph(page, 0, 0)).toHaveText("original");
@@ -286,7 +287,7 @@ test("the dialog sets table alignment and width (AC-22, AC-23)", async ({ page }
   expect(Math.abs(leftGap - rightGap)).toBeLessThan(8);
   // The whole dialog session — border/shading/padding/valign/alignment/
   // width all touched together — is one undo step (AC-34).
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   const revertedBox = (await table(page).boundingBox())!;
   expect(revertedBox.width).toBeGreaterThan(contentBox.width * 0.9);
 });

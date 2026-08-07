@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LINE_START } from "./keys";
+import { MOD, LINE_START } from "./keys";
 import { equalStructural } from "../src/lib/equality";
 
 // SPEC-014 — paragraph alignment, indents, spacing, RTL and the ruler.
@@ -159,10 +159,10 @@ test("Ctrl+L, Ctrl+E, Ctrl+R and Ctrl+J set the alignment (AC-3)", async ({ page
   await page.keyboard.type("aligned by shortcut");
 
   for (const [combo, alignment] of [
-    ["Control+KeyE", "center"],
-    ["Control+KeyR", "right"],
-    ["Control+KeyJ", "justify"],
-    ["Control+KeyL", "left"],
+    [`${MOD}+KeyE`, "center"],
+    [`${MOD}+KeyR`, "right"],
+    [`${MOD}+KeyJ`, "justify"],
+    [`${MOD}+KeyL`, "left"],
   ] as const) {
     await page.keyboard.press(combo);
     await waitForSaved(page);

@@ -1,6 +1,7 @@
 import { test, expect, type Download, type Page } from "@playwright/test";
 import { inflateRawSync } from "node:zlib";
 import { readFileSync } from "node:fs";
+import { LINE_END, LINE_START, MOD } from "./keys";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -139,7 +140,7 @@ test("cells accept character formatting (AC-6)", async ({ page }) => {
   await createDocument(page);
   await insertViaPicker(page, 1, 2);
   await page.keyboard.type("bold me");
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("format-bold").click();
   const span = cellParagraph(page, 0, 0).locator("span").first();
   await expect(span).toHaveCSS("font-weight", "700");
@@ -159,7 +160,7 @@ test("cells accept lists with their own numbering context (AC-8)", async ({ page
   await page.keyboard.type("first");
   await page.getByTestId("list-numbered").click();
   await expect(cellParagraph(page, 0, 0)).toHaveAttribute("data-list-marker", "1.");
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press("Enter");
   await page.keyboard.type("second");
   await expect(cellAt(page, 0, 0).locator(".doc-paragraph").nth(1)).toHaveAttribute(
@@ -225,7 +226,7 @@ test("arrow keys move between cells at cell boundaries (AC-13)", async ({ page }
   await page.keyboard.type("y");
   await expect(cellParagraph(page, 1, 1)).toHaveText("y");
   // ArrowLeft at the cell's start enters the previous cell.
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.type("z");
   await expect(cellParagraph(page, 1, 0)).toHaveText("z");
@@ -235,7 +236,7 @@ test("the caret never gets trapped: arrows exit the table at its edges (AC-14)",
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("below");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await insertViaPicker(page, 1, 2);
   // Down from the last row leaves the table into the following paragraph.
   await cellParagraph(page, 0, 1).click();
@@ -343,7 +344,7 @@ test("hover handles delete rows and columns; deleting every row deletes the tabl
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("after");
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   await insertViaPicker(page, 2, 2);
   await page.keyboard.type("doomed");
 

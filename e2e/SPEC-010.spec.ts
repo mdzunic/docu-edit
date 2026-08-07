@@ -132,18 +132,23 @@ test("scroll position survives reopening (AC-10)", async ({ page }) => {
     "quick brown fox",
   );
 
-  // Place the caret first (clicking can itself scroll), then scroll, then
+  // Scroll, then place the caret on a line that offset actually shows, then
   // edit — the content edit after the scroll puts the scroll offset into
-  // the next draft/commit write. The browser clamps scrollTop to the page
-  // surface's height, so keep the value it actually applied.
-  await page.getByTestId("document-content").click({ position: { x: 20, y: 20 } });
+  // the next draft/commit write. The caret has to be on screen for that:
+  // an edit made with the caret out of view scrolls back to it (SPEC-028),
+  // which would carry a different offset into the write. The browser clamps
+  // scrollTop to the page surface's height, so keep the value it applied.
   const canvas = page.getByTestId("canvas");
   const applied = await canvas.evaluate((el) => {
     el.scrollTop = 800;
     return el.scrollTop;
   });
   expect(applied).toBeGreaterThan(100);
+  const view = (await canvas.boundingBox())!;
+  await page.mouse.click(view.x + view.width / 2, view.y + view.height / 2);
+  await expect.poll(async () => canvas.evaluate((el) => el.scrollTop)).toBe(applied);
   await page.keyboard.type("x");
+  await expect.poll(async () => canvas.evaluate((el) => el.scrollTop)).toBe(applied);
   await expect(page.getByTestId("save-state")).toHaveText(SAVED);
   await settleWrites(page);
 
