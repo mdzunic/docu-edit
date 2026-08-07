@@ -270,6 +270,104 @@ describe("pageOfBlock", () => {
   });
 });
 
+// Multi-column fixture: two zero-gap equal columns over the 100px content
+// width give two 50px columns, each PAGE_LINES fake lines tall.
+function columnFixture(columnCount: number, ...blocks: Block[]): DocumentModel {
+  const model = fixture(...blocks);
+  model.sections[0].columns = {
+    count: columnCount,
+    equalWidth: true,
+    gapCm: 0,
+    separator: false,
+  };
+  return model;
+}
+
+function columnsOf(page: PageLayout): Array<number | undefined> {
+  return page.items.map((item) => item.columnIndex);
+}
+
+describe("paginate — columns (SPEC-030)", () => {
+  it("flows down the first column, then the next, then the next page (AC-9)", () => {
+    const pages = paginate(
+      columnFixture(2, ...Array.from({ length: 25 }, () => paragraph(1))),
+      fakeMetrics,
+    );
+    expect(pages).toHaveLength(2);
+    // Page 1: 10 in column 0, 10 in column 1.
+    expect(pages[0].items).toHaveLength(20);
+    expect(columnsOf(pages[0])).toEqual([...Array(10).fill(0), ...Array(10).fill(1)]);
+    // Overflow continues at the top of page 2's first column.
+    expect(pages[1].items).toHaveLength(5);
+    expect(columnsOf(pages[1])).toEqual(Array(5).fill(0));
+    expect(pages[1].items[0].columnIndex).toBe(0);
+  });
+
+  it("exposes each page's resolved column geometry", () => {
+    const pages = paginate(columnFixture(2, paragraph(1)), fakeMetrics);
+    expect(pages[0].columns?.count).toBe(2);
+    expect(pages[0].columns?.columns).toHaveLength(2);
+    expect(pages[0].columns?.columns[0].offsetCm).toBe(0);
+    expect(pages[0].columns?.columns[1].offsetCm).toBeCloseTo(pages[0].columns!.columns[0].widthCm, 5);
+  });
+
+  it("keeps single-column pages free of column metadata (back-compat)", () => {
+    const pages = paginate(fixture(paragraph(1)), fakeMetrics);
+    expect(pages[0].columns).toBeUndefined();
+    expect(pages[0].items[0].columnIndex).toBeUndefined();
+  });
+
+  it("moves following content to the next column at a column break (AC-10)", () => {
+    const pages = paginate(
+      columnFixture(2, paragraph(1), { type: "break", kind: "column" }, paragraph(1)),
+      fakeMetrics,
+    );
+    expect(pages).toHaveLength(1);
+    // paragraph 0 + the marker in column 0; paragraph 2 in column 1.
+    const p0 = pages[0].items.find((i) => i.blockIndex === 0);
+    const p2 = pages[0].items.find((i) => i.blockIndex === 2);
+    expect(p0?.columnIndex).toBe(0);
+    expect(p2?.columnIndex).toBe(1);
+  });
+
+  it("treats a column break as a no-op in a single-column section (AC-12)", () => {
+    const pages = paginate(
+      fixture(paragraph(1), { type: "break", kind: "column" }, paragraph(1)),
+      fakeMetrics,
+    );
+    expect(pages).toHaveLength(1);
+    // No page break, no new column: all three blocks flow on one page.
+    expect(pages[0].items.map((i) => i.blockIndex)).toEqual([0, 1, 2]);
+  });
+
+  it("a column break in the last column moves to the next page (AC-11)", () => {
+    const pages = paginate(
+      columnFixture(2, paragraph(1), { type: "break", kind: "column" }, paragraph(1), {
+        type: "break",
+        kind: "column",
+      }, paragraph(1)),
+      fakeMetrics,
+    );
+    // block0 col0, block2 col1, block4 -> next page col0.
+    expect(pages).toHaveLength(2);
+    expect(pages[1].items.find((i) => i.blockIndex === 4)?.columnIndex).toBe(0);
+  });
+
+  it("restores column-break behaviour when the count grows again (AC-13)", () => {
+    const single = paginate(
+      fixture(paragraph(1), { type: "break", kind: "column" }, paragraph(1)),
+      fakeMetrics,
+    );
+    expect(single).toHaveLength(1);
+    expect(single[0].items).toHaveLength(3);
+    const multi = paginate(
+      columnFixture(2, paragraph(1), { type: "break", kind: "column" }, paragraph(1)),
+      fakeMetrics,
+    );
+    expect(multi[0].items.find((i) => i.blockIndex === 2)?.columnIndex).toBe(1);
+  });
+});
+
 describe("estimateMetrics", () => {
   it("estimates plausible paragraph lines from text length", () => {
     const m = estimateMetrics(paragraph(0), 500, 11);

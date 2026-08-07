@@ -5,6 +5,7 @@
 // same pattern).
 import type { Block } from "./documentModel";
 import type { MarkSegment } from "./marks";
+import type { PageColumns } from "./pagination";
 
 /** One run's precomputed rendering: link fields resolved, style object
  * built, and — with formatting marks on — the text split into mark
@@ -51,6 +52,9 @@ export interface RenderEntry {
   imageSelected?: boolean;
   runs?: RenderRun[];
   needsBr?: boolean;
+  /** Which column of a multi-column page this entry flows into (SPEC-030);
+   * absent on single-column pages. */
+  column?: number;
 }
 
 /** Typed empty seed for DocPage's entries prop (espree bars the
@@ -63,4 +67,16 @@ export function noRenderEntries(): RenderEntry[] {
  * Array (see styles.asStyleEntries for the same pattern). */
 export function asRenderEntries(value: unknown): RenderEntry[] {
   return value as RenderEntry[];
+}
+
+/** Typed pass-through for a single entry prop (espree bars the annotation). */
+export function asRenderEntry(value: unknown): RenderEntry {
+  return value as RenderEntry;
+}
+
+/** Typed pass-through for DocPage's `columns` prop (SPEC-030) arriving as a
+ * runtime-declared Object — the page's multi-column geometry, or null on a
+ * single-column page. */
+export function asPageColumns(value: unknown): PageColumns | null {
+  return (value ?? null) as PageColumns | null;
 }

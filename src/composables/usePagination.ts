@@ -35,7 +35,7 @@ import {
   estimateMetrics,
   paginate,
   reconcilePages,
-  sectionGeometryPx,
+  sectionColumnFlowWidthPx,
   type BlockMetrics,
   type MetricsProvider,
   type PageLayout,
@@ -357,7 +357,7 @@ export function usePagination(
     if (block !== target.ref) {
       return true; // the model moved on; the new layout re-listed what matters
     }
-    const width = sectionGeometryPx(model, target.section).contentWidthPx;
+    const width = sectionColumnFlowWidthPx(model, target.section);
     const elements = sliceElements(root, target.section, target.block);
     if (elements.length > 0) {
       const splittable = isParagraphBlock(block);

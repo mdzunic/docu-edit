@@ -11,9 +11,8 @@
 // holds no document logic of its own. Runtime prop/emit declarations, not
 // the generic form — this script is parsed by espree (see AppShell.vue).
 import { computed } from "vue";
-import DocImageBlock from "./DocImageBlock.vue";
-import DocTableBlock from "./DocTableBlock.vue";
-import { asRenderEntries, noRenderEntries } from "../lib/pageRender";
+import DocPageBlock from "./DocPageBlock.vue";
+import { asPageColumns, asRenderEntries, noRenderEntries } from "../lib/pageRender";
 
 const props = defineProps({
   pageStyle: { type: Object, required: true },
@@ -21,6 +20,9 @@ const props = defineProps({
   /** Precomputed render entries (lib/pageRender.RenderEntry) — the typed
    * default seed gives the template its element type (see StylePicker). */
   entries: { type: Array, default: () => noRenderEntries() },
+  /** This page's multi-column geometry (SPEC-030), or null for a single
+   * column. When set, entries are grouped into positioned column boxes. */
+  columns: { type: Object, default: null },
   /** A virtualized page (SPEC-028): the box renders with its exact layout
    * geometry but none of its content — the pagination controller measures
    * its blocks off-DOM instead. */
@@ -32,15 +34,32 @@ defineEmits(["image-select"]);
 
 const renderEntries = computed(() => asRenderEntries(props.entries));
 
-function componentFor(entry = noRenderEntries()[0]) {
-  if (entry.kind === "table") {
-    return DocTableBlock;
+// Multi-column layout (SPEC-030): entries carry the column they flow into, so
+// each column box renders its own slice of the list. The single-column path
+// below is left untouched — a page with no columns renders exactly as before.
+const columnBoxes = computed(() => {
+  const cols = asPageColumns(props.columns);
+  if (!cols || cols.count <= 1) {
+    return [];
   }
-  if (entry.kind === "image") {
-    return DocImageBlock;
+  return cols.columns.map((column, index) => ({
+    index,
+    style: { left: `${column.offsetCm}cm`, width: `${column.widthCm}cm` },
+    entries: renderEntries.value.filter((entry) => (entry.column ?? 0) === index),
+  }));
+});
+
+/** Left offset (cm) of each "line between columns" rule (AC-4): centred in the
+ * gutter to the right of every column but the last. */
+const columnRules = computed(() => {
+  const cols = asPageColumns(props.columns);
+  if (!cols || cols.count <= 1 || !cols.separator) {
+    return [];
   }
-  return entry.tag || "div";
-}
+  return cols.columns.slice(0, -1).map((column) => column.offsetCm + column.widthCm + cols.gapCm / 2);
+});
+
+const hasColumns = computed(() => columnBoxes.value.length > 0);
 </script>
 
 <template>
@@ -56,81 +75,51 @@ function componentFor(entry = noRenderEntries()[0]) {
     >
       <div
         class="page-margin"
+        :class="{ 'has-columns': hasColumns }"
         data-testid="page-margin"
       >
-        <component
-          :is="componentFor(entry)"
-          v-for="entry in renderEntries"
-          :key="entry.key"
-          v-memo="entry.memo"
-          :class="entry.className"
-          :style="entry.styleObj"
-          :contenteditable="entry.uneditable ? 'false' : undefined"
-          :data-section="entry.dataSection"
-          :data-block="entry.dataBlock"
-          :data-slice-start="entry.sliceStart"
-          :data-slice-more="entry.sliceMore"
-          :data-break-kind="entry.breakKind"
-          :data-section-marker="entry.sectionMarker"
-          :data-marker-label="entry.markerLabel"
-          :data-list-marker="entry.listMarker"
-          :data-list-level="entry.listLevel"
-          :block="entry.blockProp"
-          :section="entry.sectionProp"
-          :block-index="entry.blockIndexProp"
-          :cell-range="entry.kind === 'table' ? cellRange : undefined"
-          :src="entry.imageSrc"
-          :selected="entry.imageSelected"
-          @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : undefined"
-        >
-          <template v-if="entry.runs && entry.runs.length > 0">
-            <template
-              v-for="run in entry.runs"
-              :key="run.key"
-            >
-              <!-- The plain (no-marks) variants keep a single text child, so
-                   the span's firstChild stays the run's own text node — DOM
-                   shapes older specs' tests and tooling rely on. -->
-              <a
-                v-if="run.href && !run.segments"
-                data-doc-link=""
-                :href="run.href"
-                :target="run.target"
-                :rel="run.rel"
-                :style="run.styleObj"
-              >{{ run.text }}</a>
-              <a
-                v-else-if="run.href"
-                data-doc-link=""
-                :href="run.href"
-                :target="run.target"
-                :rel="run.rel"
-                :style="run.styleObj"
-              ><template
-                v-for="(segment, segmentIndex) in run.segments"
-                :key="segmentIndex"
-              ><span
-                v-if="segment.kind !== 'text'"
-                :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
-              >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></a>
-              <span
-                v-else-if="run.segments"
-                :style="run.styleObj"
-              ><template
-                v-for="(segment, segmentIndex) in run.segments"
-                :key="segmentIndex"
-              ><span
-                v-if="segment.kind !== 'text'"
-                :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
-              >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></span>
-              <span
-                v-else
-                :style="run.styleObj"
-              >{{ run.text }}</span>
-            </template>
-          </template>
-          <br v-else-if="entry.needsBr">
-        </component>
+        <!-- Multi-column pages (SPEC-030): each column is a positioned box the
+             engine's per-column flow filled; "line between" rules sit in the
+             gutters. -->
+        <template v-if="hasColumns">
+          <div
+            v-for="col in columnBoxes"
+            :key="col.index"
+            class="doc-column"
+            data-testid="doc-column"
+            :data-column="col.index"
+            :style="col.style"
+          >
+            <!-- v-memo cannot nest inside the column v-for, so multi-column
+                 pages re-render their blocks each patch — acceptable, they are
+                 far fewer than a long single-column document's pages. -->
+            <DocPageBlock
+              v-for="entry in col.entries"
+              :key="entry.key"
+              :entry="entry"
+              :cell-range="cellRange"
+              @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
+            />
+          </div>
+          <div
+            v-for="(left, ruleIndex) in columnRules"
+            :key="`rule-${ruleIndex}`"
+            class="doc-column-rule"
+            aria-hidden="true"
+            :style="{ left: `${left}cm` }"
+          />
+        </template>
+        <!-- Single-column page: unchanged from SPEC-028. -->
+        <template v-else>
+          <DocPageBlock
+            v-for="entry in renderEntries"
+            :key="entry.key"
+            v-memo="entry.memo"
+            :entry="entry"
+            :cell-range="cellRange"
+            @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
+          />
+        </template>
       </div>
     </div>
   </div>
@@ -169,6 +158,33 @@ function componentFor(entry = noRenderEntries()[0]) {
   height: 100%;
   outline: 1px dashed #c8c8c8;
   outline-offset: -1px;
+}
+
+/* Multi-column page (SPEC-030): the column boxes are absolutely positioned
+   within the content area at the widths/offsets the engine resolved, so each
+   column is an independent normal-flow column exactly where it was measured.
+   overflow:hidden contains anything wider than the column (AC-15). */
+.page-margin.has-columns {
+  position: relative;
+}
+
+.doc-column {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* "Line between columns" (AC-4): a hairline rule centred in the gutter,
+   spanning the content height. */
+.doc-column-rule {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid #9aa0a6;
+  pointer-events: none;
 }
 
 .doc-paragraph {
