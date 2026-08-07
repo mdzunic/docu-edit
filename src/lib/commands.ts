@@ -218,7 +218,9 @@ export function splitBlock(
 /** Inserts a manual break at the selection (SPEC-028 AC-4..7): the caret's
  * paragraph is split around a new break block, so the content after the
  * caret starts a new page (AC-5). At a paragraph start no split happens —
- * the break lands before the paragraph, leaving no stray empty half. A
+ * the break lands before the paragraph, leaving no stray empty half; the
+ * one exception is a break with nothing before it at all, which gets an
+ * empty paragraph so the page it ends stays reachable. A
  * non-collapsed selection is deleted first. Inert inside a table cell:
  * breaks are top-level blocks, and there is no page flow to break inside a
  * cell. The caret ends up at the start of the content after the break. */
@@ -235,20 +237,33 @@ export function insertBreak(
   }
   const breakBlock: BreakBlock = { type: "break", kind };
   const blocks = next.sections[base.section].blocks;
-  if (paragraphAt(next, base)) {
-    if (base.offset === 0) {
-      blocks.splice(base.block, 0, breakBlock);
-      return result(next, { section: base.section, block: base.block + 1, offset: 0 });
-    }
-    const after = splitParagraphInPlace(next, base);
-    next.sections[after.section].blocks.splice(after.block, 0, breakBlock);
-    return result(next, { section: after.section, block: after.block + 1, offset: 0 });
-  }
   // Atom caret (table/image/break edge): the break lands on the side of the
-  // atom the caret addresses; a paragraph is created after it when nothing
-  // follows, so the caret has a home on the new page.
-  const at = base.offset >= 1 ? base.block + 1 : base.block;
+  // atom the caret addresses. A paragraph caret splits its paragraph in two
+  // and the break goes between the halves — unless it sits at the very
+  // start, where there is no half to leave behind.
+  const atom = !paragraphAt(next, base);
+  let at: number;
+  if (!atom && base.offset > 0) {
+    at = splitParagraphInPlace(next, base).block;
+  } else if (atom && base.offset >= 1) {
+    at = base.block + 1;
+  } else {
+    at = base.block;
+  }
+  // Nothing precedes the break on the page it ends — it is the first block
+  // of the document, or of a section that begins its own page. That page
+  // would render empty AND unreachable: no paragraph on it for a click or
+  // an arrow key to put the caret in, so its content could never be
+  // written. Give it a home, the way insertSectionBreak backfills an empty
+  // half of a split section.
+  const startsOwnPage =
+    base.section === 0 || next.sections[base.section].start !== "continuous";
+  if (at === 0 && startsOwnPage) {
+    blocks.splice(0, 0, { type: "paragraph", runs: [] });
+    at = 1;
+  }
   blocks.splice(at, 0, breakBlock);
+  // …and a home on the new page when nothing follows.
   if (at + 1 >= blocks.length) {
     blocks.push({ type: "paragraph", runs: [] });
   }

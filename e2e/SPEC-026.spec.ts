@@ -101,6 +101,45 @@ test.describe("autocorrect", () => {
     expect(await paraText(page)).toBe("a--");
   });
 
+  test("the settings menu is genuinely visible, not clipped by the toolbar strip", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    // Clicked where it already sits: Locator.click() would scroll the strip
+    // first, and that scroll re-runs the popup's positioning — hiding a
+    // wrong first-open placement a real user would see.
+    const box = await page.evaluate(() => {
+      const button = document.querySelector('[data-testid="autocorrect-menu"]')!;
+      const strip = button.closest(".toolbar")!;
+      strip.scrollLeft +=
+        button.getBoundingClientRect().left - strip.getBoundingClientRect().left - 200;
+      return button.getBoundingClientRect().toJSON();
+    });
+    await page.mouse.click(box.left + box.width / 2, box.top + box.height / 2);
+    const list = page.getByTestId("autocorrect-menu-list");
+    await expect(list).toBeVisible();
+    // Anchored just under its button, and painted over the canvas rather
+    // than behind the strip's overflow clip: hit-testing an item's centre
+    // reaches the item itself.
+    const geometry = await page.evaluate(() => {
+      const button = document.querySelector('[data-testid="autocorrect-menu"]')!.getBoundingClientRect();
+      const menu = document.querySelector('[data-testid="autocorrect-menu-list"]')!.getBoundingClientRect();
+      return { drop: menu.top - button.bottom, height: menu.height };
+    });
+    expect(geometry.drop).toBeLessThanOrEqual(8);
+    expect(geometry.height).toBeGreaterThan(20);
+    const item = page.getByTestId("autocorrect-smart-quotes");
+    const itemBox = (await item.boundingBox())!;
+    const hit = await page.evaluate(
+      ({ x, y }) =>
+        !!document
+          .elementFromPoint(x, y)
+          ?.closest('[data-testid="autocorrect-smart-quotes"]'),
+      { x: itemBox.x + itemBox.width / 2, y: itemBox.y + itemBox.height / 2 },
+    );
+    expect(hit).toBe(true);
+  });
+
   test("turning dash substitution off leaves -- literal (AC-24)", async ({ page }) => {
     await createDocument(page);
     await focusCaret(page);

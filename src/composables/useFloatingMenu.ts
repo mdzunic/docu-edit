@@ -26,7 +26,12 @@ export function useFloatingMenu({
   offsetY = 4,
   margin = 8,
 }: UseFloatingMenuOptions) {
-  const menuStyle = ref<Record<string, string>>({});
+  // `position: fixed` from the very first render, before any measurement:
+  // the popup must never take part in the toolbar's flow, or opening it
+  // would grow the strip and push the anchor down — and the measurement
+  // below, which runs on that perturbed layout, would then place the popup
+  // far beneath its button. Only left/top wait for the measurement.
+  const menuStyle = ref<Record<string, string>>({ position: "fixed" });
 
   function position() {
     if (!open()) {

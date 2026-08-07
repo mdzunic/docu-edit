@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // The autocorrect settings menu (SPEC-026): toggles the smart-quote and dash
 // substitutions independently. The parent owns the persisted settings and
@@ -13,6 +14,17 @@ const props = defineProps({
 const emit = defineEmits(["toggle-smart-quotes", "toggle-dashes"]);
 
 const open = ref(false);
+const button = useTemplateRef("button");
+const menu = useTemplateRef("menu");
+
+// A fixed-position popup, like the toolbar's other menus: .toolbar clips on
+// overflow-y, so an absolutely-positioned list here is painted behind the
+// strip's edge instead of over the canvas.
+const { menuStyle } = useFloatingMenu({
+  open: () => open.value,
+  anchor: () => button.value,
+  menu: () => menu.value,
+});
 
 function closeMenu() {
   open.value = false;
@@ -29,6 +41,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
     @keydown.escape="closeMenu"
   >
     <button
+      ref="button"
       type="button"
       class="toolbar-button"
       data-testid="autocorrect-menu"
@@ -42,10 +55,12 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
     </button>
     <div
       v-if="open"
+      ref="menu"
       class="autocorrect-list"
       role="menu"
       aria-label="Autocorrect settings"
       data-testid="autocorrect-menu-list"
+      :style="menuStyle"
     >
       <button
         type="button"
@@ -73,15 +88,12 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 
 <style scoped>
 .autocorrect {
-  position: relative;
   display: inline-flex;
 }
 
+/* position/left/top come inline from useFloatingMenu's menuStyle. */
 .autocorrect-list {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 0.25rem);
-  z-index: 10;
+  z-index: 30;
   min-width: 12rem;
   display: flex;
   flex-direction: column;

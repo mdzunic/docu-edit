@@ -168,13 +168,96 @@ test("Ctrl/Cmd+Enter inserts a manual page break at the caret (AC-5, AC-7)", asy
   await expect(pages(page).nth(1)).toContainText("World");
 });
 
+test("inserting a page break scrolls the new page into view (AC-5)", async ({ page }) => {
+  await createDocument(page);
+  await pasteText(page, paragraphLines(150));
+  await waitForPagination(page);
+  await content(page).click();
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.press(`${MOD}+Enter`);
+  await waitForPagination(page);
+  // The caret is now at the top of page 2 — a page the user must be able to
+  // see, or the text they type next lands somewhere off-screen.
+  await expect(page.getByTestId("page-indicator")).toContainText("Page 2 of");
+  const caretBox = await page.evaluate(() => {
+    const selection = getSelection()!;
+    const range = selection.getRangeAt(0).cloneRange();
+    range.selectNodeContents(range.startContainer.parentElement!);
+    const rect = range.getBoundingClientRect();
+    const view = document.querySelector("main")!.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, viewTop: view.top, viewBottom: view.bottom };
+  });
+  expect(caretBox.top).toBeGreaterThanOrEqual(caretBox.viewTop);
+  expect(caretBox.bottom).toBeLessThanOrEqual(caretBox.viewBottom);
+});
+
+test("the page a break ends keeps a paragraph the caret can reach (AC-5)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  // A break with nothing before it: without a paragraph of its own, page 1
+  // would render as an empty box no click or arrow key could enter, and
+  // every subsequent keystroke would land on page 2.
+  await page.keyboard.press(`${MOD}+Enter`);
+  await waitForPagination(page);
+  await expect(pages(page)).toHaveCount(2);
+  await expect(pages(page).nth(0).locator("[data-section][data-block]").first()).toHaveCount(1);
+
+  await page.evaluate(() => {
+    document.querySelector("main")!.scrollTop = 0;
+  });
+  const box = (await pages(page).nth(0).boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + Math.min(box.height / 2, 300));
+  await expect(page.getByTestId("page-indicator")).toHaveText("Page 1 of 2");
+  await page.keyboard.type("First page");
+  await waitForPagination(page);
+  await expect(pages(page).nth(0)).toContainText("First page");
+  await expect(pages(page).nth(1)).not.toContainText("First page");
+
+  // And the caret still crosses the break in both directions.
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("page-indicator")).toHaveText("Page 2 of 2");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByTestId("page-indicator")).toHaveText("Page 1 of 2");
+});
+
+/** Opens a toolbar popup by clicking its button where it already sits.
+ * Locator.click() scrolls the strip first, and that scroll re-runs the
+ * popup's positioning — which would repair a first-open placement that a
+ * real user (clicking a button already under their pointer) sees wrong. */
+async function openToolbarMenu(page: Page, testId: string): Promise<void> {
+  const box = await page.evaluate((id) => {
+    const button = document.querySelector(`[data-testid="${id}"]`)!;
+    const strip = button.closest(".toolbar")!;
+    strip.scrollLeft +=
+      button.getBoundingClientRect().left - strip.getBoundingClientRect().left - 200;
+    return button.getBoundingClientRect().toJSON();
+  }, testId);
+  await page.mouse.click(box.left + box.width / 2, box.top + box.height / 2);
+}
+
+/** Vertical gap between a popup's top edge and its button's bottom edge. */
+async function menuDropFrom(page: Page, buttonId: string, menuId: string): Promise<number> {
+  return page.evaluate(
+    ({ b, m }) => {
+      const button = document.querySelector(`[data-testid="${b}"]`)!.getBoundingClientRect();
+      const menu = document.querySelector(`[data-testid="${m}"]`)!.getBoundingClientRect();
+      return menu.top - button.bottom;
+    },
+    { b: buttonId, m: menuId },
+  );
+}
+
 test("the Insert-break menu is genuinely visible and offers all four breaks (AC-8, AC-9)", async ({
   page,
 }) => {
   await createDocument(page);
-  await page.getByTestId("insert-break-button").click();
+  await openToolbarMenu(page, "insert-break-button");
   const menu = page.getByTestId("insert-break-menu");
   await expect(menu).toBeVisible();
+  // Anchored to its button on the FIRST open, not dropped down the page: a
+  // popup that took part in the toolbar's flow before being positioned
+  // would grow the strip and be measured against a pushed-down button.
+  expect(await menuDropFrom(page, "insert-break-button", "insert-break-menu")).toBeLessThanOrEqual(8);
 
   const items = [
     { id: "break-page", label: "Page Break" },

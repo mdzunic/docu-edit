@@ -70,10 +70,13 @@ describe("useFloatingMenu", () => {
     stubRect(anchorEl.value, { left: 40, right: 60, bottom: 60, width: 20 });
 
     window.dispatchEvent(new Event("resize"));
-    expect(menuStyle.value).toEqual({});
+    // No left/top before the menu opens — but `position: fixed` is there
+    // from the start, so the popup's very first render is already out of
+    // the toolbar's flow and cannot displace the anchor it measures.
+    expect(menuStyle.value).toEqual({ position: "fixed" });
 
     open.value = true;
     await nextTick();
-    expect(menuStyle.value).not.toEqual({});
+    expect(menuStyle.value.top).toBe("64px");
   });
 });

@@ -79,6 +79,31 @@ describe("insertBreak", () => {
     expect(selection.focus).toEqual(caret(2, 0));
   });
 
+  it("leaves an empty paragraph before a break at the document start", () => {
+    // Without it the first page holds nothing but the break: it renders as
+    // an empty page no click or arrow key can reach, so its content could
+    // never be typed.
+    const { model, selection } = insertBreak(fixture("Start"), caretSelection(caret(0, 0)), "page");
+    expect(blockTexts(model)).toEqual(["", "<break>", "Start"]);
+    expect(selection.focus).toEqual(caret(2, 0));
+  });
+
+  it("leaves an empty paragraph before a break at the start of a next-page section", () => {
+    const model = fixture("One");
+    model.sections.push({ blocks: [paragraph("Two")], start: "nextPage" });
+    const result = insertBreak(model, caretSelection({ section: 1, block: 0, offset: 0 }), "page");
+    expect(blockTexts(result.model, 1)).toEqual(["", "<break>", "Two"]);
+    expect(result.selection.focus).toEqual({ section: 1, block: 2, offset: 0 });
+  });
+
+  it("adds no leading paragraph when the section continues the current page", () => {
+    const model = fixture("One");
+    model.sections.push({ blocks: [paragraph("Two")], start: "continuous" });
+    const result = insertBreak(model, caretSelection({ section: 1, block: 0, offset: 0 }), "page");
+    expect(blockTexts(result.model, 1)).toEqual(["<break>", "Two"]);
+    expect(result.selection.focus).toEqual({ section: 1, block: 1, offset: 0 });
+  });
+
   it("keeps the split paragraph's formatting on both halves", () => {
     const model = fixture("HelloWorld");
     (model.sections[0].blocks[0] as Paragraph).formatting = { alignment: "center" };

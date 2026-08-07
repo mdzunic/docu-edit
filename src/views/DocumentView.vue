@@ -1109,6 +1109,10 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   refreshUndoRedoState();
   root.focus();
   void restoreCaretAfterRender();
+  // Undo/redo can move the caret a long way — undoing an inserted page
+  // break pulls it back a whole page — so follow it, the way the break
+  // insertion it reverses does.
+  void scrollModelCaretIntoView(caret);
   scheduleFindRefresh();
 }
 
@@ -3514,6 +3518,9 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       event.preventDefault();
       const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
       applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
+      // The caret moved to the top of a page that is very likely below the
+      // fold: follow it, or the user types onto a page they cannot see.
+      void scrollModelCaretIntoView(caret);
       break;
     }
     case "view.formattingMarks": {
@@ -4120,6 +4127,7 @@ function handleInsertBreak(kind = "") {
   const selection = paragraphSelection(root);
   applyEdit(insertBreak(model, selection, asBreakKind(kind)), selection, "insert break");
   root.focus();
+  void scrollModelCaretIntoView(caret);
 }
 
 function handleInsertSectionBreak(start = "") {
@@ -4135,6 +4143,7 @@ function handleInsertSectionBreak(start = "") {
     "insert section break",
   );
   root.focus();
+  void scrollModelCaretIntoView(caret);
 }
 
 /** The paragraph pagination menu's toggles (AC-22..28): each key flips
