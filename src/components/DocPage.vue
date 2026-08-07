@@ -10,10 +10,18 @@
 // slice windows) from DocumentView's pagedViews computed, so this component
 // holds no document logic of its own. Runtime prop/emit declarations, not
 // the generic form — this script is parsed by espree (see AppShell.vue).
-import { computed } from "vue";
-import DocImageBlock from "./DocImageBlock.vue";
-import DocTableBlock from "./DocTableBlock.vue";
-import { asRenderEntries, noRenderEntries } from "../lib/pageRender";
+//
+// Header/footer bands (SPEC-029): two more entry lists, rendered as
+// absolutely-positioned bands inside the same page box rather than folded
+// into the body's content flow — a header/footer never affects pagination
+// (lib/pagination.ts is untouched by SPEC-029), it just repeats within the
+// page's own top/bottom margin. `headerEditable`/`footerEditable` mark the
+// one page currently being edited (only one at a time, see DocumentView's
+// activeHeaderFooter) — every other page renders the identical content
+// read-only, which is how "edits apply to every page in the section at
+// once" (AC-10) falls out for free: they all read the same model content.
+import DocBlockEntries from "./DocBlockEntries.vue";
+import { noRenderEntries } from "../lib/pageRender";
 
 const props = defineProps({
   pageStyle: { type: Object, required: true },
@@ -26,21 +34,26 @@ const props = defineProps({
    * its blocks off-DOM instead. */
   virtual: { type: Boolean, default: false },
   cellRange: { type: Object, default: null },
+  headerEntries: { type: Array, default: () => noRenderEntries() },
+  footerEntries: { type: Array, default: () => noRenderEntries() },
+  headerStyle: { type: Object, default: null },
+  footerStyle: { type: Object, default: null },
+  headerEditable: { type: Boolean, default: false },
+  footerEditable: { type: Boolean, default: false },
+  /** Body content dims while a header/footer is being edited (AC-1, AC-2). */
+  dimmed: { type: Boolean, default: false },
 });
 
-defineEmits(["image-select"]);
-
-const renderEntries = computed(() => asRenderEntries(props.entries));
-
-function componentFor(entry = noRenderEntries()[0]) {
-  if (entry.kind === "table") {
-    return DocTableBlock;
-  }
-  if (entry.kind === "image") {
-    return DocImageBlock;
-  }
-  return entry.tag || "div";
-}
+defineEmits([
+  "image-select",
+  "dblclick-header",
+  "dblclick-footer",
+  "dblclick-body",
+  "hf-beforeinput",
+  "hf-keydown",
+  "hf-compositionstart",
+  "hf-compositionend",
+]);
 </script>
 
 <template>
@@ -51,87 +64,51 @@ function componentFor(entry = noRenderEntries()[0]) {
     :style="pageStyle"
   >
     <div
+      class="page-header-band"
+      data-testid="page-header-band"
+      :style="headerStyle"
+      :contenteditable="headerEditable"
+      :data-hf-editable="headerEditable ? '1' : undefined"
+      spellcheck="false"
+      @dblclick="$emit('dblclick-header')"
+      @beforeinput.stop="headerEditable ? $emit('hf-beforeinput', $event) : undefined"
+      @keydown.stop="headerEditable ? $emit('hf-keydown', $event) : undefined"
+      @compositionstart.stop="headerEditable ? $emit('hf-compositionstart') : undefined"
+      @compositionend.stop="headerEditable ? $emit('hf-compositionend', $event) : undefined"
+    >
+      <DocBlockEntries :entries="headerEntries" />
+    </div>
+    <div
       class="page-content"
       :style="contentStyle"
+      @dblclick="$emit('dblclick-body')"
     >
       <div
         class="page-margin"
         data-testid="page-margin"
+        :class="{ 'page-margin-dimmed': dimmed }"
       >
-        <component
-          :is="componentFor(entry)"
-          v-for="entry in renderEntries"
-          :key="entry.key"
-          v-memo="entry.memo"
-          :class="entry.className"
-          :style="entry.styleObj"
-          :contenteditable="entry.uneditable ? 'false' : undefined"
-          :data-section="entry.dataSection"
-          :data-block="entry.dataBlock"
-          :data-slice-start="entry.sliceStart"
-          :data-slice-more="entry.sliceMore"
-          :data-break-kind="entry.breakKind"
-          :data-section-marker="entry.sectionMarker"
-          :data-marker-label="entry.markerLabel"
-          :data-list-marker="entry.listMarker"
-          :data-list-level="entry.listLevel"
-          :block="entry.blockProp"
-          :section="entry.sectionProp"
-          :block-index="entry.blockIndexProp"
-          :cell-range="entry.kind === 'table' ? cellRange : undefined"
-          :src="entry.imageSrc"
-          :selected="entry.imageSelected"
-          @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : undefined"
-        >
-          <template v-if="entry.runs && entry.runs.length > 0">
-            <template
-              v-for="run in entry.runs"
-              :key="run.key"
-            >
-              <!-- The plain (no-marks) variants keep a single text child, so
-                   the span's firstChild stays the run's own text node — DOM
-                   shapes older specs' tests and tooling rely on. -->
-              <a
-                v-if="run.href && !run.segments"
-                data-doc-link=""
-                :href="run.href"
-                :target="run.target"
-                :rel="run.rel"
-                :style="run.styleObj"
-              >{{ run.text }}</a>
-              <a
-                v-else-if="run.href"
-                data-doc-link=""
-                :href="run.href"
-                :target="run.target"
-                :rel="run.rel"
-                :style="run.styleObj"
-              ><template
-                v-for="(segment, segmentIndex) in run.segments"
-                :key="segmentIndex"
-              ><span
-                v-if="segment.kind !== 'text'"
-                :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
-              >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></a>
-              <span
-                v-else-if="run.segments"
-                :style="run.styleObj"
-              ><template
-                v-for="(segment, segmentIndex) in run.segments"
-                :key="segmentIndex"
-              ><span
-                v-if="segment.kind !== 'text'"
-                :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
-              >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></span>
-              <span
-                v-else
-                :style="run.styleObj"
-              >{{ run.text }}</span>
-            </template>
-          </template>
-          <br v-else-if="entry.needsBr">
-        </component>
+        <DocBlockEntries
+          :entries="entries"
+          :cell-range="cellRange"
+          @image-select="(section, block) => $emit('image-select', section, block)"
+        />
       </div>
+    </div>
+    <div
+      class="page-footer-band"
+      data-testid="page-footer-band"
+      :style="footerStyle"
+      :contenteditable="footerEditable"
+      :data-hf-editable="footerEditable ? '1' : undefined"
+      spellcheck="false"
+      @dblclick="$emit('dblclick-footer')"
+      @beforeinput.stop="footerEditable ? $emit('hf-beforeinput', $event) : undefined"
+      @keydown.stop="footerEditable ? $emit('hf-keydown', $event) : undefined"
+      @compositionstart.stop="footerEditable ? $emit('hf-compositionstart') : undefined"
+      @compositionend.stop="footerEditable ? $emit('hf-compositionend', $event) : undefined"
+    >
+      <DocBlockEntries :entries="footerEntries" />
     </div>
   </div>
 </template>
@@ -161,6 +138,51 @@ function componentFor(entry = noRenderEntries()[0]) {
   height: 100%;
 }
 
+/* Body content dims while a header/footer is being edited (SPEC-029
+ * AC-1, AC-2) — opacity, not visibility, so the dimmed text stays a
+ * legible reading reference the way Word's own dimming does.
+ * `pointer-events: none` sits on the margin box (the entries' own
+ * container), not `.page-content` itself, so a double-click still lands on
+ * `.page-content`'s own dblclick-body listener above it in the DOM and
+ * exits editing (AC-8) instead of being swallowed by the dimmed area. */
+.page-margin-dimmed {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Header/footer bands (SPEC-029): positioned within the page's own
+   top/bottom margin — inline top/left/right/bottom come from
+   DocumentView's headerStyle/footerStyle, computed from the section's
+   margins and a fixed header/footer distance from the page edge. */
+.page-header-band,
+.page-footer-band {
+  position: absolute;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header text sits at the bottom of the top margin, just above the body
+   text's own top edge; footer text sits at the top of the bottom margin,
+   just below the body text's own bottom edge — matching where Word
+   positions header/footer content within the margin band. */
+.page-header-band {
+  justify-content: flex-end;
+  padding-bottom: 0.2cm;
+}
+
+.page-footer-band {
+  justify-content: flex-start;
+  padding-top: 0.2cm;
+}
+
+.page-header-band[data-hf-editable],
+.page-footer-band[data-hf-editable] {
+  outline: 1px dashed #1a73e8;
+  outline-offset: 2px;
+}
+
 /* Marks where the page margins end and content begins — an outline, not a
    border, so the rendered content geometry matches the engine's
    margin-box math exactly. */
@@ -171,105 +193,4 @@ function componentFor(entry = noRenderEntries()[0]) {
   outline-offset: -1px;
 }
 
-.doc-paragraph {
-  margin: 0;
-  font-weight: normal;
-  font-size: inherit;
-}
-
-/* The list marker (SPEC-018): painted from the derived data-list-marker
-   attribute, never part of the editable text — caret offsets and the
-   model/DOM text equality check stay untouched. */
-.doc-paragraph[data-list-marker]::before {
-  content: attr(data-list-marker);
-  display: inline-block;
-  min-width: 0.635cm;
-  margin-inline-start: -0.635cm;
-  white-space: nowrap;
-}
-
-/* A manual break block (SPEC-028): always in the DOM (it is content the
-   caret can delete), invisible until formatting marks are shown, then a
-   labelled dashed rule (AC-11, AC-16). The label is a pseudo-element so
-   the canvas text stays byte-identical to the model. */
-.doc-break {
-  display: block;
-  height: 0;
-  overflow: hidden;
-  user-select: none;
-}
-
-.marks-on .doc-break {
-  height: auto;
-  overflow: visible;
-  margin: 2px 0;
-  border-top: 1px dashed #9aa0a6;
-  color: #5f6368;
-  font-size: 0.7rem;
-  line-height: 1.3;
-  text-align: center;
-}
-
-.marks-on .doc-break::before {
-  content: attr(data-marker-label);
-}
-
-/* A section break's marker (SPEC-028 AC-16): rendered only while marks are
-   on, and absolutely positioned with zero flow height so showing marks
-   never re-paginates the section boundary itself. */
-.doc-section-marker {
-  display: block;
-  position: relative;
-  height: 0;
-  overflow: visible;
-  user-select: none;
-}
-
-.marks-on .doc-section-marker::before {
-  content: attr(data-marker-label);
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  border-top: 1px dashed #9aa0a6;
-  color: #5f6368;
-  font-size: 0.7rem;
-  line-height: 1.3;
-  text-align: center;
-}
-
-/* Space/tab marks (AC-14, AC-15): the real characters render (selection,
-   caret math and copy all see the model text); the visible mark paints
-   over them from a pseudo-element. */
-.mark-space {
-  position: relative;
-}
-
-.mark-space::before {
-  content: "·";
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  color: #80868b;
-  pointer-events: none;
-}
-
-.mark-tab {
-  position: relative;
-}
-
-.mark-tab::before {
-  content: "→";
-  position: absolute;
-  left: 0;
-  color: #80868b;
-  pointer-events: none;
-}
-
-/* The pilcrow (AC-13) — suppressed on a slice that continues onto the next
-   page: the paragraph has not ended there. */
-.marks-on .doc-paragraph:not([data-slice-more])::after {
-  content: "¶";
-  color: #80868b;
-}
 </style>
