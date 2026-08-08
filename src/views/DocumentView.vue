@@ -1048,7 +1048,12 @@ function handleNoteNumberClick(noteId = "") {
   if (!ref) {
     return;
   }
-  exitNoteEditing();
+  // Leave note editing inline (not through exitNoteEditing, whose own
+  // deferred refocus would race the caret placement below).
+  activeNote.value = null;
+  noteCaret = noCaret();
+  noteSelectionAnchor = noCaret();
+  notePendingFormat = noPendingFormat();
   const target = ref.cell
     ? { section: ref.section, block: ref.block, offset: ref.offset + 1, cell: ref.cell }
     : { section: ref.section, block: ref.block, offset: ref.offset + 1 };

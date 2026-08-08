@@ -102,13 +102,24 @@ export function sliceStartOf(element: Element): number {
   return Number.isInteger(value) && value > 0 ? value : 0;
 }
 
+/** True when `element` sits inside a `data-canvas-ignore` subtree WITHIN
+ * `root` — a note area or header/footer band (SPEC-029/031) whose
+ * paragraphs reuse synthetic section-0 addressing that must never shadow
+ * the root's own blocks. Relative on purpose: when `root` itself is the
+ * editable surface inside such a subtree (a note body, a band), the
+ * ignored ancestor lies outside it and nothing is excluded. */
+export function inIgnoredSubtree(root: Element, element: Element): boolean {
+  const ignored = element.closest("[data-canvas-ignore]");
+  return !!ignored && ignored !== root && root.contains(ignored);
+}
+
 // All rendered slices of a block address in document order, with each
 // slice's character window; a whole (unsplit) block is its own single
 // entry.
 function slicesFor(root: Element, address: string): Element[] {
-  return Array.from(root.querySelectorAll(`${address}:not([data-row])`)).sort(
-    (a, b) => sliceStartOf(a) - sliceStartOf(b),
-  );
+  return Array.from(root.querySelectorAll(`${address}:not([data-row])`))
+    .filter((el) => !inIgnoredSubtree(root, el))
+    .sort((a, b) => sliceStartOf(a) - sliceStartOf(b));
 }
 
 // The slice whose character window contains `offset`: the first slice the
@@ -163,7 +174,7 @@ export function tableCellFromEventTarget(
   }
   const element = target instanceof Element ? target : target.parentElement;
   const td = element?.closest("td[data-row]");
-  if (!td || !root.contains(td)) {
+  if (!td || !root.contains(td) || inIgnoredSubtree(root, td)) {
     return null;
   }
   const paragraph = td.querySelector("[data-section][data-block]");
@@ -206,7 +217,7 @@ export function paragraphFromEventTarget(
   }
   const element = target instanceof Element ? target : target.parentElement;
   const paragraph = element?.closest("[data-section][data-block]");
-  if (!paragraph || !root.contains(paragraph)) {
+  if (!paragraph || !root.contains(paragraph) || inIgnoredSubtree(root, paragraph)) {
     return null;
   }
   const section = Number(paragraph.getAttribute("data-section"));
@@ -243,7 +254,7 @@ export function caretFromDomPoint(
 ): CaretPosition | null {
   const element = node instanceof Element ? node : node.parentElement;
   const paragraph = element?.closest(BLOCK_SELECTOR);
-  if (!paragraph || !root.contains(paragraph)) {
+  if (!paragraph || !root.contains(paragraph) || inIgnoredSubtree(root, paragraph)) {
     return null;
   }
   const section = Number(paragraph.getAttribute("data-section"));
@@ -340,7 +351,9 @@ export function domPointForCaret(
     const slices = slicesFor(root, address);
     paragraph = slices.length > 0 ? sliceForOffset(slices, caret.offset) : null;
     if (!paragraph) {
-      const cellParagraphs = root.querySelectorAll(`${address}[data-row]`);
+      const cellParagraphs = Array.from(root.querySelectorAll(`${address}[data-row]`)).filter(
+        (el) => !inIgnoredSubtree(root, el),
+      );
       if (cellParagraphs.length === 0) {
         return null;
       }
