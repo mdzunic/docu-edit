@@ -49,6 +49,7 @@ import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
+import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
@@ -471,21 +472,6 @@ function registerFindRefresh(fn = () => {}) {
   findRefreshScheduler = fn;
 }
 
-// --- clipboard (SPEC-016) ---------------------------------------------------
-// `plainPasteNext` is armed by the Ctrl/Cmd+Shift+V keydown (AC-27): where
-// the browser fires a `paste` event for that combination the flag routes it
-// down the plain-text path, and where it does not (macOS — see
-// schedulePlainPasteFallback) the flag survives long enough for the fallback
-// to notice. `pastePayload`/`pastePendingFormat`
-// describe the last applied paste so the options chip can re-interpret it;
-// `lastCopy` is the local snapshot backing the context menu's async paste
-// (see ClipboardSnapshot in lib/clipboard.ts). Plain variables — nothing
-// renders from them; the chip and menu render from the two refs below.
-let plainPasteNext = false;
-let pastePayload = noPastePayload();
-let pastePendingFormat = noPendingFormat();
-let lastCopy = noClipboardSnapshot();
-const pasteChip = ref({ visible: false, left: 0, top: 0, applied: "source" });
 const contextMenu = ref({ visible: false, left: 0, top: 0 });
 
 // --- tables (SPEC-022) ------------------------------------------------------
@@ -1672,6 +1658,34 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
+// Cut/copy/paste and the paste-options chip (SPEC-016) live in useClipboard;
+// the plain-paste flag and chip state it owns are wired into handleKeyDown and
+// the session-close hook (resetClipboard) here.
+const {
+  pasteChip,
+  handleCopy,
+  handleCut,
+  handlePaste,
+  handlePasteOption,
+  dismissPasteChip,
+  armPlainPaste,
+  clearPlainPaste,
+  performPaste,
+  getLastCopy,
+} = useClipboard({
+  doc,
+  contentRoot,
+  editable,
+  documentId,
+  currentSelection,
+  applyEdit,
+  addToast,
+  getCaret: () => caret,
+  getPendingFormat: () => pendingFormat,
+  insertImageFromFile,
+  onSessionClose,
+});
+
 const autosave = useAutosave({
   getCaret: () => caret,
   getScroll: () => scrollTop,
@@ -1749,7 +1763,8 @@ function closeSession() {
   specialCharacterDialogOpen.value = false;
   producedEnDashAt = -1;
   producedOpenSingleAt = -1;
-  plainPasteNext = false;
+  // The clipboard's own state (plain-paste flag, chip, payload) is reset by the
+  // clipboard composable's session-close hook, not here.
   // AC-19: the undo/redo history does not outlive the document being open.
   if (sessionDocId) {
     clearUndoHistory(sessionDocId);
@@ -2431,255 +2446,6 @@ async function verifyCanvasAfterRender() {
 // events; the app's own context menu drives them via execCommand (cut/copy)
 // and the async clipboard API (paste).
 
-/** Captures the selection's fragment and writes all three clipboard
- * flavours (AC-7..9): plain text, minimal HTML and the internal payload.
- * Also remembers the snapshot locally for the context menu's paste. */
-function writeClipboardFlavours(data = new DataTransfer(), model = doc.value, selection = noSelection()) {
-  if (!model || !selection) {
-    return;
-  }
-  const fragment = extractFragment(model, selection);
-  const flavours = clipboardFlavours(fragment);
-  data.setData("text/plain", flavours.text);
-  data.setData("text/html", flavours.html);
-  data.setData(DOC_MODEL_MIME, flavours.payload);
-  lastCopy = { text: flavours.text, html: flavours.html, fragment };
-}
-
-/** Ctrl/Cmd+C and the context menu's Copy (AC-2, AC-5). Copying mutates
- * nothing, so it works in a read-only (conflict-bar) session too. */
-function handleCopy(event = new ClipboardEvent("copy")) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  const data = event.clipboardData;
-  if (!root || !model || !data) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection || isCollapsed(selection)) {
-    return;
-  }
-  event.preventDefault();
-  writeClipboardFlavours(data, model, selection);
-}
-
-/** Ctrl/Cmd+X and the context menu's Cut (AC-1, AC-4): the copy flavours
- * plus deleting the selection, recorded as a single "cut" undo step
- * (AC-36..38). */
-function handleCut(event = new ClipboardEvent("cut")) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  const data = event.clipboardData;
-  if (!root || !model || !data || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection || isCollapsed(selection)) {
-    return;
-  }
-  event.preventDefault();
-  writeClipboardFlavours(data, model, selection);
-  applyEdit(deleteRange(model, selection), selection, "cut");
-}
-
-function clipboardHasImage(data = new DataTransfer()) {
-  const items = data.items;
-  if (!items) {
-    return false;
-  }
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].kind === "file" && items[i].type.startsWith("image/")) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Ctrl/Cmd+V and the native menu's Paste (AC-3, AC-6): reads the flavours
- * off the event and routes them through performPaste. Always prevented —
- * the browser must never splice its own HTML into the canvas. */
-/** The first clipboard file item of an accepted image type, or null — read
- * synchronously off the paste event (SPEC-024 AC-1), the one point a raw
- * image File is reachable without the async Clipboard API's permission
- * prompt. */
-function clipboardImageFile(data = new DataTransfer()) {
-  const items = data.items;
-  if (!items) {
-    return null;
-  }
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].kind === "file" && isAcceptedImageType(items[i].type) && typeof items[i].getAsFile === "function") {
-      return items[i].getAsFile();
-    }
-  }
-  return null;
-}
-
-function handlePaste(event = new ClipboardEvent("paste")) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  event.preventDefault();
-  const data = event.clipboardData;
-  if (!data) {
-    return;
-  }
-  const plainOnly = plainPasteNext;
-  plainPasteNext = false;
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  const imageFile = clipboardImageFile(data);
-  if (imageFile) {
-    void insertImageFromFile(imageFile, selection);
-    return;
-  }
-  performPaste(
-    {
-      internal: data.getData(DOC_MODEL_MIME),
-      html: data.getData("text/html"),
-      text: data.getData("text/plain"),
-      hasImage: clipboardHasImage(data),
-    },
-    selection,
-    plainOnly,
-  );
-}
-
-/** Ctrl/Cmd+Shift+V's fallback path. Chromium only turns that combination
- * into a clipboard command on Windows/Linux, where it is a native paste
- * variant; on macOS it belongs to the application menu and never reaches
- * the page, so the armed flag would sit there and the command would
- * silently do nothing. Once the event has had its chance, read the
- * clipboard's text ourselves — plain text is the only flavour this command
- * wants, and the only one navigator.clipboard exposes. A refused
- * permission or an empty clipboard leaves the document untouched, exactly
- * as before. */
-function schedulePlainPasteFallback() {
-  window.setTimeout(() => {
-    if (!plainPasteNext) {
-      // The paste event arrived and consumed the flag.
-      return;
-    }
-    plainPasteNext = false;
-    void pastePlainFromClipboard();
-  }, 0);
-}
-
-async function pastePlainFromClipboard() {
-  let text = "";
-  try {
-    text = await navigator.clipboard.readText();
-  } catch {
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value || text === "") {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  performPaste({ internal: "", html: "", text, hasImage: false }, selection, true);
-}
-
-/** One paste, whatever triggered it: the internal payload wins (exact
- * editor-to-editor fidelity, AC-10..13), then the sanitised HTML import
- * (AC-14..26), then plain text; `plainOnly` (Ctrl/Cmd+Shift+V, AC-27)
- * forces the text path but keeps any richer fragment so the chip can still
- * offer "Keep source formatting". Image content is gated behind the
- * "Images aren't supported yet" toast until SPEC-024 (AC-45, AC-46). */
-function performPaste(
-  flavours = { internal: "", html: "", text: "", hasImage: false },
-  selection = noSelection(),
-  plainOnly = false,
-) {
-  const model = doc.value;
-  if (!model || !selection) {
-    return;
-  }
-  let fragment = flavours.internal ? parseFragmentPayload(flavours.internal) : null;
-  let imagesDropped = false;
-  if (!fragment && flavours.html) {
-    const imported = importHtml(flavours.html);
-    imagesDropped = imported.imagesDropped;
-    if (imported.blocks.length > 0) {
-      fragment = imported.blocks;
-    }
-  }
-  if (imagesDropped || flavours.hasImage) {
-    addToast(IMAGES_UNSUPPORTED_MESSAGE);
-  }
-  if (!fragment && !flavours.text) {
-    return;
-  }
-  const payload = { fragment, text: flavours.text };
-  const mode = plainOnly || !fragment ? "text" : "source";
-  const result = executePaste(model, selection, payload, mode, pendingFormat);
-  pastePayload = payload;
-  pastePendingFormat = pendingFormat ? { ...pendingFormat } : noPendingFormat();
-  applyEdit(result, selection, "paste", false, true);
-  void openPasteChip(mode);
-}
-
-/** Shows the chip pinned under the post-paste caret (AC-29). */
-async function openPasteChip(applied = "source") {
-  await nextTick();
-  const root = contentRoot.value;
-  const rect = root && caret ? caretClientRect(root, caret) : null;
-  pasteChip.value = {
-    visible: true,
-    left: rect ? Math.max(8, rect.left) : 16,
-    top: rect ? rect.bottom + 8 : 16,
-    applied,
-  };
-}
-
-function dismissPasteChip() {
-  if (pasteChip.value.visible) {
-    pasteChip.value = { visible: false, left: 0, top: 0, applied: "source" };
-  }
-  pastePayload = noPastePayload();
-  pastePendingFormat = noPendingFormat();
-}
-
-/** A chip choice (AC-30..32): re-applies the same paste under the chosen
- * interpretation by replacing the paste's undo step — pop it, restore the
- * pre-paste state, re-run the paste from the stored payload — so the paste
- * plus the re-application stay one undo step (AC-33). Choosing the option
- * already applied is a confirmation no-op. */
-function handlePasteOption(mode = "") {
-  const root = contentRoot.value;
-  const payload = pastePayload;
-  if (!root || !editable.value || !payload || !pasteChip.value.visible) {
-    return;
-  }
-  const chosen = asPasteMode(mode);
-  if (chosen === pasteChip.value.applied) {
-    root.focus();
-    return;
-  }
-  const snapshot = undoDocument(documentId.value);
-  if (!snapshot) {
-    return;
-  }
-  doc.value = snapshot.model;
-  const result = executePaste(
-    snapshot.model,
-    snapshot.selection,
-    payload,
-    chosen,
-    pastePendingFormat,
-  );
-  applyEdit(result, snapshot.selection, "paste", false, true);
-  void openPasteChip(chosen);
-  root.focus();
-}
 
 // --- hyperlinks and bookmarks (SPEC-025) -----------------------------------
 
@@ -3228,9 +2994,10 @@ async function contextMenuPaste() {
     addToast("Clipboard unavailable — paste with the keyboard instead");
     return;
   }
+  const ownIfLastCopy = getLastCopy();
   const own =
-    lastCopy && flavours.html && flavours.html === lastCopy.html
-      ? lastCopy.fragment
+    ownIfLastCopy && flavours.html && flavours.html === ownIfLastCopy.html
+      ? ownIfLastCopy.fragment
       : null;
   performPaste(
     {
@@ -4779,7 +4546,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "v") {
     // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
     // consumed because an empty clipboard fired no paste event).
-    plainPasteNext = false;
+    clearPlainPaste();
     return;
   }
   const shortcut = findShortcut(event);
@@ -4840,8 +4607,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
       // the browser fire the paste event it produces for this combo — that
       // event hands us every clipboard flavour at once.
-      plainPasteNext = true;
-      schedulePlainPasteFallback();
+      armPlainPaste();
       break;
     case "insert.nonBreakingSpace":
       // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
