@@ -47,6 +47,13 @@ const props = defineProps({
   footerEditable: { type: Boolean, default: false },
   /** Body content dims while a header/footer is being edited (AC-1, AC-2). */
   dimmed: { type: Boolean, default: false },
+  /** This page's footnote area (SPEC-031), or null: `{ style, notes }` with
+   * per-note entries precomputed by DocumentView's pagedViews — pinned to
+   * the bottom of the content area, above the footer band (AC-2, AC-5). */
+  footnoteArea: { type: Object, default: null },
+  /** The endnote area (SPEC-031 AC-4): rendered in flow after the body
+   * content, at the end of the document. Same shape as footnoteArea. */
+  endnoteArea: { type: Object, default: null },
 });
 
 defineEmits([
@@ -59,6 +66,12 @@ defineEmits([
   "hf-keydown",
   "hf-compositionstart",
   "hf-compositionend",
+  "note-activate",
+  "note-number-click",
+  "note-beforeinput",
+  "note-keydown",
+  "note-compositionstart",
+  "note-compositionend",
 ]);
 
 const renderEntries = computed(() => asRenderEntries(props.entries));
@@ -101,6 +114,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
     <div
       class="page-header-band"
       data-testid="page-header-band"
+      data-canvas-ignore="1"
       :style="headerStyle"
       :contenteditable="headerEditable"
       :data-hf-editable="headerEditable ? '1' : undefined"
@@ -164,11 +178,104 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             @toc-action="(payload) => $emit('toc-action', payload)"
           />
         </template>
+        <!-- The endnote area (SPEC-031 AC-4): flows after the last body
+             content — inside the margin box, so it dims with the body. -->
+        <div
+          v-if="endnoteArea"
+          class="page-note-area page-note-area-flow"
+          data-testid="endnote-area"
+          data-canvas-ignore="1"
+        >
+          <div
+            class="note-separator"
+            data-testid="note-separator"
+          />
+          <div
+            v-for="note in endnoteArea.notes"
+            :key="note.noteId"
+            class="note-entry"
+            :data-note-id="note.noteId"
+          >
+            <button
+              v-if="note.label"
+              class="note-number"
+              data-testid="note-number"
+              type="button"
+              tabindex="-1"
+              :data-note-id="note.noteId"
+              @mousedown.prevent
+              @click="$emit('note-number-click', note.noteId)"
+            >
+              {{ note.label }}
+            </button>
+            <div
+              class="note-body"
+              :contenteditable="note.editable"
+              :data-note-editable="note.editable ? '1' : undefined"
+              spellcheck="false"
+              @mousedown.stop="note.editable ? undefined : $emit('note-activate', note.noteId, note.kind)"
+              @beforeinput.stop="note.editable ? $emit('note-beforeinput', $event) : undefined"
+              @keydown.stop="note.editable ? $emit('note-keydown', $event) : undefined"
+              @compositionstart.stop="note.editable ? $emit('note-compositionstart') : undefined"
+              @compositionend.stop="note.editable ? $emit('note-compositionend', $event) : undefined"
+            >
+              <DocBlockEntries :entries="note.entries" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- The footnote area (SPEC-031): pinned to the bottom of the content
+         area (AC-2), separated from body text by a rule (AC-5). Outside the
+         margin box so it stays fully interactive while the body dims. -->
+    <div
+      v-if="footnoteArea"
+      class="page-note-area"
+      data-testid="footnote-area"
+      data-canvas-ignore="1"
+      :style="footnoteArea.style"
+    >
+      <div
+        class="note-separator"
+        data-testid="note-separator"
+      />
+      <div
+        v-for="note in footnoteArea.notes"
+        :key="note.noteId"
+        class="note-entry"
+        :data-note-id="note.noteId"
+      >
+        <button
+          v-if="note.label"
+          class="note-number"
+          data-testid="note-number"
+          type="button"
+          tabindex="-1"
+          :data-note-id="note.noteId"
+          @mousedown.prevent.stop
+          @click="$emit('note-number-click', note.noteId)"
+        >
+          {{ note.label }}
+        </button>
+        <div
+          class="note-body"
+          :contenteditable="note.editable"
+          :data-note-editable="note.editable ? '1' : undefined"
+          spellcheck="false"
+          @mousedown.stop="note.editable ? undefined : $emit('note-activate', note.noteId, note.kind)"
+          @beforeinput.stop="note.editable ? $emit('note-beforeinput', $event) : undefined"
+          @keydown.stop="note.editable ? $emit('note-keydown', $event) : undefined"
+          @compositionstart.stop="note.editable ? $emit('note-compositionstart') : undefined"
+          @compositionend.stop="note.editable ? $emit('note-compositionend', $event) : undefined"
+        >
+          <DocBlockEntries :entries="note.entries" />
+        </div>
       </div>
     </div>
     <div
       class="page-footer-band"
       data-testid="page-footer-band"
+      data-canvas-ignore="1"
       :style="footerStyle"
       :contenteditable="footerEditable"
       :data-hf-editable="footerEditable ? '1' : undefined"
@@ -396,5 +503,72 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 .marks-on .doc-paragraph:not([data-slice-more])::after {
   content: "¶";
   color: #80868b;
+}
+
+/* Footnote/endnote areas (SPEC-031). The footnote area is absolutely pinned
+   to the bottom of the content area (inline style from DocumentView); the
+   endnote variant flows after the body content instead. Note text renders
+   slightly smaller, matching word processors' own note styling. */
+.page-note-area {
+  position: absolute;
+  box-sizing: border-box;
+  font-size: 0.85em;
+}
+
+.page-note-area-flow {
+  position: static;
+  margin-top: 12px;
+}
+
+/* The separator line between body text and the note area (AC-5). */
+.note-separator {
+  width: 33%;
+  border-top: 1px solid #5f6368;
+  margin-bottom: 6px;
+}
+
+/* One note: the number sits in a fixed gutter (NOTE_LABEL_GUTTER_PX in
+   lib/notesLayout.ts — the width note content is measured minus), the body
+   fills the rest. Paragraph margins are zeroed: the area planner stacks
+   plain block heights (see notesLayout's fillArea). */
+.note-entry {
+  position: relative;
+  padding-left: 24px;
+}
+
+.note-entry + .note-entry {
+  margin-top: 4px;
+}
+
+.note-number {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.85em;
+  vertical-align: super;
+  color: #1a73e8;
+  cursor: pointer;
+}
+
+.note-number:hover {
+  text-decoration: underline;
+}
+
+.note-body {
+  min-height: 1em;
+  outline: none;
+}
+
+.note-body[data-note-editable] {
+  outline: 1px dashed #1a73e8;
+  outline-offset: 2px;
+}
+
+.page-note-area :deep(.doc-paragraph) {
+  margin: 0 !important;
 }
 </style>

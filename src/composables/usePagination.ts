@@ -30,17 +30,20 @@ import {
   isToc,
   type Block,
   type DocumentModel,
+  type NoteKind,
   type Paragraph,
 } from "../lib/documentModel";
 import {
   estimateMetrics,
-  paginate,
   reconcilePages,
   sectionColumnFlowWidthPx,
   type BlockMetrics,
   type MetricsProvider,
   type PageLayout,
 } from "../lib/pagination";
+import { layoutWithNotes, type NoteArea, type NoteMetricsProvider } from "../lib/notesLayout";
+import { paragraphWithNoteLabels, renderedOffsetToModel } from "../lib/notes";
+import { renderedOffsetsToModel } from "../lib/domCaret";
 import {
   combineSliceMetrics,
   lineStartOffsets,
@@ -107,8 +110,20 @@ const OFFSETS_BUDGET_MS = 12;
  * a Vue patch that is about to render them gets a chance to land. */
 const MAX_STALLED_PASSES = 2;
 
+/** One relayout's note areas (SPEC-031), aligned with `pages` by index. */
+export interface PageNoteAreas {
+  footnotes: (NoteArea | null)[];
+  endnotes: (NoteArea | null)[];
+}
+
 export interface PaginationController {
   pages: ShallowRef<PageLayout[]>;
+  /** Per-page footnote/endnote areas (SPEC-031). */
+  noteAreas: ShallowRef<PageNoteAreas>;
+  /** The page each footnote reference renders on, aligned with
+   * collectNoteRefs(model, "footnote") — noteLabels' per-page restart
+   * input (SPEC-031 AC-19). */
+  footnoteRefPages: ShallowRef<number[]>;
   /** True while a long measurement pass runs (drives "Paginating…"). */
   busy: Ref<boolean>;
   /** "measuring" while any rendered page still uses estimated metrics;
@@ -138,11 +153,41 @@ export interface PaginationController {
   stop: () => void;
 }
 
+function sameArea(a: NoteArea | null, b: NoteArea | null): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return (
+    a.kind === b.kind &&
+    Math.abs(a.heightPx - b.heightPx) < 0.5 &&
+    a.items.length === b.items.length &&
+    a.items.every((item, index) => {
+      const other = b.items[index];
+      return (
+        item.noteId === other.noteId &&
+        item.blockIndex === other.blockIndex &&
+        item.startLine === other.startLine &&
+        item.endLine === other.endLine
+      );
+    })
+  );
+}
+
+function sameAreaLists(a: (NoteArea | null)[], b: (NoteArea | null)[]): boolean {
+  return a.length === b.length && a.every((area, index) => sameArea(area, b[index]));
+}
+
 export function usePagination(
   docOf: () => DocumentModel | null,
   rootOf: () => HTMLElement | null,
+  noteLabelOf: (noteId: string, kind: NoteKind) => string = () => "",
 ): PaginationController {
   const pages = shallowRef<PageLayout[]>([]);
+  const noteAreas = shallowRef<PageNoteAreas>({ footnotes: [], endnotes: [] });
+  const footnoteRefPages = shallowRef<number[]>([]);
   const busy = ref(false);
   const state = ref<"clean" | "measuring">("clean");
 
@@ -205,10 +250,6 @@ export function usePagination(
     return entry && Math.abs(entry.metrics.contentWidthPx - contentWidthPx) < 0.5 ? entry : null;
   }
 
-  // Re-lays-out from the current cache. Returns the number of blocks still
-  // unresolved (unmeasured, or split without line offsets yet) plus how
-  // many offsets this call resolved, so the measure loop can tell settled
-  // from stalled.
   function relayout(model: DocumentModel): { unresolved: number; resolved: number } {
     pending = [];
     const seen = new Set<Block>();
@@ -225,7 +266,54 @@ export function usePagination(
         return estimateMetrics(block, contentWidthPx, model.defaultStyles.fontSizePt);
       },
     };
-    const layout = paginate(model, provider);
+    // Note content (SPEC-031) is measured synchronously with canvas metrics
+    // (notes are small and never DOM-measured — their areas render from the
+    // same cache these measurements land in).
+    const noteProvider: NoteMetricsProvider = {
+      noteMetricsFor(_note, _blockIndex, block, contentWidthPx) {
+        const entry = entryFor(block, contentWidthPx);
+        if (entry) {
+          return entry.metrics;
+        }
+        const root = rootOf();
+        if (root && measurer && isParagraphBlock(block)) {
+          const measured = measureParagraphText(
+            block,
+            contentWidthPx,
+            baseFontOf(root),
+            model.showFormattingMarks === true,
+            measurer,
+          );
+          if (measured) {
+            cache.set(block, { metrics: measured.metrics, lineOffsets: measured.lineOffsets });
+            return measured.metrics;
+          }
+        }
+        return estimateMetrics(block, contentWidthPx, model.defaultStyles.fontSizePt);
+      },
+    };
+    const notesLayout = layoutWithNotes(
+      model,
+      provider,
+      noteProvider,
+      (block) => cache.get(block)?.lineOffsets ?? null,
+    );
+    const layout = notesLayout.pages;
+    if (
+      !sameAreaLists(noteAreas.value.footnotes, notesLayout.footnoteAreas) ||
+      !sameAreaLists(noteAreas.value.endnotes, notesLayout.endnoteAreas)
+    ) {
+      noteAreas.value = {
+        footnotes: notesLayout.footnoteAreas,
+        endnotes: notesLayout.endnoteAreas,
+      };
+    }
+    if (
+      footnoteRefPages.value.length !== notesLayout.footnoteRefPages.length ||
+      footnoteRefPages.value.some((page, index) => page !== notesLayout.footnoteRefPages[index])
+    ) {
+      footnoteRefPages.value = notesLayout.footnoteRefPages;
+    }
     const offsets = ensureLineOffsets(model, layout);
     buildPlacements(model, layout);
     const reconciled = reconcilePages(pages.value, layout);
@@ -285,7 +373,12 @@ export function usePagination(
         for (const element of slices) {
           const base = sliceStartOf(element);
           const measured = measureBlockElement(element, entry.metrics.contentWidthPx, true);
-          for (const offset of lineStartOffsets(element, measured.lines)) {
+          // DOM-measured offsets are in rendered text space; note reference
+          // labels (SPEC-031) may be longer than their model placeholder.
+          for (const offset of renderedOffsetsToModel(
+            element,
+            lineStartOffsets(element, measured.lines),
+          )) {
             offsets.push(base + offset);
           }
         }
@@ -370,17 +463,24 @@ export function usePagination(
     }
     // Not rendered (its page is a virtualized empty box): paragraphs are
     // measured with canvas text metrics; anything else keeps its estimate
-    // until realization renders it.
+    // until realization renders it. Note reference marks measure at their
+    // rendered label text (SPEC-031), with line offsets mapped back to
+    // model space.
     if (measurer && isParagraphBlock(block)) {
+      const rendered = paragraphWithNoteLabels(block, noteLabelOf);
       const measured = measureParagraphText(
-        block,
+        rendered,
         width,
         baseFontOf(root),
         model.showFormattingMarks === true,
         measurer,
       );
       if (measured) {
-        cache.set(block, { metrics: measured.metrics, lineOffsets: measured.lineOffsets });
+        const lineOffsets =
+          rendered === block
+            ? measured.lineOffsets
+            : measured.lineOffsets.map((offset) => renderedOffsetToModel(block, noteLabelOf, offset));
+        cache.set(block, { metrics: measured.metrics, lineOffsets });
         return true;
       }
     }
@@ -577,6 +677,8 @@ export function usePagination(
 
   return {
     pages,
+    noteAreas,
+    footnoteRefPages,
     busy,
     state,
     canMeasureOffscreen: measurer !== null,

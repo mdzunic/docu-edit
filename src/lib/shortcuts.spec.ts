@@ -21,10 +21,14 @@ describe("SHORTCUTS registry (SPEC-021 AC-1, AC-5, AC-11)", () => {
       for (const binding of definition.bindings) {
         // shiftOptional matches both shift states, so it claims both
         // normalized slots — a future binding requiring/forbidding shift on
-        // the same key would collide with it either way.
+        // the same key would collide with it either way. Alt is part of the
+        // normalization exactly as bindingMatchesEvent matches it (modifiers
+        // are exact, never a subset): Ctrl+Alt+F (SPEC-031's insert
+        // footnote) and Ctrl+F (find) are distinct bindings by design, the
+        // same way the SPEC-019 style shortcuts Ctrl+Alt+1..6 always were.
         const shiftStates = binding.shiftOptional ? [false, true] : [!!binding.shift];
         for (const shiftHeld of shiftStates) {
-          const normalized = `${binding.mod ? "mod+" : ""}${shiftHeld ? "shift+" : ""}${binding.key.toLowerCase()}`;
+          const normalized = `${binding.mod ? "mod+" : ""}${binding.alt ? "alt+" : ""}${shiftHeld ? "shift+" : ""}${binding.key.toLowerCase()}`;
           const owner = seen.get(normalized);
           expect(owner === undefined || owner === definition.id).toBe(true);
           seen.set(normalized, definition.id);

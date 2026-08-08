@@ -132,6 +132,18 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     category: "Insert",
     bindings: [{ key: "Enter", mod: true }],
   },
+  {
+    id: "insert.footnote",
+    label: "Insert footnote",
+    category: "Insert",
+    bindings: [{ key: "f", mod: true, alt: true }],
+  },
+  {
+    id: "insert.endnote",
+    label: "Insert endnote",
+    category: "Insert",
+    bindings: [{ key: "d", mod: true, alt: true }],
+  },
 
   // File
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },

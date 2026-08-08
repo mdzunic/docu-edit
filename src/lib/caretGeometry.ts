@@ -5,6 +5,7 @@
 // nearest text position. Framework-free: needs a DOM, but no Vue.
 import {
   BLOCK_SELECTOR,
+  inIgnoredSubtree,
   caretFromDomPoint,
   cellPathOf,
   domPointForCaret,
@@ -62,7 +63,11 @@ export function caretNearClientPoint(
   x: number,
   y: number,
 ): CaretPosition | null {
-  const blocks = Array.from(root.querySelectorAll(BLOCK_SELECTOR));
+  // Note-area/header-band paragraphs reuse synthetic addressing and must
+  // never win a body hit test (SPEC-031; see domCaret.inIgnoredSubtree).
+  const blocks = Array.from(root.querySelectorAll(BLOCK_SELECTOR)).filter(
+    (el) => !inIgnoredSubtree(root, el),
+  );
   if (blocks.length === 0) {
     return null;
   }

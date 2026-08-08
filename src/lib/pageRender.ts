@@ -19,6 +19,14 @@ export interface RenderRun {
   styleObj: Record<string, string>;
   text: string;
   segments: MarkSegment[] | null;
+  /** Note reference mark (SPEC-031): the model placeholder text the
+   * rendered label stands for — becomes the span's data-caret-atom, so
+   * caret mapping counts it as one character (see lib/domCaret.ts). */
+  atomText?: string;
+  /** The mark's note id (SPEC-031) — click-to-jump's target (AC-15). */
+  noteId?: string;
+  /** The mark's hover tooltip: the note's text (SPEC-031 AC-14). */
+  title?: string;
 }
 
 /** One page item's precomputed rendering — a paragraph (possibly a slice of
