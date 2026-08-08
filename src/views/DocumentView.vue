@@ -51,8 +51,10 @@ import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
+import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useLinks } from "./document/useLinks";
+import { useNotes } from "./document/useNotes";
 import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
@@ -525,611 +527,8 @@ let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
 
-// --- headers, footers and page numbers (SPEC-029) ---------------------------
-// The section/part/kind currently being edited, or null while editing the
-// body (AC-1, AC-2, AC-7, AC-8) — set by double-clicking a header/footer
-// band or "Insert -> Header/Footer", cleared by Escape or double-clicking
-// the body. Exactly one page's band ever renders as the live contenteditable
-// surface at a time (see hfRootEl); every other page of the same section
-// renders the identical content read-only, which is how "edits apply to
-// every page in the section at once" (AC-10) falls out for free — they all
-// read the same model content, not a per-page copy.
-const activeHeaderFooter = ref(noActiveHeaderFooter());
-// Caret/selection inside the active header/footer's own content, addressed
-// in the same synthetic single-section coordinates withHeaderFooterModel
-// builds (section 0) — plain variables like the body's own caret/
-// selectionAnchor, since nothing renders from them directly.
-let hfCaret = noCaret();
-let hfSelectionAnchor = noCaret();
-// A collapsed hf caret's not-yet-typed format override, mirroring the
-// body's own pendingFormat (SPEC-012/013).
-let hfPendingFormat = noPendingFormat();
-let hfComposing = false;
-let hfCompositionRange = noSelection();
-// Forces the header/footer band's entries to remount after a composition
-// commit (mirrors the body's bumpBlockKey/remount, scoped down since a
-// header/footer's content is small enough to always remount whole rather
-// than track individual block addresses).
-const hfRemountEpoch = ref(0);
-const headerFooterOptionsOpen = ref(false);
-const headerFooterOptionsInitial = ref({});
-const pageNumberDialogOpen = ref(false);
-// The TOC options dialog state lives in useLinks (SPEC-033).
-
-/** The one DOM element currently rendering as an editable header/footer
- * band, if any — set by DocPage's `data-hf-editable` attribute on whichever
- * page's band `activeHeaderFooter` addresses (see DocPage.vue's
- * headerEditable/footerEditable props). A plain query instead of a Vue
- * template ref because the band lives inside one of many `v-for`-repeated
- * DocPage instances — at most one exists in the DOM at a time. */
-function hfRootEl() {
-  const found = contentRoot.value?.querySelector("[data-hf-editable]");
-  return found instanceof HTMLElement ? found : null;
-}
-
-/** The header/footer content's live selection, mirroring the body's
- * currentSelection(root) — falls back to the tracked hfCaret/
- * hfSelectionAnchor when the DOM selection is not inside the band (a
- * toolbar control just took focus, SPEC-013's own pattern). */
-function currentHfSelection() {
-  const root = hfRootEl();
-  if (root) {
-    const range = modelRangeFromSelection(root, document.getSelection());
-    if (range) {
-      return { anchor: range.start, focus: range.end };
-    }
-  }
-  return hfCaret ? { anchor: hfSelectionAnchor ?? hfCaret, focus: hfCaret } : null;
-}
-
-/** Leaves header/footer editing and returns focus to the body (AC-7, AC-8). */
-function exitHeaderFooterEditing() {
-  if (!activeHeaderFooter.value) {
-    return;
-  }
-  activeHeaderFooter.value = null;
-  hfCaret = noCaret();
-  hfSelectionAnchor = noCaret();
-  void nextTick().then(() => contentRoot.value?.focus());
-}
-
-/** Enters header/footer editing for the given page's band (AC-1, AC-2):
- * resolves which kind (default/first/even) that page actually renders —
- * the same resolution headerFooterForPage uses for read-only display — so
- * typing lands in the content the user is looking at. */
-function enterHeaderFooterEditing(pageIndex = 0, part = asHeaderFooterPart("header")) {
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  const pages = paginationPages.value;
-  const page = pages[pageIndex];
-  if (!page) {
-    return;
-  }
-  const pageNumber = pageNumbers.value[pageIndex] ?? 1;
-  const kind = resolveHeaderFooterKind(model, pages, pageIndex, pageNumber);
-  clearCellSelection();
-  clearImageSelection();
-  exitNoteEditing();
-  activeHeaderFooter.value = { sectionIndex: page.sectionIndex, part, kind, pageIndex };
-  hfCaret = { section: 0, block: 0, offset: 0 };
-  hfSelectionAnchor = noCaret();
-  void nextTick().then(() => {
-    const root = hfRootEl();
-    if (root) {
-      root.focus();
-      setDomCaret(root, hfCaret ?? { section: 0, block: 0, offset: 0 });
-    }
-  });
-}
-
-function handleDblclickHeader(pageIndex = 0) {
-  enterHeaderFooterEditing(pageIndex, "header");
-}
-
-function handleDblclickFooter(pageIndex = 0) {
-  enterHeaderFooterEditing(pageIndex, "footer");
-}
-
-function handleDblclickBody() {
-  exitHeaderFooterEditing();
-  exitNoteEditing();
-}
-
-/** Opens "Insert -> Header/Footer" (AC-2): enters editing the caret's own
- * section, defaulting to the header. */
-function openInsertHeaderFooter(part = asHeaderFooterPart("header")) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const pages = paginationPages.value;
-  const pageIndex = caret ? pagination.pageOfCaret(caret) : 0;
-  enterHeaderFooterEditing(pageIndex, part);
-  void pages;
-}
-
-/** Folds a header/footer command's result (built against the synthetic
- * single-section model, see withHeaderFooterModel) back into the real
- * document and commits it — applyEdit's header/footer sibling. Undo is
- * recorded against a body-caret filler selection (the body caret does not
- * move for a header/footer edit) so Ctrl/Cmd+Z still restores the prior
- * document content; the "currently editing this band" indicator itself is
- * not part of the undo history. */
-function applyHeaderFooterEdit(resultModel = noDocument(), resultSelection = noSelection(), label = "") {
-  const active = activeHeaderFooter.value;
-  const before = doc.value;
-  if (!active || !before || !resultSelection) {
-    return;
-  }
-  const nextModel = commitHeaderFooterModel(before, active.sectionIndex, active.part, active.kind, resultModel);
-  const bodyFiller = caretSelection(caret ?? documentStart());
-  recordHistoryEdit(documentId.value, {
-    before: { model: before, selection: bodyFiller },
-    after: { model: nextModel, selection: bodyFiller },
-    label,
-    groupable: false,
-  });
-  doc.value = replaceDocumentModel(documentId.value, nextModel);
-  hfCaret = resultSelection.focus;
-  hfSelectionAnchor = isCollapsed(resultSelection) ? noCaret() : resultSelection.anchor;
-  autosave.markDirty();
-  refreshUndoRedoState();
-  void nextTick().then(() => {
-    const root = hfRootEl();
-    if (!root || !hfCaret) {
-      return;
-    }
-    if (hfSelectionAnchor) {
-      setDomSelection(root, hfSelectionAnchor, hfCaret);
-    } else {
-      setDomCaret(root, hfCaret);
-    }
-  });
-}
-
-function handleHfBeforeInput(event = new InputEvent("beforeinput")) {
-  const type = event.inputType;
-  if (hfComposing || event.isComposing || type === "insertCompositionText") {
-    return;
-  }
-  event.preventDefault();
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  let result = null;
-  let label = "";
-  if (type === "insertText" || type === "insertFromPaste") {
-    const text = event.data ?? (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
-    if (text) {
-      result = insertText(synthetic, selection, text, hfPendingFormat);
-      label = "typing";
-    }
-  } else if (type === "insertParagraph") {
-    result = splitBlock(synthetic, selection);
-    label = "new paragraph";
-  } else if (type === "insertLineBreak") {
-    result = insertLineBreak(synthetic, selection);
-    label = "line break";
-  } else if (type === "deleteContentBackward") {
-    result = deleteBackward(synthetic, selection);
-    label = "delete";
-  } else if (type === "deleteContentForward") {
-    result = deleteForward(synthetic, selection);
-    label = "delete";
-  } else if (type === "deleteByCut" || type === "deleteContent") {
-    result = isCollapsed(selection) ? null : deleteRange(synthetic, selection);
-    label = "delete";
-  }
-  if (result) {
-    applyHeaderFooterEdit(result.model, result.selection, label);
-  }
-}
-
-function handleHfKeyDown(event = new KeyboardEvent("keydown")) {
-  if (event.key === "Escape") {
-    event.stopPropagation();
-    exitHeaderFooterEditing();
-  }
-}
-
-function handleHfCompositionStart() {
-  const root = hfRootEl();
-  if (!root || !editable.value) {
-    return;
-  }
-  hfComposing = true;
-  hfCompositionRange = currentHfSelection();
-}
-
-function handleHfCompositionEnd(event = new CompositionEvent("compositionend")) {
-  hfComposing = false;
-  const range = hfCompositionRange;
-  hfCompositionRange = null;
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value || !range) {
-    return;
-  }
-  const data = event.data ?? "";
-  if (!data) {
-    return;
-  }
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  const result = insertText(synthetic, range, data, null);
-  applyHeaderFooterEdit(result.model, result.selection, "typing");
-  hfRemountEpoch.value += 1;
-}
-
-/** "Header/footer options" (AC-11, AC-12, AC-22, AC-23): prefilled from the
- * section currently being edited, or the caret's section when opened from
- * the menu without an active header/footer. */
-function openHeaderFooterOptions() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const sectionIndex = activeHeaderFooter.value?.sectionIndex ?? caretSectionIndex.value;
-  const section = model.sections[sectionIndex];
-  headerFooterOptionsInitial.value = {
-    sectionIndex,
-    titlePage: section?.titlePage === true,
-    evenAndOddHeaders: section?.evenAndOddHeaders === true,
-    pageNumberStart: section?.pageNumberStart ?? null,
-  };
-  headerFooterOptionsOpen.value = true;
-}
-
-function handleHeaderFooterOptionsApply(
-  payload = { sectionIndex: 0, titlePage: false, evenAndOddHeaders: false, pageNumberStart: null },
-) {
-  headerFooterOptionsOpen.value = false;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  applyEdit(
-    setHeaderFooterOptions(model, selection, payload.sectionIndex, {
-      titlePage: payload.titlePage,
-      evenAndOddHeaders: payload.evenAndOddHeaders,
-      pageNumberStart: payload.pageNumberStart,
-    }),
-    selection,
-    "header/footer options",
-  );
-}
-
-function handleHeaderFooterOptionsCancel() {
-  headerFooterOptionsOpen.value = false;
-}
-
-/** "Insert page number" (AC-14..19): targets the section currently being
- * edited if a header/footer is active, else the caret's own section. */
-function openPageNumberDialog() {
-  if (!doc.value) {
-    return;
-  }
-  pageNumberDialogOpen.value = true;
-}
-
-function handlePageNumberInsert(
-  options = { part: "footer", position: "center", format: "decimal", pageXofY: false },
-) {
-  pageNumberDialogOpen.value = false;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const sectionIndex = activeHeaderFooter.value?.sectionIndex ?? caretSectionIndex.value;
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  applyEdit(
-    insertPageNumberCommand(model, selection, sectionIndex, {
-      part: asHeaderFooterPart(options.part),
-      position: asParagraphAlignment(options.position),
-      format: asPageNumberFormat(options.format),
-      pageXofY: !!options.pageXofY,
-    }),
-    selection,
-    "insert page number",
-  );
-}
-
-function handlePageNumberCancel() {
-  pageNumberDialogOpen.value = false;
-}
 
 
-// --- footnotes and endnotes (SPEC-031) ---------------------------------------
-// The note currently being edited, or null while editing the body — set by
-// inserting a note (AC-2, AC-4), clicking a reference mark (AC-15) or
-// clicking into a note's body; cleared by Escape or double-clicking the
-// body. The same one-live-editable-surface shape as activeHeaderFooter:
-// note content is addressed through withNoteModel's synthetic
-// single-section coordinates (section 0).
-const activeNote = ref(noActiveNote());
-let noteCaret = noCaret();
-let noteSelectionAnchor = noCaret();
-let notePendingFormat = noPendingFormat();
-let noteComposing = false;
-let noteCompositionRange = noSelection();
-const noteRemountEpoch = ref(0);
-const noteSettingsOpen = ref(false);
-const noteSettingsInitial = ref({});
-
-/** The one DOM element currently rendering as an editable note body, if
- * any (see hfRootEl, the same pattern). */
-function noteRootEl() {
-  const found = contentRoot.value?.querySelector("[data-note-editable]");
-  return found instanceof HTMLElement ? found : null;
-}
-
-function currentNoteSelection() {
-  const root = noteRootEl();
-  if (root) {
-    const range = modelRangeFromSelection(root, document.getSelection());
-    if (range) {
-      return { anchor: range.start, focus: range.end };
-    }
-  }
-  return noteCaret ? { anchor: noteSelectionAnchor ?? noteCaret, focus: noteCaret } : null;
-}
-
-/** Leaves note editing and returns focus to the body. */
-function exitNoteEditing() {
-  if (!activeNote.value) {
-    return;
-  }
-  activeNote.value = null;
-  noteCaret = noCaret();
-  noteSelectionAnchor = noCaret();
-  notePendingFormat = noPendingFormat();
-  void nextTick().then(() => contentRoot.value?.focus());
-}
-
-/** Enters note editing (AC-2, AC-4, AC-15): the note's area renders as the
- * live editable surface and the caret lands at the given offset of its
- * first block (its end for a click-to-jump, its start for a fresh note —
- * both are the same place for an empty note). */
-function enterNoteEditing(noteId = "", kind = asNoteKind("footnote"), atEnd = false) {
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  clearCellSelection();
-  clearImageSelection();
-  exitHeaderFooterEditing();
-  activeNote.value = { noteId, kind };
-  const note = noteById(model, noteId);
-  const lastBlock = note ? Math.max(0, note.blocks.length - 1) : 0;
-  const lastLength = note ? blockLength(note.blocks[lastBlock]) : 0;
-  noteCaret = atEnd
-    ? { section: 0, block: lastBlock, offset: lastLength }
-    : { section: 0, block: 0, offset: 0 };
-  noteSelectionAnchor = noCaret();
-  notePendingFormat = noPendingFormat();
-  void nextTick().then(() => {
-    const root = noteRootEl();
-    if (root) {
-      root.focus();
-      setDomCaret(root, noteCaret ?? { section: 0, block: 0, offset: 0 });
-      root.scrollIntoView({ block: "nearest" });
-    }
-  });
-}
-
-/** Folds a note command's result (built against withNoteModel's synthetic
- * model) back into the real document and commits it — applyEdit's note
- * sibling, mirroring applyHeaderFooterEdit's undo/selection handling. */
-function applyNoteEdit(resultModel = noDocument(), resultSelection = noSelection(), label = "") {
-  const active = activeNote.value;
-  const before = doc.value;
-  if (!active || !before || !resultSelection) {
-    return;
-  }
-  const nextModel = commitNoteModel(before, active.noteId, resultModel);
-  const bodyFiller = caretSelection(caret ?? documentStart());
-  recordHistoryEdit(documentId.value, {
-    before: { model: before, selection: bodyFiller },
-    after: { model: nextModel, selection: bodyFiller },
-    label,
-    groupable: false,
-  });
-  doc.value = replaceDocumentModel(documentId.value, nextModel);
-  noteCaret = resultSelection.focus;
-  noteSelectionAnchor = isCollapsed(resultSelection) ? noCaret() : resultSelection.anchor;
-  autosave.markDirty();
-  refreshUndoRedoState();
-  void nextTick().then(() => {
-    const root = noteRootEl();
-    if (!root || !noteCaret) {
-      return;
-    }
-    if (noteSelectionAnchor) {
-      setDomSelection(root, noteSelectionAnchor, noteCaret);
-    } else {
-      setDomCaret(root, noteCaret);
-    }
-  });
-}
-
-function handleNoteBeforeInput(event = new InputEvent("beforeinput")) {
-  const type = event.inputType;
-  if (noteComposing || event.isComposing || type === "insertCompositionText") {
-    return;
-  }
-  event.preventDefault();
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withNoteModel(model, active.noteId);
-  let result = null;
-  let label = "";
-  if (type === "insertText" || type === "insertFromPaste") {
-    const text = event.data ?? (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
-    if (text) {
-      result = insertText(synthetic, selection, text, notePendingFormat);
-      label = "typing";
-    }
-  } else if (type === "insertParagraph") {
-    result = splitBlock(synthetic, selection);
-    label = "new paragraph";
-  } else if (type === "insertLineBreak") {
-    result = insertLineBreak(synthetic, selection);
-    label = "line break";
-  } else if (type === "deleteContentBackward") {
-    result = deleteBackward(synthetic, selection);
-    label = "delete";
-  } else if (type === "deleteContentForward") {
-    result = deleteForward(synthetic, selection);
-    label = "delete";
-  } else if (type === "deleteByCut" || type === "deleteContent") {
-    result = isCollapsed(selection) ? null : deleteRange(synthetic, selection);
-    label = "delete";
-  }
-  if (result) {
-    notePendingFormat = noPendingFormat();
-    applyNoteEdit(result.model, result.selection, label);
-  }
-}
-
-function handleNoteKeyDown(event = new KeyboardEvent("keydown")) {
-  if (event.key === "Escape") {
-    event.stopPropagation();
-    exitNoteEditing();
-  }
-}
-
-function handleNoteCompositionStart() {
-  if (!noteRootEl() || !editable.value) {
-    return;
-  }
-  noteComposing = true;
-  noteCompositionRange = currentNoteSelection();
-}
-
-function handleNoteCompositionEnd(event = new CompositionEvent("compositionend")) {
-  noteComposing = false;
-  const range = noteCompositionRange;
-  noteCompositionRange = null;
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value || !range) {
-    return;
-  }
-  const data = event.data ?? "";
-  if (!data) {
-    return;
-  }
-  const synthetic = withNoteModel(model, active.noteId);
-  const result = insertText(synthetic, range, data, null);
-  applyNoteEdit(result.model, result.selection, "typing");
-  noteRemountEpoch.value += 1;
-}
-
-/** Clicking a read-only note body activates editing it (AC-6). */
-function handleNoteActivate(noteId = "", kind = "") {
-  enterNoteEditing(noteId, asNoteKind(kind), true);
-}
-
-/** Clicking a note's number jumps back to its reference mark (AC-16). */
-function handleNoteNumberClick(noteId = "") {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const kind = noteById(model, noteId)?.kind ?? "footnote";
-  const ref = collectNoteRefs(model, kind).find((entry) => entry.noteId === noteId);
-  if (!ref) {
-    return;
-  }
-  // Leave note editing inline (not through exitNoteEditing, whose own
-  // deferred refocus would race the caret placement below).
-  activeNote.value = null;
-  noteCaret = noCaret();
-  noteSelectionAnchor = noCaret();
-  notePendingFormat = noPendingFormat();
-  const target = ref.cell
-    ? { section: ref.section, block: ref.block, offset: ref.offset + 1, cell: ref.cell }
-    : { section: ref.section, block: ref.block, offset: ref.offset + 1 };
-  void nextTick().then(() => {
-    contentRoot.value?.focus();
-    applyCaretMove(target);
-    void scrollModelCaretIntoView(target, true);
-  });
-}
-
-/** "Insert → Footnote/Endnote" and Ctrl/Cmd+Alt+F / Ctrl/Cmd+Alt+D (AC-1,
- * AC-3): inserts the superscript reference mark at the caret, then moves
- * the caret into the new note's own area (AC-2, AC-4). */
-function handleInsertNote(kind = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value || activeHeaderFooter.value || activeNote.value) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  const noteId = createNoteId();
-  const noteKind = asNoteKind(kind);
-  applyEdit(insertNote(model, selection, noteKind, noteId), selection, `insert ${kind}`);
-  enterNoteEditing(noteId, noteKind);
-}
-
-/** The footnote settings dialog (AC-17..20), prefilled with both streams'
- * effective settings. */
-function openNoteSettings() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  noteSettingsInitial.value = {
-    kind: activeNote.value?.kind ?? "footnote",
-    footnote: effectiveNoteSettings(model, "footnote"),
-    endnote: effectiveNoteSettings(model, "endnote"),
-  };
-  noteSettingsOpen.value = true;
-}
-
-function handleNoteSettingsApply(
-  payload = { kind: "footnote", numberFormat: "decimal", startAt: 1, restart: "continuous" },
-) {
-  noteSettingsOpen.value = false;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  applyEdit(
-    setNoteSettings(model, selection, asNoteKind(payload.kind), {
-      numberFormat: asNoteNumberFormat(payload.numberFormat),
-      startAt: payload.startAt,
-      restart: asNoteRestart(payload.restart),
-    }),
-    selection,
-    "note settings",
-  );
-}
-
-function handleNoteSettingsCancel() {
-  noteSettingsOpen.value = false;
-}
 
 /** Whether the active cell-range selection spans more than one cell — the
  * context menu's "Merge cells" gate (SPEC-023 AC-6). */
@@ -1272,6 +671,57 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
+// --- headers, footers and page numbers (SPEC-029) ----------------------------
+// Lives in useHeadersFooters (the one live-editable band + page-number dialogs).
+// It runs before images/notes — which consume its `activeHeaderFooter` /
+// `applyHeaderFooterEdit` — so the mutual deps (clearImageSelection,
+// exitNoteEditing, and the later pagination refs) come in as lazy getters.
+const {
+  activeHeaderFooter,
+  hfRemountEpoch,
+  headerFooterOptionsOpen,
+  headerFooterOptionsInitial,
+  pageNumberDialogOpen,
+  currentHfSelection,
+  applyHeaderFooterEdit,
+  hfRootEl,
+  getHfPendingFormat,
+  setHfPendingFormat,
+  exitHeaderFooterEditing,
+  enterHeaderFooterEditing,
+  handleDblclickHeader,
+  handleDblclickFooter,
+  handleDblclickBody,
+  openInsertHeaderFooter,
+  handleHfBeforeInput,
+  handleHfKeyDown,
+  handleHfCompositionStart,
+  handleHfCompositionEnd,
+  openHeaderFooterOptions,
+  handleHeaderFooterOptionsApply,
+  handleHeaderFooterOptionsCancel,
+  openPageNumberDialog,
+  handlePageNumberInsert,
+  handlePageNumberCancel,
+} = useHeadersFooters({
+  doc,
+  contentRoot,
+  editable,
+  documentId,
+  currentSelection,
+  applyEdit,
+  getPaginationPages: () => paginationPages.value,
+  getPageNumbers: () => pageNumbers.value,
+  getCaretSectionIndex: () => caretSectionIndex.value,
+  pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
+  clearCellSelection,
+  getClearImageSelection: () => clearImageSelection,
+  getExitNoteEditing: () => exitNoteEditing,
+  getCaret: () => caret,
+  markDirty: () => autosave.markDirty(),
+  refreshUndoRedoState,
+});
+
 // --- images (SPEC-024) -------------------------------------------------------
 // Image selection/handles/options and insertion + resize live in useImages; the
 // canvas and applyEdit reach them through these returned bindings.
@@ -1307,6 +757,48 @@ const {
   currentHfSelection,
   applyHeaderFooterEdit,
   getCaret: () => caret,
+});
+
+// Footnotes and endnotes (SPEC-031) live in useNotes; it provides `activeNote` /
+// `noteRemountEpoch` that usePaginationView renders the note areas from.
+const {
+  activeNote,
+  noteRemountEpoch,
+  noteSettingsOpen,
+  noteSettingsInitial,
+  noteRootEl,
+  currentNoteSelection,
+  applyNoteEdit,
+  getNotePendingFormat,
+  setNotePendingFormat,
+  exitNoteEditing,
+  enterNoteEditing,
+  handleNoteActivate,
+  handleNoteNumberClick,
+  handleInsertNote,
+  handleNoteBeforeInput,
+  handleNoteKeyDown,
+  handleNoteCompositionStart,
+  handleNoteCompositionEnd,
+  openNoteSettings,
+  handleNoteSettingsApply,
+  handleNoteSettingsCancel,
+} = useNotes({
+  doc,
+  contentRoot,
+  editable,
+  documentId,
+  activeHeaderFooter,
+  currentSelection,
+  applyEdit,
+  applyCaretMove,
+  scrollModelCaretIntoView,
+  clearCellSelection,
+  clearImageSelection,
+  exitHeaderFooterEditing,
+  getCaret: () => caret,
+  markDirty: () => autosave.markDirty(),
+  refreshUndoRedoState,
 });
 
 // Cut/copy/paste and the paste-options chip (SPEC-016) live in useClipboard;
@@ -2704,8 +2196,8 @@ function toggleHfCharacterFormat(key = "") {
   const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
   if (key === "subscript" || key === "superscript") {
     if (isCollapsed(selection)) {
-      const on = verticalAlignState(synthetic, selection, key, hfPendingFormat) === "on";
-      hfPendingFormat = { ...hfPendingFormat, vertAlign: on ? false : key };
+      const on = verticalAlignState(synthetic, selection, key, getHfPendingFormat()) === "on";
+      setHfPendingFormat({ ...getHfPendingFormat(), vertAlign: on ? false : key });
     } else {
       const result = toggleVerticalAlign(synthetic, selection, key);
       applyHeaderFooterEdit(result.model, result.selection, key);
@@ -2715,8 +2207,8 @@ function toggleHfCharacterFormat(key = "") {
   }
   const formatKey = asCharacterFormatKey(key);
   if (isCollapsed(selection)) {
-    const next = formatState(synthetic, selection, formatKey, hfPendingFormat) !== "on";
-    hfPendingFormat = { ...hfPendingFormat, [formatKey]: next };
+    const next = formatState(synthetic, selection, formatKey, getHfPendingFormat()) !== "on";
+    setHfPendingFormat({ ...getHfPendingFormat(), [formatKey]: next });
   } else {
     const result = toggleFormat(synthetic, selection, formatKey);
     applyHeaderFooterEdit(result.model, result.selection, formatKey);
@@ -2737,7 +2229,7 @@ function applyHfRunFormatPatch(patch = noPendingFormat(), label = "formatting") 
   }
   const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
   if (isCollapsed(selection)) {
-    hfPendingFormat = { ...hfPendingFormat, ...patch };
+    setHfPendingFormat({ ...getHfPendingFormat(), ...patch });
   } else {
     const result = applyFormat(synthetic, selection, patch);
     applyHeaderFooterEdit(result.model, result.selection, label);
@@ -2775,8 +2267,8 @@ function toggleNoteCharacterFormat(key = "") {
   const synthetic = withNoteModel(model, active.noteId);
   if (key === "subscript" || key === "superscript") {
     if (isCollapsed(selection)) {
-      const on = verticalAlignState(synthetic, selection, key, notePendingFormat) === "on";
-      notePendingFormat = { ...notePendingFormat, vertAlign: on ? false : key };
+      const on = verticalAlignState(synthetic, selection, key, getNotePendingFormat()) === "on";
+      setNotePendingFormat({ ...getNotePendingFormat(), vertAlign: on ? false : key });
     } else {
       const result = toggleVerticalAlign(synthetic, selection, key);
       applyNoteEdit(result.model, result.selection, key);
@@ -2786,8 +2278,8 @@ function toggleNoteCharacterFormat(key = "") {
   }
   const formatKey = asCharacterFormatKey(key);
   if (isCollapsed(selection)) {
-    const next = formatState(synthetic, selection, formatKey, notePendingFormat) !== "on";
-    notePendingFormat = { ...notePendingFormat, [formatKey]: next };
+    const next = formatState(synthetic, selection, formatKey, getNotePendingFormat()) !== "on";
+    setNotePendingFormat({ ...getNotePendingFormat(), [formatKey]: next });
   } else {
     const result = toggleFormat(synthetic, selection, formatKey);
     applyNoteEdit(result.model, result.selection, formatKey);
@@ -2808,7 +2300,7 @@ function applyNoteRunFormatPatch(patch = noPendingFormat(), label = "formatting"
   }
   const synthetic = withNoteModel(model, active.noteId);
   if (isCollapsed(selection)) {
-    notePendingFormat = { ...notePendingFormat, ...patch };
+    setNotePendingFormat({ ...getNotePendingFormat(), ...patch });
   } else {
     const result = applyFormat(synthetic, selection, patch);
     applyNoteEdit(result.model, result.selection, label);
