@@ -51,6 +51,7 @@ import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
+import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useLinks } from "./document/useLinks";
@@ -634,19 +635,6 @@ const recentColors = ref(loadRecentColors());
 // recomputes as families come and go.
 const documentFonts = computed(() => (doc.value ? documentFontFamilies(doc.value) : []));
 
-// --- format painter (SPEC-020) ----------------------------------------------
-// "" (unarmed), "once" (a single click — disarms itself after one applied
-// selection, AC-13) or "repeat" (a double-click — stays armed until Escape or
-// another button click, AC-14..17). A ref because the canvas's cursor and
-// the button's pressed state both render from it; `painterFormat` is the
-// copied formatting itself, plain because nothing renders from it directly.
-const painterMode = ref("");
-let painterFormat = noPainterFormat();
-// The selection maybeApplyPainter last acted on (applied to, or saw
-// collapsed and skipped) — guards against its own applyEdit's caret-restore
-// echo (setDomSelection re-selecting the same range still raises a
-// selectionchange) re-triggering the same application over and over.
-let lastPainterSelection = noSelection();
 
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
@@ -670,6 +658,22 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
+
+// The format painter (SPEC-020) lives in useFormatPainter; handleSelectionChange
+// and the canvas mouseup dispatch into its maybeApplyPainter.
+const {
+  painterMode,
+  disarmPainter,
+  handlePainterClick,
+  handlePainterDblClick,
+  maybeApplyPainter,
+} = useFormatPainter({
+  doc,
+  contentRoot,
+  editable,
+  currentSelection,
+  applyEdit,
+});
 
 // --- headers, footers and page numbers (SPEC-029) ----------------------------
 // Lives in useHeadersFooters (the one live-editable band + page-number dialogs).
@@ -2527,83 +2531,6 @@ function handleClearFormatting() {
 
 /** Disarms the format painter (AC-15, AC-16, AC-17): dropping the copied
  * format and the armed cursor/button state. Idempotent, so Escape can call
- * it unconditionally. */
-function disarmPainter() {
-  painterMode.value = "";
-  painterFormat = noPainterFormat();
-  lastPainterSelection = noSelection();
-}
-
-/** Arms the painter from the current caret/selection (AC-9, AC-10): copies
- * its formatting and switches the canvas cursor and the button's pressed
- * state on. */
-function armPainter(mode = "once") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  painterFormat = capturePainterFormat(model, selection);
-  painterMode.value = mode;
-  lastPainterSelection = noSelection();
-}
-
-/** A single click on the painter button: arms single-use mode, or disarms
- * if it was already armed — including the first of the two clicks a
- * dblclick fires, which the dblclick handler below re-arms as repeat mode
- * (AC-13, AC-14, AC-16). */
-function handlePainterClick() {
-  if (painterMode.value !== "") {
-    disarmPainter();
-    return;
-  }
-  armPainter("once");
-}
-
-/** A double-click on the painter button arms repeated-use mode (AC-14). */
-function handlePainterDblClick() {
-  armPainter("repeat");
-}
-
-/** Applies the armed painter's copied formatting to the selection just made
- * (AC-12) — the settled result of a text drag (canvas mouseup) or of a
- * single-step keyboard/click selection change (handleSelectionChange).
- * Single-use mode disarms after this one application (AC-13); repeated-use
- * stays armed for the next one. A collapsed selection is not "a selection
- * made" — nothing is applied, and the painter stays armed. `lastPainterSelection`
- * skips a selection already acted on, which is what keeps this safe to call
- * from every selectionchange without special-casing our own edits' echo. */
-function maybeApplyPainter() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || painterMode.value === "" || !painterFormat) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  const last = lastPainterSelection;
-  if (
-    last &&
-    compareCaret(selection.anchor, last.anchor) === 0 &&
-    compareCaret(selection.focus, last.focus) === 0
-  ) {
-    return;
-  }
-  lastPainterSelection = selection;
-  if (isCollapsed(selection)) {
-    return;
-  }
-  applyEdit(applyPainterFormat(model, selection, painterFormat), selection, "format painter", false);
-  if (painterMode.value === "once") {
-    disarmPainter();
-  }
-}
 
 /** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
  * clears any absolute height so the preset actually takes effect (AC-11). */
