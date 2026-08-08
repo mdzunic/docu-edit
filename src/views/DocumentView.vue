@@ -49,6 +49,8 @@ import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
+import { useFindReplace } from "./document/useFindReplace";
+import { usePaginationView } from "./document/usePaginationView";
 import { documentExists } from "../lib/documents";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
@@ -438,6 +440,34 @@ function refreshUndoRedoState() {
     canRedo: canRedoDocument(id),
     redoLabel: redoDocumentLabel(id) ?? "",
   };
+}
+
+// --- feature lifecycle hooks ------------------------------------------------
+// Extracted feature composables register callbacks the backbone runs at the
+// points they care about (session close, unmount, scroll, post-edit find
+// refresh), so the backbone need not import feature modules and there are no
+// import cycles. Registration callbacks are idempotent per feature.
+// No TS annotations here — ESLint parses .vue scripts with espree, which
+// cannot parse them (see the other espree notes in this file). A dummy
+// no-op keeps `findRefreshScheduler` function-typed via inference.
+// The callbacks are typed by inference — a `() => {}` seed makes each Set a
+// `Set<() => void>` and each param a `() => void` (see note above: espree).
+const sessionCloseHooks = new Set([() => {}]);
+const unmountHooks = new Set([() => {}]);
+const scrollHooks = new Set([() => {}]);
+let findRefreshScheduler = () => {};
+
+function onSessionClose(cb = () => {}) {
+  sessionCloseHooks.add(cb);
+}
+function onUnmount(cb = () => {}) {
+  unmountHooks.add(cb);
+}
+function onScroll(cb = () => {}) {
+  scrollHooks.add(cb);
+}
+function registerFindRefresh(fn = () => {}) {
+  findRefreshScheduler = fn;
 }
 
 // --- clipboard (SPEC-016) ---------------------------------------------------
@@ -1639,6 +1669,7 @@ const caretStatus = ref("");
 const remount = ref({ key: "", count: 0, epoch: 0 });
 
 const contentRoot = useTemplateRef("contentRoot");
+const pageRef = useTemplateRef("pageRef");
 
 const autosave = useAutosave({
   getCaret: () => caret,
@@ -1709,7 +1740,7 @@ function closeSession() {
   caretPage.value = 1;
   dismissPasteChip();
   closeContextMenu();
-  resetFindState();
+  sessionCloseHooks.forEach((cb) => cb());
   clearCellSelection();
   cellDragOrigin = null;
   tableHover.value = null;
@@ -1751,11 +1782,9 @@ function handleScroll() {
     scrollTop = scrollContainer.scrollTop;
   }
   scheduleViewportRefresh();
-  // Re-measure the (viewport-limited) highlight overlay for the new scroll
-  // position; rAF-throttled inside scheduleFindMeasure (SPEC-017).
-  if (findVisible.value) {
-    scheduleFindMeasure();
-  }
+  // Feature composables re-measure scroll-sensitive overlays (e.g. the find
+  // highlight overlay) by registering a scroll hook — see onScroll.
+  scrollHooks.forEach((cb) => cb());
 }
 
 function handleSelectionChange() {
@@ -1812,7 +1841,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   closeSession();
-  cancelFindScheduled();
+  unmountHooks.forEach((cb) => cb());
   document.removeEventListener("selectionchange", handleSelectionChange);
   document.removeEventListener("keydown", handleGlobalShortcut);
   window.removeEventListener("mousemove", handleColumnResizeMove);
@@ -1913,7 +1942,7 @@ function applyEdit(
   }
   // An edit made with the find bar open shifts match positions; refresh off
   // the keystroke path so typing stays responsive (SPEC-017 AC-31).
-  scheduleFindRefresh();
+  findRefreshScheduler?.();
 }
 
 /** Ctrl/Cmd+Z / the toolbar's Undo button (AC-1, AC-4). */
@@ -1962,7 +1991,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // break pulls it back a whole page — so follow it, the way the break
   // insertion it reverses does.
   void scrollModelCaretIntoView(caret);
-  scheduleFindRefresh();
+  findRefreshScheduler?.();
 }
 
 /** Inserts a literal string at the current caret WITHOUT running autocorrect
@@ -5416,18 +5445,6 @@ const virtualizing = computed(
     pagination.canMeasureOffscreen && paginationPages.value.length > VIRTUALIZE_MIN_PAGES,
 );
 
-/** The current find match's page: realized so the highlight overlay and
- * scroll-into-view can measure it (SPEC-017). Reads paginationPages so it
- * recomputes when placements do. */
-const findMatchPage = computed(() => {
-  void paginationPages.value;
-  const match = findMatchesRef.value[findCurrentIndex.value];
-  if (!match) {
-    return -1;
-  }
-  return pagination.pageOfCaret({ section: match.section, block: match.block, offset: match.start });
-});
-
 function refreshViewportRange() {
   const container = scrollContainer;
   const pagesEl = pageRef.value;
@@ -5550,539 +5567,86 @@ const rulerColumns = computed(() => {
   return { boundaries };
 });
 
-const SECTION_MARKER_LABELS = {
-  continuous: "Section Break (Continuous)",
-  nextPage: "Section Break (Next Page)",
-};
-const BREAK_LABELS = { page: "Page Break", column: "Column Break" };
 
-// Typed-null seeds for renderEntryFor's espree-style defaults (never hit:
-// pagedViews always passes real values).
+// --- find and replace (SPEC-017) -------------------------------------------
+// The DOM-facing find/replace logic is extracted into useFindReplace; it owns
+// the find bar's reactive state, the highlight overlay and the post-edit
+// refresh (wired into applyEdit via registerFindRefresh, and into session
+// close / unmount / scroll via the hooks above).
+const {
+  findVisible,
+  findExpanded,
+  findQuery,
+  findReplaceText,
+  findMatchCase,
+  findWholeWords,
+  findUseRegex,
+  findError,
+  findHint,
+  findCurrentIndex,
+  findMatchesRef,
+  findHighlightRects,
+  findMatchPage,
+  openFind,
+  closeFind,
+  toggleFindExpand,
+  findNext,
+  findPrev,
+  replaceCurrent,
+  replaceAll,
+} = useFindReplace({
+  doc,
+  contentRoot,
+  pageRef,
+  editable,
+  paginationPages,
+  pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
+  applyEdit,
+  updateCaretStatus,
+  addToast,
+  getCaret: () => caret,
+  setCaret: (next) => {
+    caret = next;
+  },
+  getScrollContainer: () => scrollContainer,
+  registerRefresh: registerFindRefresh,
+  onSessionClose,
+  onUnmount,
+  onScroll: (cb) => scrollHooks.add(cb),
+});
+
+// Seed for espree-style handler defaults that never get real values here
+// (applyHeaderFooterEdit/applyNoteEdit's `= noDocument()` params, tocPageNumberFor).
 function noDocument() {
   return createDocument("unused");
 }
-function noFlatEntry() {
-  return flatBlocks.value[0];
-}
 
-/** One page item's precomputed render entry for DocPage — or null for the
- * continuation slice of a block whose real metrics have not arrived yet
- * (it renders whole at its first slice until measured). */
-function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = wholePageItem(0, 0), marks = false) {
-  const block = flatEntry.block;
-  const column = item.columnIndex;
-  if (isBreak(block)) {
-    return {
-      key: flatEntry.key,
-      memo: [block, flatEntry.section, flatEntry.blockIndex, marks, column],
-      kind: "break",
-      tag: "div",
-      className: "doc-break",
-      uneditable: true,
-      dataSection: flatEntry.section,
-      dataBlock: flatEntry.blockIndex,
-      breakKind: block.kind,
-      markerLabel: BREAK_LABELS[block.kind] ?? "Break",
-      column,
-    };
-  }
-  if (flatEntry.isTable || flatEntry.isImage) {
-    return {
-      key: flatEntry.key,
-      memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, flatEntry.cellSel, flatEntry.imgSel, column, model.listDefinitions],
-      kind: flatEntry.isTable ? "table" : "image",
-      blockProp: block,
-      sectionProp: flatEntry.section,
-      blockIndexProp: flatEntry.blockIndex,
-      // SPEC-032: cell paragraphs derive defined-list markers/indents from
-      // the model's definitions (DocTableBlock).
-      listDefinitions: flatEntry.isTable ? model.listDefinitions ?? [] : undefined,
-      imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
-      imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
-      column,
-    };
-  }
-  if (flatEntry.isToc) {
-    const toc = asToc(block);
-    const staleHeadings = tocHeadingsStale(model, toc);
-    const stalePagination = tocPageNumbersStale(toc, (anchor) => tocPageNumberFor(model, anchor));
-    return {
-      key: flatEntry.key,
-      memo: [block, flatEntry.section, flatEntry.blockIndex, staleHeadings, stalePagination, column],
-      kind: "toc",
-      uneditable: true,
-      blockProp: block,
-      sectionProp: flatEntry.section,
-      blockIndexProp: flatEntry.blockIndex,
-      tocStaleHeadings: staleHeadings,
-      tocStalePagination: stalePagination,
-      column,
-    };
-  }
-  const paragraph = flatEntry.paragraph;
-  let sliceStart;
-  let sliceEnd;
-  if (item.startLine !== undefined) {
-    const widthPx = sectionColumnFlowWidthPx(model, item.sectionIndex);
-    const offsets = pagination.isMeasured(block, widthPx) ? pagination.lineOffsetsFor(block) : null;
-    if (!offsets) {
-      if (item.startLine > 0) {
-        return null;
-      }
-    } else {
-      sliceStart = offsets[item.startLine] ?? 0;
-      sliceEnd =
-        item.endLine !== undefined && item.endLine < offsets.length
-          ? offsets[item.endLine]
-          : undefined;
-      if (sliceStart === 0 && sliceEnd === undefined) {
-        sliceStart = undefined;
-      }
-    }
-  }
-  let runs = paragraph.runs;
-  if (sliceStart !== undefined || sliceEnd !== undefined) {
-    const from = sliceStart ?? 0;
-    const tail = splitRuns(paragraph.runs, from)[1];
-    runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
-  }
-  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? []) };
-  const continuation = sliceStart !== undefined && sliceStart > 0;
-  if (continuation) {
-    // A continuation slice starts mid-paragraph: no space-before, no
-    // first-line indent, no repeated list marker.
-    styleObj.marginTop = "0";
-    styleObj.textIndent = "0";
-  }
-  if (sliceEnd !== undefined) {
-    styleObj.marginBottom = "0";
-  }
-  const sliceSig = `${sliceStart ?? ""}:${sliceEnd ?? ""}`;
-  let noteSig = "";
-  const renderRuns = runs.map((run, runIndex) => {
-    // A note reference mark (SPEC-031): renders its computed number as a
-    // caret atom standing for the one-character model placeholder (see
-    // lib/domCaret.ts), with the note's text as its tooltip (AC-14).
-    if (run.note) {
-      const label = noteLabelsMap.value.get(run.note.noteId) ?? run.text;
-      const title = noteTooltipsMap.value.get(run.note.noteId) ?? "";
-      noteSig += `${run.note.noteId}=${label}|${title};`;
-      return {
-        key: runKey(run, runIndex),
-        href: "",
-        styleObj: runStyle(run.formatting),
-        text: label,
-        segments: null,
-        atomText: run.text,
-        noteId: run.note.noteId,
-        title,
-      };
-    }
-    const href = runLinkHref(run.formatting);
-    const external = href ? isExternalLink(run.formatting) : false;
-    // Segments only when the run actually holds a space/tab to mark — the
-    // plain variant keeps the span's single-text-node DOM shape.
-    const segments = marks ? markSegments(run.text) : null;
-    const marked = segments && segments.some((segment) => segment.kind !== "text");
-    return {
-      key: runKey(run, runIndex),
-      href: href || "",
-      target: external ? "_blank" : undefined,
-      rel: external ? "noopener noreferrer" : undefined,
-      styleObj: runStyle(run.formatting),
-      text: run.text,
-      segments: marked ? segments : null,
-    };
-  });
-  return {
-    key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
-    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks, column, noteSig],
-    kind: "paragraph",
-    tag: headingTag(paragraph.headingLevel),
-    className: "doc-paragraph",
-    styleObj,
-    dataSection: flatEntry.section,
-    dataBlock: flatEntry.blockIndex,
-    sliceStart: continuation ? String(sliceStart) : undefined,
-    sliceMore: sliceEnd !== undefined ? "1" : undefined,
-    listMarker: continuation ? undefined : flatEntry.marker || undefined,
-    listLevel: paragraph.list ? paragraph.list.level : undefined,
-    runs: renderRuns,
-    needsBr: runs.length === 0,
-    column,
-  };
-}
-
-/** A header/footer's content rendered as DocPage entries (SPEC-029 AC-3..6,
- * AC-20, AC-21): the same paragraph/table/image shapes renderEntryFor
- * builds for body content, minus line-slicing (header/footer content never
- * splits across pages) and with any page-number/page-count field run
- * substituted for its live value on this specific page. Addressed with
- * section 0 (dataSection/dataBlock), matching withHeaderFooterModel's
- * synthetic single-section convention — only meaningful while this exact
- * band is the active editable one; read-only mirror bands ignore it. */
-function headerFooterRenderEntries(blocks = noBlocks(), pageNumber = 1, totalPages = 1, marks = false) {
-  const media = doc.value?.media ?? [];
-  const entries = noRenderEntries();
-  blocks.forEach((block, blockIndex) => {
-    if (isTable(block)) {
-      entries.push({
-        key: `hf:${blockIndex}`,
-        memo: [block, blockIndex, marks],
-        kind: "table",
-        blockProp: block,
-        sectionProp: 0,
-        blockIndexProp: blockIndex,
-      });
-      return;
-    }
-    if (isImage(block)) {
-      entries.push({
-        key: `hf:${blockIndex}`,
-        memo: [block, blockIndex],
-        kind: "image",
-        blockProp: block,
-        sectionProp: 0,
-        blockIndexProp: blockIndex,
-        imageSrc: mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)),
-        imageSelected: false,
-      });
-      return;
-    }
-    const paragraph = asParagraphBlock(block);
-    const styleObj = { ...paragraphStyle(paragraph) };
-    const renderRuns = paragraph.runs.map((run, runIndex) => {
-      const text = run.field
-        ? fieldValueText(run.field.kind, run.field.format, pageNumber, totalPages)
-        : run.text;
-      const segments = marks ? markSegments(text) : null;
-      const marked = segments && segments.some((segment) => segment.kind !== "text");
-      return {
-        key: runKey(run, runIndex),
-        href: "",
-        styleObj: runStyle(run.formatting),
-        text,
-        segments: marked ? segments : null,
-      };
-    });
-    entries.push({
-      key: `hf:${blockIndex}`,
-      memo: [block, blockIndex, pageNumber, totalPages, marks, hfRemountEpoch.value],
-      kind: "paragraph",
-      tag: headingTag(paragraph.headingLevel),
-      className: "doc-paragraph",
-      styleObj,
-      dataSection: 0,
-      dataBlock: blockIndex,
-      runs: renderRuns,
-      needsBr: renderRuns.length === 0,
-    });
-  });
-  return entries;
-}
-
-/** One note's blocks (or page slices of them) as DocPage entries (SPEC-031
- * AC-6): the paragraph/table/image shapes renderEntryFor builds, addressed
- * with section 0 (withNoteModel's synthetic convention) so the note body's
- * caret mapping works while it is the live editable surface. */
-function noteBlocksEntries(note = noNoteContent(), items = noNoteAreaItems(), marks = false) {
-  const entries = noRenderEntries();
-  if (!note) {
-    return entries;
-  }
-  const media = doc.value?.media ?? [];
-  for (const item of items) {
-    const block = note.blocks[item.blockIndex];
-    if (!block) {
-      continue;
-    }
-    if (isTable(block)) {
-      entries.push({
-        key: `note:${note.noteId}:${item.blockIndex}`,
-        memo: [block, item.blockIndex, marks],
-        kind: "table",
-        blockProp: block,
-        sectionProp: 0,
-        blockIndexProp: item.blockIndex,
-      });
-      continue;
-    }
-    if (isImage(block)) {
-      entries.push({
-        key: `note:${note.noteId}:${item.blockIndex}`,
-        memo: [block, item.blockIndex],
-        kind: "image",
-        blockProp: block,
-        sectionProp: 0,
-        blockIndexProp: item.blockIndex,
-        imageSrc: mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)),
-        imageSelected: false,
-      });
-      continue;
-    }
-    const paragraph = asParagraphBlock(block);
-    let sliceStart;
-    let sliceEnd;
-    if (item.startLine !== undefined) {
-      const offsets = pagination.lineOffsetsFor(block);
-      if (!offsets) {
-        // Unmeasured split: the first slice renders whole, continuations
-        // wait for measurement (the body's own rule).
-        if (item.startLine > 0) {
-          continue;
-        }
-      } else {
-        sliceStart = offsets[item.startLine] ?? 0;
-        sliceEnd =
-          item.endLine !== undefined && item.endLine < offsets.length
-            ? offsets[item.endLine]
-            : undefined;
-        if (sliceStart === 0 && sliceEnd === undefined) {
-          sliceStart = undefined;
-        }
-      }
-    }
-    let runs = paragraph.runs;
-    if (sliceStart !== undefined || sliceEnd !== undefined) {
-      const from = sliceStart ?? 0;
-      const tail = splitRuns(paragraph.runs, from)[1];
-      runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
-    }
-    const continuation = sliceStart !== undefined && sliceStart > 0;
-    const renderRuns = runs.map((run, runIndex) => {
-      const segments = marks ? markSegments(run.text) : null;
-      const marked = segments && segments.some((segment) => segment.kind !== "text");
-      return {
-        key: runKey(run, runIndex),
-        href: "",
-        styleObj: runStyle(run.formatting),
-        text: run.text,
-        segments: marked ? segments : null,
-      };
-    });
-    entries.push({
-      key: `note:${note.noteId}:${item.blockIndex}${continuation ? `@${sliceStart}` : ""}`,
-      memo: [block, item.blockIndex, `${sliceStart ?? ""}:${sliceEnd ?? ""}`, marks, noteRemountEpoch.value],
-      kind: "paragraph",
-      tag: headingTag(paragraph.headingLevel),
-      className: "doc-paragraph",
-      styleObj: { ...paragraphStyle(paragraph) },
-      dataSection: 0,
-      dataBlock: item.blockIndex,
-      sliceStart: continuation ? String(sliceStart) : undefined,
-      sliceMore: sliceEnd !== undefined ? "1" : undefined,
-      runs: renderRuns,
-      needsBr: renderRuns.length === 0,
-    });
-  }
-  return entries;
-}
-
-/** One page's footnote or endnote area as DocPage's prop shape (SPEC-031):
- * per-note groups in area order, each with its number label (on the group
- * that starts the note), its rendered entries and whether it is the live
- * editable surface. The active note renders its full content unsliced
- * where it starts; its read-only continuation slices elsewhere hide. */
-function noteAreaView(model = noDocument(), area = noNoteArea(), marks = false) {
-  if (!area) {
-    return null;
-  }
-  const activeId = activeNote.value?.noteId ?? null;
-  const labels = noteLabelsMap.value;
-  const groups = [];
-  let current = null;
-  for (const item of area.items) {
-    if (!current || current.noteId !== item.noteId) {
-      current = { noteId: item.noteId, items: noNoteAreaItems() };
-      groups.push(current);
-    }
-    current.items.push(item);
-  }
-  const notes = [];
-  for (const group of groups) {
-    const note = noteById(model, group.noteId);
-    if (!note) {
-      continue;
-    }
-    const first = group.items[0];
-    const starts = first.blockIndex === 0 && (first.startLine === undefined || first.startLine === 0);
-    const isActive = editable.value && activeId === group.noteId;
-    if (isActive && !starts) {
-      continue; // The active note renders whole where it starts.
-    }
-    const items = isActive
-      ? note.blocks.map((_, blockIndex) => ({ noteId: note.noteId, blockIndex }))
-      : group.items;
-    notes.push({
-      noteId: note.noteId,
-      kind: note.kind,
-      label: starts ? (labels.get(note.noteId) ?? "") : "",
-      editable: isActive,
-      entries: noteBlocksEntries(note, items, marks),
-    });
-  }
-  return notes.length > 0 ? { kind: area.kind, notes } : null;
-}
-
-/** The footnote area's band geometry (SPEC-031 AC-2): pinned to the bottom
- * of the content area — the planner reserved exactly this height. */
-function footnoteAreaStyle(margins = { topCm: 0, rightCm: 0, bottomCm: 0, leftCm: 0 }, heightPx = 0) {
-  return {
-    left: `${margins.leftCm}cm`,
-    right: `${margins.rightCm}cm`,
-    bottom: `${margins.bottomCm}cm`,
-    height: `${heightPx}px`,
-  };
-}
-
-/** The header/footer band geometry for a page (SPEC-029): positioned
- * within the section's own top/bottom margin so it never competes with the
- * body content box (which still starts exactly at the margin, unchanged by
- * SPEC-029). Null when nothing should render there — the read-only mirror
- * bands of an unedited, content-free header/footer stay entirely out of
- * the DOM. */
-function headerFooterBandStyle(margins = { topCm: 0, rightCm: 0, bottomCm: 0, leftCm: 0 }, part = "header") {
-  const left = `${margins.leftCm}cm`;
-  const right = `${margins.rightCm}cm`;
-  if (part === "header") {
-    return { left, right, height: `${margins.topCm}cm`, top: "0" };
-  }
-  return { left, right, height: `${margins.bottomCm}cm`, bottom: "0" };
-}
-
-// The rendered pages: the layout's items joined with flatBlocks' per-block
-// render data, styles resolved from each page's own geometry (AC-17..19).
-// Under virtualization only realized pages build entries; the rest render
-// as empty boxes with the layout's exact geometry.
-const pagedViews = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return [];
-  }
-  const marks = marksOn.value;
-  const byAddress = new Map();
-  for (const entry of flatBlocks.value) {
-    byAddress.set(`${entry.section}:${entry.blockIndex}`, entry);
-  }
-  const lastSection = model.sections.length - 1;
-  const virtual = virtualizing.value;
-  const range = viewportPageRange.value;
-  const caretIndex = caretPage.value - 1;
-  const anchorIndex = anchorPage.value;
-  const findIndex = findMatchPage.value;
-  const active = activeHeaderFooter.value;
-  const numbers = pageNumbers.value;
-  const totalPages = paginationPages.value.length;
-  const pageNoteAreas = pagination.noteAreas.value;
-  return paginationPages.value.map((page, pageIndex) => {
-    const realized =
-      !virtual ||
-      (pageIndex >= range.start && pageIndex <= range.end) ||
-      pageIndex === caretIndex ||
-      pageIndex === anchorIndex ||
-      pageIndex === findIndex ||
-      realizedSticky.has(page);
-    if (!realized) {
-      return {
-        pageStyle: {
-          width: `${page.pageSize.widthCm}cm`,
-          height: `${page.pageSize.heightCm}cm`,
-        },
-        contentStyle: {
-          padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
-        },
-        entries: [],
-        columns: page.columns,
-        virtual: true,
-        // The header/footer bands still need real geometry even on a
-        // virtualized page (SPEC-029): they are what double-clicking the
-        // margin hit-tests against (AC-1) — a virtual page still occupies
-        // its full on-screen box, just without body content mounted.
-        headerStyle: headerFooterBandStyle(page.margins, "header"),
-        footerStyle: headerFooterBandStyle(page.margins, "footer"),
-        headerEntries: [],
-        footerEntries: [],
-        footnoteArea: null,
-        endnoteArea: null,
-      };
-    }
-    realizedSticky.add(page);
-    const entries = [];
-    for (const item of page.items) {
-      const flatEntry = byAddress.get(`${item.sectionIndex}:${item.blockIndex}`);
-      if (!flatEntry) {
-        continue;
-      }
-      const entry = renderEntryFor(model, flatEntry, item, marks);
-      if (!entry) {
-        continue;
-      }
-      entries.push(entry);
-      const sectionBlocks = model.sections[item.sectionIndex].blocks;
-      if (
-        marks &&
-        item.sectionIndex < lastSection &&
-        item.blockIndex === sectionBlocks.length - 1 &&
-        entry.sliceMore === undefined
-      ) {
-        const kind =
-          model.sections[item.sectionIndex + 1].start === "continuous" ? "continuous" : "nextPage";
-        entries.push({
-          key: `${flatEntry.key}:marker`,
-          memo: [kind, marks, flatEntry.key],
-          kind: "marker",
-          tag: "div",
-          className: "doc-section-marker",
-          uneditable: true,
-          sectionMarker: kind,
-          markerLabel: SECTION_MARKER_LABELS[kind],
-          column: entry.column,
-        });
-      }
-    }
-    // Header/footer bands (SPEC-029 AC-9, AC-10): every page of a section
-    // renders the same resolved content — the one page `active` addresses
-    // renders it as the live editable surface, every other page read-only.
-    const pageNumber = numbers[pageIndex] ?? pageIndex + 1;
-    const headerEditable = !!active && active.part === "header" && active.pageIndex === pageIndex;
-    const footerEditable = !!active && active.part === "footer" && active.pageIndex === pageIndex;
-    const headerContent = headerFooterForPage(model, paginationPages.value, pageIndex, pageNumber, "header");
-    const footerContent = headerFooterForPage(model, paginationPages.value, pageIndex, pageNumber, "footer");
-    const headerBlocks = headerContent?.blocks ?? (headerEditable ? createEmptyHeaderFooterContent().blocks : null);
-    const footerBlocks = footerContent?.blocks ?? (footerEditable ? createEmptyHeaderFooterContent().blocks : null);
-    // Note areas (SPEC-031): the footnote band pins to the content bottom;
-    // the endnote area flows after the body content (AC-2, AC-4).
-    const footnotePlan = pageNoteAreas.footnotes[pageIndex] ?? null;
-    const footnoteView = footnotePlan ? noteAreaView(model, footnotePlan, marks) : null;
-    const endnoteView = noteAreaView(model, pageNoteAreas.endnotes[pageIndex] ?? null, marks);
-    return {
-      pageStyle: {
-        width: `${page.pageSize.widthCm}cm`,
-        height: `${page.pageSize.heightCm}cm`,
-      },
-      contentStyle: {
-        padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
-      },
-      entries,
-      columns: page.columns,
-      virtual: false,
-      // Note editing does not dim the body (matching Word): the note area
-      // is the only live surface, but the body stays a legible, clickable
-      // reference — a body mousedown exits note editing.
-      dimmed: !!active,
-      headerEditable,
-      footerEditable,
-      headerStyle: headerFooterBandStyle(page.margins, "header"),
-      footerStyle: headerFooterBandStyle(page.margins, "footer"),
-      headerEntries: headerBlocks ? headerFooterRenderEntries(headerBlocks, pageNumber, totalPages, marks) : [],
-      footerEntries: footerBlocks ? headerFooterRenderEntries(footerBlocks, pageNumber, totalPages, marks) : [],
-      footnoteArea:
-        footnotePlan && footnoteView
-          ? { ...footnoteView, style: footnoteAreaStyle(page.margins, footnotePlan.heightPx) }
-          : null,
-      endnoteArea: endnoteView,
-    };
-  });
+// The paginated render data is derived by usePaginationView (it owns flatBlocks
+// and the renderEntryFor / note-area / header-band builders). Kept in a
+// composable because it is the framework-free counterpart to the editing core —
+// nothing here edits the model, it only says what the canvas shows.
+const { pagedViews } = usePaginationView({
+  doc,
+  pagination,
+  noteLabelsMap,
+  noteTooltipsMap,
+  pageNumbers,
+  marksOn,
+  virtualizing,
+  viewportPageRange,
+  caretPage,
+  anchorPage,
+  findMatchPage,
+  activeHeaderFooter,
+  activeNote,
+  editable,
+  cellSelection,
+  imageSelection,
+  remount,
+  realizedSticky,
+  hfRemountEpoch,
+  noteRemountEpoch,
+  tocPageNumberFor,
 });
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
@@ -6135,65 +5699,6 @@ function handleTogglePagination(key = "") {
 
 const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
 
-// Sections flattened to one list so a single v-for can carry v-memo (Vue
-// bars v-memo on elements nested inside another v-for). The memo skips
-// re-rendering paragraphs whose block object is unchanged — textEditing
-// replaces edited blocks — which is what keeps typing responsive on very
-// large documents.
-const flatBlocks = computed(() => {
-  if (!doc.value) {
-    return [];
-  }
-  // Keys carry the remount state (see `remount`): bumping it renames a key,
-  // which makes Vue mount that paragraph fresh instead of patching DOM the
-  // browser's IME composition may have rearranged underneath it.
-  const bump = remount.value;
-  // List markers are derived from the whole block sequence (SPEC-018 AC-10,
-  // AC-11), so they are computed here per render rather than stored — and
-  // each entry's marker joins its v-memo key, because an edit elsewhere in
-  // a list renumbers items whose block object never changed.
-  const markers = listMarkers(doc.value);
-  // The active cell-range highlight joins table entries' v-memo keys the
-  // same way (SPEC-022 AC-16): the highlighted table's block object never
-  // changes when the drag extends.
-  const range = cellSelection.value;
-  // The selected image (SPEC-024) joins its own entry's v-memo key the same
-  // way, so a wrap-mode/selection change re-renders it.
-  const selectedImage = imageSelection.value;
-  const media = doc.value.media ?? [];
-  return doc.value.sections.flatMap((section, sectionIndex) =>
-    section.blocks.map((block, blockIndex) => {
-      const address = `${sectionIndex}:${blockIndex}`;
-      const suffix = bump.key === address ? `:${bump.count}` : "";
-      const table = isTable(block);
-      const image = isImage(block);
-      const toc = isToc(block);
-      const cellSel =
-        table && range && range.section === sectionIndex && range.block === blockIndex
-          ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
-          : "";
-      const imgSelected =
-        image && !!selectedImage && selectedImage.section === sectionIndex && selectedImage.block === blockIndex;
-      return {
-        key: `${bump.epoch}:${address}${suffix}`,
-        block,
-        // The paragraph-branch view of the block — see asParagraphBlock;
-        // the template's table/image branches never read it.
-        paragraph: asParagraphBlock(block),
-        isTable: table,
-        isImage: image,
-        isToc: toc,
-        imageSrc: image ? mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)) : "",
-        imageSelected: imgSelected,
-        section: sectionIndex,
-        blockIndex,
-        marker: markers[sectionIndex][blockIndex],
-        cellSel,
-        imgSel: imgSelected ? "1" : "",
-      };
-    }),
-  );
-});
 const downloadFormat = computed(() =>
   doc.value && doc.value.format === "odt" ? "odt" : "docx",
 );
@@ -6259,56 +5764,6 @@ function deleteOpenDocument() {
   router.push("/");
 }
 
-// --- find and replace (SPEC-017) -------------------------------------------
-// The pure logic (compiling a query, locating matches, rewriting the model)
-// lives in lib/findReplace.ts; this view owns the DOM-facing half: the find
-// bar's reactive state, the on-screen highlight overlay, scrolling the current
-// match into view, and applying replaces through the same applyEdit path as
-// every other edit so undo/autosave treat them identically.
-//
-// The performance contract (AC-30, AC-31 — first results within 300 ms and no
-// typing block on a 200-page document) shapes the whole design: finding
-// matches is a cheap string scan, but *measuring* a DOM rectangle for every
-// match is not, so the overlay only ever measures matches whose paragraph is
-// on screen (plus the current one), and a document edit while the bar is open
-// reschedules that work on a debounce/rAF instead of running it synchronously
-// in the keystroke path.
-const findVisible = ref(false);
-const findExpanded = ref(false);
-const findQuery = ref("");
-const findReplaceText = ref("");
-const findMatchCase = ref(false);
-const findWholeWords = ref(false);
-const findUseRegex = ref(false);
-const findError = ref("");
-const findHint = ref("");
-const findCurrentIndex = ref(-1);
-// A shallow ref of the match list and one of the overlay rectangles: shallow
-// because both are wholesale-replaced, never mutated in place, and can grow
-// large (thousands of matches) — a deep proxy per entry would be wasteful.
-const findMatchesRef = shallowRef(noMatches());
-const findHighlightRects = shallowRef(noHighlightRects());
-const pageRef = useTemplateRef("pageRef");
-
-// The caret to restore when Escape closes the bar (AC-13), a per-block index
-// of the matches for viewport-limited measuring, and the scheduling handles
-// that keep highlight work off the keystroke path. Plain variables — nothing
-// renders from them. window.setTimeout/requestAnimationFrame return numbers in
-// the DOM lib, so 0 is a safe "nothing scheduled" sentinel.
-let caretBeforeFind = noCaret();
-let findMatchesByBlock = new Map();
-let findIdleHandle = noIdleHandle();
-let findDebounceTimer = 0;
-let findHintTimer = 0;
-
-function currentFindOptions() {
-  return {
-    matchCase: findMatchCase.value,
-    wholeWords: findWholeWords.value,
-    regex: findUseRegex.value,
-  };
-}
-
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
  * the bar is already open) and Ctrl/Cmd+P (print) — so this is bound on
@@ -6341,450 +5796,6 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   }
 }
 
-function openFind(expand = false) {
-  if (!doc.value || !editable.value) {
-    return;
-  }
-  if (!findVisible.value) {
-    // Snapshot the caret only on a fresh open, so Escape can put it back
-    // exactly where it was (AC-13) even after navigation moved the selection.
-    caretBeforeFind = caret;
-  }
-  findVisible.value = true;
-  if (expand) {
-    findExpanded.value = true;
-  }
-  runSearch();
-}
-
-/** Escape / the close button (AC-4, AC-11, AC-12): hide the bar, clear the
- * highlights, and — for Escape — return the caret to where it was (AC-13). */
-function closeFind(restoreCaret = false) {
-  if (!findVisible.value) {
-    return;
-  }
-  findVisible.value = false;
-  findExpanded.value = false;
-  findError.value = "";
-  findHint.value = "";
-  setFindMatches(noMatches(), -1);
-  findHighlightRects.value = noHighlightRects();
-  cancelFindScheduled();
-  const root = contentRoot.value;
-  if (root && editable.value) {
-    root.focus();
-    if (restoreCaret && caretBeforeFind) {
-      caret = caretBeforeFind;
-      setDomCaret(root, caret);
-      updateCaretStatus({ start: caret, end: caret });
-    }
-  }
-}
-
-function toggleFindExpand() {
-  findExpanded.value = !findExpanded.value;
-}
-
-/** Tears the bar down when the document session ends (navigation/unmount).
- * The three search options are deliberately kept — they persist for the
- * session (AC-23), across documents too. */
-function resetFindState() {
-  findVisible.value = false;
-  findExpanded.value = false;
-  findQuery.value = "";
-  findReplaceText.value = "";
-  findError.value = "";
-  findHint.value = "";
-  setFindMatches(noMatches(), -1);
-  findHighlightRects.value = noHighlightRects();
-  cancelFindScheduled();
-}
-
-function setFindMatches(matches = noMatches(), index = -1) {
-  findMatchesRef.value = matches;
-  findCurrentIndex.value = index;
-  const byBlock = new Map();
-  for (const match of matches) {
-    const key = `${match.section}:${match.block}`;
-    const list = byBlock.get(key);
-    if (list) {
-      list.push(match);
-    } else {
-      byBlock.set(key, [match]);
-    }
-  }
-  findMatchesByBlock = byBlock;
-}
-
-/** Recomputes matches for the current query/options (AC-5's "as the user
- * types"). Cheap enough to run synchronously even on a large document (AC-30);
- * only the DOM measurement is deferred. `preserveAnchor`, when given, keeps the
- * current match near a model position across a change. */
-function runSearch(preserveAnchor = noCaret()) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  findHint.value = "";
-  const compiled = compileQuery(findQuery.value, currentFindOptions());
-  if (compiled === null) {
-    findError.value = "";
-    setFindMatches(noMatches(), -1);
-    scheduleFindMeasure();
-    return;
-  }
-  if (isQueryError(compiled)) {
-    // AC-24, AC-25: an invalid regex shows an inline error and does not run —
-    // no matches, no highlights.
-    findError.value = compiled.error;
-    setFindMatches(noMatches(), -1);
-    scheduleFindMeasure();
-    return;
-  }
-  findError.value = "";
-  const matches = findMatches(model, compiled);
-  let index = matches.length > 0 ? 0 : -1;
-  if (preserveAnchor && matches.length > 0) {
-    index = indexAtOrAfter(matches, preserveAnchor);
-  }
-  setFindMatches(matches, index);
-  scheduleFindMeasure();
-  if (index >= 0) {
-    scheduleScrollCurrentIntoView();
-  }
-}
-
-function findNext() {
-  stepFind(1);
-}
-
-function findPrev() {
-  stepFind(-1);
-}
-
-/** Enter / Shift+Enter and the prev/next buttons (AC-3, AC-8, AC-9), wrapping
- * at either end with a transient hint (AC-10). */
-function stepFind(direction = 1) {
-  const matches = findMatchesRef.value;
-  if (matches.length === 0) {
-    return;
-  }
-  let index = findCurrentIndex.value;
-  if (index < 0) {
-    index = 0;
-  } else {
-    const moved = index + direction;
-    if (moved < 0) {
-      index = matches.length - 1;
-      showFindHint("Wrapped to bottom");
-    } else if (moved >= matches.length) {
-      index = 0;
-      showFindHint("Wrapped to top");
-    } else {
-      index = moved;
-    }
-  }
-  findCurrentIndex.value = index;
-  scheduleFindMeasure();
-  scheduleScrollCurrentIntoView();
-}
-
-function showFindHint(text = "") {
-  findHint.value = text;
-  window.clearTimeout(findHintTimer);
-  findHintTimer = window.setTimeout(() => {
-    findHint.value = "";
-  }, 1500);
-}
-
-function currentFindSelection() {
-  const matches = findMatchesRef.value;
-  const index = findCurrentIndex.value;
-  if (index >= 0 && index < matches.length) {
-    return matchSelection(matches[index]);
-  }
-  return caret ? caretSelection(caret) : noSelection();
-}
-
-/** The "Replace" button (AC-16): replaces the current match, taking its first
- * run's formatting (AC-26), then advances the current match to the next one so
- * repeated clicks walk the document (AC-8). Focus stays in the bar — applyEdit
- * places the DOM caret without stealing focus — so the button can be clicked
- * again immediately. */
-function replaceCurrent() {
-  const model = doc.value;
-  const matches = findMatchesRef.value;
-  const index = findCurrentIndex.value;
-  if (!model || !editable.value || findError.value !== "" || index < 0 || index >= matches.length) {
-    return;
-  }
-  const match = matches[index];
-  const before = matchSelection(match);
-  const anchor = {
-    section: match.section,
-    block: match.block,
-    offset: match.start + findReplaceText.value.length,
-  };
-  applyEdit(replaceMatch(model, match, findReplaceText.value), before, "replace");
-  refreshFindAfterEdit(anchor);
-}
-
-/** The "Replace all" button (AC-17): one edit for every match (AC-19's single
- * undo step), reporting the count (AC-18). Enabled even with no matches so it
- * can report "Replaced 0 occurrences". */
-function replaceAll() {
-  const model = doc.value;
-  if (!model || !editable.value || findQuery.value === "" || findError.value !== "") {
-    return;
-  }
-  const compiled = compileQuery(findQuery.value, currentFindOptions());
-  if (compiled === null || isQueryError(compiled)) {
-    return;
-  }
-  const matches = findMatches(model, compiled);
-  const count = matches.length;
-  if (count > 0) {
-    const before = currentFindSelection() ?? caretSelection(documentStart());
-    applyEdit(replaceMatches(model, matches, findReplaceText.value), before, "replace all");
-  }
-  addToast(`Replaced ${count} occurrences`);
-  refreshFindAfterEdit(noCaret());
-}
-
-/** Recomputes matches after a model edit (a replace, or typing in the canvas
- * with the bar open), keeping the current match near `anchor`. */
-function refreshFindAfterEdit(anchor = noCaret()) {
-  const model = doc.value;
-  if (!model || !findVisible.value) {
-    return;
-  }
-  const compiled = compileQuery(findQuery.value, currentFindOptions());
-  if (compiled === null || isQueryError(compiled)) {
-    setFindMatches(noMatches(), -1);
-    scheduleFindMeasure();
-    return;
-  }
-  const matches = findMatches(model, compiled);
-  const index = anchor
-    ? indexAtOrAfter(matches, anchor)
-    : matches.length > 0
-      ? 0
-      : -1;
-  setFindMatches(matches, index);
-  scheduleFindMeasure();
-  if (index >= 0) {
-    scheduleScrollCurrentIntoView();
-  }
-}
-
-function currentFindAnchor() {
-  const matches = findMatchesRef.value;
-  const index = findCurrentIndex.value;
-  if (index >= 0 && index < matches.length) {
-    return matchSelection(matches[index]).anchor;
-  }
-  return caret;
-}
-
-/** Called from every model-edit path while the bar is open. Debounced so a
- * burst of keystrokes reschedules a single recompute rather than rescanning
- * and re-measuring on every character — the crux of AC-31 (typing stays
- * responsive even with thousands of matches highlighted). */
-function scheduleFindRefresh() {
-  if (!findVisible.value) {
-    return;
-  }
-  window.clearTimeout(findDebounceTimer);
-  findDebounceTimer = window.setTimeout(() => {
-    refreshFindAfterEdit(currentFindAnchor());
-  }, 120);
-}
-
-function scheduleFindMeasure() {
-  if (findIdleHandle) {
-    return;
-  }
-  // Highlight measurement forces a full reflow — on a 200-page canvas
-  // (SPEC-028) that is the most expensive read in the find path, and the
-  // match COUNT never depends on it. Idle scheduling keeps it out of the
-  // keystroke-to-first-result window (SPEC-017 AC-30/31).
-  findIdleHandle = scheduleIdleWork(
-    () => {
-      findIdleHandle = null;
-      measureFindHighlights();
-    },
-    { timeoutMs: 150, fallbackBudgetMs: 8, maxBudgetMs: 16 },
-  );
-}
-
-function scheduleScrollCurrentIntoView() {
-  window.requestAnimationFrame(scrollCurrentMatchIntoView);
-}
-
-function cancelFindScheduled() {
-  if (findIdleHandle) {
-    findIdleHandle.cancel();
-    findIdleHandle = null;
-  }
-  window.clearTimeout(findDebounceTimer);
-  window.clearTimeout(findHintTimer);
-}
-
-function findViewportBounds() {
-  if (scrollContainer) {
-    const rect = scrollContainer.getBoundingClientRect();
-    return { top: rect.top, bottom: rect.bottom };
-  }
-  return { top: 0, bottom: window.innerHeight };
-}
-
-/** The set of "section:block" keys for paragraphs currently on (or just off)
- * screen — the only ones whose matches are worth measuring. Walks pages
- * first (SPEC-028): off-screen pages are skipped whole, so a 200-page
- * document reads a few hundred rects here, not one per paragraph. */
-function visibleFindBlockKeys(root = noElement(), bounds = { top: 0, bottom: 0 }) {
-  const keys = new Set();
-  if (!root) {
-    return keys;
-  }
-  const margin = 200;
-  const pageElements = root.querySelectorAll('[data-testid="document-page"]');
-  const scopes = [];
-  if (pageElements.length > 0) {
-    for (const pageElement of pageElements) {
-      const rect = pageElement.getBoundingClientRect();
-      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
-        continue;
-      }
-      scopes.push(pageElement);
-    }
-  } else {
-    scopes.push(root);
-  }
-  for (const scope of scopes) {
-    for (const element of scope.querySelectorAll(BLOCK_SELECTOR)) {
-      const rect = element.getBoundingClientRect();
-      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
-        continue;
-      }
-      keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
-    }
-  }
-  return keys;
-}
-
-function matchClientRects(root = noElement(), match = { section: 0, block: 0, start: 0, end: 0 }) {
-  if (!root) {
-    return [];
-  }
-  const startPoint = domPointForCaret(root, {
-    section: match.section,
-    block: match.block,
-    offset: match.start,
-  });
-  const endPoint = domPointForCaret(root, {
-    section: match.section,
-    block: match.block,
-    offset: match.end,
-  });
-  if (!startPoint || !endPoint) {
-    return [];
-  }
-  const range = root.ownerDocument.createRange();
-  try {
-    range.setStart(startPoint.node, startPoint.offset);
-    range.setEnd(endPoint.node, endPoint.offset);
-  } catch {
-    return [];
-  }
-  return Array.from(range.getClientRects());
-}
-
-/** Rebuilds the overlay rectangles, measuring only on-screen matches (plus the
- * current one). Runs off the keystroke path via rAF. */
-function measureFindHighlights() {
-  const root = contentRoot.value;
-  const pageEl = pageRef.value;
-  const matches = findMatchesRef.value;
-  if (!findVisible.value || !root || !pageEl || matches.length === 0) {
-    findHighlightRects.value = noHighlightRects();
-    return;
-  }
-  const pageRect = pageEl.getBoundingClientRect();
-  const visibleKeys = visibleFindBlockKeys(root, findViewportBounds());
-  const currentIndex = findCurrentIndex.value;
-  const rects = noHighlightRects();
-  for (const [key, blockMatches] of findMatchesByBlock) {
-    if (!visibleKeys.has(key)) {
-      continue;
-    }
-    for (const match of blockMatches) {
-      pushMatchRects(rects, root, pageRect, match, false, currentIndex, matches);
-    }
-  }
-  // The current match is always drawn distinctly, even if it fell outside the
-  // measured band before its scroll-into-view lands (AC-6).
-  if (currentIndex >= 0 && currentIndex < matches.length) {
-    const current = matches[currentIndex];
-    if (!visibleKeys.has(`${current.section}:${current.block}`)) {
-      pushMatchRects(rects, root, pageRect, current, true, currentIndex, matches);
-    }
-  }
-  findHighlightRects.value = rects;
-}
-
-function pushMatchRects(
-  rects = noHighlightRects(),
-  root = noElement(),
-  pageRect = new DOMRect(),
-  match = { section: 0, block: 0, start: 0, end: 0 },
-  forceCurrent = false,
-  currentIndex = -1,
-  matches = noMatches(),
-) {
-  const isCurrent = forceCurrent || matches[currentIndex] === match;
-  for (const rect of matchClientRects(root, match)) {
-    rects.push({
-      left: rect.left - pageRect.left,
-      top: rect.top - pageRect.top,
-      width: rect.width,
-      height: rect.height,
-      current: isCurrent,
-    });
-  }
-}
-
-/** Scrolls the current match into view (AC-7); a following scroll event
- * re-measures the overlay for the new viewport. */
-function scrollCurrentMatchIntoView() {
-  const root = contentRoot.value;
-  const matches = findMatchesRef.value;
-  const index = findCurrentIndex.value;
-  if (!root || !scrollContainer || index < 0 || index >= matches.length) {
-    return;
-  }
-  const rects = matchClientRects(root, matches[index]);
-  if (rects.length === 0) {
-    return;
-  }
-  const rect = rects[0];
-  const view = scrollContainer.getBoundingClientRect();
-  const pad = 60;
-  if (rect.top < view.top + pad) {
-    scrollContainer.scrollTop -= view.top + pad - rect.top;
-  } else if (rect.bottom > view.bottom - pad) {
-    scrollContainer.scrollTop += rect.bottom - (view.bottom - pad);
-  }
-}
-
-// Re-run the search whenever the query or an option changes while the bar is
-// open (AC-5, AC-20..23). Keeping the current match near where it was avoids
-// the view jumping to the top of the document on an option toggle.
-watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
-  if (findVisible.value) {
-    runSearch(currentFindAnchor());
-  }
-});
 </script>
 
 <template>
