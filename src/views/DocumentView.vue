@@ -52,6 +52,7 @@ import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
 import { useImages } from "./document/useImages";
+import { useLinks } from "./document/useLinks";
 import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
@@ -524,17 +525,6 @@ let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
 
-// --- table of contents (SPEC-033) -------------------------------------------
-// A click "selects" a TOC block the same way SPEC-024 selects an image
-// (AC-14, AC-15): set by DocTocBlock's own click handling, cleared by a
-// mousedown elsewhere on the canvas or Escape — see handleTocAction and
-// handleKeyDown's typing-attempt guard below.
-const tocSelection = ref(noTocSelection());
-
-function clearTocSelection() {
-  tocSelection.value = null;
-}
-
 // --- headers, footers and page numbers (SPEC-029) ---------------------------
 // The section/part/kind currently being edited, or null while editing the
 // body (AC-1, AC-2, AC-7, AC-8) — set by double-clicking a header/footer
@@ -564,8 +554,7 @@ const hfRemountEpoch = ref(0);
 const headerFooterOptionsOpen = ref(false);
 const headerFooterOptionsInitial = ref({});
 const pageNumberDialogOpen = ref(false);
-// "Insert -> Table of contents" (SPEC-033 AC-1, AC-5..7).
-const tocOptionsDialogOpen = ref(false);
+// The TOC options dialog state lives in useLinks (SPEC-033).
 
 /** The one DOM element currently rendering as an editable header/footer
  * band, if any — set by DocPage's `data-hf-editable` attribute on whichever
@@ -860,117 +849,6 @@ function handlePageNumberCancel() {
   pageNumberDialogOpen.value = false;
 }
 
-/** A heading anchor's current displayed page number (SPEC-033): resolved
- * through the pagination controller, so it reflects whatever the canvas has
- * actually measured — null for an anchor that no longer resolves to a
- * heading (used both to generate/update entries and to detect the
- * "pagination changed" staleness the block's update control watches). */
-function tocPageNumberFor(model = noDocument(), anchor = "") {
-  const position = anchorCaret(model, anchor);
-  if (!position) {
-    return null;
-  }
-  const pageIndex = pagination.pageOfCaret(position);
-  return pageNumbers.value[pageIndex] ?? null;
-}
-
-/** "Insert -> Table of contents" (SPEC-033 AC-1): opens the options dialog.
- * Unavailable while editing a header/footer band — a TOC is body content. */
-function openTocDialog() {
-  if (!doc.value || !editable.value || activeHeaderFooter.value) {
-    return;
-  }
-  tocOptionsDialogOpen.value = true;
-}
-
-function handleTocInsert(options = defaultTocOptions()) {
-  tocOptionsDialogOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    insertTableOfContents(model, selection, options, (anchor) => tocPageNumberFor(model, anchor)),
-    selection,
-    "insert table of contents",
-  );
-  root.focus();
-}
-
-function handleTocCancel() {
-  tocOptionsDialogOpen.value = false;
-}
-
-/** Deletes the selected TOC block (SPEC-033 AC-16): the generic whole-atom
- * range delete every Image/Table/BreakBlock already uses — see
- * handleKeyDown's Delete/Backspace branch above. The headings it was built
- * from live in their own blocks and are never touched. */
-function handleTocDelete() {
-  const location = tocSelection.value;
-  const model = doc.value;
-  if (!location || !model || !editable.value) {
-    return;
-  }
-  const start = { section: location.section, block: location.blockIndex, offset: 0 };
-  const end = { section: location.section, block: location.blockIndex, offset: 1 };
-  const selection = caretSelection(start);
-  applyEdit(deleteRange(model, { anchor: start, focus: end }), selection, "delete table of contents");
-}
-
-/** DocTocBlock's single `action` event (SPEC-033 AC-8, AC-9, AC-12, AC-13):
- * one payload shape for the three things a TOC block can trigger, so the
- * event only has to be relayed (not fanned into three) through
- * DocBlockEntries/DocPageBlock/DocPage up to this view. */
-function handleTocAction(payload = { type: "jump", anchor: "", section: 0, blockIndex: 0 }) {
-  if (payload.type === "jump") {
-    clearTocSelection();
-    jumpToAnchor(payload.anchor ?? "");
-  } else if (payload.type === "update-page-numbers") {
-    handleTocUpdatePageNumbers(payload.section, payload.blockIndex);
-  } else if (payload.type === "update-entire") {
-    handleTocUpdateEntire(payload.section, payload.blockIndex);
-  } else if (payload.type === "select") {
-    clearCellSelection();
-    clearImageSelection();
-    tocSelection.value = { section: payload.section, blockIndex: payload.blockIndex };
-  }
-}
-
-/** "Update page numbers only" (SPEC-033 AC-12). */
-function handleTocUpdatePageNumbers(section = 0, blockIndex = 0) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  applyEdit(
-    updateTocPageNumbersOnly(model, selection, section, blockIndex, (anchor) =>
-      tocPageNumberFor(model, anchor),
-    ),
-    selection,
-    "update page numbers",
-  );
-}
-
-/** "Update entire table" (SPEC-033 AC-13). */
-function handleTocUpdateEntire(section = 0, blockIndex = 0) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  applyEdit(
-    updateTocEntirely(model, selection, section, blockIndex, (anchor) =>
-      tocPageNumberFor(model, anchor),
-    ),
-    selection,
-    "update table of contents",
-  );
-}
 
 // --- footnotes and endnotes (SPEC-031) ---------------------------------------
 // The note currently being edited, or null while editing the body — set by
@@ -1370,19 +1248,6 @@ let painterFormat = noPainterFormat();
 // echo (setDomSelection re-selecting the same range still raises a
 // selectionchange) re-triggering the same application over and over.
 let lastPainterSelection = noSelection();
-
-// --- hyperlinks and bookmarks (SPEC-025) ------------------------------------
-// The link/bookmark dialogs capture the selection they will apply to when
-// they open (their own inputs take the focus); the chip tracks the link
-// extent the caret currently sits in. Plain vars where nothing renders.
-const linkDialogOpen = ref(false);
-const linkDialogInitial = ref({ text: "", url: "", anchor: "" });
-let linkDialogSelection = noSelection();
-const linkChip = ref({ visible: false, left: 0, top: 0, label: "", external: false });
-let linkChipExtent = noLinkExtent();
-const bookmarkDialogOpen = ref(false);
-let bookmarkDialogSelection = noSelection();
-const bookmarkManagerOpen = ref(false);
 
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
@@ -2234,186 +2099,16 @@ async function verifyCanvasAfterRender() {
 
 /** The dialog's heading targets (AC-19, AC-21), re-read from the current
  * model each time the dialog template evaluates them. */
-function documentHeadings() {
-  const model = doc.value;
-  return model
-    ? listHeadings(model).map((heading) => ({
-        anchor: heading.anchor,
-        text: heading.text,
-        level: heading.level,
-      }))
-    : [];
-}
 
-/** The dialog's bookmark targets (AC-20, AC-21). */
-function documentBookmarkTargets() {
-  const model = doc.value;
-  return model
-    ? listBookmarks(model).map((bookmark) => ({ anchor: bookmark.name, text: bookmark.name }))
-    : [];
-}
 
-/** Bookmark names in document order — the manager's list (AC-23) and the
- * uniqueness set the insert dialog validates against (AC-27). */
-function documentBookmarkNames() {
-  const model = doc.value;
-  return model ? listBookmarks(model).map((bookmark) => bookmark.name) : [];
-}
 
-/** A model selection spanning a link extent — what Edit/Remove act on. */
-function extentSelection(extent = noLinkExtent()) {
-  if (!extent) {
-    return null;
-  }
-  const address = extent.address;
-  const anchor = address.cell
-    ? { section: address.section, block: address.block, offset: extent.from, cell: address.cell }
-    : { section: address.section, block: address.block, offset: extent.from };
-  const focus = address.cell
-    ? { section: address.section, block: address.block, offset: extent.to, cell: address.cell }
-    : { section: address.section, block: address.block, offset: extent.to };
-  return { anchor, focus };
-}
 
-/** Opens the link dialog (AC-1, AC-2): prefilled with the selected text and
- * an empty URL, both fields empty without a selection — or, with a collapsed
- * caret inside an existing link, editing that link's whole extent (AC-9). */
-function openLinkDialog() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  dismissLinkChip();
-  const selection = currentSelection(root) ?? caretSelection(documentStart());
-  const extent = isCollapsed(selection) ? linkAtCaret(model, selection.focus) : null;
-  if (extent) {
-    linkDialogSelection = extentSelection(extent);
-    linkDialogInitial.value = {
-      text: extent.text,
-      url: extent.target.href ?? "",
-      anchor: extent.target.anchor ?? "",
-    };
-  } else {
-    linkDialogSelection = selection;
-    linkDialogInitial.value = {
-      text: isCollapsed(selection) ? "" : fragmentText(extractFragment(model, selection)),
-      url: "",
-      anchor: "",
-    };
-  }
-  linkDialogOpen.value = true;
-}
 
-/** Applies the dialog's link (AC-3, AC-19, AC-20): the selection is wrapped
- * when its text was kept, or replaced by the edited text. The dialog already
- * rejected dangerous schemes (AC-14..16); sanitizeHref here is a backstop. */
-function handleLinkDialogSave(payload = { text: "", href: "", anchor: "" }) {
-  const model = doc.value;
-  const selection = linkDialogSelection;
-  linkDialogOpen.value = false;
-  linkDialogSelection = noSelection();
-  if (!model || !selection) {
-    return;
-  }
-  const anchor = String(payload.anchor ?? "");
-  const href = anchor === "" ? sanitizeHref(String(payload.href ?? "")) : null;
-  if (anchor === "" && href === null) {
-    return;
-  }
-  const target = anchor !== "" ? { anchor } : { href: href ?? "" };
-  const text = String(payload.text ?? "");
-  const selectionText = isCollapsed(selection)
-    ? ""
-    : fragmentText(extractFragment(model, selection));
-  const result =
-    !isCollapsed(selection) && text === selectionText
-      ? applyLink(model, selection, target)
-      : insertLinkText(model, selection, text, target);
-  applyEdit(result, selection, "insert link", false);
-  contentRoot.value?.focus();
-}
 
-function handleLinkDialogCancel() {
-  linkDialogOpen.value = false;
-  linkDialogSelection = noSelection();
-  contentRoot.value?.focus();
-  void restoreCaretAfterRender();
-}
 
-function dismissLinkChip() {
-  if (linkChip.value.visible) {
-    linkChip.value = { visible: false, left: 0, top: 0, label: "", external: false };
-  }
-  linkChipExtent = noLinkExtent();
-}
 
-/** Shows the chip when a collapsed caret sits inside a link (AC-8), pinned
- * under the caret like the paste options chip; hides it everywhere else. */
-async function refreshLinkChip() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value || !caret || selectionAnchor || linkDialogOpen.value) {
-    dismissLinkChip();
-    return;
-  }
-  const at = caret;
-  const extent = linkAtCaret(model, at);
-  if (!extent) {
-    dismissLinkChip();
-    return;
-  }
-  await nextTick();
-  if (caret !== at || !contentRoot.value) {
-    return;
-  }
-  const rect = caretClientRect(root, at);
-  if (!rect) {
-    dismissLinkChip();
-    return;
-  }
-  linkChipExtent = extent;
-  linkChip.value = {
-    visible: true,
-    left: Math.max(8, rect.left),
-    top: rect.bottom + 8,
-    label: linkTargetLabel(model, extent.target),
-    external: extent.target.href !== undefined,
-  };
-}
 
-/** Opens a link target: an external URL in a new tab (AC-12, AC-13 — the
- * window.open feature string is the programmatic rel="noopener noreferrer";
- * the rendered <a> carries the literal attribute too), an internal anchor
- * as an in-document jump. Re-sanitized before navigating (AC-17). */
-function openLinkTarget(target = noLinkTarget()) {
-  if (!target) {
-    return;
-  }
-  if (target.href !== undefined) {
-    const href = sanitizeHref(target.href);
-    if (href !== null) {
-      window.open(href, "_blank", "noopener,noreferrer");
-    }
-    return;
-  }
-  jumpToAnchor(target.anchor ?? "");
-}
 
-/** Moves the caret to a bookmark or heading anchor and scrolls it into
- * view (AC-24, and internal link opens). */
-function jumpToAnchor(anchor = "") {
-  const model = doc.value;
-  if (!model || anchor === "") {
-    return;
-  }
-  const position = anchorCaret(model, anchor);
-  if (!position) {
-    return;
-  }
-  applyCaretMove(position, false);
-  void scrollModelCaretIntoView(position);
-}
 
 /** Brings a model position into view and settles it a third of the way down
  * the canvas — a deliberate move to somewhere else in the document (a
@@ -2462,38 +2157,9 @@ async function keepCaretVisible() {
   }
 }
 
-function handleLinkChipOpen() {
-  const extent = linkChipExtent;
-  if (extent) {
-    openLinkTarget(extent.target);
-  }
-}
 
-function handleLinkChipEdit() {
-  openLinkDialog();
-}
 
-/** Copies the chip's target to the clipboard (AC-10). */
-function handleLinkChipCopy() {
-  const extent = linkChipExtent;
-  if (!extent) {
-    return;
-  }
-  const text = extent.target.href ?? `#${extent.target.anchor ?? ""}`;
-  void navigator.clipboard?.writeText(text).catch(() => {});
-}
 
-/** Removes the link the caret sits in, keeping the text and its other
- * formatting (AC-11, AC-33, AC-34). */
-function handleLinkChipRemove() {
-  const model = doc.value;
-  if (!model || !editable.value || !caret) {
-    return;
-  }
-  const selection = caretSelection(caret);
-  applyEdit(removeLink(model, selection), selection, "remove link", false);
-  contentRoot.value?.focus();
-}
 
 /** Clicks on rendered hyperlinks (AC-12). Browsers do not navigate a plain
  * click on an <a> inside a contenteditable region — the anchors are real
@@ -2529,99 +2195,12 @@ function handleContentClick(event = new MouseEvent("click")) {
   }
 }
 
-/** Autolinks after a completed space/Enter edit (AC-5, AC-6): a bare URL
- * ending where the word ended becomes a link, as its own undo step so
- * Ctrl/Cmd+Z right after reverts just the link (AC-7). The caret stays
- * exactly where the base edit put it — after the space, or at the start of
- * the paragraph Enter created; the autolink itself never moves it. */
-function maybeAutolink(result = noCommandResult(), afterEnter = false) {
-  const model = doc.value;
-  if (!model || !result) {
-    return;
-  }
-  const focus = result.selection.focus;
-  const cell = focus.cell;
-  if (afterEnter && (focus.offset !== 0 || (cell ? cell.block === 0 : focus.block === 0))) {
-    return;
-  }
-  const address = afterEnter
-    ? cell
-      ? {
-          section: focus.section,
-          block: focus.block,
-          cell: { row: cell.row, col: cell.col, block: cell.block - 1 },
-        }
-      : { section: focus.section, block: focus.block - 1 }
-    : cell
-      ? { section: focus.section, block: focus.block, cell }
-      : { section: focus.section, block: focus.block };
-  const paragraph = paragraphAt(model, address);
-  if (!paragraph) {
-    return;
-  }
-  const endOffset = afterEnter ? blockLength(paragraph) : focus.offset - 1;
-  if (endOffset <= 0) {
-    return;
-  }
-  const linked = autolinkAt(model, address, endOffset);
-  if (!linked) {
-    return;
-  }
-  const keep = caretSelection(focus);
-  applyEdit({ model: linked, selection: keep }, keep, "autolink", false);
-}
 
-/** Opens the "Insert bookmark" dialog (AC-22) for the current caret. */
-function openBookmarkDialog() {
-  const root = contentRoot.value;
-  if (!root || !doc.value || !editable.value) {
-    return;
-  }
-  bookmarkDialogSelection = currentSelection(root) ?? caretSelection(documentStart());
-  bookmarkDialogOpen.value = true;
-}
 
-function handleBookmarkDialogSave(name = "") {
-  const model = doc.value;
-  const selection = bookmarkDialogSelection;
-  bookmarkDialogOpen.value = false;
-  bookmarkDialogSelection = noSelection();
-  if (!model || !selection || name === "") {
-    return;
-  }
-  if (validateBookmarkName(name, documentBookmarkNames()) !== "") {
-    return;
-  }
-  applyEdit(insertBookmark(model, selection, name), selection, "insert bookmark", false);
-  contentRoot.value?.focus();
-}
 
-function handleBookmarkDialogCancel() {
-  bookmarkDialogOpen.value = false;
-  bookmarkDialogSelection = noSelection();
-  contentRoot.value?.focus();
-  void restoreCaretAfterRender();
-}
 
-function handleBookmarkJump(name = "") {
-  bookmarkManagerOpen.value = false;
-  contentRoot.value?.focus();
-  jumpToAnchor(String(name));
-}
 
-function handleBookmarkRemove(name = "") {
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(contentRoot.value) ?? caretSelection(documentStart());
-  applyEdit(deleteBookmark(model, selection, String(name)), selection, "delete bookmark", false);
-}
 
-function closeBookmarkManager() {
-  bookmarkManagerOpen.value = false;
-  contentRoot.value?.focus();
-}
 
 // --- the editor's context menu (SPEC-016 AC-4..6) --------------------------
 
@@ -4284,6 +3863,66 @@ const pageNumbers = computed(() => {
   const model = doc.value;
   return model ? computePageNumbers(paginationPages.value, model) : [];
 });
+
+// Hyperlinks, bookmarks and TOC navigation (SPEC-025, SPEC-033) live in
+// useLinks; it needs pageNumbers (above) and the session's caret/scroll anchors.
+const {
+  linkDialogOpen,
+  linkDialogInitial,
+  linkChip,
+  bookmarkDialogOpen,
+  bookmarkManagerOpen,
+  tocSelection,
+  tocOptionsDialogOpen,
+  documentHeadings,
+  documentBookmarkTargets,
+  documentBookmarkNames,
+  openLinkDialog,
+  handleLinkDialogSave,
+  handleLinkDialogCancel,
+  dismissLinkChip,
+  refreshLinkChip,
+  openLinkTarget,
+  jumpToAnchor,
+  handleLinkChipOpen,
+  handleLinkChipEdit,
+  handleLinkChipCopy,
+  handleLinkChipRemove,
+  openBookmarkDialog,
+  handleBookmarkDialogSave,
+  handleBookmarkDialogCancel,
+  handleBookmarkJump,
+  handleBookmarkRemove,
+  closeBookmarkManager,
+  maybeAutolink,
+  tocPageNumberFor,
+  openTocDialog,
+  handleTocInsert,
+  handleTocCancel,
+  handleTocDelete,
+  handleTocAction,
+  handleTocUpdatePageNumbers,
+  handleTocUpdateEntire,
+  clearTocSelection,
+} = useLinks({
+  doc,
+  contentRoot,
+  editable,
+  currentSelection,
+  paragraphSelection,
+  applyEdit,
+  applyCaretMove,
+  scrollModelCaretIntoView,
+  restoreCaretAfterRender,
+  activeHeaderFooter,
+  pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
+  pageNumbers,
+  clearCellSelection,
+  clearImageSelection,
+  getCaret: () => caret,
+  getSelectionAnchor: () => selectionAnchor,
+});
+
 const caretPage = ref(1);
 const caretSectionIndex = ref(0);
 const paragraphPagination = ref(emptyParagraphPaginationState());
