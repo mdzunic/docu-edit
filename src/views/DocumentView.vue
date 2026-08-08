@@ -51,6 +51,7 @@ import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
+import { useImages } from "./document/useImages";
 import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
@@ -522,26 +523,6 @@ const tablePropertiesInitial = ref({});
 let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
-
-// --- images (SPEC-024) -------------------------------------------------------
-// The selected image (AC-7): set by clicking one, cleared by any edit
-// (applyEdit) or a mousedown elsewhere on the canvas — mirrors cellSelection.
-const imageSelection = ref(noImageLocation());
-// The selected image's measured geometry (AC-8, AC-9): page-relative
-// rectangle for the resize handles, recomputed on select/scroll/resize. Null
-// hides the handles/floating toolbar.
-const imageHandles = ref(noImageHandleGeometry());
-const imageOptionsOpen = ref(false);
-const imageOptionsInitial = ref({});
-let imageResizeDrag = noImageResizeDrag();
-let imageDragMoved = false;
-
-function clearImageSelection() {
-  if (imageSelection.value) {
-    imageSelection.value = null;
-    imageHandles.value = null;
-  }
-}
 
 // --- table of contents (SPEC-033) -------------------------------------------
 // A click "selects" a TOC block the same way SPEC-024 selects an image
@@ -1272,235 +1253,6 @@ function handleNoteSettingsCancel() {
   noteSettingsOpen.value = false;
 }
 
-/** The document's own effective save format (the same rule DownloadMenu's
- * default and handleDownload use) — decides whether an inserted SVG is
- * converted to PNG (AC-2) or kept as-is (AC-3). */
-function effectiveFormat() {
-  return doc.value && doc.value.format === "odt" ? "odt" : "docx";
-}
-
-function remeasureImageHandles() {
-  const location = imageSelection.value;
-  const pageEl = pageRef.value;
-  const root = contentRoot.value;
-  if (!location || !pageEl || !root) {
-    return;
-  }
-  const imageEl = root.querySelector(
-    `.doc-image-anchor[data-section="${location.section}"][data-block="${location.block}"]`,
-  );
-  imageHandles.value = imageEl ? measureImageGeometry(pageEl, imageEl) : null;
-}
-
-function handleImageSelect(section = 0, block = 0) {
-  clearCellSelection();
-  imageSelection.value = { section, block };
-  void nextTick().then(remeasureImageHandles);
-}
-
-const HANDLE_SIZE = 8;
-
-/** One resize handle's page-relative position, centred on its edge/corner
- * of the measured image rect (AC-8). */
-function imageHandleStyle(handle = "se") {
-  const geometry = imageHandles.value;
-  if (!geometry) {
-    return {};
-  }
-  const xFrac = handle.includes("w") ? 0 : handle.includes("e") ? 1 : 0.5;
-  const yFrac = handle.includes("n") ? 0 : handle.includes("s") ? 1 : 0.5;
-  return {
-    left: `${geometry.left + geometry.width * xFrac - HANDLE_SIZE / 2}px`,
-    top: `${geometry.top + geometry.height * yFrac - HANDLE_SIZE / 2}px`,
-    cursor: `${handle}-resize`,
-  };
-}
-
-/** The floating image toolbar's fixed (viewport) position (AC-9): above the
- * image when there's room, otherwise just below it. */
-function imageToolbarStyle() {
-  const geometry = imageHandles.value;
-  const pageEl = pageRef.value;
-  if (!geometry || !pageEl) {
-    return { left: 0, top: 0 };
-  }
-  const pageRect = pageEl.getBoundingClientRect();
-  const viewportTop = pageRect.top + geometry.top;
-  const above = viewportTop - 40;
-  return {
-    left: pageRect.left + geometry.left,
-    top: above >= 0 ? above : pageRect.top + geometry.top + geometry.height + 8,
-  };
-}
-
-/** Runs an image command (setImageWrap/setImageSize/…) against the
- * currently selected image and commits it — the shared apply step every
- * image toolbar/dialog/resize action funnels through. */
-function applyImageEdit(mutate = noImageCommand(), label = "") {
-  const model = doc.value;
-  const root = contentRoot.value;
-  const location = imageSelection.value;
-  if (!mutate || !model || !root || !location) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  const result = mutate(model, selection, location);
-  applyEdit(result, selection, label);
-}
-
-function handleImageWrap(wrap = "inline") {
-  const location = imageSelection.value;
-  if (!location) {
-    return;
-  }
-  applyImageEdit((model, selection) => setImageWrap(model, selection, location, asImageWrapMode(wrap)), "wrap image");
-}
-
-function handleImageDelete() {
-  const location = imageSelection.value;
-  if (!location) {
-    return;
-  }
-  applyImageEdit((model, selection) => deleteImage(model, selection, location), "delete image");
-  clearImageSelection();
-}
-
-function openImageOptions() {
-  const model = doc.value;
-  const location = imageSelection.value;
-  const image = model && location ? imageAt(model, location) : null;
-  if (!image) {
-    return;
-  }
-  imageOptionsInitial.value = {
-    altText: image.altText || "",
-    widthCm: Number(image.widthCm.toFixed(2)),
-    heightCm: Number(image.heightCm.toFixed(2)),
-    naturalWidthCm: Number(pxToCm(image.naturalWidthPx).toFixed(2)),
-    naturalHeightCm: Number(pxToCm(image.naturalHeightPx).toFixed(2)),
-  };
-  imageOptionsOpen.value = true;
-}
-
-function handleImageOptionsApply(payload = { altText: "", widthCm: 0, heightCm: 0 }) {
-  imageOptionsOpen.value = false;
-  const location = imageSelection.value;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!location || !model || !root) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  let result = setImageAltText(model, selection, location, payload.altText);
-  result = setImageSize(result.model, result.selection, location, payload.widthCm, payload.heightCm);
-  applyEdit(result, selection, "image options");
-  root.focus();
-}
-
-/** Reads a File chosen/dropped/pasted and inserts it at the caret (AC-1),
- * showing validation/conversion failures as a toast — never the console
- * (AC-34). */
-async function insertImageFromFile(file = new File([], ""), atSelection = noSelection()) {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  const root = contentRoot.value;
-  const selection = active
-    ? (atSelection ?? currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 }))
-    : (atSelection ?? (root ? currentSelection(root) : null) ?? (model ? caretSelection(caret ?? documentStart()) : null));
-  if (!model || !selection) {
-    return;
-  }
-  let prepared;
-  try {
-    prepared = await prepareImageInsert(file, effectiveFormat());
-  } catch (error) {
-    if (error instanceof ImageInsertError) {
-      addToast(error.message);
-      return;
-    }
-    throw error;
-  }
-  const current = doc.value;
-  if (!current) {
-    return;
-  }
-  if (active) {
-    // Header/footer images (SPEC-029 AC-6): inserted into the active band's
-    // synthetic model — insertImage's own media-dedup writes into that
-    // model's `media`, which commitHeaderFooterModel keeps (see its own
-    // doc comment) exactly like any other model-level side effect.
-    const synthetic = withHeaderFooterModel(current, active.sectionIndex, active.part, active.kind);
-    const result = insertImage(synthetic, selection, prepared.media, prepared.naturalWidthPx, prepared.naturalHeightPx);
-    applyHeaderFooterEdit(result.model, result.selection, "insert image");
-    return;
-  }
-  const result = insertImage(current, selection, prepared.media, prepared.naturalWidthPx, prepared.naturalHeightPx);
-  applyEdit(result, selection, "insert image");
-}
-
-function handleInsertImageFile(file = new File([], "")) {
-  void insertImageFromFile(file);
-}
-
-// --- image resize handles (SPEC-024 AC-8, AC-10..12) ------------------------
-
-function startImageResize(event = new MouseEvent("mousedown"), handle = "se") {
-  const location = imageSelection.value;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!location || !model || !root || !editable.value) {
-    return;
-  }
-  const image = imageAt(model, location);
-  const imageEl = root.querySelector(
-    `.doc-image-anchor[data-section="${location.section}"][data-block="${location.block}"] .doc-image`,
-  );
-  if (!image || !(imageEl instanceof HTMLElement)) {
-    return;
-  }
-  event.preventDefault();
-  imageDragMoved = false;
-  imageResizeDrag = {
-    section: location.section,
-    block: location.block,
-    handle: asImageHandle(handle),
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    start: { widthCm: image.widthCm, heightCm: image.heightCm },
-    imageEl,
-  };
-  window.addEventListener("mousemove", handleImageResizeMove);
-  window.addEventListener("mouseup", finishImageResize);
-}
-
-function handleImageResizeMove(event = new MouseEvent("mousemove")) {
-  const drag = imageResizeDrag;
-  if (!drag) {
-    return;
-  }
-  imageDragMoved = true;
-  const deltaXCm = (event.clientX - drag.startClientX) * CM_PER_PX;
-  const deltaYCm = (event.clientY - drag.startClientY) * CM_PER_PX;
-  const size = resizedImageSize(drag.start, drag.handle, deltaXCm, deltaYCm, event.shiftKey);
-  previewImageSize(drag.imageEl, size.widthCm, size.heightCm);
-}
-
-/** Release (AC-10..12): the live-previewed size becomes the one model
- * update this whole drag makes — mirrors finishColumnResize's contract. */
-function finishImageResize() {
-  window.removeEventListener("mousemove", handleImageResizeMove);
-  window.removeEventListener("mouseup", finishImageResize);
-  const drag = imageResizeDrag;
-  imageResizeDrag = null;
-  if (!drag || !imageDragMoved) {
-    return;
-  }
-  const widthCm = parseFloat(drag.imageEl.style.width) || drag.start.widthCm;
-  const heightCm = parseFloat(drag.imageEl.style.height) || drag.start.heightCm;
-  const location = { section: drag.section, block: drag.block };
-  applyImageEdit((model, selection) => setImageSize(model, selection, location, widthCm, heightCm), "resize image");
-}
-
 /** Whether the active cell-range selection spans more than one cell — the
  * context menu's "Merge cells" gate (SPEC-023 AC-6). */
 const canMergeCells = computed(() => {
@@ -1654,6 +1406,43 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
+
+// --- images (SPEC-024) -------------------------------------------------------
+// Image selection/handles/options and insertion + resize live in useImages; the
+// canvas and applyEdit reach them through these returned bindings.
+const {
+  imageSelection,
+  imageHandles,
+  imageOptionsOpen,
+  imageOptionsInitial,
+  clearImageSelection,
+  handleImageSelect,
+  imageHandleStyle,
+  imageToolbarStyle,
+  remeasureImageHandles,
+  handleImageWrap,
+  handleImageDelete,
+  openImageOptions,
+  handleImageOptionsApply,
+  insertImageFromFile,
+  handleInsertImageFile,
+  startImageResize,
+  handleImageResizeMove,
+  finishImageResize,
+} = useImages({
+  doc,
+  contentRoot,
+  pageRef,
+  editable,
+  currentSelection,
+  applyEdit,
+  clearCellSelection,
+  addToast,
+  activeHeaderFooter,
+  currentHfSelection,
+  applyHeaderFooterEdit,
+  getCaret: () => caret,
+});
 
 // Cut/copy/paste and the paste-options chip (SPEC-016) live in useClipboard;
 // the plain-paste flag and chip state it owns are wired into handleKeyDown and
