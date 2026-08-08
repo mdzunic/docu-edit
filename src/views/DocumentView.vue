@@ -51,6 +51,7 @@ import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
+import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { documentExists } from "../lib/documents";
@@ -519,12 +520,8 @@ const splitCellDialogOpen = ref(false);
 const tablePropertiesOpen = ref(false);
 const tablePropertiesInitial = ref({});
 let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
-
-// Column/row resize (AC-1..5): live-resizes the hovered table's DOM directly
-// while dragging (never the model — AC-3), then commits the final widths/
-// height on release. Null when no drag is active.
-let columnResizeDrag = noColumnResizeDrag();
-let rowResizeDrag = noRowResizeDrag();
+// The column/row resize drag state now lives inside useTables (it owns the
+// live-resize handlers and their listener lifecycle).
 
 // --- images (SPEC-024) -------------------------------------------------------
 // The selected image (AC-7): set by clicking one, cleared by any edit
@@ -1860,10 +1857,7 @@ onBeforeUnmount(() => {
   unmountHooks.forEach((cb) => cb());
   document.removeEventListener("selectionchange", handleSelectionChange);
   document.removeEventListener("keydown", handleGlobalShortcut);
-  window.removeEventListener("mousemove", handleColumnResizeMove);
-  window.removeEventListener("mouseup", finishColumnResize);
-  window.removeEventListener("mousemove", handleRowResizeMove);
-  window.removeEventListener("mouseup", finishRowResize);
+  // Column/row resize listener cleanup is owned by useTables' onUnmount hook.
   if (scrollContainer) {
     scrollContainer.removeEventListener("scroll", handleScroll);
     scrollContainer = null;
@@ -3276,423 +3270,52 @@ function handlePageMouseOver(event = new MouseEvent("mouseover")) {
   tableHover.value = measureTableHandles(pageEl, table);
 }
 
-/** One handle/menu table action against an explicit target cell. `before`
- * is the current selection for undo restoration. */
-function applyTableAction(action = "", target = { section: 0, block: 0, row: 0, col: 0 }) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const location = target;
-  const fallbackCaret = {
-    section: location.section,
-    block: location.block,
-    offset: 0,
-    cell: { row: location.row, col: location.col, block: 0 },
-  };
-  const selection = currentSelection(root) ?? caretSelection(fallbackCaret);
-  let result = noCommandResult();
-  let label = "";
-  if (action === "insert-row-above") {
-    result = insertTableRow(model, selection, location, "above");
-    label = "insert row";
-  } else if (action === "insert-row-below") {
-    result = insertTableRow(model, selection, location, "below");
-    label = "insert row";
-  } else if (action === "insert-col-left") {
-    result = insertTableColumn(model, selection, location, "left");
-    label = "insert column";
-  } else if (action === "insert-col-right") {
-    result = insertTableColumn(model, selection, location, "right");
-    label = "insert column";
-  } else if (action === "delete-row") {
-    result = deleteTableRow(model, selection, location);
-    label = "delete row";
-  } else if (action === "delete-col") {
-    result = deleteTableColumn(model, selection, location);
-    label = "delete column";
-  } else if (action === "delete-table") {
-    result = deleteTable(model, selection, location);
-    label = "delete table";
-  }
-  if (result) {
-    applyEdit(result, selection, label);
-    root.focus();
-  }
-}
-
-/** A hover handle's click (AC-20, AC-21): boundary index `at` for inserts
- * (0 = before the first row/column), row/column index for deletes. */
-function handleTableHandle(kind = "", at = 0) {
-  const hover = tableHover.value;
-  if (!hover) {
-    return;
-  }
-  const base = { section: hover.section, block: hover.block, row: 0, col: 0 };
-  if (kind === "insert-row") {
-    applyTableAction(at === 0 ? "insert-row-above" : "insert-row-below", {
-      ...base,
-      row: at === 0 ? 0 : at - 1,
-    });
-  } else if (kind === "delete-row") {
-    applyTableAction("delete-row", { ...base, row: at });
-  } else if (kind === "insert-col") {
-    applyTableAction(at === 0 ? "insert-col-left" : "insert-col-right", {
-      ...base,
-      col: at === 0 ? 0 : at - 1,
-    });
-  } else if (kind === "delete-col") {
-    applyTableAction("delete-col", { ...base, col: at });
-  }
-}
-
-// --- column/row resize (SPEC-023 AC-1..5) -----------------------------------
-
-/** Dragging a column boundary handle (AC-1..3): live-resizes the column on
- * either side of the boundary (or, for the table's own right edge, just
- * that column) directly in the DOM; the model updates once, on release. */
-function startColumnResize(event = new MouseEvent("mousedown"), colIndex = 0) {
-  const hover = tableHover.value;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!hover || !model || !root || !editable.value) {
-    return;
-  }
-  const table = tableAt(model, hover.section, hover.block);
-  const tableEl = findTableElement(root, hover.section, hover.block);
-  if (!table || !tableEl) {
-    return;
-  }
-  event.preventDefault();
-  columnResizeDrag = {
-    section: hover.section,
-    block: hover.block,
-    colIndex,
-    startX: event.clientX,
-    startWidthsCm: [...table.columnWidthsCm],
-    tableEl,
-    liveWidthsCm: null,
-  };
-  window.addEventListener("mousemove", handleColumnResizeMove);
-  window.addEventListener("mouseup", finishColumnResize);
-}
-
-function handleColumnResizeMove(event = new MouseEvent("mousemove")) {
-  const drag = columnResizeDrag;
-  if (!drag) {
-    return;
-  }
-  const deltaCm = (event.clientX - drag.startX) * CM_PER_PX;
-  const widths = [...drag.startWidthsCm];
-  const i = drag.colIndex;
-  if (i < widths.length - 1) {
-    // An internal boundary: the neighbour absorbs exactly what this column
-    // gains, so the table's overall width is unchanged (AC-1, AC-2).
-    const total = widths[i] + widths[i + 1];
-    const next = Math.min(Math.max(widths[i] + deltaCm, MIN_COLUMN_WIDTH_CM), total - MIN_COLUMN_WIDTH_CM);
-    widths[i] = next;
-    widths[i + 1] = total - next;
-  } else {
-    // The table's own right edge: only the last column changes.
-    widths[i] = Math.max(MIN_COLUMN_WIDTH_CM, widths[i] + deltaCm);
-  }
-  drag.liveWidthsCm = widths;
-  previewColumnWidths(drag.tableEl, widths);
-}
-
-/** Release (AC-3): the live DOM widths become the one model update this
- * whole drag makes. */
-function finishColumnResize() {
-  window.removeEventListener("mousemove", handleColumnResizeMove);
-  window.removeEventListener("mouseup", finishColumnResize);
-  const drag = columnResizeDrag;
-  columnResizeDrag = null;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!drag || !drag.liveWidthsCm || !root || !model) {
-    return;
-  }
-  const location = { section: drag.section, block: drag.block, row: 0, col: drag.colIndex };
-  const fallbackCaret = {
-    section: drag.section,
-    block: drag.block,
-    offset: 0,
-    cell: { row: 0, col: drag.colIndex, block: 0 },
-  };
-  const selection = currentSelection(root) ?? caretSelection(fallbackCaret);
-  applyEdit(setColumnWidths(model, selection, location, drag.liveWidthsCm), selection, "resize column");
-}
-
-/** Dragging a row boundary handle (AC-4, AC-5): live-resizes just that row;
- * the model's minimum height updates once, on release. Starts from the
- * row's current minimum, or (unset) its rendered height, so the boundary
- * starts exactly under the pointer. */
-function startRowResize(event = new MouseEvent("mousedown"), rowIndex = 0) {
-  const hover = tableHover.value;
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!hover || !model || !root || !editable.value) {
-    return;
-  }
-  const table = tableAt(model, hover.section, hover.block);
-  const tableEl = findTableElement(root, hover.section, hover.block);
-  const trEl = tableEl ? tableRowElement(tableEl, rowIndex) : null;
-  if (!table || !trEl) {
-    return;
-  }
-  event.preventDefault();
-  const row = table.rows[rowIndex];
-  const startHeightCm = row.minHeightCm ?? trEl.getBoundingClientRect().height * CM_PER_PX;
-  rowResizeDrag = {
-    section: hover.section,
-    block: hover.block,
-    rowIndex,
-    startY: event.clientY,
-    startHeightCm,
-    trEl,
-    liveHeightCm: null,
-  };
-  window.addEventListener("mousemove", handleRowResizeMove);
-  window.addEventListener("mouseup", finishRowResize);
-}
-
-function handleRowResizeMove(event = new MouseEvent("mousemove")) {
-  const drag = rowResizeDrag;
-  if (!drag) {
-    return;
-  }
-  const deltaCm = (event.clientY - drag.startY) * CM_PER_PX;
-  const heightCm = Math.max(MIN_ROW_HEIGHT_CM, drag.startHeightCm + deltaCm);
-  drag.liveHeightCm = heightCm;
-  previewRowHeight(drag.trEl, heightCm);
-}
-
-/** Release (AC-4): the live height becomes the row's minimum — a floor the
- * row can still grow past for its content (AC-5, see renderFormatting.ts's
- * tableRowStyle). */
-function finishRowResize() {
-  window.removeEventListener("mousemove", handleRowResizeMove);
-  window.removeEventListener("mouseup", finishRowResize);
-  const drag = rowResizeDrag;
-  rowResizeDrag = null;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!drag || drag.liveHeightCm === null || !root || !model) {
-    return;
-  }
-  const location = { section: drag.section, block: drag.block, row: drag.rowIndex, col: 0 };
-  const fallbackCaret = {
-    section: drag.section,
-    block: drag.block,
-    offset: 0,
-    cell: { row: drag.rowIndex, col: 0, block: 0 },
-  };
-  const selection = currentSelection(root) ?? caretSelection(fallbackCaret);
-  applyEdit(
-    setRowMinHeight(model, selection, location, drag.rowIndex, drag.liveHeightCm),
-    selection,
-    "resize row",
-  );
-}
-
-/** The context menu's table action (AC-17..19), against the cell the
- * right-click landed in — or, for the SPEC-023 formatting actions, routed
- * to their own handlers instead of the row/column command dispatch above. */
-function handleContextMenuTableAction(action = "") {
-  const target = contextMenuTableCell;
-  closeContextMenu();
-  if (!target) {
-    return;
-  }
-  if (action === "merge-cells") {
-    handleMergeCells();
-  } else if (action === "split-cell") {
-    openSplitCellDialog(target);
-  } else if (action === "table-properties") {
-    openTableProperties(target);
-  } else {
-    applyTableAction(action, target);
-  }
-}
-
-/** "Merge cells" (AC-6, AC-7): the active cell-range selection, or a no-op
- * without one (the menu only offers it with a multi-cell range active). */
-function handleMergeCells() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  const range = cellSelection.value;
-  if (!root || !model || !editable.value || !range) {
-    return;
-  }
-  const selection = currentSelection(root) ?? caretSelection({ section: range.section, block: range.block, offset: 0 });
-  applyEdit(mergeCells(model, selection, range), selection, "merge cells");
-  root.focus();
-}
-
-/** "Split cell…" (AC-8, AC-9): opens the dialog against the right-clicked
- * cell (or the active range's anchor cell, if one covers it). */
-function openSplitCellDialog(target = { section: 0, block: 0, row: 0, col: 0 }) {
-  tableFormattingLocation = target;
-  splitCellDialogOpen.value = true;
-}
-
-/** OK in the split-cell dialog: one combined edit (AC-9, AC-34). */
-function handleSplitCellApply(size = { rows: 1, cols: 1 }) {
-  splitCellDialogOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const location = tableFormattingLocation;
-  const fallbackCaret = {
-    section: location.section,
-    block: location.block,
-    offset: 0,
-    cell: { row: location.row, col: location.col, block: 0 },
-  };
-  const selection = currentSelection(root) ?? caretSelection(fallbackCaret);
-  applyEdit(splitCell(model, selection, location, size.rows, size.cols), selection, "split cell");
-  root.focus();
-}
-
-/** The table properties dialog (SPEC-023 AC-10..23): opened against the
- * right-clicked cell's table, prefilled from that cell's own current
- * values. Border/shading/padding/vertical-alignment apply to the active
- * cell-range selection when one covers more than one cell (AC-14),
- * otherwise to the whole table (AC-13); alignment/width always apply to the
- * whole table. */
-function openTableProperties(target = { section: 0, block: 0, row: 0, col: 0 }) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const table = tableAt(model, target.section, target.block);
-  if (!table) {
-    return;
-  }
-  tableFormattingLocation = target;
-  const range = cellSelection.value ?? fullTableRange(model, target);
-  const bounds = range ? cellRangeBounds(range) : { top: target.row, left: target.col, bottom: target.row, right: target.col };
-  const cell = table.rows[bounds.top]?.cells[bounds.left];
-  const scope =
-    cellSelection.value && (bounds.top !== bounds.bottom || bounds.left !== bounds.right)
-      ? "the selected cells"
-      : "the whole table";
-  const firstBorder = cell?.borders?.top ?? cell?.borders?.bottom ?? cell?.borders?.left ?? cell?.borders?.right;
-  tablePropertiesInitial.value = {
-    borderStyle: firstBorder?.style ?? "single",
-    borderWidthPt: firstBorder?.widthPt ?? 1,
-    borderColor: firstBorder && firstBorder.color !== "auto" ? firstBorder.color : "#000000",
-    shadingFill: cell?.shadingFill ?? "",
-    paddingCm: cell?.paddingCm ?? 0.19,
-    verticalAlign: cell?.verticalAlign ?? "top",
-    alignment: table.alignment ?? "left",
-    widthMode: table.widthMode ?? "fixed",
-    widthPercent: table.widthPercent ?? 100,
-    scope,
-  };
-  tablePropertiesOpen.value = true;
-}
-
-/** OK in the table properties dialog: every field the dialog carries,
- * chained through the model as one combined edit — a single undo step
- * (AC-34) regardless of how many of the dialog's sections the user
- * touched. */
-function handleTablePropertiesApply(
-  payload = {
-    borderPreset: "",
-    borderStyle: "single",
-    borderWidthPt: 1,
-    borderColor: "#000000",
-    shadingFill: "",
-    paddingCm: 0.19,
-    verticalAlign: "top",
-    alignment: "left",
-    widthMode: "fixed",
-    widthPercent: 100,
+// --- tables (SPEC-022, SPEC-023) ---------------------------------------------
+// Row/column insert-delete, merge/split, the properties dialog, and live column
+// /row resize live in useTables; the hover handles' geometry and the cell-range
+// drag selection stay with the canvas event hub above.
+const {
+  applyTableAction,
+  handleTableHandle,
+  startColumnResize,
+  handleColumnResizeMove,
+  finishColumnResize,
+  startRowResize,
+  handleRowResizeMove,
+  finishRowResize,
+  handleContextMenuTableAction,
+  handleMergeCells,
+  openSplitCellDialog,
+  handleSplitCellApply,
+  openTableProperties,
+  handleTablePropertiesApply,
+  handleInsertTable,
+} = useTables({
+  doc,
+  contentRoot,
+  editable,
+  currentSelection,
+  paragraphSelection,
+  applyEdit,
+  addToast,
+  activeHeaderFooter,
+  currentHfSelection,
+  applyHeaderFooterEdit,
+  hfRootEl,
+  closeContextMenu,
+  tableHover,
+  cellSelection,
+  insertTableDialogOpen,
+  splitCellDialogOpen,
+  tablePropertiesOpen,
+  tablePropertiesInitial,
+  getTableFormattingLocation: () => tableFormattingLocation,
+  setTableFormattingLocation: (location) => {
+    tableFormattingLocation = location;
   },
-) {
-  tablePropertiesOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  const location = tableFormattingLocation;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const range = cellSelection.value ?? fullTableRange(model, location);
-  if (!range) {
-    return;
-  }
-  const fallbackCaret = {
-    section: location.section,
-    block: location.block,
-    offset: 0,
-    cell: { row: location.row, col: location.col, block: 0 },
-  };
-  const selection = currentSelection(root) ?? caretSelection(fallbackCaret);
-  let current = model;
-  if (payload.borderPreset) {
-    current = applyBorderPreset(current, selection, range, asBorderPreset(payload.borderPreset), {
-      style: asBorderLineStyle(payload.borderStyle),
-      widthPt: payload.borderWidthPt,
-      color: payload.borderColor,
-    }).model;
-  }
-  current = setCellShading(current, selection, range, payload.shadingFill || undefined).model;
-  current = setCellPadding(current, selection, range, payload.paddingCm).model;
-  current = setCellVerticalAlign(current, selection, range, asCellVerticalAlign(payload.verticalAlign)).model;
-  current = setTableAlignment(current, selection, location, asTableAlignment(payload.alignment)).model;
-  current = setTableWidthMode(
-    current,
-    selection,
-    location,
-    asTableWidthMode(payload.widthMode),
-    payload.widthPercent,
-  ).model;
-  applyEdit({ model: current, selection }, selection, "table properties");
-  root.focus();
-}
-
-/** The toolbar's grid picker or the dialog (AC-1..4): inserts at the caret
- * and focuses the first cell. Inside a table the insert is refused —
- * nested tables are out of scope (SPEC-022). */
-function handleInsertTable(size = { rows: 0, cols: 0 }) {
-  insertTableDialogOpen.value = false;
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (active) {
-    // Header/footer tables (SPEC-029 AC-5): same insertTable command, run
-    // against the active band's synthetic model.
-    if (!model || !editable.value) {
-      return;
-    }
-    const selection = currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
-    if (selection.focus.cell) {
-      addToast("Tables can't be inserted inside a table");
-      hfRootEl()?.focus();
-      return;
-    }
-    const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-    const result = insertTable(synthetic, selection, size.rows, size.cols);
-    applyHeaderFooterEdit(result.model, result.selection, "insert table");
-    hfRootEl()?.focus();
-    return;
-  }
-  const root = contentRoot.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  if (selection.focus.cell) {
-    addToast("Tables can't be inserted inside a table");
-    root.focus();
-    return;
-  }
-  applyEdit(insertTable(model, selection, size.rows, size.cols), selection, "insert table");
-  root.focus();
-}
+  getContextMenuTableCell: () => contextMenuTableCell,
+  onUnmount,
+});
 
 // --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
 
