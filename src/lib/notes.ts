@@ -222,3 +222,48 @@ export function withNoteBlocks(
 export function createNoteId(): string {
   return `note-${crypto.randomUUID()}`;
 }
+
+/** `paragraph` with every note reference run's placeholder text replaced by
+ * its displayed label — the text the canvas actually renders (SPEC-031), so
+ * text measurement wraps exactly like the rendered paragraph. Returns the
+ * input object untouched (same identity) when it holds no note runs. */
+export function paragraphWithNoteLabels(
+  paragraph: Paragraph,
+  labelOf: (noteId: string, kind: NoteKind) => string,
+): Paragraph {
+  if (!paragraph.runs.some((run) => run.note)) {
+    return paragraph;
+  }
+  return {
+    ...paragraph,
+    runs: paragraph.runs.map((run) =>
+      run.note ? { ...run, text: labelOf(run.note.noteId, run.note.kind) || run.text } : run,
+    ),
+  };
+}
+
+/** Maps an offset in a paragraph's rendered (label-substituted) text back
+ * to model space — the inverse the measurement path needs so line-start
+ * offsets stay model coordinates (see domCaret.renderedOffsetsToModel for
+ * the DOM-side counterpart). An offset inside a label snaps to the mark's
+ * start. */
+export function renderedOffsetToModel(
+  paragraph: Paragraph,
+  labelOf: (noteId: string, kind: NoteKind) => string,
+  renderedOffset: number,
+): number {
+  let rendered = 0;
+  let model = 0;
+  for (const run of paragraph.runs) {
+    const renderedLength = run.note
+      ? (labelOf(run.note.noteId, run.note.kind) || run.text).length
+      : run.text.length;
+    if (renderedOffset <= rendered + renderedLength) {
+      const within = renderedOffset - rendered;
+      return model + (run.note ? (within >= renderedLength ? run.text.length : 0) : within);
+    }
+    rendered += renderedLength;
+    model += run.text.length;
+  }
+  return model;
+}

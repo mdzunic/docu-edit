@@ -1181,6 +1181,12 @@ export function noActiveNote(): ActiveNoteTarget | null {
   return null;
 }
 
+/** Typed `null` seed for note-content parameters in `.vue` scripts (same
+ * espree constraint as asCharacterFormatKey). */
+export function noNoteContent(): NoteContent | null {
+  return null;
+}
+
 /** The product's built-in fallback styles (A4, standard margins, Calibri
  * 11pt) — the starting point for a blank document, and the fallback the
  * `.docx` reader falls back to for anything a source file doesn't specify. */

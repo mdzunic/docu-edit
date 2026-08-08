@@ -147,7 +147,7 @@ describe("withNoteModel/commitNoteModel (SPEC-031 AC-6)", () => {
     expect(synthetic.sections).toHaveLength(1);
     const typed = insertText(synthetic, caretSelection(caret(0, 0)), "Note body");
     const committed = commitNoteModel(inserted.model, "n1", typed.model);
-    expect((noteById(committed, "n1")?.blocks[0] as Paragraph).runs[0].text).toBe("Note body");
+    expect((noteById(committed, "n1")!.blocks[0] as Paragraph).runs[0].text).toBe("Note body");
     // The body sections come back untouched.
     expect(committed.sections).toBe(inserted.model.sections);
   });

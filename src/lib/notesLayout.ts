@@ -25,15 +25,7 @@ import {
   type MetricsProvider,
   type PageLayout,
 } from "./pagination";
-import {
-  isBreak,
-  isImage,
-  isTable,
-  type Block,
-  type DocumentModel,
-  type NoteContent,
-  type NoteKind,
-} from "./documentModel";
+import type { Block, DocumentModel, NoteContent, NoteKind } from "./documentModel";
 import { collectNoteRefs, noteById, type NoteRefLocation } from "./notes";
 
 /** The gutter (px) a note's content is indented by in the note area — the
@@ -108,6 +100,17 @@ export interface NotesLayout {
  * pages: the full content width minus the number gutter. */
 export function noteContentWidthPx(model: DocumentModel, sectionIndex: number): number {
   return Math.max(1, sectionGeometryPx(model, sectionIndex).contentWidthPx - NOTE_LABEL_GUTTER_PX);
+}
+
+/** Typed `null` seed for note-area parameters in `.vue` scripts, which
+ * espree bars from writing the annotation (see pageRender.asPageColumns). */
+export function noNoteArea(): NoteArea | null {
+  return null;
+}
+
+/** Typed empty seed for note-area item lists in `.vue` scripts. */
+export function noNoteAreaItems(): NoteAreaItem[] {
+  return [];
 }
 
 // --- reference → page assignment --------------------------------------------

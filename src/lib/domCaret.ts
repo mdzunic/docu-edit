@@ -12,6 +12,89 @@ import type { CaretPosition } from "./textEditing";
 /** Selects the canvas's paragraph elements (shared with caretGeometry). */
 export const BLOCK_SELECTOR = "[data-section][data-block]";
 
+/** Marks a rendered inline element as a caret atom (SPEC-031's note
+ * reference marks): its rendered text may be any length (a note number like
+ * "12"), but the model text it stands for is this attribute's value (the
+ * one-character placeholder). Both mapping directions below — and every
+ * consumer that equates rendered text with model text — count the attribute
+ * value's length instead of the rendered text's. */
+export const CARET_ATOM_ATTRIBUTE = "data-caret-atom";
+const CARET_ATOM_SELECTOR = "[data-caret-atom]";
+
+function atomModelLength(atom: Element): number {
+  return (atom.getAttribute(CARET_ATOM_ATTRIBUTE) ?? "").length || 1;
+}
+
+/** The model text a rendered canvas subtree stands for: its text content
+ * with every caret atom's rendered text replaced by the atom's model text,
+ * and every `data-canvas-ignore` subtree (header/footer bands and note
+ * areas — content outside the body flow) skipped. Identical to
+ * `textContent` for plain body content. */
+export function canvasModelText(root: Element): string {
+  if (root.hasAttribute("data-canvas-ignore")) {
+    return "";
+  }
+  if (root.hasAttribute(CARET_ATOM_ATTRIBUTE)) {
+    return root.getAttribute(CARET_ATOM_ATTRIBUTE) ?? "";
+  }
+  let text = "";
+  for (const node of Array.from(root.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += (node as Text).data;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      text += canvasModelText(node as Element);
+    }
+  }
+  return text;
+}
+
+/** The model text length a rendered element stands for (see
+ * canvasModelText) — what `element.textContent.length` used to mean before
+ * caret atoms existed. */
+export function modelTextLengthOf(element: Element): number {
+  return canvasModelText(element).length;
+}
+
+/** Maps line-start offsets measured in an element's RENDERED text (see
+ * pageMetrics.lineStartOffsets) into model text space: offsets past an
+ * atom's rendered label shrink by the label's extra length; an offset
+ * inside a label snaps to the atom's start. */
+export function renderedOffsetsToModel(element: Element, offsets: number[]): number[] {
+  const atoms = Array.from(element.querySelectorAll(CARET_ATOM_SELECTOR));
+  if (atoms.length === 0) {
+    return offsets;
+  }
+  // Each atom's rendered start offset within the element, in document
+  // order, with its rendered/model lengths.
+  const doc = element.ownerDocument;
+  const spans = atoms.map((atom) => {
+    const range = doc.createRange();
+    range.selectNodeContents(element);
+    range.setEndBefore(atom);
+    const start = range.toString().length;
+    return {
+      start,
+      rendered: (atom.textContent ?? "").length,
+      model: atomModelLength(atom),
+    };
+  });
+  return offsets.map((offset) => {
+    let mapped = offset;
+    for (const span of spans) {
+      if (offset >= span.start + span.rendered) {
+        mapped -= span.rendered - span.model;
+      } else if (offset > span.start) {
+        // Inside the rendered label: snap to the atom's start.
+        mapped -= offset - span.start;
+        break;
+      } else {
+        break;
+      }
+    }
+    return mapped;
+  });
+}
+
 /** The character offset a rendered element's text starts at within its
  * block — 0 unless the paragraph is split across pages (SPEC-028). */
 export function sliceStartOf(element: Element): number {
@@ -175,10 +258,32 @@ export function caretFromDomPoint(
   } catch {
     return null;
   }
+  // Caret atoms (SPEC-031): an atom before the point contributed its whole
+  // rendered label to the range's text but stands for its model text; a
+  // point inside an atom snaps to just after it.
+  let adjusted: number | null = null;
+  let adjustment = 0;
+  for (const atom of Array.from(paragraph.querySelectorAll(CARET_ATOM_SELECTOR))) {
+    const renderedLength = (atom.textContent ?? "").length;
+    const modelLength = atomModelLength(atom);
+    const atomRange = paragraph.ownerDocument.createRange();
+    atomRange.selectNodeContents(atom);
+    if (atomRange.compareBoundaryPoints(Range.END_TO_END, range) <= 0) {
+      adjustment += renderedLength - modelLength;
+      continue;
+    }
+    if (atomRange.compareBoundaryPoints(Range.END_TO_START, range) < 0) {
+      const before = paragraph.ownerDocument.createRange();
+      before.selectNodeContents(paragraph);
+      before.setEnd(atomRange.startContainer, atomRange.startOffset);
+      adjusted = before.toString().length - adjustment + modelLength;
+    }
+    break; // Atoms come in document order: the rest start after the point.
+  }
   const caret: CaretPosition = {
     section,
     block,
-    offset: sliceStartOf(paragraph) + range.toString().length,
+    offset: sliceStartOf(paragraph) + (adjusted ?? range.toString().length - adjustment),
   };
   const cell = paragraph.hasAttribute("data-row") ? cellPathOf(paragraph) : undefined;
   if (cell) {
@@ -249,22 +354,58 @@ export function domPointForCaret(
   if (!paragraph) {
     return null;
   }
-  const walker = paragraph.ownerDocument.createTreeWalker(
-    paragraph,
-    NodeFilter.SHOW_TEXT,
-  );
-  let remaining = atomOffset ?? Math.max(0, caret.offset - sliceStartOf(paragraph));
-  let lastText: Text | null = null;
-  while (walker.nextNode()) {
-    const text = walker.currentNode as Text;
-    lastText = text;
-    if (remaining <= text.data.length) {
-      return { node: text, offset: remaining };
+  // Walk text nodes and caret atoms in order. An atom is opaque: it counts
+  // as its model text's length and the point lands before or after it,
+  // never inside its rendered label (SPEC-031).
+  const units: Array<{ text: Text } | { atom: Element }> = [];
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      units.push({ text: node as Text });
+      return;
     }
-    remaining -= text.data.length;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+    if ((node as Element).hasAttribute(CARET_ATOM_ATTRIBUTE)) {
+      units.push({ atom: node as Element });
+      return;
+    }
+    for (const child of Array.from(node.childNodes)) {
+      visit(child);
+    }
+  };
+  for (const child of Array.from(paragraph.childNodes)) {
+    visit(child);
   }
-  if (lastText) {
-    return { node: lastText, offset: lastText.data.length };
+  const afterAtom = (atom: Element): DomPoint => {
+    const parent = atom.parentNode as Node;
+    const index = Array.prototype.indexOf.call(parent.childNodes, atom);
+    return { node: parent, offset: index + 1 };
+  };
+  let remaining = atomOffset ?? Math.max(0, caret.offset - sliceStartOf(paragraph));
+  let last: { text: Text } | { atom: Element } | null = null;
+  for (const unit of units) {
+    if ("text" in unit) {
+      if (remaining <= unit.text.data.length) {
+        return { node: unit.text, offset: remaining };
+      }
+      remaining -= unit.text.data.length;
+    } else {
+      const modelLength = atomModelLength(unit.atom);
+      if (remaining < modelLength) {
+        const parent = unit.atom.parentNode as Node;
+        const index = Array.prototype.indexOf.call(parent.childNodes, unit.atom);
+        return { node: parent, offset: index };
+      }
+      remaining -= modelLength;
+    }
+    last = unit;
+  }
+  if (last && "text" in last) {
+    return { node: last.text, offset: last.text.data.length };
+  }
+  if (last) {
+    return afterAtom(last.atom);
   }
   return { node: paragraph, offset: 0 };
 }
