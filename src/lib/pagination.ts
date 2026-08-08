@@ -11,6 +11,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
   resolveColumnWidthsCm,
   sectionColumns,
   sectionContentWidthCm,
@@ -212,7 +213,7 @@ interface Frame {
 }
 
 function paragraphOf(block: Block): Paragraph | null {
-  return isTable(block) || isImage(block) || isBreak(block) ? null : block;
+  return isTable(block) || isImage(block) || isBreak(block) || isToc(block) ? null : block;
 }
 
 function sliceHeight(metrics: BlockMetrics, startLine: number, endLine: number): number {
@@ -643,6 +644,17 @@ export function estimateMetrics(
     return {
       contentWidthPx,
       heightPx: rows * lineHeight + 8,
+      marginTopPx: 0,
+      marginBottomPx: 0,
+      lines: [],
+      estimated: true,
+    };
+  }
+  if (isToc(block)) {
+    const rows = Math.max(1, block.entries.length);
+    return {
+      contentWidthPx,
+      heightPx: rows * lineHeight,
       marginTopPx: 0,
       marginBottomPx: 0,
       lines: [],

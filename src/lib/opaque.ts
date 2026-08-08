@@ -6,7 +6,7 @@
 // an item is and that it cannot be represented in the target format, so the
 // conversion report dialog and the tests both read the writer's `dropped`
 // array rather than diffing models.
-import { isBreak, isImage, type DocumentFormat, type DocumentModel } from "./documentModel";
+import { isBreak, isImage, isToc, type DocumentFormat, type DocumentModel } from "./documentModel";
 import { parseXml, XmlParseError } from "./docx/xml";
 
 // --- base64 ----------------------------------------------------------------
@@ -252,6 +252,12 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
         }
         if (isBreak(blockAt)) {
           // A break block carries no content and no unmodelled XML.
+          continue;
+        }
+        if (isToc(blockAt)) {
+          // A TOC's generated entries are plain data, not preserved XML —
+          // both writers regenerate its field/index markup fresh, so there
+          // is nothing here that could be dropped by a format conversion.
           continue;
         }
         // A table's cell paragraphs are inspected too (SPEC-022); their

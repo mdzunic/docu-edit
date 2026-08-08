@@ -872,9 +872,74 @@ export function asSectionColumns(value: unknown): SectionColumns {
   return value as SectionColumns;
 }
 
+// --- table of contents (SPEC-033) -------------------------------------------
+
+/** One heading included in a table of contents: the entry text, outline
+ * level (1-6) and the heading's derived anchor (lib/links.ts's
+ * headingAnchor) an entry click jumps to — the same anchor scheme internal
+ * hyperlinks use (SPEC-025), so a TOC entry is a pre-resolved internal link.
+ * `pageNumber` is the page the heading fell on when the TOC was last
+ * generated or updated; null until pagination has resolved it once. Staying
+ * a plain snapshot (rather than a live lookup) is what makes "headings
+ * changed" and "pagination changed" two independently detectable staleness
+ * conditions (SPEC-033 AC-10/11, see lib/toc.ts). */
+export interface TocEntry {
+  text: string;
+  level: number;
+  anchor: string;
+  pageNumber: number | null;
+}
+
+/** A table of contents's configuration (SPEC-033 AC-5..7): which heading
+ * levels (1-6) it includes, whether it shows page numbers, and whether
+ * entries render as plain dot-leader-and-page-number rows or as hyperlinks
+ * only — Word's "Use hyperlinks instead of page numbers": no dot leader, no
+ * page number, the heading text itself is the clickable link. Every entry
+ * is clickable either way (AC-8); this only decides what else is shown. */
+export interface TocOptions {
+  /** Heading levels (1-6) to include, e.g. [1, 2, 3]. */
+  levels: number[];
+  showPageNumbers: boolean;
+  hyperlinksOnly: boolean;
+}
+
+/** Typed pass-through for a TocOptions arriving from a `.vue` template as a
+ * runtime-declared Object (same espree constraint as asParagraphBlock). */
+export function asTocOptions(value: unknown): TocOptions {
+  return value as TocOptions;
+}
+
+/** A table of contents block (SPEC-033): a generated, block-level atom —
+ * blockLength 1, like Image/BreakBlock (see textEditing.blockLength), a
+ * caret sits before or after it, never inside. Built from the document's
+ * Heading 1-6 paragraphs (lib/links.ts's listHeadings) and not directly
+ * editable; its `entries` are only ever replaced wholesale, by the insert
+ * command or the "Update table of contents" commands (lib/toc.ts), never
+ * typed into. Round-trips as a `TOC` field with a cached result (.docx) and
+ * `text:table-of-content` (.odt). */
+export interface TableOfContents {
+  type: "toc";
+  options: TocOptions;
+  entries: TocEntry[];
+}
+
+/** Whether a block is a table of contents — the isTable-style narrowing
+ * helper (also usable from espree-parsed `.vue` scripts). */
+export function isToc(block: Block | undefined): block is TableOfContents {
+  return block?.type === "toc";
+}
+
+/** Typed pass-through for a TableOfContents arriving as a runtime-declared
+ * Object prop (espree bars the type annotation — see asImage for the same
+ * pattern). */
+export function asToc(value: unknown): TableOfContents {
+  return value as TableOfContents;
+}
+
 /** Block-level children of a section: paragraphs, tables (SPEC-022),
- * images (SPEC-024) and manual breaks (SPEC-028). */
-export type Block = Paragraph | Table | Image | BreakBlock;
+ * images (SPEC-024), manual breaks (SPEC-028) and tables of contents
+ * (SPEC-033). */
+export type Block = Paragraph | Table | Image | BreakBlock | TableOfContents;
 
 /** A section groups block-level content; documents have one or more. A
  * section boundary IS the section break (SPEC-028): inserting a section

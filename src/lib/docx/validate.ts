@@ -63,8 +63,15 @@ const NUM_FMT_VALUES = new Set([
 // the schema's required document order.
 const PPR_SEQUENCE = [
   "pStyle", "keepNext", "keepLines", "pageBreakBefore", "widowControl",
-  "numPr", "bidi", "spacing", "ind", "jc", "outlineLvl", "sectPr",
+  "numPr", "tabs", "bidi", "spacing", "ind", "jc", "outlineLvl", "sectPr",
 ];
+// ST_TabJc (the subset the writer emits: custom tab stops, SPEC-032; TOC
+// entry dot leaders, SPEC-033).
+const TAB_JC_VALUES = new Set(["left", "right", "center", "decimal"]);
+// ST_TabTlc.
+const TAB_LEADER_CHAR_VALUES = new Set(["none", "dot", "hyphen", "underscore"]);
+// ST_FldCharType (SPEC-033's TOC/PAGEREF complex fields).
+const FLD_CHAR_TYPES = new Set(["begin", "separate", "end"]);
 // CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
 // fitText, vertAlign", so shd follows u and vertAlign follows shd.
 const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];
@@ -243,6 +250,18 @@ function checkParagraphProperties(pPr: Element, context: string, violations: str
         checkAttr(child, "val", (v) => UNSIGNED_PATTERN.test(v) && Number(v) <= 9,
           "an outline level between 0 and 9", context, violations);
         break;
+      case "tabs":
+        for (const tab of Array.from(child.children)) {
+          if (!isWordElement(tab) || tab.localName !== "tab") {
+            continue;
+          }
+          checkAttr(tab, "val", (v) => TAB_JC_VALUES.has(v), "an ST_TabJc value", context, violations);
+          checkAttr(tab, "pos", (v) => INTEGER_PATTERN.test(v),
+            "a whole-number twip measurement", context, violations);
+          checkAttr(tab, "leader", (v) => TAB_LEADER_CHAR_VALUES.has(v),
+            "an ST_TabTlc value", context, violations, false);
+        }
+        break;
     }
   }
 }
@@ -259,6 +278,12 @@ function checkRun(run: Element, context: string, violations: string[]): void {
         violations.push(`${context}: w:rPr must be the first child of w:r`);
       }
       checkRunProperties(child, `${context}/w:rPr`, violations);
+    } else if (child.localName === "fldChar") {
+      checkAttr(child, "fldCharType", (v) => FLD_CHAR_TYPES.has(v),
+        "an ST_FldCharType value", context, violations);
+    } else if (child.localName === "instrText") {
+      // Free-form field instruction text (SPEC-033's TOC/PAGEREF fields) —
+      // no attribute constraints beyond being a WordprocessingML element.
     } else if (!["t", "tab", "br"].includes(child.localName)) {
       violations.push(`${context}: unexpected element w:${child.localName}`);
     }

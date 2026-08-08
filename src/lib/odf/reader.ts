@@ -34,6 +34,8 @@ import type {
   TableCell,
   TableRow,
   TableWidthMode,
+  TableOfContents,
+  TocEntry,
 } from "../documentModel";
 import { createDefaultStyles, FIELD_PLACEHOLDER_TEXT } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
@@ -429,6 +431,92 @@ function collectInlineSegment(
 interface BodyTextBlockResult {
   blocks: Block[];
   media: MediaPart[];
+}
+
+// --- table of contents (SPEC-033) -------------------------------------------
+
+/** One `text:table-of-content`'s index-body paragraph as a TOC entry
+ * (SPEC-033 AC-19): the `text:a`'s href (an internal "#anchor" target) and
+ * text, split at its `text:tab` into the heading text and the cached page
+ * number. A paragraph with no `text:a` at all (the empty-TOC placeholder)
+ * yields null. */
+function tocEntryFromParagraph(pEl: Element): TocEntry | null {
+  const link = firstChildElement(pEl, TEXT_NAMESPACE, "a");
+  if (!link) {
+    return null;
+  }
+  const href = xlinkAttr(link, "href") ?? "";
+  const anchor = href.startsWith("#") ? href.slice(1) : href;
+  let text = "";
+  let pageNumberText = "";
+  let sawTab = false;
+  for (const node of Array.from(link.childNodes)) {
+    if (node.nodeType === node.TEXT_NODE) {
+      const value = node.textContent ?? "";
+      if (sawTab) {
+        pageNumberText += value;
+      } else {
+        text += value;
+      }
+    } else if (node.nodeType === node.ELEMENT_NODE) {
+      const el = node as Element;
+      if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "tab") {
+        sawTab = true;
+      } else if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "span") {
+        if (sawTab) {
+          pageNumberText += el.textContent ?? "";
+        } else {
+          text += el.textContent ?? "";
+        }
+      }
+    }
+  }
+  const styleVal = textAttr(pEl, "style-name") ?? "";
+  const levelMatch = /^Contents_20_([1-6])$/.exec(styleVal);
+  const pageNumber = /^\d+$/.test(pageNumberText) ? Number(pageNumberText) : null;
+  return { text, level: levelMatch ? Number(levelMatch[1]) : 1, anchor, pageNumber };
+}
+
+/** Parses a `text:table-of-content` element (SPEC-033 AC-19, AC-20): every
+ * index-body paragraph becomes one entry (see tocEntryFromParagraph); the
+ * included levels are the entries' own distinct levels, falling back to the
+ * source config's entry templates (a foreign producer's index whose body
+ * happens to be empty) and finally to the default top-three levels. */
+function parseTableOfContent(el: Element): TableOfContents {
+  const body = firstChildElement(el, TEXT_NAMESPACE, "index-body");
+  const entries: TocEntry[] = [];
+  if (body) {
+    for (const child of Array.from(body.children)) {
+      if (child.namespaceURI !== TEXT_NAMESPACE || child.localName !== "p") {
+        continue;
+      }
+      const entry = tocEntryFromParagraph(child);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+  }
+  let levels = Array.from(new Set(entries.map((entry) => entry.level))).sort((a, b) => a - b);
+  if (levels.length === 0) {
+    const source = firstChildElement(el, TEXT_NAMESPACE, "table-of-content-source");
+    const templateLevels = source
+      ? Array.from(source.children)
+          .filter(
+            (child) =>
+              child.namespaceURI === TEXT_NAMESPACE &&
+              child.localName === "table-of-content-entry-template",
+          )
+          .map((child) => Number(textAttr(child, "outline-level")))
+          .filter((level) => Number.isInteger(level) && level >= 1 && level <= 6)
+      : [];
+    levels = templateLevels.length > 0 ? templateLevels : [1, 2, 3];
+  }
+  const hasPageNumbers = entries.some((entry) => entry.pageNumber !== null);
+  return {
+    type: "toc",
+    options: { levels, showPageNumbers: hasPageNumbers, hyperlinksOnly: !hasPageNumbers },
+    entries,
+  };
 }
 
 /** Parses one body-level `text:p`/`text:h` into one or more blocks
@@ -1511,6 +1599,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
       } else {
         opaqueBlocks.push({ xml: serializeElement(child), blockIndex: blocks.length });
       }
+    } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "table-of-content") {
+      // SPEC-033 AC-18..20: a generated table of contents.
+      blocks.push(parseTableOfContent(child));
     } else {
       // Sequence declarations, frames, ... — unmodelled body children are
       // preserved verbatim, anchored to their position among the
