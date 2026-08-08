@@ -524,6 +524,33 @@ export function insertText(
   return { ...c, offset: c.offset + text.length };
 }
 
+/** Inserts a complete run at the caret as-is (SPEC-031's note reference
+ * marks): unlike insertText it never inherits formatting — the run carries
+ * its own — but maintains bookmark anchors the same way. Meant for marker
+ * runs, which normalizeRuns refuses to coalesce into neighbours. Returns
+ * the caret after the run. A table-atom caret is inert. */
+export function insertRun(
+  model: DocumentModel,
+  caret: CaretPosition,
+  run: Run,
+): CaretPosition {
+  const c = clampCaret(model, caret);
+  const block = paragraphAt(model, c);
+  if (!block) {
+    return c;
+  }
+  const [before, after] = splitRuns(block.runs, c.offset);
+  replaceParagraphAt(
+    model,
+    c,
+    setBookmarks(
+      { ...block, runs: normalizeRuns([...before, run, ...after]) },
+      bookmarksAfterInsert(block.bookmarks, c.offset, run.text.length),
+    ),
+  );
+  return { ...c, offset: c.offset + run.text.length };
+}
+
 /** Splits the caret's paragraph in two (the Enter key) — inside its cell
  * when the caret is in a table (SPEC-022), which is how a cell grows a
  * second paragraph. Both halves keep the paragraph's block-level formatting
