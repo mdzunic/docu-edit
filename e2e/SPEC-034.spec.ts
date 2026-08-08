@@ -278,6 +278,89 @@ test("headers print and export in position (AC-8, AC-10)", async ({ page }) => {
   expect(pdf).toContain(" Tj ET");
 });
 
+test("footers sit at the bottom of the page, above any footnotes (AC-9, AC-11)", async ({ page }) => {
+  await stubPrint(page);
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Body above a footer and a footnote");
+  await waitForPagination(page);
+
+  // Give the page a footer.
+  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("hf-menu-footer").click();
+  await expect(page.getByTestId("page-footer-band").first()).toHaveAttribute(
+    "data-hf-editable",
+    "1",
+  );
+  await page.keyboard.type("Report footer");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("page-footer-band").first()).toContainText("Report footer");
+
+  // A footnote reference at the end of the body, with a note body.
+  await content(page).click();
+  await page.keyboard.press(`${MOD}+End`);
+  await page.getByTestId("notes-menu-button").click();
+  await page.getByTestId("notes-menu-footnote").click();
+  await page.keyboard.type("Footnote body text");
+  await page.keyboard.press("Escape");
+  await waitForPagination(page);
+
+  const pageBox = await documentPages(page).first().boundingBox();
+  const footerBox = await page.getByTestId("page-footer-band").first().boundingBox();
+  const noteBox = await page.getByTestId("footnote-area").first().boundingBox();
+  expect(pageBox).toBeTruthy();
+  expect(footerBox).toBeTruthy();
+  expect(noteBox).toBeTruthy();
+  // The footer sits in the bottom 30% of the page (AC-9)…
+  expect(footerBox!.y + footerBox!.height - pageBox!.y).toBeGreaterThan(pageBox!.height * 0.7);
+  // …and the footnote area sits above it, itself in the lower part of the
+  // page (AC-11), separated from the body by the note separator rule.
+  expect(noteBox!.y + noteBox!.height).toBeLessThanOrEqual(footerBox!.y + 1);
+  expect(noteBox!.y - pageBox!.y).toBeGreaterThan(pageBox!.height * 0.5);
+  await expect(page.getByTestId("note-separator").first()).toBeVisible();
+  await expect(page.getByTestId("footnote-area").first()).toContainText("Footnote body text");
+
+  // Both remain in place under the print preview.
+  await page.keyboard.press(`${MOD}+p`);
+  await expect(preview(page)).toBeVisible();
+  await expect(page.getByTestId("page-footer-band").first()).toContainText("Report footer");
+  await expect(page.getByTestId("footnote-area").first()).toContainText("Footnote body text");
+});
+
+test("multi-column layout flows and prints columns in order (AC-12)", async ({ page }) => {
+  await createDocument(page);
+  // Enough paragraphs that the first page's left column fills and content
+  // spills into the right column — short text alone would fit in one
+  // column and never exercise the column break.
+  await pasteText(page, paragraphLines(90, "Column"));
+  await waitForPagination(page);
+
+  await page.getByTestId("columns-button").click();
+  await page.getByTestId("columns-preset-2").click();
+  await page.getByTestId("columns-confirm").click();
+  await waitForPagination(page);
+
+  const columns = await page.getByTestId("doc-column").all();
+  expect(columns.length).toBeGreaterThanOrEqual(2);
+  const firstBox = await columns[0].boundingBox();
+  const secondBox = await columns[1].boundingBox();
+  expect(firstBox).toBeTruthy();
+  expect(secondBox).toBeTruthy();
+  // Left column renders left of the right column on the same page (AC-12)…
+  expect(firstBox!.x).toBeLessThan(secondBox!.x);
+  // …and content flows into the left column first, continuing into the
+  // right column in document order.
+  const firstText = (await columns[0].textContent()) ?? "";
+  const secondText = (await columns[1].textContent()) ?? "";
+  expect(firstText).toContain("Column 0 ");
+  expect(firstText).not.toContain("Column 89 ");
+  expect(secondText).not.toContain("Column 0 ");
+
+  // Column order survives into the PDF export as ordinary page text.
+  const pdf = await downloadPdfText(page);
+  expect(pdf).toContain(" Tj ET");
+});
+
 test("a large export shows progress, keeps the UI responsive and completes well under budget (AC-21, AC-22, AC-23)", async ({
   page,
 }) => {
