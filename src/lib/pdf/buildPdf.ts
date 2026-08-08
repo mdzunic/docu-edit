@@ -96,7 +96,9 @@ function pdfTextString(text: string): string {
 /** A URI operand: control characters stripped, delimiters escaped, so a
  * crafted href can never break out of the string and inject objects. */
 function pdfUriString(uri: string): string {
-  const cleaned = uri.replace(/[\r\n\t\0]/g, "");
+  const cleaned = Array.from(uri)
+    .filter((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127)
+    .join("");
   return `(${cleaned.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)")})`;
 }
 

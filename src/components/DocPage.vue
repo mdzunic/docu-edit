@@ -54,6 +54,10 @@ const props = defineProps({
   /** The endnote area (SPEC-031 AC-4): rendered in flow after the body
    * content, at the end of the document. Same shape as footnoteArea. */
   endnoteArea: { type: Object, default: null },
+  /** Outside the selected print range (SPEC-034 AC-29/31): the page hides
+   * while the print preview is open and never prints. Inert on screen —
+   * only the is-print-preview / @media print rules act on the marker. */
+  printHidden: { type: Boolean, default: false },
 });
 
 defineEmits([
@@ -109,6 +113,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
     class="page"
     data-testid="document-page"
     :data-virtual="virtual ? '1' : undefined"
+    :data-print-hidden="printHidden ? '1' : undefined"
     :style="pageStyle"
   >
     <div

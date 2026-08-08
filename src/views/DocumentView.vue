@@ -40,6 +40,7 @@ import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
+import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
@@ -51,6 +52,8 @@ import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { useFindReplace } from "./document/useFindReplace";
+import { usePdfExport } from "./document/usePdfExport";
+import { usePrintPreview } from "./document/usePrintPreview";
 import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
@@ -3283,6 +3286,46 @@ const pageNumbers = computed(() => {
   return model ? computePageNumbers(paginationPages.value, model) : [];
 });
 
+// Print preview and printing (SPEC-034): the preview overlays the canvas
+// (which is itself the preview surface), owns the page-range state and the
+// realize-everything gate both printing and PDF export share.
+const {
+  printPreviewOpen,
+  printing,
+  forceRealizeAll: printForceRealize,
+  rangeMode: printRangeMode,
+  rangeText: printRangeText,
+  rangeError: printRangeError,
+  canPrint,
+  printablePageCount,
+  printHiddenPages,
+  openPrintPreview,
+  closePrintPreview,
+  confirmPrint,
+  realizeAllPages,
+} = usePrintPreview({ doc, pagination, pagesRoot: pageRef });
+
+// PDF export (SPEC-034): reads the realized canvas into a client-built PDF.
+const { pdfExporting, pdfProgress, exportPdf } = usePdfExport({
+  doc,
+  pagination,
+  pagesRoot: pageRef,
+  realizeAllPages,
+  endRealizeAll: () => {
+    if (!printPreviewOpen.value) {
+      printForceRealize.value = false;
+    }
+  },
+  addToast,
+});
+
+// Formatting marks are a screen affordance: the class that paints them
+// drops while the print preview is open and while printing (SPEC-034
+// AC-13). The model's showFormattingMarks setting itself is untouched.
+const marksVisible = computed(
+  () => marksOn.value && !printPreviewOpen.value && !printing.value,
+);
+
 // Hyperlinks, bookmarks and TOC navigation (SPEC-025, SPEC-033) live in
 // useLinks; it needs pageNumbers (above) and the session's caret/scroll anchors.
 const {
@@ -3381,6 +3424,9 @@ const anchorPage = ref(-1);
 
 const virtualizing = computed(
   () =>
+    // Print preview / printing / PDF export need every page's real content
+    // in the DOM (SPEC-034) — virtualization pauses while they run.
+    !printForceRealize.value &&
     pagination.canMeasureOffscreen && paginationPages.value.length > VIRTUALIZE_MIN_PAGES,
 );
 
@@ -3655,6 +3701,12 @@ function handleTitleUpdate(newTitle = "") {
 }
 
 async function handleDownload(format = "") {
+  // PDF export (SPEC-034 AC-14): a rendered-output snapshot, not a save —
+  // it runs its own pipeline and never touches autosave or the model.
+  if (format === "pdf") {
+    void exportPdf();
+    return;
+  }
   if (!doc.value || (format !== "docx" && format !== "odt")) {
     return;
   }
@@ -3718,6 +3770,9 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   // canvas focused, so this is deliberately unguarded by isOutsideDocumentInput.
   if (event.key === "Escape") {
     disarmPainter();
+    if (printPreviewOpen.value) {
+      closePrintPreview();
+    }
   }
   if (isOutsideDocumentInput(event.target)) {
     return;
@@ -3730,8 +3785,11 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     event.preventDefault();
     openFind(true);
   } else if (shortcut?.id === "file.print") {
+    // SPEC-034 AC-1 (superseding SPEC-021's immediate window.print()):
+    // Ctrl/Cmd+P opens the in-app print preview; the native dialog opens
+    // from its Print button.
     event.preventDefault();
-    window.print();
+    openPrintPreview();
   }
 }
 
@@ -4037,7 +4095,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     <div class="page-wrap">
       <div
         v-if="findVisible"
-        class="find-bar-dock"
+        class="find-bar-dock print-exclude"
       >
         <FindBar
           :visible="findVisible"
@@ -4086,7 +4144,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       >
         <div
           v-if="findVisible"
-          class="find-highlight-layer"
+          class="find-highlight-layer print-exclude"
           data-testid="find-highlights"
           aria-hidden="true"
         >
@@ -4106,7 +4164,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         </div>
         <div
           v-if="tableHover"
-          class="table-handles"
+          class="table-handles print-exclude"
           data-testid="table-handles"
         >
           <!-- Column handles above the table: an insert button at every
@@ -4211,7 +4269,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         </div>
         <div
           v-if="imageHandles"
-          class="image-handles"
+          class="image-handles print-exclude"
           data-testid="image-handles"
         >
           <div
@@ -4226,7 +4284,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         <div
           ref="contentRoot"
           class="document-content"
-          :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksOn }"
+          :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
           data-testid="document-content"
           role="textbox"
           aria-multiline="true"
@@ -4268,6 +4326,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
             :footer-editable="pageView.footerEditable"
             :footnote-area="pageView.footnoteArea ?? undefined"
             :endnote-area="pageView.endnoteArea ?? undefined"
+            :print-hidden="printHiddenPages.has(pageIndex)"
             @image-select="handleImageSelect"
             @toc-action="handleTocAction"
             @dblclick-header="handleDblclickHeader(pageIndex)"
@@ -4304,6 +4363,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     </template>
     <LinkChip
       v-if="linkChip.visible"
+      class="print-exclude"
       :left="linkChip.left"
       :top="linkChip.top"
       :label="linkChip.label"
@@ -4368,6 +4428,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     />
     <PasteOptionsChip
       v-if="pasteChip.visible"
+      class="print-exclude"
       :left="pasteChip.left"
       :top="pasteChip.top"
       :applied="pasteChip.applied"
@@ -4376,6 +4437,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     />
     <ImageToolbar
       v-if="imageSelection && imageHandles"
+      class="print-exclude"
       :left="imageToolbarStyle().left"
       :top="imageToolbarStyle().top"
       :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
@@ -4385,6 +4447,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     />
     <EditorContextMenu
       v-if="contextMenu.visible"
+      class="print-exclude"
       :left="contextMenu.left"
       :top="contextMenu.top"
       :table-actions="!!contextMenuTableCell"
@@ -4460,6 +4523,28 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       @apply="handleImageOptionsApply"
       @cancel="imageOptionsOpen = false"
     />
+    <PrintPreviewDialog
+      v-if="printPreviewOpen"
+      :page-count="printablePageCount"
+      :range-mode="printRangeMode"
+      :range-text="printRangeText"
+      :error="printRangeError ?? ''"
+      :can-print="canPrint"
+      @update:range-mode="printRangeMode = $event"
+      @update:range-text="printRangeText = $event"
+      @print="confirmPrint"
+      @close="closePrintPreview"
+    />
+    <!-- PDF export progress (AC-22): a passive status chip — pointer-events
+         off, so the UI stays fully interactive underneath (AC-23). -->
+    <div
+      v-if="pdfExporting"
+      class="pdf-export-progress print-exclude"
+      role="status"
+      data-testid="pdf-export-progress"
+    >
+      Exporting PDF…{{ pdfProgress.total > 0 ? ` page ${pdfProgress.done} of ${pdfProgress.total}` : "" }}
+    </div>
   </AppShell>
   <AppShell
     v-else
@@ -4688,6 +4773,24 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* The PDF export progress chip (SPEC-034 AC-22): floats over the canvas
+   without capturing the pointer, so scrolling/clicking keep working while
+   the export runs (AC-23). */
+.pdf-export-progress {
+  position: fixed;
+  bottom: 3rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 130;
+  padding: 0.5rem 1.25rem;
+  border-radius: 999px;
+  background: #202124;
+  color: #fff;
+  font-size: 0.875rem;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+  pointer-events: none;
 }
 
 .not-found {

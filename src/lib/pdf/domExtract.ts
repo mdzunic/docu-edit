@@ -14,6 +14,9 @@ import { faceKeyFor } from "./fontMap";
 /** CSS px (96dpi) to PDF points (72dpi). */
 export const PT_PER_PX = 72 / 96;
 
+/** Layout centimetres to PDF points (the page geometry's unit). */
+export const PT_PER_CM = 72 / 2.54;
+
 /** The fraction of a text fragment's box that hangs below the baseline —
  * the Liberation faces all put ~19% of (ascent+descent) in the descender,
  * so the baseline sits at bottom − 0.19 × height. */
