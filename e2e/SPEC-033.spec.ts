@@ -2,7 +2,11 @@ import { test, expect, type Download, type Page } from "@playwright/test";
 import { inflateRawSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { MOD } from "./keys";
+import { createDocument as buildDocumentModel, type Paragraph } from "../src/lib/documentModel";
+import { writeDocx } from "../src/lib/docx/writer";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -330,4 +334,26 @@ test("round-trips through .odt as text:table-of-content (AC-18)", async ({ page 
   await openFixture(page, path);
   await expect(tocEntries(page)).toHaveCount(1);
   await expect(tocEntries(page)).toContainText("Chapter One");
+});
+
+test("a TOC for 300 headings generates in under 1 second (AC-21)", async ({ page }) => {
+  const model = buildDocumentModel("perf-toc-test");
+  const blocks: Paragraph[] = [];
+  for (let i = 1; i <= 300; i++) {
+    blocks.push({ type: "paragraph", runs: [{ text: `Heading ${i}`, formatting: {} }], headingLevel: 1 });
+  }
+  model.sections = [{ blocks }];
+  model.format = "docx";
+  const { bytes } = await writeDocx(model);
+  const dir = mkdtempSync(join(tmpdir(), "toc-perf-"));
+  const path = join(dir, "perf-toc-test.docx");
+  writeFileSync(path, bytes);
+
+  await openFixture(page, path);
+  await page.getByTestId("insert-toc-button").click();
+  await expect(page.getByTestId("toc-options-dialog")).toBeVisible();
+  const start = Date.now();
+  await page.getByTestId("toc-options-apply").click();
+  await expect(tocEntries(page)).toHaveCount(300);
+  expect(Date.now() - start).toBeLessThan(1000);
 });
