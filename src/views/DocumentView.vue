@@ -42,6 +42,7 @@ import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
+import StatisticsDialog from "../components/StatisticsDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
@@ -62,6 +63,7 @@ import { useNotes } from "./document/useNotes";
 import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
+import { useWordCount } from "./document/useWordCount";
 import { documentExists } from "../lib/documents";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
@@ -835,6 +837,20 @@ const {
   insertImageFromFile,
   onSessionClose,
 });
+
+// Live word count and the statistics dialog (SPEC-036) live in useWordCount;
+// updateCaretStatus below feeds it every selection change, and its own
+// throttled watch on `doc` keeps the document-wide total live.
+const {
+  statusBarText: wordCountStatusText,
+  announcement: wordCountAnnouncement,
+  setSelection: setWordCountSelection,
+  statisticsOpen,
+  includeNotes: statisticsIncludeNotes,
+  dialogStats: statisticsStats,
+  openStatistics,
+  closeStatistics,
+} = useWordCount({ doc, onUnmount });
 
 const autosave = useAutosave({
   getCaret: () => caret,
@@ -1884,6 +1900,7 @@ async function contextMenuPaste() {
  * (SPEC-012 AC-12..14) for the same range. */
 function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   const model = doc.value;
+  setWordCountSelection(range.start, range.end);
   if (!model || !range.start || !range.end) {
     formatStates.value = EMPTY_FORMAT_STATES;
     formatValues.value = emptyToolbarFormatValues();
@@ -4353,6 +4370,14 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       >
         {{ caretStatus }}
       </div>
+      <div
+        class="visually-hidden"
+        role="status"
+        aria-live="polite"
+        data-testid="word-count-status"
+      >
+        {{ wordCountAnnouncement }}
+      </div>
     </div>
     <template #status-bar>
       <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
@@ -4360,6 +4385,14 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         v-if="paginationBusy"
         data-testid="pagination-busy"
       >Paginating…</span>
+      <button
+        type="button"
+        class="word-count-button"
+        data-testid="word-count-button"
+        @click="openStatistics"
+      >
+        {{ wordCountStatusText }}
+      </button>
     </template>
     <LinkChip
       v-if="linkChip.visible"
@@ -4512,6 +4545,14 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       @apply="handleNoteSettingsApply"
       @cancel="handleNoteSettingsCancel"
     />
+    <StatisticsDialog
+      v-if="statisticsOpen"
+      :stats="statisticsStats"
+      :pages="pageCount"
+      :include-notes="statisticsIncludeNotes"
+      @update-include-notes="statisticsIncludeNotes = $event"
+      @close="closeStatistics"
+    />
     <SpecialCharacterDialog
       v-if="specialCharacterDialogOpen"
       @insert="handleSpecialCharacterInsert"
@@ -4585,6 +4626,26 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+/* Sits in the status bar next to the page indicator (SPEC-036 AC-1, AC-4):
+   a plain-looking button (no border/background of its own) so it reads as
+   status text until focused/hovered, while still being a real <button> —
+   keyboard-reachable by Tab and activatable with Enter/Space with no extra
+   keydown handling (AC-27). */
+.word-count-button {
+  font: inherit;
+  font-size: 0.75rem;
+  color: inherit;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.word-count-button:hover,
+.word-count-button:focus-visible {
+  text-decoration: underline;
 }
 
 .save-state {
