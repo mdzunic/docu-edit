@@ -884,6 +884,22 @@ function handleTocCancel() {
   tocOptionsDialogOpen.value = false;
 }
 
+/** Deletes the selected TOC block (SPEC-033 AC-16): the generic whole-atom
+ * range delete every Image/Table/BreakBlock already uses — see
+ * handleKeyDown's Delete/Backspace branch above. The headings it was built
+ * from live in their own blocks and are never touched. */
+function handleTocDelete() {
+  const location = tocSelection.value;
+  const model = doc.value;
+  if (!location || !model || !editable.value) {
+    return;
+  }
+  const start = { section: location.section, block: location.blockIndex, offset: 0 };
+  const end = { section: location.section, block: location.blockIndex, offset: 1 };
+  const selection = caretSelection(start);
+  applyEdit(deleteRange(model, { anchor: start, focus: end }), selection, "delete table of contents");
+}
+
 /** DocTocBlock's single `action` event (SPEC-033 AC-8, AC-9, AC-12, AC-13):
  * one payload shape for the three things a TOC block can trigger, so the
  * event only has to be relayed (not fanned into three) through
@@ -4564,11 +4580,19 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     exitHeaderFooterEditing();
     return;
   }
+  if (tocSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+    // Deleting a selected TOC (SPEC-033 AC-16) is the same dedicated
+    // keydown path SPEC-024 uses for a selected image: a click never
+    // places a DOM caret/selection inside it for the native beforeinput
+    // deletion flow to act on. Removes the whole atom; the headings it was
+    // built from are separate blocks and are untouched.
+    event.preventDefault();
+    handleTocDelete();
+    return;
+  }
   if (tocSelection.value && isContentKey(event)) {
-    // A selected TOC is not directly editable (SPEC-033 AC-14, AC-15): a
-    // click on it never places a native caret inside it (contenteditable
-    // is false), so — unlike text editing — there is no beforeinput to
-    // intercept; the hint fires here instead, before the keystroke can
+    // Every other content-producing key while a TOC is selected (SPEC-033
+    // AC-14, AC-15): the hint fires here instead of letting the keystroke
     // reach whatever the native caret still sits on elsewhere.
     event.preventDefault();
     addToast('This table of contents isn’t editable — use "Update table of contents" instead.');

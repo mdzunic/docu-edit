@@ -308,4 +308,61 @@ writeFileSync(
   ]),
 );
 
+// ---------------------------------------------------------------------
+// Fixture D: Word-authored, containing a table of contents (SPEC-033
+// AC-19, AC-20) — the shape real Word emits: a `TOC` complex field
+// (fldChar begin/separate/end around an instrText instruction) whose
+// cached result is TOCn-styled paragraphs, each entry's page number itself
+// a NESTED `PAGEREF` complex field inside the entry's own hyperlink. The
+// reader must track field nesting depth to find the OUTER field's true end
+// rather than stopping at the first entry's nested PAGEREF end.
+// ---------------------------------------------------------------------
+const wordTocBody = `
+  <w:p>
+    <w:pPr><w:pStyle w:val="TOC1"/><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+    <w:r><w:instrText xml:space="preserve"> TOC \\o "1-2" \\h \\z \\u </w:instrText></w:r>
+    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+    <w:hyperlink w:anchor="_Toc1" w:history="1">
+      <w:r><w:t>Introduction</w:t></w:r>
+      <w:r><w:tab/></w:r>
+      <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+      <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc1 \\h </w:instrText></w:r>
+      <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+      <w:r><w:t>1</w:t></w:r>
+      <w:r><w:fldChar w:fldCharType="end"/></w:r>
+    </w:hyperlink>
+  </w:p>
+  <w:p>
+    <w:pPr><w:pStyle w:val="TOC2"/><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+    <w:hyperlink w:anchor="_Toc2" w:history="1">
+      <w:r><w:t>Background</w:t></w:r>
+      <w:r><w:tab/></w:r>
+      <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+      <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc2 \\h </w:instrText></w:r>
+      <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+      <w:r><w:t>1</w:t></w:r>
+      <w:r><w:fldChar w:fldCharType="end"/></w:r>
+    </w:hyperlink>
+    <w:r><w:fldChar w:fldCharType="end"/></w:r>
+  </w:p>
+  <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>Introduction</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>
+  <w:p><w:r><w:t>Opening paragraph.</w:t></w:r></w:p>
+  <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:bookmarkStart w:id="1" w:name="_Toc2"/><w:r><w:t>Background</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>
+  <w:p><w:r><w:t>More detail.</w:t></w:r></w:p>`;
+
+writeFileSync(
+  path.join(outDir, "word-toc.docx"),
+  buildZip([
+    { name: "[Content_Types].xml", content: CONTENT_TYPES },
+    { name: "_rels/.rels", content: ROOT_RELS },
+    { name: "word/_rels/document.xml.rels", content: DOCUMENT_RELS },
+    {
+      name: "word/document.xml",
+      content: documentXml(wordTocBody, sectPr({ w: 11906, h: 16838, margin: 1440 })),
+    },
+    { name: "word/styles.xml", content: wordStyles },
+  ]),
+);
+
 console.log("Wrote fixtures to", outDir);

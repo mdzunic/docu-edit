@@ -510,16 +510,41 @@ function tocFieldStartOptions(pEl: Element): TocOptions | null {
   return { levels: levels.length > 0 ? levels : [1], showPageNumbers: true, hyperlinksOnly: false };
 }
 
-/** Whether any run directly inside this paragraph (its own runs, or a
- * hyperlink's) carries the field's closing `w:fldChar type="end"`. */
-function tocFieldEndsIn(pEl: Element): boolean {
-  const runs = [
-    ...childElements(pEl, WORD_NAMESPACE, "r"),
-    ...childElements(pEl, WORD_NAMESPACE, "hyperlink").flatMap((h) =>
-      childElements(h, WORD_NAMESPACE, "r"),
-    ),
-  ];
-  return runs.some((rEl) => runFldCharType(rEl) === "end");
+/** Walks a paragraph's runs in document order — its own direct runs and, in
+ * place, each hyperlink's runs — tracking complex-field nesting depth
+ * (SPEC-033 AC-19, AC-20). A real Word TOC entry commonly caches its page
+ * number as a NESTED `PAGEREF` complex field inside the entry's own
+ * hyperlink; that nested field's `end` must not be mistaken for the outer
+ * TOC field's own `end`, so `depth` only reaches 0 again — `endedHere` true
+ * — when every nested field opened has also closed. `depth` carries across
+ * paragraphs (the caller threads it through the whole field's paragraph
+ * span), starting at 0 for the field's very first paragraph. */
+function tocFieldDepthWalk(pEl: Element, depth: number): { depth: number; endedHere: boolean } {
+  let d = depth;
+  let endedHere = false;
+  for (const child of Array.from(pEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      continue;
+    }
+    const runs =
+      child.localName === "r"
+        ? [child]
+        : child.localName === "hyperlink"
+          ? childElements(child, WORD_NAMESPACE, "r")
+          : [];
+    for (const rEl of runs) {
+      const fldType = runFldCharType(rEl);
+      if (fldType === "begin") {
+        d += 1;
+      } else if (fldType === "end") {
+        d -= 1;
+        if (d === 0) {
+          endedHere = true;
+        }
+      }
+    }
+  }
+  return { depth: d, endedHere };
 }
 
 /** The heading anchor, text and cached page number a TOC entry paragraph's
@@ -580,6 +605,7 @@ function parseTocField(
 ): { toc: TableOfContents; endIndex: number } {
   const entries: TocEntry[] = [];
   let endIndex = startIndex;
+  let depth = 0;
   for (let i = startIndex; i < bodyChildren.length; i += 1) {
     const pEl = bodyChildren[i];
     if (pEl.namespaceURI !== WORD_NAMESPACE || pEl.localName !== "p") {
@@ -590,7 +616,9 @@ function parseTocField(
       entries.push(entry);
     }
     endIndex = i;
-    if (tocFieldEndsIn(pEl)) {
+    const walked = tocFieldDepthWalk(pEl, depth);
+    depth = walked.depth;
+    if (walked.endedHere) {
       break;
     }
   }

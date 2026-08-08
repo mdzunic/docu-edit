@@ -99,9 +99,16 @@ export function tocEntriesFromHeadings(
 
 /** Whether the document's headings have changed since `toc` was generated
  * (SPEC-033 AC-10): a different set of included headings, different text,
- * or a different order — page numbers are deliberately ignored here (that
- * is tocPageNumbersStale's job), so the two staleness conditions the block's
- * "Update table of contents" control reacts to stay independent. */
+ * or a different order — compared by text and level only, never by anchor.
+ * The anchor is a synthetic reference this app derives for its own
+ * click-to-jump wiring (lib/links.ts's headingAnchor), not content a source
+ * file round-trips identically — a TOC read from a Word-authored fixture
+ * carries Word's own bookmark names (e.g. "_Toc1") as its entries' anchors,
+ * which would never match this app's derived scheme and so would always
+ * (and wrongly) read as stale otherwise. Page numbers are deliberately
+ * ignored here too (that is tocPageNumbersStale's job), so the two
+ * staleness conditions the block's "Update table of contents" control
+ * reacts to stay independent. */
 export function tocHeadingsStale(model: DocumentModel, toc: TableOfContents): boolean {
   const current = tocEntriesFromHeadings(model, toc.options);
   if (current.length !== toc.entries.length) {
@@ -109,9 +116,7 @@ export function tocHeadingsStale(model: DocumentModel, toc: TableOfContents): bo
   }
   return current.some(
     (entry, index) =>
-      entry.text !== toc.entries[index].text ||
-      entry.level !== toc.entries[index].level ||
-      entry.anchor !== toc.entries[index].anchor,
+      entry.text !== toc.entries[index].text || entry.level !== toc.entries[index].level,
   );
 }
 

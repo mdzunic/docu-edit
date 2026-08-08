@@ -1121,7 +1121,7 @@ function tocEntryParagraphXml(entry: TocEntry, options: TocOptions): string {
       ? `<text:tab/>${escapeXml(String(entry.pageNumber ?? ""))}`
       : "";
   return (
-    `<text:p text:style-name="Contents_20_${level}">` +
+    `<text:p text:style-name="Contents_20_${level}"${LINK_XMLNS}>` +
     `<text:a xlink:type="simple" xlink:href="#${escapeXml(entry.anchor)}">${escapeXml(entry.text)}${trailer}</text:a>` +
     "</text:p>"
   );
