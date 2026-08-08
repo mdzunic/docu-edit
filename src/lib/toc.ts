@@ -42,6 +42,24 @@ export function defaultTocOptions(): TocOptions {
   return { levels: [...DEFAULT_TOC_LEVELS], showPageNumbers: true, hyperlinksOnly: false };
 }
 
+/** The block a click "selected" (SPEC-033 AC-14, AC-15) — unlike a
+ * paragraph caret, a click on a TOC never places a native DOM
+ * selection/caret inside it (it is contenteditable="false"), so the view
+ * tracks which one is selected the same way SPEC-024 tracks a selected
+ * image, to catch a typing attempt that would otherwise silently land
+ * wherever the native caret last was. */
+export interface TocSelection {
+  section: number;
+  blockIndex: number;
+}
+
+/** Typed `null` seed for a TocSelection ref in `.vue` scripts, which espree
+ * bars from writing the `TocSelection | null` annotation themselves (see
+ * lib/images.ts's noImageLocation for the same pattern). */
+export function noTocSelection(): TocSelection | null {
+  return null;
+}
+
 /** Resolves a page number for a heading anchor — supplied by the caller
  * (DocumentView), since only the pagination controller (DOM measurement)
  * knows current page numbers; this module stays framework-free by taking

@@ -9,6 +9,7 @@
 import { computed } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
 import DocTableBlock from "./DocTableBlock.vue";
+import DocTocBlock from "./DocTocBlock.vue";
 import { asRenderEntries, noRenderEntries } from "../lib/pageRender";
 
 const props = defineProps({
@@ -16,7 +17,7 @@ const props = defineProps({
   cellRange: { type: Object, default: null },
 });
 
-defineEmits(["image-select"]);
+defineEmits(["image-select", "toc-action"]);
 
 const renderEntries = computed(() => asRenderEntries(props.entries));
 
@@ -26,6 +27,9 @@ function componentFor(entry = noRenderEntries()[0]) {
   }
   if (entry.kind === "image") {
     return DocImageBlock;
+  }
+  if (entry.kind === "toc") {
+    return DocTocBlock;
   }
   return entry.tag || "div";
 }
@@ -56,7 +60,10 @@ function componentFor(entry = noRenderEntries()[0]) {
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
     :src="entry.imageSrc"
     :selected="entry.imageSelected"
+    :stale-headings="entry.kind === 'toc' ? entry.tocStaleHeadings : undefined"
+    :stale-pagination="entry.kind === 'toc' ? entry.tocStalePagination : undefined"
     @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : undefined"
+    @action="entry.kind === 'toc' ? $emit('toc-action', $event) : undefined"
   >
     <template v-if="entry.runs && entry.runs.length > 0">
       <template

@@ -51,6 +51,7 @@ const props = defineProps({
 
 defineEmits([
   "image-select",
+  "toc-action",
   "dblclick-header",
   "dblclick-footer",
   "dblclick-body",
@@ -143,6 +144,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               :entry="entry"
               :cell-range="cellRange"
               @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
+              @toc-action="(payload) => $emit('toc-action', payload)"
             />
           </div>
           <div
@@ -159,6 +161,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             :entries="entries"
             :cell-range="cellRange"
             @image-select="(section, block) => $emit('image-select', section, block)"
+            @toc-action="(payload) => $emit('toc-action', payload)"
           />
         </template>
       </div>

@@ -27,6 +27,7 @@ import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
 import TableInsertControl from "../components/TableInsertControl.vue";
+import TocOptionsDialog from "../components/TocOptionsDialog.vue";
 import FindBar from "../components/FindBar.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
@@ -82,6 +83,9 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
+  asToc,
+  asTocOptions,
   noActiveHeaderFooter,
   noBlocks,
   resolveColumnWidthsCm,
@@ -90,6 +94,15 @@ import {
   sectionMargins,
   sectionPageSize,
 } from "../lib/documentModel";
+import {
+  defaultTocOptions,
+  insertTableOfContents,
+  noTocSelection,
+  tocHeadingsStale,
+  tocPageNumbersStale,
+  updateTocEntirely,
+  updateTocPageNumbersOnly,
+} from "../lib/toc";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
 import {
   anchorCaret,
@@ -494,6 +507,17 @@ function clearImageSelection() {
   }
 }
 
+// --- table of contents (SPEC-033) -------------------------------------------
+// A click "selects" a TOC block the same way SPEC-024 selects an image
+// (AC-14, AC-15): set by DocTocBlock's own click handling, cleared by a
+// mousedown elsewhere on the canvas or Escape — see handleTocAction and
+// handleKeyDown's typing-attempt guard below.
+const tocSelection = ref(noTocSelection());
+
+function clearTocSelection() {
+  tocSelection.value = null;
+}
+
 // --- headers, footers and page numbers (SPEC-029) ---------------------------
 // The section/part/kind currently being edited, or null while editing the
 // body (AC-1, AC-2, AC-7, AC-8) — set by double-clicking a header/footer
@@ -523,6 +547,8 @@ const hfRemountEpoch = ref(0);
 const headerFooterOptionsOpen = ref(false);
 const headerFooterOptionsInitial = ref({});
 const pageNumberDialogOpen = ref(false);
+// "Insert -> Table of contents" (SPEC-033 AC-1, AC-5..7).
+const tocOptionsDialogOpen = ref(false);
 
 /** The one DOM element currently rendering as an editable header/footer
  * band, if any — set by DocPage's `data-hf-editable` attribute on whichever
@@ -813,6 +839,100 @@ function handlePageNumberInsert(
 
 function handlePageNumberCancel() {
   pageNumberDialogOpen.value = false;
+}
+
+/** A heading anchor's current displayed page number (SPEC-033): resolved
+ * through the pagination controller, so it reflects whatever the canvas has
+ * actually measured — null for an anchor that no longer resolves to a
+ * heading (used both to generate/update entries and to detect the
+ * "pagination changed" staleness the block's update control watches). */
+function tocPageNumberFor(model = noDocument(), anchor = "") {
+  const position = anchorCaret(model, anchor);
+  if (!position) {
+    return null;
+  }
+  const pageIndex = pagination.pageOfCaret(position);
+  return pageNumbers.value[pageIndex] ?? null;
+}
+
+/** "Insert -> Table of contents" (SPEC-033 AC-1): opens the options dialog.
+ * Unavailable while editing a header/footer band — a TOC is body content. */
+function openTocDialog() {
+  if (!doc.value || !editable.value || activeHeaderFooter.value) {
+    return;
+  }
+  tocOptionsDialogOpen.value = true;
+}
+
+function handleTocInsert(options = defaultTocOptions()) {
+  tocOptionsDialogOpen.value = false;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  applyEdit(
+    insertTableOfContents(model, selection, options, (anchor) => tocPageNumberFor(model, anchor)),
+    selection,
+    "insert table of contents",
+  );
+  root.focus();
+}
+
+function handleTocCancel() {
+  tocOptionsDialogOpen.value = false;
+}
+
+/** DocTocBlock's single `action` event (SPEC-033 AC-8, AC-9, AC-12, AC-13):
+ * one payload shape for the three things a TOC block can trigger, so the
+ * event only has to be relayed (not fanned into three) through
+ * DocBlockEntries/DocPageBlock/DocPage up to this view. */
+function handleTocAction(payload = { type: "jump", anchor: "", section: 0, blockIndex: 0 }) {
+  if (payload.type === "jump") {
+    clearTocSelection();
+    jumpToAnchor(payload.anchor ?? "");
+  } else if (payload.type === "update-page-numbers") {
+    handleTocUpdatePageNumbers(payload.section, payload.blockIndex);
+  } else if (payload.type === "update-entire") {
+    handleTocUpdateEntire(payload.section, payload.blockIndex);
+  } else if (payload.type === "select") {
+    clearCellSelection();
+    clearImageSelection();
+    tocSelection.value = { section: payload.section, blockIndex: payload.blockIndex };
+  }
+}
+
+/** "Update page numbers only" (SPEC-033 AC-12). */
+function handleTocUpdatePageNumbers(section = 0, blockIndex = 0) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    updateTocPageNumbersOnly(model, selection, section, blockIndex, (anchor) =>
+      tocPageNumberFor(model, anchor),
+    ),
+    selection,
+    "update page numbers",
+  );
+}
+
+/** "Update entire table" (SPEC-033 AC-13). */
+function handleTocUpdateEntire(section = 0, blockIndex = 0) {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    updateTocEntirely(model, selection, section, blockIndex, (anchor) => tocPageNumberFor(model, anchor)),
+    selection,
+    "update table of contents",
+  );
 }
 
 /** The document's own effective save format (the same rule DownloadMenu's
@@ -1442,6 +1562,7 @@ function applyEdit(
   tableHover.value = null;
   const priorImageSelection = imageSelection.value;
   clearImageSelection();
+  clearTocSelection();
   const before = doc.value;
   if (before) {
     recordHistoryEdit(documentId.value, {
@@ -1694,6 +1815,31 @@ function applyAutocorrect(
   return false;
 }
 
+/** Whether a caret's own block address (ignoring any cell path) is a TOC
+ * atom (SPEC-033) — used to catch every edit attempt at its boundary before
+ * the ordinary per-inputType dispatch below. */
+function caretAtToc(model = noDocument(), caret = noCaret()) {
+  if (!caret || caret.cell) {
+    return false;
+  }
+  return isToc(model.sections[caret.section]?.blocks[caret.block]);
+}
+
+/** Whether a keydown would type or delete content — a plain printable
+ * character, or Enter/Backspace/Delete without a modifier — the set
+ * handleKeyDown's selected-TOC guard (SPEC-033 AC-15) intercepts. Excludes
+ * navigation, Tab and every modifier combo, so Ctrl/Cmd+C (copy) and arrow
+ * keys around a selected TOC still work normally. */
+function isContentKey(event = new KeyboardEvent("keydown")) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  if (event.key === "Enter" || event.key === "Backspace" || event.key === "Delete") {
+    return true;
+  }
+  return event.key.length === 1;
+}
+
 function handleBeforeInput(event = new InputEvent("beforeinput")) {
   const type = event.inputType;
   if (composing || event.isComposing || type === "insertCompositionText") {
@@ -1709,6 +1855,14 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
   }
   const selection = currentSelection(root);
   if (!selection) {
+    return;
+  }
+  // A TOC is not directly editable (SPEC-033 AC-14, AC-15, AC-24): a caret
+  // sitting at its atom boundary (either end of the selection) shows the
+  // update hint instead of silently doing nothing, the way Image/BreakBlock
+  // atoms already do for every other kind of edit.
+  if (caretAtToc(model, selection.anchor) || caretAtToc(model, selection.focus)) {
+    addToast('This table of contents isn’t editable — use "Update table of contents" instead.');
     return;
   }
   // The paragraph a collapsed caret sits in — what the list-specific Enter
@@ -3159,6 +3313,12 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   if (!imageTarget) {
     clearImageSelection();
   }
+  // Same for a selected TOC (SPEC-033) — a click on one is handled by
+  // DocTocBlock's own @action "select", which fires afterward.
+  const tocTarget = event.target instanceof Element ? event.target.closest(".doc-toc") : null;
+  if (!tocTarget) {
+    clearTocSelection();
+  }
 }
 
 /** Mousemove with the primary button down: entering a different cell of the
@@ -4400,7 +4560,18 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     clearCellSelection();
     disarmPainter();
     clearImageSelection();
+    clearTocSelection();
     exitHeaderFooterEditing();
+    return;
+  }
+  if (tocSelection.value && isContentKey(event)) {
+    // A selected TOC is not directly editable (SPEC-033 AC-14, AC-15): a
+    // click on it never places a native caret inside it (contenteditable
+    // is false), so — unlike text editing — there is no beforeinput to
+    // intercept; the hint fires here instead, before the keystroke can
+    // reach whatever the native caret still sits on elsewhere.
+    event.preventDefault();
+    addToast('This table of contents isn’t editable — use "Update table of contents" instead.');
     return;
   }
   if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
@@ -4938,6 +5109,23 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
       column,
     };
   }
+  if (flatEntry.isToc) {
+    const toc = asToc(block);
+    const staleHeadings = tocHeadingsStale(model, toc);
+    const stalePagination = tocPageNumbersStale(toc, (anchor) => tocPageNumberFor(model, anchor));
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, staleHeadings, stalePagination, column],
+      kind: "toc",
+      uneditable: true,
+      blockProp: block,
+      sectionProp: flatEntry.section,
+      blockIndexProp: flatEntry.blockIndex,
+      tocStaleHeadings: staleHeadings,
+      tocStalePagination: stalePagination,
+      column,
+    };
+  }
   const paragraph = flatEntry.paragraph;
   let sliceStart;
   let sliceEnd;
@@ -5297,6 +5485,7 @@ const flatBlocks = computed(() => {
       const suffix = bump.key === address ? `:${bump.count}` : "";
       const table = isTable(block);
       const image = isImage(block);
+      const toc = isToc(block);
       const cellSel =
         table && range && range.section === sectionIndex && range.block === blockIndex
           ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
@@ -5311,6 +5500,7 @@ const flatBlocks = computed(() => {
         paragraph: asParagraphBlock(block),
         isTable: table,
         isImage: image,
+        isToc: toc,
         imageSrc: image ? mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)) : "",
         imageSelected: imgSelected,
         section: sectionIndex,
@@ -6028,6 +6218,18 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         v-if="editable"
         type="button"
         class="toolbar-button"
+        data-testid="insert-toc-button"
+        title="Table of contents"
+        aria-label="Insert table of contents"
+        @mousedown.prevent
+        @click="openTocDialog"
+      >
+        TOC
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
         data-testid="insert-special-character-button"
         title="Special characters"
         aria-label="Insert special character"
@@ -6427,6 +6629,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             :header-editable="pageView.headerEditable"
             :footer-editable="pageView.footerEditable"
             @image-select="handleImageSelect"
+            @toc-action="handleTocAction"
             @dblclick-header="handleDblclickHeader(pageIndex)"
             @dblclick-footer="handleDblclickFooter(pageIndex)"
             @dblclick-body="handleDblclickBody"
@@ -6581,6 +6784,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       :initial="{ part: activeHeaderFooter?.part ?? 'header' }"
       @apply="handlePageNumberInsert"
       @cancel="handlePageNumberCancel"
+    />
+    <TocOptionsDialog
+      v-if="tocOptionsDialogOpen"
+      :initial="defaultTocOptions()"
+      @apply="handleTocInsert"
+      @cancel="handleTocCancel"
     />
     <HeaderFooterOptionsDialog
       v-if="headerFooterOptionsOpen"
