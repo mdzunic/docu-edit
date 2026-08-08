@@ -112,7 +112,9 @@ test("registry shortcuts do not fire while focus is in the find bar (AC-13)", as
   await expect(page.getByTestId("find-bar")).toBeVisible();
 });
 
-test("Ctrl/Cmd+P prints instead of opening the browser's print dialog (AC-10)", async ({ page }) => {
+test("Ctrl/Cmd+P is intercepted: the app's own print preview opens instead of the browser's print dialog (AC-10; behaviour superseded by SPEC-034 AC-1)", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     (window as unknown as { __printCalls: number }).__printCalls = 0;
     window.print = () => {
@@ -124,7 +126,10 @@ test("Ctrl/Cmd+P prints instead of opening the browser's print dialog (AC-10)", 
   await content(page).click();
 
   await page.keyboard.press(`${MOD}+p`);
-  await expect
-    .poll(() => page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls))
-    .toBe(1);
+  // SPEC-034: the shortcut opens the in-app preview; the native dialog only
+  // opens from the preview's Print button, so no window.print() call yet.
+  await expect(page.getByTestId("print-preview")).toBeVisible();
+  expect(
+    await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls),
+  ).toBe(0);
 });

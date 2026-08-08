@@ -59,7 +59,7 @@ function select() {
   >
     <div
       v-if="staleHeadings || stalePagination"
-      class="toc-update-bar"
+      class="toc-update-bar print-exclude"
       data-testid="toc-update-bar"
     >
       <span class="toc-update-label">Update table of contents</span>

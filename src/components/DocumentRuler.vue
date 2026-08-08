@@ -275,7 +275,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
 <template>
   <div
     ref="root"
-    class="ruler"
+    class="ruler print-exclude"
     data-testid="document-ruler"
     role="group"
     aria-label="Ruler"

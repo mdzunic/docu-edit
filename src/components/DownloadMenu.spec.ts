@@ -29,7 +29,19 @@ describe("DownloadMenu", () => {
     expect(item.text()).toBe("OpenDocument Text (.odt)");
     expect(item.attributes("role")).toBe("menuitem");
     const items = wrapper.findAll('[role="menuitem"]').map((option) => option.text());
-    expect(items).toEqual(["Word (.docx)", "OpenDocument Text (.odt)"]);
+    // "PDF (.pdf)" appended by SPEC-034 AC-14.
+    expect(items).toEqual(["Word (.docx)", "OpenDocument Text (.odt)", "PDF (.pdf)"]);
+  });
+
+  it("opens the menu with a 'PDF (.pdf)' option that emits download('pdf') (SPEC-034 AC-14)", async () => {
+    const wrapper = mount(DownloadMenu);
+    await wrapper.get('[data-testid="download-menu"]').trigger("click");
+    const item = wrapper.get('[data-testid="download-pdf"]');
+    expect(item.text()).toBe("PDF (.pdf)");
+    expect(item.attributes("role")).toBe("menuitem");
+    await item.trigger("click");
+    expect(wrapper.emitted("download")).toEqual([["pdf"]]);
+    expect(wrapper.find('[data-testid="download-menu-list"]').exists()).toBe(false);
   });
 
   it("emits download('odt') and closes when the .odt option is chosen (SPEC-007 AC-2)", async () => {
