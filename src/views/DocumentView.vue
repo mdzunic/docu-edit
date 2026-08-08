@@ -965,6 +965,18 @@ function handleTocUpdateEntire(section = 0, blockIndex = 0) {
   const root = contentRoot.value;
   const model = doc.value;
   if (!root || !model || !editable.value) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    updateTocEntirely(model, selection, section, blockIndex, (anchor) =>
+      tocPageNumberFor(model, anchor),
+    ),
+    selection,
+    "update table of contents",
+  );
+}
+
 // --- footnotes and endnotes (SPEC-031) ---------------------------------------
 // The note currently being edited, or null while editing the body — set by
 // inserting a note (AC-2, AC-4), clicking a reference mark (AC-15) or
@@ -1232,12 +1244,6 @@ function handleNoteSettingsApply(
   }
   const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
   applyEdit(
-    updateTocEntirely(model, selection, section, blockIndex, (anchor) => tocPageNumberFor(model, anchor)),
-    selection,
-    "update table of contents",
-  );
-}
-
     setNoteSettings(model, selection, asNoteKind(payload.kind), {
       numberFormat: asNoteNumberFormat(payload.numberFormat),
       startAt: payload.startAt,

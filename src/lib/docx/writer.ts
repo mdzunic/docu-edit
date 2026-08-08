@@ -1241,7 +1241,11 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
           if (block.type === "table") {
             return tableXml(block, includeOpaque, inlineCtx, () => undefined);
           }
-          if (block.type === "image" || block.type === "break") {
+          if (block.type === "image" || block.type === "break" || block.type === "toc") {
+            // A note body holds paragraphs (and its first block must, to
+            // carry the reference marker); images/breaks/TOCs have no valid
+            // per-note serialisation, so they are omitted here the way they
+            // are omitted from the note areas.
             return "";
           }
           if (markerPending) {
