@@ -1,0 +1,12 @@
+Liberation Fonts (Sans, Serif, Mono)
+
+Digitized data copyright (c) 2010 Google Corporation
+ with Reserved Font Names Arimo, Tinos and Cousine.
+Copyright (c) 2012 Red Hat, Inc. with Reserved Font Name Liberation.
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1,
+available with a FAQ at: http://scripts.sil.org/OFL
+
+These fonts are bundled for embedding into exported PDF documents
+(SPEC-034). They are fetched on demand by the PDF exporter and are not part
+of the application's own UI font stack.
