@@ -8,7 +8,7 @@
 // Scope (AC "search covers body text"): every paragraph of every section is
 // searched. Headers, footers and footnotes are not part of the model yet, so
 // they are excluded for free — the find bar states this to the user.
-import { isBreak, isImage, isTable, type DocumentModel, type RunFormatting } from "./documentModel";
+import { isBreak, isImage, isTable, isToc, type DocumentModel, type RunFormatting } from "./documentModel";
 import {
   blockText,
   clampCaret,
@@ -121,7 +121,9 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
     section.blocks.forEach((block, blockIndex) => {
       // Table/image content is not searched (SPEC-022/024): a FindMatch
       // addresses a top-level block's character space, which neither has.
-      if (isTable(block) || isImage(block)) {
+      // A TOC's generated text is not searched either (SPEC-033) — it is
+      // not directly editable, so a replace could never land there anyway.
+      if (isTable(block) || isImage(block) || isToc(block)) {
         return;
       }
       const text = blockText(block);
@@ -209,7 +211,7 @@ export function replaceMatches(
   for (const [key, blockMatches] of byBlock) {
     const [section, block] = key.split(":").map(Number);
     const targetBlock = next.sections[section].blocks[block];
-    if (isTable(targetBlock) || isImage(targetBlock) || isBreak(targetBlock)) {
+    if (isTable(targetBlock) || isImage(targetBlock) || isBreak(targetBlock) || isToc(targetBlock)) {
       continue;
     }
     let runs = targetBlock.runs;

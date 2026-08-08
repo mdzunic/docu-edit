@@ -27,6 +27,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
   type Block,
   type DocumentModel,
   type NoteKind,
@@ -442,7 +443,7 @@ export function usePagination(
   }
 
   function isParagraphBlock(block: Block): block is Paragraph {
-    return !isTable(block) && !isImage(block) && !isBreak(block);
+    return !isTable(block) && !isImage(block) && !isBreak(block) && !isToc(block);
   }
 
   function measureOne(root: HTMLElement, model: DocumentModel, target: PendingTarget): boolean {

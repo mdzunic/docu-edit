@@ -39,6 +39,9 @@ import type {
   TableCell,
   TableRow,
   TableWidthMode,
+  TableOfContents,
+  TocEntry,
+  TocOptions,
 } from "../documentModel";
 import {
   createDefaultStyles,
@@ -505,6 +508,185 @@ function imageRunDrawing(rEl: Element, ctx: DrawingContext): ParsedDrawing | nul
     return null;
   }
   return parseDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
+}
+
+// --- table of contents (SPEC-033) -------------------------------------------
+
+/** The `w:fldChar` type of a run, or null for a run that carries none
+ * (SPEC-033's TOC field detection). */
+function runFldCharType(rEl: Element): string | null {
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "fldChar") {
+      return wordAttr(child, "fldCharType");
+    }
+  }
+  return null;
+}
+
+function runInstrText(rEl: Element): string | null {
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "instrText") {
+      return child.textContent ?? "";
+    }
+  }
+  return null;
+}
+
+/** The TOC field options a paragraph's complex-field begin/instrText
+ * sequence describes (SPEC-033 AC-19), or null when this paragraph does not
+ * begin a TOC field. `showPageNumbers`/`hyperlinksOnly` are inferred from
+ * whether entries actually carry a page-number trailer (see
+ * tocEntryFromParagraph) rather than from the instruction text, since a
+ * hand-authored Word field's switches vary more than this reader needs to
+ * distinguish — what matters is what the cached result actually shows. */
+function tocFieldStartOptions(pEl: Element): TocOptions | null {
+  let sawBegin = false;
+  let instr = "";
+  for (const rEl of childElements(pEl, WORD_NAMESPACE, "r")) {
+    const fldType = runFldCharType(rEl);
+    if (fldType === "begin") {
+      sawBegin = true;
+      continue;
+    }
+    if (fldType === "separate" || fldType === "end") {
+      break;
+    }
+    if (sawBegin) {
+      instr += runInstrText(rEl) ?? "";
+    }
+  }
+  if (!sawBegin || !/^\s*TOC\b/i.test(instr)) {
+    return null;
+  }
+  const rangeMatch = /\\o\s*"(\d+)\s*-\s*(\d+)"/.exec(instr);
+  const min = rangeMatch ? Math.max(1, Number(rangeMatch[1])) : 1;
+  const max = rangeMatch ? Math.min(6, Number(rangeMatch[2])) : 3;
+  const levels: number[] = [];
+  for (let level = Math.min(min, max); level <= Math.max(min, max); level += 1) {
+    levels.push(level);
+  }
+  return { levels: levels.length > 0 ? levels : [1], showPageNumbers: true, hyperlinksOnly: false };
+}
+
+/** Walks a paragraph's runs in document order — its own direct runs and, in
+ * place, each hyperlink's runs — tracking complex-field nesting depth
+ * (SPEC-033 AC-19, AC-20). A real Word TOC entry commonly caches its page
+ * number as a NESTED `PAGEREF` complex field inside the entry's own
+ * hyperlink; that nested field's `end` must not be mistaken for the outer
+ * TOC field's own `end`, so `depth` only reaches 0 again — `endedHere` true
+ * — when every nested field opened has also closed. `depth` carries across
+ * paragraphs (the caller threads it through the whole field's paragraph
+ * span), starting at 0 for the field's very first paragraph. */
+function tocFieldDepthWalk(pEl: Element, depth: number): { depth: number; endedHere: boolean } {
+  let d = depth;
+  let endedHere = false;
+  for (const child of Array.from(pEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      continue;
+    }
+    const runs =
+      child.localName === "r"
+        ? [child]
+        : child.localName === "hyperlink"
+          ? childElements(child, WORD_NAMESPACE, "r")
+          : [];
+    for (const rEl of runs) {
+      const fldType = runFldCharType(rEl);
+      if (fldType === "begin") {
+        d += 1;
+      } else if (fldType === "end") {
+        d -= 1;
+        if (d === 0) {
+          endedHere = true;
+        }
+      }
+    }
+  }
+  return { depth: d, endedHere };
+}
+
+/** The heading anchor, text and cached page number a TOC entry paragraph's
+ * `w:hyperlink` carries (SPEC-033 AC-19): text before its `w:tab`, the page
+ * number after — absent a tab, the entry is a hyperlink-only line (no page
+ * number was cached for it). Returns null for a paragraph with no
+ * hyperlink at all (the placeholder paragraph of an empty TOC). */
+function tocEntryFromParagraph(pEl: Element): TocEntry | null {
+  const hyperlink = firstChildElement(pEl, WORD_NAMESPACE, "hyperlink");
+  if (!hyperlink) {
+    return null;
+  }
+  const anchor = wordAttr(hyperlink, "anchor") ?? "";
+  let text = "";
+  let pageNumberText = "";
+  let sawTab = false;
+  for (const rEl of childElements(hyperlink, WORD_NAMESPACE, "r")) {
+    for (const child of Array.from(rEl.children)) {
+      if (child.namespaceURI !== WORD_NAMESPACE) {
+        continue;
+      }
+      if (child.localName === "tab") {
+        sawTab = true;
+      } else if (child.localName === "t") {
+        if (sawTab) {
+          pageNumberText += child.textContent ?? "";
+        } else {
+          text += child.textContent ?? "";
+        }
+      }
+    }
+  }
+  const pPr = firstChildElement(pEl, WORD_NAMESPACE, "pPr");
+  const styleVal = pPr ? wordAttr(firstChildElement(pPr, WORD_NAMESPACE, "pStyle") ?? pPr, "val") : null;
+  const levelMatch = styleVal ? /^TOC([1-6])$/.exec(styleVal) : null;
+  const pageNumber = /^\d+$/.test(pageNumberText) ? Number(pageNumberText) : null;
+  return {
+    text,
+    level: levelMatch ? Number(levelMatch[1]) : 1,
+    anchor,
+    pageNumber,
+  };
+}
+
+/** Parses a TOC field's full paragraph run (SPEC-033 AC-19, AC-20): starting
+ * at `startIndex` (already confirmed to begin a TOC field by
+ * tocFieldStartOptions), consumes body paragraphs up to and including the
+ * one whose field closes, folding their cached entries into one
+ * TableOfContents block. Returns the block and the index of the last
+ * paragraph it consumed, so the caller's loop can skip past it. A field
+ * that never finds its own end (malformed input) consumes the rest of the
+ * body — the same "better than losing the content" tradeoff the opaque-node
+ * fallback elsewhere in this reader makes. */
+function parseTocField(
+  bodyChildren: Element[],
+  startIndex: number,
+  options: TocOptions,
+): { toc: TableOfContents; endIndex: number } {
+  const entries: TocEntry[] = [];
+  let endIndex = startIndex;
+  let depth = 0;
+  for (let i = startIndex; i < bodyChildren.length; i += 1) {
+    const pEl = bodyChildren[i];
+    if (pEl.namespaceURI !== WORD_NAMESPACE || pEl.localName !== "p") {
+      continue;
+    }
+    const entry = tocEntryFromParagraph(pEl);
+    if (entry) {
+      entries.push(entry);
+    }
+    endIndex = i;
+    const walked = tocFieldDepthWalk(pEl, depth);
+    depth = walked.depth;
+    if (walked.endedHere) {
+      break;
+    }
+  }
+  const hasPageNumbers = entries.some((entry) => entry.pageNumber !== null);
+  const toc: TableOfContents = {
+    type: "toc",
+    options: { ...options, showPageNumbers: hasPageNumbers, hyperlinksOnly: !hasPageNumbers },
+    entries,
+  };
+  return { toc, endIndex };
 }
 
 /** Parses one body-level `<w:p>` into one or more blocks (SPEC-024, breaks
@@ -1528,8 +1710,20 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   let current = rawSections[0];
   const mediaById = new Map<string, MediaPart>();
   let sectPr: Element | undefined;
-  for (const child of Array.from(body.children)) {
+  const bodyChildren = Array.from(body.children);
+  for (let bodyIndex = 0; bodyIndex < bodyChildren.length; bodyIndex += 1) {
+    const child = bodyChildren[bodyIndex];
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "p") {
+      // A TOC field (SPEC-033 AC-19, AC-20): its own paragraphs are the
+      // field's cached result, so the whole span becomes one TOC block
+      // rather than the ordinary per-paragraph parse below.
+      const tocOptions = tocFieldStartOptions(child);
+      if (tocOptions) {
+        const { toc, endIndex } = parseTocField(bodyChildren, bodyIndex, tocOptions);
+        current.blocks.push(toc);
+        bodyIndex = endIndex;
+        continue;
+      }
       const { blocks: parsedBlocks, media } = parseBodyParagraphBlocks(
         child,
         styleCatalog,

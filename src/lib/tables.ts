@@ -13,6 +13,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
   sectionColumnWidthCm,
   type BorderSide,
   type CellBorders,
@@ -165,7 +166,7 @@ export function insertTable(
     rows: Array.from({ length: rows }, () => emptyRow(cols)),
     columnWidthsCm: tableColumnWidthsCm(next, at.section, cols),
   };
-  if (isTable(target) || isImage(target) || isBreak(target)) {
+  if (isTable(target) || isImage(target) || isBreak(target) || isToc(target)) {
     return { model: next, selection: caretSelection(at) };
   }
   const length = blockLength(target);

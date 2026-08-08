@@ -8,6 +8,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
   type DocumentModel,
   type Paragraph,
   type Run,
@@ -454,7 +455,7 @@ function forEachParagraph(
             });
           });
         });
-      } else if (!isImage(block) && !isBreak(block)) {
+      } else if (!isImage(block) && !isBreak(block) && !isToc(block)) {
         visit(block, { section: sectionIndex, block: blockIndex });
       }
     });

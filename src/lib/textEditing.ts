@@ -13,6 +13,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
   type Block,
   type BookmarkAnchor,
   type CharacterFormatKey,
@@ -79,7 +80,7 @@ export function blockText(block: Block): string {
     }
     return text;
   }
-  if (isImage(block) || isBreak(block)) {
+  if (isImage(block) || isBreak(block) || isToc(block)) {
     return "";
   }
   let text = "";
@@ -93,7 +94,7 @@ export function blockText(block: Block): string {
  * of length 1 (offset 0 = before it, 1 = after it — see CaretPosition),
  * never addressed by character. */
 export function blockLength(block: Block): number {
-  if (isTable(block) || isImage(block) || isBreak(block)) {
+  if (isTable(block) || isImage(block) || isBreak(block) || isToc(block)) {
     return 1;
   }
   let length = 0;
@@ -163,7 +164,7 @@ export function clampCaret(
     }
     return { section, block, offset: clampNumber(caret.offset, 0, 1) };
   }
-  if (isImage(target) || isBreak(target)) {
+  if (isImage(target) || isBreak(target) || isToc(target)) {
     return { section, block, offset: clampNumber(caret.offset, 0, 1) };
   }
   const offset = clampNumber(caret.offset, 0, blockLength(target));
@@ -193,7 +194,7 @@ export function paragraphAt(
     }
     return block.rows[address.cell.row].cells[address.cell.col].blocks[address.cell.block];
   }
-  if (isImage(block) || isBreak(block)) {
+  if (isImage(block) || isBreak(block) || isToc(block)) {
     return null;
   }
   return block;
@@ -662,14 +663,14 @@ function resolveTableEdges(
   end: CaretPosition,
 ): { start: CaretPosition; end: CaretPosition } {
   const startBlock = model.sections[start.section].blocks[start.block];
-  if ((isTable(startBlock) || isImage(startBlock) || isBreak(startBlock)) && !start.cell && start.offset >= 1) {
+  if ((isTable(startBlock) || isImage(startBlock) || isBreak(startBlock) || isToc(startBlock)) && !start.cell && start.offset >= 1) {
     const next = nextBlockStart(model, start.section, start.block);
     if (next) {
       start = next;
     }
   }
   const endBlock = model.sections[end.section].blocks[end.block];
-  if ((isTable(endBlock) || isImage(endBlock) || isBreak(endBlock)) && !end.cell && end.offset <= 0) {
+  if ((isTable(endBlock) || isImage(endBlock) || isBreak(endBlock) || isToc(endBlock)) && !end.cell && end.offset <= 0) {
     const prev = previousBlockEnd(model, end.section, end.block);
     if (prev) {
       end = prev;
@@ -741,7 +742,7 @@ export function deleteRange(
   const startBlock = model.sections[start.section].blocks[start.block];
   const endBlock = model.sections[end.section].blocks[end.block];
   if (startBlock === endBlock) {
-    if (isTable(startBlock) || isImage(startBlock) || isBreak(startBlock)) {
+    if (isTable(startBlock) || isImage(startBlock) || isBreak(startBlock) || isToc(startBlock)) {
       // The range covers exactly this atom: remove it whole. The caret
       // lands where the atom was (SPEC-022 AC-23, SPEC-024 AC-30).
       const blocks = model.sections[start.section].blocks;
@@ -771,11 +772,11 @@ export function deleteRange(
   // table/image/break (always fully covered after resolveTableEdges)
   // contributes nothing and is removed whole.
   const head =
-    isTable(startBlock) || isImage(startBlock) || isBreak(startBlock)
+    isTable(startBlock) || isImage(startBlock) || isBreak(startBlock) || isToc(startBlock)
       ? null
       : splitRuns(startBlock.runs, start.offset)[0];
   const tail =
-    isTable(endBlock) || isImage(endBlock) || isBreak(endBlock)
+    isTable(endBlock) || isImage(endBlock) || isBreak(endBlock) || isToc(endBlock)
       ? null
       : splitRuns(endBlock.runs, end.offset)[1];
   let replacement: Paragraph | null;
@@ -939,7 +940,7 @@ export function deleteBackward(
   const prevBlock = model.sections[prev.section].blocks[prev.block];
   if (
     prev.section !== c.section &&
-    (isTable(prevBlock) || isImage(prevBlock) || isBreak(prevBlock))
+    (isTable(prevBlock) || isImage(prevBlock) || isBreak(prevBlock) || isToc(prevBlock))
   ) {
     // Backspace at a section start whose previous section ends in an atom:
     // the section break itself is deleted (the sections merge), the atom
@@ -951,7 +952,7 @@ export function deleteBackward(
     // atom is removed whole, the caret's paragraph is kept as-is.
     return deleteRange(model, { section: prev.section, block: prev.block, offset: 0 }, c);
   }
-  if (isTable(prevBlock) || isImage(prevBlock)) {
+  if (isTable(prevBlock) || isImage(prevBlock) || isToc(prevBlock)) {
     return c;
   }
   return deleteRange(model, prev, c);
@@ -1000,7 +1001,7 @@ export function deleteForward(
   const nextBlock = model.sections[next.section].blocks[next.block];
   if (
     next.section !== c.section &&
-    (isTable(nextBlock) || isImage(nextBlock) || isBreak(nextBlock))
+    (isTable(nextBlock) || isImage(nextBlock) || isBreak(nextBlock) || isToc(nextBlock))
   ) {
     // Delete at a section end whose next section starts with an atom: the
     // section break is deleted (the sections merge), the atom stays and the
@@ -1012,7 +1013,7 @@ export function deleteForward(
     // Deleting a manual break just ahead rejoins the flow (SPEC-028 AC-10).
     return deleteRange(model, c, { section: next.section, block: next.block, offset: 1 });
   }
-  if (isTable(nextBlock) || isImage(nextBlock)) {
+  if (isTable(nextBlock) || isImage(nextBlock) || isToc(nextBlock)) {
     return c;
   }
   return deleteRange(model, c, next);

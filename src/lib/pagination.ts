@@ -11,6 +11,7 @@ import {
   isBreak,
   isImage,
   isTable,
+  isToc,
   resolveColumnWidthsCm,
   sectionColumns,
   sectionContentWidthCm,
@@ -212,7 +213,7 @@ interface Frame {
 }
 
 function paragraphOf(block: Block): Paragraph | null {
-  return isTable(block) || isImage(block) || isBreak(block) ? null : block;
+  return isTable(block) || isImage(block) || isBreak(block) || isToc(block) ? null : block;
 }
 
 /** The rendered height (px) of a block's `[startLine, endLine)` slice —
@@ -664,6 +665,17 @@ export function estimateMetrics(
     return {
       contentWidthPx,
       heightPx: rows * lineHeight + 8,
+      marginTopPx: 0,
+      marginBottomPx: 0,
+      lines: [],
+      estimated: true,
+    };
+  }
+  if (isToc(block)) {
+    const rows = Math.max(1, block.entries.length);
+    return {
+      contentWidthPx,
+      heightPx: rows * lineHeight,
       marginTopPx: 0,
       marginBottomPx: 0,
       lines: [],

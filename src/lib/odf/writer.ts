@@ -51,6 +51,9 @@ import type {
   Table,
   TableCell,
   TableRow,
+  TableOfContents,
+  TocEntry,
+  TocOptions,
 } from "../documentModel";
 import {
   FIELD_PLACEHOLDER_TEXT,
@@ -62,6 +65,7 @@ import {
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
+import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import {
   BULLET_CHARS,
   clampListLevel,
@@ -529,7 +533,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
-      if (block.type === "image" || block.type === "break") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc") {
         continue;
       }
       if (block.styleId) {
@@ -1142,6 +1146,74 @@ function inlineContentXml(
   return content;
 }
 
+// --- table of contents (SPEC-033) -------------------------------------------
+
+function tocEntryTemplateXml(level: number): string {
+  return (
+    `<text:table-of-content-entry-template text:outline-level="${level}" text:style-name="Contents_20_${level}">` +
+    "<text:index-entry-link-start/>" +
+    "<text:index-entry-text/>" +
+    '<text:index-entry-tab-stop style:type="right" style:leader-char="."/>' +
+    "<text:index-entry-page-number/>" +
+    "<text:index-entry-link-end/>" +
+    "</text:table-of-content-entry-template>"
+  );
+}
+
+/** The `text:table-of-content-source` config (SPEC-033 AC-5, AC-18):
+ * LibreOffice/Word read this to know which outline levels and entry shape
+ * "Update index" should regenerate — this app's own reader ignores it
+ * (entries round-trip from the index body itself, see reader.ts's
+ * parseTableOfContent), but it is what makes the file's own "regenerate"
+ * command available in a real word processor too. */
+function tocSourceXml(options: TocOptions): string {
+  const levels = options.levels.length > 0 ? options.levels : [1];
+  const maxLevel = Math.max(...levels);
+  const templates = levels.map((level) => tocEntryTemplateXml(level)).join("");
+  return (
+    `<text:table-of-content-source text:outline-level="${maxLevel}" text:use-outline-level="true">` +
+    '<text:index-title-template text:style-name="Contents_20_Heading"/>' +
+    templates +
+    "</text:table-of-content-source>"
+  );
+}
+
+/** One TOC entry as an index-body paragraph: its heading text as an
+ * internal hyperlink (AC-8, AC-9 — every entry is clickable regardless of
+ * options), plus, unless `hyperlinksOnly`, a tab and the cached page number
+ * (AC-2..4, AC-7). */
+function tocEntryParagraphXml(entry: TocEntry, options: TocOptions): string {
+  const level = Math.max(1, Math.min(6, entry.level));
+  const trailer =
+    options.showPageNumbers && !options.hyperlinksOnly
+      ? `<text:tab/>${escapeXml(String(entry.pageNumber ?? ""))}`
+      : "";
+  return (
+    `<text:p text:style-name="Contents_20_${level}"${LINK_XMLNS}>` +
+    `<text:a xlink:type="simple" xlink:href="#${escapeXml(entry.anchor)}">${escapeXml(entry.text)}${trailer}</text:a>` +
+    "</text:p>"
+  );
+}
+
+/** A TOC block as `text:table-of-content` (SPEC-033 AC-18): a source config
+ * plus an index body holding the cached entries (or the empty-state
+ * placeholder) as plain paragraphs. `text:protected="true"` mirrors the
+ * block's own "not directly editable" contract in the format itself — a
+ * real ODF consumer refuses to type into a protected index the same way
+ * this app's own canvas refuses to (SPEC-033 AC-14/15/24). */
+function tocXml(toc: TableOfContents): string {
+  const body =
+    toc.entries.length === 0
+      ? `<text:p text:style-name="Contents_20_1">${escapeXml(TOC_PLACEHOLDER_TEXT)}</text:p>`
+      : toc.entries.map((entry) => tocEntryParagraphXml(entry, toc.options)).join("");
+  return (
+    '<text:table-of-content text:protected="true" text:name="TableOfContents1">' +
+    tocSourceXml(toc.options) +
+    `<text:index-body>${body}</text:index-body>` +
+    "</text:table-of-content>"
+  );
+}
+
 /** A paragraph as text:p — or text:h with text:outline-level when the model
  * carries a heading level, so the level survives re-opening regardless of
  * the style's definition. */
@@ -1425,6 +1497,17 @@ export function buildContentXml(
         // SPEC-028 AC-32: held until the next paragraph (see pendingBreak);
         // the break block itself emits nothing here.
         pendingBreak = block.kind;
+        i++;
+        continue;
+      }
+      if (block.type === "toc") {
+        // text:table-of-content takes no paragraph style either, same as a
+        // table (SPEC-028's pending break/section boundary needs a carrier).
+        const options = takeStyleOptions();
+        if (options) {
+          blockXml.push(carrierParagraphXml(styles, options));
+        }
+        blockXml.push(tocXml(block));
         i++;
         continue;
       }

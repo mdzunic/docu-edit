@@ -49,16 +49,21 @@ import type {
   Table,
   TableCell,
   TableRow,
+  TableOfContents,
+  TocEntry,
+  TocOptions,
 } from "../documentModel";
 import {
   DEFAULT_TITLE,
   resolveColumnWidthsCm,
+  sectionContentWidthCm,
   sectionMargins,
   sectionPageSize,
 } from "../documentModel";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
+import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import { referencedNotes } from "../notes";
 import {
   childElements,
@@ -1010,6 +1015,76 @@ function planHeaderFooterWrite(
   };
 }
 
+// --- table of contents (SPEC-033) -------------------------------------------
+
+// Word's own TOC style indent step (0.25in per level) — cosmetic only; the
+// reader never looks at paragraph indentation to parse a TOC back, only the
+// field's own structure (see reader.ts's parseTocField).
+const TOC_LEVEL_INDENT_TWIPS = 360;
+
+function tocFieldInstr(options: TocOptions): string {
+  const levels = options.levels.length > 0 ? options.levels : [1];
+  const min = Math.min(...levels);
+  const max = Math.max(...levels);
+  return ` TOC \\o "${min}-${max}" \\h \\z \\u `;
+}
+
+function tocEntryPPr(entry: TocEntry, tabPosTwips: number, includeTab: boolean): string {
+  const indent = (Math.max(1, entry.level) - 1) * TOC_LEVEL_INDENT_TWIPS;
+  const tabs = includeTab
+    ? `<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="${tabPosTwips}"/></w:tabs>`
+    : "";
+  return `<w:pPr><w:pStyle w:val="TOC${entry.level}"/>${tabs}<w:ind w:left="${indent}"/></w:pPr>`;
+}
+
+/** One TOC entry's inline content: its heading text as an internal
+ * hyperlink to the heading's anchor (AC-8, AC-9 — every entry is clickable
+ * regardless of options), plus, unless `hyperlinksOnly`, a dot-leader tab
+ * and the cached page number (AC-2..4, AC-7). The page number is written as
+ * plain cached text rather than a nested PAGEREF field — it is already
+ * inside the outer TOC field's own cached result, so Word displays it
+ * without prompting either way, and a plain run keeps the entry's XML (and
+ * the reader that parses it back) far simpler. */
+function tocEntryContentXml(entry: TocEntry, options: TocOptions): string {
+  const textRun = `<w:r><w:t>${escapeXml(entry.text)}</w:t></w:r>`;
+  const trailer =
+    options.showPageNumbers && !options.hyperlinksOnly
+      ? `<w:r><w:tab/></w:r><w:r><w:t>${escapeXml(String(entry.pageNumber ?? ""))}</w:t></w:r>`
+      : "";
+  return `<w:hyperlink w:anchor="${escapeXml(entry.anchor)}">${textRun}${trailer}</w:hyperlink>`;
+}
+
+/** The `w:p` sequence a TOC block writes (SPEC-033 AC-17): a real complex
+ * field — `w:fldChar` begin/separate/end around a `w:instrText` TOC
+ * instruction — whose cached RESULT is the entries themselves, so Word
+ * shows them immediately on open with no "update fields?" prompt. Every
+ * entry is its own paragraph in the TOCn style Word itself uses; the field
+ * boundary markers live in the first and last paragraphs, exactly where
+ * Word puts them when it saves a document containing a TOC. */
+function tocFieldXml(toc: TableOfContents, model: DocumentModel, sectionIndex: number): string {
+  const tabPosTwips = cmToTwips(sectionContentWidthCm(model, sectionIndex));
+  const beginRuns =
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+    `<w:r><w:instrText xml:space="preserve">${escapeXml(tocFieldInstr(toc.options))}</w:instrText></w:r>` +
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>';
+  const endRun = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+  if (toc.entries.length === 0) {
+    return (
+      `<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>${beginRuns}` +
+      `<w:r><w:t>${escapeXml(TOC_PLACEHOLDER_TEXT)}</w:t></w:r>${endRun}</w:p>`
+    );
+  }
+  const includeTab = toc.options.showPageNumbers && !toc.options.hyperlinksOnly;
+  return toc.entries
+    .map((entry, index) => {
+      const pPr = tocEntryPPr(entry, tabPosTwips, includeTab);
+      const boundary = index === 0 ? beginRuns : "";
+      const trailingEnd = index === toc.entries.length - 1 ? endRun : "";
+      return `<w:p>${pPr}${boundary}${tocEntryContentXml(entry, toc.options)}${trailingEnd}</w:p>`;
+    })
+    .join("");
+}
+
 /** One header/footer part's full XML (SPEC-029 AC-3..6, AC-24): its own
  * paragraphs/tables/images, sharing the exact same per-block serialisation
  * body content uses (paragraphXml/tableXml/imageParagraphXml) rather than a
@@ -1031,6 +1106,11 @@ function headerFooterPartXml(
         return imageParagraphXml(block, plan.mediaPlan, docPrId++);
       }
       if (block.type === "break") {
+        return "";
+      }
+      if (block.type === "toc") {
+        // A TOC is a body-level feature (SPEC-033); one is never inserted
+        // into a header/footer, but the Block union covers it structurally.
         return "";
       }
       return paragraphXml(block, includeOpaque, inlineCtx);
@@ -1413,6 +1493,8 @@ export function buildDocumentXml(
           // the typed w:br run, the shape the reader folds back into a
           // BreakBlock on open.
           blockXml.push(`<w:p><w:r><w:br w:type="${block.kind}"/></w:r></w:p>`);
+        } else if (block.type === "toc") {
+          blockXml.push(tocFieldXml(block, model, sectionIndex));
         } else {
           blockXml.push(
             paragraphXml(
@@ -1475,7 +1557,7 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (block.type === "image" || block.type === "break") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc") {
         continue;
       }
       const paragraphs =
