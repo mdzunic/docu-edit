@@ -1317,7 +1317,16 @@ export function setNoteSettings(
       settings.restart = patch.restart;
     }
   }
-  return { model: { ...model, [key]: settings }, selection };
+  const next: DocumentModel = { ...model, [key]: settings };
+  // The .docx writer keeps a preserved body-level sectPr verbatim; the new
+  // settings must reach its w:footnotePr/w:endnotePr, so drop it and let
+  // the writer regenerate — the same rule every page-setup command follows.
+  if (next.sourceXml?.docxSectPr !== undefined) {
+    const sourceXml = { ...next.sourceXml };
+    delete sourceXml.docxSectPr;
+    next.sourceXml = sourceXml;
+  }
+  return { model: next, selection };
 }
 
 /** Addresses one note's content as a throwaway single-section document —

@@ -18,6 +18,11 @@ import type {
   ListDefinition,
   MediaPart,
   NamedStyle,
+  NoteContent,
+  NoteKind,
+  NoteNumberFormat,
+  NoteRestart,
+  NoteSettings,
   OpaqueBlock,
   OpaqueInline,
   OpaquePart,
@@ -35,7 +40,13 @@ import type {
   TableRow,
   TableWidthMode,
 } from "../documentModel";
-import { createDefaultStyles, createFieldRun, DEFAULT_COLUMN_GAP_CM, MAX_COLUMN_COUNT } from "../documentModel";
+import {
+  createDefaultStyles,
+  createFieldRun,
+  createNoteRun,
+  DEFAULT_COLUMN_GAP_CM,
+  MAX_COLUMN_COUNT,
+} from "../documentModel";
 import { sanitizeHref } from "../links";
 import { bytesToBase64 } from "../opaque";
 import { ZipError, unzip } from "./zip";
@@ -117,6 +128,37 @@ function runHasUnmodelledContent(rEl: Element): boolean {
   );
 }
 
+/** The stable model note id for a source note's numeric id (SPEC-031) —
+ * shared by the reference runs and the parsed footnotes.xml/endnotes.xml
+ * contents so they link up. */
+function docxNoteId(kind: NoteKind, sourceId: string): string {
+  return `${kind === "footnote" ? "fn" : "en"}${sourceId}`;
+}
+
+/** A run's footnote/endnote reference (SPEC-031): the `w:footnoteReference`/
+ * `w:endnoteReference` child's kind and target id, or null for an ordinary
+ * run. Custom-mark references (`w:customMarkFollows`) are left to the
+ * opaque-inline path — the model only numbers automatically. */
+function noteReferenceOf(rEl: Element): { kind: NoteKind; noteId: string } | null {
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      continue;
+    }
+    const isFootnote = child.localName === "footnoteReference";
+    const isEndnote = child.localName === "endnoteReference";
+    if (!isFootnote && !isEndnote) {
+      continue;
+    }
+    const sourceId = wordAttr(child, "id");
+    if (!sourceId || wordAttr(child, "customMarkFollows") === "1") {
+      return null;
+    }
+    const kind: NoteKind = isFootnote ? "footnote" : "endnote";
+    return { kind, noteId: docxNoteId(kind, sourceId) };
+  }
+  return null;
+}
+
 // The Compound File Binary Format signature every legacy .doc (Word 97-2003)
 // file starts with — used to reject them with a specific, actionable error
 // instead of the generic "not a ZIP" message a naive open would produce.
@@ -147,6 +189,13 @@ export interface ParsedDocxDocument {
   /** Multilevel list definitions (SPEC-032) reconstructed from composite
    * abstractNums the body actually references; empty when there are none. */
   listDefinitions: ListDefinition[];
+  /** Footnote/endnote contents (SPEC-031) the body's reference marks link
+   * to; empty when the package has neither part. */
+  notes: NoteContent[];
+  /** Footnote numbering settings from the body sectPr's w:footnotePr. */
+  footnoteSettings?: NoteSettings;
+  /** Endnote numbering settings from the body sectPr's w:endnotePr. */
+  endnoteSettings?: NoteSettings;
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -270,6 +319,15 @@ function collectRuns(
       continue; // Modelled separately by parseParagraph.
     }
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "r") {
+      // A footnote/endnote reference run (SPEC-031) becomes a note marker
+      // run linked to the parsed footnotes.xml/endnotes.xml content.
+      const noteRef = noteReferenceOf(child);
+      if (noteRef) {
+        const rPr = firstChildElement(child, WORD_NAMESPACE, "rPr");
+        const formatting = mergeRunFormatting(inheritedFormatting, parseRunProperties(rPr));
+        runs.push(createNoteRun(noteRef.noteId, noteRef.kind, formatting));
+        continue;
+      }
       if (runHasUnmodelledContent(child)) {
         // A drawing/object/field run is preserved whole — splitting it into
         // "the text we understood" plus "the rest" could not round-trip.
@@ -1221,6 +1279,138 @@ function parseHeaderFooterContent(
   return blocks.length > 0 ? { blocks, media } : fallback;
 }
 
+// --- footnotes and endnotes (SPEC-031) ---------------------------------------
+
+const FOOTNOTES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
+const ENDNOTES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
+
+const NOTE_NUM_FMT_BY_VAL: Record<string, NoteNumberFormat> = {
+  decimal: "decimal",
+  lowerRoman: "lowerRoman",
+  lowerLetter: "lowerAlpha",
+  chicago: "symbol",
+};
+
+const NOTE_RESTART_BY_VAL: Record<string, NoteRestart> = {
+  eachPage: "page",
+  eachSect: "section",
+};
+
+/** A sectPr's `w:footnotePr`/`w:endnotePr` as model note settings (SPEC-031
+ * AC-17..20), or undefined when absent or carrying nothing the model
+ * expresses. `continuous` restart maps to absent — the model default. */
+function parseNoteSettings(
+  sectPr: Element | undefined,
+  tag: "footnotePr" | "endnotePr",
+): NoteSettings | undefined {
+  const pr = sectPr ? firstChildElement(sectPr, WORD_NAMESPACE, tag) : undefined;
+  if (!pr) {
+    return undefined;
+  }
+  const settings: NoteSettings = {};
+  const numFmt = firstChildElement(pr, WORD_NAMESPACE, "numFmt");
+  const format = numFmt ? NOTE_NUM_FMT_BY_VAL[wordAttr(numFmt, "val") ?? ""] : undefined;
+  if (format !== undefined) {
+    settings.numberFormat = format;
+  }
+  const numStart = firstChildElement(pr, WORD_NAMESPACE, "numStart");
+  const start = numStart ? Number(wordAttr(numStart, "val")) : NaN;
+  if (Number.isInteger(start) && start >= 1) {
+    settings.startAt = start;
+  }
+  const numRestart = firstChildElement(pr, WORD_NAMESPACE, "numRestart");
+  const restart = numRestart ? NOTE_RESTART_BY_VAL[wordAttr(numRestart, "val") ?? ""] : undefined;
+  if (restart !== undefined) {
+    settings.restart = restart;
+  }
+  return Object.keys(settings).length > 0 ? settings : undefined;
+}
+
+/** One footnotes.xml/endnotes.xml part's real notes (SPEC-031 AC-21/22):
+ * each `w:footnote`/`w:endnote` with no `w:type` (separator and
+ * continuation entries carry one) becomes a NoteContent whose blocks parse
+ * exactly like body content — through the part's own relationships, the
+ * parseHeaderFooterContent pattern. The `w:footnoteRef`/`w:endnoteRef`
+ * marker elements inside the note text are Word's rendering of the note's
+ * own number and are dropped: the model derives numbers from mark order,
+ * and the writer re-emits a fresh marker run on save. */
+function parseNotesPart(
+  partPath: string,
+  parts: Map<string, Uint8Array>,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+  kind: NoteKind,
+): { notes: NoteContent[]; media: MediaPart[] } {
+  const raw = parts.get(partPath);
+  if (!raw) {
+    return { notes: [], media: [] };
+  }
+  let root: Element;
+  try {
+    root = parseXml(decodeUtf8(raw)).documentElement;
+  } catch (error) {
+    if (error instanceof XmlParseError) {
+      return { notes: [], media: [] };
+    }
+    throw error;
+  }
+  const relsBytes = parts.get(relsPathFor(partPath));
+  const ownRels = relsBytes
+    ? parseRelationships(decodeUtf8(relsBytes))
+    : new Map<string, Relationship>();
+  const ctx: DrawingContext = { mainRels: ownRels, mainPartPath: partPath, parts };
+  const linkCtx: LinkReadContext = {
+    hrefForRelId: (relId) => {
+      const rel = ownRels.get(relId);
+      if (!rel || rel.type !== HYPERLINK_RELATIONSHIP) {
+        return undefined;
+      }
+      return sanitizeHref(rel.target) ?? undefined;
+    },
+  };
+  const tag = kind === "footnote" ? "footnote" : "endnote";
+  const refTag = kind === "footnote" ? "footnoteRef" : "endnoteRef";
+  const notes: NoteContent[] = [];
+  const media: MediaPart[] = [];
+  for (const noteEl of childElements(root, WORD_NAMESPACE, tag)) {
+    if (wordAttr(noteEl, "type") !== null) {
+      continue; // separator / continuationSeparator / continuationNotice
+    }
+    const sourceId = wordAttr(noteEl, "id");
+    if (sourceId === null) {
+      continue;
+    }
+    for (const marker of Array.from(noteEl.getElementsByTagNameNS(WORD_NAMESPACE, refTag))) {
+      marker.parentElement?.removeChild(marker);
+    }
+    const blocks: Block[] = [];
+    for (const child of Array.from(noteEl.children)) {
+      if (child.namespaceURI === WORD_NAMESPACE && child.localName === "p") {
+        const result = parseBodyParagraphBlocks(child, styleCatalog, numberingCatalog, ctx, linkCtx);
+        for (const block of result.blocks) {
+          if (block.type !== "break") {
+            blocks.push(block);
+          }
+        }
+        media.push(...result.media);
+      } else if (child.namespaceURI === WORD_NAMESPACE && child.localName === "tbl") {
+        const table = parseTable(child, styleCatalog, numberingCatalog, linkCtx);
+        if (table) {
+          blocks.push(table);
+        }
+      }
+    }
+    notes.push({
+      noteId: docxNoteId(kind, sourceId),
+      kind,
+      blocks: blocks.length > 0 ? blocks : [{ type: "paragraph", runs: [] }],
+    });
+  }
+  return { notes, media };
+}
+
 /** Parses a `.docx` file's bytes into the sections/defaultStyles this
  * project's document model needs. Throws `LegacyDocError` for a binary
  * Word 97-2003 `.doc` file, or `DocxOpenError` for anything else that
@@ -1449,7 +1639,32 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   // content is now fully modelled — so a section with any reference has its
   // preserved sectPr dropped here: reusing it verbatim would keep pointing
   // at relationship ids the writer's freshly minted ones do not reproduce.
+  // Footnotes and endnotes (SPEC-031): the note parts are consumed and
+  // rebuilt from the model on save — like headers/footers — so they are
+  // excluded from `opaque` below; the reference runs already became note
+  // marker runs in collectRuns.
   const consumedHeaderFooterParts = new Set<string>();
+  const notes: NoteContent[] = [];
+  for (const [relType, kind] of [
+    [FOOTNOTES_RELATIONSHIP, "footnote"],
+    [ENDNOTES_RELATIONSHIP, "endnote"],
+  ] as Array<[string, NoteKind]>) {
+    const rel = Array.from(mainRels.values()).find((entry) => entry.type === relType);
+    if (!rel) {
+      continue;
+    }
+    const partPath = resolvePartPath(mainPartPath, rel.target);
+    const parsed = parseNotesPart(partPath, parts, styleCatalog, numberingCatalog, kind);
+    notes.push(...parsed.notes);
+    for (const part of parsed.media) {
+      mediaById.set(part.mediaId, part);
+    }
+    consumedHeaderFooterParts.add(partPath);
+    consumedHeaderFooterParts.add(relsPathFor(partPath));
+  }
+  const footnoteSettings = parseNoteSettings(sectPr, "footnotePr");
+  const endnoteSettings = parseNoteSettings(sectPr, "endnotePr");
+
   const settingsRel = Array.from(mainRels.values()).find((rel) => rel.type === SETTINGS_RELATIONSHIP);
   const settingsPartPath = settingsRel ? resolvePartPath(mainPartPath, settingsRel.target) : "word/settings.xml";
   const settingsText = readPart(settingsPartPath);
@@ -1523,7 +1738,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     }
   }
 
-  return {
+  const result: ParsedDocxDocument = {
     sections,
     defaultStyles,
     styles: catalogToNamedStyles(styleCatalog),
@@ -1533,5 +1748,13 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     // Multilevel definitions (SPEC-032) the resolved w:numPr references
     // actually used — reconstructed from their composite abstractNums.
     listDefinitions: numberingCatalog.definitionsUsed(),
+    notes,
   };
+  if (footnoteSettings) {
+    result.footnoteSettings = footnoteSettings;
+  }
+  if (endnoteSettings) {
+    result.endnoteSettings = endnoteSettings;
+  }
+  return result;
 }
