@@ -135,6 +135,22 @@ export interface FieldSpec {
   format: PageNumberFormat;
 }
 
+/** Which note stream a reference belongs to (SPEC-031): footnotes render at
+ * the bottom of the page holding their reference, endnotes in one area at
+ * the end of the document. */
+export type NoteKind = "footnote" | "endnote";
+
+/** An inline footnote/endnote reference mark (SPEC-031) carried on a run —
+ * the same convention as FieldSpec: the run's text stays a one-character
+ * placeholder so the mark behaves as a single caret atom, and every
+ * renderer substitutes the computed note number at paint time. `noteId`
+ * references a `DocumentModel.notes` entry; deliberately not named `id`
+ * (see BookmarkAnchor for the equality.ts IGNORED_KEYS rule). */
+export interface NoteRef {
+  noteId: string;
+  kind: NoteKind;
+}
+
 /** The smallest unit of text: a string plus the formatting applied to it.
  * Tabs and forced line breaks are preserved as literal "\t" / "\n"
  * characters in `text` — renderers use `white-space: pre-wrap` so both
@@ -145,6 +161,9 @@ export interface Run {
   /** Marks this run as a computed page-number/page-count field (SPEC-029)
    * rather than literal text; see FieldSpec. */
   field?: FieldSpec;
+  /** Marks this run as a footnote/endnote reference mark (SPEC-031); see
+   * NoteRef. Mutually exclusive with `field` by construction. */
+  note?: NoteRef;
 }
 
 /** A field run's placeholder text — a single character so it occupies
@@ -1013,6 +1032,15 @@ export interface DocumentModel {
   /** Multilevel list definitions (SPEC-032) referenced by
    * `ListFormatting.defId`. Absent when the document has none. */
   listDefinitions?: ListDefinition[];
+  /** Footnote/endnote content (SPEC-031) referenced by `NoteRef.noteId`.
+   * Absent when the document has none. */
+  notes?: NoteContent[];
+  /** Footnote numbering settings (SPEC-031 AC-17..20); absent means the
+   * defaults (decimal, start 1, continuous). */
+  footnoteSettings?: NoteSettings;
+  /** Endnote numbering settings (SPEC-031); absent means the defaults
+   * (lowerRoman, start 1, continuous). */
+  endnoteSettings?: NoteSettings;
   format?: DocumentFormat;
   /** Image bytes referenced by `Image.mediaId` (SPEC-024), deduplicated —
    * one entry per distinct image regardless of how many times it is used. */
@@ -1053,6 +1081,105 @@ const STANDARD_MARGINS: Margins = {
 // default since OOXML (.docx) is this project's primary format.
 const DEFAULT_FONT_FAMILY = "Calibri";
 const DEFAULT_FONT_SIZE_PT = 11;
+
+// --- footnotes and endnotes (SPEC-031) --------------------------------------
+
+/** One footnote/endnote's content (SPEC-031): a block flow like a
+ * header/footer's, referenced by `NoteRef.noteId` from a body run. Notes are
+ * document-scoped (like `media`), not section-scoped: OOXML keeps them all
+ * in one footnotes.xml/endnotes.xml part regardless of sections.
+ *
+ * A note whose reference mark has been deleted stays in this list but is
+ * invisible everywhere (numbering, note areas and both writers derive from
+ * the reference marks, never from this list alone) — which is what makes
+ * deleting a mark delete its note (AC-10) while still letting undo, and a
+ * cut mark pasted back, find the content again. */
+export interface NoteContent {
+  /** Identity referenced by `NoteRef.noteId` — not named `id` for the same
+   * equality.ts reason as `BookmarkAnchor.name`. */
+  noteId: string;
+  kind: NoteKind;
+  blocks: Block[];
+}
+
+/** The numbering formats the footnote settings dialog offers (SPEC-031
+ * AC-17): 1 2 3 / i ii iii / a b c / * † ‡ §. The first three reuse
+ * lists.ts's formatOrdinal vocabulary; "symbol" cycles the traditional
+ * footnote symbols, doubling each full cycle (* † ‡ § ** †† …). */
+export type NoteNumberFormat = "decimal" | "lowerRoman" | "lowerAlpha" | "symbol";
+
+/** When note numbering restarts (SPEC-031 AC-19, AC-20); absent means
+ * continuous through the document. Mirrors `w:numRestart` (.docx) and
+ * `text:start-numbering-at` (.odt). */
+export type NoteRestart = "continuous" | "page" | "section";
+
+/** One note stream's numbering settings (SPEC-031 AC-17..20). Every field
+ * optional with a documented default so an untouched document stores
+ * nothing: footnotes default to decimal, endnotes to lowerRoman (Word's own
+ * defaults), both starting at 1 and numbering continuously. */
+export interface NoteSettings {
+  numberFormat?: NoteNumberFormat;
+  startAt?: number;
+  restart?: NoteRestart;
+}
+
+/** Typed pass-through for a note kind coming from a `.vue` template's plain
+ * string (same espree constraint as asCharacterFormatKey). */
+export function asNoteKind(value: string): NoteKind {
+  return value as NoteKind;
+}
+
+/** Typed pass-through for a note number format coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asNoteNumberFormat(value: string): NoteNumberFormat {
+  return value as NoteNumberFormat;
+}
+
+/** Typed pass-through for a note restart coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asNoteRestart(value: string): NoteRestart {
+  return value as NoteRestart;
+}
+
+/** A note reference mark's placeholder text — a single character so the mark
+ * occupies exactly one caret position (see FIELD_PLACEHOLDER_TEXT, the same
+ * convention). */
+export const NOTE_PLACEHOLDER_TEXT = "1";
+
+/** Builds a note reference run (SPEC-031 AC-1, AC-3): superscript by
+ * construction — the mark renders and saves as a superscript reference in
+ * both file formats. */
+export function createNoteRun(
+  noteId: string,
+  kind: NoteKind,
+  formatting: RunFormatting = {},
+): Run {
+  return {
+    text: NOTE_PLACEHOLDER_TEXT,
+    formatting: { ...formatting, vertAlign: "superscript" },
+    note: { noteId, kind },
+  };
+}
+
+/** A new, empty note content — the seed a freshly inserted footnote/endnote
+ * starts from (one empty paragraph, like a blank document's section). */
+export function createEmptyNoteContent(noteId: string, kind: NoteKind): NoteContent {
+  return { noteId, kind, blocks: [{ type: "paragraph", runs: [] }] };
+}
+
+/** Which note DocumentView is currently editing (SPEC-031) — UI state like
+ * ActiveHeaderFooterTarget, declared here purely for espree-parsed `.vue`
+ * scripts' typed ref seeds. */
+export interface ActiveNoteTarget {
+  noteId: string;
+  kind: NoteKind;
+}
+
+/** Typed `null` seed for activeNote refs in `.vue` scripts (same espree
+ * constraint as asCharacterFormatKey). */
+export function noActiveNote(): ActiveNoteTarget | null {
+  return null;
+}
 
 /** The product's built-in fallback styles (A4, standard margins, Calibri
  * 11pt) — the starting point for a blank document, and the fallback the

@@ -286,6 +286,14 @@ function sameFormatting(a: Run["formatting"], b: Run["formatting"]): boolean {
   );
 }
 
+/** A run whose text is a placeholder for a computed value — a page-number
+ * field (SPEC-029) or a note reference mark (SPEC-031). Never coalesced
+ * with neighbouring runs: merging would silently turn the marker into
+ * literal text. */
+function isMarkerRun(run: Run): boolean {
+  return run.field !== undefined || run.note !== undefined;
+}
+
 /** Drops empty runs and coalesces adjacent runs with identical formatting,
  * so editing never fragments a paragraph into needless run boundaries.
  * Exported as the model's run normalisation: the clipboard fragment
@@ -298,7 +306,12 @@ export function normalizeRuns(runs: Run[]): Run[] {
       continue;
     }
     const last = result[result.length - 1];
-    if (last && sameFormatting(last.formatting, run.formatting)) {
+    if (
+      last &&
+      !isMarkerRun(last) &&
+      !isMarkerRun(run) &&
+      sameFormatting(last.formatting, run.formatting)
+    ) {
       result[result.length - 1] = { ...last, text: last.text + run.text };
     } else {
       result.push(run);
@@ -1132,8 +1145,10 @@ export function patchFormatting(
     }
     const [before, tail] = splitRuns(paragraph.runs, from);
     const [within, after] = splitRuns(tail, to - from);
+    // Spread the run so a marker (field/note) keeps its identity when only
+    // its formatting changes.
     const changed = within.map((run) => ({
-      text: run.text,
+      ...run,
       formatting: applyFormatPatch(run.formatting, patch),
     }));
     replaceParagraphAt(model, address, {
@@ -1165,7 +1180,7 @@ export function replaceFormatting(
     }
     const [before, tail] = splitRuns(paragraph.runs, from);
     const [within, after] = splitRuns(tail, to - from);
-    const changed = within.map((run) => ({ text: run.text, formatting: { ...formatting } }));
+    const changed = within.map((run) => ({ ...run, formatting: { ...formatting } }));
     replaceParagraphAt(model, address, {
       ...paragraph,
       runs: normalizeRuns([...before, ...changed, ...after]),
