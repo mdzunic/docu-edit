@@ -33,6 +33,8 @@ import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import MultilevelListMenu from "../components/MultilevelListMenu.vue";
+import NotesMenu from "../components/NotesMenu.vue";
+import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -67,6 +69,9 @@ import {
   asListMarkerStyle,
   asListType,
   asMeasurementUnit,
+  asNoteKind,
+  asNoteNumberFormat,
+  asNoteRestart,
   asTabStopAlignment,
   asTabStops,
   asPageNumberFormat,
@@ -83,7 +88,9 @@ import {
   isImage,
   isTable,
   noActiveHeaderFooter,
+  noActiveNote,
   noBlocks,
+  noNoteContent,
   resolveColumnWidthsCm,
   sectionColumns,
   sectionContentWidthCm,
@@ -148,10 +155,12 @@ import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
 import {
   BLOCK_SELECTOR,
+  canvasModelText,
   caretFromDomPoint,
   domPointForCaret,
   extendDomSelection,
   modelRangeFromSelection,
+  modelTextLengthOf,
   noElement,
   noEventTarget,
   noParagraphTarget,
@@ -241,6 +250,7 @@ import {
   changeListLevel,
   clearFormatting,
   commitHeaderFooterModel,
+  commitNoteModel,
   deleteBackward,
   deleteForward,
   deleteRange,
@@ -257,6 +267,7 @@ import {
   INDENT_STEP_CM,
   insertBreak,
   insertLineBreak,
+  insertNote,
   insertPageNumberCommand,
   insertSectionBreak,
   insertText,
@@ -278,6 +289,7 @@ import {
   setHeaderFooterOptions,
   setListMarker,
   setListNumberingValue,
+  setNoteSettings,
   setPageMargins,
   setPageSetup,
   setTabStops,
@@ -293,11 +305,21 @@ import {
   updateStyleFromSelection,
   verticalAlignState,
   withHeaderFooterModel,
+  withNoteModel,
 } from "../lib/commands";
+import {
+  collectNoteRefs,
+  createNoteId,
+  effectiveNoteSettings,
+  noteById,
+  noteLabels,
+  noteText,
+} from "../lib/notes";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import { markSegments } from "../lib/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
 import { PX_PER_CM, sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
+import { noNoteArea, noNoteAreaItems } from "../lib/notesLayout";
 import {
   computePageNumbers,
   fieldValueText,
@@ -579,6 +601,7 @@ function enterHeaderFooterEditing(pageIndex = 0, part = asHeaderFooterPart("head
   const kind = resolveHeaderFooterKind(model, pages, pageIndex, pageNumber);
   clearCellSelection();
   clearImageSelection();
+  exitNoteEditing();
   activeHeaderFooter.value = { sectionIndex: page.sectionIndex, part, kind, pageIndex };
   hfCaret = { section: 0, block: 0, offset: 0 };
   hfSelectionAnchor = noCaret();
@@ -601,6 +624,7 @@ function handleDblclickFooter(pageIndex = 0) {
 
 function handleDblclickBody() {
   exitHeaderFooterEditing();
+  exitNoteEditing();
 }
 
 /** Opens "Insert -> Header/Footer" (AC-2): enters editing the caret's own
@@ -813,6 +837,287 @@ function handlePageNumberInsert(
 
 function handlePageNumberCancel() {
   pageNumberDialogOpen.value = false;
+}
+
+// --- footnotes and endnotes (SPEC-031) ---------------------------------------
+// The note currently being edited, or null while editing the body — set by
+// inserting a note (AC-2, AC-4), clicking a reference mark (AC-15) or
+// clicking into a note's body; cleared by Escape or double-clicking the
+// body. The same one-live-editable-surface shape as activeHeaderFooter:
+// note content is addressed through withNoteModel's synthetic
+// single-section coordinates (section 0).
+const activeNote = ref(noActiveNote());
+let noteCaret = noCaret();
+let noteSelectionAnchor = noCaret();
+let notePendingFormat = noPendingFormat();
+let noteComposing = false;
+let noteCompositionRange = noSelection();
+const noteRemountEpoch = ref(0);
+const noteSettingsOpen = ref(false);
+const noteSettingsInitial = ref({});
+
+/** The one DOM element currently rendering as an editable note body, if
+ * any (see hfRootEl, the same pattern). */
+function noteRootEl() {
+  const found = contentRoot.value?.querySelector("[data-note-editable]");
+  return found instanceof HTMLElement ? found : null;
+}
+
+function currentNoteSelection() {
+  const root = noteRootEl();
+  if (root) {
+    const range = modelRangeFromSelection(root, document.getSelection());
+    if (range) {
+      return { anchor: range.start, focus: range.end };
+    }
+  }
+  return noteCaret ? { anchor: noteSelectionAnchor ?? noteCaret, focus: noteCaret } : null;
+}
+
+/** Leaves note editing and returns focus to the body. */
+function exitNoteEditing() {
+  if (!activeNote.value) {
+    return;
+  }
+  activeNote.value = null;
+  noteCaret = noCaret();
+  noteSelectionAnchor = noCaret();
+  notePendingFormat = noPendingFormat();
+  void nextTick().then(() => contentRoot.value?.focus());
+}
+
+/** Enters note editing (AC-2, AC-4, AC-15): the note's area renders as the
+ * live editable surface and the caret lands at the given offset of its
+ * first block (its end for a click-to-jump, its start for a fresh note —
+ * both are the same place for an empty note). */
+function enterNoteEditing(noteId = "", kind = asNoteKind("footnote"), atEnd = false) {
+  const model = doc.value;
+  if (!model || !editable.value) {
+    return;
+  }
+  clearCellSelection();
+  clearImageSelection();
+  exitHeaderFooterEditing();
+  activeNote.value = { noteId, kind };
+  const note = noteById(model, noteId);
+  const lastBlock = note ? Math.max(0, note.blocks.length - 1) : 0;
+  const lastLength = note ? blockLength(note.blocks[lastBlock]) : 0;
+  noteCaret = atEnd
+    ? { section: 0, block: lastBlock, offset: lastLength }
+    : { section: 0, block: 0, offset: 0 };
+  noteSelectionAnchor = noCaret();
+  notePendingFormat = noPendingFormat();
+  void nextTick().then(() => {
+    const root = noteRootEl();
+    if (root) {
+      root.focus();
+      setDomCaret(root, noteCaret ?? { section: 0, block: 0, offset: 0 });
+      root.scrollIntoView({ block: "nearest" });
+    }
+  });
+}
+
+/** Folds a note command's result (built against withNoteModel's synthetic
+ * model) back into the real document and commits it — applyEdit's note
+ * sibling, mirroring applyHeaderFooterEdit's undo/selection handling. */
+function applyNoteEdit(resultModel = noDocument(), resultSelection = noSelection(), label = "") {
+  const active = activeNote.value;
+  const before = doc.value;
+  if (!active || !before || !resultSelection) {
+    return;
+  }
+  const nextModel = commitNoteModel(before, active.noteId, resultModel);
+  const bodyFiller = caretSelection(caret ?? documentStart());
+  recordHistoryEdit(documentId.value, {
+    before: { model: before, selection: bodyFiller },
+    after: { model: nextModel, selection: bodyFiller },
+    label,
+    groupable: false,
+  });
+  doc.value = replaceDocumentModel(documentId.value, nextModel);
+  noteCaret = resultSelection.focus;
+  noteSelectionAnchor = isCollapsed(resultSelection) ? noCaret() : resultSelection.anchor;
+  autosave.markDirty();
+  refreshUndoRedoState();
+  void nextTick().then(() => {
+    const root = noteRootEl();
+    if (!root || !noteCaret) {
+      return;
+    }
+    if (noteSelectionAnchor) {
+      setDomSelection(root, noteSelectionAnchor, noteCaret);
+    } else {
+      setDomCaret(root, noteCaret);
+    }
+  });
+}
+
+function handleNoteBeforeInput(event = new InputEvent("beforeinput")) {
+  const type = event.inputType;
+  if (noteComposing || event.isComposing || type === "insertCompositionText") {
+    return;
+  }
+  event.preventDefault();
+  const active = activeNote.value;
+  const model = doc.value;
+  if (!active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentNoteSelection();
+  if (!selection) {
+    return;
+  }
+  const synthetic = withNoteModel(model, active.noteId);
+  let result = null;
+  let label = "";
+  if (type === "insertText" || type === "insertFromPaste") {
+    const text = event.data ?? (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
+    if (text) {
+      result = insertText(synthetic, selection, text, notePendingFormat);
+      label = "typing";
+    }
+  } else if (type === "insertParagraph") {
+    result = splitBlock(synthetic, selection);
+    label = "new paragraph";
+  } else if (type === "insertLineBreak") {
+    result = insertLineBreak(synthetic, selection);
+    label = "line break";
+  } else if (type === "deleteContentBackward") {
+    result = deleteBackward(synthetic, selection);
+    label = "delete";
+  } else if (type === "deleteContentForward") {
+    result = deleteForward(synthetic, selection);
+    label = "delete";
+  } else if (type === "deleteByCut" || type === "deleteContent") {
+    result = isCollapsed(selection) ? null : deleteRange(synthetic, selection);
+    label = "delete";
+  }
+  if (result) {
+    notePendingFormat = noPendingFormat();
+    applyNoteEdit(result.model, result.selection, label);
+  }
+}
+
+function handleNoteKeyDown(event = new KeyboardEvent("keydown")) {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    exitNoteEditing();
+  }
+}
+
+function handleNoteCompositionStart() {
+  if (!noteRootEl() || !editable.value) {
+    return;
+  }
+  noteComposing = true;
+  noteCompositionRange = currentNoteSelection();
+}
+
+function handleNoteCompositionEnd(event = new CompositionEvent("compositionend")) {
+  noteComposing = false;
+  const range = noteCompositionRange;
+  noteCompositionRange = null;
+  const active = activeNote.value;
+  const model = doc.value;
+  if (!active || !model || !editable.value || !range) {
+    return;
+  }
+  const data = event.data ?? "";
+  if (!data) {
+    return;
+  }
+  const synthetic = withNoteModel(model, active.noteId);
+  const result = insertText(synthetic, range, data, null);
+  applyNoteEdit(result.model, result.selection, "typing");
+  noteRemountEpoch.value += 1;
+}
+
+/** Clicking a read-only note body activates editing it (AC-6). */
+function handleNoteActivate(noteId = "", kind = "") {
+  enterNoteEditing(noteId, asNoteKind(kind), true);
+}
+
+/** Clicking a note's number jumps back to its reference mark (AC-16). */
+function handleNoteNumberClick(noteId = "") {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  const kind = noteById(model, noteId)?.kind ?? "footnote";
+  const ref = collectNoteRefs(model, kind).find((entry) => entry.noteId === noteId);
+  if (!ref) {
+    return;
+  }
+  // Leave note editing inline (not through exitNoteEditing, whose own
+  // deferred refocus would race the caret placement below).
+  activeNote.value = null;
+  noteCaret = noCaret();
+  noteSelectionAnchor = noCaret();
+  notePendingFormat = noPendingFormat();
+  const target = ref.cell
+    ? { section: ref.section, block: ref.block, offset: ref.offset + 1, cell: ref.cell }
+    : { section: ref.section, block: ref.block, offset: ref.offset + 1 };
+  void nextTick().then(() => {
+    contentRoot.value?.focus();
+    applyCaretMove(target);
+    void scrollModelCaretIntoView(target, true);
+  });
+}
+
+/** "Insert → Footnote/Endnote" and Ctrl/Cmd+Alt+F / Ctrl/Cmd+Alt+D (AC-1,
+ * AC-3): inserts the superscript reference mark at the caret, then moves
+ * the caret into the new note's own area (AC-2, AC-4). */
+function handleInsertNote(kind = "") {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value || activeHeaderFooter.value || activeNote.value) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  const noteId = createNoteId();
+  const noteKind = asNoteKind(kind);
+  applyEdit(insertNote(model, selection, noteKind, noteId), selection, `insert ${kind}`);
+  enterNoteEditing(noteId, noteKind);
+}
+
+/** The footnote settings dialog (AC-17..20), prefilled with both streams'
+ * effective settings. */
+function openNoteSettings() {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  noteSettingsInitial.value = {
+    kind: activeNote.value?.kind ?? "footnote",
+    footnote: effectiveNoteSettings(model, "footnote"),
+    endnote: effectiveNoteSettings(model, "endnote"),
+  };
+  noteSettingsOpen.value = true;
+}
+
+function handleNoteSettingsApply(
+  payload = { kind: "footnote", numberFormat: "decimal", startAt: 1, restart: "continuous" },
+) {
+  noteSettingsOpen.value = false;
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!model || !root) {
+    return;
+  }
+  const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+  applyEdit(
+    setNoteSettings(model, selection, asNoteKind(payload.kind), {
+      numberFormat: asNoteNumberFormat(payload.numberFormat),
+      startAt: payload.startAt,
+      restart: asNoteRestart(payload.restart),
+    }),
+    selection,
+    "note settings",
+  );
+}
+
+function handleNoteSettingsCancel() {
+  noteSettingsOpen.value = false;
 }
 
 /** The document's own effective save format (the same rule DownloadMenu's
@@ -1905,7 +2210,10 @@ async function verifyCanvasAfterRender() {
   const expected = model.sections
     .map((section) => section.blocks.map(blockText).join(""))
     .join("");
-  if (root.textContent !== expected) {
+  // canvasModelText, not textContent: note reference marks render their
+  // computed number over a one-character model placeholder, and note areas/
+  // header/footer bands hold content outside the body flow (SPEC-031).
+  if (canvasModelText(root) !== expected) {
     const current = remount.value;
     remount.value = { key: current.key, count: current.count, epoch: current.epoch + 1 };
     void restoreCaretAfterRender();
@@ -2443,6 +2751,17 @@ function handleLinkChipRemove() {
  * through the same sanitized path as the chip. */
 function handleContentClick(event = new MouseEvent("click")) {
   const eventTarget = event.target;
+  // Clicking a note reference mark jumps to its note (SPEC-031 AC-15).
+  const mark = eventTarget instanceof Element ? eventTarget.closest(".doc-note-ref[data-note-id]") : null;
+  if (mark) {
+    event.preventDefault();
+    const noteId = mark.getAttribute("data-note-id") ?? "";
+    const note = doc.value ? noteById(doc.value, noteId) : undefined;
+    if (note) {
+      enterNoteEditing(note.noteId, note.kind, true);
+    }
+    return;
+  }
   const anchor = eventTarget instanceof Element ? eventTarget.closest("a[data-doc-link]") : null;
   if (!anchor) {
     return;
@@ -3078,7 +3397,9 @@ function caretAtBlockEdge(blockEl = noElement(), edge = "start") {
     return null;
   }
   const sliceStart = Number(blockEl.getAttribute("data-slice-start") ?? "0");
-  const offset = edge === "start" ? sliceStart : sliceStart + (blockEl.textContent ?? "").length;
+  // modelTextLengthOf, not textContent.length: a note reference mark's
+  // rendered number stands for a one-character placeholder (SPEC-031).
+  const offset = edge === "start" ? sliceStart : sliceStart + modelTextLengthOf(blockEl);
   return { section, block, offset };
 }
 
@@ -3150,6 +3471,9 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   if (event.button !== 0) {
     return;
   }
+  // Clicking the body while a note is being edited leaves note editing
+  // (SPEC-031) — clicks inside the note area stop propagation before here.
+  exitNoteEditing();
   mouseButtonDown = true;
   clearCellSelection();
   cellDragOrigin = editable.value ? tableCellAtTarget(event.target) : null;
@@ -3769,6 +4093,75 @@ function applyHfParagraphCommand(command = noParagraphCommand(), label = "format
   hfRootEl()?.focus();
 }
 
+/** toggleHfCharacterFormat's note counterpart (SPEC-031 AC-6). */
+function toggleNoteCharacterFormat(key = "") {
+  const active = activeNote.value;
+  const model = doc.value;
+  if (!active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentNoteSelection();
+  if (!selection) {
+    return;
+  }
+  const synthetic = withNoteModel(model, active.noteId);
+  if (key === "subscript" || key === "superscript") {
+    if (isCollapsed(selection)) {
+      const on = verticalAlignState(synthetic, selection, key, notePendingFormat) === "on";
+      notePendingFormat = { ...notePendingFormat, vertAlign: on ? false : key };
+    } else {
+      const result = toggleVerticalAlign(synthetic, selection, key);
+      applyNoteEdit(result.model, result.selection, key);
+    }
+    noteRootEl()?.focus();
+    return;
+  }
+  const formatKey = asCharacterFormatKey(key);
+  if (isCollapsed(selection)) {
+    const next = formatState(synthetic, selection, formatKey, notePendingFormat) !== "on";
+    notePendingFormat = { ...notePendingFormat, [formatKey]: next };
+  } else {
+    const result = toggleFormat(synthetic, selection, formatKey);
+    applyNoteEdit(result.model, result.selection, formatKey);
+  }
+  noteRootEl()?.focus();
+}
+
+/** applyRunFormatPatch's note counterpart (SPEC-031 AC-6). */
+function applyNoteRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
+  const active = activeNote.value;
+  const model = doc.value;
+  if (!patch || !active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentNoteSelection();
+  if (!selection) {
+    return;
+  }
+  const synthetic = withNoteModel(model, active.noteId);
+  if (isCollapsed(selection)) {
+    notePendingFormat = { ...notePendingFormat, ...patch };
+  } else {
+    const result = applyFormat(synthetic, selection, patch);
+    applyNoteEdit(result.model, result.selection, label);
+  }
+  noteRootEl()?.focus();
+}
+
+/** applyParagraphCommand's note counterpart (SPEC-031 AC-6). */
+function applyNoteParagraphCommand(command = noParagraphCommand(), label = "formatting") {
+  const active = activeNote.value;
+  const model = doc.value;
+  if (!command || !active || !model || !editable.value) {
+    return;
+  }
+  const selection = currentNoteSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
+  const synthetic = withNoteModel(model, active.noteId);
+  const result = command(synthetic, selection);
+  applyNoteEdit(result.model, result.selection, label);
+  noteRootEl()?.focus();
+}
+
 /** Bold/italic/underline/strikethrough (SPEC-012 AC-3..6, AC-16, AC-17)
  * and subscript/superscript (SPEC-013): a real selection is formatted
  * through the command API (which keeps the selection live, see applyEdit);
@@ -3777,6 +4170,10 @@ function applyHfParagraphCommand(command = noParagraphCommand(), label = "format
 function toggleCharacterFormat(key = "") {
   if (activeHeaderFooter.value) {
     toggleHfCharacterFormat(key);
+    return;
+  }
+  if (activeNote.value) {
+    toggleNoteCharacterFormat(key);
     return;
   }
   const root = contentRoot.value;
@@ -3818,6 +4215,10 @@ function toggleCharacterFormat(key = "") {
 function applyRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
   if (activeHeaderFooter.value) {
     applyHfRunFormatPatch(patch, label);
+    return;
+  }
+  if (activeNote.value) {
+    applyNoteRunFormatPatch(patch, label);
     return;
   }
   const root = contentRoot.value;
@@ -3881,6 +4282,10 @@ function paragraphSelection(root = noElement()) {
 function applyParagraphCommand(command = noParagraphCommand(), label = "formatting", refocus = true) {
   if (activeHeaderFooter.value) {
     applyHfParagraphCommand(command, label);
+    return;
+  }
+  if (activeNote.value) {
+    applyNoteParagraphCommand(command, label);
     return;
   }
   const root = contentRoot.value;
@@ -4401,6 +4806,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     disarmPainter();
     clearImageSelection();
     exitHeaderFooterEditing();
+    exitNoteEditing();
     return;
   }
   if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
@@ -4460,6 +4866,18 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       // The caret moved to the top of a page that is very likely below the
       // fold: follow it, or the user types onto a page they cannot see.
       void scrollModelCaretIntoView(caret, true);
+      break;
+    }
+    case "insert.footnote": {
+      // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
+      event.preventDefault();
+      handleInsertNote("footnote");
+      break;
+    }
+    case "insert.endnote": {
+      // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
+      event.preventDefault();
+      handleInsertNote("endnote");
       break;
     }
     case "view.formattingMarks": {
@@ -4693,10 +5111,59 @@ function handlePageMouseDown(event = new MouseEvent("mousedown")) {
 const pagination = usePagination(
   () => doc.value,
   () => contentRoot.value,
+  (noteId) => noteLabelsMap.value.get(noteId) ?? "",
 );
 const paginationPages = pagination.pages;
 const paginationBusy = pagination.busy;
 const paginationState = pagination.state;
+
+// --- note numbering (SPEC-031 AC-7..9, AC-17..20) ---------------------------
+// Displayed note numbers, derived fresh from mark order and the numbering
+// settings on every model change — never persisted, like list numbering.
+// Footnotes thread the per-page assignment through for "restart each page".
+const noteLabelsMap = computed(() => {
+  const model = doc.value;
+  if (!model) {
+    return new Map();
+  }
+  const refPages = pagination.footnoteRefPages.value;
+  const labels = noteLabels(model, "footnote", collectNoteRefs(model, "footnote"), (ref, index) => refPages[index] ?? 0);
+  for (const [noteId, label] of noteLabels(model, "endnote", collectNoteRefs(model, "endnote"))) {
+    labels.set(noteId, label);
+  }
+  return labels;
+});
+
+/** Reference-mark tooltips (AC-14): each note's plain text. */
+const noteTooltipsMap = computed(() => {
+  const model = doc.value;
+  const tooltips = new Map();
+  for (const note of model?.notes ?? []) {
+    tooltips.set(note.noteId, noteText(note));
+  }
+  return tooltips;
+});
+
+// A mark's rendered label width differs per number, and the measurement
+// cache is keyed by block object identity — so when an existing note's
+// label CHANGES (an earlier note inserted/deleted renumbers it), the
+// paragraphs holding those marks must re-measure. New ids (a fresh insert)
+// need none: nothing measured them yet.
+let knownNoteLabels = new Map();
+watch(noteLabelsMap, (labels) => {
+  let changed = false;
+  for (const [noteId, label] of labels) {
+    const known = knownNoteLabels.get(noteId);
+    if (known !== undefined && known !== label) {
+      changed = true;
+      break;
+    }
+  }
+  knownNoteLabels = new Map(labels);
+  if (changed) {
+    pagination.invalidateAll();
+  }
+});
 
 watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
 onMounted(() => pagination.schedule());
@@ -4977,7 +5444,26 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
     styleObj.marginBottom = "0";
   }
   const sliceSig = `${sliceStart ?? ""}:${sliceEnd ?? ""}`;
+  let noteSig = "";
   const renderRuns = runs.map((run, runIndex) => {
+    // A note reference mark (SPEC-031): renders its computed number as a
+    // caret atom standing for the one-character model placeholder (see
+    // lib/domCaret.ts), with the note's text as its tooltip (AC-14).
+    if (run.note) {
+      const label = noteLabelsMap.value.get(run.note.noteId) ?? run.text;
+      const title = noteTooltipsMap.value.get(run.note.noteId) ?? "";
+      noteSig += `${run.note.noteId}=${label}|${title};`;
+      return {
+        key: runKey(run, runIndex),
+        href: "",
+        styleObj: runStyle(run.formatting),
+        text: label,
+        segments: null,
+        atomText: run.text,
+        noteId: run.note.noteId,
+        title,
+      };
+    }
     const href = runLinkHref(run.formatting);
     const external = href ? isExternalLink(run.formatting) : false;
     // Segments only when the run actually holds a space/tab to mark — the
@@ -4996,7 +5482,7 @@ function renderEntryFor(model = noDocument(), flatEntry = noFlatEntry(), item = 
   });
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
-    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks, column],
+    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks, column, noteSig],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
     className: "doc-paragraph",
@@ -5081,6 +5567,160 @@ function headerFooterRenderEntries(blocks = noBlocks(), pageNumber = 1, totalPag
   return entries;
 }
 
+/** One note's blocks (or page slices of them) as DocPage entries (SPEC-031
+ * AC-6): the paragraph/table/image shapes renderEntryFor builds, addressed
+ * with section 0 (withNoteModel's synthetic convention) so the note body's
+ * caret mapping works while it is the live editable surface. */
+function noteBlocksEntries(note = noNoteContent(), items = noNoteAreaItems(), marks = false) {
+  const entries = noRenderEntries();
+  if (!note) {
+    return entries;
+  }
+  const media = doc.value?.media ?? [];
+  for (const item of items) {
+    const block = note.blocks[item.blockIndex];
+    if (!block) {
+      continue;
+    }
+    if (isTable(block)) {
+      entries.push({
+        key: `note:${note.noteId}:${item.blockIndex}`,
+        memo: [block, item.blockIndex, marks],
+        kind: "table",
+        blockProp: block,
+        sectionProp: 0,
+        blockIndexProp: item.blockIndex,
+      });
+      continue;
+    }
+    if (isImage(block)) {
+      entries.push({
+        key: `note:${note.noteId}:${item.blockIndex}`,
+        memo: [block, item.blockIndex],
+        kind: "image",
+        blockProp: block,
+        sectionProp: 0,
+        blockIndexProp: item.blockIndex,
+        imageSrc: mediaDataUri(media.find((part) => part.mediaId === asImage(block).mediaId)),
+        imageSelected: false,
+      });
+      continue;
+    }
+    const paragraph = asParagraphBlock(block);
+    let sliceStart;
+    let sliceEnd;
+    if (item.startLine !== undefined) {
+      const offsets = pagination.lineOffsetsFor(block);
+      if (!offsets) {
+        // Unmeasured split: the first slice renders whole, continuations
+        // wait for measurement (the body's own rule).
+        if (item.startLine > 0) {
+          continue;
+        }
+      } else {
+        sliceStart = offsets[item.startLine] ?? 0;
+        sliceEnd =
+          item.endLine !== undefined && item.endLine < offsets.length
+            ? offsets[item.endLine]
+            : undefined;
+        if (sliceStart === 0 && sliceEnd === undefined) {
+          sliceStart = undefined;
+        }
+      }
+    }
+    let runs = paragraph.runs;
+    if (sliceStart !== undefined || sliceEnd !== undefined) {
+      const from = sliceStart ?? 0;
+      const tail = splitRuns(paragraph.runs, from)[1];
+      runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
+    }
+    const continuation = sliceStart !== undefined && sliceStart > 0;
+    const renderRuns = runs.map((run, runIndex) => {
+      const segments = marks ? markSegments(run.text) : null;
+      const marked = segments && segments.some((segment) => segment.kind !== "text");
+      return {
+        key: runKey(run, runIndex),
+        href: "",
+        styleObj: runStyle(run.formatting),
+        text: run.text,
+        segments: marked ? segments : null,
+      };
+    });
+    entries.push({
+      key: `note:${note.noteId}:${item.blockIndex}${continuation ? `@${sliceStart}` : ""}`,
+      memo: [block, item.blockIndex, `${sliceStart ?? ""}:${sliceEnd ?? ""}`, marks, noteRemountEpoch.value],
+      kind: "paragraph",
+      tag: headingTag(paragraph.headingLevel),
+      className: "doc-paragraph",
+      styleObj: { ...paragraphStyle(paragraph) },
+      dataSection: 0,
+      dataBlock: item.blockIndex,
+      sliceStart: continuation ? String(sliceStart) : undefined,
+      sliceMore: sliceEnd !== undefined ? "1" : undefined,
+      runs: renderRuns,
+      needsBr: renderRuns.length === 0,
+    });
+  }
+  return entries;
+}
+
+/** One page's footnote or endnote area as DocPage's prop shape (SPEC-031):
+ * per-note groups in area order, each with its number label (on the group
+ * that starts the note), its rendered entries and whether it is the live
+ * editable surface. The active note renders its full content unsliced
+ * where it starts; its read-only continuation slices elsewhere hide. */
+function noteAreaView(model = noDocument(), area = noNoteArea(), marks = false) {
+  if (!area) {
+    return null;
+  }
+  const activeId = activeNote.value?.noteId ?? null;
+  const labels = noteLabelsMap.value;
+  const groups = [];
+  let current = null;
+  for (const item of area.items) {
+    if (!current || current.noteId !== item.noteId) {
+      current = { noteId: item.noteId, items: noNoteAreaItems() };
+      groups.push(current);
+    }
+    current.items.push(item);
+  }
+  const notes = [];
+  for (const group of groups) {
+    const note = noteById(model, group.noteId);
+    if (!note) {
+      continue;
+    }
+    const first = group.items[0];
+    const starts = first.blockIndex === 0 && (first.startLine === undefined || first.startLine === 0);
+    const isActive = editable.value && activeId === group.noteId;
+    if (isActive && !starts) {
+      continue; // The active note renders whole where it starts.
+    }
+    const items = isActive
+      ? note.blocks.map((_, blockIndex) => ({ noteId: note.noteId, blockIndex }))
+      : group.items;
+    notes.push({
+      noteId: note.noteId,
+      kind: note.kind,
+      label: starts ? (labels.get(note.noteId) ?? "") : "",
+      editable: isActive,
+      entries: noteBlocksEntries(note, items, marks),
+    });
+  }
+  return notes.length > 0 ? { kind: area.kind, notes } : null;
+}
+
+/** The footnote area's band geometry (SPEC-031 AC-2): pinned to the bottom
+ * of the content area — the planner reserved exactly this height. */
+function footnoteAreaStyle(margins = { topCm: 0, rightCm: 0, bottomCm: 0, leftCm: 0 }, heightPx = 0) {
+  return {
+    left: `${margins.leftCm}cm`,
+    right: `${margins.rightCm}cm`,
+    bottom: `${margins.bottomCm}cm`,
+    height: `${heightPx}px`,
+  };
+}
+
 /** The header/footer band geometry for a page (SPEC-029): positioned
  * within the section's own top/bottom margin so it never competes with the
  * body content box (which still starts exactly at the margin, unchanged by
@@ -5119,6 +5759,7 @@ const pagedViews = computed(() => {
   const active = activeHeaderFooter.value;
   const numbers = pageNumbers.value;
   const totalPages = paginationPages.value.length;
+  const pageNoteAreas = pagination.noteAreas.value;
   return paginationPages.value.map((page, pageIndex) => {
     const realized =
       !virtual ||
@@ -5147,6 +5788,8 @@ const pagedViews = computed(() => {
         footerStyle: headerFooterBandStyle(page.margins, "footer"),
         headerEntries: [],
         footerEntries: [],
+        footnoteArea: null,
+        endnoteArea: null,
       };
     }
     realizedSticky.add(page);
@@ -5193,6 +5836,11 @@ const pagedViews = computed(() => {
     const footerContent = headerFooterForPage(model, paginationPages.value, pageIndex, pageNumber, "footer");
     const headerBlocks = headerContent?.blocks ?? (headerEditable ? createEmptyHeaderFooterContent().blocks : null);
     const footerBlocks = footerContent?.blocks ?? (footerEditable ? createEmptyHeaderFooterContent().blocks : null);
+    // Note areas (SPEC-031): the footnote band pins to the content bottom;
+    // the endnote area flows after the body content (AC-2, AC-4).
+    const footnotePlan = pageNoteAreas.footnotes[pageIndex] ?? null;
+    const footnoteView = footnotePlan ? noteAreaView(model, footnotePlan, marks) : null;
+    const endnoteView = noteAreaView(model, pageNoteAreas.endnotes[pageIndex] ?? null, marks);
     return {
       pageStyle: {
         width: `${page.pageSize.widthCm}cm`,
@@ -5204,6 +5852,9 @@ const pagedViews = computed(() => {
       entries,
       columns: page.columns,
       virtual: false,
+      // Note editing does not dim the body (matching Word): the note area
+      // is the only live surface, but the body stays a legible, clickable
+      // reference — a body mousedown exits note editing.
       dimmed: !!active,
       headerEditable,
       footerEditable,
@@ -5211,6 +5862,11 @@ const pagedViews = computed(() => {
       footerStyle: headerFooterBandStyle(page.margins, "footer"),
       headerEntries: headerBlocks ? headerFooterRenderEntries(headerBlocks, pageNumber, totalPages, marks) : [],
       footerEntries: footerBlocks ? headerFooterRenderEntries(footerBlocks, pageNumber, totalPages, marks) : [],
+      footnoteArea:
+        footnotePlan && footnoteView
+          ? { ...footnoteView, style: footnoteAreaStyle(page.margins, footnotePlan.heightPx) }
+          : null,
+      endnoteArea: endnoteView,
     };
   });
 });
@@ -6024,6 +6680,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
         @insert-page-number="openPageNumberDialog"
         @options="openHeaderFooterOptions"
       />
+      <NotesMenu
+        v-if="editable"
+        @insert-footnote="handleInsertNote('footnote')"
+        @insert-endnote="handleInsertNote('endnote')"
+        @settings="openNoteSettings"
+      />
       <button
         v-if="editable"
         type="button"
@@ -6392,7 +7054,7 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
           aria-multiline="true"
           aria-label="Document content"
           :aria-readonly="editable ? undefined : 'true'"
-          :contenteditable="editable && !activeHeaderFooter"
+          :contenteditable="editable && !activeHeaderFooter && !activeNote"
           spellcheck="false"
           @beforeinput="handleBeforeInput"
           @keydown="handleKeyDown"
@@ -6426,6 +7088,8 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             :footer-entries="pageView.footerEntries"
             :header-editable="pageView.headerEditable"
             :footer-editable="pageView.footerEditable"
+            :footnote-area="pageView.footnoteArea ?? undefined"
+            :endnote-area="pageView.endnoteArea ?? undefined"
             @image-select="handleImageSelect"
             @dblclick-header="handleDblclickHeader(pageIndex)"
             @dblclick-footer="handleDblclickFooter(pageIndex)"
@@ -6434,6 +7098,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
             @hf-keydown="handleHfKeyDown"
             @hf-compositionstart="handleHfCompositionStart"
             @hf-compositionend="handleHfCompositionEnd"
+            @note-activate="handleNoteActivate"
+            @note-number-click="handleNoteNumberClick"
+            @note-beforeinput="handleNoteBeforeInput"
+            @note-keydown="handleNoteKeyDown"
+            @note-compositionstart="handleNoteCompositionStart"
+            @note-compositionend="handleNoteCompositionEnd"
           />
         </div>
       </div>
@@ -6587,6 +7257,12 @@ watch([findQuery, findMatchCase, findWholeWords, findUseRegex], () => {
       :initial="headerFooterOptionsInitial"
       @apply="handleHeaderFooterOptionsApply"
       @cancel="handleHeaderFooterOptionsCancel"
+    />
+    <NoteSettingsDialog
+      v-if="noteSettingsOpen"
+      :initial="noteSettingsInitial"
+      @apply="handleNoteSettingsApply"
+      @cancel="handleNoteSettingsCancel"
     />
     <SpecialCharacterDialog
       v-if="specialCharacterDialogOpen"

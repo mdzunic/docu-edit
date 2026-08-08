@@ -215,7 +215,11 @@ function paragraphOf(block: Block): Paragraph | null {
   return isTable(block) || isImage(block) || isBreak(block) ? null : block;
 }
 
-function sliceHeight(metrics: BlockMetrics, startLine: number, endLine: number): number {
+/** The rendered height (px) of a block's `[startLine, endLine)` slice —
+ * the whole block when it has no line boxes. Exported for the footnote
+ * area planner (SPEC-031), which splits note content by the same rule
+ * paragraphs split by. */
+export function sliceHeight(metrics: BlockMetrics, startLine: number, endLine: number): number {
   const lines = metrics.lines;
   if (lines.length === 0) {
     return metrics.heightPx;
@@ -273,9 +277,9 @@ function placeSlice(
   frame.count += 1;
 }
 
-// How many of the block's lines from `startLine` on fit within `available`
-// px.
-function linesFitting(m: BlockMetrics, startLine: number, available: number): number {
+/** How many of the block's lines from `startLine` on fit within `available`
+ * px. Exported for the footnote area planner (SPEC-031). */
+export function linesFitting(m: BlockMetrics, startLine: number, available: number): number {
   let count = 0;
   const base = m.lines[startLine]?.top ?? 0;
   for (let i = startLine; i < m.lines.length; i += 1) {
@@ -289,8 +293,20 @@ function linesFitting(m: BlockMetrics, startLine: number, available: number): nu
   return count;
 }
 
-/** Lays the whole document out onto pages. */
-export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLayout[] {
+// A footnote reserve may never squeeze a page's body below this share of
+// its content height — the reference's own line must keep a page to sit on
+// (SPEC-031), and a runaway reserve must not collapse pages to zero.
+const MIN_BODY_FRACTION = 0.2;
+
+/** Lays the whole document out onto pages. `reserveOf` (SPEC-031) reserves
+ * space at the bottom of a page — the footnote area's height — shortening
+ * every column of that page; omitted or zero reproduces the pre-SPEC-031
+ * layout exactly. */
+export function paginate(
+  model: DocumentModel,
+  metrics: MetricsProvider,
+  reserveOf?: (pageIndex: number) => number,
+): PageLayout[] {
   const pages: PageLayout[] = [];
   // Every column of every page, in fill order. `fi` is the frame being
   // filled; it only ever moves forward, so frames of earlier pages are never
@@ -322,6 +338,11 @@ export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLa
       };
     }
     pages.push(layout);
+    const reserve = reserveOf ? Math.max(0, reserveOf(pages.length - 1)) : 0;
+    const heightPx = Math.max(
+      geometry.contentHeightPx * MIN_BODY_FRACTION,
+      geometry.contentHeightPx - reserve,
+    );
     const base = frames.length;
     for (let c = 0; c < geometry.count; c += 1) {
       frames.push({
@@ -330,7 +351,7 @@ export function paginate(model: DocumentModel, metrics: MetricsProvider): PageLa
         columnIndex: c,
         columnCount: geometry.count,
         flowWidthPx: geometry.flowWidthPx,
-        heightPx: geometry.contentHeightPx,
+        heightPx,
         cursor: 0,
         pendingMargin: 0,
         count: 0,

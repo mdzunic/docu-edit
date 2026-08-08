@@ -200,3 +200,84 @@ describe("setDomSelection / extendDomSelection", () => {
     root.remove();
   });
 });
+
+// --- caret atoms (SPEC-031) --------------------------------------------------
+// A note reference mark renders its computed number (any length) but stands
+// for a one-character model placeholder, declared via data-caret-atom.
+
+/** One paragraph: "ab" + a mark rendering "12" for model text "1" + "cd". */
+function buildAtomContent(): HTMLElement {
+  const root = document.createElement("div");
+  const p = document.createElement("p");
+  p.setAttribute("data-section", "0");
+  p.setAttribute("data-block", "0");
+  const before = document.createElement("span");
+  before.textContent = "ab";
+  const atom = document.createElement("span");
+  atom.setAttribute("data-caret-atom", "1");
+  atom.textContent = "12";
+  const after = document.createElement("span");
+  after.textContent = "cd";
+  p.append(before, atom, after);
+  root.appendChild(p);
+  document.body.appendChild(root);
+  return root;
+}
+
+describe("caret atoms (SPEC-031)", () => {
+  it("counts an atom as one model character in caretFromDomPoint", () => {
+    const root = buildAtomContent();
+    const afterText = root.querySelectorAll("span")[2].firstChild!;
+    // DOM point 1 char into "cd": rendered offset is 2+2+1, model 2+1+1.
+    expect(caretFromDomPoint(root, afterText, 1)).toEqual({ section: 0, block: 0, offset: 4 });
+    root.remove();
+  });
+
+  it("snaps a point inside the atom's rendered label to just after it", () => {
+    const root = buildAtomContent();
+    const atomText = root.querySelectorAll("span")[1].firstChild!;
+    expect(caretFromDomPoint(root, atomText, 1)).toEqual({ section: 0, block: 0, offset: 3 });
+    root.remove();
+  });
+
+  it("resolves model offsets across the atom in domPointForCaret", () => {
+    const root = buildAtomContent();
+    const spans = root.querySelectorAll("span");
+    // Offset 2: end of "ab" (before the atom).
+    expect(domPointForCaret(root, { section: 0, block: 0, offset: 2 })).toEqual({
+      node: spans[0].firstChild,
+      offset: 2,
+    });
+    // Offset 3: just after the atom — the start of "cd".
+    expect(domPointForCaret(root, { section: 0, block: 0, offset: 3 })).toEqual({
+      node: spans[2].firstChild,
+      offset: 0,
+    });
+    // Offset 5: end of "cd".
+    expect(domPointForCaret(root, { section: 0, block: 0, offset: 5 })).toEqual({
+      node: spans[2].firstChild,
+      offset: 2,
+    });
+    root.remove();
+  });
+});
+
+describe("canvasModelText and renderedOffsetsToModel (SPEC-031)", () => {
+  it("substitutes atoms' model text in canvasModelText", async () => {
+    const { canvasModelText } = await import("./domCaret");
+    const root = buildAtomContent();
+    expect(canvasModelText(root)).toBe("ab1cd");
+    root.remove();
+  });
+
+  it("maps rendered line offsets back to model space", async () => {
+    const { renderedOffsetsToModel } = await import("./domCaret");
+    const root = buildAtomContent();
+    const p = root.querySelector("p")!;
+    // Rendered text "ab12cd": offset 4 (after the label) is model 3; offset 3
+    // (inside the label) snaps to the atom's start at model 2.
+    expect(renderedOffsetsToModel(p, [0, 2, 4, 6])).toEqual([0, 2, 3, 5]);
+    expect(renderedOffsetsToModel(p, [3])).toEqual([2]);
+    root.remove();
+  });
+});

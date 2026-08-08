@@ -116,6 +116,14 @@ const REGISTRY: Record<string, Scenario> = {
       format: "decimal",
       pageXofY: false,
     }),
+  // SPEC-031: footnotes and endnotes.
+  insertNote: (model) => commands.insertNote(model, caretSelection(caret(0, 3)), "footnote"),
+  setNoteSettings: (model) =>
+    commands.setNoteSettings(model, caretSelection(caret(0, 0)), "footnote", {
+      numberFormat: "lowerRoman",
+      startAt: 2,
+      restart: "page",
+    }),
   // SPEC-032: multilevel lists, numbering control and custom tab stops.
   applyMultilevelPreset: (model) =>
     commands.applyMultilevelPreset(model, caretSelection(caret(0, 0)), "decimal"),
@@ -179,6 +187,11 @@ const QUERIES = new Set([
   "withHeaderFooterModel",
   "commitHeaderFooterModel",
   "insertPageNumber",
+  // SPEC-031: the note-content editing seam — the same throwaway
+  // single-section addressing as withHeaderFooterModel, never mutating the
+  // input model.
+  "withNoteModel",
+  "commitNoteModel",
   // SPEC-032: pure reads and the levels normaliser the two definition
   // commands are built from (applyListDefinition normalises through it; it
   // never touches a model itself).

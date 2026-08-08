@@ -66,8 +66,20 @@ function componentFor(entry = noRenderEntries()[0]) {
         <!-- The plain (no-marks) variants keep a single text child, so
              the span's firstChild stays the run's own text node — DOM
              shapes older specs' tests and tooling rely on. -->
+        <!-- A note reference mark (SPEC-031): renders its computed number
+             but stands for the one-character model placeholder carried in
+             data-caret-atom (see lib/domCaret.ts's caret-atom mapping). -->
+        <span
+          v-if="run.atomText"
+          class="doc-note-ref"
+          contenteditable="false"
+          :data-caret-atom="run.atomText"
+          :data-note-id="run.noteId"
+          :title="run.title"
+          :style="run.styleObj"
+        >{{ run.text }}</span>
         <a
-          v-if="run.href && !run.segments"
+          v-else-if="run.href && !run.segments"
           data-doc-link=""
           :href="run.href"
           :target="run.target"
@@ -217,5 +229,18 @@ function componentFor(entry = noRenderEntries()[0]) {
 .marks-on .doc-paragraph:not([data-slice-more])::after {
   content: "¶";
   color: #80868b;
+}
+
+/* A note reference mark (SPEC-031): clickable (AC-15), visually a link-blue
+   superscript number — the superscript itself comes from the run's own
+   vertAlign formatting in the inline style. */
+.doc-note-ref {
+  color: #1a73e8;
+  cursor: pointer;
+  user-select: none;
+}
+
+.doc-note-ref:hover {
+  text-decoration: underline;
 }
 </style>

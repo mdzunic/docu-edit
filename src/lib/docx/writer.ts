@@ -31,6 +31,10 @@ import type {
   HeaderFooterPart,
   Image,
   Margins,
+  NoteContent,
+  NoteKind,
+  NoteNumberFormat,
+  NoteSettings,
   PageNumberFormat,
   NamedStyle,
   PageSize,
@@ -55,6 +59,7 @@ import {
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
+import { referencedNotes } from "../notes";
 import {
   childElements,
   parseRelationships,
@@ -251,8 +256,19 @@ function fieldInstr(field: FieldSpec): string {
  * wrapping one: `w:fldSimple` schema-wraps a cached-result run the same
  * shape an ordinary run would be, so the run's own formatting/placeholder
  * text still goes through runPropertiesXml/runContentXml unchanged; only
- * the instruction wrapper differs. */
-function runXml(run: Run): string {
+ * the instruction wrapper differs. A note reference run (SPEC-031) emits a
+ * `w:footnoteReference`/`w:endnoteReference` instead of any text — Word
+ * renders the number itself — resolved through `noteIds` (the notes write
+ * plan's numeric ids); a dangling reference emits nothing. */
+function runXml(run: Run, noteIds?: Map<string, number>): string {
+  if (run.note) {
+    const id = noteIds?.get(run.note.noteId);
+    if (id === undefined) {
+      return "";
+    }
+    const tag = run.note.kind === "footnote" ? "footnoteReference" : "endnoteReference";
+    return `<w:r>${runPropertiesXml(run.formatting)}<w:${tag} w:id="${id}"/></w:r>`;
+  }
   const inner = `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
   if (run.field) {
     return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${inner}</w:fldSimple>`;
@@ -492,6 +508,10 @@ function bookmarkIdsFor(model: DocumentModel): Map<string, number> {
 interface InlineWriteContext {
   hyperlinkPlan: HyperlinkWritePlan;
   bookmarkIds: Map<string, number>;
+  /** Numeric footnotes.xml/endnotes.xml ids by model noteId (SPEC-031);
+   * absent in contexts that can hold no note references (the note parts
+   * themselves, headers/footers). */
+  noteIds?: Map<string, number>;
 }
 
 /** The paragraph's inline content: its runs, with any preserved opaque
@@ -506,7 +526,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
   const hasLinks = paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null);
   const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
   if (opaque.length === 0 && !hasLinks && !hasBookmarks) {
-    return paragraph.runs.map(runXml).join("");
+    return paragraph.runs.map((run) => runXml(run, ctx.noteIds)).join("");
   }
   const { runs, bookmarksAtBoundary, boundaryFor } = inlineWriteLayout(paragraph);
   const opaqueAtBoundary = new Map<number, string[]>();
@@ -555,7 +575,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
           : `<w:hyperlink w:anchor="${escapeXml(target.anchor ?? "")}">`;
       openTarget = target;
     }
-    xml += runXml(run);
+    xml += runXml(run, ctx.noteIds);
   }
   closeHyperlink();
   return xml;
@@ -1034,6 +1054,175 @@ function headerFooterPartRelsXml(plan: HeaderFooterPartPlan): string | null {
   return `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${relXml}</Relationships>`;
 }
 
+// --- footnotes and endnotes (SPEC-031) ---------------------------------------
+
+export const FOOTNOTES_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
+export const ENDNOTES_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml";
+const FOOTNOTES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
+const ENDNOTES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
+
+interface NotesPartPlan {
+  kind: NoteKind;
+  partName: string;
+  notes: NoteContent[];
+  hyperlinkPlan: HyperlinkWritePlan;
+}
+
+export interface NotesWritePlan {
+  /** One footnotes.xml and/or endnotes.xml part per stream with content. */
+  parts: NotesPartPlan[];
+  /** Numeric part-local ids by model noteId — what the body's
+   * w:footnoteReference/w:endnoteReference elements carry. */
+  noteIds: Map<string, number>;
+  /** `<Relationship>` elements for word/_rels/document.xml.rels. */
+  relationshipsXml: string;
+  /** `<Override>` elements for `[Content_Types].xml`. */
+  contentTypesXml: string;
+  /** Relationship ids this plan claimed (for later planners' taken sets). */
+  relIds: Set<string>;
+}
+
+/** Plans the footnotes.xml/endnotes.xml parts a save needs (SPEC-031
+ * AC-21/22): like headers/footers, the note parts are always regenerated
+ * fresh from the model. Only referenced notes are written (an unreferenced
+ * note is invisible everywhere — see NoteContent), numbered 1..n in
+ * first-reference order; ids -1/0 are the conventional separator entries.
+ * Notes' own hyperlinks resolve through the part's own rels file. */
+export function planNotesWrite(
+  model: DocumentModel,
+  takenRelIds: Set<string> = new Set(),
+  existingPartNames: Set<string> = new Set(),
+): NotesWritePlan {
+  const parts: NotesPartPlan[] = [];
+  const relParts: string[] = [];
+  const overrideParts: string[] = [];
+  const noteIds = new Map<string, number>();
+  const taken = new Set(takenRelIds);
+  const relIds = new Set<string>();
+  for (const kind of ["footnote", "endnote"] as NoteKind[]) {
+    const notes = referencedNotes(model, kind);
+    if (notes.length === 0) {
+      continue;
+    }
+    const base = kind === "footnote" ? "footnotes" : "endnotes";
+    let n = 1;
+    let fileName = `${base}.xml`;
+    let partName = `word/${fileName}`;
+    while (existingPartNames.has(partName)) {
+      n += 1;
+      fileName = `${base}${n}.xml`;
+      partName = `word/${fileName}`;
+    }
+    const relId = nextFreeRelId(taken);
+    taken.add(relId);
+    relIds.add(relId);
+    notes.forEach((note, index) => noteIds.set(note.noteId, index + 1));
+    const hyperlinkPlan = planHyperlinkWriteFor(
+      notes.flatMap((note) => note.blocks),
+      new Set(),
+    );
+    parts.push({ kind, partName, notes, hyperlinkPlan });
+    const relType = kind === "footnote" ? FOOTNOTES_RELATIONSHIP : ENDNOTES_RELATIONSHIP;
+    relParts.push(`<Relationship Id="${relId}" Type="${relType}" Target="${fileName}"/>`);
+    const contentType = kind === "footnote" ? FOOTNOTES_CONTENT_TYPE : ENDNOTES_CONTENT_TYPE;
+    overrideParts.push(`<Override PartName="/${partName}" ContentType="${contentType}"/>`);
+  }
+  return {
+    parts,
+    noteIds,
+    relationshipsXml: relParts.join(""),
+    contentTypesXml: overrideParts.join(""),
+    relIds,
+  };
+}
+
+/** One footnotes.xml/endnotes.xml part's full XML (SPEC-031 AC-21/22): the
+ * conventional separator/continuationSeparator entries at ids -1/0, then
+ * every referenced note at its planned id, its content sharing the body's
+ * per-block serialisation. The note's first paragraph opens with a fresh
+ * superscript `w:footnoteRef`/`w:endnoteRef` marker run — Word's own shape,
+ * and the element the reader drops on open, so the round trip is stable. */
+function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<string, number>): string {
+  const tag = plan.kind === "footnote" ? "footnote" : "endnote";
+  const rootTag = plan.kind === "footnote" ? "footnotes" : "endnotes";
+  const refTag = plan.kind === "footnote" ? "footnoteRef" : "endnoteRef";
+  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map() };
+  const markerRun = `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${refTag}/></w:r>`;
+  const noteXml = plan.notes
+    .map((note) => {
+      const id = noteIds.get(note.noteId) ?? 0;
+      let markerPending = true;
+      const body = note.blocks
+        .map((block) => {
+          if (block.type === "table") {
+            return tableXml(block, includeOpaque, inlineCtx, () => undefined);
+          }
+          if (block.type === "image" || block.type === "break") {
+            return "";
+          }
+          if (markerPending) {
+            markerPending = false;
+            return `<w:p>${paragraphPropertiesXml(block)}${markerRun}${inlineContentXml(block, includeOpaque, inlineCtx)}</w:p>`;
+          }
+          return paragraphXml(block, includeOpaque, inlineCtx);
+        })
+        .join("");
+      return `<w:${tag} w:id="${id}">${body.length > 0 ? body : `<w:p>${markerRun}</w:p>`}</w:${tag}>`;
+    })
+    .join("");
+  return (
+    `${XML_DECLARATION}<w:${rootTag} xmlns:w="${WORD_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}">` +
+    `<w:${tag} w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:${tag}>` +
+    `<w:${tag} w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:${tag}>` +
+    noteXml +
+    `</w:${rootTag}>`
+  );
+}
+
+/** A note part's own `_rels/*.rels` — null when its notes reference no
+ * external hyperlinks (the common case). */
+function notesPartRelsXml(plan: NotesPartPlan): string | null {
+  const relXml = plan.hyperlinkPlan.relationshipsXml;
+  if (relXml.length === 0) {
+    return null;
+  }
+  return `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${relXml}</Relationships>`;
+}
+
+// The w:numFmt value for each model note numbering format — "chicago" is
+// OOXML's name for the * † ‡ § symbol cycle.
+const NOTE_NUM_FMT_VALUES: Record<NoteNumberFormat, string> = {
+  decimal: "decimal",
+  lowerRoman: "lowerRoman",
+  lowerAlpha: "lowerLetter",
+  symbol: "chicago",
+};
+
+/** A sectPr's `w:footnotePr`/`w:endnotePr` (SPEC-031 AC-17..20) from the
+ * model's note settings — "" when nothing is set, so untouched documents
+ * emit exactly what they always did. Children in CT_FtnProps order:
+ * numFmt, numStart, numRestart. */
+function notePrXml(tag: "footnotePr" | "endnotePr", settings: NoteSettings | undefined): string {
+  if (!settings) {
+    return "";
+  }
+  const parts: string[] = [];
+  if (settings.numberFormat !== undefined) {
+    parts.push(`<w:numFmt w:val="${NOTE_NUM_FMT_VALUES[settings.numberFormat]}"/>`);
+  }
+  if (settings.startAt !== undefined) {
+    parts.push(`<w:numStart w:val="${settings.startAt}"/>`);
+  }
+  if (settings.restart !== undefined && settings.restart !== "continuous") {
+    parts.push(`<w:numRestart w:val="${settings.restart === "page" ? "eachPage" : "eachSect"}"/>`);
+  }
+  return parts.length > 0 ? `<w:${tag}>${parts.join("")}</w:${tag}>` : "";
+}
+
 /** A from-scratch word/settings.xml (SPEC-029): only ever created when a
  * section wants different odd/even headers — OOXML's only representation
  * of that is this one document-wide flag, so a document that never asked
@@ -1093,6 +1282,7 @@ function sectionPropertiesXml(
   titlePage: boolean,
   pageNumberStart: number | undefined,
   columns?: SectionColumns,
+  notesPr = "",
 ): string {
   const width = cmToTwips(pageSize.widthCm);
   const height = cmToTwips(pageSize.heightCm);
@@ -1119,6 +1309,7 @@ function sectionPropertiesXml(
     `<w:sectPr${needsR ? ` xmlns:r="${R_ATTRIBUTE_NAMESPACE}"` : ""}>` +
     headerRefs +
     footerRefs +
+    notesPr +
     type +
     `<w:pgSz w:w="${width}" w:h="${height}"${orient}/>` +
     `<w:pgMar w:top="${cmToTwips(topCm)}" w:right="${cmToTwips(rightCm)}"` +
@@ -1153,9 +1344,14 @@ export function buildDocumentXml(
   mediaPlan: MediaWritePlan = planMediaWrite(model),
   hyperlinkPlan: HyperlinkWritePlan = planHyperlinkWrite(model),
   headerFooterPlan: HeaderFooterWritePlan = planHeaderFooterWrite(model, new Set(), new Set()),
+  notesPlan: NotesWritePlan = planNotesWrite(model),
 ): string {
   const includeOpaque = model.format === "docx";
-  const inlineCtx: InlineWriteContext = { hyperlinkPlan, bookmarkIds: bookmarkIdsFor(model) };
+  const inlineCtx: InlineWriteContext = {
+    hyperlinkPlan,
+    bookmarkIds: bookmarkIdsFor(model),
+    noteIds: notesPlan.noteIds,
+  };
   const blockXml: string[] = [];
   let docPrId = 1;
   // A section with any header/footer reference, title page or explicit
@@ -1254,6 +1450,10 @@ export function buildDocumentXml(
           lastSectionModel?.titlePage === true,
           lastSectionModel?.pageNumberStart,
           lastSectionModel?.columns,
+          // Note numbering settings (SPEC-031) live on the body-level sectPr
+          // — the one the reader reads them back from.
+          notePrXml("footnotePr", model.footnoteSettings) +
+            notePrXml("endnotePr", model.endnoteSettings),
         );
   return (
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
@@ -1655,12 +1855,17 @@ export async function writeDocx(
       new Set([...baseTaken, ...hyperlinkPlan.relIds]),
       existingMediaPartNames,
     );
-    // Header/footer parts (SPEC-029) mint relationship ids past everything
-    // above, and their own images share the same word/media/imageN.ext
-    // naming pool (existingMediaPartNames, mutated by planMediaWrite above).
-    const headerFooterPlan = planHeaderFooterWrite(
+    // Note parts (SPEC-031) mint their relationship ids past the base set,
+    // header/footer parts (SPEC-029) past everything — their own images
+    // share the same word/media/imageN.ext naming pool
+    // (existingMediaPartNames, mutated by planMediaWrite above).
+    const notesPlan = planNotesWrite(
       model,
       new Set([...baseTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]),
+    );
+    const headerFooterPlan = planHeaderFooterWrite(
+      model,
+      new Set([...baseTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]),
       existingMediaPartNames,
     );
     const settingsOverride = headerFooterPlan.evenAndOddHeaders
@@ -1668,21 +1873,26 @@ export async function writeDocx(
       : "";
     const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
       /<\/Types>\s*$/,
-      `${headerFooterPlan.contentTypesXml}${settingsOverride}</Types>`,
+      `${notesPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${settingsOverride}</Types>`,
     );
     const entries: ZipEntryInput[] = [
       { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
       { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
       {
         name: "word/document.xml",
-        data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan)),
+        data: encoder.encode(
+          buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan),
+        ),
       },
       {
         name: "word/_rels/document.xml.rels",
         data: encoder.encode(
           buildDocumentRelsXml(
             !plan.isEmpty,
-            hyperlinkPlan.relationshipsXml + mediaPlan.relationshipsXml + headerFooterPlan.relationshipsXml,
+            hyperlinkPlan.relationshipsXml +
+              mediaPlan.relationshipsXml +
+              notesPlan.relationshipsXml +
+              headerFooterPlan.relationshipsXml,
           ),
         ),
       },
@@ -1709,6 +1919,16 @@ export async function writeDocx(
       const relsXml = headerFooterPartRelsXml(partPlan);
       if (relsXml !== null) {
         entries.push({ name: relsPathFor(partPlan.partName), data: encoder.encode(relsXml) });
+      }
+    }
+    for (const notesPart of notesPlan.parts) {
+      entries.push({
+        name: notesPart.partName,
+        data: encoder.encode(notesPartXml(notesPart, model.format === "docx", notesPlan.noteIds)),
+      });
+      const relsXml = notesPartRelsXml(notesPart);
+      if (relsXml !== null) {
+        entries.push({ name: relsPathFor(notesPart.partName), data: encoder.encode(relsXml) });
       }
     }
     const bytes = await zip(entries);
@@ -1791,12 +2011,22 @@ export async function writeDocx(
   const addMediaDecls = mediaPlan.relationshipsXml.length > 0;
   const addHyperlinkDecls = hyperlinkPlan.relationshipsXml.length > 0;
 
+  // Note parts (SPEC-031): the reader consumed the source's own
+  // footnotes.xml/endnotes.xml (they are not in preservedParts), so the
+  // canonical names are normally free again; ids mint past everything above.
+  const notesPlan = planNotesWrite(
+    model,
+    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]),
+    existingPartNames,
+  );
+  const addNotesDecls = notesPlan.relationshipsXml.length > 0;
+
   // Headers, footers and page numbering (SPEC-029): relationship ids mint
   // past everything above; header/footer part names and their own images
   // avoid every preserved/already-minted name the same way media does.
   const headerFooterPlan = planHeaderFooterWrite(
     model,
-    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]),
+    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]),
     existingPartNames,
     existingPartNames,
   );
@@ -1831,7 +2061,12 @@ export async function writeDocx(
     } else if (patchedSettings !== null && name === settingsPartName) {
       entries.push({ name, data: encoder.encode(patchedSettings) });
     } else if (
-      (addNumberingDecls || addMediaDecls || addHyperlinkDecls || addHeaderFooterDecls || addSettingsPart) &&
+      (addNumberingDecls ||
+        addMediaDecls ||
+        addHyperlinkDecls ||
+        addNotesDecls ||
+        addHeaderFooterDecls ||
+        addSettingsPart) &&
       name === mainRelsName
     ) {
       let rels = mainRelsText!;
@@ -1844,13 +2079,16 @@ export async function writeDocx(
       if (addMediaDecls) {
         rels = withMediaRelationships(rels, mediaPlan.relationshipsXml);
       }
+      if (addNotesDecls) {
+        rels = withMediaRelationships(rels, notesPlan.relationshipsXml);
+      }
       if (addHeaderFooterDecls) {
         rels = withMediaRelationships(rels, headerFooterPlan.relationshipsXml);
       }
       if (addSettingsPart) {
         rels = withMediaRelationships(
           rels,
-          `<Relationship Id="${nextFreeRelId(new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]))}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
+          `<Relationship Id="${nextFreeRelId(new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]))}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
         );
       }
       entries.push({ name, data: encoder.encode(rels) });
@@ -1858,7 +2096,12 @@ export async function writeDocx(
       entries.push({ name, data: encoder.encode(withCoreRelationship(relsText)) });
     } else if (
       name === "[Content_Types].xml" &&
-      (!coreRel || addNumberingDecls || addMediaDecls || addHeaderFooterDecls || addSettingsPart)
+      (!coreRel ||
+        addNumberingDecls ||
+        addMediaDecls ||
+        addNotesDecls ||
+        addHeaderFooterDecls ||
+        addSettingsPart)
     ) {
       let contentTypes = decoder.decode(data);
       if (!coreRel) {
@@ -1869,6 +2112,9 @@ export async function writeDocx(
       }
       if (addMediaDecls) {
         contentTypes = withImageContentTypes(contentTypes, mediaPlan.extensions);
+      }
+      if (addNotesDecls) {
+        contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${notesPlan.contentTypesXml}</Types>`);
       }
       if (addHeaderFooterDecls) {
         contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${headerFooterPlan.contentTypesXml}</Types>`);
@@ -1902,9 +2148,21 @@ export async function writeDocx(
       entries.push({ name: relsPathFor(partPlan.partName), data: encoder.encode(relsXml) });
     }
   }
+  for (const notesPart of notesPlan.parts) {
+    entries.push({
+      name: notesPart.partName,
+      data: encoder.encode(notesPartXml(notesPart, model.format === "docx", notesPlan.noteIds)),
+    });
+    const relsXml = notesPartRelsXml(notesPart);
+    if (relsXml !== null) {
+      entries.push({ name: relsPathFor(notesPart.partName), data: encoder.encode(relsXml) });
+    }
+  }
   entries.push({
     name: mainPartName,
-    data: encoder.encode(buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan)),
+    data: encoder.encode(
+      buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan),
+    ),
   });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
   entries.push(...mediaPlan.zipEntries);

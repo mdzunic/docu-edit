@@ -36,6 +36,10 @@ import type {
   ListDefinition,
   Margins,
   NamedStyle,
+  NoteContent,
+  NoteKind,
+  NoteNumberFormat,
+  NoteSettings,
   PageNumberFormat,
   PageSize,
   Paragraph,
@@ -50,10 +54,12 @@ import type {
 } from "../documentModel";
 import {
   FIELD_PLACEHOLDER_TEXT,
+  NOTE_PLACEHOLDER_TEXT,
   resolveColumnWidthsCm,
   sectionMargins,
   sectionPageSize,
 } from "../documentModel";
+import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import {
@@ -995,7 +1001,69 @@ function fieldContentXml(field: FieldSpec): string {
   return `<text:${tag}${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:${tag}>`;
 }
 
+// SPEC-031: the notes of the content part being built — set by
+// buildContentXml around its body walk so a note reference run anywhere in
+// the flow (list items and table cells included) can emit its text:note
+// without threading a parameter through every serialiser. Null outside a
+// build (and while a note's own body serialises, so a malformed nested
+// reference degrades to nothing rather than recursing).
+interface OdtNotesWriteContext {
+  contentById: Map<string, NoteContent>;
+  /** Derived citation text per noteId — the number consumers re-derive. */
+  citations: Map<string, string>;
+  includeOpaque: boolean;
+}
+let odtNotesContext: OdtNotesWriteContext | null = null;
+
+function odtNotesWriteContext(model: DocumentModel): OdtNotesWriteContext {
+  const contentById = new Map<string, NoteContent>();
+  const citations = new Map<string, string>();
+  for (const kind of ["footnote", "endnote"] as NoteKind[]) {
+    const refs = collectNoteRefs(model, kind);
+    const labels = noteLabels(model, kind, refs);
+    for (const note of referencedNotes(model, kind, refs)) {
+      contentById.set(note.noteId, note);
+      citations.set(note.noteId, labels.get(note.noteId) ?? "");
+    }
+  }
+  return { contentById, citations, includeOpaque: model.format === "odt" };
+}
+
+/** The model noteId as an XML-safe text:id — model ids (note-UUIDs, docx
+ * fn/en ids, ODT source ids) already fit; anything else is sanitised. */
+function odtNoteXmlId(noteId: string): string {
+  return noteId.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+/** A note reference run as its `text:note` element (SPEC-031 AC-23/24):
+ * citation plus the note's whole body inline at the reference, the ODF
+ * shape. Emits nothing for a dangling reference or outside a body build. */
+function noteXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): string {
+  const ctx = odtNotesContext;
+  const note = run.note ? ctx?.contentById.get(run.note.noteId) : undefined;
+  if (!ctx || !run.note || !note) {
+    return "";
+  }
+  const citation = ctx.citations.get(run.note.noteId) ?? "";
+  odtNotesContext = null;
+  const body = note.blocks
+    .map((block) =>
+      block.type === "paragraph" ? paragraphXml(block, styles, ctx.includeOpaque) : "",
+    )
+    .join("");
+  odtNotesContext = ctx;
+  state.lastChar = NOTE_PLACEHOLDER_TEXT;
+  return (
+    `<text:note text:id="${escapeXml(odtNoteXmlId(run.note.noteId))}" text:note-class="${run.note.kind}">` +
+    `<text:note-citation>${escapeXml(citation)}</text:note-citation>` +
+    `<text:note-body>${body}</text:note-body></text:note>`
+  );
+}
+
 function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): string {
+  if (run.note) {
+    return noteXml(run, styles, state);
+  }
   const styleName = styles.textNameFor(run.formatting);
   if (run.field) {
     state.lastChar = FIELD_PLACEHOLDER_TEXT;
@@ -1268,6 +1336,9 @@ export function buildContentXml(
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
   const blockXml: string[] = [];
+  // Footnotes/endnotes (SPEC-031): note reference runs anywhere in the body
+  // emit their text:note through this context; cleared before returning.
+  odtNotesContext = odtNotesWriteContext(model);
   // Defined-list instance continuity for the whole body (SPEC-032): one map
   // across every section, so an instance interrupted by a section break
   // still writes text:continue-list on its later segments.
@@ -1395,6 +1466,7 @@ export function buildContentXml(
     // cycle is a fixed point).
     blockXml.push(carrierParagraphXml(styles, { breakBefore: pendingBreak }));
   }
+  odtNotesContext = null;
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
   const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
   const preservedStyles = includeOpaque ? (model.sourceXml?.odtAutomaticStyles ?? []) : [];
@@ -1769,6 +1841,112 @@ function masterPageXml(name: string, layoutName: string, headerFooter?: HeaderFo
  * page per section (SPEC-007 AC-15; SPEC-028 AC-33) — the first section's
  * pair keeps the "pm1"/"Standard" names every single-section document
  * always used, so those stay byte-identical. */
+// style:num-format for a note numbering format (SPEC-031) — ODF has no
+// symbol cycle format, so "symbol" degrades to decimal on an .odt save (a
+// documented fidelity limit; the in-app rendering keeps the symbols).
+const ODT_NOTE_NUM_FORMAT: Record<NoteNumberFormat, string> = {
+  decimal: "1",
+  lowerRoman: "i",
+  lowerAlpha: "a",
+  symbol: "1",
+};
+
+/** The notes-configuration attributes the model's settings map to (SPEC-031
+ * AC-17..20), as [namespaceURI, qualifiedName, value] triples — shared by
+ * the from-scratch styles.xml and the preserved-part patch so both write
+ * the same thing. `text:start-value` is the counter's initial value, one
+ * below the first displayed number (LibreOffice's own convention). */
+function notesConfigurationAttrs(settings: NoteSettings): Array<[string, string, string]> {
+  const attrs: Array<[string, string, string]> = [];
+  if (settings.numberFormat !== undefined) {
+    attrs.push([STYLE_NAMESPACE, "style:num-format", ODT_NOTE_NUM_FORMAT[settings.numberFormat]]);
+  }
+  if (settings.startAt !== undefined) {
+    attrs.push([TEXT_NAMESPACE, "text:start-value", String(Math.max(0, settings.startAt - 1))]);
+  }
+  if (settings.restart === "page") {
+    attrs.push([TEXT_NAMESPACE, "text:start-numbering-at", "page"]);
+  } else if (settings.restart === "section") {
+    attrs.push([TEXT_NAMESPACE, "text:start-numbering-at", "chapter"]);
+  }
+  return attrs;
+}
+
+function notesConfigurationXml(cls: NoteKind, settings: NoteSettings | undefined): string {
+  if (!settings) {
+    return "";
+  }
+  const attrs = notesConfigurationAttrs(settings);
+  if (attrs.length === 0) {
+    return "";
+  }
+  const rendered = attrs.map(([, qname, value]) => ` ${qname}="${escapeXml(value)}"`).join("");
+  return `<text:notes-configuration text:note-class="${cls}"${rendered}/>`;
+}
+
+/** A preserved styles.xml with the model's note numbering settings merged
+ * onto its `text:notes-configuration` elements (SPEC-031), or null when
+ * nothing needs changing. Existing configuration elements keep every
+ * attribute this model does not set (citation styles, positions, …) — the
+ * patch sets only the modelled attributes, the patchOdtStylesXml
+ * philosophy. */
+export function patchOdtNotesConfiguration(
+  model: DocumentModel,
+  originalStylesXml: string,
+): string | null {
+  const wanted: Array<[NoteKind, NoteSettings]> = [];
+  if (model.footnoteSettings && notesConfigurationAttrs(model.footnoteSettings).length > 0) {
+    wanted.push(["footnote", model.footnoteSettings]);
+  }
+  if (model.endnoteSettings && notesConfigurationAttrs(model.endnoteSettings).length > 0) {
+    wanted.push(["endnote", model.endnoteSettings]);
+  }
+  if (wanted.length === 0) {
+    return null;
+  }
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return null;
+  }
+  const root = stylesDoc.documentElement;
+  let officeStyles = firstChildElement(root, OFFICE_NAMESPACE, "styles");
+  if (!officeStyles) {
+    officeStyles = stylesDoc.createElementNS(OFFICE_NAMESPACE, "office:styles");
+    root.insertBefore(
+      officeStyles,
+      firstChildElement(root, OFFICE_NAMESPACE, "automatic-styles") ?? null,
+    );
+  }
+  let changed = false;
+  for (const [cls, settings] of wanted) {
+    const attrs = notesConfigurationAttrs(settings);
+    const existing = Array.from(officeStyles.children).find(
+      (el) =>
+        el.namespaceURI === TEXT_NAMESPACE &&
+        el.localName === "notes-configuration" &&
+        (el.getAttributeNS(TEXT_NAMESPACE, "note-class") ?? "footnote") === cls,
+    );
+    if (existing) {
+      for (const [ns, qname, value] of attrs) {
+        const local = qname.split(":")[1];
+        if (existing.getAttributeNS(ns, local) !== value) {
+          existing.setAttributeNS(ns, qname, value);
+          changed = true;
+        }
+      }
+    } else {
+      const wrapper = parseXml(
+        `<office:document-styles${DOCUMENT_XMLNS}>${notesConfigurationXml(cls, settings)}</office:document-styles>`,
+      );
+      officeStyles.appendChild(stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true));
+      changed = true;
+    }
+  }
+  return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
+}
+
 export function buildStylesXml(model: DocumentModel): string {
   const { fontFamily, fontSizePt } = model.defaultStyles;
   const includeOpaque = model.format === "odt";
@@ -1798,6 +1976,8 @@ export function buildStylesXml(model: DocumentModel): string {
     `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"/>` +
     "</style:default-style>" +
     namedStyles +
+    notesConfigurationXml("footnote", model.footnoteSettings) +
+    notesConfigurationXml("endnote", model.endnoteSettings) +
     "</office:styles>" +
     "<office:automatic-styles>" +
     pageLayouts +
@@ -2224,6 +2404,8 @@ export async function writeOdt(
       patchOdtSectionMasterPages(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
     patchedStyles =
       patchOdtSectionHeaderFooters(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
+    patchedStyles =
+      patchOdtNotesConfiguration(model, patchedStyles ?? originalStyles) ?? patchedStyles;
   }
 
   const entries: ZipEntryInput[] = [
