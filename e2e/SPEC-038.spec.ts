@@ -265,3 +265,28 @@ test("the View menu toggles the comments pane and the comments-only view", async
   await page.getByTestId("view-menu-comments-only").click();
   await expect(pane(page).getByTestId("comments-only-toggle")).toHaveAttribute("aria-pressed", "true");
 });
+
+// The comments dock (right-hand margin pane) and the Download menu both
+// occupy the top-right of the canvas; adding a comment auto-opens the dock
+// and leaves it open, which is exactly the state a real user is in when they
+// then reach for Download (AC-18, AC-19, AC-20 all round-trip through it).
+// A stacking-order regression here doesn't fail any existing test (the menu
+// still opens, its items still exist in the DOM) — only a click actually
+// landing on the intended item catches it.
+test("the Download menu stays clickable with the comments pane open (AC-18, AC-19)", async ({ page }) => {
+  await createDocument(page);
+  const text = "One more pass on this section.";
+  await seedParagraph(page, text);
+  await commentOn(page, text, "section", "Looks good");
+  await expect(pane(page)).toBeVisible();
+
+  await page.getByTestId("download-menu").click();
+  const docxDownload = page.waitForEvent("download");
+  await page.getByTestId("download-docx").click();
+  await docxDownload;
+
+  await page.getByTestId("download-menu").click();
+  const odtDownload = page.waitForEvent("download");
+  await page.getByTestId("download-odt").click();
+  await odtDownload;
+});

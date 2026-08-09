@@ -101,7 +101,7 @@ function choose(format = "") {
   position: absolute;
   right: 0;
   top: calc(100% + 0.25rem);
-  z-index: 10;
+  z-index: 30;
   min-width: 10rem;
   display: flex;
   flex-direction: column;

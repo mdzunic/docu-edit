@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { formatTimestamp } from "../lib/format";
 import {
   asCommentAuthorList,
@@ -129,11 +129,25 @@ function onAuthorFilterChange(event = new Event("change")) {
     emit("update:author-filter", target.value);
   }
 }
-function onAuthorNameInput(event = new Event("input")) {
-  const target = event.target;
-  if (target instanceof HTMLInputElement) {
-    emit("update:author-name", target.value);
-  }
+
+// A local draft, not a direct `:value="authorName"` binding: the pane
+// re-renders for unrelated reasons while the user types (e.g. the idle-
+// scheduled highlight/thread-position measurement updating threadTops), and
+// Vue's DOM patch for `value` always reconciles against the input's *live*
+// DOM value, not the previous vnode — so a plain prop binding would snap
+// the field back to authorName mid-keystroke, before the eventual
+// change/blur ever commits it (AC-4). v-model keeps the draft (and so the
+// bound value) in lockstep with every keystroke, so those re-renders find
+// nothing to reconcile. Mirrors RenameDialog's local `draft`.
+const authorDraft = ref(props.authorName);
+watch(
+  () => props.authorName,
+  (name) => {
+    authorDraft.value = name;
+  },
+);
+function commitAuthorName() {
+  emit("update:author-name", authorDraft.value);
 }
 </script>
 
@@ -160,11 +174,11 @@ function onAuthorNameInput(event = new Event("input")) {
       <label>
         Comment as
         <input
+          v-model="authorDraft"
           type="text"
           class="comments-author-input"
           data-testid="comment-author-name-input"
-          :value="authorName"
-          @change="onAuthorNameInput"
+          @change="commitAuthorName"
         >
       </label>
     </div>
