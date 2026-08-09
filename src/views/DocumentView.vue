@@ -15,6 +15,10 @@ import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DownloadMenu from "../components/DownloadMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
+import SpellContextMenu from "../components/SpellContextMenu.vue";
+import LanguageStatusControl from "../components/LanguageStatusControl.vue";
+import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
+import { SUPPORTED_LANGUAGES } from "../lib/language";
 import HeaderFooterMenu from "../components/HeaderFooterMenu.vue";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
 import ImageInsertControl from "../components/ImageInsertControl.vue";
@@ -64,6 +68,8 @@ import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
+import { noSpellContextMenu, noSpellUnderlineRect, useSpellCheck } from "./document/useSpellCheck";
+import { useDocumentLanguage } from "./document/useDocumentLanguage";
 import { documentExists } from "../lib/documents";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
@@ -210,6 +216,7 @@ import {
   replaceMatch,
   replaceMatches,
 } from "../lib/findReplace";
+import { applyCasePattern, detectCasePattern } from "../lib/spellcheck/suggestions";
 import {
   caretAtClientPoint,
   caretClientRect,
@@ -484,6 +491,7 @@ function registerFindRefresh(fn = () => {}) {
 }
 
 const contextMenu = ref({ visible: false, left: 0, top: 0 });
+const spellContextMenu = ref(noSpellContextMenu());
 
 // --- tables (SPEC-022) ------------------------------------------------------
 // The rectangular cell-range selection (AC-15, AC-16): activated by
@@ -1758,6 +1766,80 @@ function closeContextMenu() {
   contextMenuListTarget = null;
 }
 
+// --- the spell-check context menu (SPEC-035 AC-2, AC-3) ---------------------
+
+/** Right-click on a spell-check underline: opens the suggestions menu
+ * instead of the regular editing menu. The underline layer is a sibling of
+ * .document-content, not a descendant, so this and handleContextMenu never
+ * both fire for the same click. */
+function handleSpellContextMenu(event = new MouseEvent("contextmenu"), rect = noSpellUnderlineRect()) {
+  if (!editable.value) {
+    return;
+  }
+  event.preventDefault();
+  spellContextMenu.value = {
+    visible: true,
+    left: event.clientX,
+    top: event.clientY,
+    section: rect.section,
+    block: rect.block,
+    start: rect.start,
+    end: rect.end,
+    word: rect.word,
+    lang: rect.lang,
+    suggestions: suggestionsFor(rect.word, rect.lang),
+  };
+}
+
+function closeSpellContextMenu() {
+  spellContextMenu.value = noSpellContextMenu();
+}
+
+/** Choosing a suggestion (SPEC-035 AC-4, AC-4.1): replaceMatch preserves
+ * the word's character formatting; applyCasePattern reshapes the
+ * suggestion to the misspelling's own capitalisation pattern first. */
+function applySpellSuggestion(suggestion = "") {
+  const state = spellContextMenu.value;
+  closeSpellContextMenu();
+  const model = doc.value;
+  if (!model || !editable.value) {
+    return;
+  }
+  const match = { section: state.section, block: state.block, start: state.start, end: state.end };
+  const shaped = applyCasePattern(suggestion, detectCasePattern(state.word));
+  const before = caretSelection({ ...match, offset: match.start });
+  applyEdit(replaceMatch(model, match, shaped), before, "spelling suggestion");
+}
+
+/** "Ignore" (SPEC-035 AC-5): this occurrence only, for the session. */
+function spellIgnore() {
+  const state = spellContextMenu.value;
+  closeSpellContextMenu();
+  ignoreOccurrence({
+    section: state.section,
+    block: state.block,
+    start: state.start,
+    end: state.end,
+    word: state.word,
+    lang: state.lang,
+  });
+}
+
+/** "Ignore all" (SPEC-035 AC-6): every occurrence of the word, for the
+ * session. */
+function spellIgnoreAll() {
+  const state = spellContextMenu.value;
+  closeSpellContextMenu();
+  ignoreAllOccurrences(state.word);
+}
+
+/** "Add to dictionary" (SPEC-035 AC-7): persists across sessions. */
+function spellAddToDictionary() {
+  const state = spellContextMenu.value;
+  closeSpellContextMenu();
+  addWordToDictionary(state.word, state.lang);
+}
+
 /** A numbering-control entry picked from the context menu (SPEC-032
  * AC-14..16), applied at the right-clicked paragraph. "Set numbering
  * value…" prompts for the ordinal; cancelling the prompt changes nothing. */
@@ -1901,6 +1983,7 @@ async function contextMenuPaste() {
 function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   const model = doc.value;
   setWordCountSelection(range.start, range.end);
+  setLanguageSelection(range.start, range.end);
   if (!model || !range.start || !range.end) {
     formatStates.value = EMPTY_FORMAT_STATES;
     formatValues.value = emptyToolbarFormatValues();
@@ -3617,6 +3700,52 @@ const {
   onScroll: (cb) => scrollHooks.add(cb),
 });
 
+const {
+  spellUnderlineRects,
+  customDictionaryList,
+  ignoreOccurrence,
+  ignoreAllOccurrences,
+  addWordToDictionary,
+  removeWordFromDictionary,
+  suggestionsFor,
+} = useSpellCheck({
+  doc,
+  contentRoot,
+  pageRef,
+  getScrollContainer: () => scrollContainer,
+  onSessionClose,
+  onUnmount,
+  onScroll: (cb) => scrollHooks.add(cb),
+});
+
+const {
+  statusBarLanguageLabel,
+  currentLanguageTag,
+  selectionActive: languageSelectionActive,
+  selectionNoProof,
+  setSelection: setLanguageSelection,
+  setLanguage,
+  setNoProof,
+} = useDocumentLanguage({ doc, applyEdit });
+
+const customDictionaryDialogOpen = ref(false);
+
+function openCustomDictionaryDialog() {
+  customDictionaryDialogOpen.value = true;
+}
+
+function closeCustomDictionaryDialog() {
+  customDictionaryDialogOpen.value = false;
+}
+
+function handleCustomDictionaryAdd(word = "", lang = "") {
+  addWordToDictionary(word, lang);
+}
+
+function handleCustomDictionaryRemove(word = "", lang = "") {
+  removeWordFromDictionary(word, lang);
+}
+
 // Seed for espree-style handler defaults that never get real values here
 // (applyHeaderFooterEdit/applyNoteEdit's `= noDocument()` params, tocPageNumberFor).
 function noDocument() {
@@ -4180,6 +4309,32 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
           />
         </div>
         <div
+          v-if="spellUnderlineRects.length > 0"
+          class="spell-underline-layer print-exclude"
+          data-testid="spell-underlines"
+          aria-hidden="true"
+        >
+          <div
+            v-for="(rect, index) in spellUnderlineRects"
+            :key="index"
+            class="spell-underline"
+            data-testid="spell-underline"
+            :data-section="rect.section"
+            :data-block="rect.block"
+            :data-start="rect.start"
+            :data-end="rect.end"
+            :data-word="rect.word"
+            :data-lang="rect.lang"
+            :style="{
+              left: `${rect.left}px`,
+              top: `${rect.top}px`,
+              width: `${rect.width}px`,
+              height: `${rect.height}px`,
+            }"
+            @contextmenu="handleSpellContextMenu($event, rect)"
+          />
+        </div>
+        <div
           v-if="tableHover"
           class="table-handles print-exclude"
           data-testid="table-handles"
@@ -4393,6 +4548,16 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       >
         {{ wordCountStatusText }}
       </button>
+      <LanguageStatusControl
+        :current-language-tag="currentLanguageTag"
+        :current-language-label="statusBarLanguageLabel"
+        :language-options="SUPPORTED_LANGUAGES"
+        :selection-active="languageSelectionActive"
+        :selection-no-proof="selectionNoProof"
+        @select="setLanguage"
+        @manage-dictionary="openCustomDictionaryDialog"
+        @toggle-no-proof="setNoProof"
+      />
     </template>
     <LinkChip
       v-if="linkChip.visible"
@@ -4492,6 +4657,28 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       @table-action="handleContextMenuTableAction"
       @list-action="handleContextMenuListAction"
       @dismiss="closeContextMenu"
+    />
+    <SpellContextMenu
+      v-if="spellContextMenu.visible"
+      class="print-exclude"
+      :left="spellContextMenu.left"
+      :top="spellContextMenu.top"
+      :word="spellContextMenu.word"
+      :suggestions="spellContextMenu.suggestions"
+      @suggestion="applySpellSuggestion"
+      @ignore="spellIgnore"
+      @ignore-all="spellIgnoreAll"
+      @add-to-dictionary="spellAddToDictionary"
+      @dismiss="closeSpellContextMenu"
+    />
+    <CustomDictionaryDialog
+      v-if="customDictionaryDialogOpen"
+      :entries="customDictionaryList"
+      :language-options="SUPPORTED_LANGUAGES"
+      :default-language="currentLanguageTag"
+      @add="handleCustomDictionaryAdd"
+      @remove="handleCustomDictionaryRemove"
+      @close="closeCustomDictionaryDialog"
     />
     <SplitCellDialog
       v-if="splitCellDialogOpen"
@@ -4720,6 +4907,36 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 .find-highlight.current {
   background: rgb(255 145 0 / 0.65);
   outline: 1px solid #f57c00;
+}
+
+/* The spell-check underline overlay (SPEC-035 AC-1). Unlike
+   .find-highlight-layer (intentionally *behind* the text it highlights),
+   this must paint ABOVE the page: DocPage's own .page root is itself
+   `position: relative` with no z-index (stack level 0, CSS2.1 Appendix E
+   step 6), the same tier a sibling z-index:0 layer occupies — ties within
+   that tier resolve by DOM order, and .page (containing every page's
+   opaque background and all its text) comes after this layer in the
+   markup, so a bare z-index:0 here would paint BEHIND every page's
+   background and be invisible (verified by screenshot while building this:
+   z-index:0 here is empirically hidden). z-index:1 moves this layer into
+   the next stacking tier (CSS2.1 step 7, positive z-index), which always
+   paints after every stack-level-0 box regardless of DOM order — still well
+   under the table/image handle layers' z-index:15. */
+.spell-underline-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.spell-underline {
+  position: absolute;
+  pointer-events: auto;
+  cursor: default;
+  background-repeat: repeat-x;
+  background-position: left bottom;
+  background-size: 6px 4px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4' viewBox='0 0 6 4'%3E%3Cpath d='M0 3 Q1.5 0 3 3 T6 3' fill='none' stroke='%23d93025' stroke-width='1'/%3E%3C/svg%3E");
 }
 
 /* The paginated canvas (SPEC-028): one relative wrapper hosting every page
