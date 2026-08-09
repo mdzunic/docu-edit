@@ -34,6 +34,7 @@ test.describe("special-character picker", () => {
   }) => {
     await createDocument(page);
     await focusCaret(page);
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("insert-special-character-button").click();
     await expect(page.getByTestId("special-character-dialog")).toBeVisible();
     // All eight categories present.
@@ -50,6 +51,7 @@ test.describe("special-character picker", () => {
   test("search filters by name and by hex code point (AC-2, AC-4)", async ({ page }) => {
     await createDocument(page);
     await focusCaret(page);
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("insert-special-character-button").click();
     const search = page.getByTestId("special-character-search");
     await search.fill("euro sign");
@@ -63,12 +65,14 @@ test.describe("special-character picker", () => {
   test("tracks a Recent row that survives a reload (AC-7, AC-10)", async ({ page }) => {
     await createDocument(page);
     await focusCaret(page);
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("insert-special-character-button").click();
     await page.getByTestId("special-char-2014").click();
     await page.getByTestId("special-character-close").click();
 
     await page.reload();
     await focusCaret(page);
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("insert-special-character-button").click();
     await expect(page.getByTestId("special-character-recent")).toBeVisible();
     await expect(page.getByTestId("recent-char-2014")).toBeVisible();
@@ -101,35 +105,24 @@ test.describe("autocorrect", () => {
     expect(await paraText(page)).toBe("a--");
   });
 
-  test("the settings menu is genuinely visible, not clipped by the toolbar strip", async ({
+  test("the autocorrect settings are reachable from the Edit menu, visible and hit-testable", async ({
     page,
   }) => {
     await createDocument(page);
-    // Clicked where it already sits: Locator.click() would scroll the strip
-    // first, and that scroll re-runs the popup's positioning — hiding a
-    // wrong first-open placement a real user would see.
-    const box = await page.evaluate(() => {
-      const button = document.querySelector('[data-testid="autocorrect-menu"]')!;
-      const strip = button.closest(".toolbar")!;
-      strip.scrollLeft +=
-        button.getBoundingClientRect().left - strip.getBoundingClientRect().left - 200;
-      return button.getBoundingClientRect().toJSON();
-    });
-    await page.mouse.click(box.left + box.width / 2, box.top + box.height / 2);
-    const list = page.getByTestId("autocorrect-menu-list");
-    await expect(list).toBeVisible();
-    // Anchored just under its button, and painted over the canvas rather
-    // than behind the strip's overflow clip: hit-testing an item's centre
-    // reaches the item itself.
-    const geometry = await page.evaluate(() => {
-      const button = document.querySelector('[data-testid="autocorrect-menu"]')!.getBoundingClientRect();
-      const menu = document.querySelector('[data-testid="autocorrect-menu-list"]')!.getBoundingClientRect();
-      return { drop: menu.top - button.bottom, height: menu.height };
-    });
-    expect(geometry.drop).toBeLessThanOrEqual(8);
-    expect(geometry.height).toBeGreaterThan(20);
+    // SPEC-049: the autocorrect toggles moved from an ad-hoc toolbar dropdown
+    // into the Edit menu of the application menu bar. The menu bar is not an
+    // overflow-clipped container like the toolbar strip was, so the old
+    // clip-escape geometry no longer applies — what matters is that the
+    // toggle is visible, inside the viewport and hit-testable.
+    await page.getByTestId("menu-title-edit").click();
     const item = page.getByTestId("autocorrect-smart-quotes");
+    await expect(item).toBeVisible();
+    await expect(item).toHaveAttribute("role", "menuitemcheckbox");
     const itemBox = (await item.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(itemBox.height).toBeGreaterThan(10);
+    expect(itemBox.y).toBeGreaterThanOrEqual(0);
+    expect(itemBox.y + itemBox.height).toBeLessThanOrEqual(viewport.height);
     const hit = await page.evaluate(
       ({ x, y }) =>
         !!document
@@ -143,7 +136,7 @@ test.describe("autocorrect", () => {
   test("turning dash substitution off leaves -- literal (AC-24)", async ({ page }) => {
     await createDocument(page);
     await focusCaret(page);
-    await page.getByTestId("autocorrect-menu").click();
+    await page.getByTestId("menu-title-edit").click();
     await page.getByTestId("autocorrect-dashes").click();
     // Close the menu, then type.
     await focusCaret(page);
@@ -157,6 +150,7 @@ test.describe("non-BMP characters", () => {
     await createDocument(page);
     await focusCaret(page);
     await page.keyboard.type("a");
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("insert-special-character-button").click();
     await page.getByTestId("special-character-search").fill("grinning face");
     await page.getByTestId("special-char-1F600").first().click();
@@ -176,6 +170,7 @@ test.describe("non-BMP characters", () => {
     await createDocument(page);
     await focusCaret(page);
     await page.keyboard.type("a");
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("insert-special-character-button").click();
     await page.getByTestId("special-character-search").fill("grinning face");
     await page.getByTestId("special-char-1F600").first().click();

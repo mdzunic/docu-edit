@@ -279,6 +279,7 @@ onBeforeUnmount(() => {
         :aria-expanded="openIndex === index ? 'true' : 'false'"
         :aria-controls="`menu-${menu.id}`"
         :tabindex="activeIndex === index ? 0 : -1"
+        @mousedown.prevent
         @click="toggleMenu(index)"
         @mouseenter="onTitleEnter(index)"
         @focus="activeIndex = index"
@@ -356,6 +357,10 @@ onBeforeUnmount(() => {
   border-radius: 0 0 6px 6px;
   background: #fff;
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.18);
+  /* A long menu (Insert) never runs off the bottom of the viewport: it caps
+     its height and scrolls, so every command stays reachable. */
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
 }
 
 /* Shared look for every command the callers place in a popup — authored as

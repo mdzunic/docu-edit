@@ -35,7 +35,7 @@ const cellParagraph = (page: Page, row: number, col: number) =>
 
 /** Opens the toolbar grid picker and inserts rows×cols via its cells. */
 async function insertViaPicker(page: Page, rows: number, cols: number): Promise<void> {
-  await page.getByTestId("insert-table-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId(`table-grid-cell-${rows}-${cols}`).click();
   await expect(table(page)).toHaveCount(1);
 }
@@ -84,7 +84,7 @@ function unzipParts(buffer: Buffer): Map<string, Buffer> {
 
 test("the toolbar control opens a 10×10 grid picker that inserts the chosen size (AC-1, AC-3)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("insert-table-button").click();
+  await page.getByTestId("menu-title-insert").click();
   const grid = page.getByTestId("insert-table-grid");
   await expect(grid).toBeVisible();
   // The grid offers up to 10×10.
@@ -115,7 +115,7 @@ test("equal column widths span the text area (AC-3)", async ({ page }) => {
 
 test("the Insert table… dialog inserts larger sizes (AC-2)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("insert-table-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("insert-table-dialog-item").click();
   await expect(page.getByTestId("insert-table-dialog")).toBeVisible();
   await page.getByTestId("insert-table-rows").fill("12");

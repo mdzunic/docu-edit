@@ -38,6 +38,7 @@ async function download(page: Page, format: "docx" | "odt"): Promise<string> {
 const content = (page: Page) => page.getByTestId("document-content");
 
 async function openDialog(page: Page): Promise<void> {
+  await page.getByTestId("menu-title-file").click();
   await page.getByTestId("page-setup-button").click();
   await expect(page.getByTestId("page-setup-dialog")).toBeVisible();
 }
@@ -308,8 +309,10 @@ test("page setup round-trips through .odt (style:page-layout-properties) with no
 test("the Show/hide ruler toggle displays and hides the ruler (AC-14)", async ({ page }) => {
   await createDocument(page);
   await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await page.getByTestId("menu-title-view").click();
   await page.getByTestId("toggle-ruler-button").click();
   await expect(page.getByTestId("document-ruler")).toHaveCount(0);
+  await page.getByTestId("menu-title-view").click();
   await page.getByTestId("toggle-ruler-button").click();
   await expect(page.getByTestId("document-ruler")).toBeVisible();
 });

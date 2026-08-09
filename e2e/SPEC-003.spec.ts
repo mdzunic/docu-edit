@@ -200,6 +200,7 @@ test("deleting the open document returns to / with a toast (AC-19, AC-20)", asyn
 }) => {
   await createDocument(page, "Open and doomed");
 
+  await page.getByTestId("menu-title-file").click();
   await page.getByTestId("delete-document").click();
   await expect(page.getByTestId("delete-message")).toContainText(
     "Open and doomed",

@@ -257,7 +257,7 @@ test("headers print and export in position (AC-8, AC-10)", async ({ page }) => {
   await waitForPagination(page);
 
   // Enter the header band and give it content (SPEC-029's editing flow).
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await expect(page.getByTestId("page-header-band").first()).toHaveAttribute(
     "data-hf-editable",
@@ -286,7 +286,7 @@ test("footers sit at the bottom of the page, above any footnotes (AC-9, AC-11)",
   await waitForPagination(page);
 
   // Give the page a footer.
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-footer").click();
   await expect(page.getByTestId("page-footer-band").first()).toHaveAttribute(
     "data-hf-editable",
@@ -299,7 +299,7 @@ test("footers sit at the bottom of the page, above any footnotes (AC-9, AC-11)",
   // A footnote reference at the end of the body, with a note body.
   await content(page).click();
   await page.keyboard.press(`${MOD}+End`);
-  await page.getByTestId("notes-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("notes-menu-footnote").click();
   await page.keyboard.type("Footnote body text");
   await page.keyboard.press("Escape");
@@ -335,6 +335,7 @@ test("multi-column layout flows and prints columns in order (AC-12)", async ({ p
   await pasteText(page, paragraphLines(90, "Column"));
   await waitForPagination(page);
 
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("columns-button").click();
   await page.getByTestId("columns-preset-2").click();
   await page.getByTestId("columns-confirm").click();

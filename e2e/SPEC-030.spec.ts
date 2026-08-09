@@ -67,6 +67,7 @@ async function typeParagraphs(page: Page, count: number): Promise<void> {
 
 /** Opens the Columns dialog and applies `count` equal columns to the section. */
 async function applyColumns(page: Page, count: number): Promise<void> {
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("columns-button").click();
   await expect(page.getByTestId("columns-dialog")).toBeVisible();
   await page.getByTestId(`columns-preset-${count}`).click();
@@ -78,6 +79,7 @@ test.describe("SPEC-030 multi-column layout", () => {
   test("the dialog offers 1/2/3 presets and a 1-6 custom count (AC-1, AC-2)", async ({ page }) => {
     await createDocument(page);
     await content(page).click();
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await expect(page.getByTestId("columns-dialog")).toBeVisible();
     await expect(page.getByTestId("columns-preset-1")).toBeVisible();
@@ -101,6 +103,7 @@ test.describe("SPEC-030 multi-column layout", () => {
   test("equal-width disables the per-column width fields (AC-3, AC-3a)", async ({ page }) => {
     await createDocument(page);
     await content(page).click();
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await page.getByTestId("columns-preset-2").click();
     // Equal widths on: the width fields are disabled.
@@ -139,7 +142,7 @@ test.describe("SPEC-030 multi-column layout", () => {
     await applyColumns(page, 2);
     // Put the caret in the first column, then insert a 2×3 table.
     await content(page).getByText("Paragraph 1", { exact: false }).first().click();
-    await page.getByTestId("insert-table-button").click();
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("table-grid-cell-2-3").click();
     const table = content(page).locator("table.doc-table").first();
     await expect(table).toBeVisible();
@@ -158,7 +161,7 @@ test.describe("SPEC-030 multi-column layout", () => {
     // Caret at end of the paragraph, insert a column break, then more text.
     await content(page).getByText("Left column text").click();
     await page.keyboard.press("End");
-    await page.getByTestId("insert-break-button").click();
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("break-column").click();
     await page.keyboard.type("Right column text");
     // "Left column text" is in column 0; "Right column text" in column 1.
@@ -247,6 +250,7 @@ test.describe("SPEC-030 multi-column layout", () => {
   test("the 'Line between columns' toggle renders a vertical rule in the gutter (AC-4)", async ({ page }) => {
     await createDocument(page);
     await typeParagraphs(page, 4);
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await page.getByTestId("columns-dialog").waitFor({ state: "visible" });
     await page.getByTestId("columns-preset-2").click();
@@ -261,6 +265,7 @@ test.describe("SPEC-030 multi-column layout", () => {
   test("the apply-to selector offers 'Current section' and 'Selection' (AC-5)", async ({ page }) => {
     await createDocument(page);
     await content(page).click();
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await page.getByTestId("columns-dialog").waitFor({ state: "visible" });
     const options = await page.getByTestId("columns-apply-to").locator("option").allTextContents();
@@ -296,6 +301,7 @@ test.describe("SPEC-030 multi-column layout", () => {
       sel.removeAllRanges();
       sel.addRange(range);
     });
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await page.getByTestId("columns-dialog").waitFor({ state: "visible" });
     await page.getByTestId("columns-preset-2").click();
@@ -322,6 +328,7 @@ test.describe("SPEC-030 multi-column layout", () => {
     await createDocument(page);
     await typeParagraphs(page, 3);
     await content(page).getByText("Paragraph 2", { exact: false }).click();
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await page.getByTestId("columns-dialog").waitFor({ state: "visible" });
     await page.getByTestId("columns-preset-2").click();
@@ -358,13 +365,13 @@ test.describe("SPEC-030 multi-column layout", () => {
     await content(page).getByText("FirstColumnFiller").click();
     await page.keyboard.press("End");
     // First break: column 0 -> column 1 (still the same page).
-    await page.getByTestId("insert-break-button").click();
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("break-column").click();
     await page.keyboard.type("SecondColumnMarker");
     await page.keyboard.press("End");
     // Second break: column 1 is the page's last column, so this one must
     // continue on the next page's first column (AC-11).
-    await page.getByTestId("insert-break-button").click();
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("break-column").click();
     await page.keyboard.type("NextPageMarker");
     const location = await locate(page, "NextPageMarker");
@@ -378,13 +385,14 @@ test.describe("SPEC-030 multi-column layout", () => {
     await applyColumns(page, 3);
     await content(page).getByText("BeforeBreak").click();
     await page.keyboard.press("End");
-    await page.getByTestId("insert-break-button").click();
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("break-column").click();
     await page.keyboard.type("AfterBreak");
     expect(await docColumns(page).count()).toBeGreaterThanOrEqual(2);
 
     // AC-12: collapse to 1 column — the break becomes inert: single page,
     // both paragraphs present, no column boxes at all.
+    await page.getByTestId("menu-title-format").click();
     await page.getByTestId("columns-button").click();
     await page.getByTestId("columns-dialog").waitFor({ state: "visible" });
     await page.getByTestId("columns-preset-1").click();
@@ -485,7 +493,7 @@ test.describe("SPEC-030 multi-column layout", () => {
     await applyColumns(page, 2);
     await content(page).getByText("BeforeBreak").click();
     await page.keyboard.press("End");
-    await page.getByTestId("insert-break-button").click();
+    await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("break-column").click();
     await page.keyboard.type("AfterBreak");
     await page.getByTestId("download-menu").click();
