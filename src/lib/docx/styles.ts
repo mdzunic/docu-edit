@@ -26,6 +26,10 @@ export interface StyleCatalog {
   styles: Map<string, StyleDefinition>;
   docDefaultParagraphFormatting: ParagraphFormatting;
   docDefaultRunFormatting: RunFormatting;
+  /** `docDefaults/rPrDefault/rPr/w:lang`, held separately from
+   * `docDefaultRunFormatting` (SPEC-035) — see the lift-out comment in
+   * parseStylesCatalog. */
+  docDefaultLanguage?: string;
 }
 
 const HEADING_PATTERN = /^heading\s*([1-9])$/i;
@@ -60,6 +64,23 @@ export function parseStylesCatalog(stylesDoc: Document | undefined): StyleCatalo
     const rPrDefault = firstChildElement(docDefaults, WORD_NAMESPACE, "rPrDefault");
     const rPr = rPrDefault ? firstChildElement(rPrDefault, WORD_NAMESPACE, "rPr") : undefined;
     catalog.docDefaultRunFormatting = parseRunProperties(rPr);
+    // SPEC-035: the document-default language is lifted out of
+    // docDefaultRunFormatting rather than left in it. resolveStyle below
+    // uses docDefaultRunFormatting as the base of every paragraph/run's
+    // resolved formatting, which the reader then bakes directly onto each
+    // run (see docx/reader.ts's collectRuns) — exactly right for fontFamily/
+    // fontSizePt, but it would stamp an explicit w:lang-equivalent onto
+    // *every* run in the model just because the document declared a default,
+    // making `RunFormatting.lang` presence meaningless as an "explicit
+    // override" signal for the language selector/status bar and adding an
+    // unexpected key to every run's formatting. The document default lives
+    // on DocumentModel.defaultStyles.language instead (see reader.ts); a
+    // run only carries `lang` when its own or a named style's rPr sets one.
+    if (catalog.docDefaultRunFormatting.lang !== undefined) {
+      catalog.docDefaultLanguage = catalog.docDefaultRunFormatting.lang;
+      const { lang: _lang, ...rest } = catalog.docDefaultRunFormatting;
+      catalog.docDefaultRunFormatting = rest;
+    }
 
     const pPrDefault = firstChildElement(docDefaults, WORD_NAMESPACE, "pPrDefault");
     const pPr = pPrDefault ? firstChildElement(pPrDefault, WORD_NAMESPACE, "pPr") : undefined;
