@@ -108,6 +108,7 @@ Any spec asserting a round trip must name one of the three relations —
 | SPEC-036 | Word count and document statistics |
 | SPEC-037 | Document outline navigator |
 | SPEC-038 | Comments |
+| SPEC-049 | Menu bar and toolbar consolidation — queue before SPEC-039 |
 | SPEC-039 | Track changes |
 | SPEC-040 | Version history and restore |
 | SPEC-041 | Document properties and metadata |
