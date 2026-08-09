@@ -4222,15 +4222,19 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       </button>
     </div>
     <div class="editor-layout">
-      <OutlinePane
+      <div
         v-if="outlinePaneOpen"
-        :outline="outlineTree"
-        :collapsed="outlinePaneCollapsed"
-        :active-anchor="activeOutlineAnchor ?? undefined"
-        @navigate="handleOutlineNavigate"
-        @toggle="handleOutlineToggleCollapse"
-        @move="handleOutlineMove"
-      />
+        class="outline-dock"
+      >
+        <OutlinePane
+          :outline="outlineTree"
+          :collapsed="outlinePaneCollapsed"
+          :active-anchor="activeOutlineAnchor ?? undefined"
+          @navigate="handleOutlineNavigate"
+          @toggle="handleOutlineToggleCollapse"
+          @move="handleOutlineMove"
+        />
+      </div>
       <div class="page-wrap">
         <div
           v-if="findVisible"
@@ -4810,21 +4814,47 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   cursor: pointer;
 }
 
-/* The outline pane (SPEC-037) sits to the left of the pages in a flex row;
-   the pages column grows to fill the rest. The pane itself is position:sticky
-   (see OutlinePane.vue) so it stays visible while this row scrolls in the
-   canvas. */
+/* The outline pane (SPEC-037) is a left sidebar that OVERLAYS the canvas
+   rather than reflowing it: the pane sits in an absolutely-positioned dock on
+   the left edge, while page-wrap spans the full width beneath. Keeping the
+   page column full-width (and so its page centred within the whole canvas)
+   preserves the SPEC-002 invariant that a blank document's page is centred in
+   the editor viewport even while the sidebar is open. The pane itself stays
+   position:sticky (see OutlinePane.vue) so it stays visible while the pages
+   scroll; the dock stretches to the content height to give it a stick range. */
 .editor-layout {
-  display: flex;
-  align-items: flex-start;
+  position: relative;
   min-height: 100%;
 }
 
+/* Full-width page column; the absolute dock sits over its left edge. */
 .page-wrap {
   position: relative;
-  flex: 1 1 0;
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   padding: 2rem 1rem;
+}
+
+/* The sticky rail hosting the pane. absolute so it never reflows the page
+   column; top:0/bottom:0 make it as tall as the content so its sticky child
+   (OutlinePane) stays pinned for the whole scroll. */
+.outline-dock {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 16rem;
+  z-index: 20;
+  /* The dock floats over the full-width, fully-centred page column. It must
+     not swallow pointer events over the page (typing/caret, the ruler's
+     left-edge tab selector, right-click) — only the outline tree itself is
+     interactive; the rest passes through to the page beneath. */
+  pointer-events: none;
+}
+
+.outline-dock :deep(.outline-tree) {
+  pointer-events: auto;
 }
 
 /* A zero-height sticky rail pinned to the top of the scrolling canvas; the
