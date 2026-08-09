@@ -8,7 +8,7 @@ export interface UseFloatingMenuOptions {
   anchor: () => Element | null;
   /** The popup itself; its width is measured so it can be kept on-screen. */
   menu: () => Element | null;
-  /** Gap between the anchor's bottom edge and the popup's top edge, in px. */
+  /** Gap between the anchor and the popup, in px. */
   offsetY?: number;
   /** Minimum distance to keep to the viewport's left/right edges, in px. */
   margin?: number;
@@ -16,6 +16,10 @@ export interface UseFloatingMenuOptions {
    * how a dropdown menu hangs off its button) or centred under it (how a
    * tooltip points at its control). */
   align?: "start" | "center";
+  /** Vertical placement: below the anchor (the default, for toolbar
+   * buttons near the top) or above it (for a status-bar control anchored
+   * at the bottom of the viewport, where "below" would open off-screen). */
+  placement?: "below" | "above";
 }
 
 /** Anchors a position:fixed popup below its trigger. The toolbar that hosts
@@ -30,6 +34,7 @@ export function useFloatingMenu({
   offsetY = 4,
   margin = 8,
   align = "start",
+  placement = "below",
 }: UseFloatingMenuOptions) {
   // `position: fixed` from the very first render, before any measurement:
   // the popup must never take part in the toolbar's flow, or opening it
@@ -48,17 +53,22 @@ export function useFloatingMenu({
     }
     const anchorRect = anchorEl.getBoundingClientRect();
     const menuEl = menu();
-    const menuWidth = menuEl ? menuEl.getBoundingClientRect().width : 0;
+    const menuRect = menuEl ? menuEl.getBoundingClientRect() : null;
+    const menuWidth = menuRect ? menuRect.width : 0;
     const maxLeft = window.innerWidth - menuWidth - margin;
     const wanted =
       align === "center"
         ? anchorRect.left + anchorRect.width / 2 - menuWidth / 2
         : anchorRect.left;
     const left = Math.max(margin, Math.min(wanted, maxLeft));
+    const top =
+      placement === "above"
+        ? anchorRect.top - offsetY - (menuRect ? menuRect.height : 0)
+        : anchorRect.bottom + offsetY;
     menuStyle.value = {
       position: "fixed",
       left: `${left}px`,
-      top: `${anchorRect.bottom + offsetY}px`,
+      top: `${top}px`,
     };
   }
 

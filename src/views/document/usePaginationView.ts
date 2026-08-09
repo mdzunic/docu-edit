@@ -35,6 +35,7 @@ import { noRenderEntries, type RenderEntry } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../../lib/renderFormatting";
+import { effectiveLanguage } from "../../lib/language";
 import { markSegments } from "../../lib/marks";
 import { splitRuns } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
@@ -254,6 +255,7 @@ function renderEntryFor(
         atomText: run.text,
         noteId: run.note.noteId,
         title,
+        lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
       };
     }
     const href = runLinkHref(run.formatting);
@@ -268,6 +270,7 @@ function renderEntryFor(
       styleObj: runStyle(run.formatting),
       text: run.text,
       segments: marked ? segments : null,
+      lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
     };
   });
   return {
@@ -340,6 +343,7 @@ function headerFooterRenderEntries(
         styleObj: runStyle(run.formatting),
         text,
         segments: marked ? segments : null,
+        lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
       };
     });
     entries.push({
@@ -436,6 +440,7 @@ function noteBlocksEntries(
         styleObj: runStyle(run.formatting),
         text: run.text,
         segments: marked ? segments : null,
+        lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
       };
     });
     entries.push({
