@@ -389,11 +389,12 @@ export function layoutWithNotes(
   metrics: MetricsProvider,
   noteMetrics: NoteMetricsProvider,
   lineOffsetsOf: (block: Block) => number[] | null,
+  isHidden: (sectionIndex: number, blockIndex: number) => boolean = () => false,
 ): NotesLayout {
   const footnoteRefs = collectNoteRefs(model, "footnote");
   const endnoteRefs = collectNoteRefs(model, "endnote");
 
-  let pages = paginate(model, metrics);
+  let pages = paginate(model, metrics, undefined, isHidden);
   let refPages: number[] = [];
   let plan: FootnotePlan = { areas: pages.map(() => null), reserves: [], carry: [], pageByNote: new Map() };
 
@@ -406,7 +407,7 @@ export function layoutWithNotes(
         break;
       }
       reserves = plan.reserves;
-      pages = paginate(model, metrics, (page) => reserves[page] ?? 0);
+      pages = paginate(model, metrics, (page) => reserves[page] ?? 0, isHidden);
     }
     // The last pagination may have shifted references: the rendered areas
     // must match the final pages, so re-plan once against them.

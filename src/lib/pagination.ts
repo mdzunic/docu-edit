@@ -307,6 +307,7 @@ export function paginate(
   model: DocumentModel,
   metrics: MetricsProvider,
   reserveOf?: (pageIndex: number) => number,
+  isHidden: (sectionIndex: number, blockIndex: number) => boolean = () => false,
 ): PageLayout[] {
   const pages: PageLayout[] = [];
   // Every column of every page, in fill order. `fi` is the frame being
@@ -528,6 +529,12 @@ export function paginate(
     }
     for (let b = 0; b < section.blocks.length; b += 1) {
       const block = section.blocks[b];
+      // A block collapsed under a body heading (SPEC-037 AC-16) is laid out
+      // nowhere — it contributes no height and no page item, so the document
+      // reflows exactly as if it were absent, without the model ever changing.
+      if (isHidden(s, b)) {
+        continue;
+      }
       if (isBreak(block)) {
         // The break marker sits on the frame it ends (visible when formatting
         // marks are on). A page break then opens the next page; a column
