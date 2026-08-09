@@ -475,6 +475,65 @@ export interface BookmarkAnchor {
   offset: number;
 }
 
+/** Which edge of a comment thread's anchored range a `CommentAnchor` marks
+ * (SPEC-038) — mirrors OOXML's split `w:commentRangeStart`/
+ * `w:commentRangeEnd` tags and ODF's `office:annotation`/
+ * `office:annotation-end`. */
+export type CommentAnchorBoundary = "start" | "end";
+
+/** One edge of a comment thread's anchored range (SPEC-038) — a
+ * character-offset point stored as a paragraph-level side-list, the same
+ * shape as `BookmarkAnchor`. A thread's `"start"` and `"end"` points are
+ * matched by `threadId`, not by array position or paragraph: the common
+ * case has both in the same paragraph, but a range spanning a paragraph
+ * break puts them in different paragraphs. Offset maintenance across edits
+ * (insert/delete/split/merge) follows the exact same rules as
+ * `BookmarkAnchor` — see textEditing.ts's `anchorsAfterInsert`/
+ * `anchorsAfterDelete`/`mergedAnchors`, shared by both. Deliberately not
+ * named `id`: lib/equality.ts's IGNORED_KEYS drops bare "id" keys from
+ * structural comparison (see BookmarkAnchor for the same reasoning). */
+export interface CommentAnchor {
+  threadId: string;
+  boundary: CommentAnchorBoundary;
+  offset: number;
+}
+
+/** One message in a comment thread (SPEC-038): the thread's opening comment
+ * (`CommentThread.messages[0]`) or a reply. Plain text only — rich text
+ * inside comments is out of scope — so `text` is rendered as plain text
+ * everywhere (never interpreted as HTML/markup, AC "no markup injection").
+ * Deliberately not named `id` — same equality.ts reason as BookmarkAnchor. */
+export interface CommentMessage {
+  messageId: string;
+  /** The commenter's display name, from the settable identity
+   * (lib/commentIdentity.ts) at the time the message was written. */
+  author: string;
+  text: string;
+  /** ISO 8601 timestamp. */
+  createdAt: string;
+}
+
+/** A comment thread anchored to a range of document text (SPEC-038): the
+ * in-memory, format-agnostic shape of OOXML's
+ * `w:commentRangeStart/End`+`w:commentReference` and ODF's
+ * `office:annotation`+`office:annotation-end`. `messages[0]` is the
+ * thread's opening comment; `messages[1..]` are replies. A thread stays in
+ * `DocumentModel.comments` even after its anchoring range is deleted from
+ * the body — visibility (which highlight to paint, whether the thread
+ * shows up anywhere) is always DERIVED from live `CommentAnchor`s
+ * (lib/comments.ts's `visibleCommentThreads`), never cascade-deleted — the
+ * same contract `NoteContent` uses (SPEC-031), which is what lets undo (and
+ * a cut-and-pasted-back range) find the thread's content again. Not named
+ * `id` — same equality.ts reason as BookmarkAnchor. */
+export interface CommentThread {
+  threadId: string;
+  messages: CommentMessage[];
+  /** Whether the thread is resolved (SPEC-038): resolving hides its
+   * highlight and moves it to the "Resolved" section of the comments UI; it
+   * can be reopened. Never affects the anchor itself. */
+  resolved: boolean;
+}
+
 /** A paragraph is a block-level element made of inline runs. */
 export interface Paragraph {
   type: "paragraph";
@@ -498,6 +557,10 @@ export interface Paragraph {
    * `offset`. A side-list like `opaqueInlines` so `runs` stays plain;
    * offsets are maintained by the textEditing primitives. */
   bookmarks?: BookmarkAnchor[];
+  /** Comment anchor points in this paragraph (SPEC-038), ordered by
+   * `offset`. See `CommentAnchor`; offsets are maintained by the
+   * textEditing primitives the same way `bookmarks` are. */
+  commentAnchors?: CommentAnchor[];
 }
 
 // --- images (SPEC-024) -------------------------------------------------------
@@ -1156,6 +1219,12 @@ export interface DocumentModel {
    * document-level app preference persisted like `showRuler` — neither
    * reader/writer maps it to anything in a `.docx`/`.odt`. */
   showFormattingMarks?: boolean;
+  /** Comment threads (SPEC-038), addressed into `Section.blocks` by the
+   * `CommentAnchor` side-lists on their anchoring paragraphs. Absent when
+   * the document has none. Deliberately outside `Section.blocks` (like
+   * `notes`) so block-tree walks (word count, pagination, TOC, outline, …)
+   * never need to know comments exist. */
+  comments?: CommentThread[];
 }
 
 export const DEFAULT_TITLE = "Untitled document";

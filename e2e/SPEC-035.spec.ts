@@ -33,6 +33,42 @@ async function waitForUnderlines(page: Page, atLeast = 1): Promise<void> {
     .toBeGreaterThanOrEqual(atLeast);
 }
 
+/** Waits for the underline set to stop changing, and returns the settled
+ * count. A bare "at least N" wait can return mid-flight: typing "again" makes
+ * an idle pass briefly flag the incomplete "agai", so the count can be one
+ * higher than the text's real misspelling count for a moment. */
+async function waitForStableUnderlines(page: Page, atLeast = 1): Promise<number> {
+  await waitForUnderlines(page, atLeast);
+  let previous = -1;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const count = await underlines(page).count();
+    if (count === previous && count >= atLeast) {
+      return count;
+    }
+    previous = count;
+    await page.waitForTimeout(150);
+  }
+  return previous;
+}
+
+/** Right-clicks the first flagged word. The underline overlay is deliberately
+ * inert (pointer-events: none) — its rects cover whole glyph boxes and paint
+ * above the text, so making them clickable swallowed every ordinary click and
+ * drag that started on a misspelled word. DocumentView hit-tests the
+ * right-click against the underline rects instead, so this drives the mouse at
+ * the word's coordinates, which is what a user does anyway. Settling first
+ * stands in for the actionability wait Playwright would have done on a real
+ * click target — an inert element can never "receive events", so a re-measuring
+ * pass could otherwise move the word between measuring it and clicking. */
+async function rightClickFirstUnderline(page: Page): Promise<void> {
+  await waitForStableUnderlines(page);
+  const box = await underlines(page).first().boundingBox();
+  if (!box) {
+    throw new Error("no spell underline on screen to right-click");
+  }
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
+}
+
 test("a misspelled word is genuinely painted on screen, not just present in the DOM (AC-1)", async ({ page }) => {
   await createDocument(page);
   await typeBody(page, "This is a wrongwordxyz test.");
@@ -40,19 +76,42 @@ test("a misspelled word is genuinely painted on screen, not just present in the 
   // Regression guard for the exact historical failure: the underline
   // element existed in the DOM at the right coordinates but painted behind
   // the page's opaque background (a CSS stacking-order bug), so it never
-  // appeared on screen. Hit-test the underline's own box, the same way
-  // e2e/SPEC-013.spec.ts verifies a tooltip is actually reachable rather
-  // than just present.
+  // appeared on screen. elementFromPoint resolves in paint order, so it can
+  // still answer "is anything covering this box?" — but only for an element
+  // that takes part in hit-testing, and the layer is deliberately inert (see
+  // rightClickFirstUnderline). So the probe opts this one element in for the
+  // duration of the measurement and restores it afterwards: if the stacking
+  // bug came back, the page background would win the hit test and this fails
+  // exactly as it did before.
   const reached = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="spell-underline"]') as HTMLElement;
+    const previous = el.style.pointerEvents;
+    el.style.pointerEvents = "auto";
+    try {
+      const rect = el.getBoundingClientRect();
+      const at = document.elementFromPoint(
+        Math.round(rect.left + rect.width / 2),
+        Math.round(rect.top + rect.height / 2),
+      );
+      return !!at?.closest('[data-testid="spell-underline"]');
+    } finally {
+      el.style.pointerEvents = previous;
+    }
+  });
+  expect(reached).toBe(true);
+
+  // ...and the inertness itself is the other half of AC-1: with the layer
+  // left alone, a click on a flagged word must reach the text underneath.
+  const hitsText = await page.evaluate(() => {
     const el = document.querySelector('[data-testid="spell-underline"]')!;
     const rect = el.getBoundingClientRect();
     const at = document.elementFromPoint(
       Math.round(rect.left + rect.width / 2),
       Math.round(rect.top + rect.height / 2),
     );
-    return !!at?.closest('[data-testid="spell-underline"]');
+    return !at?.closest('[data-testid="spell-underline"]');
   });
-  expect(reached).toBe(true);
+  expect(hitsText).toBe(true);
 });
 
 test("typing stays responsive while spell check runs off the typing path (AC-1.1)", async ({ page }) => {
@@ -71,7 +130,7 @@ test("right-clicking a misspelled word offers up to five suggestions plus Ignore
   await createDocument(page);
   await typeBody(page, "I saw a wrold today.");
   await waitForUnderlines(page);
-  await underlines(page).first().click({ button: "right" });
+  await rightClickFirstUnderline(page);
   const menu = page.getByTestId("spell-context-menu");
   await expect(menu).toBeVisible();
   const count = await page.locator('[data-testid="spell-suggestion"]').count();
@@ -86,7 +145,7 @@ test('a word with no close match shows a disabled "No suggestions" item, and Ign
   await createDocument(page);
   await typeBody(page, "zzqxvbnmqwrty nonsense token");
   await waitForUnderlines(page);
-  await underlines(page).first().click({ button: "right" });
+  await rightClickFirstUnderline(page);
   await expect(page.getByTestId("spell-no-suggestions")).toBeVisible();
   await expect(page.getByTestId("spell-no-suggestions")).toBeDisabled();
   await expect(page.getByTestId("spell-ignore")).toBeEnabled();
@@ -101,7 +160,7 @@ test("choosing a suggestion replaces the word, keeps its formatting, and matches
   await page.keyboard.type("Wrold");
   await page.keyboard.press(`${MOD}+b`);
   await waitForUnderlines(page);
-  await underlines(page).first().click({ button: "right" });
+  await rightClickFirstUnderline(page);
   await page.getByTestId("spell-suggestion").first().click();
   await expect(content(page)).toHaveText("World");
   const bold = await content(page).locator("span, a").first().evaluate((el) => getComputedStyle(el).fontWeight);
@@ -111,15 +170,14 @@ test("choosing a suggestion replaces the word, keeps its formatting, and matches
 test('"Ignore" clears one occurrence, "Ignore all" clears every occurrence, for the session (AC-5, AC-6)', async ({ page }) => {
   await createDocument(page);
   await typeBody(page, "wrold and wrold again");
-  await waitForUnderlines(page, 2);
-  const before = await underlines(page).count();
+  const before = await waitForStableUnderlines(page, 2);
   expect(before).toBeGreaterThanOrEqual(2);
-  await underlines(page).first().click({ button: "right" });
+  await rightClickFirstUnderline(page);
   await page.getByTestId("spell-ignore").click();
   await page.waitForTimeout(300);
   expect(await underlines(page).count()).toBe(before - 1);
 
-  await underlines(page).first().click({ button: "right" });
+  await rightClickFirstUnderline(page);
   await page.getByTestId("spell-ignore-all").click();
   await page.waitForTimeout(300);
   expect(await underlines(page).count()).toBe(0);
@@ -129,7 +187,7 @@ test("Add to dictionary persists across a reload and removes the underline every
   await createDocument(page);
   await typeBody(page, "docuedit docuedit");
   await waitForUnderlines(page, 2);
-  await underlines(page).first().click({ button: "right" });
+  await rightClickFirstUnderline(page);
   await page.getByTestId("spell-add-to-dictionary").click();
   await page.waitForTimeout(300);
   expect(await underlines(page).count()).toBe(0);

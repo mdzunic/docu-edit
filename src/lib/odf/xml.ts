@@ -14,6 +14,9 @@ export const SVG_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:svg-compatib
 export const DRAW_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 /** XLink (SPEC-024) — `draw:image`'s `xlink:href`. */
 export const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+/** Dublin Core (SPEC-038) — `office:annotation`'s `dc:creator`/`dc:date`
+ * child elements. */
+export const DC_NAMESPACE = "http://purl.org/dc/elements/1.1/";
 
 /** Reads an `office:*` attribute regardless of the bound prefix. */
 export function officeAttr(el: Element, localName: string): string | null {

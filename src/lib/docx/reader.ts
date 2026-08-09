@@ -11,6 +11,9 @@ import type {
   BreakKind,
   CellBorders,
   CellVerticalAlign,
+  CommentAnchor,
+  CommentMessage,
+  CommentThread,
   DefaultStyles,
   FieldKind,
   HeaderFooterKind,
@@ -51,7 +54,9 @@ import {
   MAX_COLUMN_COUNT,
 } from "../documentModel";
 import { sanitizeHref } from "../links";
+import { createMessageId, parseReplyParagraphText } from "../comments";
 import { bytesToBase64 } from "../opaque";
+import { blockText } from "../textEditing";
 import { ZipError, unzip } from "./zip";
 import {
   childElements,
@@ -162,6 +167,27 @@ function noteReferenceOf(rEl: Element): { kind: NoteKind; noteId: string } | nul
   return null;
 }
 
+/** The stable model thread id for a source comment's numeric range id
+ * (SPEC-038) — shared by the body's commentRangeStart/End anchors and the
+ * parsed word/comments.xml entries so they link up, mirroring docxNoteId.
+ * The range id and the `<w:comment w:id>` it belongs to are always written
+ * as the same number (see writer.ts's commentIdsFor), so no separate
+ * commentReference lookup is needed to find which comment a range names. */
+function docxCommentId(sourceId: string): string {
+  return `wc${sourceId}`;
+}
+
+/** Whether a run's only content (besides `w:rPr`) is a `w:commentReference`
+ * (SPEC-038) — dropped on read like a footnoteRef/endnoteRef marker: the
+ * model derives which comment a range belongs to from the range's own id
+ * (docxCommentId), so the reference run itself carries nothing the model
+ * needs, and the writer regenerates a fresh one on save. */
+function isCommentReferenceRun(rEl: Element): boolean {
+  return Array.from(rEl.children).some(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "commentReference",
+  );
+}
+
 // The Compound File Binary Format signature every legacy .doc (Word 97-2003)
 // file starts with — used to reject them with a specific, actionable error
 // instead of the generic "not a ZIP" message a naive open would produce.
@@ -199,6 +225,9 @@ export interface ParsedDocxDocument {
   footnoteSettings?: NoteSettings;
   /** Endnote numbering settings from the body sectPr's w:endnotePr. */
   endnoteSettings?: NoteSettings;
+  /** Comment threads (SPEC-038) from word/comments.xml; empty when the
+   * package has no comments part. */
+  comments: CommentThread[];
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -309,6 +338,26 @@ function collectBookmark(child: Element, runs: Run[], bookmarks: BookmarkAnchor[
   bookmarks.push({ name, offset: textLengthOf(runs) });
 }
 
+/** Records a `w:commentRangeStart`/`w:commentRangeEnd` as a model comment
+ * anchor point at the current text offset (SPEC-038) — the boundary
+ * counterpart of collectBookmark. A malformed id-less marker is dropped. */
+function collectCommentAnchor(child: Element, runs: Run[], commentAnchors: CommentAnchor[]): void {
+  const isStart = child.localName === "commentRangeStart";
+  const isEnd = child.localName === "commentRangeEnd";
+  if (!isStart && !isEnd) {
+    return;
+  }
+  const id = wordAttr(child, "id");
+  if (!id) {
+    return;
+  }
+  commentAnchors.push({
+    threadId: docxCommentId(id),
+    boundary: isStart ? "start" : "end",
+    offset: textLengthOf(runs),
+  });
+}
+
 function collectRuns(
   container: Element,
   inheritedFormatting: RunFormatting,
@@ -316,6 +365,7 @@ function collectRuns(
   opaqueInlines: OpaqueInline[],
   bookmarks: BookmarkAnchor[],
   links?: LinkReadContext,
+  commentAnchors: CommentAnchor[] = [],
 ): void {
   for (const child of Array.from(container.children)) {
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "pPr") {
@@ -329,6 +379,10 @@ function collectRuns(
         const rPr = firstChildElement(child, WORD_NAMESPACE, "rPr");
         const formatting = mergeRunFormatting(inheritedFormatting, parseRunProperties(rPr));
         runs.push(createNoteRun(noteRef.noteId, noteRef.kind, formatting));
+        continue;
+      }
+      if (isCommentReferenceRun(child)) {
+        // Dropped (SPEC-038): the range's own id already names its comment.
         continue;
       }
       if (runHasUnmodelledContent(child)) {
@@ -351,12 +405,18 @@ function collectRuns(
         opaqueInlines,
         bookmarks,
         links,
+        commentAnchors,
       );
     } else if (
       child.namespaceURI === WORD_NAMESPACE &&
       (child.localName === "bookmarkStart" || child.localName === "bookmarkEnd")
     ) {
       collectBookmark(child, runs, bookmarks);
+    } else if (
+      child.namespaceURI === WORD_NAMESPACE &&
+      (child.localName === "commentRangeStart" || child.localName === "commentRangeEnd")
+    ) {
+      collectCommentAnchor(child, runs, commentAnchors);
     } else if (
       child.namespaceURI === WORD_NAMESPACE &&
       TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)
@@ -451,6 +511,7 @@ function assembleParagraph(
   opaqueInlines: OpaqueInline[],
   includeList: boolean,
   bookmarks: BookmarkAnchor[] = [],
+  commentAnchors: CommentAnchor[] = [],
 ): Paragraph {
   const paragraph: Paragraph = { type: "paragraph", runs, formatting: { ...meta.formatting } };
   if (includeList && meta.list) {
@@ -468,6 +529,9 @@ function assembleParagraph(
   if (bookmarks.length > 0) {
     paragraph.bookmarks = bookmarks;
   }
+  if (commentAnchors.length > 0) {
+    paragraph.commentAnchors = commentAnchors;
+  }
   return paragraph;
 }
 
@@ -481,8 +545,9 @@ function parseParagraph(
   const runs: Run[] = [];
   const opaqueInlines: OpaqueInline[] = [];
   const bookmarks: BookmarkAnchor[] = [];
-  collectRuns(pEl, meta.resolved.runFormatting, runs, opaqueInlines, bookmarks, links);
-  return assembleParagraph(meta, runs, opaqueInlines, true, bookmarks);
+  const commentAnchors: CommentAnchor[] = [];
+  collectRuns(pEl, meta.resolved.runFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors);
+  return assembleParagraph(meta, runs, opaqueInlines, true, bookmarks, commentAnchors);
 }
 
 /** Context a body-level paragraph parse needs to resolve a `w:drawing`'s
@@ -740,14 +805,18 @@ function parseBodyParagraphBlocks(
   let runs: Run[] = [];
   let opaqueInlines: OpaqueInline[] = [];
   let bookmarks: BookmarkAnchor[] = [];
+  let commentAnchors: CommentAnchor[] = [];
   const flush = () => {
-    if (runs.length === 0 && opaqueInlines.length === 0 && bookmarks.length === 0) {
+    if (runs.length === 0 && opaqueInlines.length === 0 && bookmarks.length === 0 && commentAnchors.length === 0) {
       return;
     }
-    blocks.push(assembleParagraph(meta, runs, opaqueInlines, blocks.length === 0, bookmarks));
+    blocks.push(
+      assembleParagraph(meta, runs, opaqueInlines, blocks.length === 0, bookmarks, commentAnchors),
+    );
     runs = [];
     opaqueInlines = [];
     bookmarks = [];
+    commentAnchors = [];
   };
   for (const child of Array.from(pEl.children)) {
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "pPr") {
@@ -759,6 +828,9 @@ function parseBodyParagraphBlocks(
         flush();
         blocks.push(parsed.image);
         media.push(parsed.media);
+        continue;
+      }
+      if (isCommentReferenceRun(child)) {
         continue;
       }
       if (runHasUnmodelledContent(child)) {
@@ -811,12 +883,18 @@ function parseBodyParagraphBlocks(
         opaqueInlines,
         bookmarks,
         links,
+        commentAnchors,
       );
     } else if (
       child.namespaceURI === WORD_NAMESPACE &&
       (child.localName === "bookmarkStart" || child.localName === "bookmarkEnd")
     ) {
       collectBookmark(child, runs, bookmarks);
+    } else if (
+      child.namespaceURI === WORD_NAMESPACE &&
+      (child.localName === "commentRangeStart" || child.localName === "commentRangeEnd")
+    ) {
+      collectCommentAnchor(child, runs, commentAnchors);
     } else if (child.namespaceURI === WORD_NAMESPACE && TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)) {
       // Regenerated by Word on open; deliberately not preserved.
     } else {
@@ -1593,6 +1671,74 @@ function parseNotesPart(
   return { notes, media };
 }
 
+// --- comments (SPEC-038) -----------------------------------------------------
+
+const COMMENTS_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+
+const UNKNOWN_COMMENT_AUTHOR = "Unknown";
+
+interface ParsedComment {
+  threadId: string;
+  messages: CommentMessage[];
+}
+
+/** word/comments.xml's comments (SPEC-038, "Opening a Word document with
+ * comments shows every comment, its author and its date"): each
+ * `w:comment` becomes one thread, keyed by its numeric id — matched to the
+ * body's commentRangeStart/End via docxCommentId. Reverses writer.ts's
+ * commentsPartXml encoding: the first paragraph is the opening message's
+ * plain text, later paragraphs are replies encoded as
+ * "{author} ({createdAt}): {text}". A comment with no paragraphs still
+ * becomes a thread with one empty-text message, so an empty comment
+ * round-trips rather than vanishing. */
+function parseCommentsPart(
+  partPath: string,
+  parts: Map<string, Uint8Array>,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+): ParsedComment[] {
+  const raw = parts.get(partPath);
+  if (!raw) {
+    return [];
+  }
+  let root: Element;
+  try {
+    root = parseXml(decodeUtf8(raw)).documentElement;
+  } catch (error) {
+    if (error instanceof XmlParseError) {
+      return [];
+    }
+    throw error;
+  }
+  const comments: ParsedComment[] = [];
+  for (const commentEl of childElements(root, WORD_NAMESPACE, "comment")) {
+    const sourceId = wordAttr(commentEl, "id");
+    if (sourceId === null) {
+      continue;
+    }
+    const author = wordAttr(commentEl, "author") || UNKNOWN_COMMENT_AUTHOR;
+    const createdAt = wordAttr(commentEl, "date") || new Date(0).toISOString();
+    const texts = childElements(commentEl, WORD_NAMESPACE, "p").map((pEl) =>
+      blockText(parseParagraph(pEl, styleCatalog, numberingCatalog)),
+    );
+    const messages: CommentMessage[] = [
+      { messageId: createMessageId(), author, text: texts[0] ?? "", createdAt },
+    ];
+    for (const text of texts.slice(1)) {
+      const reply = parseReplyParagraphText(text);
+      if (reply) {
+        messages.push({ messageId: createMessageId(), ...reply });
+        continue;
+      }
+      const last = messages[messages.length - 1];
+      last.text = last.text.length > 0 ? `${last.text}\n${text}` : text;
+    }
+    comments.push({ threadId: docxCommentId(sourceId), messages });
+  }
+  return comments;
+}
+
 /** Parses a `.docx` file's bytes into the sections/defaultStyles this
  * project's document model needs. Throws `LegacyDocError` for a binary
  * Word 97-2003 `.doc` file, or `DocxOpenError` for anything else that
@@ -1860,6 +2006,24 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   const footnoteSettings = parseNoteSettings(sectPr, "footnotePr");
   const endnoteSettings = parseNoteSettings(sectPr, "endnotePr");
 
+  // Comments (SPEC-038): word/comments.xml is consumed and rebuilt from the
+  // model on save, like the note parts above — the range/reference elements
+  // already became commentAnchors side-lists in collectRuns. A thread whose
+  // range anchors turn out not to be present anywhere in the body (a
+  // malformed source) is still kept here rather than dropped: it simply
+  // stays invisible everywhere, the same "derive, don't discard" contract
+  // NoteContent uses (see lib/comments.ts's visibleCommentThreads).
+  const comments: CommentThread[] = [];
+  const commentsRel = Array.from(mainRels.values()).find((entry) => entry.type === COMMENTS_RELATIONSHIP);
+  if (commentsRel) {
+    const partPath = resolvePartPath(mainPartPath, commentsRel.target);
+    for (const parsed of parseCommentsPart(partPath, parts, styleCatalog, numberingCatalog)) {
+      comments.push({ threadId: parsed.threadId, resolved: false, messages: parsed.messages });
+    }
+    consumedHeaderFooterParts.add(partPath);
+    consumedHeaderFooterParts.add(relsPathFor(partPath));
+  }
+
   const settingsRel = Array.from(mainRels.values()).find((rel) => rel.type === SETTINGS_RELATIONSHIP);
   const settingsPartPath = settingsRel ? resolvePartPath(mainPartPath, settingsRel.target) : "word/settings.xml";
   const settingsText = readPart(settingsPartPath);
@@ -1944,6 +2108,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     // actually used — reconstructed from their composite abstractNums.
     listDefinitions: numberingCatalog.definitionsUsed(),
     notes,
+    comments,
   };
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;

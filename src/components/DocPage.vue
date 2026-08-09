@@ -76,6 +76,7 @@ defineEmits([
   "note-keydown",
   "note-compositionstart",
   "note-compositionend",
+  "outline-toggle",
 ]);
 
 const renderEntries = computed(() => asRenderEntries(props.entries));
@@ -164,6 +165,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               :cell-range="cellRange"
               @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
               @toc-action="(payload) => $emit('toc-action', payload)"
+              @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
             />
           </div>
           <div
@@ -181,6 +183,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             :cell-range="cellRange"
             @image-select="(section, block) => $emit('image-select', section, block)"
             @toc-action="(payload) => $emit('toc-action', payload)"
+            @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"
           />
         </template>
         <!-- The endnote area (SPEC-031 AC-4): flows after the last body

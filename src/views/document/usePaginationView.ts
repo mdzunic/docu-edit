@@ -39,6 +39,7 @@ import { effectiveLanguage } from "../../lib/language";
 import { markSegments } from "../../lib/marks";
 import { splitRuns } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
+import { blockKey, headingContentLength } from "../../lib/outline";
 import { mediaDataUri } from "../../lib/images";
 import type { PaginationController } from "../../composables/usePagination";
 import type { CellRange } from "../../lib/tables";
@@ -109,6 +110,9 @@ export interface PaginationViewDeps {
   editable: Ref<boolean>;
   cellSelection: Ref<CellRange | null>;
   imageSelection: Ref<ImageLocation | null>;
+  /** Body headings collapsed in the document body (SPEC-037 AC-16), keyed by
+   * their "section:block" address — drives the chevron direction. */
+  collapsedHeadings: Ref<ReadonlySet<string>>;
   remount: Ref<{ key: string; count: number; epoch: number }>;
   realizedSticky: WeakSet<object>;
   hfRemountEpoch: Ref<number>;
@@ -237,6 +241,14 @@ function renderEntryFor(
     styleObj.marginBottom = "0";
   }
   const sliceSig = `${sliceStart ?? ""}:${sliceEnd ?? ""}`;
+  // A body heading that owns content shows a collapse chevron (SPEC-037
+  // AC-16) — only on its first slice, never on a continuation.
+  const headingKey = blockKey(flatEntry.section, flatEntry.blockIndex);
+  const outlineToggle =
+    paragraph.headingLevel !== undefined &&
+    !continuation &&
+    headingContentLength(model, flatEntry.section, flatEntry.blockIndex) > 0;
+  const outlineCollapsed = outlineToggle && deps.collapsedHeadings.value.has(headingKey);
   let noteSig = "";
   const renderRuns = runs.map((run, runIndex) => {
     // A note reference mark (SPEC-031): renders its computed number as a
@@ -275,7 +287,18 @@ function renderEntryFor(
   });
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
-    memo: [block, flatEntry.section, flatEntry.blockIndex, flatEntry.marker, sliceSig, marks, column, noteSig],
+    memo: [
+      block,
+      flatEntry.section,
+      flatEntry.blockIndex,
+      flatEntry.marker,
+      sliceSig,
+      marks,
+      column,
+      noteSig,
+      outlineToggle,
+      outlineCollapsed,
+    ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
     className: "doc-paragraph",
@@ -288,6 +311,8 @@ function renderEntryFor(
     listLevel: paragraph.list ? paragraph.list.level : undefined,
     runs: renderRuns,
     needsBr: runs.length === 0,
+    outlineToggle: outlineToggle || undefined,
+    outlineCollapsed: outlineCollapsed || undefined,
     column,
   } as RenderEntry;
 }

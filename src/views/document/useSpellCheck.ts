@@ -44,9 +44,9 @@ export interface SpellCheckIssue {
 
 /** One on-screen underline strip (SPEC-035 AC-1): positioned at the bottom
  * of a word's glyph box, page-relative, the same coordinate space
- * useFindReplace's HighlightRect uses. Carries the issue it renders so the
- * context menu (SPEC-035 AC-2) can read it straight off the clicked
- * element's data attributes instead of a separate hit-test. */
+ * useFindReplace's HighlightRect uses. Carries the issue it renders so
+ * DocumentView's right-click hit test (SPEC-035 AC-2) can hand the whole
+ * issue to the suggestions menu straight from the rect it matched. */
 export interface SpellUnderlineRect {
   left: number;
   top: number;

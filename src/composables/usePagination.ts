@@ -180,10 +180,15 @@ function sameAreaLists(a: (NoteArea | null)[], b: (NoteArea | null)[]): boolean 
   return a.length === b.length && a.every((area, index) => sameArea(area, b[index]));
 }
 
+// Shared empty set so the default (nothing collapsed) allocates nothing per
+// call and the layout fast-paths straight past the hidden check.
+const EMPTY_HIDDEN: ReadonlySet<string> = new Set();
+
 export function usePagination(
   docOf: () => DocumentModel | null,
   rootOf: () => HTMLElement | null,
   noteLabelOf: (noteId: string, kind: NoteKind) => string = () => "",
+  hiddenOf: () => ReadonlySet<string> = () => EMPTY_HIDDEN,
 ): PaginationController {
   const pages = shallowRef<PageLayout[]>([]);
   const noteAreas = shallowRef<PageNoteAreas>({ footnotes: [], endnotes: [] });
@@ -292,11 +297,17 @@ export function usePagination(
         return estimateMetrics(block, contentWidthPx, model.defaultStyles.fontSizePt);
       },
     };
+    const hidden = hiddenOf();
+    const isHidden =
+      hidden.size === 0
+        ? undefined
+        : (sectionIndex: number, blockIndex: number) => hidden.has(`${sectionIndex}:${blockIndex}`);
     const notesLayout = layoutWithNotes(
       model,
       provider,
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
+      isHidden,
     );
     const layout = notesLayout.pages;
     if (

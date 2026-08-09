@@ -29,6 +29,7 @@ import type {
   Block,
   BorderSide,
   BreakKind,
+  CommentThread,
   DocumentModel,
   FieldSpec,
   Image,
@@ -64,6 +65,7 @@ import {
 } from "../documentModel";
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
+import { replyParagraphText, visibleCommentThreads } from "../comments";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
@@ -83,7 +85,15 @@ import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, styleAttr } from "./xml";
+import {
+  FO_NAMESPACE,
+  OFFICE_NAMESPACE,
+  STYLE_NAMESPACE,
+  TABLE_NAMESPACE,
+  TEXT_NAMESPACE,
+  XLINK_NAMESPACE,
+  styleAttr,
+} from "./xml";
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 
@@ -1054,6 +1064,73 @@ function odtNoteXmlId(noteId: string): string {
   return noteId.replace(/[^A-Za-z0-9._-]/g, "-");
 }
 
+// SPEC-038: the comment threads of the content part being built — set by
+// buildContentXml around its body walk, mirroring odtNotesContext, so a
+// comment-anchor boundary run anywhere in the flow can emit its
+// office:annotation/office:annotation-end without threading a parameter
+// through every serialiser.
+let odtCommentsContext: Map<string, CommentThread> | null = null;
+
+function odtCommentsWriteContext(model: DocumentModel): Map<string, CommentThread> {
+  const byThreadId = new Map<string, CommentThread>();
+  for (const entry of visibleCommentThreads(model)) {
+    byThreadId.set(entry.thread.threadId, entry.thread);
+  }
+  return byThreadId;
+}
+
+/** The model threadId as an XML-safe office:name — same sanitisation as
+ * odtNoteXmlId. */
+function odtCommentXmlName(threadId: string): string {
+  return threadId.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+/** One plain-text message as a bare `<text:p>` (no style reference — ODF
+ * defaults an unstyled text:p to "Standard") — the comment body's own
+ * lightweight paragraph shape; unlike document body paragraphs there is no
+ * automatic style, run formatting or opaque content to carry (comments are
+ * plain text only). */
+function commentBodyParagraphXml(text: string): string {
+  const state: WhitespaceState = { lastChar: "" };
+  return `<text:p>${runContentXml(text, state)}</text:p>`;
+}
+
+/** A comment thread's `office:annotation` (SPEC-038): `dc:creator`/`dc:date`
+ * from the opening message, body one `<text:p>` per message — the opening
+ * message's text verbatim, then each reply via lib/comments.ts's
+ * `replyParagraphText` — the whole comment inline at its range's start
+ * (ODF's own shape, unlike `.docx`'s separate comments.xml part). Emits
+ * nothing for a dangling thread id (not in ctx — see visibleCommentThreads)
+ * or outside a body build. */
+function annotationStartXml(threadId: string): string {
+  const thread = odtCommentsContext?.get(threadId);
+  if (!thread) {
+    return "";
+  }
+  const opening = thread.messages[0];
+  const body = [opening.text, ...thread.messages.slice(1).map(replyParagraphText)]
+    .map(commentBodyParagraphXml)
+    .join("");
+  // xmlns:dc declared locally (the TABLE_XMLNS/LINK_XMLNS convention) so
+  // content.xml is unchanged for documents without comments.
+  return (
+    `<office:annotation xmlns:dc="${DC_NAMESPACE}" office:name="${escapeXml(odtCommentXmlName(threadId))}">` +
+    `<dc:creator>${escapeXml(opening.author)}</dc:creator>` +
+    `<dc:date>${escapeXml(opening.createdAt)}</dc:date>` +
+    body +
+    `</office:annotation>`
+  );
+}
+
+/** A comment thread's `office:annotation-end` (SPEC-038) — emits nothing
+ * for a dangling thread id, the same convention as annotationStartXml. */
+function annotationEndXml(threadId: string): string {
+  if (!odtCommentsContext?.has(threadId)) {
+    return "";
+  }
+  return `<office:annotation-end office:name="${escapeXml(odtCommentXmlName(threadId))}"/>`;
+}
+
 /** A note reference run as its `text:note` element (SPEC-031 AC-23/24):
  * citation plus the note's whole body inline at the reference, the ODF
  * shape. Emits nothing for a dangling reference or outside a body build. */
@@ -1108,10 +1185,12 @@ function inlineContentXml(
   const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
   const hasLinks = paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null);
   const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
-  if (opaque.length === 0 && !hasLinks && !hasBookmarks) {
+  const hasComments = (paragraph.commentAnchors ?? []).length > 0;
+  if (opaque.length === 0 && !hasLinks && !hasBookmarks && !hasComments) {
     return paragraph.runs.map((run) => runXml(run, styles, state)).join("");
   }
-  const { runs, bookmarksAtBoundary, boundaryFor } = inlineWriteLayout(paragraph);
+  const { runs, bookmarksAtBoundary, commentStartsAtBoundary, commentEndsAtBoundary, boundaryFor } =
+    inlineWriteLayout(paragraph);
   const opaqueAtBoundary = new Map<number, string[]>();
   for (const node of opaque) {
     const boundary = boundaryFor(node.runIndex);
@@ -1146,6 +1225,16 @@ function inlineContentXml(
     content += opaqueHere.join("");
     for (const name of bookmarksAtBoundary.get(i) ?? []) {
       content += `<text:bookmark text:name="${escapeXml(name)}"/>`;
+    }
+    // Comment ranges (SPEC-038): office:annotation-end must precede
+    // annotation starts landing at the very same boundary (closing a
+    // finished range before opening the next keeps well-formed nesting),
+    // so ends are emitted first.
+    for (const threadId of commentEndsAtBoundary.get(i) ?? []) {
+      content += annotationEndXml(threadId);
+    }
+    for (const threadId of commentStartsAtBoundary.get(i) ?? []) {
+      content += annotationStartXml(threadId);
     }
     if (!run) {
       break;
@@ -1426,6 +1515,10 @@ export function buildContentXml(
   // Footnotes/endnotes (SPEC-031): note reference runs anywhere in the body
   // emit their text:note through this context; cleared before returning.
   odtNotesContext = odtNotesWriteContext(model);
+  // Comments (SPEC-038): comment-anchor boundary runs anywhere in the body
+  // emit their office:annotation/-end through this context; cleared with
+  // odtNotesContext below.
+  odtCommentsContext = odtCommentsWriteContext(model);
   // Defined-list instance continuity for the whole body (SPEC-032): one map
   // across every section, so an instance interrupted by a section break
   // still writes text:continue-list on its later segments.
@@ -1565,6 +1658,7 @@ export function buildContentXml(
     blockXml.push(carrierParagraphXml(styles, { breakBefore: pendingBreak }));
   }
   odtNotesContext = null;
+  odtCommentsContext = null;
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
   const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
   const preservedStyles = includeOpaque ? (model.sourceXml?.odtAutomaticStyles ?? []) : [];

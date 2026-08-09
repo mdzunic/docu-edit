@@ -74,6 +74,11 @@ export interface RenderEntry {
   tocStalePagination?: boolean;
   runs?: RenderRun[];
   needsBr?: boolean;
+  /** A body heading that owns content and so shows a collapse chevron
+   * (SPEC-037 AC-16); only on the heading's first slice. */
+  outlineToggle?: boolean;
+  /** Whether that heading is currently collapsed in the body. */
+  outlineCollapsed?: boolean;
   /** Which column of a multi-column page this entry flows into (SPEC-030);
    * absent on single-column pages. */
   column?: number;

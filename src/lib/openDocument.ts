@@ -6,6 +6,7 @@
 // propagate unchanged — the caller only mutates app state once this
 // resolves, so a rejected file leaves the previous state untouched.
 import type {
+  CommentThread,
   DocumentFormat,
   DocumentModel,
   ListDefinition,
@@ -67,6 +68,7 @@ function buildModel(
     notes?: NoteContent[];
     footnoteSettings?: NoteSettings;
     endnoteSettings?: NoteSettings;
+    comments?: CommentThread[];
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -106,6 +108,10 @@ function buildModel(
   }
   if (parsed.endnoteSettings) {
     model.endnoteSettings = parsed.endnoteSettings;
+  }
+  // Comments (SPEC-038) anchored in the body's commentAnchors side-lists.
+  if (parsed.comments && parsed.comments.length > 0) {
+    model.comments = parsed.comments;
   }
   return model;
 }

@@ -104,7 +104,7 @@ Any spec asserting a round trip must name one of the three relations —
 ### Phase 5 — Authoring depth, review and collaboration
 | Spec | Title |
 | --- | --- |
-| SPEC-035 | Spell check and document language |
+| SPEC-035 | Spell check with user-supplied dictionaries, and document language |
 | SPEC-036 | Word count and document statistics |
 | SPEC-037 | Document outline navigator |
 | SPEC-038 | Comments |
