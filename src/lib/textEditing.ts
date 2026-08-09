@@ -17,6 +17,7 @@ import {
   type Block,
   type BookmarkAnchor,
   type CharacterFormatKey,
+  type CommentAnchor,
   type DocumentModel,
   type Paragraph,
   type PendingFormat,
@@ -346,12 +347,70 @@ export function splitRuns(runs: Run[], offset: number): [Run[], Run[]] {
   return [normalizeRuns(before), normalizeRuns(after)];
 }
 
-// --- bookmark anchor maintenance (SPEC-025) ---------------------------------
-// Bookmarks are character-offset anchors on a paragraph (a side-list, like
-// opaqueInlines), so the operations below that rebuild a paragraph's text
-// keep the anchors pointing at the same spot. Every helper returns the
-// input untouched when there are no bookmarks, so pre-SPEC-025 behaviour is
-// byte-identical for bookmark-free documents.
+// --- anchor maintenance (bookmarks SPEC-025, comment anchors SPEC-038) -----
+// Bookmarks and comment-range anchors are both character-offset points on a
+// paragraph (side-lists, like opaqueInlines), so the operations below that
+// rebuild a paragraph's text keep both kinds pointing at the same spot,
+// through one shared generic implementation. Every helper returns the input
+// untouched when there is nothing to adjust, so pre-SPEC-025 behaviour is
+// byte-identical for anchor-free documents.
+
+/** Anchors after inserting `length` characters at `offset`: anchors after
+ * the point shift right; one exactly at it stays put, so text typed at a
+ * just-inserted anchor lands after it. Generic over `BookmarkAnchor` and
+ * `CommentAnchor` — both are plain `{offset}` points. */
+function anchorsAfterInsert<T extends { offset: number }>(
+  anchors: T[] | undefined,
+  offset: number,
+  length: number,
+): T[] | undefined {
+  if (!anchors || length === 0) {
+    return anchors;
+  }
+  return anchors.map((anchor) =>
+    anchor.offset > offset ? { ...anchor, offset: anchor.offset + length } : anchor,
+  );
+}
+
+/** Anchors after deleting [from, to) within one paragraph: anchors past the
+ * range shift left; anchors inside it collapse to the deletion point rather
+ * than vanishing, so deleting text around an anchor never silently loses it. */
+function anchorsAfterDelete<T extends { offset: number }>(
+  anchors: T[] | undefined,
+  from: number,
+  to: number,
+): T[] | undefined {
+  if (!anchors || from >= to) {
+    return anchors;
+  }
+  return anchors.map((anchor) =>
+    anchor.offset <= from
+      ? anchor
+      : { ...anchor, offset: Math.max(from, anchor.offset - (to - from)) },
+  );
+}
+
+/** Anchors of two paragraphs merged by a cross-paragraph deletion: the
+ * first keeps [0, from] (later anchors collapse to `from`), the second's
+ * land at `from` plus their distance past `to`. */
+function mergedAnchors<T extends { offset: number }>(
+  first: T[] | undefined,
+  second: T[] | undefined,
+  from: number,
+  to: number,
+): T[] | undefined {
+  if (!first && !second) {
+    return undefined;
+  }
+  const merged = [
+    ...(first ?? []).map((anchor) => (anchor.offset <= from ? anchor : { ...anchor, offset: from })),
+    ...(second ?? []).map((anchor) => ({
+      ...anchor,
+      offset: from + Math.max(0, anchor.offset - to),
+    })),
+  ];
+  return merged.sort((a, b) => a.offset - b.offset);
+}
 
 /** Writes a bookmark list onto a freshly built paragraph: assigns it when
  * non-empty, removes the key entirely when empty — an `undefined`-valued
@@ -365,63 +424,18 @@ function setBookmarks(paragraph: Paragraph, bookmarks: BookmarkAnchor[] | undefi
   return paragraph;
 }
 
-/** Anchors after inserting `length` characters at `offset`: anchors after
- * the point shift right; one exactly at it stays put, so text typed at a
- * just-inserted bookmark lands after the bookmark. */
-function bookmarksAfterInsert(
-  bookmarks: BookmarkAnchor[] | undefined,
-  offset: number,
-  length: number,
-): BookmarkAnchor[] | undefined {
-  if (!bookmarks || length === 0) {
-    return bookmarks;
+/** Writes a comment-anchor list onto a freshly built paragraph — the same
+ * empty-means-absent contract as setBookmarks (SPEC-038). */
+function setCommentAnchors(
+  paragraph: Paragraph,
+  anchors: CommentAnchor[] | undefined,
+): Paragraph {
+  if (anchors && anchors.length > 0) {
+    paragraph.commentAnchors = anchors;
+  } else {
+    delete paragraph.commentAnchors;
   }
-  return bookmarks.map((bookmark) =>
-    bookmark.offset > offset ? { ...bookmark, offset: bookmark.offset + length } : bookmark,
-  );
-}
-
-/** Anchors after deleting [from, to) within one paragraph: anchors past the
- * range shift left; anchors inside it collapse to the deletion point rather
- * than vanishing, so deleting text around a bookmark never silently loses
- * the bookmark itself. */
-function bookmarksAfterDelete(
-  bookmarks: BookmarkAnchor[] | undefined,
-  from: number,
-  to: number,
-): BookmarkAnchor[] | undefined {
-  if (!bookmarks || from >= to) {
-    return bookmarks;
-  }
-  return bookmarks.map((bookmark) =>
-    bookmark.offset <= from
-      ? bookmark
-      : { ...bookmark, offset: Math.max(from, bookmark.offset - (to - from)) },
-  );
-}
-
-/** Anchors of two paragraphs merged by a cross-paragraph deletion: the
- * first keeps [0, from] (later anchors collapse to `from`), the second's
- * land at `from` plus their distance past `to`. */
-function mergedBookmarks(
-  first: Paragraph,
-  second: Paragraph,
-  from: number,
-  to: number,
-): BookmarkAnchor[] | undefined {
-  if (!first.bookmarks && !second.bookmarks) {
-    return undefined;
-  }
-  const merged = [
-    ...(first.bookmarks ?? []).map((bookmark) =>
-      bookmark.offset <= from ? bookmark : { ...bookmark, offset: from },
-    ),
-    ...(second.bookmarks ?? []).map((bookmark) => ({
-      ...bookmark,
-      offset: from + Math.max(0, bookmark.offset - to),
-    })),
-  ];
-  return merged.sort((a, b) => a.offset - b.offset);
+  return paragraph;
 }
 
 /** `formatting` with `key` forced to `value`. `false` deletes the key
@@ -517,9 +531,12 @@ export function insertText(
   replaceParagraphAt(
     model,
     c,
-    setBookmarks(
-      { ...block, runs: normalizeRuns([...before, inserted, ...after]) },
-      bookmarksAfterInsert(block.bookmarks, c.offset, text.length),
+    setCommentAnchors(
+      setBookmarks(
+        { ...block, runs: normalizeRuns([...before, inserted, ...after]) },
+        anchorsAfterInsert(block.bookmarks, c.offset, text.length),
+      ),
+      anchorsAfterInsert(block.commentAnchors, c.offset, text.length),
     ),
   );
   return { ...c, offset: c.offset + text.length };
@@ -544,9 +561,12 @@ export function insertRun(
   replaceParagraphAt(
     model,
     c,
-    setBookmarks(
-      { ...block, runs: normalizeRuns([...before, run, ...after]) },
-      bookmarksAfterInsert(block.bookmarks, c.offset, run.text.length),
+    setCommentAnchors(
+      setBookmarks(
+        { ...block, runs: normalizeRuns([...before, run, ...after]) },
+        anchorsAfterInsert(block.bookmarks, c.offset, run.text.length),
+      ),
+      anchorsAfterInsert(block.commentAnchors, c.offset, run.text.length),
     ),
   );
   return { ...c, offset: c.offset + run.text.length };
@@ -587,6 +607,17 @@ export function splitParagraph(
       block.bookmarks
         .filter((bookmark) => bookmark.offset > c.offset)
         .map((bookmark) => ({ ...bookmark, offset: bookmark.offset - c.offset })),
+    );
+  }
+  if (block.commentAnchors) {
+    // Same distribution rule as bookmarks (SPEC-038): a comment boundary
+    // exactly at the split point stays with the first half.
+    setCommentAnchors(first, block.commentAnchors.filter((anchor) => anchor.offset <= c.offset));
+    setCommentAnchors(
+      second,
+      block.commentAnchors
+        .filter((anchor) => anchor.offset > c.offset)
+        .map((anchor) => ({ ...anchor, offset: anchor.offset - c.offset })),
     );
   }
   if (c.cell) {
@@ -710,9 +741,12 @@ export function deleteRange(
       replaceParagraphAt(
         model,
         start,
-        setBookmarks(
-          { ...startPara, runs: normalizeRuns([...before, ...after]) },
-          bookmarksAfterDelete(startPara.bookmarks, start.offset, end.offset),
+        setCommentAnchors(
+          setBookmarks(
+            { ...startPara, runs: normalizeRuns([...before, ...after]) },
+            anchorsAfterDelete(startPara.bookmarks, start.offset, end.offset),
+          ),
+          anchorsAfterDelete(startPara.commentAnchors, start.offset, end.offset),
         ),
       );
       return start;
@@ -728,9 +762,12 @@ export function deleteRange(
       cell.col,
       cell.block,
       end.cell!.block - cell.block + 1,
-      setBookmarks(
-        { ...startPara, runs: normalizeRuns([...before, ...after]) },
-        mergedBookmarks(startPara, endPara, start.offset, end.offset),
+      setCommentAnchors(
+        setBookmarks(
+          { ...startPara, runs: normalizeRuns([...before, ...after]) },
+          mergedAnchors(startPara.bookmarks, endPara.bookmarks, start.offset, end.offset),
+        ),
+        mergedAnchors(startPara.commentAnchors, endPara.commentAnchors, start.offset, end.offset),
       ),
     );
     return start;
@@ -761,9 +798,12 @@ export function deleteRange(
     replaceParagraphAt(
       model,
       start,
-      setBookmarks(
-        { ...startBlock, runs: normalizeRuns([...before, ...after]) },
-        bookmarksAfterDelete(startBlock.bookmarks, start.offset, end.offset),
+      setCommentAnchors(
+        setBookmarks(
+          { ...startBlock, runs: normalizeRuns([...before, ...after]) },
+          anchorsAfterDelete(startBlock.bookmarks, start.offset, end.offset),
+        ),
+        anchorsAfterDelete(startBlock.commentAnchors, start.offset, end.offset),
       ),
     );
     return start;
@@ -781,21 +821,32 @@ export function deleteRange(
       : splitRuns(endBlock.runs, end.offset)[1];
   let replacement: Paragraph | null;
   if (head !== null && tail !== null) {
-    replacement = setBookmarks(
-      { ...(startBlock as Paragraph), runs: normalizeRuns([...head, ...tail]) },
-      mergedBookmarks(startBlock as Paragraph, endBlock as Paragraph, start.offset, end.offset),
+    const startPara = startBlock as Paragraph;
+    const endPara = endBlock as Paragraph;
+    replacement = setCommentAnchors(
+      setBookmarks(
+        { ...startPara, runs: normalizeRuns([...head, ...tail]) },
+        mergedAnchors(startPara.bookmarks, endPara.bookmarks, start.offset, end.offset),
+      ),
+      mergedAnchors(startPara.commentAnchors, endPara.commentAnchors, start.offset, end.offset),
     );
   } else if (head !== null) {
     const startPara = startBlock as Paragraph;
-    replacement = setBookmarks(
-      { ...startPara, runs: normalizeRuns(head) },
-      bookmarksAfterDelete(startPara.bookmarks, start.offset, blockLength(startPara)),
+    replacement = setCommentAnchors(
+      setBookmarks(
+        { ...startPara, runs: normalizeRuns(head) },
+        anchorsAfterDelete(startPara.bookmarks, start.offset, blockLength(startPara)),
+      ),
+      anchorsAfterDelete(startPara.commentAnchors, start.offset, blockLength(startPara)),
     );
   } else if (tail !== null) {
     const endPara = endBlock as Paragraph;
-    replacement = setBookmarks(
-      { ...endPara, runs: normalizeRuns(tail) },
-      bookmarksAfterDelete(endPara.bookmarks, 0, end.offset),
+    replacement = setCommentAnchors(
+      setBookmarks(
+        { ...endPara, runs: normalizeRuns(tail) },
+        anchorsAfterDelete(endPara.bookmarks, 0, end.offset),
+      ),
+      anchorsAfterDelete(endPara.commentAnchors, 0, end.offset),
     );
   } else {
     replacement = null;

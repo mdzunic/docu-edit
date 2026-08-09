@@ -144,6 +144,12 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     category: "Insert",
     bindings: [{ key: "d", mod: true, alt: true }],
   },
+  {
+    id: "insert.comment",
+    label: "Insert comment",
+    category: "Insert",
+    bindings: [{ key: "m", mod: true, alt: true }],
+  },
 
   // File
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },

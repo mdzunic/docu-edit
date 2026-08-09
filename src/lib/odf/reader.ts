@@ -10,6 +10,9 @@ import type {
   BorderSide,
   CellBorders,
   CellVerticalAlign,
+  CommentAnchor,
+  CommentMessage,
+  CommentThread,
   DefaultStyles,
   FieldKind,
   FieldSpec,
@@ -51,6 +54,8 @@ import { ZipError, unzip } from "../docx/zip";
 import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { sanitizeHref } from "../links";
+import { createMessageId, parseReplyParagraphText } from "../comments";
+import { blockText } from "../textEditing";
 import {
   clampListLevel,
   defaultMarkerStyle,
@@ -61,12 +66,14 @@ import {
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import {
+  DC_NAMESPACE,
   DRAW_NAMESPACE,
   OFFICE_NAMESPACE,
   STYLE_NAMESPACE,
   TABLE_NAMESPACE,
   TEXT_NAMESPACE,
   foAttr,
+  officeAttr,
   styleAttr,
   tableAttr,
   textAttr,
@@ -122,6 +129,9 @@ export interface ParsedOdtDocument {
   footnoteSettings?: NoteSettings;
   /** Endnote numbering settings from styles.xml's notes-configuration. */
   endnoteSettings?: NoteSettings;
+  /** Comment threads (SPEC-038) from office:annotation elements anywhere in
+   * the body; empty when the document holds none. */
+  comments: CommentThread[];
 }
 
 // Transient markup LibreOffice regenerates on every open (rendered
@@ -195,6 +205,13 @@ interface TextPiece {
 let odtNoteSink: NoteContent[] | null = null;
 let odtNoteCounter = 0;
 
+// SPEC-038: comment threads collected while the body parses — set by
+// parseOdt around its body walk, mirroring odtNoteSink; null outside a body
+// parse (header/footer content), where an annotation stays an opaque inline
+// exactly as before this spec.
+let odtCommentSink: CommentThread[] | null = null;
+let odtCommentCounter = 0;
+
 interface InlineAccumulator {
   pieces: TextPiece[];
   /** Last character emitted into the paragraph ("" at paragraph start) —
@@ -209,6 +226,8 @@ interface InlineAccumulator {
   mergeBarrier: boolean;
   /** Point bookmarks (SPEC-025), anchored at their character offset. */
   bookmarks: BookmarkAnchor[];
+  /** Comment anchor points (SPEC-038), anchored at their character offset. */
+  commentAnchors: CommentAnchor[];
 }
 
 function accumulatedTextLength(acc: InlineAccumulator): number {
@@ -284,6 +303,69 @@ function appendLiteralText(acc: InlineAccumulator, raw: string, formatting: RunF
   appendText(acc, text, formatting);
 }
 
+const UNKNOWN_COMMENT_AUTHOR = "Unknown";
+
+/** The stable model thread id for a source annotation's `office:name`
+ * (SPEC-038) — matched between its `office:annotation` start and
+ * `office:annotation-end`. Model ids from this reader (and the .docx
+ * reader's docxCommentId) are opaque strings, so no shared scheme is
+ * needed across formats — only within one parsed document. */
+function odtCommentId(name: string): string {
+  return `oc-${name}`;
+}
+
+/** Records an `office:annotation`/`office:annotation-end` as a comment
+ * anchor point at the current text offset (SPEC-038) — the ranged
+ * counterpart of the bookmark case above, except an annotation START also
+ * carries the whole comment's content (author, date, messages) inline,
+ * ODF's own shape (see documentModel.ts's CommentThread doc comment: ODF
+ * has no separate "comments part" the way `.docx` does). Outside a body
+ * parse (odtCommentSink === null — header/footer content) the element
+ * stays an opaque inline, the pre-SPEC-038 behaviour, mirroring the `note`
+ * case's same guard. */
+function collectAnnotation(el: Element, acc: InlineAccumulator, catalog: OdfStyleCatalog): void {
+  const isEnd = el.localName === "annotation-end";
+  if (odtCommentSink === null) {
+    acc.opaqueInlines.push({ xml: serializeElement(el), runIndex: acc.pieces.length });
+    acc.mergeBarrier = true;
+    return;
+  }
+  const name = officeAttr(el, "name");
+  if (isEnd) {
+    if (name) {
+      acc.commentAnchors.push({
+        threadId: odtCommentId(name),
+        boundary: "end",
+        offset: accumulatedTextLength(acc),
+      });
+    }
+    return;
+  }
+  odtCommentCounter += 1;
+  const threadId = odtCommentId(name ?? `annotation-${odtCommentCounter}`);
+  const creatorEl = firstChildElement(el, DC_NAMESPACE, "creator");
+  const dateEl = firstChildElement(el, DC_NAMESPACE, "date");
+  const author = (creatorEl?.textContent ?? "").trim() || UNKNOWN_COMMENT_AUTHOR;
+  const createdAt = (dateEl?.textContent ?? "").trim() || new Date(0).toISOString();
+  const texts = Array.from(el.children)
+    .filter((child) => child.namespaceURI === TEXT_NAMESPACE && child.localName === "p")
+    .map((pEl) => blockText(parseTextBlock(pEl, catalog, false)));
+  const messages: CommentMessage[] = [
+    { messageId: createMessageId(), author, text: texts[0] ?? "", createdAt },
+  ];
+  for (const text of texts.slice(1)) {
+    const reply = parseReplyParagraphText(text);
+    if (reply) {
+      messages.push({ messageId: createMessageId(), ...reply });
+      continue;
+    }
+    const last = messages[messages.length - 1];
+    last.text = last.text.length > 0 ? `${last.text}\n${text}` : text;
+  }
+  odtCommentSink.push({ threadId, resolved: false, messages });
+  acc.commentAnchors.push({ threadId, boundary: "start", offset: accumulatedTextLength(acc) });
+}
+
 function collectInline(
   container: Element,
   formatting: RunFormatting,
@@ -299,10 +381,17 @@ function collectInline(
       continue;
     }
     const el = node as Element;
+    if (
+      el.namespaceURI === OFFICE_NAMESPACE &&
+      (el.localName === "annotation" || el.localName === "annotation-end")
+    ) {
+      collectAnnotation(el, acc, catalog);
+      continue;
+    }
     if (el.namespaceURI !== TEXT_NAMESPACE) {
-      // Frames, annotations, change marks, … — unmodelled inline elements
-      // from other namespaces are preserved verbatim, anchored to their
-      // position between the runs (SPEC-008).
+      // Frames, change marks, … — unmodelled inline elements from other
+      // namespaces are preserved verbatim, anchored to their position
+      // between the runs (SPEC-008).
       acc.opaqueInlines.push({ xml: serializeElement(el), runIndex: acc.pieces.length });
       acc.mergeBarrier = true;
       continue;
@@ -433,7 +522,14 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   const styleName = textAttr(el, "style-name") ?? undefined;
   const resolved = resolveParagraphStyle(catalog, styleName);
 
-  const acc: InlineAccumulator = { pieces: [], lastChar: "", opaqueInlines: [], mergeBarrier: false, bookmarks: [] };
+  const acc: InlineAccumulator = {
+    pieces: [],
+    lastChar: "",
+    opaqueInlines: [],
+    mergeBarrier: false,
+    bookmarks: [],
+    commentAnchors: [],
+  };
   collectInline(el, resolved.runFormatting, catalog, acc);
   // Each run gets its own formatting object — runs must stay independently
   // mutable for the editing specs even where they shared a resolved style.
@@ -459,6 +555,9 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   }
   if (acc.bookmarks.length > 0) {
     paragraph.bookmarks = acc.bookmarks;
+  }
+  if (acc.commentAnchors.length > 0) {
+    paragraph.commentAnchors = acc.commentAnchors;
   }
   if (isHeading) {
     // text:outline-level is 1-based; per ODF a text:h without one is level 1
@@ -489,7 +588,14 @@ function collectInlineSegment(
   catalog: OdfStyleCatalog,
   ownerDocument: Document,
 ): InlineAccumulator {
-  const acc: InlineAccumulator = { pieces: [], lastChar: "", opaqueInlines: [], mergeBarrier: false, bookmarks: [] };
+  const acc: InlineAccumulator = {
+    pieces: [],
+    lastChar: "",
+    opaqueInlines: [],
+    mergeBarrier: false,
+    bookmarks: [],
+    commentAnchors: [],
+  };
   const temp = ownerDocument.createElementNS(TEXT_NAMESPACE, "text:tmp");
   for (const node of nodes) {
     temp.appendChild(node.cloneNode(true));
@@ -636,7 +742,12 @@ function parseBodyTextBlockOrSplit(
     const runs: Run[] = acc.pieces
       .filter((piece) => piece.text.length > 0)
       .map((piece) => ({ text: piece.text, formatting: { ...piece.formatting }, ...(piece.field ? { field: piece.field } : {}) }));
-    if (runs.length === 0 && acc.opaqueInlines.length === 0 && acc.bookmarks.length === 0) {
+    if (
+      runs.length === 0 &&
+      acc.opaqueInlines.length === 0 &&
+      acc.bookmarks.length === 0 &&
+      acc.commentAnchors.length === 0
+    ) {
       return;
     }
     const formatting: ParagraphFormatting = { ...resolved.paragraphFormatting };
@@ -650,6 +761,9 @@ function parseBodyTextBlockOrSplit(
     }
     if (acc.bookmarks.length > 0) {
       paragraph.bookmarks = acc.bookmarks;
+    }
+    if (acc.commentAnchors.length > 0) {
+      paragraph.commentAnchors = acc.commentAnchors;
     }
     if (headingLevel !== undefined) {
       paragraph.headingLevel = headingLevel;
@@ -1637,6 +1751,11 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   const notes: NoteContent[] = [];
   odtNoteSink = notes;
   odtNoteCounter = 0;
+  // SPEC-038: comments anywhere in the body walk collect here (see
+  // odtCommentSink).
+  const comments: CommentThread[] = [];
+  odtCommentSink = comments;
+  odtCommentCounter = 0;
   for (const child of Array.from(textRoot.children)) {
     if (child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h")) {
       const signals = paragraphAutoStyleSignals(catalog, textAttr(child, "style-name") ?? undefined);
@@ -1731,6 +1850,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   }
   finishSection();
   odtNoteSink = null;
+  odtCommentSink = null;
 
   const fallback = createDefaultStyles();
   // The document default page geometry is the master the body actually
@@ -1832,6 +1952,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     media: Array.from(mediaById.values()),
     listDefinitions: catalog.listRead?.definitions ?? [],
     notes,
+    comments,
   };
   const footnoteSettings = parseOdtNoteSettings(stylesDoc, "footnote");
   if (footnoteSettings) {
