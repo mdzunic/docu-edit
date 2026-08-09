@@ -111,6 +111,20 @@ export function parseRunProperties(rPr: Element | undefined): RunFormatting {
     formatting.vertAlign = vertAlignVal;
   }
 
+  // SPEC-035: language and "do not check spelling". w:lang carries three
+  // attributes (val/eastAsia/bidi); only w:val is modelled, matching the
+  // one-language-per-run scope of the spell checker.
+  const lang = firstChildElement(rPr, WORD_NAMESPACE, "lang");
+  const langVal = lang ? attr(lang, "val") : null;
+  if (langVal) {
+    formatting.lang = langVal;
+  }
+
+  const noProof = parseBooleanToggle(firstChildElement(rPr, WORD_NAMESPACE, "noProof"));
+  if (noProof !== undefined) {
+    formatting.noProof = noProof;
+  }
+
   return formatting;
 }
 

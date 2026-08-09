@@ -2,6 +2,7 @@
 // and writes. Plain data only (no classes, no functions on the objects) so
 // `JSON.stringify`/`JSON.parse` round-trips it without loss — that property
 // is what SPEC-006/007 (save) and SPEC-004/005 (open) will rely on.
+import { DEFAULT_LANGUAGE } from "./language";
 
 /** Sub/superscript (`w:vertAlign` / `style:text-position`). Mutually
  * exclusive by construction: one field holds either value (SPEC-013). */
@@ -37,6 +38,21 @@ export interface RunFormatting {
   /** Internal link target (SPEC-025): a bookmark name or a derived heading
    * anchor (see lib/links.ts) in this document. */
   linkAnchor?: string;
+  /** This run's language (SPEC-035), e.g. "en-US" — see lib/language.ts.
+   * Absent means the document's default language (`DefaultStyles.language`)
+   * applies; explicitly set here only when a run/style diverges from it, so
+   * opening a document does not stamp every run with the document default
+   * (see docx/styles.ts's and odf/styles.ts's docDefault "lift-out", which
+   * keeps this field absent on the common case). Drives dictionary
+   * selection, the rendered `lang` attribute for assistive technology, and
+   * round-trips as `w:lang` (.docx) / `fo:language`+`fo:country` (.odt). */
+  lang?: string;
+  /** "Do not check spelling" (SPEC-035 AC-11): when true, the spell checker
+   * skips this run entirely regardless of language/dictionary availability.
+   * Round-trips as `w:noProof` (.docx); .odt has no equivalent flag, so it
+   * maps to the special `fo:language="zxx"` ("no linguistic content", see
+   * lib/language.ts's ODF_NO_LINGUISTIC_CONTENT) convention instead. */
+  noProof?: boolean;
 }
 
 /** The run-formatting fields SPEC-012's toolbar toggles: bold, italic,
@@ -64,6 +80,13 @@ export interface PendingFormat {
   color?: string;
   highlight?: string | false;
   vertAlign?: VerticalAlignment | false;
+  /** SPEC-035's language selector, applied to a real selection via
+   * applyFormat. */
+  lang?: string;
+  /** SPEC-035's "Do not check spelling"; `false` clears it (same
+   * delete-the-key semantics as the boolean character formats — see
+   * withFormat), not an explicit off. */
+  noProof?: boolean;
 }
 
 /** Typed pass-through for a character-format key coming from a `.vue`
@@ -1111,6 +1134,10 @@ export interface DefaultStyles {
   margins: Margins;
   fontFamily: string;
   fontSizePt: number;
+  /** The document's default language (SPEC-035), e.g. "en-US" — see
+   * lib/language.ts. Absent means the product default (DEFAULT_LANGUAGE);
+   * a run's own `RunFormatting.lang` overrides this for its own text. */
+  language?: string;
 }
 
 /** The source format a document was opened from, if any — drives the format
@@ -1330,6 +1357,7 @@ export function createDefaultStyles(): DefaultStyles {
     margins: { ...STANDARD_MARGINS },
     fontFamily: DEFAULT_FONT_FAMILY,
     fontSizePt: DEFAULT_FONT_SIZE_PT,
+    language: DEFAULT_LANGUAGE,
   };
 }
 

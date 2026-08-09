@@ -1913,6 +1913,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     ...fallbackStyles,
     fontFamily: styleCatalog.docDefaultRunFormatting.fontFamily ?? fallbackStyles.fontFamily,
     fontSizePt: styleCatalog.docDefaultRunFormatting.fontSizePt ?? fallbackStyles.fontSizePt,
+    language: styleCatalog.docDefaultLanguage ?? fallbackStyles.language,
   });
 
   const sections: Section[] = rawSections.map((raw) => {

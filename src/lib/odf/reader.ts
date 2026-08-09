@@ -1900,6 +1900,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     margins: leadingGeometry?.margins ?? catalog.margins ?? fallback.margins,
     fontFamily: catalog.defaultRunFormatting.fontFamily ?? fallback.fontFamily,
     fontSizePt: catalog.defaultRunFormatting.fontSizePt ?? fallback.fontSizePt,
+    language: catalog.defaultLanguage ?? fallback.language,
   };
 
   // content.xml and meta.xml are rebuilt on save (body/title/timestamp);

@@ -27,6 +27,12 @@ export interface RenderRun {
   noteId?: string;
   /** The mark's hover tooltip: the note's text (SPEC-031 AC-14). */
   title?: string;
+  /** This run's effective language (SPEC-035 AC-14) — the run's own
+   * `RunFormatting.lang`, else the document default, resolved once here so
+   * the renderer never re-derives it. Bound as the DOM `lang` attribute for
+   * assistive technology; always set, unlike the model field it derives
+   * from (see lib/language.ts's effectiveLanguage). */
+  lang: string;
 }
 
 /** One page item's precomputed rendering — a paragraph (possibly a slice of

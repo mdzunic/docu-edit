@@ -72,9 +72,13 @@ const TAB_JC_VALUES = new Set(["left", "right", "center", "decimal"]);
 const TAB_LEADER_CHAR_VALUES = new Set(["none", "dot", "hyphen", "underscore"]);
 // ST_FldCharType (SPEC-033's TOC/PAGEREF complex fields).
 const FLD_CHAR_TYPES = new Set(["begin", "separate", "end"]);
-// CT_RPr's schema order runs "… sz, highlight, u, effect, bdr, shd,
-// fitText, vertAlign", so shd follows u and vertAlign follows shd.
-const RPR_SEQUENCE = ["rFonts", "b", "i", "strike", "color", "sz", "highlight", "u", "shd", "vertAlign"];
+// CT_RPr's schema order runs "… strike, …, noProof, …, color, spacing, …,
+// sz, …, highlight, u, effect, bdr, shd, fitText, vertAlign, rtl, cs, em,
+// lang, …" — noProof precedes color, lang follows vertAlign (SPEC-035; the
+// rtl/cs/em slots between them are never emitted by this writer).
+const RPR_SEQUENCE = [
+  "rFonts", "b", "i", "strike", "noProof", "color", "sz", "highlight", "u", "shd", "vertAlign", "lang",
+];
 // CT_SectPr puts w:type before the page geometry (SPEC-028 AC-31); w:cols
 // follows w:pgMar in the schema (SPEC-030).
 const SECTPR_SEQUENCE = ["type", "pgSz", "pgMar", "cols"];
@@ -181,10 +185,13 @@ function checkRunProperties(rPr: Element, context: string, violations: string[])
         checkAttr(child, "val", (v) => ["baseline", "subscript", "superscript"].includes(v),
           "an ST_VerticalAlignRun value", context, violations);
         break;
+      case "lang":
+        checkAttr(child, "val", (v) => v.length > 0, "a non-empty language tag", context, violations);
+        break;
       case "rFonts":
         break;
       default:
-        // b/i/strike: w:val, when present, must be an ST_OnOff value.
+        // b/i/strike/noProof: w:val, when present, must be an ST_OnOff value.
         checkAttr(child, "val", (v) => ["0", "1", "true", "false", "on", "off"].includes(v),
           "an ST_OnOff value", context, violations, false);
     }

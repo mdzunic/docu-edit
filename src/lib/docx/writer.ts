@@ -152,11 +152,11 @@ const JC_VALUES: Record<ParagraphAlignment, string> = {
 
 function runPropertiesXml(formatting: RunFormatting): string {
   const parts: string[] = [];
-  // Emitted in CT_RPr sequence order: rFonts, b, i, strike, color, sz,
-  // highlight, u, shd, vertAlign. Explicit false values are written as
-  // w:val="0"/"none" — the model only holds false where the source
-  // explicitly switched the property off, and dropping that would change
-  // the re-opened model.
+  // Emitted in CT_RPr sequence order: rFonts, b, i, strike, noProof, color,
+  // sz, highlight, u, shd, vertAlign, lang. Explicit false values are
+  // written as w:val="0"/"none" — the model only holds false where the
+  // source explicitly switched the property off, and dropping that would
+  // change the re-opened model.
   if (formatting.fontFamily !== undefined) {
     const family = escapeXml(formatting.fontFamily);
     parts.push(`<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>`);
@@ -169,6 +169,10 @@ function runPropertiesXml(formatting: RunFormatting): string {
   }
   if (formatting.strikethrough !== undefined) {
     parts.push(formatting.strikethrough ? "<w:strike/>" : '<w:strike w:val="0"/>');
+  }
+  // SPEC-035: "do not check spelling".
+  if (formatting.noProof !== undefined) {
+    parts.push(formatting.noProof ? "<w:noProof/>" : '<w:noProof w:val="0"/>');
   }
   const color = cssColorToOoxml(formatting.color);
   if (color !== undefined) {
@@ -207,6 +211,13 @@ function runPropertiesXml(formatting: RunFormatting): string {
   }
   if (formatting.vertAlign !== undefined) {
     parts.push(`<w:vertAlign w:val="${formatting.vertAlign}"/>`);
+  }
+  // SPEC-035: run language, e.g. from the language selector applied to a
+  // selection, or a source style/run that already diverged from the
+  // document default (see docx/styles.ts's docDefault lift-out — the
+  // document default itself is written into docDefaults, not here).
+  if (formatting.lang !== undefined) {
+    parts.push(`<w:lang w:val="${escapeXml(formatting.lang)}"/>`);
   }
   return parts.length > 0 ? `<w:rPr>${parts.join("")}</w:rPr>` : "";
 }
@@ -1733,7 +1744,7 @@ function styleDefinitionXml(definition: NamedStyle, isDefault: boolean): string 
  * style's own formatting when a definition exists (the catalogue, or the
  * built-in set for ids applied in the editor), name-only otherwise. */
 export function buildStylesXml(model: DocumentModel): string {
-  const { fontFamily, fontSizePt } = model.defaultStyles;
+  const { fontFamily, fontSizePt, language } = model.defaultStyles;
   const family = escapeXml(fontFamily);
 
   // Definitions come from the model's catalogue alone — never the built-in
@@ -1785,6 +1796,7 @@ export function buildStylesXml(model: DocumentModel): string {
     "<w:docDefaults><w:rPrDefault><w:rPr>" +
     `<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>` +
     `<w:sz w:val="${ptToHalfPoints(fontSizePt)}"/>` +
+    (language !== undefined ? `<w:lang w:val="${escapeXml(language)}"/>` : "") +
     "</w:rPr></w:rPrDefault></w:docDefaults>" +
     styles +
     "</w:styles>"

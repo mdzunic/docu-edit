@@ -90,6 +90,7 @@ function componentFor(entry = noRenderEntries()[0]) {
           :data-note-id="run.noteId"
           :title="run.title"
           :style="run.styleObj"
+          :lang="run.lang"
         >{{ run.text }}</span>
         <a
           v-else-if="run.href && !run.segments"
@@ -98,6 +99,7 @@ function componentFor(entry = noRenderEntries()[0]) {
           :target="run.target"
           :rel="run.rel"
           :style="run.styleObj"
+          :lang="run.lang"
         >{{ run.text }}</a>
         <a
           v-else-if="run.href"
@@ -106,6 +108,7 @@ function componentFor(entry = noRenderEntries()[0]) {
           :target="run.target"
           :rel="run.rel"
           :style="run.styleObj"
+          :lang="run.lang"
         ><template
           v-for="(segment, segmentIndex) in run.segments"
           :key="segmentIndex"
@@ -116,6 +119,7 @@ function componentFor(entry = noRenderEntries()[0]) {
         <span
           v-else-if="run.segments"
           :style="run.styleObj"
+          :lang="run.lang"
         ><template
           v-for="(segment, segmentIndex) in run.segments"
           :key="segmentIndex"
@@ -126,6 +130,7 @@ function componentFor(entry = noRenderEntries()[0]) {
         <span
           v-else
           :style="run.styleObj"
+          :lang="run.lang"
         >{{ run.text }}</span>
       </template>
     </template>
