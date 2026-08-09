@@ -39,6 +39,16 @@ function toggle() {
   }
 }
 
+// Opened by the Format menu's "Highlight colour" entry (SPEC-049): the
+// control is kept in the toolbar but also reachable from the menu.
+function openMenu() {
+  if (!props.disabled) {
+    open.value = true;
+  }
+}
+
+defineExpose({ openMenu });
+
 /** Emits the OOXML colour name, or false for "No colour" (SPEC-013: an
  * explicit off, not an absence). */
 function pick(name = "") {

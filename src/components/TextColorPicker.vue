@@ -48,6 +48,18 @@ function toggle() {
   customInvalid.value = false;
 }
 
+// Opened by the Format menu's "Text colour" entry (SPEC-049): the control is
+// kept in the toolbar but also reachable from the menu.
+function openMenu() {
+  if (!props.disabled) {
+    open.value = true;
+    customDraft.value = "";
+    customInvalid.value = false;
+  }
+}
+
+defineExpose({ openMenu });
+
 function pick(hex = "") {
   emit("select", hex);
   open.value = false;

@@ -213,6 +213,15 @@ onUnmounted(() => {
       </div>
     </header>
     <StorageWarningBanner />
+    <!-- The menu bar (SPEC-049) sits between the app bar and the toolbar
+         strip. Only rendered when a view supplies one, so the home and
+         open-from-URL shells keep their previous layout. -->
+    <div
+      v-if="$slots.menubar"
+      class="menubar-region"
+    >
+      <slot name="menubar" />
+    </div>
     <div
       class="toolbar"
       role="toolbar"
@@ -314,6 +323,14 @@ h1.document-title[role="button"] {
   border-radius: 3px;
   background: rgb(255 255 255 / 0.15);
   color: inherit;
+}
+
+/* The menu bar's own row. It is flush against the app bar above and the
+   toolbar strip below; the MenuBar component paints its own background and
+   border, so this wrapper only reserves the row and never clips the popups
+   that hang out of it. */
+.menubar-region {
+  flex: none;
 }
 
 /* A single non-wrapping row: contents that overflow the viewport width are
