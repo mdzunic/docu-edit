@@ -9,6 +9,7 @@ import { computed } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
 import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
+import DocHeadingToggle from "./DocHeadingToggle.vue";
 import { asRenderEntry, noRenderEntries } from "../lib/pageRender";
 
 const props = defineProps({
@@ -17,7 +18,7 @@ const props = defineProps({
   cellRange: { type: Object, default: null },
 });
 
-defineEmits(["image-select", "toc-action"]);
+defineEmits(["image-select", "toc-action", "outline-toggle"]);
 
 function componentFor(entry = noRenderEntries()[0]) {
   if (entry.kind === "table") {
@@ -64,6 +65,11 @@ const entry = computed(() => asRenderEntry(props.entry));
     @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : undefined"
     @action="entry.kind === 'toc' ? $emit('toc-action', $event) : undefined"
   >
+    <DocHeadingToggle
+      v-if="entry.outlineToggle"
+      :collapsed="entry.outlineCollapsed"
+      @toggle="$emit('outline-toggle', entry.dataSection, entry.dataBlock)"
+    />
     <template v-if="entry.runs && entry.runs.length > 0">
       <template
         v-for="run in entry.runs"

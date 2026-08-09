@@ -36,6 +36,8 @@ import HighlightPicker from "../components/HighlightPicker.vue";
 import MultilevelListMenu from "../components/MultilevelListMenu.vue";
 import NotesMenu from "../components/NotesMenu.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
+import OutlinePane from "../components/OutlinePane.vue";
+import ViewMenu from "../components/ViewMenu.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -65,6 +67,15 @@ import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { documentExists } from "../lib/documents";
+import {
+  activeHeadingAnchor,
+  blockKey,
+  buildOutline,
+  emptyKeySet,
+  hiddenBlockAddresses,
+  moveHeading,
+} from "../lib/outline";
+import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../lib/outlinePane";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
 import { noConversionReport } from "../lib/opaque";
@@ -1901,6 +1912,9 @@ async function contextMenuPaste() {
 function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   const model = doc.value;
   setWordCountSelection(range.start, range.end);
+  // The caret's focus end drives the outline's active-heading highlight
+  // (SPEC-037 AC-3, AC-4) — a reactive mirror of the plain `caret` variable.
+  caretPosition.value = range.end;
   if (!model || !range.start || !range.end) {
     formatStates.value = EMPTY_FORMAT_STATES;
     formatValues.value = emptyToolbarFormatValues();
@@ -3228,6 +3242,30 @@ function handlePageMouseDown(event = new MouseEvent("mousedown")) {
 
 // ---------------------------------------------------------------------------
 
+// --- document outline navigator (SPEC-037) ---------------------------------
+// The caret's focus end, mirrored reactively (the live `caret` is a plain
+// variable) so the pane's active-heading highlight tracks caret and scroll
+// (AC-3, AC-4). Updated in updateCaretStatus.
+const caretPosition = ref(noCaret());
+// Per-user open/closed state, persisted to localStorage (AC-14) and open by
+// default for a new user (AC-15).
+const outlinePaneOpen = ref(loadOutlinePaneOpen());
+watch(outlinePaneOpen, (open) => saveOutlinePaneOpen(open));
+// Transient view state, never part of the model: which pane tree nodes are
+// collapsed (AC-7, AC-8), and which body headings are collapsed in the
+// document body (AC-16), keyed by "section:block". Body collapse hides blocks
+// from layout only — it is never written to the file (AC-17).
+const outlinePaneCollapsed = ref(emptyKeySet());
+const collapsedHeadings = ref(emptyKeySet());
+
+const outlineTree = computed(() => (doc.value ? buildOutline(doc.value) : []));
+const activeOutlineAnchor = computed(() =>
+  doc.value ? activeHeadingAnchor(doc.value, caretPosition.value) : null,
+);
+const hiddenBodyBlocks = computed(() =>
+  doc.value ? hiddenBlockAddresses(doc.value, collapsedHeadings.value) : emptyKeySet(),
+);
+
 // --- pagination (SPEC-028) --------------------------------------------------
 // The controller owns measurement; every doc.value replacement re-lays-out
 // synchronously (flush: "sync") so the rendered pages always agree with the
@@ -3237,7 +3275,11 @@ const pagination = usePagination(
   () => doc.value,
   () => contentRoot.value,
   (noteId) => noteLabelsMap.value.get(noteId) ?? "",
+  () => hiddenBodyBlocks.value,
 );
+// A body-heading collapse/expand changes only the hidden set, not the model,
+// so re-lay-out explicitly when it changes (AC-16).
+watch(hiddenBodyBlocks, () => pagination.schedule());
 const paginationPages = pagination.pages;
 const paginationBusy = pagination.busy;
 const paginationState = pagination.state;
@@ -3644,12 +3686,78 @@ const { pagedViews } = usePaginationView({
   editable,
   cellSelection,
   imageSelection,
+  collapsedHeadings,
   remount,
   realizedSticky,
   hfRemountEpoch,
   noteRemountEpoch,
   tocPageNumberFor,
 });
+
+// --- outline navigator handlers (SPEC-037) ---------------------------------
+/** View menu toggle / persistence of the pane's open state (AC-13, AC-14). */
+function toggleOutlinePane() {
+  outlinePaneOpen.value = !outlinePaneOpen.value;
+}
+
+/** Clicking or Enter on an outline entry (AC-5, AC-6, AC-19): jump to the
+ * heading — place the caret at its start and scroll it into view. Reuses the
+ * same anchor-jump the TOC and internal links use. */
+function handleOutlineNavigate(anchor = "") {
+  jumpToAnchor(anchor);
+}
+
+/** Collapse/expand a node in the pane (AC-7, AC-8) — pane-only view state. */
+function handleOutlineToggleCollapse(anchor = "") {
+  const next = new Set(outlinePaneCollapsed.value);
+  if (next.has(anchor)) {
+    next.delete(anchor);
+  } else {
+    next.add(anchor);
+  }
+  outlinePaneCollapsed.value = next;
+}
+
+/** Drop of a dragged outline entry (AC-9, AC-10, AC-11): move the heading and
+ * all its content as ONE undo step. moveHeading returns null for a rejected
+ * drop (different level, non-sibling, onto itself), so no edit is recorded. */
+function handleOutlineMove(payload = { source: "", target: "", position: "before" }) {
+  const model = doc.value;
+  if (!model || !editable.value) {
+    return;
+  }
+  const before = currentSelection(contentRoot.value);
+  // Narrow the payload's position to the DropPosition literal union (espree
+  // bars a type annotation on the handler's own parameter).
+  const position = payload.position === "after" ? "after" : "before";
+  const result = moveHeading(model, payload.source, payload.target, position);
+  if (result) {
+    applyEdit(result, before, "move heading");
+  }
+}
+
+/** The body chevron next to a heading (AC-16): collapse/expand its content.
+ * Keyed by "section:block"; purely transient (AC-17). When collapsing the
+ * section the caret sits in, move the caret to the heading so it never hides
+ * behind collapsed content. */
+function handleBodyHeadingToggle(section = 0, block = 0) {
+  const model = doc.value;
+  if (!model) {
+    return;
+  }
+  const key = blockKey(section, block);
+  const next = new Set(collapsedHeadings.value);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  collapsedHeadings.value = next;
+  const hidden = hiddenBlockAddresses(model, next);
+  if (caret && hidden.has(blockKey(caret.section, caret.block))) {
+    applyCaretMove({ section, block, offset: 0 });
+  }
+}
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
 function handleInsertBreak(kind = "") {
@@ -3838,6 +3946,10 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       </div>
     </template>
     <template #toolbar>
+      <ViewMenu
+        :outline-open="outlinePaneOpen"
+        @toggle-outline="toggleOutlinePane"
+      />
       <UndoRedoControls
         v-if="editable"
         :can-undo="undoRedoState.canUndo"
@@ -4109,274 +4221,290 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         Discard
       </button>
     </div>
-    <div class="page-wrap">
+    <div class="editor-layout">
       <div
-        v-if="findVisible"
-        class="find-bar-dock print-exclude"
+        v-if="outlinePaneOpen"
+        class="outline-dock"
       >
-        <FindBar
-          :visible="findVisible"
-          :expanded="findExpanded"
-          :query="findQuery"
-          :replace-text="findReplaceText"
-          :match-case="findMatchCase"
-          :whole-words="findWholeWords"
-          :use-regex="findUseRegex"
-          :match-count="findMatchesRef.length"
-          :current-index="findCurrentIndex"
-          :error="findError"
-          :hint="findHint"
-          @update:query="findQuery = $event"
-          @update:replace-text="findReplaceText = $event"
-          @update:match-case="findMatchCase = $event"
-          @update:whole-words="findWholeWords = $event"
-          @update:use-regex="findUseRegex = $event"
-          @toggle-expand="toggleFindExpand"
-          @next="findNext"
-          @prev="findPrev"
-          @replace="replaceCurrent"
-          @replace-all="replaceAll"
-          @close="closeFind(true)"
+        <OutlinePane
+          :outline="outlineTree"
+          :collapsed="outlinePaneCollapsed"
+          :active-anchor="activeOutlineAnchor ?? undefined"
+          @navigate="handleOutlineNavigate"
+          @toggle="handleOutlineToggleCollapse"
+          @move="handleOutlineMove"
         />
       </div>
-      <DocumentRuler
-        v-if="doc.showRuler !== false"
-        :page-width-cm="rulerPageWidthCm"
-        :margin-left-cm="rulerMarginLeftCm"
-        :margin-right-cm="rulerMarginRightCm"
-        :formatting="paragraphFormatting"
-        :columns="rulerColumns"
-        :tab-stops="paragraphFormatting.tabStops || []"
-        :disabled="!editable"
-        @update="handleRulerUpdate"
-        @open-tabs-dialog="openTabsDialog"
-      />
-      <div
-        ref="pageRef"
-        class="pages"
-        data-testid="document-pages"
-        :data-pagination-state="paginationState"
-        @mousedown="handlePageMouseDown"
-        @mouseover="handlePageMouseOver"
-      >
+      <div class="page-wrap">
         <div
           v-if="findVisible"
-          class="find-highlight-layer print-exclude"
-          data-testid="find-highlights"
-          aria-hidden="true"
+          class="find-bar-dock print-exclude"
         >
-          <div
-            v-for="(rect, index) in findHighlightRects"
-            :key="index"
-            class="find-highlight"
-            :class="{ current: rect.current }"
-            :data-current="rect.current ? 'true' : 'false'"
-            :style="{
-              left: `${rect.left}px`,
-              top: `${rect.top}px`,
-              width: `${rect.width}px`,
-              height: `${rect.height}px`,
-            }"
+          <FindBar
+            :visible="findVisible"
+            :expanded="findExpanded"
+            :query="findQuery"
+            :replace-text="findReplaceText"
+            :match-case="findMatchCase"
+            :whole-words="findWholeWords"
+            :use-regex="findUseRegex"
+            :match-count="findMatchesRef.length"
+            :current-index="findCurrentIndex"
+            :error="findError"
+            :hint="findHint"
+            @update:query="findQuery = $event"
+            @update:replace-text="findReplaceText = $event"
+            @update:match-case="findMatchCase = $event"
+            @update:whole-words="findWholeWords = $event"
+            @update:use-regex="findUseRegex = $event"
+            @toggle-expand="toggleFindExpand"
+            @next="findNext"
+            @prev="findPrev"
+            @replace="replaceCurrent"
+            @replace-all="replaceAll"
+            @close="closeFind(true)"
           />
         </div>
+        <DocumentRuler
+          v-if="doc.showRuler !== false"
+          :page-width-cm="rulerPageWidthCm"
+          :margin-left-cm="rulerMarginLeftCm"
+          :margin-right-cm="rulerMarginRightCm"
+          :formatting="paragraphFormatting"
+          :columns="rulerColumns"
+          :tab-stops="paragraphFormatting.tabStops || []"
+          :disabled="!editable"
+          @update="handleRulerUpdate"
+          @open-tabs-dialog="openTabsDialog"
+        />
         <div
-          v-if="tableHover"
-          class="table-handles print-exclude"
-          data-testid="table-handles"
+          ref="pageRef"
+          class="pages"
+          data-testid="document-pages"
+          :data-pagination-state="paginationState"
+          @mousedown="handlePageMouseDown"
+          @mouseover="handlePageMouseOver"
         >
-          <!-- Column handles above the table: an insert button at every
+          <div
+            v-if="findVisible"
+            class="find-highlight-layer print-exclude"
+            data-testid="find-highlights"
+            aria-hidden="true"
+          >
+            <div
+              v-for="(rect, index) in findHighlightRects"
+              :key="index"
+              class="find-highlight"
+              :class="{ current: rect.current }"
+              :data-current="rect.current ? 'true' : 'false'"
+              :style="{
+                left: `${rect.left}px`,
+                top: `${rect.top}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+              }"
+            />
+          </div>
+          <div
+            v-if="tableHover"
+            class="table-handles print-exclude"
+            data-testid="table-handles"
+          >
+            <!-- Column handles above the table: an insert button at every
                column boundary, a delete button over every column centre
                (AC-20, AC-21). -->
-          <button
-            v-for="boundary in tableHover.cols.length + 1"
-            :key="`ci${boundary}`"
-            type="button"
-            class="table-handle insert"
-            :data-testid="`table-handle-insert-col-${boundary - 1}`"
-            :aria-label="`Insert column at position ${boundary}`"
-            :style="{
-              left: `${(boundary - 1 < tableHover.cols.length
-                ? tableHover.cols[boundary - 1].left
-                : tableHover.left + tableHover.width) - 8}px`,
-              top: `${tableHover.top - 20}px`,
-            }"
-            @mousedown.prevent
-            @click="handleTableHandle('insert-col', boundary - 1)"
-          >
-            +
-          </button>
-          <button
-            v-for="(col, colIndex) in tableHover.cols"
-            :key="`cd${colIndex}`"
-            type="button"
-            class="table-handle delete"
-            :data-testid="`table-handle-delete-col-${colIndex}`"
-            :aria-label="`Delete column ${colIndex + 1}`"
-            :style="{
-              left: `${col.left + col.width / 2 - 8}px`,
-              top: `${tableHover.top - 20}px`,
-            }"
-            @mousedown.prevent
-            @click="handleTableHandle('delete-col', colIndex)"
-          >
-            ×
-          </button>
-          <!-- Row handles left of the table: same pattern. -->
-          <button
-            v-for="boundary in tableHover.rows.length + 1"
-            :key="`ri${boundary}`"
-            type="button"
-            class="table-handle insert"
-            :data-testid="`table-handle-insert-row-${boundary - 1}`"
-            :aria-label="`Insert row at position ${boundary}`"
-            :style="{
-              left: `${tableHover.left - 20}px`,
-              top: `${(boundary - 1 < tableHover.rows.length
-                ? tableHover.rows[boundary - 1].top
-                : tableHover.top + tableHover.height) - 8}px`,
-            }"
-            @mousedown.prevent
-            @click="handleTableHandle('insert-row', boundary - 1)"
-          >
-            +
-          </button>
-          <button
-            v-for="(row, rowIndex) in tableHover.rows"
-            :key="`rd${rowIndex}`"
-            type="button"
-            class="table-handle delete"
-            :data-testid="`table-handle-delete-row-${rowIndex}`"
-            :aria-label="`Delete row ${rowIndex + 1}`"
-            :style="{
-              left: `${tableHover.left - 20}px`,
-              top: `${row.top + row.height / 2 - 8}px`,
-            }"
-            @mousedown.prevent
-            @click="handleTableHandle('delete-row', rowIndex)"
-          >
-            ×
-          </button>
-          <!-- Column/row resize strips (SPEC-023 AC-1..5): a thin draggable
+            <button
+              v-for="boundary in tableHover.cols.length + 1"
+              :key="`ci${boundary}`"
+              type="button"
+              class="table-handle insert"
+              :data-testid="`table-handle-insert-col-${boundary - 1}`"
+              :aria-label="`Insert column at position ${boundary}`"
+              :style="{
+                left: `${(boundary - 1 < tableHover.cols.length
+                  ? tableHover.cols[boundary - 1].left
+                  : tableHover.left + tableHover.width) - 8}px`,
+                top: `${tableHover.top - 20}px`,
+              }"
+              @mousedown.prevent
+              @click="handleTableHandle('insert-col', boundary - 1)"
+            >
+              +
+            </button>
+            <button
+              v-for="(col, colIndex) in tableHover.cols"
+              :key="`cd${colIndex}`"
+              type="button"
+              class="table-handle delete"
+              :data-testid="`table-handle-delete-col-${colIndex}`"
+              :aria-label="`Delete column ${colIndex + 1}`"
+              :style="{
+                left: `${col.left + col.width / 2 - 8}px`,
+                top: `${tableHover.top - 20}px`,
+              }"
+              @mousedown.prevent
+              @click="handleTableHandle('delete-col', colIndex)"
+            >
+              ×
+            </button>
+            <!-- Row handles left of the table: same pattern. -->
+            <button
+              v-for="boundary in tableHover.rows.length + 1"
+              :key="`ri${boundary}`"
+              type="button"
+              class="table-handle insert"
+              :data-testid="`table-handle-insert-row-${boundary - 1}`"
+              :aria-label="`Insert row at position ${boundary}`"
+              :style="{
+                left: `${tableHover.left - 20}px`,
+                top: `${(boundary - 1 < tableHover.rows.length
+                  ? tableHover.rows[boundary - 1].top
+                  : tableHover.top + tableHover.height) - 8}px`,
+              }"
+              @mousedown.prevent
+              @click="handleTableHandle('insert-row', boundary - 1)"
+            >
+              +
+            </button>
+            <button
+              v-for="(row, rowIndex) in tableHover.rows"
+              :key="`rd${rowIndex}`"
+              type="button"
+              class="table-handle delete"
+              :data-testid="`table-handle-delete-row-${rowIndex}`"
+              :aria-label="`Delete row ${rowIndex + 1}`"
+              :style="{
+                left: `${tableHover.left - 20}px`,
+                top: `${row.top + row.height / 2 - 8}px`,
+              }"
+              @mousedown.prevent
+              @click="handleTableHandle('delete-row', rowIndex)"
+            >
+              ×
+            </button>
+            <!-- Column/row resize strips (SPEC-023 AC-1..5): a thin draggable
                strip along each column's right edge (spanning the table's
                height) and each row's bottom edge (spanning its width). -->
+            <div
+              v-for="(col, colIndex) in tableHover.cols"
+              :key="`cr${colIndex}`"
+              class="table-resize-handle column"
+              :data-testid="`table-resize-col-${colIndex}`"
+              :style="{
+                left: `${col.left + col.width - 3}px`,
+                top: `${tableHover.top}px`,
+                height: `${tableHover.height}px`,
+              }"
+              @mousedown="startColumnResize($event, colIndex)"
+            />
+            <div
+              v-for="(row, rowIndex) in tableHover.rows"
+              :key="`rr${rowIndex}`"
+              class="table-resize-handle row"
+              :data-testid="`table-resize-row-${rowIndex}`"
+              :style="{
+                left: `${tableHover.left}px`,
+                top: `${row.top + row.height - 3}px`,
+                width: `${tableHover.width}px`,
+              }"
+              @mousedown="startRowResize($event, rowIndex)"
+            />
+          </div>
           <div
-            v-for="(col, colIndex) in tableHover.cols"
-            :key="`cr${colIndex}`"
-            class="table-resize-handle column"
-            :data-testid="`table-resize-col-${colIndex}`"
-            :style="{
-              left: `${col.left + col.width - 3}px`,
-              top: `${tableHover.top}px`,
-              height: `${tableHover.height}px`,
-            }"
-            @mousedown="startColumnResize($event, colIndex)"
-          />
+            v-if="imageHandles"
+            class="image-handles print-exclude"
+            data-testid="image-handles"
+          >
+            <div
+              v-for="handle in IMAGE_HANDLES"
+              :key="handle"
+              class="image-resize-handle"
+              :data-testid="`image-resize-${handle}`"
+              :style="imageHandleStyle(handle)"
+              @mousedown="startImageResize($event, handle)"
+            />
+          </div>
           <div
-            v-for="(row, rowIndex) in tableHover.rows"
-            :key="`rr${rowIndex}`"
-            class="table-resize-handle row"
-            :data-testid="`table-resize-row-${rowIndex}`"
-            :style="{
-              left: `${tableHover.left}px`,
-              top: `${row.top + row.height - 3}px`,
-              width: `${tableHover.width}px`,
-            }"
-            @mousedown="startRowResize($event, rowIndex)"
-          />
+            ref="contentRoot"
+            class="document-content"
+            :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
+            data-testid="document-content"
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Document content"
+            :aria-readonly="editable ? undefined : 'true'"
+            :contenteditable="editable && !activeHeaderFooter && !activeNote"
+            spellcheck="false"
+            @beforeinput="handleBeforeInput"
+            @keydown="handleKeyDown"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
+            @copy="handleCopy"
+            @cut="handleCut"
+            @paste="handlePaste"
+            @contextmenu="handleContextMenu"
+            @mousedown="handleCanvasMouseDown"
+            @mousemove="handleCanvasMouseMove"
+            @mouseup="handleCanvasMouseUp"
+            @click="handleContentClick"
+            @dragenter="handleCanvasDragEnter"
+            @dragover="handleCanvasDragOver"
+            @drop="handleCanvasDrop"
+          >
+            <DocPage
+              v-for="(pageView, pageIndex) in pagedViews"
+              :key="pageIndex"
+              :page-style="pageView.pageStyle"
+              :content-style="pageView.contentStyle"
+              :entries="pageView.entries"
+              :columns="pageView.columns"
+              :virtual="pageView.virtual"
+              :cell-range="cellSelection || undefined"
+              :dimmed="pageView.dimmed"
+              :header-style="pageView.headerStyle ?? undefined"
+              :footer-style="pageView.footerStyle ?? undefined"
+              :header-entries="pageView.headerEntries"
+              :footer-entries="pageView.footerEntries"
+              :header-editable="pageView.headerEditable"
+              :footer-editable="pageView.footerEditable"
+              :footnote-area="pageView.footnoteArea ?? undefined"
+              :endnote-area="pageView.endnoteArea ?? undefined"
+              :print-hidden="printHiddenPages.has(pageIndex)"
+              @image-select="handleImageSelect"
+              @toc-action="handleTocAction"
+              @dblclick-header="handleDblclickHeader(pageIndex)"
+              @dblclick-footer="handleDblclickFooter(pageIndex)"
+              @dblclick-body="handleDblclickBody"
+              @hf-beforeinput="handleHfBeforeInput"
+              @hf-keydown="handleHfKeyDown"
+              @hf-compositionstart="handleHfCompositionStart"
+              @hf-compositionend="handleHfCompositionEnd"
+              @note-activate="handleNoteActivate"
+              @note-number-click="handleNoteNumberClick"
+              @note-beforeinput="handleNoteBeforeInput"
+              @note-keydown="handleNoteKeyDown"
+              @note-compositionstart="handleNoteCompositionStart"
+              @note-compositionend="handleNoteCompositionEnd"
+              @outline-toggle="handleBodyHeadingToggle"
+            />
+          </div>
         </div>
         <div
-          v-if="imageHandles"
-          class="image-handles print-exclude"
-          data-testid="image-handles"
+          class="visually-hidden"
+          role="status"
+          aria-live="polite"
+          data-testid="caret-status"
         >
-          <div
-            v-for="handle in IMAGE_HANDLES"
-            :key="handle"
-            class="image-resize-handle"
-            :data-testid="`image-resize-${handle}`"
-            :style="imageHandleStyle(handle)"
-            @mousedown="startImageResize($event, handle)"
-          />
+          {{ caretStatus }}
         </div>
         <div
-          ref="contentRoot"
-          class="document-content"
-          :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
-          data-testid="document-content"
-          role="textbox"
-          aria-multiline="true"
-          aria-label="Document content"
-          :aria-readonly="editable ? undefined : 'true'"
-          :contenteditable="editable && !activeHeaderFooter && !activeNote"
-          spellcheck="false"
-          @beforeinput="handleBeforeInput"
-          @keydown="handleKeyDown"
-          @compositionstart="handleCompositionStart"
-          @compositionend="handleCompositionEnd"
-          @copy="handleCopy"
-          @cut="handleCut"
-          @paste="handlePaste"
-          @contextmenu="handleContextMenu"
-          @mousedown="handleCanvasMouseDown"
-          @mousemove="handleCanvasMouseMove"
-          @mouseup="handleCanvasMouseUp"
-          @click="handleContentClick"
-          @dragenter="handleCanvasDragEnter"
-          @dragover="handleCanvasDragOver"
-          @drop="handleCanvasDrop"
+          class="visually-hidden"
+          role="status"
+          aria-live="polite"
+          data-testid="word-count-status"
         >
-          <DocPage
-            v-for="(pageView, pageIndex) in pagedViews"
-            :key="pageIndex"
-            :page-style="pageView.pageStyle"
-            :content-style="pageView.contentStyle"
-            :entries="pageView.entries"
-            :columns="pageView.columns"
-            :virtual="pageView.virtual"
-            :cell-range="cellSelection || undefined"
-            :dimmed="pageView.dimmed"
-            :header-style="pageView.headerStyle ?? undefined"
-            :footer-style="pageView.footerStyle ?? undefined"
-            :header-entries="pageView.headerEntries"
-            :footer-entries="pageView.footerEntries"
-            :header-editable="pageView.headerEditable"
-            :footer-editable="pageView.footerEditable"
-            :footnote-area="pageView.footnoteArea ?? undefined"
-            :endnote-area="pageView.endnoteArea ?? undefined"
-            :print-hidden="printHiddenPages.has(pageIndex)"
-            @image-select="handleImageSelect"
-            @toc-action="handleTocAction"
-            @dblclick-header="handleDblclickHeader(pageIndex)"
-            @dblclick-footer="handleDblclickFooter(pageIndex)"
-            @dblclick-body="handleDblclickBody"
-            @hf-beforeinput="handleHfBeforeInput"
-            @hf-keydown="handleHfKeyDown"
-            @hf-compositionstart="handleHfCompositionStart"
-            @hf-compositionend="handleHfCompositionEnd"
-            @note-activate="handleNoteActivate"
-            @note-number-click="handleNoteNumberClick"
-            @note-beforeinput="handleNoteBeforeInput"
-            @note-keydown="handleNoteKeyDown"
-            @note-compositionstart="handleNoteCompositionStart"
-            @note-compositionend="handleNoteCompositionEnd"
-          />
+          {{ wordCountAnnouncement }}
         </div>
-      </div>
-      <div
-        class="visually-hidden"
-        role="status"
-        aria-live="polite"
-        data-testid="caret-status"
-      >
-        {{ caretStatus }}
-      </div>
-      <div
-        class="visually-hidden"
-        role="status"
-        aria-live="polite"
-        data-testid="word-count-status"
-      >
-        {{ wordCountAnnouncement }}
       </div>
     </div>
     <template #status-bar>
@@ -4686,9 +4814,47 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   cursor: pointer;
 }
 
+/* The outline pane (SPEC-037) is a left sidebar that OVERLAYS the canvas
+   rather than reflowing it: the pane sits in an absolutely-positioned dock on
+   the left edge, while page-wrap spans the full width beneath. Keeping the
+   page column full-width (and so its page centred within the whole canvas)
+   preserves the SPEC-002 invariant that a blank document's page is centred in
+   the editor viewport even while the sidebar is open. The pane itself stays
+   position:sticky (see OutlinePane.vue) so it stays visible while the pages
+   scroll; the dock stretches to the content height to give it a stick range. */
+.editor-layout {
+  position: relative;
+  min-height: 100%;
+}
+
+/* Full-width page column; the absolute dock sits over its left edge. */
 .page-wrap {
   position: relative;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 2rem 1rem;
+}
+
+/* The sticky rail hosting the pane. absolute so it never reflows the page
+   column; top:0/bottom:0 make it as tall as the content so its sticky child
+   (OutlinePane) stays pinned for the whole scroll. */
+.outline-dock {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 16rem;
+  z-index: 20;
+  /* The dock floats over the full-width, fully-centred page column. It must
+     not swallow pointer events over the page (typing/caret, the ruler's
+     left-edge tab selector, right-click) — only the outline tree itself is
+     interactive; the rest passes through to the page beneath. */
+  pointer-events: none;
+}
+
+.outline-dock :deep(.outline-tree) {
+  pointer-events: auto;
 }
 
 /* A zero-height sticky rail pinned to the top of the scrolling canvas; the
