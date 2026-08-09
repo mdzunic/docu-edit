@@ -139,6 +139,10 @@ export interface OdfStyleCatalog {
    * base of every resolution chain, like docx's docDefaults. */
   defaultParagraphFormatting: ParagraphFormatting;
   defaultRunFormatting: RunFormatting;
+  /** The default style's language (SPEC-035), held separately from
+   * `defaultRunFormatting` — see the lift-out comment in
+   * parseOdfStyleCatalog (mirrors docx/styles.ts's docDefaultLanguage). */
+  defaultLanguage?: string;
   /** From the first `style:master-page`'s `style:page-layout` in styles.xml. */
   pageSize?: PageSize;
   margins?: Margins;
@@ -551,6 +555,20 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
         // A percentage font size on the default style has nothing to resolve
         // against, so only the absolute formatting is kept.
         catalog.defaultRunFormatting = parseTextProperties(textPropertiesOf(defaultEl), fontFaces).formatting;
+        // SPEC-035: lifted out of defaultRunFormatting for the same reason
+        // as docx/styles.ts's docDefaultLanguage — resolveParagraphStyle
+        // below uses defaultRunFormatting as the base of every paragraph's
+        // resolved formatting, baked directly onto each run on read, and a
+        // document-default language should not become an explicit `lang`
+        // on every run just because the document declared one. The default
+        // lives on DocumentModel.defaultStyles.language instead (see
+        // reader.ts); a run only carries `lang` when its own or a named
+        // style's text-properties set one.
+        if (catalog.defaultRunFormatting.lang !== undefined) {
+          catalog.defaultLanguage = catalog.defaultRunFormatting.lang;
+          const { lang: _lang, ...rest } = catalog.defaultRunFormatting;
+          catalog.defaultRunFormatting = rest;
+        }
       }
       collectStyles(officeStyles, fontFaces, (family, definition) => {
         const target = family === "paragraph" ? catalog.paragraphStyles : catalog.textStyles;

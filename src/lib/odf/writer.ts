@@ -63,6 +63,7 @@ import {
   sectionPageSize,
 } from "../documentModel";
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
+import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
@@ -192,6 +193,20 @@ function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number):
     // writes; the reader only reads the sub/super keyword back.
     const position = formatting.vertAlign === "subscript" ? "sub 58%" : "super 58%";
     attrs.push(`style:text-position="${position}"`);
+  }
+  // SPEC-035: "do not check spelling" maps to ODF's "no linguistic content"
+  // language (fo:language="zxx") — there is no separate flag, so this wins
+  // over an explicit `lang` on the same run (the run's real language cannot
+  // be expressed alongside it in ODF; see lib/language.ts's
+  // ODF_NO_LINGUISTIC_CONTENT).
+  if (formatting.noProof) {
+    attrs.push(`fo:language="${ODF_NO_LINGUISTIC_CONTENT}"`);
+  } else if (formatting.lang !== undefined) {
+    const { language, country } = splitLanguageTag(formatting.lang);
+    attrs.push(`fo:language="${escapeXml(language)}"`);
+    if (country !== undefined) {
+      attrs.push(`fo:country="${escapeXml(country)}"`);
+    }
   }
   return attrs.length > 0 ? `<style:text-properties ${attrs.join(" ")}/>` : "";
 }
@@ -2030,8 +2045,91 @@ export function patchOdtNotesConfiguration(
   return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
 }
 
+/** The document-default language declared by a styles.xml part's
+ * `style:default-style[family=paragraph]`, or undefined when it declares
+ * none — the raw value, with no DEFAULT_LANGUAGE fallback applied (that
+ * fallback is the reader/patchOdtDefaultLanguage's job, not this parse). */
+function defaultLanguageOf(stylesDoc: Document): string | undefined {
+  const officeStyles = firstChildElement(stylesDoc.documentElement, OFFICE_NAMESPACE, "styles");
+  const defaultStyle = officeStyles
+    ? Array.from(officeStyles.children).find(
+        (el) =>
+          el.namespaceURI === STYLE_NAMESPACE &&
+          el.localName === "default-style" &&
+          el.getAttributeNS(STYLE_NAMESPACE, "family") === "paragraph",
+      )
+    : undefined;
+  const textProps = defaultStyle ? firstChildElement(defaultStyle, STYLE_NAMESPACE, "text-properties") : undefined;
+  const language = textProps?.getAttributeNS(FO_NAMESPACE, "language");
+  if (!language) {
+    return undefined;
+  }
+  return composeLanguageTag(language, textProps?.getAttributeNS(FO_NAMESPACE, "country"));
+}
+
+/** A preserved styles.xml with the model's default language (SPEC-035)
+ * written into `style:default-style`'s `fo:language`/`fo:country`, or null
+ * when the model's language already matches what re-opening the *original*
+ * part would produce — the same "no patch means byte-identical" contract as
+ * patchOdtNotesConfiguration, needed here because
+ * DocumentModel.defaultStyles.language is always populated (falls back to
+ * DEFAULT_LANGUAGE the same way the reader does), so a naive "is it set"
+ * check would rewrite every untouched document's styles.xml on every save. */
+export function patchOdtDefaultLanguage(model: DocumentModel, originalStylesXml: string): string | null {
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return null;
+  }
+  const wanted = model.defaultStyles.language ?? DEFAULT_LANGUAGE;
+  const original = defaultLanguageOf(stylesDoc) ?? DEFAULT_LANGUAGE;
+  if (wanted === original) {
+    return null;
+  }
+  const root = stylesDoc.documentElement;
+  let officeStyles = firstChildElement(root, OFFICE_NAMESPACE, "styles");
+  if (!officeStyles) {
+    officeStyles = stylesDoc.createElementNS(OFFICE_NAMESPACE, "office:styles");
+    root.insertBefore(officeStyles, firstChildElement(root, OFFICE_NAMESPACE, "automatic-styles") ?? null);
+  }
+  let defaultStyle = Array.from(officeStyles.children).find(
+    (el) =>
+      el.namespaceURI === STYLE_NAMESPACE &&
+      el.localName === "default-style" &&
+      el.getAttributeNS(STYLE_NAMESPACE, "family") === "paragraph",
+  );
+  if (!defaultStyle) {
+    const wrapper = parseXml(
+      `<office:document-styles${DOCUMENT_XMLNS}><style:default-style style:family="paragraph"/></office:document-styles>`,
+    );
+    defaultStyle = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    officeStyles.insertBefore(defaultStyle, officeStyles.firstElementChild ?? null);
+  }
+  let textProps = firstChildElement(defaultStyle, STYLE_NAMESPACE, "text-properties");
+  if (!textProps) {
+    textProps = stylesDoc.createElementNS(STYLE_NAMESPACE, "style:text-properties");
+    defaultStyle.appendChild(textProps);
+  }
+  const { language, country } = splitLanguageTag(wanted);
+  textProps.setAttributeNS(FO_NAMESPACE, "fo:language", language);
+  if (country !== undefined) {
+    textProps.setAttributeNS(FO_NAMESPACE, "fo:country", country);
+  } else {
+    textProps.removeAttributeNS(FO_NAMESPACE, "country");
+  }
+  return `${XML_DECLARATION}${serializeElement(root)}`;
+}
+
 export function buildStylesXml(model: DocumentModel): string {
-  const { fontFamily, fontSizePt } = model.defaultStyles;
+  const { fontFamily, fontSizePt, language } = model.defaultStyles;
+  const languageAttrs = (() => {
+    if (language === undefined) {
+      return "";
+    }
+    const { language: lang, country } = splitLanguageTag(language);
+    return ` fo:language="${escapeXml(lang)}"${country !== undefined ? ` fo:country="${escapeXml(country)}"` : ""}`;
+  })();
   const includeOpaque = model.format === "odt";
   const namedStyles = (model.styles ?? [])
     .filter((style) => style.name !== undefined)
@@ -2056,7 +2154,7 @@ export function buildStylesXml(model: DocumentModel): string {
     `${XML_DECLARATION}<office:document-styles${DOCUMENT_XMLNS} office:version="1.2">` +
     "<office:styles>" +
     '<style:default-style style:family="paragraph">' +
-    `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"/>` +
+    `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
     "</style:default-style>" +
     namedStyles +
     notesConfigurationXml("footnote", model.footnoteSettings) +
@@ -2489,6 +2587,8 @@ export async function writeOdt(
       patchOdtSectionHeaderFooters(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
     patchedStyles =
       patchOdtNotesConfiguration(model, patchedStyles ?? originalStyles) ?? patchedStyles;
+    patchedStyles =
+      patchOdtDefaultLanguage(model, patchedStyles ?? originalStyles) ?? patchedStyles;
   }
 
   const entries: ZipEntryInput[] = [

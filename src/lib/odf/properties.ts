@@ -12,6 +12,7 @@ import type {
   TabStopAlignment,
 } from "../documentModel";
 import { firstChildElement } from "../docx/xml";
+import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../language";
 import { foAttr, styleAttr, STYLE_NAMESPACE } from "./xml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 
@@ -172,6 +173,20 @@ export function parseTextProperties(
   const vertAlign = parseTextPosition(styleAttr(textPropsEl, "text-position"));
   if (vertAlign !== undefined) {
     formatting.vertAlign = vertAlign;
+  }
+
+  // SPEC-035: language, and "do not check spelling" via ODF's "no
+  // linguistic content" convention (fo:language="zxx") — ODF has no
+  // separate boolean flag the way .docx's w:noProof is, so a run marked
+  // this way maps to `noProof: true` with no `lang` (see lib/language.ts's
+  // ODF_NO_LINGUISTIC_CONTENT).
+  const language = foAttr(textPropsEl, "language");
+  if (language) {
+    if (language.trim().toLowerCase() === ODF_NO_LINGUISTIC_CONTENT) {
+      formatting.noProof = true;
+    } else {
+      formatting.lang = composeLanguageTag(language, foAttr(textPropsEl, "country"));
+    }
   }
 
   return result;
