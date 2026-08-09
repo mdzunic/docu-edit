@@ -23,6 +23,7 @@ import ImageToolbar from "../components/ImageToolbar.vue";
 import InsertBreakMenu from "../components/InsertBreakMenu.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
+import CommentsPane from "../components/CommentsPane.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
@@ -54,6 +55,7 @@ import { useAutosave } from "../composables/useAutosave";
 import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
+import { asCommentFilter, useComments } from "./document/useComments";
 import { useFindReplace } from "./document/useFindReplace";
 import { usePdfExport } from "./document/usePdfExport";
 import { usePrintPreview } from "./document/usePrintPreview";
@@ -3020,6 +3022,12 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       handleInsertNote("endnote");
       break;
     }
+    case "insert.comment": {
+      // Ctrl/Cmd+Alt+M (SPEC-038 AC-1).
+      event.preventDefault();
+      openCommentComposer();
+      break;
+    }
     case "view.formattingMarks": {
       // Ctrl/Cmd+Shift+P (AC-12).
       event.preventDefault();
@@ -3659,6 +3667,53 @@ const {
   onScroll: (cb) => scrollHooks.add(cb),
 });
 
+// --- comments (SPEC-038) -----------------------------------------------------
+const {
+  commentsPaneOpen,
+  toggleCommentsPane,
+  commentsOnlyView,
+  toggleCommentsOnlyView,
+  commentFilter,
+  commentAuthorFilter,
+  commentAuthorName,
+  activeThreadId: activeCommentThreadId,
+  openThreads: openCommentThreads,
+  resolvedThreads: resolvedCommentThreads,
+  commentAuthors,
+  filteredThreads: filteredCommentThreads,
+  commentComposerOpen,
+  openCommentComposer,
+  cancelCommentComposer,
+  submitComment,
+  submitReply: submitCommentReply,
+  saveEditedMessage: saveEditedCommentMessage,
+  deleteMessage: deleteCommentMessage,
+  resolveThread: resolveCommentThread,
+  reopenThread: reopenCommentThread,
+  deleteThread: deleteCommentThread,
+  focusThreadFromHighlight,
+  focusThread: focusCommentThread,
+  commentHighlightRects,
+  commentThreadTops,
+  scheduleCommentsMeasure,
+} = useComments({
+  doc,
+  contentRoot,
+  pagesRoot: pageRef,
+  editable,
+  currentSelection,
+  applyEdit,
+  applyCaretMove,
+  scrollModelCaretIntoView,
+  getCaret: () => caret,
+  addToast,
+  onSessionClose,
+  onUnmount,
+  onScroll: (cb) => scrollHooks.add(cb),
+});
+const commentsDockRef = useTemplateRef("commentsDockRef");
+watch(commentsDockRef, () => scheduleCommentsMeasure(commentsDockRef.value));
+
 // Seed for espree-style handler defaults that never get real values here
 // (applyHeaderFooterEdit/applyNoteEdit's `= noDocument()` params, tocPageNumberFor).
 function noDocument() {
@@ -3948,7 +4003,11 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     <template #toolbar>
       <ViewMenu
         :outline-open="outlinePaneOpen"
+        :comments-pane-open="commentsPaneOpen"
+        :comments-only-view="commentsOnlyView"
         @toggle-outline="toggleOutlinePane"
+        @toggle-comments-pane="toggleCommentsPane"
+        @toggle-comments-only="toggleCommentsOnlyView"
       />
       <UndoRedoControls
         v-if="editable"
@@ -4147,6 +4206,29 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         v-if="editable"
         type="button"
         class="toolbar-button"
+        data-testid="toolbar-insert-comment"
+        :title="`Insert comment (${shortcutLabel('insert.comment')})`"
+        :aria-label="`Insert comment (${shortcutLabel('insert.comment')})`"
+        @mousedown.prevent
+        @click="openCommentComposer"
+      >
+        Comment
+      </button>
+      <button
+        type="button"
+        class="toolbar-button"
+        data-testid="toolbar-comments-pane"
+        title="Comments pane"
+        aria-label="Comments pane"
+        :aria-pressed="commentsPaneOpen"
+        @click="toggleCommentsPane"
+      >
+        Comments
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="toolbar-button"
         data-testid="page-setup-button"
         title="Page setup"
         aria-label="Page setup"
@@ -4235,6 +4317,40 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
           @move="handleOutlineMove"
         />
       </div>
+      <div
+        v-if="commentsPaneOpen"
+        ref="commentsDockRef"
+        class="comments-dock print-exclude"
+      >
+        <CommentsPane
+          :open-threads="openCommentThreads"
+          :resolved-threads="resolvedCommentThreads"
+          :filtered-threads="filteredCommentThreads"
+          :comments-only-view="commentsOnlyView"
+          :thread-tops="commentThreadTops"
+          :active-thread-id="activeCommentThreadId ?? undefined"
+          :author-name="commentAuthorName"
+          :comment-filter="commentFilter"
+          :comment-author-filter="commentAuthorFilter"
+          :authors="commentAuthors"
+          :composer-open="commentComposerOpen"
+          :editable="editable"
+          @close="toggleCommentsPane"
+          @toggle-comments-only="toggleCommentsOnlyView"
+          @update:comment-filter="commentFilter = asCommentFilter($event)"
+          @update:author-filter="commentAuthorFilter = $event"
+          @update:author-name="commentAuthorName = $event"
+          @submit-comment="submitComment"
+          @cancel-composer="cancelCommentComposer"
+          @focus-thread="focusCommentThread"
+          @submit-reply="submitCommentReply"
+          @save-edit="saveEditedCommentMessage"
+          @delete-message="deleteCommentMessage"
+          @resolve="resolveCommentThread"
+          @reopen="reopenCommentThread"
+          @delete-thread="deleteCommentThread"
+        />
+      </div>
       <div class="page-wrap">
         <div
           v-if="findVisible"
@@ -4303,6 +4419,26 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
                 width: `${rect.width}px`,
                 height: `${rect.height}px`,
               }"
+            />
+          </div>
+          <div
+            v-if="commentHighlightRects.length > 0"
+            class="comment-highlight-layer print-exclude"
+            data-testid="comment-highlights"
+          >
+            <div
+              v-for="(rect, index) in commentHighlightRects"
+              :key="index"
+              class="comment-highlight"
+              :class="{ active: rect.active }"
+              :data-testid="`comment-highlight-${rect.threadId}`"
+              :style="{
+                left: `${rect.left}px`,
+                top: `${rect.top}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+              }"
+              @click="focusThreadFromHighlight(rect.threadId)"
             />
           </div>
           <div
@@ -4857,6 +4993,22 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   pointer-events: auto;
 }
 
+/* The comments pane's own dock (SPEC-038) — the outline-dock's mirror on
+   the right edge of the page column. */
+.comments-dock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18rem;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.comments-dock :deep(.comments-pane) {
+  pointer-events: auto;
+}
+
 /* A zero-height sticky rail pinned to the top of the scrolling canvas; the
    find bar (position: absolute) floats at its top-right and stays put while
    the document scrolls. */
@@ -4886,6 +5038,35 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 .find-highlight.current {
   background: rgb(255 145 0 / 0.65);
   outline: 1px solid #f57c00;
+}
+
+/* The comment highlight overlay (SPEC-038): same layering convention as
+   .find-highlight-layer, but each rect IS clickable (AC "clicking a
+   highlighted range focuses its thread"), so pointer-events stays auto on
+   the individual rects while the layer itself still passes clicks through
+   the gaps between them. */
+.comment-highlight-layer {
+  position: absolute;
+  inset: 0;
+  /* Unlike .find-highlight-layer (z-index: 0, never needs to catch clicks),
+     these rects must win hit-testing against the text underneath — the
+     same z-index band .table-handles (15) uses for its own clickable
+     overlay controls. */
+  z-index: 5;
+  pointer-events: none;
+}
+
+.comment-highlight {
+  position: absolute;
+  background: rgb(26 115 232 / 0.18);
+  border-bottom: 2px solid rgb(26 115 232 / 0.55);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.comment-highlight.active {
+  background: rgb(26 115 232 / 0.32);
+  border-bottom-color: #1a73e8;
 }
 
 /* The paginated canvas (SPEC-028): one relative wrapper hosting every page

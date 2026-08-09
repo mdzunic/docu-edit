@@ -65,6 +65,7 @@ import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import { referencedNotes } from "../notes";
+import { replyParagraphText, visibleCommentThreads, type VisibleCommentThread } from "../comments";
 import {
   childElements,
   parseRelationships,
@@ -517,6 +518,10 @@ interface InlineWriteContext {
    * absent in contexts that can hold no note references (the note parts
    * themselves, headers/footers). */
   noteIds?: Map<string, number>;
+  /** Numeric word/comments.xml ids by model threadId (SPEC-038); absent in
+   * contexts that can hold no comment anchors (the comments part itself,
+   * headers/footers, note content). */
+  commentIds?: Map<string, number>;
 }
 
 /** The paragraph's inline content: its runs, with any preserved opaque
@@ -530,10 +535,12 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
   const opaque = includeOpaque ? (paragraph.opaqueInlines ?? []) : [];
   const hasLinks = paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null);
   const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
-  if (opaque.length === 0 && !hasLinks && !hasBookmarks) {
+  const hasComments = (paragraph.commentAnchors ?? []).length > 0;
+  if (opaque.length === 0 && !hasLinks && !hasBookmarks && !hasComments) {
     return paragraph.runs.map((run) => runXml(run, ctx.noteIds)).join("");
   }
-  const { runs, bookmarksAtBoundary, boundaryFor } = inlineWriteLayout(paragraph);
+  const { runs, bookmarksAtBoundary, commentStartsAtBoundary, commentEndsAtBoundary, boundaryFor } =
+    inlineWriteLayout(paragraph);
   const opaqueAtBoundary = new Map<number, string[]>();
   for (const node of opaque) {
     const boundary = boundaryFor(node.runIndex);
@@ -569,6 +576,21 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
     for (const name of bookmarksAtBoundary.get(i) ?? []) {
       const id = ctx.bookmarkIds.get(name) ?? 0;
       xml += `<w:bookmarkStart w:id="${id}" w:name="${escapeXml(name)}"/><w:bookmarkEnd w:id="${id}"/>`;
+    }
+    // Comment ranges (SPEC-038): a dangling anchor (not in ctx.commentIds —
+    // its thread turned out not to be visible, see visibleCommentThreads)
+    // emits nothing, the same convention runXml's note references follow.
+    for (const threadId of commentStartsAtBoundary.get(i) ?? []) {
+      const id = ctx.commentIds?.get(threadId);
+      if (id !== undefined) {
+        xml += `<w:commentRangeStart w:id="${id}"/>`;
+      }
+    }
+    for (const threadId of commentEndsAtBoundary.get(i) ?? []) {
+      const id = ctx.commentIds?.get(threadId);
+      if (id !== undefined) {
+        xml += `<w:commentRangeEnd w:id="${id}"/><w:r><w:commentReference w:id="${id}"/></w:r>`;
+      }
     }
     if (!run) {
       break;
@@ -1277,6 +1299,101 @@ function notesPartRelsXml(plan: NotesPartPlan): string | null {
   return `${XML_DECLARATION}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${relXml}</Relationships>`;
 }
 
+// --- comments (SPEC-038) -----------------------------------------------------
+
+export const COMMENTS_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const COMMENTS_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+
+interface CommentsPartPlan {
+  partName: string;
+  threads: VisibleCommentThread[];
+}
+
+export interface CommentsWritePlan {
+  /** Zero or one word/comments.xml part — a plan-shaped array (rather than
+   * `| null`) so writeDocx's per-notes-part loops generalise to comments
+   * without a separate null check at each call site. */
+  parts: CommentsPartPlan[];
+  /** Numeric part-local ids by model threadId — what the body's
+   * w:commentRangeStart/End/commentReference elements carry. */
+  commentIds: Map<string, number>;
+  relationshipsXml: string;
+  contentTypesXml: string;
+  relIds: Set<string>;
+}
+
+/** Plans the comments.xml part a save needs (SPEC-038): like the note
+ * parts, always regenerated fresh from the model. Only threads whose
+ * anchor range is still present in the body are written (see
+ * lib/comments.ts's visibleCommentThreads — the same "invisible unless
+ * anchored" contract NoteContent uses), numbered 1..n in document order;
+ * that numeric id is shared by the range markers and the `<w:comment>`
+ * element, so no separate reference-id lookup is needed to match them up. */
+export function planCommentsWrite(
+  model: DocumentModel,
+  takenRelIds: Set<string> = new Set(),
+  existingPartNames: Set<string> = new Set(),
+): CommentsWritePlan {
+  const threads = visibleCommentThreads(model);
+  if (threads.length === 0) {
+    return { parts: [], commentIds: new Map(), relationshipsXml: "", contentTypesXml: "", relIds: new Set() };
+  }
+  let n = 1;
+  let fileName = "comments.xml";
+  let partName = `word/${fileName}`;
+  while (existingPartNames.has(partName)) {
+    n += 1;
+    fileName = `comments${n}.xml`;
+    partName = `word/${fileName}`;
+  }
+  const taken = new Set(takenRelIds);
+  const relId = nextFreeRelId(taken);
+  const commentIds = new Map<string, number>();
+  threads.forEach((entry, index) => commentIds.set(entry.thread.threadId, index + 1));
+  return {
+    parts: [{ partName, threads }],
+    commentIds,
+    relationshipsXml: `<Relationship Id="${relId}" Type="${COMMENTS_RELATIONSHIP}" Target="${fileName}"/>`,
+    contentTypesXml: `<Override PartName="/${partName}" ContentType="${COMMENTS_CONTENT_TYPE}"/>`,
+    relIds: new Set([relId]),
+  };
+}
+
+/** Up to 3 initials from an author's name, for `w:comment/@w:initials`
+ * (Word shows these in the margin balloon's collapsed state). */
+function initialsOf(author: string): string {
+  return author
+    .trim()
+    .split(/\s+/)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 3);
+}
+
+/** word/comments.xml's full XML (SPEC-038): one `<w:comment>` per visible
+ * thread, its `w:author`/`w:date` from the opening message, its body one
+ * `<w:p>` per message — the opening message's text verbatim, then each
+ * reply as `replyParagraphText`. */
+function commentsPartXml(plan: CommentsPartPlan, commentIds: Map<string, number>): string {
+  const body = plan.threads
+    .map(({ thread }) => {
+      const id = commentIds.get(thread.threadId) ?? 0;
+      const opening = thread.messages[0];
+      const paragraphs = [opening.text, ...thread.messages.slice(1).map(replyParagraphText)]
+        .map((text) => `<w:p>${text.length > 0 ? `<w:r>${runContentXml(text)}</w:r>` : ""}</w:p>`)
+        .join("");
+      return (
+        `<w:comment w:id="${id}" w:author="${escapeXml(opening.author)}" w:date="${escapeXml(opening.createdAt)}" w:initials="${escapeXml(initialsOf(opening.author))}">` +
+        paragraphs +
+        `</w:comment>`
+      );
+    })
+    .join("");
+  return `${XML_DECLARATION}<w:comments xmlns:w="${WORD_NAMESPACE}">${body}</w:comments>`;
+}
+
 // The w:numFmt value for each model note numbering format — "chicago" is
 // OOXML's name for the * † ‡ § symbol cycle.
 const NOTE_NUM_FMT_VALUES: Record<NoteNumberFormat, string> = {
@@ -1429,12 +1546,14 @@ export function buildDocumentXml(
   hyperlinkPlan: HyperlinkWritePlan = planHyperlinkWrite(model),
   headerFooterPlan: HeaderFooterWritePlan = planHeaderFooterWrite(model, new Set(), new Set()),
   notesPlan: NotesWritePlan = planNotesWrite(model),
+  commentsPlan: CommentsWritePlan = planCommentsWrite(model),
 ): string {
   const includeOpaque = model.format === "docx";
   const inlineCtx: InlineWriteContext = {
     hyperlinkPlan,
     bookmarkIds: bookmarkIdsFor(model),
     noteIds: notesPlan.noteIds,
+    commentIds: commentsPlan.commentIds,
   };
   const blockXml: string[] = [];
   let docPrId = 1;
@@ -1942,16 +2061,27 @@ export async function writeDocx(
       existingMediaPartNames,
     );
     // Note parts (SPEC-031) mint their relationship ids past the base set,
-    // header/footer parts (SPEC-029) past everything — their own images
-    // share the same word/media/imageN.ext naming pool
-    // (existingMediaPartNames, mutated by planMediaWrite above).
+    // the comments part (SPEC-038) past notes, header/footer parts
+    // (SPEC-029) past everything — their own images share the same
+    // word/media/imageN.ext naming pool (existingMediaPartNames, mutated by
+    // planMediaWrite above).
     const notesPlan = planNotesWrite(
       model,
       new Set([...baseTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds]),
     );
-    const headerFooterPlan = planHeaderFooterWrite(
+    const commentsPlan = planCommentsWrite(
       model,
       new Set([...baseTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]),
+    );
+    const headerFooterPlan = planHeaderFooterWrite(
+      model,
+      new Set([
+        ...baseTaken,
+        ...hyperlinkPlan.relIds,
+        ...mediaPlan.relIds,
+        ...notesPlan.relIds,
+        ...commentsPlan.relIds,
+      ]),
       existingMediaPartNames,
     );
     const settingsOverride = headerFooterPlan.evenAndOddHeaders
@@ -1959,7 +2089,7 @@ export async function writeDocx(
       : "";
     const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
       /<\/Types>\s*$/,
-      `${notesPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${settingsOverride}</Types>`,
+      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${settingsOverride}</Types>`,
     );
     const entries: ZipEntryInput[] = [
       { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
@@ -1967,7 +2097,7 @@ export async function writeDocx(
       {
         name: "word/document.xml",
         data: encoder.encode(
-          buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan),
+          buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
         ),
       },
       {
@@ -1978,6 +2108,7 @@ export async function writeDocx(
             hyperlinkPlan.relationshipsXml +
               mediaPlan.relationshipsXml +
               notesPlan.relationshipsXml +
+              commentsPlan.relationshipsXml +
               headerFooterPlan.relationshipsXml,
           ),
         ),
@@ -2016,6 +2147,12 @@ export async function writeDocx(
       if (relsXml !== null) {
         entries.push({ name: relsPathFor(notesPart.partName), data: encoder.encode(relsXml) });
       }
+    }
+    for (const commentsPart of commentsPlan.parts) {
+      entries.push({
+        name: commentsPart.partName,
+        data: encoder.encode(commentsPartXml(commentsPart, commentsPlan.commentIds)),
+      });
     }
     const bytes = await zip(entries);
     return { bytes, dropped: collectDropRecords(model, "docx") };
@@ -2107,12 +2244,28 @@ export async function writeDocx(
   );
   const addNotesDecls = notesPlan.relationshipsXml.length > 0;
 
+  // The comments part (SPEC-038): the reader consumed the source's own
+  // comments.xml, so its canonical name is normally free again too; ids
+  // mint past the note parts.
+  const commentsPlan = planCommentsWrite(
+    model,
+    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]),
+    existingPartNames,
+  );
+  const addCommentsDecls = commentsPlan.relationshipsXml.length > 0;
+
   // Headers, footers and page numbering (SPEC-029): relationship ids mint
   // past everything above; header/footer part names and their own images
   // avoid every preserved/already-minted name the same way media does.
   const headerFooterPlan = planHeaderFooterWrite(
     model,
-    new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]),
+    new Set([
+      ...mainRelsTaken,
+      ...hyperlinkPlan.relIds,
+      ...mediaPlan.relIds,
+      ...notesPlan.relIds,
+      ...commentsPlan.relIds,
+    ]),
     existingPartNames,
     existingPartNames,
   );
@@ -2151,6 +2304,7 @@ export async function writeDocx(
         addMediaDecls ||
         addHyperlinkDecls ||
         addNotesDecls ||
+        addCommentsDecls ||
         addHeaderFooterDecls ||
         addSettingsPart) &&
       name === mainRelsName
@@ -2168,13 +2322,16 @@ export async function writeDocx(
       if (addNotesDecls) {
         rels = withMediaRelationships(rels, notesPlan.relationshipsXml);
       }
+      if (addCommentsDecls) {
+        rels = withMediaRelationships(rels, commentsPlan.relationshipsXml);
+      }
       if (addHeaderFooterDecls) {
         rels = withMediaRelationships(rels, headerFooterPlan.relationshipsXml);
       }
       if (addSettingsPart) {
         rels = withMediaRelationships(
           rels,
-          `<Relationship Id="${nextFreeRelId(new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds]))}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
+          `<Relationship Id="${nextFreeRelId(new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds, ...commentsPlan.relIds]))}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
         );
       }
       entries.push({ name, data: encoder.encode(rels) });
@@ -2186,6 +2343,7 @@ export async function writeDocx(
         addNumberingDecls ||
         addMediaDecls ||
         addNotesDecls ||
+        addCommentsDecls ||
         addHeaderFooterDecls ||
         addSettingsPart)
     ) {
@@ -2201,6 +2359,9 @@ export async function writeDocx(
       }
       if (addNotesDecls) {
         contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${notesPlan.contentTypesXml}</Types>`);
+      }
+      if (addCommentsDecls) {
+        contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${commentsPlan.contentTypesXml}</Types>`);
       }
       if (addHeaderFooterDecls) {
         contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${headerFooterPlan.contentTypesXml}</Types>`);
@@ -2244,10 +2405,16 @@ export async function writeDocx(
       entries.push({ name: relsPathFor(notesPart.partName), data: encoder.encode(relsXml) });
     }
   }
+  for (const commentsPart of commentsPlan.parts) {
+    entries.push({
+      name: commentsPart.partName,
+      data: encoder.encode(commentsPartXml(commentsPart, commentsPlan.commentIds)),
+    });
+  }
   entries.push({
     name: mainPartName,
     data: encoder.encode(
-      buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan),
+      buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
     ),
   });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
