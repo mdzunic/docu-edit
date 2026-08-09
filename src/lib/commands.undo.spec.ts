@@ -74,6 +74,8 @@ const REGISTRY: Record<string, Scenario> = {
   toggleFormat: (model) => commands.toggleFormat(model, range(caret(0, 0), caret(0, 5)), "italic"),
   applyFormat: (model) =>
     commands.applyFormat(model, range(caret(0, 6), caret(0, 11)), { fontFamily: "Georgia" }),
+  setDocumentLanguage: (model) =>
+    commands.setDocumentLanguage(model, caretSelection(caret(0, 0)), "de-DE"),
   toggleVerticalAlign: (model) =>
     commands.toggleVerticalAlign(model, range(caret(0, 0), caret(0, 5)), "superscript"),
   applyParagraphFormat: (model) =>

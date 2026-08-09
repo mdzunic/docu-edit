@@ -506,6 +506,18 @@ export function applyFormat(
   return { model: next, selection: { anchor: start, focus: end } };
 }
 
+/** Sets the document's default language (SPEC-035 AC-9): the language
+ * selector's "no selection" case — a selection targets `applyFormat`'s
+ * `{lang}` patch instead (AC-9.1). Touches no run/paragraph content, so no
+ * cloneContainers: the selection passes through unchanged. */
+export function setDocumentLanguage(
+  model: DocumentModel,
+  selection: ModelSelection,
+  language: string,
+): CommandResult {
+  return { model: { ...model, defaultStyles: { ...model.defaultStyles, language } }, selection };
+}
+
 /** The value-carrying run-format fields SPEC-013's toolbar reflects. */
 export type RunFormatValueKey = "fontFamily" | "fontSizePt" | "color" | "highlight";
 
