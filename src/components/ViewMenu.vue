@@ -10,9 +10,13 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   /** Whether the outline pane is currently open (drives the checkmark). */
   outlineOpen: { type: Boolean, default: false },
+  /** Whether the comments pane is currently open (SPEC-038). */
+  commentsPaneOpen: { type: Boolean, default: false },
+  /** Whether the comments-only view is active (SPEC-038). */
+  commentsOnlyView: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["toggle-outline"]);
+const emit = defineEmits(["toggle-outline", "toggle-comments-pane", "toggle-comments-only"]);
 
 const open = ref(false);
 const root = useTemplateRef("root");
@@ -34,6 +38,16 @@ function toggleMenu() {
 function chooseToggleOutline() {
   open.value = false;
   emit("toggle-outline");
+}
+
+function chooseToggleCommentsPane() {
+  open.value = false;
+  emit("toggle-comments-pane");
+}
+
+function chooseToggleCommentsOnly() {
+  open.value = false;
+  emit("toggle-comments-only");
 }
 
 function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
@@ -93,6 +107,28 @@ onBeforeUnmount(() => {
       >
         <span class="menu-check">{{ outlineOpen ? "✓" : "" }}</span>
         Document outline
+      </button>
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        data-testid="view-menu-comments-pane"
+        :aria-checked="commentsPaneOpen ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="chooseToggleCommentsPane"
+      >
+        <span class="menu-check">{{ commentsPaneOpen ? "✓" : "" }}</span>
+        Comments pane
+      </button>
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        data-testid="view-menu-comments-only"
+        :aria-checked="commentsOnlyView ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="chooseToggleCommentsOnly"
+      >
+        <span class="menu-check">{{ commentsOnlyView ? "✓" : "" }}</span>
+        Comments-only view
       </button>
     </div>
   </div>
