@@ -375,19 +375,27 @@ export function autolinkAt(
 // --- writer support (AC-29..32) ---------------------------------------------
 
 /** A paragraph's inline content laid out for a file-format writer: runs
- * split at every bookmark offset (so each bookmark lands exactly on a run
- * boundary), the bookmark names per boundary, and a remapping of
- * opaque-inline anchors (which index the ORIGINAL runs) onto the split
+ * split at every bookmark AND comment-anchor offset (so each lands exactly
+ * on a run boundary), the bookmark names per boundary, the comment thread
+ * ids whose range starts/ends at each boundary (SPEC-038), and a remapping
+ * of opaque-inline anchors (which index the ORIGINAL runs) onto the split
  * list. Shared by the .docx and .odt writers. */
 export interface InlineWriteLayout {
   runs: Run[];
   bookmarksAtBoundary: Map<number, string[]>;
+  /** Thread ids whose anchored range STARTS at this run boundary. */
+  commentStartsAtBoundary: Map<number, string[]>;
+  /** Thread ids whose anchored range ENDS at this run boundary. */
+  commentEndsAtBoundary: Map<number, string[]>;
   boundaryFor(originalIndex: number): number;
 }
 
 export function inlineWriteLayout(paragraph: Paragraph): InlineWriteLayout {
   const bookmarks = paragraph.bookmarks ?? [];
-  const cutOffsets = Array.from(new Set(bookmarks.map((b) => b.offset))).sort((a, b) => a - b);
+  const commentAnchors = paragraph.commentAnchors ?? [];
+  const cutOffsets = Array.from(
+    new Set([...bookmarks.map((b) => b.offset), ...commentAnchors.map((a) => a.offset)]),
+  ).sort((a, b) => a - b);
   const runs: Run[] = [];
   const indexMap: number[] = [0];
   let pos = 0;
@@ -421,9 +429,20 @@ export function inlineWriteLayout(paragraph: Paragraph): InlineWriteLayout {
     names.push(bookmark.name);
     bookmarksAtBoundary.set(boundary, names);
   }
+  const commentStartsAtBoundary = new Map<number, string[]>();
+  const commentEndsAtBoundary = new Map<number, string[]>();
+  for (const anchor of commentAnchors) {
+    const boundary = boundaryForOffset(anchor.offset);
+    const target = anchor.boundary === "start" ? commentStartsAtBoundary : commentEndsAtBoundary;
+    const ids = target.get(boundary) ?? [];
+    ids.push(anchor.threadId);
+    target.set(boundary, ids);
+  }
   return {
     runs,
     bookmarksAtBoundary,
+    commentStartsAtBoundary,
+    commentEndsAtBoundary,
     boundaryFor: (originalIndex: number) => indexMap[Math.min(originalIndex, indexMap.length - 1)],
   };
 }
