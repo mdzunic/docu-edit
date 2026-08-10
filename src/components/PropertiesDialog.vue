@@ -242,7 +242,20 @@ function onRowValueEvent(index = 0, event = new Event("input")) {
 }
 function removeCustomProperty(index = 0) {
   propertiesDraft.customProperties.splice(index, 1);
-  delete rowDrafts[index];
+  // Rows after the removed one shift left in `customProperties`; reindex
+  // their in-progress drafts to match, or a later row's uncommitted edit
+  // would land on the wrong row after removal.
+  const shifted = emptyCustomPropertyRowDrafts();
+  for (const key of Object.keys(rowDrafts)) {
+    const i = Number(key);
+    if (i > index) {
+      shifted[i - 1] = rowDrafts[i];
+    } else if (i < index) {
+      shifted[i] = rowDrafts[i];
+    }
+    delete rowDrafts[i];
+  }
+  Object.assign(rowDrafts, shifted);
   commit();
 }
 
@@ -423,7 +436,7 @@ onMounted(async () => {
                 :key="field.name"
               >
                 <dt>{{ extraFieldLabel(field.name) }}</dt>
-                <dd>{{ field.name }}</dd>
+                <dd>{{ field.value }}</dd>
               </template>
             </dl>
           </div>

@@ -65,6 +65,7 @@ describe("buildMetaXml / parseOdfMeta round trip (SPEC-041 AC-2, AC-3, AC-6)", (
     expect(properties.extraFields).toHaveLength(1);
     expect(properties.extraFields?.[0].name).toBe("generator");
     expect(properties.extraFields?.[0].xml).toContain("LibreOffice/7.6");
+    expect(properties.extraFields?.[0].value).toBe("LibreOffice/7.6");
   });
 
   it("tolerates malformed XML by returning no properties", () => {

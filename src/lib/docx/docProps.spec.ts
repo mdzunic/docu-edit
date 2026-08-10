@@ -68,6 +68,8 @@ describe("buildCorePropertiesXml / parseCoreProperties round trip (SPEC-041 AC-2
     const properties = parseCoreProperties(source);
     expect(properties.extraFields).toHaveLength(2);
     expect(properties.extraFields?.map((field) => field.name).sort()).toEqual(["category", "revision"]);
+    expect(properties.extraFields?.find((field) => field.name === "category")?.value).toBe("Finance");
+    expect(properties.extraFields?.find((field) => field.name === "revision")?.value).toBe("3");
 
     const rebuilt = buildCorePropertiesXml(
       { title: properties.title ?? "", extraFields: properties.extraFields },
@@ -77,8 +79,10 @@ describe("buildCorePropertiesXml / parseCoreProperties round trip (SPEC-041 AC-2
     expect(rebuiltProperties.extraFields).toHaveLength(2);
     const category = rebuiltProperties.extraFields?.find((field) => field.name === "category");
     expect(category?.xml).toContain("Finance");
+    expect(category?.value).toBe("Finance");
     const revision = rebuiltProperties.extraFields?.find((field) => field.name === "revision");
     expect(revision?.xml).toContain("3");
+    expect(revision?.value).toBe("3");
   });
 
   it("tolerates malformed XML by returning no properties", () => {

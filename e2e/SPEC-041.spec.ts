@@ -1,4 +1,6 @@
 import { test, expect, type Page, type Download } from "@playwright/test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { crc32, inflateRawSync } from "node:zlib";
 import { MOD } from "./keys";
 
 // SPEC-041 — document properties and metadata: File → Properties opens a
@@ -47,6 +49,90 @@ async function reopen(page: Page, path: string): Promise<void> {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/doc\/.+/);
+}
+
+/** Minimal central-directory walk over a downloaded archive (same shape as
+ * e2e/SPEC-039.spec.ts) — enough to patch a single part of a downloaded
+ * .docx from Node before reopening it. */
+function unzipParts(buffer: Buffer): Map<string, Buffer> {
+  let eocd = buffer.length - 22;
+  while (eocd >= 0 && buffer.readUInt32LE(eocd) !== 0x06054b50) {
+    eocd--;
+  }
+  const totalEntries = buffer.readUInt16LE(eocd + 10);
+  let offset = buffer.readUInt32LE(eocd + 16);
+  const parts = new Map<string, Buffer>();
+  for (let i = 0; i < totalEntries; i++) {
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString("utf8", offset + 46, offset + 46 + nameLength);
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const data = buffer.subarray(dataStart, dataStart + compressedSize);
+    parts.set(name, method === 8 ? inflateRawSync(data) : Buffer.from(data));
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return parts;
+}
+
+// Minimal store-method (uncompressed) zip writer, same shape as
+// e2e/SPEC-039.spec.ts's own copy.
+function buildZip(parts: Map<string, Buffer>): Buffer {
+  const localChunks: Buffer[] = [];
+  const centralChunks: Buffer[] = [];
+  let offset = 0;
+  for (const [name, data] of parts) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const crc = crc32(data) >>> 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28);
+    localChunks.push(local, nameBuf, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralChunks.push(central, nameBuf);
+    offset += local.length + nameBuf.length + data.length;
+  }
+  const centralStart = offset;
+  const centralBuf = Buffer.concat(centralChunks);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(parts.size, 8);
+  eocd.writeUInt16LE(parts.size, 10);
+  eocd.writeUInt32LE(centralBuf.length, 12);
+  eocd.writeUInt32LE(centralStart, 16);
+  return Buffer.concat([...localChunks, centralBuf, eocd]);
 }
 
 test("File → Properties opens a modal dialog with General/Description/Statistics/Custom Properties tabs (AC-1)", async ({
@@ -131,6 +217,32 @@ test("Description-tab edits are written to .docx metadata and read back on reope
   await expect(page.getByTestId("properties-comments-input")).toHaveValue("Draft for review");
   await expect(page.getByTestId("properties-author-input")).toHaveValue("Ada Lovelace");
   await expect(page.getByTestId("properties-last-modified-by-input")).toHaveValue("Grace Hopper");
+});
+
+test("an unmodelled core.xml field is shown with its actual value, not its field name (AC-6)", async ({ page }) => {
+  await createDocument(page);
+  const path = await download(page, "docx");
+
+  // The editor never writes cp:category itself (AC-6: "including fields the
+  // editor does not expose for editing"), so hand-patch a downloaded docx
+  // to add one, the same way e2e/SPEC-039.spec.ts hand-builds fixtures for
+  // states the app can't reach on its own.
+  const parts = unzipParts(readFileSync(path));
+  const core = parts.get("docProps/core.xml")!.toString("utf8");
+  parts.set(
+    "docProps/core.xml",
+    Buffer.from(core.replace("</cp:coreProperties>", "<cp:category>Finance</cp:category></cp:coreProperties>"), "utf8"),
+  );
+  const fixturePath = test.info().outputPath("spec041-ac6-fixture.docx");
+  writeFileSync(fixturePath, buildZip(parts));
+
+  await reopen(page, fixturePath);
+  await openProperties(page);
+  await switchTab(page, "description");
+  const extraFields = page.getByTestId("properties-extra-fields");
+  await expect(extraFields).toContainText("Category");
+  await expect(extraFields).toContainText("Finance");
+  await expect(extraFields).not.toContainText("category");
 });
 
 test("Description-tab edits are written to .odt metadata and read back on reopen (AC-5)", async ({ page }) => {

@@ -99,7 +99,7 @@ export function parseOdfMeta(xml: string): DocumentProperties {
     } else if (ns === META_NAMESPACE && name === "user-defined") {
       // Handled by parseOdfCustomProperties below.
     } else if (!(ns === META_NAMESPACE && KNOWN_META_ELEMENTS.has(name))) {
-      extraFields.push({ name, xml: serializeElement(child) });
+      extraFields.push({ name, xml: serializeElement(child), value: text });
     }
   }
   if (keywords.length > 0) {

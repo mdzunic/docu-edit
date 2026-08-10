@@ -1376,6 +1376,10 @@ export interface ExtraMetadataField {
   name: string;
   /** The source element, serialised verbatim. */
   xml: string;
+  /** The source element's text content, for display only (AC-6: "displayed
+   * as they exist in the file") — `xml` remains the source of truth written
+   * back on save. */
+  value: string;
 }
 
 /** Document metadata (SPEC-041): the Properties dialog's Description-tab

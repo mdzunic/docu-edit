@@ -94,7 +94,7 @@ export function parseCoreProperties(xml: string): DocumentProperties {
     } else if (ns === DCTERMS_NAMESPACE && name === "modified") {
       properties.modified = text;
     } else if (!(ns === CORE_PROPERTIES_NAMESPACE && CORE_FIELD_ELEMENTS.has(name))) {
-      extraFields.push({ name, xml: serializeElement(child) });
+      extraFields.push({ name, xml: serializeElement(child), value: text });
     }
   }
   if (extraFields.length > 0) {
