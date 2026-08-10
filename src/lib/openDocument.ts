@@ -20,6 +20,7 @@ import type {
 } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
+import { inferListStyleTypes } from "./styles";
 
 export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
 
@@ -126,7 +127,10 @@ function buildModel(
   if (Object.keys(parsed.properties).length > 0) {
     model.properties = parsed.properties;
   }
-  return model;
+  // SPEC-042: neither .docx nor .odt has a "list style" family of its own —
+  // recover the Styles pane's "List" grouping from usage, now that styles,
+  // paragraphs and list definitions are all parsed (see the doc comment).
+  return inferListStyleTypes(model);
 }
 
 /** Reads and parses a picked File into a new DocumentModel (not yet stored

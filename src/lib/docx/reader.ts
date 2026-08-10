@@ -322,9 +322,22 @@ function runHasTypedBreak(rEl: Element): boolean {
  * typed break degrades to a line break there. Body-level paragraphs go
  * through parseBodyParagraphBlocks, which splits around typed breaks
  * instead (SPEC-028 AC-30). */
-function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undefined {
+/** A run's character-style reference (SPEC-042 `w:rStyle`) resolved against
+ * the style catalog and merged UNDER the run's own direct `rPr` (OOXML's
+ * character-style-overrides-paragraph-style, direct-overrides-both
+ * precedence — `inheritedFormatting` is already the paragraph's resolution). */
+function parseRun(
+  rEl: Element,
+  inheritedFormatting: RunFormatting,
+  styleCatalog: StyleCatalog,
+): Run | undefined {
   const rPr = firstChildElement(rEl, WORD_NAMESPACE, "rPr");
-  const formatting = mergeRunFormatting(inheritedFormatting, parseRunProperties(rPr));
+  const rStyleEl = rPr ? firstChildElement(rPr, WORD_NAMESPACE, "rStyle") : undefined;
+  const styleId = rStyleEl ? (wordAttr(rStyleEl, "val") ?? undefined) : undefined;
+  const base = styleId
+    ? mergeRunFormatting(inheritedFormatting, resolveStyle(styleCatalog, styleId).runFormatting)
+    : inheritedFormatting;
+  const formatting = mergeRunFormatting(base, parseRunProperties(rPr));
   const formatChange = parseRunPropertiesChange(rPr);
 
   let text = "";
@@ -337,7 +350,14 @@ function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undef
   if (text.length === 0) {
     return undefined;
   }
-  return formatChange ? { text, formatting, changes: { formatChange } } : { text, formatting };
+  const run: Run = { text, formatting };
+  if (styleId) {
+    run.styleId = styleId;
+  }
+  if (formatChange) {
+    run.changes = { formatChange };
+  }
+  return run;
 }
 
 /** The run formatting a `w:hyperlink`'s child runs inherit: the wrapper's
@@ -423,6 +443,7 @@ function collectTrackedRun(child: Element, runs: Run[], collect: () => void): vo
 function collectRuns(
   container: Element,
   inheritedFormatting: RunFormatting,
+  styleCatalog: StyleCatalog,
   runs: Run[],
   opaqueInlines: OpaqueInline[],
   bookmarks: BookmarkAnchor[],
@@ -453,7 +474,7 @@ function collectRuns(
         opaqueInlines.push({ xml: serializeElement(child), runIndex: runs.length });
         continue;
       }
-      const run = parseRun(child, inheritedFormatting);
+      const run = parseRun(child, inheritedFormatting, styleCatalog);
       if (run) {
         runs.push(run);
       }
@@ -463,6 +484,7 @@ function collectRuns(
       collectRuns(
         child,
         hyperlinkFormatting(child, inheritedFormatting, links),
+        styleCatalog,
         runs,
         opaqueInlines,
         bookmarks,
@@ -481,7 +503,7 @@ function collectRuns(
       collectCommentAnchor(child, runs, commentAnchors);
     } else if (child.namespaceURI === WORD_NAMESPACE && (child.localName === "ins" || child.localName === "del")) {
       collectTrackedRun(child, runs, () =>
-        collectRuns(child, inheritedFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors),
+        collectRuns(child, inheritedFormatting, styleCatalog, runs, opaqueInlines, bookmarks, links, commentAnchors),
       );
     } else if (
       child.namespaceURI === WORD_NAMESPACE &&
@@ -646,7 +668,7 @@ function parseParagraph(
   const opaqueInlines: OpaqueInline[] = [];
   const bookmarks: BookmarkAnchor[] = [];
   const commentAnchors: CommentAnchor[] = [];
-  collectRuns(pEl, meta.resolved.runFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors);
+  collectRuns(pEl, meta.resolved.runFormatting, styleCatalog, runs, opaqueInlines, bookmarks, links, commentAnchors);
   return assembleParagraph(meta, runs, opaqueInlines, true, bookmarks, commentAnchors);
 }
 
@@ -971,7 +993,7 @@ function parseBodyParagraphBlocks(
         pushText();
         continue;
       }
-      const run = parseRun(child, meta.resolved.runFormatting);
+      const run = parseRun(child, meta.resolved.runFormatting, styleCatalog);
       if (run) {
         runs.push(run);
       }
@@ -979,6 +1001,7 @@ function parseBodyParagraphBlocks(
       collectRuns(
         child,
         hyperlinkFormatting(child, meta.resolved.runFormatting, links),
+        styleCatalog,
         runs,
         opaqueInlines,
         bookmarks,
@@ -997,7 +1020,7 @@ function parseBodyParagraphBlocks(
       collectCommentAnchor(child, runs, commentAnchors);
     } else if (child.namespaceURI === WORD_NAMESPACE && (child.localName === "ins" || child.localName === "del")) {
       collectTrackedRun(child, runs, () =>
-        collectRuns(child, meta.resolved.runFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors),
+        collectRuns(child, meta.resolved.runFormatting, styleCatalog, runs, opaqueInlines, bookmarks, links, commentAnchors),
       );
     } else if (child.namespaceURI === WORD_NAMESPACE && TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)) {
       // Regenerated by Word on open; deliberately not preserved.

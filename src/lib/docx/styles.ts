@@ -3,8 +3,14 @@
 // formatting — this is what lets built-in heading styles (AC-25) render at
 // their defined size and weight even when a paragraph carries no direct
 // formatting of its own.
-import type { NamedStyle, ParagraphFormatting, RunFormatting } from "../documentModel";
-import { childElements, firstChildElement, wordAttr as attr, WORD_NAMESPACE } from "./xml";
+import type { NamedStyle, ParagraphFormatting, RunFormatting, StyleType } from "../documentModel";
+import {
+  childElements,
+  firstChildElement,
+  serializeElement,
+  wordAttr as attr,
+  WORD_NAMESPACE,
+} from "./xml";
 import {
   mergeParagraphFormatting,
   mergeRunFormatting,
@@ -13,13 +19,37 @@ import {
   parseRunProperties,
 } from "./properties";
 
+/** `w:type` values SPEC-042 fully models — `"paragraph"` (SPEC-019) and
+ * `"character"` (`w:rStyle`). `"table"`/`"numbering"` styles, and any
+ * `"paragraph"`/`"character"` style carrying a child the reader does not
+ * recognise (e.g. `w:tblStylePr` banding regions), come through as
+ * `unmodeled` instead — see `parseStylesCatalog`. */
+const MODELED_TYPES = new Set(["paragraph", "character"]);
+
 interface StyleDefinition {
   id: string;
   name?: string;
+  /** The raw `w:type` value ("paragraph", "character", "table",
+   * "numbering") — narrowed to a model `StyleType` only in
+   * `catalogToNamedStyles`, since "numbering" has no model equivalent. */
+  type: string;
   basedOn?: string;
+  next?: string;
   paragraphFormatting: ParagraphFormatting;
   runFormatting: RunFormatting;
   headingLevel?: number;
+  unmodeled?: boolean;
+  rawXml?: string;
+}
+
+function modelStyleType(rawType: string): StyleType {
+  if (rawType === "character") {
+    return "character";
+  }
+  // "table" and the rare legacy "numbering" family both group under
+  // "table" in the pane — neither is a style the editor fully models
+  // (see MODELED_TYPES), so the grouping only matters for display.
+  return rawType === "paragraph" ? "paragraph" : "table";
 }
 
 export interface StyleCatalog {
@@ -88,27 +118,48 @@ export function parseStylesCatalog(stylesDoc: Document | undefined): StyleCatalo
   }
 
   for (const styleEl of childElements(stylesDoc.documentElement, WORD_NAMESPACE, "style")) {
-    if (attr(styleEl, "type") !== "paragraph") {
-      continue;
-    }
     const id = attr(styleEl, "styleId");
     if (!id) {
       continue;
     }
+    const rawType = attr(styleEl, "type") ?? "paragraph";
     const nameEl = firstChildElement(styleEl, WORD_NAMESPACE, "name");
     const name = nameEl ? (attr(nameEl, "val") ?? undefined) : undefined;
     const basedOnEl = firstChildElement(styleEl, WORD_NAMESPACE, "basedOn");
     const basedOn = basedOnEl ? (attr(basedOnEl, "val") ?? undefined) : undefined;
+    const nextEl = firstChildElement(styleEl, WORD_NAMESPACE, "next");
+    const next = nextEl ? (attr(nextEl, "val") ?? undefined) : undefined;
+
+    // SPEC-042: only paragraph and character styles are modeled — table
+    // banding and legacy "numbering" styles are listed/preserved verbatim
+    // instead (AC-15..18), never resolved or edited.
+    if (!MODELED_TYPES.has(rawType)) {
+      catalog.styles.set(id, {
+        id,
+        name,
+        type: rawType,
+        basedOn,
+        next,
+        paragraphFormatting: {},
+        runFormatting: {},
+        unmodeled: true,
+        rawXml: serializeElement(styleEl),
+      });
+      continue;
+    }
+
     const pPr = firstChildElement(styleEl, WORD_NAMESPACE, "pPr");
     const rPr = firstChildElement(styleEl, WORD_NAMESPACE, "rPr");
 
     catalog.styles.set(id, {
       id,
       name,
+      type: rawType,
       basedOn,
-      paragraphFormatting: parseParagraphProperties(pPr),
+      next,
+      paragraphFormatting: rawType === "paragraph" ? parseParagraphProperties(pPr) : {},
       runFormatting: parseRunProperties(rPr),
-      headingLevel: parseOutlineLevel(pPr) ?? headingLevelFromName(id, name),
+      headingLevel: rawType === "paragraph" ? (parseOutlineLevel(pPr) ?? headingLevelFromName(id, name)) : undefined,
     });
   }
 
@@ -125,8 +176,21 @@ export function catalogToNamedStyles(catalog: StyleCatalog): NamedStyle[] {
   const styles: NamedStyle[] = [];
   for (const definition of catalog.styles.values()) {
     const style: NamedStyle = { id: definition.id, name: definition.name ?? definition.id };
+    const type = modelStyleType(definition.type);
+    if (type !== "paragraph") {
+      style.type = type;
+    }
     if (definition.basedOn !== undefined) {
       style.basedOn = definition.basedOn;
+    }
+    if (definition.next !== undefined) {
+      style.next = definition.next;
+    }
+    if (definition.unmodeled) {
+      style.unmodeled = true;
+      style.rawXml = definition.rawXml;
+      styles.push(style);
+      continue;
     }
     if (Object.keys(definition.paragraphFormatting).length > 0) {
       style.paragraphFormatting = definition.paragraphFormatting;
