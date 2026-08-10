@@ -34,18 +34,9 @@
 // diffed by simple reference/value inequality, one field at a time, the same
 // coarse "carry the whole changed thing" granularity as blocks.
 import {
-  isImage,
   type Block,
-  type CommentThread,
-  type DefaultStyles,
-  type DocumentFormat,
   type DocumentModel,
-  type ListDefinition,
-  type MeasurementUnit,
   type MediaPart,
-  type NamedStyle,
-  type NoteContent,
-  type NoteSettings,
   type OpaquePart,
   type Section,
   type SourceXml,
@@ -430,7 +421,7 @@ function buildSectionsPatch(before: Section[], after: Section[]): SectionsPatch 
 }
 
 function applySectionsPatch(before: Section[], patch: SectionsPatch): Section[] {
-  const after: Section[] = new Array(patch.afterCount);
+  const after: Section[] = Array.from({ length: patch.afterCount });
   for (let i = 0; i < patch.prefixLen; i++) {
     after[i] = before[i];
   }
