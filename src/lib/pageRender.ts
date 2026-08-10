@@ -86,6 +86,11 @@ export interface RenderEntry {
    * runs need it passed down since DocTableBlock renders its own runs
    * rather than through RenderRun. */
   trackChangesDisplayMode?: TrackChangesDisplayMode;
+  /** Whether this paragraph carries a tracked change (SPEC-039 AC-5's
+   * margin change bar) — suppressed in "No markup"/"Original" display
+   * mode, which render as if the document already reflects one side of
+   * every change. */
+  hasTrackedChange?: boolean;
 }
 
 /** Typed empty seed for DocPage's entries prop (espree bars the

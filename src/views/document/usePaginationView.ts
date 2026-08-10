@@ -35,7 +35,16 @@ import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/not
 import { noRenderEntries, type RenderEntry } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
-import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle, trackChangeRunStyle } from "../../lib/renderFormatting";
+import {
+  headingTag,
+  isExternalLink,
+  paragraphHasTrackedChange,
+  paragraphStyle,
+  runKey,
+  runLinkHref,
+  runStyle,
+  trackChangeRunStyle,
+} from "../../lib/renderFormatting";
 import { effectiveLanguage } from "../../lib/language";
 import { markSegments } from "../../lib/marks";
 import { splitRuns } from "../../lib/textEditing";
@@ -321,6 +330,9 @@ function renderEntryFor(
     outlineToggle: outlineToggle || undefined,
     outlineCollapsed: outlineCollapsed || undefined,
     column,
+    hasTrackedChange:
+      (deps.trackChangesDisplayMode.value === "all" || deps.trackChangesDisplayMode.value === "simple") &&
+      paragraphHasTrackedChange(paragraph),
   } as RenderEntry;
 }
 

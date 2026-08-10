@@ -54,6 +54,7 @@ function componentFor(entry = noRenderEntries()[0]) {
     :data-marker-label="entry.markerLabel"
     :data-list-marker="entry.listMarker"
     :data-list-level="entry.listLevel"
+    :data-tracked-change="entry.hasTrackedChange ? '1' : undefined"
     :block="entry.blockProp"
     :section="entry.sectionProp"
     :block-index="entry.blockIndexProp"
@@ -152,6 +153,14 @@ function componentFor(entry = noRenderEntries()[0]) {
   margin: 0;
   font-weight: normal;
   font-size: inherit;
+}
+
+/* SPEC-039 AC-5: a change bar in the margin for any paragraph carrying a
+   tracked change — a plain vertical rule outside the paragraph's own box
+   (a box-shadow, not a pseudo-element, so it never collides with the list
+   marker's ::before), shown in "All markup"/"Simple markup" only. */
+.doc-paragraph[data-tracked-change] {
+  box-shadow: -0.3cm 0 0 0 #1a73e8;
 }
 
 /* The list marker (SPEC-018): painted from the derived data-list-marker
