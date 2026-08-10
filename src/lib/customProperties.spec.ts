@@ -18,6 +18,11 @@ describe("customPropertyNameError (AC-7)", () => {
     expect(customPropertyNameError("Client", ["Client", "Budget"])).not.toBe("");
   });
 
+  it("rejects a duplicate name with leading/trailing whitespace, matching the trimmed name createCustomProperty stores", () => {
+    expect(customPropertyNameError("Client ", ["Client", "Budget"])).not.toBe("");
+    expect(customPropertyNameError(" Client", ["Client", "Budget"])).not.toBe("");
+  });
+
   it("accepts a unique, non-empty name", () => {
     expect(customPropertyNameError("Client", ["Budget"])).toBe("");
   });

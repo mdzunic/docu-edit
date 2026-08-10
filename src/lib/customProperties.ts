@@ -22,10 +22,11 @@ function isValidDate(value: string): boolean {
  * non-empty and unique among the document's other custom property names
  * (case-sensitive, matching how `.docx`/`.odt` compare property names). */
 export function customPropertyNameError(name: string, existingNames: string[]): string {
-  if (name.trim().length === 0) {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) {
     return "Property name cannot be empty";
   }
-  if (existingNames.includes(name)) {
+  if (existingNames.includes(trimmed)) {
     return "A custom property with this name already exists";
   }
   return "";
