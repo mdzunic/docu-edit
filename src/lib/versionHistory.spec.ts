@@ -30,6 +30,22 @@ async function loadVersionHistory(overrides: Record<string, unknown> = {}) {
   return { lib, store };
 }
 
+/** Inflates stored index-entry sizes without touching their (small, real)
+ * payloads, so budget enforcement actually fires without generating 50 MB of
+ * genuine JSON — computeUsedBytes trusts the index's `size` field directly
+ * (AC-44), so this is a faithful way to force the over-budget path
+ * deterministically. */
+function inflateSizes(
+  store: Awaited<ReturnType<typeof loadVersionHistory>>["store"],
+  docId: string,
+  bytesEach: number,
+) {
+  const key = `versions:${docId}`;
+  const index = store.records.get(key) as { versions: { size: number }[] };
+  index.versions = index.versions.map((v) => ({ ...v, size: bytesEach }));
+  store.records.set(key, index);
+}
+
 beforeEach(() => {
   vi.resetModules();
 });
@@ -164,6 +180,11 @@ describe("decideBaseline", () => {
 });
 
 describe("pruning", () => {
+  /** Builds each version by appending one paragraph to the previous
+   * version's own model object (reusing its block references), the same
+   * incremental-edit shape "writes a delta ..." above uses — needed so
+   * consecutive versions actually chain as deltas instead of each being an
+   * unrelated model that trips the wholesale-rewrite rule into a baseline. */
   async function seedVersions(
     lib: Awaited<ReturnType<typeof loadVersionHistory>>["lib"],
     docId: string,
@@ -171,9 +192,12 @@ describe("pruning", () => {
     named: Set<number> = new Set(),
   ) {
     let cachedPrev: { id: string; model: DocumentModel } | null = null;
+    let model = baseModel(docId, "paragraph 0");
     const ids: string[] = [];
     for (let i = 0; i < count; i++) {
-      const model = baseModel(docId, `paragraph ${i}`, "padding ".repeat(2000)); // large enough to exceed budget quickly
+      if (i > 0) {
+        model = { ...model, sections: [{ blocks: [...model.sections[0].blocks, paragraph(`paragraph ${i}`)] }] };
+      }
       const result = await lib.recordVersion({ docId, model, author: "You", trigger: "commit", cachedPrev });
       cachedPrev = result.newEntry!;
       ids.push(result.newEntry!.id);
@@ -184,17 +208,49 @@ describe("pruning", () => {
     return ids;
   }
 
-  it("never removes named versions or the newest 10", async () => {
-    const { lib } = await loadVersionHistory();
-    // Shrink the budget via module constant is not possible (read-only export),
-    // so this test uses reconcileBudget with a tiny model set and asserts the
-    // *ordering* invariant directly against the pruning primitives instead.
-    const ids = await seedVersions(lib, "doc-1", 15, new Set([0]));
-    const index = await lib.loadIndex("doc-1");
-    const named = index.versions.find((v) => v.name);
-    expect(named?.id).toBe(ids[0]);
-    const newest10 = index.versions.slice(-10).map((v) => v.id);
-    expect(newest10).toEqual(ids.slice(-10));
+  it("prunes the oldest unnamed, non-newest-10 version first and re-encodes the oldest retained dependant to preserve chain integrity (AC-32..36)", async () => {
+    const { lib, store } = await loadVersionHistory();
+    const ids = await seedVersions(lib, "doc-1", 12); // 1 baseline + 11 deltas, all unnamed
+    // ~5 MB per (fabricated) entry x 12 = ~60 MB, over the 50 MB budget.
+    inflateSizes(store, "doc-1", 5 * 1024 * 1024);
+
+    const currentModel = baseModel("doc-1", "current content", "padding ".repeat(2000));
+    const reconciled = await lib.reconcileBudget("doc-1", currentModel);
+
+    expect(reconciled.paused).toBe(false);
+    // Only the oldest two (outside the protected newest 10) are prunable.
+    expect(reconciled.versions.map((v) => v.id)).not.toContain(ids[0]);
+    expect(reconciled.versions.map((v) => v.id)).not.toContain(ids[1]);
+    expect(reconciled.versions).toHaveLength(10);
+    // The chain-integrity fix (step 2) re-encoded the oldest retained
+    // dependant (ids[2]) as a standalone baseline before ids[0]/ids[1] were
+    // deleted, so it — and everything after it — must still reconstruct.
+    const reencoded = reconciled.versions.find((v) => v.id === ids[2])!;
+    expect(reencoded.kind).toBe("baseline");
+    expect(reencoded.parentId).toBeNull();
+    const newest = await lib.reconstructVersion("doc-1", ids[11]);
+    expect(newest).not.toBeNull();
+    expect(newest!.sections[0].blocks).toHaveLength(12);
+    expect((newest!.sections[0].blocks[11] as Paragraph).runs[0].text).toBe("paragraph 11");
+  });
+
+  it("stops and pauses when nothing is prunable and the budget is still exceeded (AC-37, AC-38)", async () => {
+    const { lib, store } = await loadVersionHistory();
+    const ids = await seedVersions(lib, "doc-1", 3, new Set([0, 1, 2])); // all named -> nothing prunable
+    inflateSizes(store, "doc-1", 20 * 1024 * 1024); // 60 MB, over budget
+
+    const currentModel = baseModel("doc-1", "current content");
+    const reconciled = await lib.reconcileBudget("doc-1", currentModel);
+
+    expect(reconciled.paused).toBe(true);
+    expect(reconciled.versions.map((v) => v.id)).toEqual(ids); // nothing removed
+    expect(lib.HISTORY_PAUSED_MESSAGE).toBe(
+      "Version history paused — 50 MB used. Delete a version, or remove a name, to resume",
+    );
+
+    // AC-37: a subsequent cadence/commit snapshot is skipped while paused.
+    const attempt = await lib.recordVersion({ docId: "doc-1", model: currentModel, author: "You", trigger: "cadence", cachedPrev: null });
+    expect(attempt.written).toBe(false);
   });
 
   it("deleteVersion re-encodes the immediate child before removing a version other deltas depend on", async () => {
