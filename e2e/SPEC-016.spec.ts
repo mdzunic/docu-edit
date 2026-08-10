@@ -51,7 +51,7 @@ interface ModelShape {
 async function readLatestModel(page: Page, id: string): Promise<ModelShape> {
   return page.evaluate(async (docId) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("docu-edit", 1);
+      const request = indexedDB.open("docu-edit"); // no explicit version: the app has already opened the DB at its current schema version by this point
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });

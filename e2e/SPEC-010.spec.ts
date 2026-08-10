@@ -61,7 +61,7 @@ async function injectLargeDocument(
         },
       };
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open("docu-edit", 1);
+        const request = indexedDB.open("docu-edit"); // no explicit version: the app (page.goto above) already created the DB at its current schema version
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
@@ -232,7 +232,7 @@ async function injectCrashState(page: Page, id: string): Promise<void> {
       scroll: 0,
     };
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("docu-edit", 1);
+      const request = indexedDB.open("docu-edit"); // no explicit version: the app (page.goto above) already created the DB at its current schema version
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });

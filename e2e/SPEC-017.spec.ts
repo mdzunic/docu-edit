@@ -243,7 +243,7 @@ test("a 200-page document returns first results within 300ms and typing stays re
   await page.goto("/");
   const seeded = await page.evaluate(async (id) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open("docu-edit", 1);
+      const req = indexedDB.open("docu-edit"); // no explicit version: the app has already opened the DB at its current schema version by this point
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
