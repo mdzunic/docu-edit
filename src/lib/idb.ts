@@ -6,10 +6,15 @@
 // callers (documentStore) treat any rejection as "storage unavailable" and
 // keep working in-memory.
 import type { PersistedRecord } from "./documentStore";
+import type { VersionStoreRecord } from "./versionHistory";
 
 const DB_NAME = "docu-edit";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "documents";
+// SPEC-040: version history's own store, kept separate from `documents` so
+// rendering the library never reads 50 MB of version payloads per document
+// into memory at startup (see versionHistory.ts's header comment).
+const VERSIONS_STORE_NAME = "versions";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -22,6 +27,9 @@ function openDb(): Promise<IDBDatabase> {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(VERSIONS_STORE_NAME)) {
+        db.createObjectStore(VERSIONS_STORE_NAME, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -75,5 +83,31 @@ export async function putRecord(record: PersistedRecord): Promise<void> {
 export async function deleteRecord(id: string): Promise<void> {
   const db = await getDb();
   const store = db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME);
+  await requestToPromise(store.delete(id));
+}
+
+// --- version history (SPEC-040) --------------------------------------------
+// A separate object store, and separate helpers, so a version-history write
+// or read is always its own IndexedDB transaction on its own store — a
+// quota failure here can never abort a `documents` store transaction (AC-40).
+
+/** Reads one version-history record (index, payload or blob) by key. */
+export async function getVersionsRecord(id: string): Promise<VersionStoreRecord | undefined> {
+  const db = await getDb();
+  const store = db.transaction(VERSIONS_STORE_NAME, "readonly").objectStore(VERSIONS_STORE_NAME);
+  return requestToPromise(store.get(id) as IDBRequest<VersionStoreRecord | undefined>);
+}
+
+/** Writes (inserts or replaces) one version-history record. */
+export async function putVersionsRecord(record: VersionStoreRecord): Promise<void> {
+  const db = await getDb();
+  const store = db.transaction(VERSIONS_STORE_NAME, "readwrite").objectStore(VERSIONS_STORE_NAME);
+  await requestToPromise(store.put(record));
+}
+
+/** Removes one version-history record by id. Resolves even if absent. */
+export async function deleteVersionsRecord(id: string): Promise<void> {
+  const db = await getDb();
+  const store = db.transaction(VERSIONS_STORE_NAME, "readwrite").objectStore(VERSIONS_STORE_NAME);
   await requestToPromise(store.delete(id));
 }

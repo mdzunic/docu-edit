@@ -43,6 +43,9 @@ export interface UseAutosaveOptions {
   /** Applies a restored model + caret/scroll to the editor: on session
    * start, when recovered draft content is loaded, and on "Discard". */
   applyRestored: (state: RestoredState) => void;
+  /** Called after a clean tab-close commit succeeds — SPEC-040's other
+   * commit-point version-history trigger, alongside commitNow's download. */
+  onCleanClose?: () => void;
 }
 
 interface CommittedStash {
@@ -291,9 +294,9 @@ export function useAutosave(options: UseAutosaveOptions) {
     } else if (recovery.value === null) {
       // Clean close: start the commit here, where more of the page
       // lifetime remains than in pagehide.
-      void commitDocument(docId, options.getCaret(), options.getScroll()).catch(
-        () => {},
-      );
+      void commitDocument(docId, options.getCaret(), options.getScroll())
+        .then(() => options.onCleanClose?.())
+        .catch(() => {});
     }
   }
 
@@ -306,9 +309,9 @@ export function useAutosave(options: UseAutosaveOptions) {
         () => {},
       );
     } else if (recovery.value === null) {
-      void commitDocument(docId, options.getCaret(), options.getScroll()).catch(
-        () => {},
-      );
+      void commitDocument(docId, options.getCaret(), options.getScroll())
+        .then(() => options.onCleanClose?.())
+        .catch(() => {});
     }
   }
 

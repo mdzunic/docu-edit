@@ -28,6 +28,7 @@ import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
 import TrackChangesPane from "../components/TrackChangesPane.vue";
+import VersionHistoryPane from "../components/VersionHistoryPane.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
@@ -57,6 +58,7 @@ import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { asCommentFilter, useComments } from "./document/useComments";
 import { asChangeEntries, useTrackChanges } from "./document/useTrackChanges";
+import { useVersionHistory } from "./document/useVersionHistory";
 import { useFindReplace } from "./document/useFindReplace";
 import { usePdfExport } from "./document/usePdfExport";
 import { usePrintPreview } from "./document/usePrintPreview";
@@ -106,6 +108,7 @@ import {
   asNoteRestart,
   asTabStopAlignment,
   asTabStops,
+  asTrackChangesDisplayMode,
   asPageNumberFormat,
   asParagraphAlignment,
   asParagraphBlock,
@@ -444,7 +447,11 @@ const doc = shallowRef(
 // "pending" until the Web Lock resolves; "busy" renders the conflict bar and
 // a read-only canvas until the other tab closes and the queued lock grants.
 const lockState = ref("pending");
-const editable = computed(() => lockState.value === "acquired" && !!doc.value);
+// Whether this tab owns the document, regardless of version-history preview
+// — the version history pane's own actions (restore, name, delete) stay
+// enabled while previewing; only the canvas itself goes read-only.
+const documentActionsEnabled = computed(() => lockState.value === "acquired" && !!doc.value);
+const editable = computed(() => documentActionsEnabled.value && !versionHistoryPreviewActive.value);
 
 // --- caret and scroll (SPEC-010: restored on reopen) -----------------------
 // Plain variables, not refs: nothing renders from them, they are only read
@@ -750,7 +757,7 @@ const {
   getClearImageSelection: () => clearImageSelection,
   getExitNoteEditing: () => exitNoteEditing,
   getCaret: () => caret,
-  markDirty: () => autosave.markDirty(),
+  markDirty: () => noteEdit(),
   refreshUndoRedoState,
 });
 
@@ -829,7 +836,7 @@ const {
   clearImageSelection,
   exitHeaderFooterEditing,
   getCaret: () => caret,
-  markDirty: () => autosave.markDirty(),
+  markDirty: () => noteEdit(),
   refreshUndoRedoState,
 });
 
@@ -885,6 +892,7 @@ const autosave = useAutosave({
     scrollTop = restored.scroll;
     void focusAndRestore();
   },
+  onCleanClose: () => noteVersionHistoryCommitPoint(),
 });
 const { saveState, saveStateText, recovery, keepRecovered, discardRecovered } = autosave;
 
@@ -921,6 +929,7 @@ function openSession(id = "") {
     lockState.value = state === "acquired" ? "acquired" : "busy";
     if (state === "acquired") {
       void autosave.beginSession(id);
+      beginVersionHistorySession();
       refreshUndoRedoState();
     }
   });
@@ -1142,7 +1151,7 @@ function applyEdit(
   doc.value = replaceDocumentModel(documentId.value, result.model);
   caret = result.selection.focus;
   selectionAnchor = isCollapsed(result.selection) ? noCaret() : result.selection.anchor;
-  autosave.markDirty();
+  noteEdit();
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
   void restoreCaretAfterRender();
@@ -1197,7 +1206,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // it stops a stale trigger firing after an undo (SPEC-026 AC-22).
   producedEnDashAt = -1;
   producedOpenSingleAt = -1;
-  autosave.markDirty();
+  noteEdit();
   updateCaretStatus({ start: snapshot.selection.anchor, end: snapshot.selection.focus });
   refreshUndoRedoState();
   root.focus();
@@ -3879,6 +3888,47 @@ const {
 });
 
 const {
+  versionHistoryPaneOpen,
+  toggleVersionHistoryPane,
+  versions: versionHistoryEntries,
+  pausedMessage: versionHistoryPausedMessage,
+  namedOnlyFilter: versionHistoryNamedOnlyFilter,
+  previewActive: versionHistoryPreviewActive,
+  previewVersionId: versionHistoryPreviewVersionId,
+  beginVersionHistorySession,
+  noteChange: noteVersionHistoryChange,
+  noteCommitPoint: noteVersionHistoryCommitPoint,
+  selectVersion: selectVersionHistoryVersion,
+  exitPreview: exitVersionHistoryPreview,
+  restoreVersion: restoreVersionHistoryVersion,
+  nameVersion: nameVersionHistoryVersion,
+  removeVersionName: removeVersionHistoryName,
+  deleteVersion: deleteVersionHistoryVersion,
+  downloadVersion: downloadVersionHistoryVersion,
+} = useVersionHistory({
+  doc,
+  documentId,
+  applyEdit,
+  getCaret: () => caret,
+  onSessionClose,
+});
+
+// Every markDirty() call site also feeds the version-history cadence timer
+// (SPEC-040 AC-1) — the same activity signal, one order of magnitude
+// coarser (see versionCadenceScheduler.ts's header comment).
+function noteEdit() {
+  autosave.markDirty();
+  noteVersionHistoryChange();
+}
+
+// SPEC-040 AC-11..13: while previewing an old version, the canvas must show
+// its tracked-change diff markup regardless of the live document's own
+// track-changes display-mode setting.
+const effectiveTrackChangesDisplayMode = computed(() =>
+  versionHistoryPreviewActive.value ? asTrackChangesDisplayMode("all") : trackChangesDisplayMode.value,
+);
+
+const {
   statusBarLanguageLabel,
   currentLanguageTag,
   selectionActive: languageSelectionActive,
@@ -3942,7 +3992,7 @@ const { pagedViews } = usePaginationView({
   hfRemountEpoch,
   noteRemountEpoch,
   tocPageNumberFor,
-  trackChangesDisplayMode,
+  trackChangesDisplayMode: effectiveTrackChangesDisplayMode,
 });
 
 // --- outline navigator handlers (SPEC-037) ---------------------------------
@@ -4098,8 +4148,9 @@ async function handleDownload(format = "") {
   anchor.download = fileName;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  // A download is SPEC-003's explicit save: promote the state to committed.
-  void autosave.commitNow();
+  // A download is SPEC-003's explicit save: promote the state to committed,
+  // and SPEC-040's other commit-point version-history trigger (AC-2).
+  void autosave.commitNow().then(() => noteVersionHistoryCommitPoint());
   // SPEC-008: content that could not be preserved by a cross-format save is
   // reported once, after the download has been triggered, unless the user
   // opted out for this document.
@@ -4323,6 +4374,11 @@ async function menuPastePlain() {
             testid="page-setup-button"
             :disabled="!editable"
             @select="openPageSetup"
+          />
+          <MenuItem
+            label="Version history"
+            testid="file-menu-version-history"
+            @select="toggleVersionHistoryPane"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -4898,6 +4954,27 @@ async function menuPastePlain() {
           @next="goToNextChange"
           @previous="goToPreviousChange"
           @focus-change="goToChangeById"
+        />
+      </div>
+      <div
+        v-if="versionHistoryPaneOpen"
+        class="version-history-dock print-exclude"
+      >
+        <VersionHistoryPane
+          :versions="versionHistoryEntries"
+          :paused-message="versionHistoryPausedMessage ?? ''"
+          :named-only-filter="versionHistoryNamedOnlyFilter"
+          :preview-version-id="versionHistoryPreviewVersionId ?? ''"
+          :editable="documentActionsEnabled"
+          @close="toggleVersionHistoryPane"
+          @update:named-only-filter="versionHistoryNamedOnlyFilter = $event"
+          @select="selectVersionHistoryVersion"
+          @exit-preview="exitVersionHistoryPreview"
+          @restore="restoreVersionHistoryVersion"
+          @name="nameVersionHistoryVersion"
+          @remove-name="removeVersionHistoryName"
+          @delete="deleteVersionHistoryVersion"
+          @download="downloadVersionHistoryVersion"
         />
       </div>
       <div class="page-wrap">
@@ -5728,6 +5805,22 @@ async function menuPastePlain() {
 }
 
 .track-changes-dock :deep(.track-changes-pane) {
+  pointer-events: auto;
+}
+
+/* The version history pane's own dock (SPEC-040) — same shape as the other
+   two, on the same edge (not normally opened together with them). */
+.version-history-dock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.version-history-dock :deep(.version-history-pane) {
   pointer-events: auto;
 }
 
