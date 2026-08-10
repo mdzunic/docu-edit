@@ -148,3 +148,20 @@ test("downloading a specific version exports it without changing the current doc
   await expect(content(page)).toContainText("beta content");
   await expect(content(page)).not.toContainText("alpha content");
 });
+
+test("closing and reopening the document preserves the full history (AC-42)", async ({ page }) => {
+  await createDocument(page);
+  await seedParagraph(page, "alpha content");
+  await downloadCurrentDocx(page);
+  await replaceAll(page, "beta content");
+  await downloadCurrentDocx(page);
+
+  await openVersionHistoryPane(page);
+  await expect(items(page)).toHaveCount(2);
+
+  // The pane's open state is a persisted per-user preference (like the
+  // other docks), so it is already open on reload — no need to reopen it.
+  await page.reload();
+  await expect(pane(page)).toBeVisible();
+  await expect(items(page)).toHaveCount(2);
+});
