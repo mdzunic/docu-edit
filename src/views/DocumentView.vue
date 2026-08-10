@@ -4183,6 +4183,9 @@ function hoverTableGrid(rows = 0, cols = 0) {
 
 function chooseTableGrid(rows = 0, cols = 0) {
   handleInsertTable({ rows, cols });
+  // The pick closes the menu, so clear the highlight the pointer left behind:
+  // reopening Insert should show an unlit grid, not the last size chosen.
+  hoverTableGrid(0, 0);
 }
 
 // The multilevel-list presets (SPEC-032), absorbed into the Format menu.

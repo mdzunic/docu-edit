@@ -123,6 +123,24 @@ describe("MenuBar (SPEC-049)", () => {
     expect(wrapper.get('[data-testid="menu-title-file"]').attributes("aria-expanded")).toBe("false");
   });
 
+  it("closes the menu after a plain button command (the table grid picker's cells)", async () => {
+    const wrapper = mount(MenuBar, {
+      props: { menus: MENUS },
+      slots: {
+        file: () => [
+          h("div", { class: "grid" }, [
+            h("button", { type: "button", "data-testid": "grid-cell", tabindex: "-1" }),
+          ]),
+        ],
+      },
+      attachTo: document.body,
+    });
+    await wrapper.get('[data-testid="menu-title-file"]').trigger("click");
+    await wrapper.get('[data-testid="grid-cell"]').trigger("click");
+    expect(wrapper.get('[data-testid="menu-title-file"]').attributes("aria-expanded")).toBe("false");
+    wrapper.unmount();
+  });
+
   it("keeps the menu open for a data-menu-keep-open command", async () => {
     const wrapper = mount(MenuBar, {
       props: { menus: MENUS },

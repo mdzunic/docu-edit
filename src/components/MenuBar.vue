@@ -220,12 +220,19 @@ function onItemKeydown(event = new KeyboardEvent("keydown")) {
 // via data-menu-keep-open (the format painter, whose double-click-to-lock
 // gesture needs the menu to stay open across the click sequence). A pointer
 // click never restores focus to the title.
+//
+// A command is any menu-role item *or* any other button a caller put in the
+// popup: a widget like the Insert menu's table-size grid can't give its cells
+// a menuitem role without dragging all 100 of them into the Up/Down item ring,
+// yet picking a size is still a command and must close the bar.
 function onPopupClick(event = new MouseEvent("click")) {
   const target = event.target;
   if (!(target instanceof Element)) {
     return;
   }
-  const item = target.closest('[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]');
+  const item = target.closest(
+    '[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],button',
+  );
   if (!item || item.closest("[data-menu-keep-open]")) {
     return;
   }
