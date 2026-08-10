@@ -9,6 +9,7 @@ import type {
   CommentThread,
   DocumentFormat,
   DocumentModel,
+  DocumentProperties,
   ListDefinition,
   MediaPart,
   NamedStyle,
@@ -70,6 +71,7 @@ function buildModel(
     endnoteSettings?: NoteSettings;
     comments?: CommentThread[];
     trackChangesRecording?: boolean;
+    properties: DocumentProperties;
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -118,6 +120,11 @@ function buildModel(
   // but never turns the toggle on itself (see DocumentModel.trackChangesRecording).
   if (parsed.trackChangesRecording) {
     model.trackChangesRecording = true;
+  }
+  // Document properties and metadata (SPEC-041): omitted entirely when the
+  // source file had none, like every other optional model field here.
+  if (Object.keys(parsed.properties).length > 0) {
+    model.properties = parsed.properties;
   }
   return model;
 }
