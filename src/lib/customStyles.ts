@@ -41,6 +41,12 @@ export interface StyleImportPlan {
   conflicts: StyleImportConflict[];
 }
 
+/** Typed empty seeds for `.vue` refs (espree bars explicit generics on
+ * `ref<T>()` — see documentModel.asCharacterFormatKey). */
+export function noStyleImportPlan(): StyleImportPlan | null {
+  return null;
+}
+
 function normalizedName(style: NamedStyle): string | undefined {
   return style.name?.trim().toLowerCase();
 }
@@ -88,6 +94,53 @@ export interface StyleImportSummary {
   added: string[];
   replaced: string[];
   skipped: string[];
+}
+
+export function noStyleImportSummary(): StyleImportSummary | null {
+  return null;
+}
+
+/** Typed empty seed for the sourceId -> resolution lookup a `.vue` view
+ * keeps to render each conflict row's current radio selection. */
+export function noStyleImportResolutionMap(): Record<string, string> {
+  return {};
+}
+
+/** Converts the view's plain sourceId -> resolution map (built from
+ * ImportStylesDialog's `set-resolution` events, which only ever carry one
+ * of the three literal values) into `importStyles`' typed input — the
+ * `.vue` view cannot narrow `Record<string, string>` back to the literal
+ * union itself (no `as` casts in a `.vue` script; see
+ * documentModel.asCharacterFormatKey). */
+export function styleImportResolutionsFromMap(map: Record<string, string>): StyleImportResolution[] {
+  return Object.keys(map).map((sourceId) => ({ sourceId, resolution: map[sourceId] as StyleConflictResolution }));
+}
+
+/** One conflict row for ImportStylesDialog.vue's list (AC-22) — the display
+ * subset of `StyleImportConflict`, decoupled from the full `NamedStyle`
+ * objects the dialog does not need. */
+export interface StyleImportConflictRow {
+  sourceId: string;
+  name: string;
+}
+
+/** Typed empty seed for conflict-row arrays in `.vue` scripts (espree bars
+ * the type annotation — see documentModel.asCharacterFormatKey). */
+export function noStyleImportConflictRows(): StyleImportConflictRow[] {
+  return [];
+}
+
+/** Typed pass-through for a `.vue` component's untyped Array prop. */
+export function asStyleImportConflictRows(value: unknown[]): StyleImportConflictRow[] {
+  return value as StyleImportConflictRow[];
+}
+
+/** `planStyleImport`'s conflicts as ImportStylesDialog.vue's display rows. */
+export function styleImportConflictRows(conflicts: StyleImportConflict[]): StyleImportConflictRow[] {
+  return conflicts.map((conflict) => ({
+    sourceId: conflict.source.id,
+    name: conflict.source.name ?? conflict.source.id,
+  }));
 }
 
 function slugStyleId(name: string): string {

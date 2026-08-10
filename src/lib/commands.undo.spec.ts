@@ -229,6 +229,9 @@ const QUERIES = new Set([
   // SPEC-042: the caret's character-style readout, the paragraph-style
   // readout's sibling — a pure read, not a command.
   "toolbarCharacterStyleState",
+  // SPEC-042: a typed empty seed for a `.vue` default parameter, the
+  // StyleFormInput analogue of noParagraphCommand/noPendingFormat above.
+  "noStyleFormInput",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {

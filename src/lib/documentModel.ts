@@ -494,6 +494,12 @@ export interface NamedStyle {
   rawXml?: string;
 }
 
+/** Typed empty seed for `NamedStyle[]` refs/props in `.vue` scripts (espree
+ * bars the type annotation — see asCharacterFormatKey). */
+export function noNamedStyles(): NamedStyle[] {
+  return [];
+}
+
 /** An inline XML element the reader does not model (SPEC-008) — e.g. a
  * `w:drawing`-carrying run or an ODF `draw:frame` — held verbatim and
  * anchored to its position between the paragraph's runs so the writer can

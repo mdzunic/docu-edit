@@ -10,9 +10,12 @@
 // document does not define fall back to the built-in set below, which is
 // also the whole picker list for a blank document.
 import type {
+  BorderLineStyle,
+  CellBorders,
   DocumentModel,
   NamedStyle,
   Paragraph,
+  ParagraphAlignment,
   ParagraphFormatting,
   RunFormatting,
   StyleType,
@@ -494,6 +497,145 @@ export function isStyleInUse(model: DocumentModel, styleId: string): boolean {
  * per-group listing (AC-1). */
 export function stylesOfType(model: DocumentModel, type: StyleType): NamedStyle[] {
   return allStyles(model).filter((style) => styleTypeOf(style) === type);
+}
+
+/** One row the Styles pane renders (AC-1, AC-2, AC-15): a style's identity,
+ * family (for grouping), in-use state and whether the editor can offer
+ * Modify for it. */
+export interface StylesPaneEntry {
+  id: string;
+  name: string;
+  type: StyleType;
+  inUse: boolean;
+  unmodeled: boolean;
+}
+
+/** Every named style in the document, as pane rows (AC-1, AC-2, AC-15) —
+ * every named style, including one the editor cannot fully model (AC-15). */
+export function stylesPaneEntries(model: DocumentModel): StylesPaneEntry[] {
+  return allStyles(model)
+    .filter((style): style is NamedStyle & { name: string } => style.name !== undefined)
+    .map((style) => ({
+      id: style.id,
+      name: style.name,
+      type: styleTypeOf(style),
+      inUse: isStyleInUse(model, style.id),
+      unmodeled: style.unmodeled === true,
+    }));
+}
+
+/** Typed empty seed for pane-entry arrays in `.vue` scripts (espree bars
+ * the annotation — see documentModel.asCharacterFormatKey). */
+export function noStylesPaneEntries(): StylesPaneEntry[] {
+  return [];
+}
+
+/** Typed pass-through for a `.vue` component's untyped Array prop (the
+ * same pattern as noStyleEntries/asStyleEntries above). */
+export function asStylesPaneEntries(value: unknown[]): StylesPaneEntry[] {
+  return value as StylesPaneEntry[];
+}
+
+/** A `{ id, name }` pair for a style picker/select in the New/Modify style
+ * dialog (the "based on"/"style for following paragraph" options). */
+export interface StyleOption {
+  id: string;
+  name: string;
+}
+
+/** Typed empty seed for `StyleOption[]` props in `.vue` scripts. */
+export function noStyleOptions(): StyleOption[] {
+  return [];
+}
+
+/** Typed pass-through for a `.vue` component's untyped Array prop. */
+export function asStyleOptions(value: unknown[]): StyleOption[] {
+  return value as StyleOption[];
+}
+
+/** Typed pass-through for a plain string array arriving as a `.vue`
+ * component's untyped Array prop (e.g. existing style names for a
+ * collision check). */
+export function asStringArray(value: unknown[]): string[] {
+  return value as string[];
+}
+
+/** StyleEditorDialog's plain-string/number draft shape — every field a
+ * `<select>`/`<input>` can bind to, one flat object so the dialog's own
+ * script never needs to build a typed payload itself (SPEC-042): building
+ * an object incrementally by key (`payload.foo = ...`) is exactly the kind
+ * of TS-only-adjacent code the espree constraint on `.vue` scripts makes
+ * awkward, so that assembly lives here instead — plain TypeScript, no
+ * restriction — and the dialog just calls `styleFormInputFromDraft`. */
+export interface StyleEditorDraft {
+  name: string;
+  type: string;
+  basedOn: string;
+  next: string;
+  fontFamily: string;
+  fontSizePt: number | undefined;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  color: string;
+  alignment: string;
+  listPresetKey: string;
+  cellShadingFill: string;
+  cellBorderStyle: string;
+  cellBorderWidthPt: number;
+  cellBorderColor: string;
+}
+
+/** Builds a `commands.createStyle`/`modifyStyle` input from the dialog's
+ * draft (structurally compatible with `StyleFormInput`; not imported by
+ * name to avoid a styles.ts <-> commands.ts import cycle). */
+export function styleFormInputFromDraft(draft: StyleEditorDraft) {
+  const runFormatting: RunFormatting = {};
+  if (draft.fontFamily.trim()) {
+    runFormatting.fontFamily = draft.fontFamily.trim();
+  }
+  if (draft.fontSizePt !== undefined && draft.fontSizePt > 0) {
+    runFormatting.fontSizePt = draft.fontSizePt;
+  }
+  if (draft.bold) {
+    runFormatting.bold = true;
+  }
+  if (draft.italic) {
+    runFormatting.italic = true;
+  }
+  if (draft.underline) {
+    runFormatting.underline = true;
+  }
+  if (draft.color.trim()) {
+    runFormatting.color = draft.color.trim();
+  }
+
+  const borderStyle = draft.cellBorderStyle as BorderLineStyle;
+  const cellBorders: CellBorders | undefined =
+    draft.type === "table" && draft.cellBorderStyle
+      ? {
+          top: { style: borderStyle, widthPt: draft.cellBorderWidthPt, color: draft.cellBorderColor },
+          bottom: { style: borderStyle, widthPt: draft.cellBorderWidthPt, color: draft.cellBorderColor },
+          left: { style: borderStyle, widthPt: draft.cellBorderWidthPt, color: draft.cellBorderColor },
+          right: { style: borderStyle, widthPt: draft.cellBorderWidthPt, color: draft.cellBorderColor },
+        }
+      : undefined;
+
+  return {
+    name: draft.name.trim(),
+    type: draft.type as StyleType,
+    basedOn: draft.basedOn || undefined,
+    next: draft.next || undefined,
+    runFormatting,
+    paragraphFormatting:
+      draft.type === "paragraph" && draft.alignment
+        ? { alignment: draft.alignment as ParagraphAlignment }
+        : undefined,
+    listPresetKey: draft.type === "list" ? draft.listPresetKey : undefined,
+    cellShadingFill:
+      draft.type === "table" && draft.cellShadingFill.trim() ? draft.cellShadingFill.trim() : undefined,
+    cellBorders,
+  };
 }
 
 /** Reclassifies re-opened "list" styles (SPEC-042): neither `.docx` nor

@@ -91,7 +91,6 @@ import {
   styleById,
   styleChainIncludes,
   styleDisplayName,
-  styleNameCollides,
   styleTypeOf,
   type ResolvedNamedStyle,
 } from "./styles";
@@ -2706,6 +2705,15 @@ export interface StyleFormInput {
   /** Table styles only. */
   cellBorders?: CellBorders;
   cellShadingFill?: string;
+}
+
+/** Typed empty seed for a `.vue` view's default parameter value (espree
+ * bars a generic default-parameter/`as` cast — see
+ * documentModel.asCharacterFormatKey) — DocumentView.vue's saveStyleEditor
+ * handler needs `payload`'s inferred type to already be `StyleFormInput`,
+ * not a narrower object-literal type TypeScript would otherwise infer. */
+export function noStyleFormInput(): StyleFormInput {
+  return { name: "", type: "paragraph" };
 }
 
 /** "New style" (AC-3): registers a catalogue entry from the dialog's
