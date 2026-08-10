@@ -55,6 +55,7 @@ import type {
   TableOfContents,
   TocEntry,
   TocOptions,
+  TrackedChangeInfo,
 } from "../documentModel";
 import {
   FIELD_PLACEHOLDER_TEXT,
@@ -66,6 +67,7 @@ import {
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
+import { collectChanges, type ChangeEntry } from "../trackChanges";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
@@ -1071,6 +1073,81 @@ function odtNoteXmlId(noteId: string): string {
 // through every serialiser.
 let odtCommentsContext: Map<string, CommentThread> | null = null;
 
+// SPEC-039: every text-level tracked change (insert/delete/format) in the
+// model being written, keyed by changeId — set by buildContentXml around
+// its body walk, mirroring odtCommentsContext, so a marked run anywhere in
+// the flow can emit its text:change-start/-end without threading a
+// parameter through every serialiser. Structural changes (paragraph mark,
+// table row) are not included — this pass round-trips text-level changes
+// only (AC-13); see the module header for the documented gap.
+let odtChangedRegionsContext: Map<string, ChangeEntry> | null = null;
+
+function odtChangedRegionsWriteContext(model: DocumentModel): Map<string, ChangeEntry> {
+  const byId = new Map<string, ChangeEntry>();
+  for (const entry of collectChanges(model)) {
+    if (entry.kind === "insert" || entry.kind === "delete" || entry.kind === "format") {
+      byId.set(entry.changeId, entry);
+    }
+  }
+  return byId;
+}
+
+/** The model changeId as an XML-safe text:id — same sanitisation as
+ * odtNoteXmlId/odtCommentXmlName. */
+function odtChangeXmlId(changeId: string): string {
+  return changeId.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+/** The document's `text:tracked-changes` definitions block (SPEC-039
+ * AC-13): one `text:changed-region` per distinct tracked change, each
+ * naming its kind and `office:change-info` (author/date) — ODF has no
+ * standard slot for a format change's *previous* properties (unlike
+ * `.docx`'s `w:rPrChange`), so rejecting an .odt-sourced formatting change
+ * falls back to clearing the marker only (documented gap). Empty (and so
+ * omitted) for a document with no tracked changes. */
+function trackedChangesDefinitionsXml(ctx: Map<string, ChangeEntry>): string {
+  if (ctx.size === 0) {
+    return "";
+  }
+  const regions = Array.from(ctx.values())
+    .map((entry) => {
+      const tag = entry.kind === "insert" ? "insertion" : entry.kind === "delete" ? "deletion" : "format-change";
+      return (
+        `<text:changed-region text:id="${odtChangeXmlId(entry.changeId)}">` +
+        `<text:${tag}><office:change-info>` +
+        `<dc:creator>${escapeXml(entry.author)}</dc:creator><dc:date>${escapeXml(entry.date)}</dc:date>` +
+        `</office:change-info></text:${tag}></text:changed-region>`
+      );
+    })
+    .join("");
+  return `<text:tracked-changes xmlns:dc="${DC_NAMESPACE}">${regions}</text:tracked-changes>`;
+}
+
+/** A run's tracked-change marks (SPEC-039), wrapping its content in
+ * `text:change-start`/`-end` pairs — one per insert/delete/formatChange it
+ * carries, so a nested change (AC "editing over an existing tracked
+ * insertion... produces a nested change") wraps with both. These are point
+ * markers, not containers, so nesting order is cosmetic; insert is written
+ * outermost to match the .docx writer's w:ins-outside-w:del convention. */
+function wrapTrackedChangeMarks(run: Run, inner: string): string {
+  const changes = run.changes;
+  if (!changes || !odtChangedRegionsContext) {
+    return inner;
+  }
+  let xml = inner;
+  const wrap = (mark: TrackedChangeInfo | undefined) => {
+    if (!mark || !odtChangedRegionsContext?.has(mark.changeId)) {
+      return;
+    }
+    const id = odtChangeXmlId(mark.changeId);
+    xml = `<text:change-start text:change-id="${id}"/>${xml}<text:change-end text:change-id="${id}"/>`;
+  };
+  wrap(changes.formatChange);
+  wrap(changes.delete);
+  wrap(changes.insert);
+  return xml;
+}
+
 function odtCommentsWriteContext(model: DocumentModel): Map<string, CommentThread> {
   const byThreadId = new Map<string, CommentThread>();
   for (const entry of visibleCommentThreads(model)) {
@@ -1161,11 +1238,14 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
     return noteXml(run, styles, state);
   }
   const styleName = styles.textNameFor(run.formatting);
+  let span: string;
   if (run.field) {
     state.lastChar = FIELD_PLACEHOLDER_TEXT;
-    return `<text:span text:style-name="${styleName}">${fieldContentXml(run.field)}</text:span>`;
+    span = `<text:span text:style-name="${styleName}">${fieldContentXml(run.field)}</text:span>`;
+  } else {
+    span = `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
   }
-  return `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
+  return wrapTrackedChangeMarks(run, span);
 }
 
 /** The paragraph's inline content: its runs, with any preserved opaque
@@ -1519,6 +1599,10 @@ export function buildContentXml(
   // emit their office:annotation/-end through this context; cleared with
   // odtNotesContext below.
   odtCommentsContext = odtCommentsWriteContext(model);
+  // Tracked changes (SPEC-039): a marked run anywhere in the body emits its
+  // text:change-start/-end through this context; cleared with the others
+  // below. The definitions block itself is built from the same context.
+  odtChangedRegionsContext = odtChangedRegionsWriteContext(model);
   // Defined-list instance continuity for the whole body (SPEC-032): one map
   // across every section, so an instance interrupted by a section break
   // still writes text:continue-list on its later segments.
@@ -1657,8 +1741,10 @@ export function buildContentXml(
     // cycle is a fixed point).
     blockXml.push(carrierParagraphXml(styles, { breakBefore: pendingBreak }));
   }
+  const trackedChanges = trackedChangesDefinitionsXml(odtChangedRegionsContext);
   odtNotesContext = null;
   odtCommentsContext = null;
+  odtChangedRegionsContext = null;
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
   const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
   const preservedStyles = includeOpaque ? (model.sourceXml?.odtAutomaticStyles ?? []) : [];
@@ -1666,7 +1752,7 @@ export function buildContentXml(
     `${XML_DECLARATION}<office:document-content${DOCUMENT_XMLNS} office:version="1.2">` +
     fontFaceDecls +
     `<office:automatic-styles>${styles.defs.join("")}${preservedStyles.join("")}</office:automatic-styles>` +
-    `<office:body><office:text>${body}</office:text></office:body>` +
+    `<office:body><office:text>${trackedChanges}${body}</office:text></office:body>` +
     "</office:document-content>"
   );
 }
