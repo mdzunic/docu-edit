@@ -41,7 +41,8 @@ function range(anchor: CaretPosition, focus: CaretPosition): ModelSelection {
  * with plain and bold text, enough for every command — text edits,
  * character/run formatting, paragraph formatting and page margins — to have
  * something meaningful to touch, plus one list item (SPEC-018) so the list
- * commands genuinely mutate. */
+ * commands genuinely mutate, plus a one-cell table (SPEC-022) so SPEC-042's
+ * table-style command has something to apply to. */
 function fixtureDocument(): DocumentModel {
   const model = createDocument("undo-fixture");
   const listItem = paragraph(["List item", {}]);
@@ -52,6 +53,11 @@ function fixtureDocument(): DocumentModel {
         paragraph(["Hello ", {}], ["world", { bold: true }]),
         paragraph(["Second paragraph", {}]),
         listItem,
+        {
+          type: "table",
+          rows: [{ cells: [{ blocks: [paragraph(["Cell", {}])] }] }],
+          columnWidthsCm: [5],
+        },
       ],
     },
   ];
@@ -145,6 +151,26 @@ const REGISTRY: Record<string, Scenario> = {
     commands.setTabStops(model, caretSelection(caret(0, 0)), [
       { positionCm: 4, alignment: "right", leader: "dot" },
     ]),
+  // SPEC-042: custom styles manager.
+  applyCharacterStyle: (model) =>
+    commands.applyCharacterStyle(model, range(caret(0, 0), caret(0, 5)), "Emphasis"),
+  applyTableStyle: (model) =>
+    commands.applyTableStyle(model, caretSelection(caret(3, 0)), "TableStyle1"),
+  createStyle: (model) =>
+    commands.createStyle(model, caretSelection(caret(0, 0)), {
+      name: "My Style",
+      type: "paragraph",
+      runFormatting: { bold: true },
+    }),
+  modifyStyle: (model) =>
+    commands.modifyStyle(model, caretSelection(caret(0, 0)), "Heading1", {
+      name: "Heading 1",
+      type: "paragraph",
+      runFormatting: { bold: true, fontSizePt: 22 },
+    }),
+  renameStyle: (model) =>
+    commands.renameStyle(model, caretSelection(caret(0, 0)), "Heading1", "Main Heading"),
+  deleteStyle: (model) => commands.deleteStyle(model, caretSelection(caret(0, 0)), "Heading1"),
 };
 
 const QUERIES = new Set([
@@ -200,6 +226,9 @@ const QUERIES = new Set([
   "normalizeDefinitionLevels",
   "selectionListDefinitionLevels",
   "selectionTabStops",
+  // SPEC-042: the caret's character-style readout, the paragraph-style
+  // readout's sibling — a pure read, not a command.
+  "toolbarCharacterStyleState",
 ]);
 
 describe("SPEC-015 AC-20 — every command is registered for the undo test", () => {
