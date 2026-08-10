@@ -329,7 +329,8 @@ export function normalizeRuns(runs: Run[]): Run[] {
       !isMarkerRun(last) &&
       !isMarkerRun(run) &&
       sameFormatting(last.formatting, run.formatting) &&
-      sameChanges(last.changes, run.changes)
+      sameChanges(last.changes, run.changes) &&
+      last.styleId === run.styleId
     ) {
       result[result.length - 1] = { ...last, text: last.text + run.text };
     } else {
@@ -1104,6 +1105,20 @@ export function formattingAtOffset(block: Paragraph, offset: number): RunFormatt
   return {};
 }
 
+/** The character style reference (SPEC-042) at a caret offset — the same
+ * "run just before, else just after" rule as `formattingAtOffset`, used for
+ * the Styles pane's caret readout (AC-10). */
+export function runStyleIdAtOffset(block: Paragraph, offset: number): string | undefined {
+  const [before, after] = splitRuns(block.runs, offset);
+  if (before.length > 0) {
+    return before[before.length - 1].styleId;
+  }
+  if (after.length > 0) {
+    return after[0].styleId;
+  }
+  return undefined;
+}
+
 /** One paragraph's share of a range: its address plus the covered character
  * span within it (`from` may equal `to` for a paragraph the range passes
  * through without covering text — commands that address paragraphs rather
@@ -1277,6 +1292,36 @@ export function replaceFormatting(
     const [before, tail] = splitRuns(paragraph.runs, from);
     const [within, after] = splitRuns(tail, to - from);
     const changed = within.map((run) => ({ ...run, formatting: { ...formatting } }));
+    replaceParagraphAt(model, address, {
+      ...paragraph,
+      runs: normalizeRuns([...before, ...changed, ...after]),
+    });
+  }
+}
+
+/** Replaces every run strictly between `start` and `end` with `mapper`'s
+ * result, splitting the runs straddling the range's boundaries first and
+ * merging back down afterward — the same split/merge shape as
+ * `patchFormatting`/`replaceFormatting`, generalised to touch fields outside
+ * `formatting` (SPEC-042's `Run.styleId`, which `applyCharacterStyle` sets
+ * alongside a computed formatting layer `mapper` builds per run). */
+export function mapRunsInRange(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+  mapper: (run: Run, paragraph: Paragraph) => Run,
+): void {
+  for (const { address, from, to } of paragraphSlicesInRange(model, start, end)) {
+    if (from >= to) {
+      continue;
+    }
+    const paragraph = paragraphAt(model, address);
+    if (!paragraph) {
+      continue;
+    }
+    const [before, tail] = splitRuns(paragraph.runs, from);
+    const [within, after] = splitRuns(tail, to - from);
+    const changed = within.map((run) => mapper(run, paragraph));
     replaceParagraphAt(model, address, {
       ...paragraph,
       runs: normalizeRuns([...before, ...changed, ...after]),

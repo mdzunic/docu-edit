@@ -187,6 +187,12 @@ export interface Run {
   /** Marks this run as a footnote/endnote reference mark (SPEC-031); see
    * NoteRef. Mutually exclusive with `field` by construction. */
   note?: NoteRef;
+  /** Character-style reference (SPEC-042), independent of the containing
+   * paragraph's `styleId`: `w:rStyle` (.docx) / a `text:span`'s
+   * `text:style-name` resolving to a family="text" style (.odt). Baked
+   * formatting still carries the resolved effect, the same "reference kept
+   * alongside the resolved formatting" convention as `Paragraph.styleId`. */
+  styleId?: string;
   /** Pending tracked-change state (SPEC-039); see RunTrackedChanges. */
   changes?: RunTrackedChanges;
 }
@@ -424,22 +430,35 @@ export function asListMarkerStyle(value: string): ListMarkerStyle {
 
 // --- paragraph styles (SPEC-019) --------------------------------------------
 
-/** One paragraph style of the document's style catalogue (SPEC-019): its
+/** A style's family (SPEC-042): which kind of thing it applies to and how
+ * it groups in the Styles pane. Absent on `NamedStyle.type` means
+ * `"paragraph"` — the only family that existed before SPEC-042, kept as the
+ * unmarked default so every style built by SPEC-019 code stays exactly as
+ * it was. */
+export type StyleType = "paragraph" | "character" | "list" | "table";
+
+/** One style of the document's style catalogue (SPEC-019 paragraph styles;
+ * SPEC-042 widens the catalogue to character/list/table styles too): its
  * *own* (non-inherited) formatting plus the parent link resolution follows
  * (`w:basedOn` / `style:parent-style-name`). For a `.docx` these mirror the
- * paragraph `w:style` elements of styles.xml; for a `.odt`, the named
- * paragraph styles of its styles.xml. The model keeps paragraph/run
- * formatting *baked* (effective) on each paragraph, so the catalogue is not
- * needed to render — it drives the style picker, the diff that separates
- * direct formatting from style formatting, and the writers' style
- * definitions. */
+ * `w:style` elements of styles.xml; for a `.odt`, the named styles of its
+ * styles.xml. The model keeps paragraph/run formatting *baked* (effective)
+ * on each paragraph/run, so the catalogue is not needed to render — it
+ * drives the style picker/pane, the diff that separates direct formatting
+ * from style formatting, and the writers' style definitions. */
 export interface NamedStyle {
-  /** Style identity as referenced by `Paragraph.styleId`. */
+  /** Style identity as referenced by `Paragraph.styleId`/`Run.styleId`. */
   id: string;
-  /** Display name shown in the picker. */
+  /** Display name shown in the picker/pane. */
   name?: string;
+  /** The style's family; absent means `"paragraph"`. */
+  type?: StyleType;
   /** Parent style id the style inherits from. */
   basedOn?: string;
+  /** The style id applied to a new paragraph typed after one in this style
+   * (SPEC-042 AC-3/AC-4's "style for following paragraph") — `w:next` /
+   * `style:next-style-name`. Meaningful for paragraph/list styles only. */
+  next?: string;
   /** The style's own paragraph formatting; absent when it sets none. */
   paragraphFormatting?: ParagraphFormatting;
   /** The style's own run formatting; absent when it sets none. */
@@ -449,6 +468,36 @@ export interface NamedStyle {
   fontSizePercent?: number;
   /** 1-based outline level; presence makes this a heading style. */
   headingLevel?: number;
+  /** List-type styles only (SPEC-042): the `DocumentModel.listDefinitions`
+   * entry this style's numbering comes from — applying the style links a
+   * paragraph to it the same way a heading-numbering link does (see
+   * commands.ts's styleLinkFor). */
+  listDefinitionId?: string;
+  /** Table-type styles only (SPEC-042): default cell borders a table using
+   * this style bakes onto cells that carry no border of their own. Table
+   * banding (per-region overrides) is out of scope — a single border/shading
+   * set applies uniformly. */
+  cellBorders?: CellBorders;
+  /** Table-type styles only (SPEC-042): default cell background a table
+   * using this style bakes onto cells that carry no shading of their own. */
+  cellShadingFill?: string;
+  /** True for a style read from a source document the editor cannot fully
+   * model (SPEC-042 AC-15..18) — a real table style with banding regions, a
+   * `w:type="numbering"` entry, or any style carrying structure the reader
+   * does not parse. Still listed in the pane and can be applied by
+   * reference (`rawXml` is what the writer re-emits verbatim); `Modify` is
+   * unavailable for it since the editor cannot express its own properties. */
+  unmodeled?: boolean;
+  /** The style's original source XML (a `<w:style>`/`<style:style>` element,
+   * serialised), preserved verbatim for `unmodeled` styles so export writes
+   * it back unchanged (AC-18). Absent for styles the editor fully models. */
+  rawXml?: string;
+}
+
+/** Typed empty seed for `NamedStyle[]` refs/props in `.vue` scripts (espree
+ * bars the type annotation — see asCharacterFormatKey). */
+export function noNamedStyles(): NamedStyle[] {
+  return [];
 }
 
 /** An inline XML element the reader does not model (SPEC-008) — e.g. a
@@ -916,6 +965,13 @@ export interface Table {
   odtName?: string;
   /** `table:style-name` of the source .odt table. */
   odtStyleName?: string;
+  /** A custom table style applied from the Styles pane (SPEC-042), by
+   * reference into `DocumentModel.styles`. Distinct from `odtStyleName`/
+   * `docxTblPr`, which hold a source document's own (possibly unmodelled)
+   * table styling — applying a catalogue style bakes its borders/shading
+   * onto the table's cells and records the reference here for in-use
+   * tracking and re-bake on Modify. */
+  styleId?: string;
   /** Per-column `table:style-name`s of the source .odt table's
    * `table:table-column` elements; entries may be undefined for columns
    * inserted in the editor (the writer generates a style for those). */

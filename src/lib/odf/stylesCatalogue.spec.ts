@@ -192,3 +192,60 @@ describe("patchOdtStylesXml", () => {
     expect(patched).toContain('fo:font-size="130%"');
   });
 });
+
+// SPEC-042 — character (family="text") styles, style:next-style-name, and
+// styles of a family this app does not model (preserved verbatim).
+
+describe("writeOdt — character style round trip (SPEC-042 AC-9, AC-14)", () => {
+  it("a run's character style survives a save as a family=text style, correctly layered over the paragraph", async () => {
+    const model = typedModel();
+    model.styles = [
+      { id: "Emphasis", name: "Emphasis", type: "character", runFormatting: { italic: true, color: "#ff0000" } },
+    ];
+    const paragraph = asParagraph(model.sections[0].blocks[0]);
+    paragraph.runs[0].styleId = "Emphasis";
+    paragraph.runs[0].formatting = { ...paragraph.runs[0].formatting, italic: true, color: "#ff0000" };
+
+    const { bytes } = await writeOdt(model);
+    const parts = await unzip(bytes);
+    expect(decoder.decode(parts.get("content.xml")!)).toContain('text:style-name="Emphasis"');
+    expect(decoder.decode(parts.get("styles.xml")!)).toContain('style:name="Emphasis" style:family="text"');
+
+    const reopened = await parseOdt(bytes);
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting).toMatchObject({
+      italic: true,
+      color: "#ff0000",
+    });
+  });
+});
+
+describe("writeOdt — style:next-style-name round trip (SPEC-042 AC-3, AC-4, AC-14)", () => {
+  it("a style's 'next' style survives a save", async () => {
+    const model = typedModel();
+    model.styles = [
+      { id: "Standard", name: "Standard" },
+      { id: "Title", name: "Title", basedOn: "Standard", next: "Standard" },
+    ];
+    const { bytes } = await writeOdt(model);
+    const stylesXml = decoder.decode((await unzip(bytes)).get("styles.xml")!);
+    expect(stylesXml).toContain('style:next-style-name="Standard"');
+    const reopened = await parseOdt(bytes);
+    expect(reopened.styles.find((style) => style.id === "Title")?.next).toBe("Standard");
+  });
+});
+
+describe("writeOdt — unmodeled styles round trip verbatim (SPEC-042 AC-15..18)", () => {
+  it("a non-paragraph/text-family style read from a source document is preserved and written back unchanged", async () => {
+    const model = typedModel();
+    const raw = '<style:style style:name="TableGrid" style:family="table">' +
+      '<style:table-properties style:width="17cm"/></style:style>';
+    model.styles = [{ id: "TableGrid", name: "TableGrid", type: "table", unmodeled: true, rawXml: raw }];
+    const { bytes } = await writeOdt(model);
+    const stylesXml = decoder.decode((await unzip(bytes)).get("styles.xml")!);
+    expect(stylesXml).toContain('style:width="17cm"');
+
+    const reopened = await parseOdt(bytes);
+    const style = reopened.styles.find((s) => s.id === "TableGrid");
+    expect(style?.unmodeled).toBe(true);
+  });
+});

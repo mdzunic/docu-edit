@@ -192,3 +192,76 @@ describe("patchStylesXml", () => {
     expect(patched).toContain('<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>');
   });
 });
+
+// SPEC-042 — character styles (w:rStyle), w:next, and table styles the
+// editor cannot fully model (unmodeled, preserved verbatim).
+
+describe("writeDocx — character style round trip (SPEC-042 AC-9, AC-13)", () => {
+  it("a run's character style survives a save as w:rStyle, correctly layered over the paragraph style", async () => {
+    const model = typedModel();
+    model.styles = [
+      { id: "Emphasis", name: "Emphasis", type: "character", runFormatting: { italic: true, color: "#ff0000" } },
+    ];
+    const paragraph = asParagraph(model.sections[0].blocks[0]);
+    paragraph.runs[0].styleId = "Emphasis";
+    paragraph.runs[0].formatting = { ...paragraph.runs[0].formatting, italic: true, color: "#ff0000" };
+
+    const { bytes } = await writeDocx(model);
+    expect(await partText(bytes, "word/document.xml")).toContain('<w:rStyle w:val="Emphasis"/>');
+    expect(await partText(bytes, "word/styles.xml")).toContain('w:type="character" w:styleId="Emphasis"');
+
+    const reopened = await parseDocx(bytes);
+    const run = asParagraph(reopened.sections[0].blocks[0]).runs[0];
+    expect(run.styleId).toBe("Emphasis");
+    expect(run.formatting).toMatchObject({ italic: true, color: "#ff0000" });
+  });
+
+  it("direct run formatting on top of a character style still wins (OOXML precedence)", async () => {
+    const model = typedModel();
+    model.styles = [{ id: "Emphasis", name: "Emphasis", type: "character", runFormatting: { bold: true } }];
+    const paragraph = asParagraph(model.sections[0].blocks[0]);
+    paragraph.runs[0].styleId = "Emphasis";
+    // Direct formatting overrides the character style's own bold=true.
+    paragraph.runs[0].formatting = { ...paragraph.runs[0].formatting, bold: false };
+    const reopened = await parseDocx((await writeDocx(model)).bytes);
+    expect(asParagraph(reopened.sections[0].blocks[0]).runs[0].formatting.bold).toBe(false);
+  });
+});
+
+describe("writeDocx — w:next round trip (SPEC-042 AC-3, AC-4, AC-13)", () => {
+  it("a style's 'next' style survives a save", async () => {
+    const model = typedModel();
+    model.styles = [
+      { id: "Normal", name: "Normal" },
+      { id: "Title", name: "Title", basedOn: "Normal", next: "Normal" },
+    ];
+    const { bytes } = await writeDocx(model);
+    expect(await partText(bytes, "word/styles.xml")).toContain('<w:next w:val="Normal"/>');
+    const reopened = await parseDocx(bytes);
+    expect(reopened.styles.find((style) => style.id === "Title")?.next).toBe("Normal");
+  });
+});
+
+describe("writeDocx — unmodeled styles round trip verbatim (SPEC-042 AC-15..18)", () => {
+  it("a table-type style read from a source document is preserved and written back unchanged", async () => {
+    const source = await writeDocx(typedModel());
+    const doc = await parseDocx(source.bytes);
+    // Simulate a foreign document declaring a real (banded) table style —
+    // parseDocx always marks non-paragraph/character styles unmodeled.
+    const model = modelFrom(doc);
+    const raw =
+      '<w:style xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+      'w:type="table" w:styleId="GridTable1"><w:name w:val="Grid Table 1"/>' +
+      '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
+    model.styles = [...(model.styles ?? []), { id: "GridTable1", name: "Grid Table 1", type: "table", unmodeled: true, rawXml: raw }];
+    const { bytes } = await writeDocx(model);
+    const stylesXml = await partText(bytes, "word/styles.xml");
+    expect(stylesXml).toContain("w:tblStylePr");
+    expect(stylesXml).toContain('w:type="firstRow"');
+
+    const reopened = await parseDocx(bytes);
+    const style = reopened.styles.find((s) => s.id === "GridTable1");
+    expect(style?.unmodeled).toBe(true);
+    expect(style?.name).toBe("Grid Table 1");
+  });
+});

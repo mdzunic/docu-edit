@@ -167,13 +167,21 @@ function trackedChangeAttrs(id: number, author: string, date: string): string {
 /** A run's formatting, plus — with `formatChange` set (SPEC-039) — a
  * trailing `w:rPrChange` recording the pre-change formatting (`previous`)
  * under a fresh numeric id from `ctx.changeIds`. */
-function runPropertiesXml(formatting: RunFormatting, formatChange?: RunFormatChange, ctx?: InlineWriteContext): string {
+function runPropertiesXml(
+  formatting: RunFormatting,
+  styleId?: string,
+  formatChange?: RunFormatChange,
+  ctx?: InlineWriteContext,
+): string {
   const parts: string[] = [];
-  // Emitted in CT_RPr sequence order: rFonts, b, i, strike, noProof, color,
-  // sz, highlight, u, shd, vertAlign, lang. Explicit false values are
+  // Emitted in CT_RPr sequence order: rStyle, rFonts, b, i, strike, noProof,
+  // color, sz, highlight, u, shd, vertAlign, lang. Explicit false values are
   // written as w:val="0"/"none" — the model only holds false where the
   // source explicitly switched the property off, and dropping that would
   // change the re-opened model.
+  if (styleId !== undefined) {
+    parts.push(`<w:rStyle w:val="${escapeXml(styleId)}"/>`);
+  }
   if (formatting.fontFamily !== undefined) {
     const family = escapeXml(formatting.fontFamily);
     parts.push(`<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>`);
@@ -238,7 +246,7 @@ function runPropertiesXml(formatting: RunFormatting, formatChange?: RunFormatCha
   }
   if (formatChange && ctx) {
     const id = changeNumericId(ctx, formatChange.changeId);
-    const previous = runPropertiesXml(formatChange.previous);
+    const previous = runPropertiesXml(formatChange.previous, undefined);
     parts.push(`<w:rPrChange${trackedChangeAttrs(id, formatChange.author, formatChange.date)}>${previous}</w:rPrChange>`);
   }
   return parts.length > 0 ? `<w:rPr>${parts.join("")}</w:rPr>` : "";
@@ -315,12 +323,12 @@ function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContex
       return "";
     }
     const tag = run.note.kind === "footnote" ? "footnoteReference" : "endnoteReference";
-    return `<w:r>${runPropertiesXml(run.formatting)}<w:${tag} w:id="${id}"/></w:r>`;
+    return `<w:r>${runPropertiesXml(run.formatting, run.styleId)}<w:${tag} w:id="${id}"/></w:r>`;
   }
   const deleted = run.changes?.delete;
   const inserted = run.changes?.insert;
   const formatChange = run.changes?.formatChange;
-  const rPr = runPropertiesXml(run.formatting, formatChange, ctx);
+  const rPr = runPropertiesXml(run.formatting, run.styleId, formatChange, ctx);
   const content = runContentXml(run.text, deleted ? "delText" : "t");
   const inner = `<w:r>${rPr}${content}</w:r>`;
   if (run.field) {
@@ -1973,25 +1981,87 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
  * style first and merges the (complete) direct formatting over it, which
  * reproduces the identical model. */
 function stylePropertiesXml(definition: NamedStyle): string {
+  if (definition.type === "table") {
+    // Table styles (SPEC-042): the resolved border/shading set bakes onto
+    // every cell at apply time (commands.ts's applyTableStyle) — this
+    // declaration is written for a real .docx consumer's benefit (a plain
+    // Word open still sees a valid table style), never re-parsed by this
+    // app's own reader (table styles always come back `unmodeled`, see
+    // docx/styles.ts — banding regions are out of scope, SPEC-042).
+    const tcPrParts = [cellBordersXml(definition.cellBorders), cellShadingXml(definition.cellShadingFill)].filter(
+      (part) => part.length > 0,
+    );
+    const tcPr = tcPrParts.length > 0 ? `<w:tcPr>${tcPrParts.join("")}</w:tcPr>` : "";
+    return runPropertiesXml(definition.runFormatting ?? {}, undefined) + tcPr;
+  }
   const pPrParts = paragraphFormattingParts(definition.paragraphFormatting ?? {});
   if (definition.headingLevel !== undefined) {
     pPrParts.push(`<w:outlineLvl w:val="${definition.headingLevel - 1}"/>`);
   }
-  const pPr = pPrParts.length > 0 ? `<w:pPr>${pPrParts.join("")}</w:pPr>` : "";
-  return pPr + runPropertiesXml(definition.runFormatting ?? {});
+  const pPr =
+    definition.type !== "character" && pPrParts.length > 0 ? `<w:pPr>${pPrParts.join("")}</w:pPr>` : "";
+  return pPr + runPropertiesXml(definition.runFormatting ?? {}, undefined);
 }
 
-/** One w:style element for a defined style (SPEC-019). */
+/** The `w:type` a catalogue entry declares (SPEC-042): "list" has no OOXML
+ * family of its own — a list style is an ordinary paragraph style whose
+ * paragraphs also carry numbering (see styles.ts's `inferListStyleTypes`
+ * doc comment) — so it declares "paragraph" like every plain paragraph
+ * style. */
+function wireStyleType(type: NamedStyle["type"]): "paragraph" | "character" | "table" {
+  return type === "character" || type === "table" ? type : "paragraph";
+}
+
+/** An `unmodeled` style's original XML (SPEC-042 AC-18), re-emitted
+ * verbatim except for the user-visible name — renaming (AC-6) is still
+ * supported even for a style whose formatting the editor cannot express. */
+function unmodeledStyleXml(definition: NamedStyle): string {
+  if (!definition.rawXml) {
+    return (
+      `<w:style w:type="${wireStyleType(definition.type)}" w:styleId="${escapeXml(definition.id)}">` +
+      `<w:name w:val="${escapeXml(definition.name ?? definition.id)}"/></w:style>`
+    );
+  }
+  try {
+    const wrapper = parseXml(`<w:root xmlns:w="${WORD_NAMESPACE}">${definition.rawXml}</w:root>`);
+    const el = wrapper.documentElement.firstElementChild;
+    if (!el) {
+      return definition.rawXml;
+    }
+    if (definition.name !== undefined) {
+      const nameEl = childElements(el, WORD_NAMESPACE, "name")[0];
+      if (nameEl) {
+        nameEl.setAttributeNS(WORD_NAMESPACE, "w:val", definition.name);
+      } else {
+        const created = wrapper.createElementNS(WORD_NAMESPACE, "w:name");
+        created.setAttributeNS(WORD_NAMESPACE, "w:val", definition.name);
+        el.insertBefore(created, el.firstElementChild);
+      }
+    }
+    return serializeElement(el);
+  } catch {
+    return definition.rawXml;
+  }
+}
+
+/** One w:style element for a defined style (SPEC-019 paragraph styles;
+ * SPEC-042 widens this to character/list/table styles and to styles the
+ * editor cannot fully model, which are re-emitted verbatim instead). */
 function styleDefinitionXml(definition: NamedStyle, isDefault: boolean): string {
+  if (definition.unmodeled) {
+    return unmodeledStyleXml(definition);
+  }
   const defaultAttr = isDefault ? ' w:default="1"' : "";
   const basedOn =
     definition.basedOn !== undefined
       ? `<w:basedOn w:val="${escapeXml(definition.basedOn)}"/>`
       : "";
+  const next = definition.next !== undefined ? `<w:next w:val="${escapeXml(definition.next)}"/>` : "";
   return (
-    `<w:style w:type="paragraph"${defaultAttr} w:styleId="${escapeXml(definition.id)}">` +
+    `<w:style w:type="${wireStyleType(definition.type)}"${defaultAttr} w:styleId="${escapeXml(definition.id)}">` +
     `<w:name w:val="${escapeXml(definition.name ?? definition.id)}"/>` +
     basedOn +
+    next +
     stylePropertiesXml(definition) +
     "</w:style>"
   );
@@ -2103,14 +2173,24 @@ export function patchStylesXml(model: DocumentModel, originalXml: string): strin
     return doc.importNode(wrapper.documentElement.firstElementChild!, true) as Element;
   };
   for (const definition of upserts) {
+    // Matched by styleId alone (SPEC-042): a style's family no longer maps
+    // 1:1 onto "paragraph", and a styleId is unique across families in a
+    // real styles.xml.
     const existing = childElements(root, WORD_NAMESPACE, "style").find(
-      (el) => wordAttr(el, "type") === "paragraph" && wordAttr(el, "styleId") === definition.id,
+      (el) => wordAttr(el, "styleId") === definition.id,
     );
+    const replacement = importStyleElement(definition);
     if (!existing) {
-      root.appendChild(importStyleElement(definition));
+      root.appendChild(replacement);
       continue;
     }
-    const replacement = importStyleElement(definition);
+    if (definition.unmodeled) {
+      // unmodeledStyleXml already re-emitted `existing`'s own XML verbatim
+      // (only the name patched) — no attribute/child merge needed, unlike
+      // the modeled branch below which regenerates from scratch.
+      root.replaceChild(replacement, existing);
+      continue;
+    }
     // Carry the original element's unmodelled attributes (w:default, …) and
     // children over: the regenerated element replaces only what the model
     // expresses.
@@ -2123,11 +2203,13 @@ export function patchStylesXml(model: DocumentModel, originalXml: string): strin
       }
       replacement.setAttributeNodeNS(attr.cloneNode(true) as Attr);
     }
-    const regenerated = new Set(["name", "basedOn", "pPr", "rPr"]);
-    // CT_Style puts pPr/rPr last, so preserved children slot in before them.
+    const regenerated = new Set(["name", "basedOn", "next", "pPr", "rPr", "tcPr"]);
+    // CT_Style puts pPr/rPr/tcPr last, so preserved children slot in before them.
     const propertiesStart =
       Array.from(replacement.children).find(
-        (el) => el.namespaceURI === WORD_NAMESPACE && (el.localName === "pPr" || el.localName === "rPr"),
+        (el) =>
+          el.namespaceURI === WORD_NAMESPACE &&
+          (el.localName === "pPr" || el.localName === "rPr" || el.localName === "tcPr"),
       ) ?? null;
     for (const child of Array.from(existing.children)) {
       if (child.namespaceURI === WORD_NAMESPACE && regenerated.has(child.localName)) {

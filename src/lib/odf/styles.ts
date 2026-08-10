@@ -15,7 +15,7 @@ import type {
   SectionColumns,
 } from "../documentModel";
 import { DEFAULT_COLUMN_GAP_CM, MAX_COLUMN_COUNT } from "../documentModel";
-import { childElements, firstChildElement } from "../docx/xml";
+import { childElements, firstChildElement, serializeElement } from "../docx/xml";
 import { mergeParagraphFormatting, mergeRunFormatting } from "../docx/properties";
 import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../lists";
 import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "./xml";
@@ -44,6 +44,9 @@ interface OdfStyleDefinition {
    * paragraph using the style starts on a new page under that master page,
    * i.e. it begins a new section (SPEC-028 AC-33). */
   masterPageName?: string;
+  /** `style:next-style-name` (SPEC-042 AC-3/AC-4's "style for following
+   * paragraph") — the ODF counterpart of docx's `w:next`. */
+  nextStyleName?: string;
   /** `fo:break-before="column"` on the style's paragraph-properties. Kept
    * off ParagraphFormatting — the model has no column-break formatting flag
    * (columns are SPEC-030) — so an AUTOMATIC style carrying it materialises
@@ -127,9 +130,24 @@ export interface OdfListReadState {
   definitions: ListDefinition[];
 }
 
+/** A named style of a family SPEC-042 does not model (anything but
+ * "paragraph"/"text" — "table", "graphic", "list", …), captured only well
+ * enough to list/preserve it (AC-15..18): identity plus verbatim source
+ * XML, never resolved into formatting. */
+export interface OdfOtherStyle {
+  name: string;
+  displayName?: string;
+  parentName?: string;
+  nextStyleName?: string;
+  rawXml: string;
+}
+
 export interface OdfStyleCatalog {
   paragraphStyles: StyleFamily;
   textStyles: StyleFamily;
+  /** Named styles of every other family, by name (SPEC-042) — see
+   * OdfOtherStyle. */
+  otherStyles: Map<string, OdfOtherStyle>;
   /** `text:list-style` definitions by name — named styles from styles.xml,
    * shadowed by automatic ones from content.xml (SPEC-018). */
   listStyles: Map<string, OdfListStyle>;
@@ -217,6 +235,10 @@ function parseStyleDefinition(styleEl: Element, fontFaces: FontFaceMap): OdfStyl
   const masterPageName = styleAttr(styleEl, "master-page-name");
   if (masterPageName) {
     definition.masterPageName = masterPageName;
+  }
+  const nextStyleName = styleAttr(styleEl, "next-style-name");
+  if (nextStyleName) {
+    definition.nextStyleName = nextStyleName;
   }
   if (paragraphProps) {
     const pageNumber = styleAttr(paragraphProps, "page-number");
@@ -533,6 +555,7 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
   const catalog: OdfStyleCatalog = {
     paragraphStyles: emptyFamily(),
     textStyles: emptyFamily(),
+    otherStyles: new Map(),
     listStyles: new Map(),
     defaultParagraphFormatting: {},
     defaultRunFormatting: {},
@@ -574,6 +597,33 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
         const target = family === "paragraph" ? catalog.paragraphStyles : catalog.textStyles;
         target.named.set(definition.name, definition);
       });
+      // SPEC-042 AC-15..18: named styles of every other family ("table",
+      // "graphic", …) are listed/preserved verbatim rather than resolved —
+      // this app has no formatting model for them (out of scope: banding).
+      for (const styleEl of childElements(officeStyles, STYLE_NAMESPACE, "style")) {
+        const family = styleAttr(styleEl, "family");
+        if (family === "paragraph" || family === "text" || !family) {
+          continue;
+        }
+        const name = styleAttr(styleEl, "name");
+        if (!name) {
+          continue;
+        }
+        const other: OdfOtherStyle = { name, rawXml: serializeElement(styleEl) };
+        const displayName = styleAttr(styleEl, "display-name");
+        if (displayName) {
+          other.displayName = displayName;
+        }
+        const parentName = styleAttr(styleEl, "parent-style-name");
+        if (parentName) {
+          other.parentName = parentName;
+        }
+        const nextStyleName = styleAttr(styleEl, "next-style-name");
+        if (nextStyleName) {
+          other.nextStyleName = nextStyleName;
+        }
+        catalog.otherStyles.set(name, other);
+      }
       collectListStyles(officeStyles, catalog);
     }
     parsePageLayout(stylesRoot, catalog);
@@ -703,6 +753,9 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
     if (definition.parentName !== undefined) {
       style.basedOn = definition.parentName;
     }
+    if (definition.nextStyleName !== undefined) {
+      style.next = definition.nextStyleName;
+    }
     const paragraphFormatting = { ...definition.paragraphFormatting };
     if (paragraphFormatting.direction === "rtl") {
       const start = paragraphFormatting.indentStartCm;
@@ -729,6 +782,46 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
     }
     if (definition.outlineLevel !== undefined) {
       style.headingLevel = definition.outlineLevel;
+    }
+    styles.push(style);
+  }
+  // SPEC-042: named text (character) styles — the ODF family for
+  // SPEC-042's character styles, resolved the same way (resolveTextStyle)
+  // but never included here before this spec, since a run's direct
+  // formatting already carried the resolved effect and nothing referenced
+  // the style by id.
+  for (const definition of catalog.textStyles.named.values()) {
+    const style: NamedStyle = {
+      id: definition.name,
+      name: definition.displayName ?? decodeStyleName(definition.name),
+      type: "character",
+    };
+    if (definition.parentName !== undefined) {
+      style.basedOn = definition.parentName;
+    }
+    if (Object.keys(definition.textProperties.formatting).length > 0) {
+      style.runFormatting = definition.textProperties.formatting;
+    }
+    if (definition.textProperties.fontSizePercent !== undefined) {
+      style.fontSizePercent = definition.textProperties.fontSizePercent;
+    }
+    styles.push(style);
+  }
+  // SPEC-042 AC-15..18: styles of every other family, listed/preserved
+  // verbatim — see OdfOtherStyle.
+  for (const other of catalog.otherStyles.values()) {
+    const style: NamedStyle = {
+      id: other.name,
+      name: other.displayName ?? decodeStyleName(other.name),
+      type: "table",
+      unmodeled: true,
+      rawXml: other.rawXml,
+    };
+    if (other.parentName !== undefined) {
+      style.basedOn = other.parentName;
+    }
+    if (other.nextStyleName !== undefined) {
+      style.next = other.nextStyleName;
     }
     styles.push(style);
   }
