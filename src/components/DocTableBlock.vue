@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { asListDefinitions } from "../lib/documentModel";
+import { asListDefinitions, asTrackChangesDisplayMode } from "../lib/documentModel";
 import {
   headingTag,
   paragraphStyle,
@@ -10,6 +10,7 @@ import {
   tableColumnWidth,
   tableRowStyle,
   tableStyle,
+  trackChangeRunStyle,
 } from "../lib/renderFormatting";
 import { asCellRange, asTable, isCellInRange, visibleRowCells } from "../lib/tables";
 
@@ -30,6 +31,9 @@ const props = defineProps({
   /** The model's multilevel list definitions (SPEC-032) — cell paragraphs
    * derive defined-list markers and indents from them. */
   listDefinitions: { type: Array, default: () => [] },
+  /** The review pane's display mode (SPEC-039 AC-9) — drives whether cell
+   * runs show inline tracked-change markup. */
+  displayMode: { type: String, default: "all" },
 });
 
 /** A cell's colspan/rowspan attribute value: undefined (the HTML default,
@@ -91,7 +95,7 @@ function spanAttr(span = 1) {
               <span
                 v-for="(run, runIndex) in paragraph.runs"
                 :key="runKey(run, runIndex)"
-                :style="runStyle(run.formatting)"
+                :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
               >{{ run.text }}</span>
             </template>
             <br v-else>

@@ -3,7 +3,7 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import type { Block, ListDefinition } from "./documentModel";
+import type { Block, ListDefinition, TrackChangesDisplayMode } from "./documentModel";
 import type { MarkSegment } from "./marks";
 import type { PageColumns } from "./pagination";
 
@@ -82,6 +82,10 @@ export interface RenderEntry {
   /** Which column of a multi-column page this entry flows into (SPEC-030);
    * absent on single-column pages. */
   column?: number;
+  /** The review pane's display mode (SPEC-039 AC-9) — a table entry's cell
+   * runs need it passed down since DocTableBlock renders its own runs
+   * rather than through RenderRun. */
+  trackChangesDisplayMode?: TrackChangesDisplayMode;
 }
 
 /** Typed empty seed for DocPage's entries prop (espree bars the

@@ -3,9 +3,21 @@
 // split out of DocumentView.vue because that file's <script setup> is
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
-import type { BorderSide, Image, ListDefinition, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
+import type {
+  BorderSide,
+  Image,
+  ListDefinition,
+  Paragraph,
+  Run,
+  RunFormatting,
+  Table,
+  TableCell,
+  TableRow,
+  TrackChangesDisplayMode,
+} from "./documentModel";
 import { listIndentCm } from "./lists";
 import { definedTextIndentCm } from "./listDefinitions";
+import { authorColor } from "./trackChangesIdentity";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
 // name as-is.
@@ -152,6 +164,53 @@ export function paragraphStyle(
 
 export function runKey(run: Run, index: number): string {
   return `${index}-${run.text.length}`;
+}
+
+// --- track changes (SPEC-039) ------------------------------------------
+
+/** A run's tracked-change markup, layered on top of `runStyle` (SPEC-039
+ * AC "inserted text renders underlined in the author's colour and deleted
+ * text renders struck through"). Every run stays in the DOM regardless of
+ * display mode — hiding/removing nodes here would desync the caret/offset
+ * mapping the pagination and domCaret machinery relies on — so "Simple
+ * markup"/"No markup"/"Original" are approximated by suppressing the
+ * colour/decoration rather than by changing document structure: "all"
+ * shows full inline markup, the other three render plain text (a deletion
+ * is still visible, just undecorated — the margin change bar is what
+ * signals a change in "simple" mode; AC-9's exact "as if accepted/
+ * rejected" text substitution is intentionally out of scope for the caret-
+ * safe canvas renderer). */
+export function trackChangeRunStyle(run: Run, displayMode: TrackChangesDisplayMode): Record<string, string> {
+  const changes = run.changes;
+  if (!changes || displayMode !== "all") {
+    return {};
+  }
+  const style: Record<string, string> = {};
+  const decorations: string[] = [];
+  if (changes.insert) {
+    decorations.push("underline");
+    style.color = authorColor(changes.insert.author);
+  }
+  if (changes.delete) {
+    decorations.push("line-through");
+    style.color = authorColor(changes.delete.author);
+  }
+  if (decorations.length > 0) {
+    style.textDecorationLine = decorations.join(" ");
+    style.textDecorationColor = style.color;
+  }
+  return style;
+}
+
+/** Whether a paragraph carries any tracked change at all — text, its own
+ * mark, or block-level (SPEC-039 AC-5's margin change bar, shown in every
+ * display mode except "No markup"/"Original", which render as if the
+ * document already reflects one side of every change). */
+export function paragraphHasTrackedChange(paragraph: Paragraph): boolean {
+  if (paragraph.changes?.markInsert || paragraph.changes?.markDelete || paragraph.changes?.formatChange) {
+    return true;
+  }
+  return paragraph.runs.some((run) => run.changes?.insert || run.changes?.delete || run.changes?.formatChange);
 }
 
 // --- tables (SPEC-023) -------------------------------------------------

@@ -23,6 +23,7 @@ import {
   type DocumentModel,
   type NoteContent,
   type Paragraph,
+  type TrackChangesDisplayMode,
 } from "../../lib/documentModel";
 import {
   sectionColumnFlowWidthPx,
@@ -34,7 +35,7 @@ import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/not
 import { noRenderEntries, type RenderEntry } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
-import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../../lib/renderFormatting";
+import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle, trackChangeRunStyle } from "../../lib/renderFormatting";
 import { effectiveLanguage } from "../../lib/language";
 import { markSegments } from "../../lib/marks";
 import { splitRuns } from "../../lib/textEditing";
@@ -118,6 +119,9 @@ export interface PaginationViewDeps {
   hfRemountEpoch: Ref<number>;
   noteRemountEpoch: Ref<number>;
   tocPageNumberFor: (model: DocumentModel, anchor: string) => number | null;
+  /** The review pane's display-mode selector (SPEC-039 AC-9); drives
+   * whether body runs show inline tracked-change markup. */
+  trackChangesDisplayMode: Ref<TrackChangesDisplayMode>;
 }
 
 const SECTION_MARKER_LABELS: Record<string, string> = {
@@ -172,6 +176,7 @@ function renderEntryFor(
         flatEntry.imgSel,
         column,
         model.listDefinitions,
+        deps.trackChangesDisplayMode.value,
       ],
       kind: flatEntry.isTable ? "table" : "image",
       blockProp: block,
@@ -181,6 +186,7 @@ function renderEntryFor(
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       column,
+      trackChangesDisplayMode: flatEntry.isTable ? deps.trackChangesDisplayMode.value : undefined,
     } as RenderEntry;
   }
   if (flatEntry.isToc) {
@@ -261,7 +267,7 @@ function renderEntryFor(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: runStyle(run.formatting),
+        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
         text: label,
         segments: null,
         atomText: run.text,
@@ -279,7 +285,7 @@ function renderEntryFor(
       href: href || "",
       target: external ? "_blank" : undefined,
       rel: external ? "noopener noreferrer" : undefined,
-      styleObj: runStyle(run.formatting),
+      styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
       text: run.text,
       segments: marked ? segments : null,
       lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
@@ -298,6 +304,7 @@ function renderEntryFor(
       noteSig,
       outlineToggle,
       outlineCollapsed,
+      deps.trackChangesDisplayMode.value,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),

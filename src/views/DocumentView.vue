@@ -27,6 +27,7 @@ import ImageToolbar from "../components/ImageToolbar.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
+import TrackChangesPane from "../components/TrackChangesPane.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
@@ -55,6 +56,7 @@ import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { useClipboard } from "./document/useClipboard";
 import { asCommentFilter, useComments } from "./document/useComments";
+import { asChangeEntries, useTrackChanges } from "./document/useTrackChanges";
 import { useFindReplace } from "./document/useFindReplace";
 import { usePdfExport } from "./document/usePdfExport";
 import { usePrintPreview } from "./document/usePrintPreview";
@@ -415,6 +417,7 @@ import {
   undoLabel as undoDocumentLabel,
 } from "../lib/undoHistory";
 import { findShortcut, isOutsideDocumentInput, shortcutLabel } from "../lib/shortcuts";
+import { applyTrackChanges } from "../lib/trackChangesDiff";
 import { isMacPlatform } from "../lib/platform";
 
 const route = useRoute();
@@ -1094,6 +1097,7 @@ function applyEdit(
   label = "",
   groupable = false,
   keepPasteChip = false,
+  skipTrackChanges = false,
 ) {
   if (!result || !beforeSelection) {
     return;
@@ -1115,6 +1119,18 @@ function applyEdit(
   clearImageSelection();
   clearTocSelection();
   const before = doc.value;
+  // SPEC-039: with recording on, rewrite the command's result into tracked-
+  // change markup before it ever reaches undo history or the model — every
+  // command becomes trackable with no per-command wiring (see
+  // trackChangesDiff.ts's header comment). `skipTrackChanges` is for the
+  // accept/reject commands themselves, whose result IS the final state a
+  // reviewer chose, not a new edit to re-diff.
+  if (before && !skipTrackChanges && isRecording()) {
+    result = {
+      model: applyTrackChanges(before, result.model, trackChangesAuthorName.value, new Date().toISOString()),
+      selection: result.selection,
+    };
+  }
   if (before) {
     recordHistoryEdit(documentId.value, {
       before: { model: before, selection: beforeSelection },
@@ -3145,6 +3161,12 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       toggleFormattingMarks();
       break;
     }
+    case "edit.toggleTrackChanges": {
+      // Ctrl/Cmd+Shift+E (SPEC-039 AC-1).
+      event.preventDefault();
+      toggleTrackChangesRecording();
+      break;
+    }
     case "nav.documentStart":
     case "nav.documentEnd": {
       // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
@@ -3829,6 +3851,33 @@ const {
   onScroll: (cb) => scrollHooks.add(cb),
 });
 
+// --- track changes (SPEC-039) ------------------------------------------
+const {
+  trackChangesRecording,
+  toggleTrackChangesRecording,
+  isRecording,
+  trackChangesAuthorName,
+  trackChangesDisplayMode,
+  setTrackChangesDisplayMode,
+  trackChangesPaneOpen,
+  toggleTrackChangesPane,
+  changes: trackedChanges,
+  acceptChange,
+  rejectChange,
+  acceptAll: acceptAllChanges,
+  rejectAll: rejectAllChanges,
+  goToNextChange,
+  goToPreviousChange,
+  goToChangeById,
+} = useTrackChanges({
+  doc,
+  applyEdit,
+  getCaret: () => caret,
+  applyCaretMove,
+  scrollModelCaretIntoView,
+  onSessionClose,
+});
+
 const {
   statusBarLanguageLabel,
   currentLanguageTag,
@@ -3893,6 +3942,7 @@ const { pagedViews } = usePaginationView({
   hfRemountEpoch,
   noteRemountEpoch,
   tocPageNumberFor,
+  trackChangesDisplayMode,
 });
 
 // --- outline navigator handlers (SPEC-037) ---------------------------------
@@ -4382,6 +4432,21 @@ async function menuPastePlain() {
             :checked="commentsOnlyView"
             @select="toggleCommentsOnlyView"
           />
+          <hr class="menu-separator">
+          <MenuCheckItem
+            label="Track changes"
+            testid="view-menu-track-changes"
+            :shortcut="shortcutLabel('edit.toggleTrackChanges')"
+            :checked="trackChangesRecording"
+            :disabled="!editable"
+            @select="toggleTrackChangesRecording"
+          />
+          <MenuCheckItem
+            label="Track changes pane"
+            testid="view-menu-track-changes-pane"
+            :checked="trackChangesPaneOpen"
+            @select="toggleTrackChangesPane"
+          />
         </template>
 
         <template #insert>
@@ -4720,6 +4785,17 @@ async function menuPastePlain() {
         :mixed="formatValues.highlightMixed"
         @select="handleHighlightSelect"
       />
+      <button
+        v-if="editable"
+        type="button"
+        class="track-changes-toolbar-toggle"
+        data-testid="toolbar-track-changes-toggle"
+        :aria-pressed="trackChangesRecording"
+        :title="shortcutLabel('edit.toggleTrackChanges')"
+        @click="toggleTrackChangesRecording"
+      >
+        Track changes: {{ trackChangesRecording ? "On" : "Off" }}
+      </button>
     </template>
     <div
       v-if="lockState === 'busy'"
@@ -4799,6 +4875,29 @@ async function menuPastePlain() {
           @resolve="resolveCommentThread"
           @reopen="reopenCommentThread"
           @delete-thread="deleteCommentThread"
+        />
+      </div>
+      <div
+        v-if="trackChangesPaneOpen"
+        class="track-changes-dock print-exclude"
+      >
+        <TrackChangesPane
+          :changes="trackedChanges"
+          :display-mode="trackChangesDisplayMode"
+          :recording="trackChangesRecording"
+          :author-name="trackChangesAuthorName"
+          :editable="editable"
+          @close="toggleTrackChangesPane"
+          @toggle-recording="toggleTrackChangesRecording"
+          @update:display-mode="setTrackChangesDisplayMode"
+          @update:author-name="trackChangesAuthorName = $event"
+          @accept="acceptChange"
+          @reject="rejectChange"
+          @accept-all="acceptAllChanges"
+          @reject-all="rejectAllChanges"
+          @next="goToNextChange"
+          @previous="goToPreviousChange"
+          @focus-change="goToChangeById"
         />
       </div>
       <div class="page-wrap">
@@ -5149,6 +5248,16 @@ async function menuPastePlain() {
         @manage-dictionary="openCustomDictionaryDialog"
         @toggle-no-proof="setNoProof"
       />
+      <button
+        v-if="editable"
+        type="button"
+        class="track-changes-status-indicator"
+        data-testid="status-bar-track-changes"
+        :aria-pressed="trackChangesRecording"
+        @click="toggleTrackChangesRecording"
+      >
+        Track changes: {{ trackChangesRecording ? "On" : "Off" }}
+      </button>
     </template>
     <LinkChip
       v-if="linkChip.visible"
@@ -5474,6 +5583,40 @@ async function menuPastePlain() {
   text-decoration: underline;
 }
 
+/* SPEC-039 AC-1: a clear on/off state in both the toolbar and the status
+   bar — the toolbar button reads as a toggle chip, the status-bar one
+   matches word-count-button's plain-until-hovered look. */
+.track-changes-toolbar-toggle {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.track-changes-toolbar-toggle[aria-pressed="true"] {
+  background: #e6f4ea;
+  color: #188038;
+  border-color: #188038;
+}
+
+.track-changes-status-indicator {
+  font: inherit;
+  font-size: 0.75rem;
+  color: inherit;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.track-changes-status-indicator[aria-pressed="true"] {
+  text-decoration: underline;
+  font-weight: 600;
+}
+
 .save-state {
   font-size: 0.8125rem;
   color: rgb(255 255 255 / 0.85);
@@ -5568,6 +5711,23 @@ async function menuPastePlain() {
 }
 
 .comments-dock :deep(.comments-pane) {
+  pointer-events: auto;
+}
+
+/* The track-changes review pane's own dock (SPEC-039) — same shape as
+   comments-dock, on the same edge (the two panes are not normally opened
+   together). */
+.track-changes-dock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18rem;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.track-changes-dock :deep(.track-changes-pane) {
   pointer-events: auto;
 }
 

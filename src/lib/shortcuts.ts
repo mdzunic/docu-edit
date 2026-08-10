@@ -151,6 +151,14 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     bindings: [{ key: "m", mod: true, alt: true }],
   },
 
+  // Editing
+  {
+    id: "edit.toggleTrackChanges",
+    label: "Track changes",
+    category: "Editing",
+    bindings: [{ key: "e", mod: true, shift: true }],
+  },
+
   // File
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },
 

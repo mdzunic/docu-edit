@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   headingTag,
+  paragraphHasTrackedChange,
   paragraphStyle,
   runKey,
   runStyle,
@@ -8,8 +9,13 @@ import {
   tableColumnWidth,
   tableRowStyle,
   tableStyle,
+  trackChangeRunStyle,
 } from "./renderFormatting";
-import type { Table, TableCell, TableRow } from "./documentModel";
+import type { Paragraph, Run, Table, TableCell, TableRow } from "./documentModel";
+
+function paragraph(runs: Run[]): Paragraph {
+  return { type: "paragraph", runs };
+}
 
 describe("headingTag", () => {
   it("returns 'p' for no heading level", () => {
@@ -264,5 +270,65 @@ describe("tableColumnWidth (AC-23)", () => {
   it("uses a relative share for an auto-width table too", () => {
     const autoTable = table({ columnWidthsCm: [1, 1, 2], widthMode: "auto" });
     expect(tableColumnWidth(autoTable, 2)).toBe("50%");
+  });
+});
+
+describe("trackChangeRunStyle (SPEC-039 AC-4)", () => {
+  const insertedRun: Run = {
+    text: "x",
+    formatting: {},
+    changes: { insert: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } },
+  };
+  const deletedRun: Run = {
+    text: "x",
+    formatting: {},
+    changes: { delete: { changeId: "c2", author: "Grace", date: "2026-01-01T00:00:00.000Z" } },
+  };
+
+  it("underlines an insertion in the author's colour in 'all' markup", () => {
+    const style = trackChangeRunStyle(insertedRun, "all");
+    expect(style.textDecorationLine).toBe("underline");
+    expect(style.color).toBeTruthy();
+  });
+
+  it("strikes through a deletion in the author's colour in 'all' markup", () => {
+    const style = trackChangeRunStyle(deletedRun, "all");
+    expect(style.textDecorationLine).toBe("line-through");
+  });
+
+  it("gives the same author the same colour every time", () => {
+    const a = trackChangeRunStyle(insertedRun, "all");
+    const b = trackChangeRunStyle({ ...insertedRun, text: "y" }, "all");
+    expect(a.color).toBe(b.color);
+  });
+
+  it("shows no inline markup outside 'all' markup mode", () => {
+    expect(trackChangeRunStyle(insertedRun, "simple")).toEqual({});
+    expect(trackChangeRunStyle(insertedRun, "noMarkup")).toEqual({});
+    expect(trackChangeRunStyle(insertedRun, "original")).toEqual({});
+  });
+
+  it("returns no style for a run with no tracked change", () => {
+    expect(trackChangeRunStyle({ text: "x", formatting: {} }, "all")).toEqual({});
+  });
+});
+
+describe("paragraphHasTrackedChange (SPEC-039 AC-5)", () => {
+  it("is false for a paragraph with no tracked changes", () => {
+    expect(paragraphHasTrackedChange(paragraph([{ text: "x", formatting: {} }]))).toBe(false);
+  });
+
+  it("is true when a run carries an insert/delete/formatChange marker", () => {
+    expect(
+      paragraphHasTrackedChange(
+        paragraph([{ text: "x", formatting: {}, changes: { insert: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } } }]),
+      ),
+    ).toBe(true);
+  });
+
+  it("is true when the paragraph's own mark is pending insert/delete", () => {
+    const p = paragraph([{ text: "x", formatting: {} }]);
+    p.changes = { markInsert: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } };
+    expect(paragraphHasTrackedChange(p)).toBe(true);
   });
 });

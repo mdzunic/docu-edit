@@ -58,6 +58,7 @@ function componentFor(entry = noRenderEntries()[0]) {
     :section="entry.sectionProp"
     :block-index="entry.blockIndexProp"
     :list-definitions="entry.listDefinitions"
+    :display-mode="entry.trackChangesDisplayMode"
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
     :src="entry.imageSrc"
     :selected="entry.imageSelected"
