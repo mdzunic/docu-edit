@@ -45,6 +45,7 @@ import type {
   TableOfContents,
   TocEntry,
   TocOptions,
+  TrackedChangeInfo,
 } from "../documentModel";
 import {
   createDefaultStyles,
@@ -84,7 +85,9 @@ import {
   mergeRunFormatting,
   parseOutlineLevel,
   parseParagraphProperties,
+  parseParagraphPropertiesChange,
   parseRunProperties,
+  parseRunPropertiesChange,
 } from "./properties";
 import { eighthPointsToPt, ooxmlColorToCss, twipsToCm } from "./units";
 
@@ -119,6 +122,7 @@ const TRANSIENT_PARAGRAPH_CHILDREN = new Set(["proofErr"]);
 const MODELLED_RUN_CHILDREN = new Set([
   "rPr",
   "t",
+  "delText",
   "tab",
   "br",
   "cr",
@@ -177,6 +181,31 @@ function docxCommentId(sourceId: string): string {
   return `wc${sourceId}`;
 }
 
+/** The model change id for a source `w:ins`/`w:del`/`w:rPrChange`/
+ * `w:pPrChange`/`w:trPr` ins-or-del's `w:id`/its own identity (SPEC-039) —
+ * same "derive, don't randomise" convention as docxCommentId, so re-parsing
+ * the same file gives the same id and a same-format round trip compares
+ * structurally equal. `kind` keeps the numeric ids each element type
+ * happens to reuse from colliding (an insertion and a format change can
+ * both be `w:id="1"` in the same file). */
+function docxChangeId(kind: string, sourceId: string): string {
+  return `wtc-${kind}-${sourceId}`;
+}
+
+const UNKNOWN_TRACK_CHANGE_AUTHOR = "Unknown";
+
+/** A tracked-change range's author/date (SPEC-039), from the `w:author`/
+ * `w:date` attributes every `w:ins`/`w:del`/`w:rPrChange`/`w:pPrChange`
+ * carries — same fallback convention as word/comments.xml's author/date. */
+function trackedChangeInfo(el: Element, kind: string): TrackedChangeInfo {
+  const id = wordAttr(el, "id") ?? `${Math.random()}`;
+  return {
+    changeId: docxChangeId(kind, id),
+    author: wordAttr(el, "author") || UNKNOWN_TRACK_CHANGE_AUTHOR,
+    date: wordAttr(el, "date") || new Date(0).toISOString(),
+  };
+}
+
 /** Whether a run's only content (besides `w:rPr`) is a `w:commentReference`
  * (SPEC-038) — dropped on read like a footnoteRef/endnoteRef marker: the
  * model derives which comment a range belongs to from the range's own id
@@ -228,6 +257,9 @@ export interface ParsedDocxDocument {
   /** Comment threads (SPEC-038) from word/comments.xml; empty when the
    * package has no comments part. */
   comments: CommentThread[];
+  /** Whether settings.xml declared `w:trackChanges` (SPEC-039) — round-trips
+   * onto DocumentModel.trackChangesRecording unchanged. */
+  trackChangesRecording: boolean;
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -242,6 +274,9 @@ function decodeUtf8(bytes: Uint8Array): string {
 function runChildText(child: Element): string {
   switch (child.localName) {
     case "t":
+    case "delText":
+      // w:delText (SPEC-039): a tracked-deletion run's text — Word's
+      // substitute for w:t inside w:del, same content model otherwise.
       return child.textContent ?? "";
     case "tab":
       return "\t";
@@ -280,6 +315,7 @@ function runHasTypedBreak(rEl: Element): boolean {
 function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undefined {
   const rPr = firstChildElement(rEl, WORD_NAMESPACE, "rPr");
   const formatting = mergeRunFormatting(inheritedFormatting, parseRunProperties(rPr));
+  const formatChange = parseRunPropertiesChange(rPr);
 
   let text = "";
   for (const child of Array.from(rEl.children)) {
@@ -291,7 +327,7 @@ function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undef
   if (text.length === 0) {
     return undefined;
   }
-  return { text, formatting };
+  return formatChange ? { text, formatting, changes: { formatChange } } : { text, formatting };
 }
 
 /** The run formatting a `w:hyperlink`'s child runs inherit: the wrapper's
@@ -358,6 +394,22 @@ function collectCommentAnchor(child: Element, runs: Run[], commentAnchors: Comme
   });
 }
 
+/** A tracked insertion/deletion wrapper's runs (SPEC-039): recurse with the
+ * given `collect` callback (the caller's own collectRuns-shaped recursion,
+ * since `parseBodyParagraphBlocks` and `collectRuns` each walk children
+ * their own way), then stamp every run it produced with the wrapper's
+ * author/date. w:del's runs use w:delText instead of w:t (handled by
+ * runChildText) but are otherwise ordinary runs. */
+function collectTrackedRun(child: Element, runs: Run[], collect: () => void): void {
+  const kind = child.localName === "ins" ? "insert" : "delete";
+  const mark = trackedChangeInfo(child, child.localName);
+  const startIndex = runs.length;
+  collect();
+  for (let i = startIndex; i < runs.length; i++) {
+    runs[i] = { ...runs[i], changes: { ...runs[i].changes, [kind]: mark } };
+  }
+}
+
 function collectRuns(
   container: Element,
   inheritedFormatting: RunFormatting,
@@ -417,6 +469,10 @@ function collectRuns(
       (child.localName === "commentRangeStart" || child.localName === "commentRangeEnd")
     ) {
       collectCommentAnchor(child, runs, commentAnchors);
+    } else if (child.namespaceURI === WORD_NAMESPACE && (child.localName === "ins" || child.localName === "del")) {
+      collectTrackedRun(child, runs, () =>
+        collectRuns(child, inheritedFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors),
+      );
     } else if (
       child.namespaceURI === WORD_NAMESPACE &&
       TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)
@@ -452,6 +508,36 @@ interface ParagraphMeta {
   headingLevel: number | undefined;
   styleId: string | undefined;
   list: Paragraph["list"];
+  changes: Paragraph["changes"];
+}
+
+/** A paragraph's own tracked-change state (SPEC-039): `w:pPrChange` for a
+ * pending formatting change, and `w:pPr/w:rPr/w:ins`|`w:del` for the
+ * paragraph mark itself (the pilcrow) being tracked-inserted/deleted —
+ * Word nests these inside the mark's own run-properties element, distinct
+ * from the paragraph's other `w:pPr` children. */
+function parseParagraphChanges(pPr: Element | undefined): Paragraph["changes"] {
+  if (!pPr) {
+    return undefined;
+  }
+  const formatChange = parseParagraphPropertiesChange(pPr);
+  const markRPr = firstChildElement(pPr, WORD_NAMESPACE, "rPr");
+  const markInsertEl = markRPr ? firstChildElement(markRPr, WORD_NAMESPACE, "ins") : undefined;
+  const markDeleteEl = markRPr ? firstChildElement(markRPr, WORD_NAMESPACE, "del") : undefined;
+  if (!formatChange && !markInsertEl && !markDeleteEl) {
+    return undefined;
+  }
+  const changes: Paragraph["changes"] = {};
+  if (formatChange) {
+    changes.formatChange = formatChange;
+  }
+  if (markInsertEl) {
+    changes.markInsert = trackedChangeInfo(markInsertEl, "ins");
+  }
+  if (markDeleteEl) {
+    changes.markDelete = trackedChangeInfo(markDeleteEl, "del");
+  }
+  return changes;
 }
 
 function parseParagraphMeta(
@@ -502,7 +588,8 @@ function parseParagraphMeta(
     }
   }
 
-  return { resolved, formatting, headingLevel, styleId, list };
+  const changes = parseParagraphChanges(pPr);
+  return { resolved, formatting, headingLevel, styleId, list, changes };
 }
 
 function assembleParagraph(
@@ -531,6 +618,9 @@ function assembleParagraph(
   }
   if (commentAnchors.length > 0) {
     paragraph.commentAnchors = commentAnchors;
+  }
+  if (meta.changes) {
+    paragraph.changes = meta.changes;
   }
   return paragraph;
 }
@@ -895,6 +985,10 @@ function parseBodyParagraphBlocks(
       (child.localName === "commentRangeStart" || child.localName === "commentRangeEnd")
     ) {
       collectCommentAnchor(child, runs, commentAnchors);
+    } else if (child.namespaceURI === WORD_NAMESPACE && (child.localName === "ins" || child.localName === "del")) {
+      collectTrackedRun(child, runs, () =>
+        collectRuns(child, meta.resolved.runFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors),
+      );
     } else if (child.namespaceURI === WORD_NAMESPACE && TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)) {
       // Regenerated by Word on open; deliberately not preserved.
     } else {
@@ -1249,6 +1343,18 @@ function parseTable(
     const minHeightCm = parseRowMinHeight(trPrEl);
     if (minHeightCm !== undefined) {
       row.minHeightCm = minHeightCm;
+    }
+    // Tracked row insert/delete (SPEC-039 AC-15): w:trPr/w:ins|w:del.
+    const insEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "ins") : undefined;
+    const delEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "del") : undefined;
+    if (insEl || delEl) {
+      row.changes = {};
+      if (insEl) {
+        row.changes.insert = trackedChangeInfo(insEl, "ins");
+      }
+      if (delEl) {
+        row.changes.delete = trackedChangeInfo(delEl, "del");
+      }
     }
     return row;
   });
@@ -2028,6 +2134,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   const settingsPartPath = settingsRel ? resolvePartPath(mainPartPath, settingsRel.target) : "word/settings.xml";
   const settingsText = readPart(settingsPartPath);
   const evenAndOddHeaders = !!settingsText && /<[\w:]*evenAndOddHeaders\b/.test(settingsText);
+  const trackChangesRecording = !!settingsText && /<[\w:]*trackChanges\b/.test(settingsText);
   const headerFooterContentCache = new Map<string, { blocks: Block[]; media: MediaPart[] }>();
   rawSections.forEach((raw, index) => {
     const isFinal = index === rawSections.length - 1;
@@ -2109,6 +2216,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     listDefinitions: numberingCatalog.definitionsUsed(),
     notes,
     comments,
+    trackChangesRecording,
   };
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;

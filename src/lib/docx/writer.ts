@@ -42,6 +42,7 @@ import type {
   ParagraphAlignment,
   ParagraphFormatting,
   Run,
+  RunFormatChange,
   RunFormatting,
   Section,
   SectionColumns,
@@ -150,7 +151,14 @@ const JC_VALUES: Record<ParagraphAlignment, string> = {
   justify: "both",
 };
 
-function runPropertiesXml(formatting: RunFormatting): string {
+function trackedChangeAttrs(id: number, author: string, date: string): string {
+  return ` w:id="${id}" w:author="${escapeXml(author)}" w:date="${escapeXml(date)}"`;
+}
+
+/** A run's formatting, plus — with `formatChange` set (SPEC-039) — a
+ * trailing `w:rPrChange` recording the pre-change formatting (`previous`)
+ * under a fresh numeric id from `ctx.changeIds`. */
+function runPropertiesXml(formatting: RunFormatting, formatChange?: RunFormatChange, ctx?: InlineWriteContext): string {
   const parts: string[] = [];
   // Emitted in CT_RPr sequence order: rFonts, b, i, strike, noProof, color,
   // sz, highlight, u, shd, vertAlign, lang. Explicit false values are
@@ -219,19 +227,26 @@ function runPropertiesXml(formatting: RunFormatting): string {
   if (formatting.lang !== undefined) {
     parts.push(`<w:lang w:val="${escapeXml(formatting.lang)}"/>`);
   }
+  if (formatChange && ctx) {
+    const id = changeNumericId(ctx, formatChange.changeId);
+    const previous = runPropertiesXml(formatChange.previous);
+    parts.push(`<w:rPrChange${trackedChangeAttrs(id, formatChange.author, formatChange.date)}>${previous}</w:rPrChange>`);
+  }
   return parts.length > 0 ? `<w:rPr>${parts.join("")}</w:rPr>` : "";
 }
 
 /** A run's text as w:t/w:tab/w:br children — the inverse of the reader's
  * literal "\t"/"\n" mapping. xml:space="preserve" keeps leading/trailing
- * spaces through Word's whitespace normalisation. */
-function runContentXml(text: string): string {
+ * spaces through Word's whitespace normalisation. `textTag` is "delText"
+ * for a tracked deletion (SPEC-039): Word's substitute for w:t inside
+ * w:del, same content model otherwise. */
+function runContentXml(text: string, textTag: "t" | "delText" = "t"): string {
   let xml = "";
   let buffer = "";
   const flush = () => {
     if (buffer.length > 0) {
       const preserve = buffer.trim() !== buffer ? ' xml:space="preserve"' : "";
-      xml += `<w:t${preserve}>${escapeXml(buffer)}</w:t>`;
+      xml += `<w:${textTag}${preserve}>${escapeXml(buffer)}</w:${textTag}>`;
       buffer = "";
     }
   };
@@ -276,8 +291,15 @@ function fieldInstr(field: FieldSpec): string {
  * the instruction wrapper differs. A note reference run (SPEC-031) emits a
  * `w:footnoteReference`/`w:endnoteReference` instead of any text — Word
  * renders the number itself — resolved through `noteIds` (the notes write
- * plan's numeric ids); a dangling reference emits nothing. */
-function runXml(run: Run, noteIds?: Map<string, number>): string {
+ * plan's numeric ids); a dangling reference emits nothing.
+ *
+ * A tracked-change run (SPEC-039) is wrapped in `w:ins`/`w:del` — both when
+ * nested (AC "editing over an existing tracked insertion... produces a
+ * nested change"), `w:ins` outermost since the insertion happened first —
+ * and a tracked deletion's text is `w:delText`, never `w:t`. Field/note
+ * runs are never wrapped: their content is a computed placeholder, not
+ * text a tracked edit could sensibly mark. */
+function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContext): string {
   if (run.note) {
     const id = noteIds?.get(run.note.noteId);
     if (id === undefined) {
@@ -286,11 +308,25 @@ function runXml(run: Run, noteIds?: Map<string, number>): string {
     const tag = run.note.kind === "footnote" ? "footnoteReference" : "endnoteReference";
     return `<w:r>${runPropertiesXml(run.formatting)}<w:${tag} w:id="${id}"/></w:r>`;
   }
-  const inner = `<w:r>${runPropertiesXml(run.formatting)}${runContentXml(run.text)}</w:r>`;
+  const deleted = run.changes?.delete;
+  const inserted = run.changes?.insert;
+  const formatChange = run.changes?.formatChange;
+  const rPr = runPropertiesXml(run.formatting, formatChange, ctx);
+  const content = runContentXml(run.text, deleted ? "delText" : "t");
+  const inner = `<w:r>${rPr}${content}</w:r>`;
   if (run.field) {
     return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${inner}</w:fldSimple>`;
   }
-  return inner;
+  let xml = inner;
+  if (deleted && ctx) {
+    const id = changeNumericId(ctx, deleted.changeId);
+    xml = `<w:del${trackedChangeAttrs(id, deleted.author, deleted.date)}>${xml}</w:del>`;
+  }
+  if (inserted && ctx) {
+    const id = changeNumericId(ctx, inserted.changeId);
+    xml = `<w:ins${trackedChangeAttrs(id, inserted.author, inserted.date)}>${xml}</w:ins>`;
+  }
+  return xml;
 }
 
 // w:tab/@w:leader values for the model's tab leaders (SPEC-032 AC-23).
@@ -373,7 +409,12 @@ function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   return parts;
 }
 
-function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef, sectPr?: string): string {
+function paragraphPropertiesXml(
+  paragraph: Paragraph,
+  numRef?: NumberingRef,
+  sectPr?: string,
+  ctx?: InlineWriteContext,
+): string {
   const parts: string[] = [];
   const formatting = paragraph.formatting ?? {};
 
@@ -413,8 +454,32 @@ function paragraphPropertiesXml(paragraph: Paragraph, numRef?: NumberingRef, sec
   if (paragraph.headingLevel !== undefined) {
     parts.push(`<w:outlineLvl w:val="${paragraph.headingLevel - 1}"/>`);
   }
+  // The paragraph mark's own tracked insert/delete (SPEC-039): nested
+  // inside the mark's own w:rPr, distinct from the paragraph's other
+  // children — a split's new mark, or a pending merge's mark-for-deletion.
+  const markInsert = paragraph.changes?.markInsert;
+  const markDelete = paragraph.changes?.markDelete;
+  if ((markInsert || markDelete) && ctx) {
+    const markParts: string[] = [];
+    if (markInsert) {
+      const id = changeNumericId(ctx, markInsert.changeId);
+      markParts.push(`<w:ins${trackedChangeAttrs(id, markInsert.author, markInsert.date)}/>`);
+    }
+    if (markDelete) {
+      const id = changeNumericId(ctx, markDelete.changeId);
+      markParts.push(`<w:del${trackedChangeAttrs(id, markDelete.author, markDelete.date)}/>`);
+    }
+    parts.push(`<w:rPr>${markParts.join("")}</w:rPr>`);
+  }
   if (sectPr !== undefined) {
     parts.push(sectPr);
+  }
+  const formatChange = paragraph.changes?.formatChange;
+  if (formatChange && ctx) {
+    const id = changeNumericId(ctx, formatChange.changeId);
+    const previousFormatting = formatChange.previous ?? {};
+    const previous = `<w:pPr>${paragraphFormattingParts(previousFormatting).join("")}</w:pPr>`;
+    parts.push(`<w:pPrChange${trackedChangeAttrs(id, formatChange.author, formatChange.date)}>${previous}</w:pPrChange>`);
   }
 
   return parts.length > 0 ? `<w:pPr>${parts.join("")}</w:pPr>` : "";
@@ -533,6 +598,24 @@ interface InlineWriteContext {
    * contexts that can hold no comment anchors (the comments part itself,
    * headers/footers, note content). */
   commentIds?: Map<string, number>;
+  /** Numeric `w:id`s for every `w:ins`/`w:del`/`w:rPrChange`/`w:pPrChange`/
+   * row-change element (SPEC-039), keyed by model changeId and assigned
+   * lazily in document-write order — the same one pool Word itself uses
+   * across every tracked-change element kind in a document. */
+  changeIds: Map<string, number>;
+}
+
+/** The numeric `w:id` for a tracked-change element (SPEC-039): the same
+ * changeId always gets the same number within one write, assigned on first
+ * encounter in document order — mirrors commentIds' assignment shape. */
+function changeNumericId(ctx: InlineWriteContext, changeId: string): number {
+  const existing = ctx.changeIds.get(changeId);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const id = ctx.changeIds.size + 1;
+  ctx.changeIds.set(changeId, id);
+  return id;
 }
 
 /** The paragraph's inline content: its runs, with any preserved opaque
@@ -548,7 +631,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
   const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
   const hasComments = (paragraph.commentAnchors ?? []).length > 0;
   if (opaque.length === 0 && !hasLinks && !hasBookmarks && !hasComments) {
-    return paragraph.runs.map((run) => runXml(run, ctx.noteIds)).join("");
+    return paragraph.runs.map((run) => runXml(run, ctx.noteIds, ctx)).join("");
   }
   const { runs, bookmarksAtBoundary, commentStartsAtBoundary, commentEndsAtBoundary, boundaryFor } =
     inlineWriteLayout(paragraph);
@@ -613,7 +696,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
           : `<w:hyperlink w:anchor="${escapeXml(target.anchor ?? "")}">`;
       openTarget = target;
     }
-    xml += runXml(run, ctx.noteIds);
+    xml += runXml(run, ctx.noteIds, ctx);
   }
   closeHyperlink();
   return xml;
@@ -626,7 +709,7 @@ function paragraphXml(
   numRef?: NumberingRef,
   sectPr?: string,
 ): string {
-  return `<w:p>${paragraphPropertiesXml(paragraph, numRef, sectPr)}${inlineContentXml(paragraph, includeOpaque, ctx)}</w:p>`;
+  return `<w:p>${paragraphPropertiesXml(paragraph, numRef, sectPr, ctx)}${inlineContentXml(paragraph, includeOpaque, ctx)}</w:p>`;
 }
 
 /** An Image block (SPEC-024): OOXML has no body-level picture element, so
@@ -799,8 +882,32 @@ function generatedTcPrXml(
 /** A row's `w:trPr` (SPEC-023 AC-4, AC-5): the source's own, preserved
  * verbatim, or — for a row this editor set a minimum height on —
  * `w:trHeight` with `hRule="atLeast"`, OOXML's own "minimum, grows for
- * content" row height rule. */
-function rowPropertiesXml(row: TableRow, includeOpaque: boolean): string {
+ * content" row height rule. A tracked row insert/delete (SPEC-039 AC-15)
+ * always wins over a preserved verbatim trPr — reusing stale XML here
+ * would silently drop the tracked change, which SPEC-008's own "never
+ * discard what wasn't understood" rule (and this spec's own "never
+ * silently drop a tracked change") both forbid. */
+function rowPropertiesXml(row: TableRow, includeOpaque: boolean, ctx?: InlineWriteContext): string {
+  const insert = row.changes?.insert;
+  const del = row.changes?.delete;
+  if ((insert || del) && ctx) {
+    // A tracked change always regenerates trPr from modelled properties
+    // only — reusing preserved verbatim XML here risks producing an
+    // invalid element if its source namespace prefix isn't "w:"; the only
+    // loss is unmodelled row properties on a row that is, by definition,
+    // pending insertion or deletion.
+    const inner = row.minHeightCm !== undefined
+      ? `<w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/>`
+      : "";
+    const marks: string[] = [];
+    if (insert) {
+      marks.push(`<w:ins${trackedChangeAttrs(changeNumericId(ctx, insert.changeId), insert.author, insert.date)}/>`);
+    }
+    if (del) {
+      marks.push(`<w:del${trackedChangeAttrs(changeNumericId(ctx, del.changeId), del.author, del.date)}/>`);
+    }
+    return `<w:trPr>${inner}${marks.join("")}</w:trPr>`;
+  }
   if (includeOpaque && row.docxTrPr !== undefined) {
     return row.docxTrPr;
   }
@@ -868,7 +975,7 @@ function tableXml(
   const ownerGrid = computeOwnerGrid(table);
   const rows = table.rows
     .map((row, rowIndex) => {
-      const trPr = rowPropertiesXml(row, includeOpaque);
+      const trPr = rowPropertiesXml(row, includeOpaque, ctx);
       const cells: string[] = [];
       for (let colIndex = 0; colIndex < table.columnWidthsCm.length; colIndex++) {
         const owner = ownerGrid[rowIndex][colIndex];
@@ -1128,7 +1235,7 @@ function headerFooterPartXml(
   includeOpaque: boolean,
   plan: HeaderFooterPartPlan,
 ): string {
-  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map() };
+  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map(), changeIds: new Map() };
   let docPrId = 1;
   const body = plan.blocks
     .map((block) => {
@@ -1263,7 +1370,7 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
   const tag = plan.kind === "footnote" ? "footnote" : "endnote";
   const rootTag = plan.kind === "footnote" ? "footnotes" : "endnotes";
   const refTag = plan.kind === "footnote" ? "footnoteRef" : "endnoteRef";
-  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map() };
+  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map(), changeIds: new Map() };
   const markerRun = `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${refTag}/></w:r>`;
   const noteXml = plan.notes
     .map((note) => {
@@ -1435,27 +1542,43 @@ function notePrXml(tag: "footnotePr" | "endnotePr", settings: NoteSettings | und
   return parts.length > 0 ? `<w:${tag}>${parts.join("")}</w:${tag}>` : "";
 }
 
-/** A from-scratch word/settings.xml (SPEC-029): only ever created when a
- * section wants different odd/even headers — OOXML's only representation
- * of that is this one document-wide flag, so a document that never asked
- * for it never gains a settings part at all. */
-function buildSettingsXml(): string {
-  return `${XML_DECLARATION}<w:settings xmlns:w="${WORD_NAMESPACE}"><w:evenAndOddHeaders/></w:settings>`;
+/** A from-scratch word/settings.xml (SPEC-029, SPEC-039): created when a
+ * section wants different odd/even headers and/or the document's
+ * recording-enabled flag (`w:trackChanges`) is set — OOXML's only
+ * representation of either is a document-wide flag, so a document that
+ * never asked for either never gains a settings part at all. */
+function buildSettingsXml(trackChangesRecording: boolean): string {
+  const trackChanges = trackChangesRecording ? "<w:trackChanges/>" : "";
+  return `${XML_DECLARATION}<w:settings xmlns:w="${WORD_NAMESPACE}"><w:evenAndOddHeaders/>${trackChanges}</w:settings>`;
 }
 
-/** Adds or removes `w:evenAndOddHeaders` on a preserved settings.xml
- * (SPEC-029) — "patch, don't regenerate", like patchStylesXml, since
- * settings.xml carries many other unmodelled document-wide flags this spec
- * must not disturb. Returns null when the flag already matches. */
-export function patchSettingsXml(evenAndOddHeaders: boolean, originalXml: string): string | null {
-  const hasFlag = /<[\w:]*evenAndOddHeaders\b/.test(originalXml);
-  if (evenAndOddHeaders === hasFlag) {
-    return null;
+/** Adds or removes `w:evenAndOddHeaders`/`w:trackChanges` on a preserved
+ * settings.xml (SPEC-029, SPEC-039) — "patch, don't regenerate", like
+ * patchStylesXml, since settings.xml carries many other unmodelled
+ * document-wide flags this spec must not disturb. Returns null when both
+ * flags already match. */
+export function patchSettingsXml(
+  evenAndOddHeaders: boolean,
+  trackChangesRecording: boolean,
+  originalXml: string,
+): string | null {
+  let xml = originalXml;
+  let changed = false;
+  const hasEvenOdd = /<[\w:]*evenAndOddHeaders\b/.test(xml);
+  if (evenAndOddHeaders !== hasEvenOdd) {
+    changed = true;
+    xml = evenAndOddHeaders
+      ? xml.replace(/(<w:settings[^>]*>)/, "$1<w:evenAndOddHeaders/>")
+      : xml.replace(/<[\w:]*evenAndOddHeaders\s*\/>/, "");
   }
-  if (evenAndOddHeaders) {
-    return originalXml.replace(/(<w:settings[^>]*>)/, "$1<w:evenAndOddHeaders/>");
+  const hasTrackChanges = /<[\w:]*trackChanges\b/.test(xml);
+  if (trackChangesRecording !== hasTrackChanges) {
+    changed = true;
+    xml = trackChangesRecording
+      ? xml.replace(/(<w:settings[^>]*>)/, "$1<w:trackChanges/>")
+      : xml.replace(/<[\w:]*trackChanges\s*\/>/, "");
   }
-  return originalXml.replace(/<[\w:]*evenAndOddHeaders\s*\/>/, "");
+  return changed ? xml : null;
 }
 
 // The section's `w:cols` (SPEC-030 AC-16/AC-16a): equal columns emit just
@@ -1565,6 +1688,7 @@ export function buildDocumentXml(
     bookmarkIds: bookmarkIdsFor(model),
     noteIds: notesPlan.noteIds,
     commentIds: commentsPlan.commentIds,
+    changeIds: new Map(),
   };
   const blockXml: string[] = [];
   let docPrId = 1;
@@ -2096,7 +2220,8 @@ export async function writeDocx(
       ]),
       existingMediaPartNames,
     );
-    const settingsOverride = headerFooterPlan.evenAndOddHeaders
+    const needsSettingsPart = headerFooterPlan.evenAndOddHeaders || !!model.trackChangesRecording;
+    const settingsOverride = needsSettingsPart
       ? `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/>`
       : "";
     const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
@@ -2135,8 +2260,11 @@ export async function writeDocx(
         data: encoder.encode(buildNumberingXml(plan)),
       });
     }
-    if (headerFooterPlan.evenAndOddHeaders) {
-      entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml()) });
+    if (needsSettingsPart) {
+      entries.push({
+        name: "word/settings.xml",
+        data: encoder.encode(buildSettingsXml(!!model.trackChangesRecording)),
+      });
     }
     for (const partPlan of headerFooterPlan.parts) {
       const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";
@@ -2292,10 +2420,11 @@ export async function writeDocx(
     : undefined;
   const settingsPartName = settingsRel ? resolvePartPath(mainPartName, settingsRel.target) : `${mainDir}settings.xml`;
   const preservedSettings = preservedParts.get(settingsPartName);
+  const trackChangesRecording = !!model.trackChangesRecording;
   const patchedSettings = preservedSettings
-    ? patchSettingsXml(headerFooterPlan.evenAndOddHeaders, decoder.decode(preservedSettings))
+    ? patchSettingsXml(headerFooterPlan.evenAndOddHeaders, trackChangesRecording, decoder.decode(preservedSettings))
     : null;
-  const addSettingsPart = !preservedSettings && headerFooterPlan.evenAndOddHeaders;
+  const addSettingsPart = !preservedSettings && (headerFooterPlan.evenAndOddHeaders || trackChangesRecording);
 
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
@@ -2393,7 +2522,7 @@ export async function writeDocx(
     entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
   }
   if (addSettingsPart) {
-    entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml()) });
+    entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml(trackChangesRecording)) });
   }
   for (const partPlan of headerFooterPlan.parts) {
     const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";

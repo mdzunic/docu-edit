@@ -4,7 +4,9 @@
 // named style) and the document-body parser (direct formatting on `w:r`/`w:p`).
 import type {
   ParagraphAlignment,
+  ParagraphFormatChange,
   ParagraphFormatting,
+  RunFormatChange,
   RunFormatting,
   TabLeader,
   TabStop,
@@ -126,6 +128,52 @@ export function parseRunProperties(rPr: Element | undefined): RunFormatting {
   }
 
   return formatting;
+}
+
+const UNKNOWN_TRACK_CHANGE_AUTHOR = "Unknown";
+
+/** A `w:rPrChange`/`w:pPrChange`'s own author/date/id (SPEC-039) — both
+ * extend `CT_TrackChange` just like `w:ins`/`w:del`, carrying the same
+ * `w:id`/`w:author`/`w:date` attributes. Ids are derived from the source
+ * `w:id`, not randomised, so re-parsing the same file is structurally
+ * stable across a same-format round trip. */
+function trackedChangeInfo(el: Element, kind: string) {
+  const id = attr(el, "id") ?? `${Math.random()}`;
+  return {
+    changeId: `wtc-${kind}-${id}`,
+    author: attr(el, "author") || UNKNOWN_TRACK_CHANGE_AUTHOR,
+    date: attr(el, "date") || new Date(0).toISOString(),
+  };
+}
+
+/** A run's pending formatting change (SPEC-039, `w:rPrChange`): the nested
+ * `w:rPr` is the formatting the run had *before* the tracked change,
+ * resolved the same way any other `w:rPr` is. Undefined when the run has
+ * no pending formatting change. */
+export function parseRunPropertiesChange(rPr: Element | undefined): RunFormatChange | undefined {
+  if (!rPr) {
+    return undefined;
+  }
+  const change = firstChildElement(rPr, WORD_NAMESPACE, "rPrChange");
+  if (!change) {
+    return undefined;
+  }
+  const previous = parseRunProperties(firstChildElement(change, WORD_NAMESPACE, "rPr"));
+  return { ...trackedChangeInfo(change, "rPrChange"), previous };
+}
+
+/** A paragraph's pending formatting change (SPEC-039, `w:pPrChange`) — the
+ * `w:pPrChange`/`w:pPr` counterpart of parseRunPropertiesChange. */
+export function parseParagraphPropertiesChange(pPr: Element | undefined): ParagraphFormatChange | undefined {
+  if (!pPr) {
+    return undefined;
+  }
+  const change = firstChildElement(pPr, WORD_NAMESPACE, "pPrChange");
+  if (!change) {
+    return undefined;
+  }
+  const previous = parseParagraphProperties(firstChildElement(change, WORD_NAMESPACE, "pPr"));
+  return { ...trackedChangeInfo(change, "pPrChange"), previous };
 }
 
 const ALIGNMENT_MAP: Record<string, ParagraphAlignment> = {
