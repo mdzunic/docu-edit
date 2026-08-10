@@ -24,6 +24,27 @@ const pickerCurrent = (page: Page) => page.getByTestId("style-picker-current");
 const clearFormattingButton = (page: Page) => page.getByTestId("clear-formatting-button");
 const painterButton = (page: Page) => page.getByTestId("format-painter-button");
 
+// SPEC-049 moved Clear formatting and the Format painter from the toolbar into
+// the Format menu of the application menu bar. The menu title carries
+// mousedown-prevent, so opening the menu preserves the editor's selection —
+// arming the painter still captures the source paragraph exactly as before,
+// and the painter item keeps the menu open so its double-click-to-lock
+// gesture survives (data-menu-keep-open). The armed state now reports as
+// aria-checked (menuitemcheckbox) rather than aria-pressed.
+async function openFormatMenu(page: Page): Promise<void> {
+  await page.getByTestId("menu-title-format").click();
+}
+
+async function armPainter(page: Page): Promise<void> {
+  await openFormatMenu(page);
+  await painterButton(page).click();
+}
+
+async function lockPainter(page: Page): Promise<void> {
+  await openFormatMenu(page);
+  await painterButton(page).dblclick();
+}
+
 interface ModelRun {
   text: string;
   formatting: Record<string, unknown>;
@@ -94,11 +115,12 @@ async function selectWholeLine(page: Page): Promise<void> {
   await page.keyboard.press(extend(LINE_END));
 }
 
-test("the toolbar offers Clear formatting and Format painter buttons (AC-1, AC-9)", async ({ page }) => {
+test("the Format menu offers Clear formatting and Format painter (AC-1, AC-9)", async ({ page }) => {
   await createDocument(page);
+  await openFormatMenu(page);
   await expect(clearFormattingButton(page)).toBeVisible();
-  await expect(clearFormattingButton(page)).toHaveAttribute("title", /Clear formatting/);
   await expect(painterButton(page)).toBeVisible();
+  await expect(painterButton(page)).toHaveAttribute("role", "menuitemcheckbox");
 });
 
 test("the Clear formatting button and Ctrl+\\ strip character formatting and reset the paragraph to Normal, without losing content or list membership (AC-1, AC-2, AC-3, AC-4, AC-6)", async ({
@@ -135,6 +157,7 @@ test("the Clear formatting button performs the same action as Ctrl+\\ (button cl
   await selectWholeLine(page);
   await page.keyboard.press(`${MOD}+b`);
   await selectWholeLine(page);
+  await openFormatMenu(page);
   await clearFormattingButton(page).click();
   await waitForSaved(page);
 
@@ -175,9 +198,9 @@ test("a single click arms the painter (cursor + pressed state) and applies once 
 
   // Caret inside the bold source paragraph, then arm the painter.
   await page.keyboard.press(LINE_START);
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "false");
-  await painterButton(page).click();
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "false");
+  await armPainter(page);
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
   await expect(content(page)).toHaveCSS("cursor", "copy");
 
   // The next selection — the plain second paragraph — receives the copy.
@@ -186,7 +209,7 @@ test("a single click arms the painter (cursor + pressed state) and applies once 
   await waitForSaved(page);
 
   expect(block(await readLatestModel(page, id), 1).runs[0].formatting).toEqual({ bold: true });
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "false");
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "false");
   await expect(content(page)).not.toHaveCSS("cursor", "copy");
 });
 
@@ -206,36 +229,36 @@ test("double-clicking the painter keeps it armed for repeated application until 
   await waitForSaved(page);
 
   await page.keyboard.press(`${MOD}+Home`);
-  await painterButton(page).dblclick();
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
+  await lockPainter(page);
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
 
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
   await waitForSaved(page);
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
 
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press(LINE_START);
   await selectWholeLine(page);
   await waitForSaved(page);
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
 
   const model = await readLatestModel(page, id);
   expect(block(model, 1).runs[0].formatting).toEqual({ bold: true });
   expect(block(model, 2).runs[0].formatting).toEqual({ bold: true });
 
   await page.keyboard.press("Escape");
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "false");
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "false");
 });
 
 test("clicking the painter button again while armed for repeated use disarms it (AC-16)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Text");
-  await painterButton(page).dblclick();
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "true");
+  await lockPainter(page);
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
   await painterButton(page).click();
-  await expect(painterButton(page)).toHaveAttribute("aria-pressed", "false");
+  await expect(painterButton(page)).toHaveAttribute("aria-checked", "false");
 });
 
 test("copies paragraph formatting only when a whole paragraph is selected (AC-10)", async ({ page }) => {
@@ -251,7 +274,7 @@ test("copies paragraph formatting only when a whole paragraph is selected (AC-10
   // Whole-paragraph selection: paragraph formatting is copied too.
   await page.keyboard.press(`${MOD}+Home`);
   await selectWholeLine(page);
-  await painterButton(page).click();
+  await armPainter(page);
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
   await waitForSaved(page);
@@ -271,7 +294,7 @@ test("format painter application is a single undo step (AC-19)", async ({ page }
   await waitForSaved(page);
 
   await page.keyboard.press(`${MOD}+Home`);
-  await painterButton(page).click();
+  await armPainter(page);
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
   await waitForSaved(page);

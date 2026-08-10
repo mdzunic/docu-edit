@@ -243,60 +243,29 @@ test("the page a break ends keeps a paragraph the caret can reach (AC-5)", async
   await expect(page.getByTestId("page-indicator")).toHaveText("Page 1 of 2");
 });
 
-/** Opens a toolbar popup by clicking its button where it already sits.
- * Locator.click() scrolls the strip first, and that scroll re-runs the
- * popup's positioning — which would repair a first-open placement that a
- * real user (clicking a button already under their pointer) sees wrong. */
-async function openToolbarMenu(page: Page, testId: string): Promise<void> {
-  const box = await page.evaluate((id) => {
-    const button = document.querySelector(`[data-testid="${id}"]`)!;
-    const strip = button.closest(".toolbar")!;
-    strip.scrollLeft +=
-      button.getBoundingClientRect().left - strip.getBoundingClientRect().left - 200;
-    return button.getBoundingClientRect().toJSON();
-  }, testId);
-  await page.mouse.click(box.left + box.width / 2, box.top + box.height / 2);
-}
-
-/** Vertical gap between a popup's top edge and its button's bottom edge. */
-async function menuDropFrom(page: Page, buttonId: string, menuId: string): Promise<number> {
-  return page.evaluate(
-    ({ b, m }) => {
-      const button = document.querySelector(`[data-testid="${b}"]`)!.getBoundingClientRect();
-      const menu = document.querySelector(`[data-testid="${m}"]`)!.getBoundingClientRect();
-      return menu.top - button.bottom;
-    },
-    { b: buttonId, m: menuId },
-  );
-}
-
-test("the Insert-break menu is genuinely visible and offers all four breaks (AC-8, AC-9)", async ({
+test("the Insert menu is genuinely visible and offers all four breaks (AC-8, AC-9)", async ({
   page,
 }) => {
   await createDocument(page);
-  await openToolbarMenu(page, "insert-break-button");
-  const menu = page.getByTestId("insert-break-menu");
-  await expect(menu).toBeVisible();
-  // Anchored to its button on the FIRST open, not dropped down the page: a
-  // popup that took part in the toolbar's flow before being positioned
-  // would grow the strip and be measured against a pushed-down button.
-  expect(await menuDropFrom(page, "insert-break-button", "insert-break-menu")).toBeLessThanOrEqual(8);
+  // SPEC-049: the breaks moved from an ad-hoc toolbar dropdown into the
+  // Insert menu of the application menu bar. The menu bar is not an
+  // overflow-clipped container like the toolbar strip was, so the old
+  // clip-escape geometry assertions no longer apply — what matters is that
+  // every item is visible, inside the viewport, hit-testable and enabled.
+  await page.getByTestId("menu-title-insert").click();
+  await expect(page.getByTestId("menu-insert")).toBeVisible();
 
   const items = [
-    { id: "break-page", label: "Page Break" },
-    { id: "break-column", label: "Column Break" },
-    { id: "break-section-next", label: "Section Break (Next Page)" },
-    { id: "break-section-continuous", label: "Section Break (Continuous)" },
+    { id: "break-page", label: "Page break" },
+    { id: "break-column", label: "Column break" },
+    { id: "break-section-next", label: "Section break (next page)" },
+    { id: "break-section-continuous", label: "Section break (continuous)" },
   ];
   const viewport = page.viewportSize()!;
   for (const item of items) {
     const locator = page.getByTestId(item.id);
     await expect(locator).toBeVisible();
-    await expect(locator).toHaveText(item.label);
-    // The menu escaped the toolbar's overflow clipping: every item's box
-    // lies fully inside the viewport, and hit-testing its centre reaches
-    // the item itself (nothing overlays or clips it away from a real
-    // user's pointer).
+    await expect(locator).toContainText(item.label);
     const box = (await locator.boundingBox())!;
     expect(box.height).toBeGreaterThan(10);
     expect(box.y).toBeGreaterThanOrEqual(0);
@@ -322,7 +291,7 @@ test("the Insert-break menu is genuinely visible and offers all four breaks (AC-
   for (let i = 0; i < 5; i += 1) {
     await page.keyboard.press("ArrowLeft");
   }
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-page").click();
   await waitForPagination(page);
   await expect(page.locator('[data-break-kind="page"]')).toHaveCount(1);
@@ -338,7 +307,7 @@ test("Column Break inserts a stored node with no visible layout effect (AC-10, A
   for (let i = 0; i < 5; i += 1) {
     await page.keyboard.press("ArrowLeft");
   }
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-column").click();
   await waitForPagination(page);
   // The break node is in the document model and rendered flow...
@@ -364,12 +333,12 @@ test("a section break (next page) forces a page; continuous does not (AC-13, AC-
   for (let i = 0; i < 3; i += 1) {
     await page.keyboard.press("ArrowLeft");
   }
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-section-continuous").click();
   await waitForPagination(page);
   await expect(pages(page)).toHaveCount(1);
 
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-section-next").click();
   await waitForPagination(page);
   await expect(pages(page)).toHaveCount(2);
@@ -440,7 +409,7 @@ test("Ctrl/Cmd+Shift+P shows paragraph marks, spaces, tabs and break markers (AC
 
   // Section markers are distinct, labelled marks-only elements.
   await page.keyboard.press(`${MOD}+End`);
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-section-continuous").click();
   const sectionMarker = page.locator('[data-section-marker="continuous"]');
   await expect(sectionMarker).toHaveCount(1);
@@ -462,13 +431,14 @@ test("a section holds its own page size, orientation and margins via Apply to (A
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("First section");
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-section-next").click();
   await page.keyboard.type("Second section");
   await waitForPagination(page);
   await expect(pages(page)).toHaveCount(2);
 
   // The Apply to control offers exactly the two scopes (AC-27).
+  await page.getByTestId("menu-title-file").click();
   await page.getByTestId("page-setup-button").click();
   const applyTo = page.getByTestId("page-setup-apply-to");
   await expect(applyTo).toBeVisible();
@@ -505,6 +475,7 @@ test("a section holds its own page size, orientation and margins via Apply to (A
   expect(Number.parseFloat(padTop)).toBeCloseTo(1, 2);
 
   // Whole document: both sections follow the new size (AC-29).
+  await page.getByTestId("menu-title-file").click();
   await page.getByTestId("page-setup-button").click();
   await page.getByTestId("page-setup-apply-to").selectOption("wholeDocument");
   await page.getByTestId("page-setup-paper-size").selectOption("Letter");
@@ -609,10 +580,10 @@ test("manual breaks and section properties round-trip through .docx (AC-11, AC-4
   await page.keyboard.type("Alpha");
   await page.keyboard.press(`${MOD}+Enter`);
   await page.keyboard.type("Beta");
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-section-continuous").click();
   await page.keyboard.type("Gamma");
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-column").click();
   await page.keyboard.type("Delta");
   await waitForPagination(page);
@@ -642,15 +613,16 @@ test("breaks and section properties round-trip through .odt (AC-11, AC-42, AC-44
   await page.keyboard.type("Alpha");
   await page.keyboard.press(`${MOD}+Enter`);
   await page.keyboard.type("Beta");
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-section-next").click();
   await page.keyboard.type("Gamma");
-  await page.getByTestId("insert-break-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("break-column").click();
   await page.keyboard.type("Delta");
   await waitForPagination(page);
   // Give the new section its own page size so the master page carries
   // something distinctive.
+  await page.getByTestId("menu-title-file").click();
   await page.getByTestId("page-setup-button").click();
   await page.getByTestId("page-setup-apply-to").selectOption("thisSection");
   await page.getByTestId("page-setup-paper-size").selectOption("A5");

@@ -83,7 +83,7 @@ function unzipParts(buffer: Buffer): Map<string, Buffer> {
 
 /** Types body text, then inserts a footnote through the Notes menu. */
 async function insertFootnoteViaMenu(page: Page): Promise<void> {
-  await page.getByTestId("notes-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("notes-menu-footnote").click();
 }
 
@@ -247,7 +247,7 @@ test("the settings dialog changes format, start number and restart (AC-17..20)",
   await page.keyboard.press("Escape");
   await expect(marks(page).first()).toHaveText("1");
 
-  await page.getByTestId("notes-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("notes-menu-settings").click();
   await expect(page.getByTestId("note-settings-dialog")).toBeVisible();
   // Restart options are offered (AC-19, AC-20).

@@ -33,7 +33,7 @@ const cellAt = (page: Page, row: number, col: number) => page.getByTestId(`table
 const cellParagraph = (page: Page, row: number, col: number) => cellAt(page, row, col).locator(".doc-paragraph").first();
 
 async function insertViaPicker(page: Page, rows: number, cols: number): Promise<void> {
-  await page.getByTestId("insert-table-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId(`table-grid-cell-${rows}-${cols}`).click();
   await expect(table(page)).toHaveCount(1);
 }

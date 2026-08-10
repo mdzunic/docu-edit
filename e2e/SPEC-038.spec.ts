@@ -96,7 +96,8 @@ test("a settable identity changes the author of new comments and replies (AC-4)"
   await createDocument(page);
   const text = "One more pass on this section.";
   await seedParagraph(page, text);
-  await page.getByTestId("toolbar-comments-pane").click();
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-comments-pane").click();
   await pane(page).getByTestId("comment-author-name-input").fill("Ada Lovelace");
   await commentOn(page, text, "section", "Looks good");
   const card = threadCards(page).filter({ hasText: "Looks good" });
@@ -217,7 +218,8 @@ test("the comments-only view lists every thread in document order with open/reso
   await createDocument(page);
   const text = "Alpha bravo charlie delta echo foxtrot.";
   await seedParagraph(page, text);
-  await page.getByTestId("toolbar-comments-pane").click();
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-comments-pane").click();
   await pane(page).getByTestId("comment-author-name-input").fill("Ada");
   await commentOn(page, text, "bravo", "Second comment target first in text");
   await commentOn(page, text, "delta", "First comment target second in text");
@@ -258,10 +260,10 @@ test("the View menu toggles the comments pane and the comments-only view", async
   await createDocument(page);
   await seedParagraph(page, "Just some text.");
   await expect(pane(page)).toHaveCount(0);
-  await page.getByTestId("view-menu-button").click();
+  await page.getByTestId("menu-title-view").click();
   await page.getByTestId("view-menu-comments-pane").click();
   await expect(pane(page)).toBeVisible();
-  await page.getByTestId("view-menu-button").click();
+  await page.getByTestId("menu-title-view").click();
   await page.getByTestId("view-menu-comments-only").click();
   await expect(pane(page).getByTestId("comments-only-toggle")).toHaveAttribute("aria-pressed", "true");
 });

@@ -160,7 +160,8 @@ describe("decade idiom (AC-50)", () => {
 describe("settings (AC-24, AC-27, AC-28)", () => {
   it("dashes off leaves -- literal", async () => {
     const w = await mountWithContent("dash-off", "a");
-    await w.get('[data-testid="autocorrect-menu"]').trigger("click");
+    // SPEC-049 moved the autocorrect toggles from a standalone dropdown into
+    // the Edit menu; the toggle item is reachable directly.
     await w.get('[data-testid="autocorrect-dashes"]').trigger("click");
     await typeAt(1, "-");
     await typeAt(2, "-");

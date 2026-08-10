@@ -303,6 +303,7 @@ test("the dialog lists headings and bookmarks, and a heading link jumps to the h
   await page.keyboard.type("body text goes here");
 
   // A bookmark at the current caret, so the dialog has one of each kind.
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-insert-bookmark").click();
   await page.getByTestId("bookmark-name-input").fill("notes");
   await page.getByTestId("bookmark-save").click();
@@ -339,6 +340,7 @@ test("insert bookmark validates names: no spaces, unique, inline error (AC-22, A
   await content(page).click();
   await page.keyboard.type("Hello world");
 
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-insert-bookmark").click();
   await page.getByTestId("bookmark-name-input").fill("has space");
   await expect(page.getByTestId("bookmark-error")).toContainText("spaces");
@@ -350,6 +352,7 @@ test("insert bookmark validates names: no spaces, unique, inline error (AC-22, A
   await expect(page.getByTestId("bookmark-dialog")).toBeHidden();
 
   // A second bookmark with the same name conflicts (AC-27, AC-28).
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-insert-bookmark").click();
   await page.getByTestId("bookmark-name-input").fill("mark_1");
   await expect(page.getByTestId("bookmark-error")).toContainText("already exists");
@@ -368,11 +371,13 @@ test("the bookmark manager lists, jumps to and deletes bookmarks (AC-23..25)", a
   for (let i = 0; i < 5; i++) {
     await page.keyboard.press("ArrowRight");
   }
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-insert-bookmark").click();
   await page.getByTestId("bookmark-name-input").fill("middle");
   await page.getByTestId("bookmark-save").click();
 
   await page.keyboard.press(`${MOD}+End`);
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-bookmarks").click();
   await expect(page.getByTestId("bookmark-manager")).toBeVisible();
   await expect(page.getByTestId("bookmark-row")).toHaveCount(1);
@@ -386,6 +391,7 @@ test("the bookmark manager lists, jumps to and deletes bookmarks (AC-23..25)", a
   await expect(content(page)).toHaveText("HelloX world");
 
   // Delete (AC-25).
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-bookmarks").click();
   await page.getByTestId("bookmark-delete-middle").click();
   await expect(page.getByTestId("bookmark-manager-empty")).toBeVisible();
@@ -398,6 +404,7 @@ test("the bookmark manager lists, jumps to and deletes bookmarks (AC-23..25)", a
 async function seedLinkAndBookmark(page: Page): Promise<void> {
   await content(page).click();
   await page.keyboard.type("go http://example.com ");
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-insert-bookmark").click();
   await page.getByTestId("bookmark-name-input").fill("rt_mark");
   await page.getByTestId("bookmark-save").click();
@@ -424,6 +431,7 @@ test("links and bookmarks round-trip through .docx (AC-29, AC-30)", async ({ pag
   await expect(link).toHaveCount(1);
   await expect(link).toHaveAttribute("href", "http://example.com");
   await expect(link).toHaveText("http://example.com");
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-bookmarks").click();
   await expect(page.getByTestId("bookmark-row")).toContainText("rt_mark");
 });
@@ -438,6 +446,7 @@ test("links and bookmarks round-trip through .odt (AC-31, AC-32)", async ({ page
   await expect(link).toHaveCount(1);
   await expect(link).toHaveAttribute("href", "http://example.com");
   await expect(link).toHaveText("http://example.com");
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("toolbar-bookmarks").click();
   await expect(page.getByTestId("bookmark-row")).toContainText("rt_mark");
 });

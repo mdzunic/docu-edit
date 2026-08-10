@@ -93,7 +93,7 @@ test("the CJK character count is separate from the Latin word count (AC-16, AC-2
 test("Include footnotes and endnotes toggles the numbers live without closing the dialog (AC-11, AC-12)", async ({ page }) => {
   await createDocument(page);
   await typeBody(page, "body text");
-  await page.getByTestId("notes-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("notes-menu-footnote").click();
   await page.keyboard.type("footnote content here");
   await wordCountButton(page).click();
@@ -111,11 +111,11 @@ test("header and footer text is excluded from the body word count (AC-21, AC-22)
   await createDocument(page);
   await typeBody(page, "body words here");
   await expect(wordCountButton(page)).toHaveText("3 words");
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await page.keyboard.type("secret header words that must not count");
   await expect(wordCountButton(page)).toHaveText("3 words");
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-footer").click();
   await page.keyboard.type("footer words too");
   await expect(wordCountButton(page)).toHaveText("3 words");

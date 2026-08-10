@@ -100,7 +100,8 @@ function buildPng(width: number, height: number, [r, g, b]: [number, number, num
 const SMALL_PNG = buildPng(200, 100, [0x33, 0x77, 0xbb]);
 
 async function insertViaPicker(page: Page, buffer: Buffer, name = "photo.png", mimeType = "image/png"): Promise<void> {
-  await page.getByTestId("insert-image-button").click();
+  // SPEC-049 moved "Image…" into the Insert menu; the hidden file input it
+  // drives lives alongside the menu bar and takes files directly.
   await page.getByTestId("insert-image-file-input").setInputFiles({ name, mimeType, buffer });
 }
 

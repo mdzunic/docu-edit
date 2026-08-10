@@ -2,7 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import AutocorrectMenu from "../components/AutocorrectMenu.vue";
+import MenuBar from "../components/MenuBar.vue";
+import MenuItem from "../components/MenuItem.vue";
+import MenuCheckItem from "../components/MenuCheckItem.vue";
 import BookmarkDialog from "../components/BookmarkDialog.vue";
 import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
@@ -19,30 +21,23 @@ import SpellContextMenu from "../components/SpellContextMenu.vue";
 import LanguageStatusControl from "../components/LanguageStatusControl.vue";
 import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
 import { SUPPORTED_LANGUAGES } from "../lib/language";
-import HeaderFooterMenu from "../components/HeaderFooterMenu.vue";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
-import ImageInsertControl from "../components/ImageInsertControl.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
-import InsertBreakMenu from "../components/InsertBreakMenu.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
-import TableInsertControl from "../components/TableInsertControl.vue";
 import TocOptionsDialog from "../components/TocOptionsDialog.vue";
 import FindBar from "../components/FindBar.vue";
 import FontFamilySelect from "../components/FontFamilySelect.vue";
 import FontSizeControl from "../components/FontSizeControl.vue";
 import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
-import MultilevelListMenu from "../components/MultilevelListMenu.vue";
-import NotesMenu from "../components/NotesMenu.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
-import ViewMenu from "../components/ViewMenu.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -145,6 +140,7 @@ import {
   updateTocPageNumbersOnly,
 } from "../lib/toc";
 import { detectListAutoformat, listMarkers } from "../lib/lists";
+import { GALLERY_PRESETS } from "../lib/listDefinitions";
 import {
   anchorCaret,
   applyLink,
@@ -176,6 +172,8 @@ import {
   insertTable,
   insertTableColumn,
   insertTableRow,
+  PICKER_MAX_ROWS,
+  PICKER_MAX_COLS,
   mergeCells,
   MIN_COLUMN_WIDTH_CM,
   MIN_ROW_HEIGHT_CM,
@@ -377,6 +375,7 @@ import {
 import { noRenderEntries } from "../lib/pageRender";
 import {
   deleteImage,
+  ACCEPTED_IMAGE_ACCEPT_ATTR,
   imageAt,
   insertImage,
   isAcceptedImageType,
@@ -3181,21 +3180,9 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       break;
     case "edit.selectAll": {
       // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
+      // Shared with the Edit-menu "Select all" command (SPEC-049).
       event.preventDefault();
-      pendingFormat = noPendingFormat();
-      const all = selectAll(model);
-      caret = all.focus;
-      updateCaretStatus({ start: all.anchor, end: all.focus });
-      if (
-        paragraphElementForCaret(root, all.anchor) &&
-        paragraphElementForCaret(root, all.focus)
-      ) {
-        setDomSelection(root, all.anchor, all.focus);
-      } else {
-        // An endpoint sits on a virtualized page: updateCaretStatus above
-        // realizes both endpoint pages; select once they have rendered.
-        void nextTick().then(() => setDomSelection(root, all.anchor, all.focus));
-      }
+      menuSelectAll();
       break;
     }
     case "format.bold":
@@ -4132,6 +4119,116 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   }
 }
 
+// --- Menu bar wiring (SPEC-049) --------------------------------------------
+// The menu bar (File/Edit/View/Insert/Format/Tools, in that order) hosts the
+// non-continuous-use commands relocated off the toolbar strip. It is a stable
+// map of the product: a command that does not apply is disabled, never hidden
+// (AC-7); the toolbar keeps only the continuous-use controls (AC-3).
+const MENUS = [
+  { id: "file", label: "File" },
+  { id: "edit", label: "Edit" },
+  { id: "view", label: "View" },
+  { id: "insert", label: "Insert" },
+  { id: "format", label: "Format" },
+  { id: "tools", label: "Tools" },
+];
+
+// Text colour and highlight stay in the toolbar (continuous-use) but are also
+// listed in the Format menu, so the menus remain a complete map — the spec's
+// one deliberate toolbar+menu exception. The menu entries open the real
+// toolbar pickers through these refs instead of duplicating the swatch popups
+// (which would collide on their fixed data-testids).
+const textColorPickerRef = useTemplateRef("textColorPickerRef");
+const highlightPickerRef = useTemplateRef("highlightPickerRef");
+
+function openTextColorMenu() {
+  textColorPickerRef.value?.openMenu();
+}
+
+function openHighlightMenu() {
+  highlightPickerRef.value?.openMenu();
+}
+
+// The Insert menu's "Image…" command drives the same hidden file picker the
+// old toolbar button did (SPEC-024).
+const menuImageInput = useTemplateRef("menuImageInput");
+
+function triggerImageInsert() {
+  if (editable.value) {
+    menuImageInput.value?.click();
+  }
+}
+
+function handleMenuImageChange(event = new Event("change")) {
+  const target = event.target;
+  const file = target instanceof HTMLInputElement ? target.files?.[0] : undefined;
+  if (file) {
+    handleInsertImageFile(file);
+  }
+  if (target instanceof HTMLInputElement) {
+    // Clear so picking the same file twice still fires a change event.
+    target.value = "";
+  }
+}
+
+// The Insert menu's table-size grid (SPEC-022): the same quick-pick the old
+// toolbar dropdown offered, now a section of the Insert menu.
+const TABLE_GRID_ROWS = Array.from({ length: PICKER_MAX_ROWS }, (_, index) => index + 1);
+const TABLE_GRID_COLS = Array.from({ length: PICKER_MAX_COLS }, (_, index) => index + 1);
+const tableGridHover = ref({ rows: 0, cols: 0 });
+
+function hoverTableGrid(rows = 0, cols = 0) {
+  tableGridHover.value = { rows, cols };
+}
+
+function chooseTableGrid(rows = 0, cols = 0) {
+  handleInsertTable({ rows, cols });
+  // The pick closes the menu, so clear the highlight the pointer left behind:
+  // reopening Insert should show an unlit grid, not the last size chosen.
+  hoverTableGrid(0, 0);
+}
+
+// The multilevel-list presets (SPEC-032), absorbed into the Format menu.
+const MULTILEVEL_PRESETS = GALLERY_PRESETS;
+
+// Edit-menu Select all / Paste without formatting: menu-invocable forms of
+// the Ctrl+A / Ctrl+Shift+V commands (their keyboard paths call these too).
+function menuSelectAll() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model) {
+    return;
+  }
+  pendingFormat = noPendingFormat();
+  const all = selectAll(model);
+  caret = all.focus;
+  updateCaretStatus({ start: all.anchor, end: all.focus });
+  if (paragraphElementForCaret(root, all.anchor) && paragraphElementForCaret(root, all.focus)) {
+    setDomSelection(root, all.anchor, all.focus);
+  } else {
+    void nextTick().then(() => setDomSelection(root, all.anchor, all.focus));
+  }
+}
+
+async function menuPastePlain() {
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!root || !model || !editable.value) {
+    return;
+  }
+  root.focus();
+  const selection = currentSelection(root);
+  if (!selection) {
+    return;
+  }
+  const flavours = await readAsyncClipboard();
+  if (!flavours) {
+    addToast("Clipboard unavailable — paste with the keyboard instead");
+    return;
+  }
+  performPaste({ internal: "", html: "", text: flavours.text, hasImage: false }, selection, true);
+}
+
 </script>
 
 <template>
@@ -4159,15 +4256,400 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         <DownloadMenu @download="handleDownload" />
       </div>
     </template>
+    <template #menubar>
+      <MenuBar
+        :menus="MENUS"
+        aria-label="Document menu"
+      >
+        <template #file>
+          <MenuItem
+            label="Print"
+            testid="file-menu-print"
+            :shortcut="shortcutLabel('file.print')"
+            @select="openPrintPreview"
+          />
+          <MenuItem
+            label="Page setup"
+            testid="page-setup-button"
+            :disabled="!editable"
+            @select="openPageSetup"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Delete document"
+            testid="delete-document"
+            :disabled="!editable"
+            @select="confirmingDelete = true"
+          />
+        </template>
+
+        <template #edit>
+          <MenuItem
+            label="Undo"
+            testid="edit-menu-undo"
+            :shortcut="shortcutLabel('edit.undo')"
+            :disabled="!editable || !undoRedoState.canUndo"
+            @select="performUndo"
+          />
+          <MenuItem
+            label="Redo"
+            testid="edit-menu-redo"
+            :shortcut="shortcutLabel('edit.redo')"
+            :disabled="!editable || !undoRedoState.canRedo"
+            @select="performRedo"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Cut"
+            testid="edit-menu-cut"
+            :disabled="!editable"
+            @select="contextMenuCut"
+          />
+          <MenuItem
+            label="Copy"
+            testid="edit-menu-copy"
+            @select="contextMenuCopy"
+          />
+          <MenuItem
+            label="Paste"
+            testid="edit-menu-paste"
+            :disabled="!editable"
+            @select="contextMenuPaste"
+          />
+          <MenuItem
+            label="Paste without formatting"
+            testid="edit-menu-paste-plain"
+            :shortcut="shortcutLabel('edit.pastePlain')"
+            :disabled="!editable"
+            @select="menuPastePlain"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Select all"
+            testid="edit-menu-select-all"
+            :shortcut="shortcutLabel('edit.selectAll')"
+            @select="menuSelectAll"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Find and replace"
+            testid="edit-menu-find-replace"
+            :shortcut="shortcutLabel('find.openReplace')"
+            @select="openFind(true)"
+          />
+          <hr class="menu-separator">
+          <div class="menu-section-label">
+            Autocorrect
+          </div>
+          <MenuCheckItem
+            label="Smart quotes"
+            testid="autocorrect-smart-quotes"
+            :checked="autocorrectSettings.smartQuotes"
+            :disabled="!editable"
+            @select="toggleAutocorrectSmartQuotes"
+          />
+          <MenuCheckItem
+            label="Em and en dashes"
+            testid="autocorrect-dashes"
+            :checked="autocorrectSettings.dashes"
+            :disabled="!editable"
+            @select="toggleAutocorrectDashes"
+          />
+        </template>
+
+        <template #view>
+          <MenuCheckItem
+            label="Ruler"
+            testid="toggle-ruler-button"
+            :checked="doc.showRuler !== false"
+            @select="toggleRuler"
+          />
+          <MenuCheckItem
+            label="Outline pane"
+            testid="view-menu-outline"
+            :checked="outlinePaneOpen"
+            @select="toggleOutlinePane"
+          />
+          <MenuCheckItem
+            label="Comments pane"
+            testid="view-menu-comments-pane"
+            :checked="commentsPaneOpen"
+            @select="toggleCommentsPane"
+          />
+          <MenuCheckItem
+            label="Comments-only view"
+            testid="view-menu-comments-only"
+            :checked="commentsOnlyView"
+            @select="toggleCommentsOnlyView"
+          />
+        </template>
+
+        <template #insert>
+          <div class="menu-section-label">
+            Table
+          </div>
+          <div class="menu-table-grid-wrap">
+            <div
+              class="menu-table-grid"
+              data-testid="insert-table-grid"
+              @mouseleave="hoverTableGrid(0, 0)"
+            >
+              <div
+                v-for="rows in TABLE_GRID_ROWS"
+                :key="rows"
+                class="menu-table-grid-row"
+              >
+                <button
+                  v-for="cols in TABLE_GRID_COLS"
+                  :key="cols"
+                  type="button"
+                  class="menu-table-grid-cell"
+                  :class="{ active: rows <= tableGridHover.rows && cols <= tableGridHover.cols }"
+                  :data-testid="`table-grid-cell-${rows}-${cols}`"
+                  :aria-label="`Insert ${rows} by ${cols} table`"
+                  :disabled="!editable"
+                  tabindex="-1"
+                  @mouseenter="hoverTableGrid(rows, cols)"
+                  @mousedown.prevent
+                  @click="chooseTableGrid(rows, cols)"
+                />
+              </div>
+            </div>
+            <div
+              class="menu-table-grid-label"
+              data-testid="insert-table-grid-label"
+            >
+              {{ tableGridHover.rows > 0 ? `${tableGridHover.rows} × ${tableGridHover.cols}` : "Insert table" }}
+            </div>
+          </div>
+          <MenuItem
+            label="Insert table…"
+            testid="insert-table-dialog-item"
+            :disabled="!editable"
+            @select="insertTableDialogOpen = true"
+          />
+          <MenuItem
+            label="Image…"
+            testid="insert-image-button"
+            :disabled="!editable"
+            @select="triggerImageInsert"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Page break"
+            testid="break-page"
+            :shortcut="shortcutLabel('insert.pageBreak')"
+            :disabled="!editable"
+            @select="handleInsertBreak('page')"
+          />
+          <MenuItem
+            label="Column break"
+            testid="break-column"
+            :disabled="!editable"
+            @select="handleInsertBreak('column')"
+          />
+          <MenuItem
+            label="Section break (next page)"
+            testid="break-section-next"
+            :disabled="!editable"
+            @select="handleInsertSectionBreak('nextPage')"
+          />
+          <MenuItem
+            label="Section break (continuous)"
+            testid="break-section-continuous"
+            :disabled="!editable"
+            @select="handleInsertSectionBreak('continuous')"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Header"
+            testid="hf-menu-header"
+            :disabled="!editable"
+            @select="openInsertHeaderFooter('header')"
+          />
+          <MenuItem
+            label="Footer"
+            testid="hf-menu-footer"
+            :disabled="!editable"
+            @select="openInsertHeaderFooter('footer')"
+          />
+          <MenuItem
+            label="Page number"
+            testid="hf-menu-page-number"
+            :disabled="!editable"
+            @select="openPageNumberDialog"
+          />
+          <MenuItem
+            label="Header and footer options"
+            testid="hf-menu-options"
+            :disabled="!editable"
+            @select="openHeaderFooterOptions"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Footnote"
+            testid="notes-menu-footnote"
+            :shortcut="shortcutLabel('insert.footnote')"
+            :disabled="!editable"
+            @select="handleInsertNote('footnote')"
+          />
+          <MenuItem
+            label="Endnote"
+            testid="notes-menu-endnote"
+            :shortcut="shortcutLabel('insert.endnote')"
+            :disabled="!editable"
+            @select="handleInsertNote('endnote')"
+          />
+          <MenuItem
+            label="Footnote and endnote settings"
+            testid="notes-menu-settings"
+            :disabled="!editable"
+            @select="openNoteSettings"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Table of contents"
+            testid="insert-toc-button"
+            :disabled="!editable"
+            @select="openTocDialog"
+          />
+          <MenuItem
+            label="Special character"
+            testid="insert-special-character-button"
+            :disabled="!editable"
+            @select="openSpecialCharacters"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Link"
+            testid="toolbar-insert-link"
+            :shortcut="shortcutLabel('insert.link')"
+            :disabled="!editable"
+            @select="openLinkDialog"
+          />
+          <MenuItem
+            label="Bookmark"
+            testid="toolbar-insert-bookmark"
+            :disabled="!editable"
+            @select="openBookmarkDialog"
+          />
+          <MenuItem
+            label="Bookmark list"
+            testid="toolbar-bookmarks"
+            @select="bookmarkManagerOpen = true"
+          />
+          <MenuItem
+            label="Comment"
+            testid="toolbar-insert-comment"
+            :shortcut="shortcutLabel('insert.comment')"
+            :disabled="!editable"
+            @select="openCommentComposer"
+          />
+        </template>
+
+        <template #format>
+          <MenuItem
+            label="Clear formatting"
+            testid="clear-formatting-button"
+            :shortcut="shortcutLabel('format.clearFormatting')"
+            :disabled="!editable"
+            @select="handleClearFormatting"
+          />
+          <!-- Format painter keeps its double-click-to-lock gesture
+               (SPEC-020 AC-14): data-menu-keep-open holds the menu open
+               across the click/click/dblclick sequence, and its armed state
+               shows as a live check (SPEC-049 AC-11). -->
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            class="menu-item"
+            data-testid="format-painter-button"
+            data-menu-keep-open
+            title="Format painter (double-click to keep it on)"
+            :aria-checked="painterMode !== '' ? 'true' : 'false'"
+            :disabled="!editable"
+            tabindex="-1"
+            @mousedown.prevent
+            @click="handlePainterClick"
+            @dblclick="handlePainterDblClick"
+          >
+            <span
+              class="menu-check"
+              aria-hidden="true"
+            >{{ painterMode !== '' ? '✓' : '' }}</span>
+            <span class="menu-item-label">Format painter</span>
+          </button>
+          <hr class="menu-separator">
+          <MenuItem
+            label="Columns"
+            testid="columns-button"
+            :disabled="!editable"
+            @select="openColumnsDialog"
+          />
+          <hr class="menu-separator">
+          <div class="menu-section-label">
+            Multilevel list
+          </div>
+          <MenuItem
+            v-for="preset in MULTILEVEL_PRESETS"
+            :key="preset.key"
+            :label="preset.label"
+            :testid="`multilevel-preset-${preset.key}`"
+            :disabled="!editable"
+            @select="handleMultilevelPreset(preset.key)"
+          />
+          <MenuItem
+            label="Number headings 1–3"
+            testid="multilevel-link-headings"
+            :disabled="!editable"
+            @select="handleLinkHeadingNumbering"
+          />
+          <MenuItem
+            label="Define new list…"
+            testid="multilevel-define-list"
+            :disabled="!editable"
+            @select="openDefineList"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Text colour"
+            testid="format-menu-text-color"
+            :disabled="!editable"
+            @select="openTextColorMenu"
+          />
+          <MenuItem
+            label="Highlight colour"
+            testid="format-menu-highlight"
+            :disabled="!editable"
+            @select="openHighlightMenu"
+          />
+        </template>
+
+        <template #tools>
+          <MenuItem
+            label="Word count"
+            testid="tools-menu-word-count"
+            @select="openStatistics"
+          />
+          <MenuItem
+            label="Custom dictionary"
+            testid="tools-menu-dictionary"
+            @select="openCustomDictionaryDialog"
+          />
+        </template>
+      </MenuBar>
+      <!-- The Insert menu's "Image…" command drives this hidden picker
+           (SPEC-024). -->
+      <input
+        ref="menuImageInput"
+        type="file"
+        class="menu-image-input"
+        data-testid="insert-image-file-input"
+        :accept="ACCEPTED_IMAGE_ACCEPT_ATTR"
+        @change="handleMenuImageChange"
+      >
+    </template>
     <template #toolbar>
-      <ViewMenu
-        :outline-open="outlinePaneOpen"
-        :comments-pane-open="commentsPaneOpen"
-        :comments-only-view="commentsOnlyView"
-        @toggle-outline="toggleOutlinePane"
-        @toggle-comments-pane="toggleCommentsPane"
-        @toggle-comments-only="toggleCommentsOnlyView"
-      />
       <UndoRedoControls
         v-if="editable"
         :can-undo="undoRedoState.canUndo"
@@ -4223,73 +4705,9 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
         @list-marker="handleListMarker"
         @toggle-pagination="handleTogglePagination"
       />
-      <MultilevelListMenu
-        v-if="editable"
-        @preset="handleMultilevelPreset"
-        @link-headings="handleLinkHeadingNumbering"
-        @define="openDefineList"
-      />
-      <TableInsertControl
-        v-if="editable"
-        @insert="handleInsertTable"
-        @open-dialog="insertTableDialogOpen = true"
-      />
-      <InsertBreakMenu
-        v-if="editable"
-        @insert-break="handleInsertBreak"
-        @insert-section-break="handleInsertSectionBreak"
-      />
-      <ImageInsertControl
-        v-if="editable"
-        @insert-file="handleInsertImageFile"
-      />
-      <HeaderFooterMenu
-        v-if="editable"
-        data-testid="header-footer-menu-wrapper"
-        @insert-header="openInsertHeaderFooter('header')"
-        @insert-footer="openInsertHeaderFooter('footer')"
-        @insert-page-number="openPageNumberDialog"
-        @options="openHeaderFooterOptions"
-      />
-      <NotesMenu
-        v-if="editable"
-        @insert-footnote="handleInsertNote('footnote')"
-        @insert-endnote="handleInsertNote('endnote')"
-        @settings="openNoteSettings"
-      />
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="insert-toc-button"
-        title="Table of contents"
-        aria-label="Insert table of contents"
-        @mousedown.prevent
-        @click="openTocDialog"
-      >
-        TOC
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="insert-special-character-button"
-        title="Special characters"
-        aria-label="Insert special character"
-        @mousedown.prevent
-        @click="openSpecialCharacters"
-      >
-        Ω
-      </button>
-      <AutocorrectMenu
-        v-if="editable"
-        :smart-quotes="autocorrectSettings.smartQuotes"
-        :dashes="autocorrectSettings.dashes"
-        @toggle-smart-quotes="toggleAutocorrectSmartQuotes"
-        @toggle-dashes="toggleAutocorrectDashes"
-      />
       <TextColorPicker
         v-if="editable"
+        ref="textColorPickerRef"
         :value="formatValues.color"
         :mixed="formatValues.colorMixed"
         :recent="recentColors"
@@ -4297,138 +4715,11 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
       />
       <HighlightPicker
         v-if="editable"
+        ref="highlightPickerRef"
         :value="formatValues.highlight"
         :mixed="formatValues.highlightMixed"
         @select="handleHighlightSelect"
       />
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="clear-formatting-button"
-        :title="`Clear formatting (${shortcutLabel('format.clearFormatting')})`"
-        :aria-label="`Clear formatting (${shortcutLabel('format.clearFormatting')})`"
-        @mousedown.prevent
-        @click="handleClearFormatting"
-      >
-        Clear formatting
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="format-painter-button"
-        title="Format painter (double-click to keep it on)"
-        aria-label="Format painter (double-click to keep it on)"
-        :aria-pressed="painterMode !== ''"
-        @mousedown.prevent
-        @click="handlePainterClick"
-        @dblclick="handlePainterDblClick"
-      >
-        Format painter
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="toolbar-insert-link"
-        :title="`Insert link (${shortcutLabel('insert.link')})`"
-        :aria-label="`Insert link (${shortcutLabel('insert.link')})`"
-        @mousedown.prevent
-        @click="openLinkDialog"
-      >
-        Link
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="toolbar-insert-bookmark"
-        title="Insert bookmark"
-        aria-label="Insert bookmark"
-        @mousedown.prevent
-        @click="openBookmarkDialog"
-      >
-        Bookmark
-      </button>
-      <button
-        type="button"
-        class="toolbar-button"
-        data-testid="toolbar-bookmarks"
-        title="Bookmarks"
-        aria-label="Bookmarks"
-        @click="bookmarkManagerOpen = true"
-      >
-        Bookmarks
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="toolbar-insert-comment"
-        :title="`Insert comment (${shortcutLabel('insert.comment')})`"
-        :aria-label="`Insert comment (${shortcutLabel('insert.comment')})`"
-        @mousedown.prevent
-        @click="openCommentComposer"
-      >
-        Comment
-      </button>
-      <button
-        type="button"
-        class="toolbar-button"
-        data-testid="toolbar-comments-pane"
-        title="Comments pane"
-        aria-label="Comments pane"
-        :aria-pressed="commentsPaneOpen"
-        @click="toggleCommentsPane"
-      >
-        Comments
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="page-setup-button"
-        title="Page setup"
-        aria-label="Page setup"
-        @mousedown.prevent
-        @click="openPageSetup"
-      >
-        Page setup
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="columns-button"
-        title="Columns"
-        aria-label="Columns"
-        @mousedown.prevent
-        @click="openColumnsDialog"
-      >
-        Columns
-      </button>
-      <button
-        type="button"
-        class="toolbar-button"
-        data-testid="toggle-ruler-button"
-        title="Show/hide ruler"
-        aria-label="Show/hide ruler"
-        :aria-pressed="doc.showRuler !== false"
-        @mousedown.prevent
-        @click="toggleRuler"
-      >
-        Ruler
-      </button>
-      <button
-        v-if="editable"
-        type="button"
-        class="toolbar-button"
-        data-testid="delete-document"
-        @click="confirmingDelete = true"
-      >
-        Delete
-      </button>
     </template>
     <div
       v-if="lockState === 'busy'"
@@ -5101,6 +5392,54 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   border-radius: 4px;
   background: #fff;
   cursor: pointer;
+}
+
+/* The Insert menu's table-size quick-pick (SPEC-049), slotted into the menu
+   popup. These rules reach it because slotted content keeps this view's
+   scope id. */
+.menu-image-input {
+  display: none;
+}
+
+.menu-table-grid-wrap {
+  padding: 0.25rem 1rem 0.5rem;
+}
+
+.menu-table-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu-table-grid-row {
+  display: flex;
+  gap: 2px;
+}
+
+.menu-table-grid-cell {
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 1px solid #bdbdbd;
+  border-radius: 2px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.menu-table-grid-cell.active {
+  background: #bbdefb;
+  border-color: #1a73e8;
+}
+
+.menu-table-grid-cell:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.menu-table-grid-label {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: #5f6368;
 }
 
 /* The format painter button's armed state (SPEC-020 AC-11, AC-14). */

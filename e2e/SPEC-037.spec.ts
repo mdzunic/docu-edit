@@ -147,14 +147,14 @@ test("the View menu toggles the pane and the open state persists per user (AC-13
   await seedHeadings(page);
   await expect(pane(page)).toBeVisible();
   // Toggle off via the View menu.
-  await page.getByTestId("view-menu-button").click();
+  await page.getByTestId("menu-title-view").click();
   await page.getByTestId("view-menu-outline").click();
   await expect(pane(page)).toHaveCount(0);
   // The closed state survives a reload.
   await page.reload();
   await expect(pane(page)).toHaveCount(0);
   // Toggle back on; that too persists.
-  await page.getByTestId("view-menu-button").click();
+  await page.getByTestId("menu-title-view").click();
   await page.getByTestId("view-menu-outline").click();
   await expect(pane(page)).toBeVisible();
   await page.reload();

@@ -51,6 +51,7 @@ async function insertToc(
   page: Page,
   options: { levels?: number[]; showPageNumbers?: boolean; hyperlinksOnly?: boolean } = {},
 ): Promise<void> {
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("insert-toc-button").click();
   await expect(page.getByTestId("toc-options-dialog")).toBeVisible();
   if (options.levels) {
@@ -350,6 +351,7 @@ test("a TOC for 300 headings generates in under 1 second (AC-21)", async ({ page
   writeFileSync(path, bytes);
 
   await openFixture(page, path);
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("insert-toc-button").click();
   await expect(page.getByTestId("toc-options-dialog")).toBeVisible();
   const start = Date.now();

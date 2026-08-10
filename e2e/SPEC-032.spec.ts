@@ -30,7 +30,7 @@ async function typeParagraphs(page: Page, texts: string[]): Promise<void> {
 }
 
 async function applyPreset(page: Page, key: string): Promise<void> {
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId(`multilevel-preset-${key}`).click();
 }
 
@@ -127,14 +127,14 @@ async function expectThreeListMarkers(page: Page): Promise<void> {
 test("the gallery offers the four presets and the decimal one numbers a selection (AC-1..4)", async ({ page }) => {
   await createDocument(page);
   await typeParagraphs(page, ["one", "two", "three"]);
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await expect(page.getByTestId("multilevel-preset-decimal")).toBeVisible();
   await expect(page.getByTestId("multilevel-preset-outline")).toBeVisible();
   await expect(page.getByTestId("multilevel-preset-legal")).toBeVisible();
   await expect(page.getByTestId("multilevel-preset-bulletMixed")).toBeVisible();
   // Close the gallery again (the toggle), then number the whole selection.
-  await page.getByTestId("multilevel-list-button").click();
-  await expect(page.getByTestId("multilevel-list-menu")).toHaveCount(0);
+  await page.getByTestId("menu-title-format").click();
+  await expect(page.getByTestId("menu-format")).toBeHidden();
   await page.keyboard.press(`${MOD}+a`);
   await applyPreset(page, "decimal");
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "1.");
@@ -180,7 +180,7 @@ test("the Define dialog sets per-level style, prefix/suffix, start, include leve
   await typeParagraphs(page, ["alpha", "beta"]);
   await page.keyboard.press(`${MOD}+a`);
   await applyPreset(page, "decimal");
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("multilevel-define-list").click();
   await expect(page.getByTestId("define-list-dialog")).toBeVisible();
   // Level 1: upperRoman in parentheses starting at 5.
@@ -199,7 +199,7 @@ test("the Define dialog sets per-level style, prefix/suffix, start, include leve
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "(V)");
   await expect(paragraphAt(page, 1)).toHaveAttribute("data-list-marker", "(VI)");
   // Re-opening shows the persisted values (the same list's own definition).
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("multilevel-define-list").click();
   await expect(page.getByTestId("define-list-style")).toHaveValue("upperRoman");
   await expect(page.getByTestId("define-list-prefix")).toHaveValue("(");
@@ -222,7 +222,7 @@ test("editing a level's format updates every item at that level in the same list
   await applyPreset(page, "decimal");
   // Edit list A's level 1 to upperRoman via the Define dialog.
   await paragraphAt(page, 0).click();
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("multilevel-define-list").click();
   await page.getByTestId("define-list-style").selectOption("upperRoman");
   await page.getByTestId("define-list-apply").click();
@@ -242,7 +242,7 @@ test("linking numbers Heading 1-3 automatically, including later headings, and s
   await applyStyle(page, "Heading1");
   await paragraphAt(page, 1).click();
   await applyStyle(page, "Heading2");
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("multilevel-link-headings").click();
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", "1.");
   await expect(paragraphAt(page, 1)).toHaveAttribute("data-list-marker", "1.1.");
@@ -265,7 +265,7 @@ test("numbered headings keep numbering when a heading is deleted or moved (AC-29
     await paragraphAt(page, index).click();
     await applyStyle(page, "Heading1");
   }
-  await page.getByTestId("multilevel-list-button").click();
+  await page.getByTestId("menu-title-format").click();
   await page.getByTestId("multilevel-link-headings").click();
   await expect(paragraphAt(page, 2)).toHaveAttribute("data-list-marker", "3.");
   // Delete the middle heading: select its whole line plus the boundary.

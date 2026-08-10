@@ -114,7 +114,7 @@ test("double-clicking the top margin enters header editing with body dimmed (AC-
 
 test("Insert -> Header/Footer enters editing with body dimmed (AC-2)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await expect(headerBand(page)).toHaveAttribute("data-hf-editable", "1");
   await expect(page.locator(".page-margin-dimmed").first()).toBeVisible();
@@ -122,7 +122,7 @@ test("Insert -> Header/Footer enters editing with body dimmed (AC-2)", async ({ 
 
 test("header content supports text and formatting like body content (AC-3, AC-4)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await page.keyboard.type("Confidential");
   await page.keyboard.press(`${MOD}+a`);
@@ -133,16 +133,16 @@ test("header content supports text and formatting like body content (AC-3, AC-4)
 
 test("header content supports tables like body content (AC-5)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
-  await page.getByTestId("insert-table-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("table-grid-cell-2-2").click();
   await expect(headerBand(page).locator("table.doc-table")).toHaveCount(1);
 });
 
 test("header content supports images like body content (AC-6)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await page.getByTestId("insert-image-file-input").setInputFiles({
     name: "photo.png",
@@ -158,7 +158,7 @@ test("header content supports images like body content (AC-6)", async ({ page })
 
 test("Escape returns to body editing (AC-7)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await expect(headerBand(page)).toHaveAttribute("data-hf-editable", "1");
   await page.keyboard.press("Escape");
@@ -168,7 +168,7 @@ test("Escape returns to body editing (AC-7)", async ({ page }) => {
 
 test("double-clicking the body returns to body editing (AC-8)", async ({ page }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await expect(headerBand(page)).toHaveAttribute("data-hf-editable", "1");
   await page.locator(".page-content").first().dblclick();
@@ -178,7 +178,7 @@ test("double-clicking the body returns to body editing (AC-8)", async ({ page })
 test("header content repeats on every page and edits apply to all at once (AC-9, AC-10)", async ({ page }) => {
   await createDocument(page);
   await makeThreePages(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await page.keyboard.type("Company Letterhead");
   await page.keyboard.press("Escape");
@@ -195,7 +195,7 @@ test("header/footer options: different first page and different odd/even (AC-11,
   await makeThreePages(page);
 
   // Different first page: give the section a distinct first-page header.
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-options").click();
   await page.getByTestId("hf-option-title-page").check();
   await page.getByTestId("hf-options-apply").click();
@@ -206,7 +206,7 @@ test("header/footer options: different first page and different odd/even (AC-11,
   await content(page).click();
   await page.keyboard.press(`${MOD}+Home`);
 
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await expect(headerBand(page, 0)).toHaveAttribute("data-hf-editable", "1");
   await page.keyboard.type("Cover Page Header");
@@ -222,7 +222,7 @@ test("Insert page number offers position/format options and inserts a page numbe
   page,
 }) => {
   await createDocument(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-page-number").click();
   await expect(page.getByTestId("page-number-dialog")).toBeVisible();
   await page.getByTestId("page-number-part").selectOption("footer");
@@ -236,7 +236,7 @@ test("Insert page number offers position/format options and inserts a page numbe
 test("'Page X of Y' inserts a composite field (AC-19)", async ({ page }) => {
   await createDocument(page);
   await makeThreePages(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-page-number").click();
   await page.getByTestId("page-number-part").selectOption("footer");
   await page.getByTestId("page-number-of-total").check();
@@ -251,7 +251,7 @@ test("page numbers render the correct value on every page and update when pagina
 }) => {
   await createDocument(page);
   await makeThreePages(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-page-number").click();
   await page.getByTestId("page-number-part").selectOption("footer");
   await page.getByTestId("page-number-apply").click();
@@ -276,14 +276,14 @@ test("page numbers render the correct value on every page and update when pagina
 test("'Start numbering at' is settable per section (AC-22, AC-23)", async ({ page }) => {
   await createDocument(page);
   await makeThreePages(page);
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-page-number").click();
   await page.getByTestId("page-number-part").selectOption("footer");
   await page.getByTestId("page-number-apply").click();
   await waitForPagination(page);
   await expect(footerBand(page, 0)).toContainText("1");
 
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-options").click();
   await page.getByTestId("hf-option-restart").check();
   await page.getByTestId("hf-option-start-at").fill("5");
@@ -298,11 +298,11 @@ test("headers, footers and page-number fields round-trip through .docx (AC-24, A
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Body text");
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-header").click();
   await page.keyboard.type("Header text");
   await page.keyboard.press("Escape");
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-page-number").click();
   await page.getByTestId("page-number-part").selectOption("footer");
   await page.getByTestId("page-number-apply").click();
@@ -329,11 +329,11 @@ test("headers and footers round-trip through .odt via master page styles (AC-26)
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Body text");
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-footer").click();
   await page.keyboard.type("Footer text");
   await page.keyboard.press("Escape");
-  await page.getByTestId("header-footer-menu-button").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("hf-menu-page-number").click();
   await page.getByTestId("page-number-part").selectOption("header");
   await page.getByTestId("page-number-apply").click();
