@@ -200,6 +200,12 @@ export async function detectOdf(data: ArrayBuffer | Uint8Array): Promise<"packag
 interface TextPiece {
   text: string;
   formatting: RunFormatting;
+  /** The nearest enclosing `text:span`'s own `text:style-name` (SPEC-042) —
+   * the ODF counterpart of the .docx reader's `w:rStyle` capture, same "raw
+   * reference, resolved later" convention `parseTextBlock`'s own
+   * `paragraph.styleId` already uses for `text:style-name` on the paragraph
+   * itself. */
+  styleId?: string;
   /** Marks this piece as a page-number/page-count field (SPEC-029) rather
    * than literal text. */
   field?: FieldSpec;
@@ -281,15 +287,20 @@ function linkFormatting(el: Element, inherited: RunFormatting): RunFormatting {
   return sanitized !== null ? { ...inherited, linkHref: sanitized } : inherited;
 }
 
-function appendText(acc: InlineAccumulator, text: string, formatting: RunFormatting): void {
+function appendText(
+  acc: InlineAccumulator,
+  text: string,
+  formatting: RunFormatting,
+  styleId?: string,
+): void {
   if (text.length === 0) {
     return;
   }
   const last = acc.pieces[acc.pieces.length - 1];
-  if (!acc.mergeBarrier && last && last.formatting === formatting) {
+  if (!acc.mergeBarrier && last && last.formatting === formatting && last.styleId === styleId) {
     last.text += text;
   } else {
-    acc.pieces.push({ text, formatting });
+    acc.pieces.push(styleId !== undefined ? { text, formatting, styleId } : { text, formatting });
   }
   acc.mergeBarrier = false;
   acc.lastChar = text[text.length - 1];
@@ -313,7 +324,12 @@ function fieldNumberFormat(el: Element): PageNumberFormat {
 /** A `text:page-number`/`text:page-count` field (SPEC-029 AC-25, AC-26) as
  * its own text piece — a field is always a merge barrier (like an opaque
  * node) so it never coalesces into a neighbouring plain-text run. */
-function appendField(acc: InlineAccumulator, kind: FieldKind, format: PageNumberFormat, formatting: RunFormatting): void {
+function appendField(
+  acc: InlineAccumulator,
+  kind: FieldKind,
+  format: PageNumberFormat,
+  formatting: RunFormatting,
+): void {
   acc.pieces.push({ text: FIELD_PLACEHOLDER_TEXT, formatting, field: { kind, format } });
   acc.mergeBarrier = true;
   acc.lastChar = FIELD_PLACEHOLDER_TEXT;
@@ -326,12 +342,17 @@ const WHITESPACE_RUN = /[ \t\r\n]+/g;
  * paragraph or after other whitespace (including explicit text:s/text:tab
  * content) is dropped. Explicit whitespace elements bypass this entirely —
  * that split is what makes the result match what LibreOffice shows. */
-function appendLiteralText(acc: InlineAccumulator, raw: string, formatting: RunFormatting): void {
+function appendLiteralText(
+  acc: InlineAccumulator,
+  raw: string,
+  formatting: RunFormatting,
+  styleId?: string,
+): void {
   let text = raw.replace(WHITESPACE_RUN, " ");
   if (text.startsWith(" ") && (acc.lastChar === "" || " \t\n".includes(acc.lastChar))) {
     text = text.slice(1);
   }
-  appendText(acc, text, formatting);
+  appendText(acc, text, formatting, styleId);
 }
 
 const UNKNOWN_COMMENT_AUTHOR = "Unknown";
@@ -522,10 +543,11 @@ function collectInline(
   formatting: RunFormatting,
   catalog: OdfStyleCatalog,
   acc: InlineAccumulator,
+  styleId?: string,
 ): void {
   for (const node of Array.from(container.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) {
-      appendLiteralText(acc, (node as CharacterData).data, formatting);
+      appendLiteralText(acc, (node as CharacterData).data, formatting, styleId);
       continue;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) {
@@ -551,23 +573,44 @@ function collectInline(
       case "s": {
         // <text:s text:c="3"/> is three explicit (non-collapsing) spaces.
         const count = Number(textAttr(el, "c") ?? "1");
-        appendText(acc, " ".repeat(Number.isInteger(count) && count > 0 ? count : 1), formatting);
+        appendText(acc, " ".repeat(Number.isInteger(count) && count > 0 ? count : 1), formatting, styleId);
         break;
       }
       case "tab":
-        appendText(acc, "\t", formatting);
+        appendText(acc, "\t", formatting, styleId);
         break;
       case "line-break":
-        appendText(acc, "\n", formatting);
+        appendText(acc, "\n", formatting, styleId);
         break;
-      case "span":
-        collectInline(el, resolveTextStyle(catalog, textAttr(el, "style-name") ?? undefined, formatting), catalog, acc);
+      case "span": {
+        // SPEC-042: capturing a run-style reference the way the .docx
+        // reader captures w:rStyle would need distinguishing a genuine
+        // named-character-style reference from ODF's own per-run automatic
+        // "direct formatting" style — both take the identical shape
+        // (text:style-name pointing at a family="text" style; LibreOffice
+        // itself parents an automatic style at the named one when direct
+        // formatting sits on top of a real character style, so even
+        // "is this name in the *named* map" is not a reliable signal). This
+        // app's own writer still round-trips an *applied* character style's
+        // baked formatting correctly (resolveCharacterStyle bakes it at
+        // apply time); only the `styleId` reference itself — needed for a
+        // later Modify/Rename to keep affecting this text after a save and
+        // reopen — does not survive an .odt round trip. Threading `styleId`
+        // through stays inert (always undefined) until that is resolved.
+        collectInline(
+          el,
+          resolveTextStyle(catalog, textAttr(el, "style-name") ?? undefined, formatting),
+          catalog,
+          acc,
+          styleId,
+        );
         break;
+      }
       case "a":
         // Hyperlinks (SPEC-025): the wrapper's target becomes link
         // formatting on its inline content, matching the .docx reader's
         // w:hyperlink handling; the element itself is not preserved.
-        collectInline(el, linkFormatting(el, formatting), catalog, acc);
+        collectInline(el, linkFormatting(el, formatting), catalog, acc, styleId);
         break;
       case "bookmark":
       case "bookmark-start": {
@@ -733,6 +776,7 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
     .map((piece) => ({
       text: piece.text,
       formatting: { ...piece.formatting },
+      ...(piece.styleId ? { styleId: piece.styleId } : {}),
       ...(piece.field ? { field: piece.field } : {}),
       ...(piece.note ? { note: piece.note } : {}),
       ...(piece.changes ? { changes: piece.changes } : {}),
@@ -958,7 +1002,12 @@ function parseBodyTextBlockOrSplit(
     segment = [];
     const runs: Run[] = acc.pieces
       .filter((piece) => piece.text.length > 0)
-      .map((piece) => ({ text: piece.text, formatting: { ...piece.formatting }, ...(piece.field ? { field: piece.field } : {}) }));
+      .map((piece) => ({
+        text: piece.text,
+        formatting: { ...piece.formatting },
+        ...(piece.styleId ? { styleId: piece.styleId } : {}),
+        ...(piece.field ? { field: piece.field } : {}),
+      }));
     if (
       runs.length === 0 &&
       acc.opaqueInlines.length === 0 &&

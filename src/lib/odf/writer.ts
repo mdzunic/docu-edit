@@ -510,7 +510,7 @@ interface AutomaticStyles {
   /** Serialised style:style elements, in first-use order. */
   defs: string[];
   paragraphNameFor(paragraph: Paragraph, options?: ParagraphStyleOptions): string | undefined;
-  textNameFor(formatting: RunFormatting): string;
+  textNameFor(formatting: RunFormatting, styleId?: string): string;
   listNameFor(levels: PlannedListLevel[]): string;
   /** A SPEC-032 definition's own text:list-style (AC-27), one per defId. */
   definedListNameFor(def: ListDefinition): string;
@@ -650,18 +650,32 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       return name;
     },
 
-    textNameFor(formatting: RunFormatting): string {
+    textNameFor(formatting: RunFormatting, styleId?: string): string {
       const propertiesXml = textPropertiesXml(formatting);
-      const existing = textNames.get(propertiesXml);
+      // SPEC-042: a character-styled run's automatic style is named after
+      // its `styleId` the first time (shadowing the named style of the same
+      // name in office:styles, the same trick `paragraphNameFor` already
+      // plays for paragraph styles) so the reference round-trips; a run
+      // with no character style keeps the plain "T1"/"T2"/… counter.
+      const key = `${styleId ?? ""} ${propertiesXml}`;
+      const existing = textNames.get(key);
       if (existing !== undefined) {
         return existing;
       }
-      const name = `T${textNames.size + 1}`;
-      textNames.set(propertiesXml, name);
+      let name: string;
+      if (styleId && !boundStyleIds.has(styleId)) {
+        boundStyleIds.add(styleId);
+        name = styleId;
+      } else if (styleId) {
+        name = claimName(styleId, "-");
+      } else {
+        name = `T${textNames.size + 1}`;
+      }
+      textNames.set(key, name);
       defs.push(
         propertiesXml === ""
-          ? `<style:style style:name="${name}" style:family="text"/>`
-          : `<style:style style:name="${name}" style:family="text">${propertiesXml}</style:style>`,
+          ? `<style:style style:name="${escapeXml(name)}" style:family="text"/>`
+          : `<style:style style:name="${escapeXml(name)}" style:family="text">${propertiesXml}</style:style>`,
       );
       return name;
     },
@@ -1300,7 +1314,7 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
   if (run.note) {
     return noteXml(run, styles, state);
   }
-  const styleName = styles.textNameFor(run.formatting);
+  const styleName = styles.textNameFor(run.formatting, run.styleId);
   let span: string;
   if (run.field) {
     state.lastChar = FIELD_PLACEHOLDER_TEXT;
@@ -1893,20 +1907,74 @@ export function buildContentXml(
  * style:name (with the display name alongside when it differs), the parent
  * link, the outline level that makes it a heading style, and the style's
  * own paragraph/text properties. */
+/** An `unmodeled` style's original XML (SPEC-042 AC-18), re-emitted
+ * verbatim except for the user-visible name — mirrors docx/writer.ts's
+ * `unmodeledStyleXml`. */
+function unmodeledOdfStyleXml(definition: NamedStyle): string {
+  if (!definition.rawXml) {
+    const displayAttr =
+      definition.name !== undefined ? ` style:display-name="${escapeXml(definition.name)}"` : "";
+    return `<style:style style:name="${escapeXml(definition.id)}"${displayAttr} style:family="table"/>`;
+  }
+  try {
+    const wrapper = parseXml(
+      `<style:root xmlns:style="${STYLE_NAMESPACE}" xmlns:office="${OFFICE_NAMESPACE}">${definition.rawXml}</style:root>`,
+    );
+    const el = wrapper.documentElement.firstElementChild;
+    if (!el) {
+      return definition.rawXml;
+    }
+    if (definition.name !== undefined) {
+      el.setAttributeNS(STYLE_NAMESPACE, "style:display-name", definition.name);
+    }
+    return serializeElement(el);
+  } catch {
+    return definition.rawXml;
+  }
+}
+
+function namedStyleFamily(type: NamedStyle["type"]): "paragraph" | "text" | "table" {
+  if (type === "character") {
+    return "text";
+  }
+  if (type === "table") {
+    return "table";
+  }
+  return "paragraph";
+}
+
 function namedStyleDefinitionXml(definition: NamedStyle): string {
+  if (definition.unmodeled) {
+    return unmodeledOdfStyleXml(definition);
+  }
+  const family = namedStyleFamily(definition.type);
   let attrs = `style:name="${escapeXml(definition.id)}"`;
   if (definition.name !== undefined && definition.name !== definition.id) {
     attrs += ` style:display-name="${escapeXml(definition.name)}"`;
   }
-  attrs += ' style:family="paragraph"';
+  attrs += ` style:family="${family}"`;
   if (definition.basedOn !== undefined) {
     attrs += ` style:parent-style-name="${escapeXml(definition.basedOn)}"`;
+  }
+  if (definition.next !== undefined && family === "paragraph") {
+    attrs += ` style:next-style-name="${escapeXml(definition.next)}"`;
   }
   if (definition.headingLevel !== undefined) {
     attrs += ` style:default-outline-level="${definition.headingLevel}"`;
   }
+  if (family === "table") {
+    // ODF has no per-table-style border concept (borders are always
+    // per-cell) — only background shading round-trips here; see
+    // NamedStyle.cellBorders's doc comment for the docx side, which does
+    // support it. Table style banding is out of scope either way.
+    const hex = definition.cellShadingFill;
+    const properties = hex !== undefined ? `<style:table-properties fo:background-color="${escapeXml(hex)}"/>` : "";
+    return properties.length > 0
+      ? `<style:style ${attrs}>${properties}</style:style>`
+      : `<style:style ${attrs}/>`;
+  }
   const properties =
-    paragraphPropertiesXml(definition.paragraphFormatting ?? {}) +
+    (family === "paragraph" ? paragraphPropertiesXml(definition.paragraphFormatting ?? {}) : "") +
     textPropertiesXml(definition.runFormatting ?? {}, definition.fontSizePercent);
   return properties.length > 0
     ? `<style:style ${attrs}>${properties}</style:style>`
@@ -2538,11 +2606,13 @@ export function patchOdtStylesXml(
       `<office:document-styles${DOCUMENT_XMLNS}>${namedStyleDefinitionXml(definition)}</office:document-styles>`,
     );
     const imported = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    // Matched by name alone (SPEC-042): a style's family no longer maps 1:1
+    // onto "paragraph", and a style:name is unique across families in one
+    // styles.xml the same way a .docx styleId is.
     const existing = Array.from(officeStyles.children).find(
       (el) =>
         el.namespaceURI === STYLE_NAMESPACE &&
         el.localName === "style" &&
-        el.getAttributeNS(STYLE_NAMESPACE, "family") === "paragraph" &&
         el.getAttributeNS(STYLE_NAMESPACE, "name") === definition.id,
     );
     if (existing) {
