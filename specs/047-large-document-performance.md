@@ -11,16 +11,180 @@ abandon a browser editor are the 300-page tender responses and the 500-row
 tables. This spec sets the budgets and makes the product hold them.
 
 ## Acceptance criteria
-- [ ] Documented performance budgets, enforced by an automated benchmark in CI against a 300-page fixture with 500 images, 200 tables and 400 footnotes
+- [ ] Every performance budget this product holds is stated in one table — see "The budgets" below — and each row is asserted by the benchmark
+- [ ] The benchmark runs against a generated fixture of 300 pages, 500 images, 200 tables and 400 footnotes — see "The benchmark fixture" below
 - [ ] Opening that fixture shows the first page in under 2 seconds and becomes fully interactive in under 8 seconds, with a progress indicator until it is
 - [ ] Typing latency stays under 50 ms at the 95th percentile anywhere in that document, including at the end
-- [ ] Only visible pages plus a small buffer are rendered to the DOM; scrolling stays above 30 fps and scroll position is stable when off-screen pages are recycled
-- [ ] Parsing, pagination, spell check, word count and export run off the main thread (worker) so the UI never blocks for more than 100 ms
-- [ ] Memory use for the benchmark fixture stays under a documented ceiling and does not grow during a 30-minute editing session — a leak test asserts it
+- [ ] Only pages inside the realization window are rendered to the DOM; scrolling stays above 30 fps and scroll position is stable when off-screen pages are recycled. The window is the one SPEC-028 already ships — see "The realization window" below; this spec does not introduce a second policy
+- [ ] Work that can leave the main thread does, so the UI never blocks for more than 100 ms — which of parsing, pagination, spell check, word count and export can actually move, and what blocks the rest, is settled in "What leaves the main thread" below
+- [ ] JS heap after the fixture settles stays under 400 MB, and a 30-minute editing session ends within 10% of its first post-settle sample — see "Memory and the leak test" below
 - [ ] Saving that fixture to `.docx` completes in under 5 seconds and does not freeze the UI
-- [ ] The benchmark runs in CI on every PR touching the editor core and fails the build on a regression beyond a stated threshold
-- [ ] Behaviour when a document exceeds the supported size is graceful: a warning naming the limit, with the document still openable read-only
+- [ ] The benchmark is runnable with the pinned toolchain and no new dependency, and fails on a regression by the rule in "The regression gate" below — a fixed threshold, not a judgement call
+- [ ] A document past the supported ceiling opens read-only with a warning naming the limit it exceeded and the value it reached — see "The supported ceiling" below
 
 ## Out of scope
 Server-side rendering or pre-pagination. Streaming partial documents from a
-server. Mobile device performance targets.
+server. Mobile device performance targets. Choosing or provisioning a CI
+provider — see "Where the benchmark runs".
+
+## Reference
+
+### The budgets
+This table is what "documented budgets" means. Every row is a hard ceiling
+asserted by the benchmark, measured on the fixture below.
+
+| Budget | Ceiling | How it is measured |
+| --- | --- | --- |
+| First page visible | 2 s | `Date.now()` from navigation to the first `[data-testid=document-page]` with content |
+| Fully interactive | 8 s | to the progress indicator clearing and pagination reporting settled |
+| Typing latency, p95 | 50 ms | 200 keystrokes at the document end; keydown → model-updated paint |
+| Scroll | ≥ 30 fps | frame timestamps over a 5 s programmatic scroll |
+| Main-thread block | ≤ 100 ms | longest task during open, pagination, spell check and save |
+| Save to `.docx` | 5 s | invoke → `Blob` resolved |
+| JS heap after settle | 400 MB | CDP `Performance.getMetrics` → `JSHeapUsedSize` |
+| Heap growth over 30 min | ≤ 10% | last sample ÷ first post-settle sample |
+
+The numbers are chosen against the fixture, not in the abstract. Change the
+fixture and they stop meaning anything.
+
+### The benchmark fixture
+Generated, not committed: a 300-page `.docx` with 500 images averaging 100 KB,
+200 tables, 400 footnotes and body text at the document default size. A
+committed fixture would be ~60 MB of binary in git, and every regression
+investigation would start by asking whether the fixture drifted.
+
+It is built by `scripts/build-spec047-fixture.mjs`, following the existing
+`scripts/build-*-fixtures.mjs` pattern, and is deterministic: same script, same
+bytes, so a heap number from one run is comparable to the next. The benchmark
+builds it on demand if it is absent.
+
+The fixture sits deliberately below the supported ceiling — 300 of 500 pages,
+500 of 1,000 images — so the benchmark measures the product working, not the
+product refusing.
+
+### Where the benchmark runs
+There is no CI configuration in this repository today, and `package.json` is
+protected, so the benchmark must need neither a new dependency nor a new npm
+script. It is therefore a Playwright spec — `e2e/SPEC-047.perf.spec.ts`, run by
+`npx playwright test` like every other e2e spec — using the pinned Playwright
+1.49.1 and its Chromium.
+
+That is also what makes the heap numbers well-defined: `JSHeapUsedSize` via a
+CDP session is Chromium-specific, and Chromium is what the pinned toolchain
+runs. The existing e2e suite already asserts timing budgets this way
+(`e2e/SPEC-017.spec.ts:290` asserts the 300 ms find budget) and DOM ceilings
+(`e2e/SPEC-028.spec.ts:687` asserts under 1,000 rendered blocks), so this is the
+established pattern rather than new machinery.
+
+Adding a workflow file that invokes it is a repository-configuration change, not
+feature work, and is out of scope here: this spec's obligation is that the
+benchmark exists, is deterministic and fails correctly when run.
+
+### The regression gate
+Two independent gates, both evaluated on the **median of 5 runs** for each
+budget:
+
+1. **Absolute** — the median exceeds the ceiling in "The budgets". Fails.
+2. **Relative** — the median exceeds the value recorded for that budget in a
+   checked-in `e2e/perf-baseline.json` by more than **15%**. Fails.
+
+The median of 5 is what makes the gate usable on a shared runner; a single run
+on a noisy machine swings far more than any regression worth catching. 15% is
+the relative allowance for the same reason — 10% flakes on shared vCPUs, and a
+real regression in this codebase (a lost memo, a dropped virtualization guard,
+an O(n²) pass) lands far above 15%, not just outside it.
+
+`perf-baseline.json` is updated by an explicit commit, never automatically. A
+gate that rewrites its own baseline ratchets silently and catches nothing.
+
+### The realization window
+SPEC-028 already ships page virtualization, and its window is normative here.
+Restating it so this spec cannot drift from the code
+(`src/views/DocumentView.vue:3580` onward):
+
+- Documents of **12 pages or fewer** always realize fully
+  (`VIRTUALIZE_MIN_PAGES`) — ordinary documents behave exactly as they did
+  before virtualization existed.
+- Above that, a page renders its content when it falls within **one viewport
+  height above to two viewport heights below the scroll position, plus 400 px
+  of overscan** (`VIEWPORT_OVERSCAN_PX`).
+- Plus, unconditionally: the caret's page, the selection anchor's page, the
+  current find match's page, and pages already realized whose layout has not
+  changed (sticky realization, so editing one page does not tear down the DOM
+  of earlier ones).
+- Virtualization pauses entirely during print preview, printing and PDF export
+  (SPEC-034), which need every page's real content in the DOM.
+
+Everything else renders as a correctly-sized empty page box, measured off-DOM
+by the pagination controller's canvas metrics — which is why virtualization
+requires `canMeasureOffscreen`.
+
+"A small buffer" was the original wording and it is not a specification: a
+one-page buffer and a ten-page buffer produce different frame rates and
+different heap numbers, and both would have satisfied it.
+
+### What leaves the main thread
+The five workloads are not equally movable, and the 100 ms budget is met
+differently by each. This is the honest split:
+
+- **Parsing** (`src/lib/docx/`, `src/lib/odf/`) — moves cleanly. Already
+  DOM-free by SPEC-004/006 rule ("does no DOM work so it can run in a worker").
+- **Export** — same, for the same reason (`writeDocx`, SPEC-006).
+- **Word count** (`src/lib/wordCount.ts`) — moves cleanly; pure functions over
+  the model.
+- **Spell check** (`src/lib/spellcheck/`) — moves cleanly, and the dictionary
+  fetch moves with it.
+- **Pagination** — *does not fully move*, and the spec must not pretend
+  otherwise. `src/lib/textMetrics.ts` measures with a `<canvas>` 2D context
+  (line 403, portable to `OffscreenCanvas` in a worker) **but also** with DOM
+  probe elements and `document.createRange()` (lines 433, 452), which have no
+  worker equivalent. Pagination therefore stays on the main thread and meets
+  the 100 ms budget by chunking through `scheduleIdleWork`
+  (`src/lib/idleScheduler.ts`), the same mechanism spell check, find/replace
+  and comments already use.
+
+Moving the first four off-thread is the acceptance criterion. Moving pagination
+is not, and an implementation that tries will either rewrite text measurement or
+quietly regress layout fidelity.
+
+### Memory and the leak test
+Measured with CDP `Performance.getMetrics` → `JSHeapUsedSize`, sampled after
+`HeapProfiler.collectGarbage`, because an unforced sample measures garbage that
+has not been collected yet rather than memory that is held.
+
+- **Ceiling: 400 MB** once the fixture has settled. The fixture's own image
+  bytes account for roughly 50 MB of that as `media` `Uint8Array`s, and the
+  parsed model for a few more; the remainder is the working set the product is
+  allowed.
+- **Leak test: the last sample of a 30-minute scripted editing session is
+  within 110% of the first post-settle sample**, sampled once a minute.
+
+The 10% allowance is not slack for a leak — it is there because some growth is
+correct. Undo history legitimately grows to `MAX_HISTORY_STEPS = 200` steps
+(`src/lib/undoHistory.ts:48`), so the session must make **more than 200 edits**
+for the measurement to be meaningful: below that cap, growth is the feature
+working. Above it, the stack evicts and the curve must go flat. A session that
+edits 50 times and reports no growth has tested nothing.
+
+### The supported ceiling
+Beyond this, the document opens read-only. The limits are counted **after parse
+and before pagination**, because page count is not known until the expensive
+pass has already run — these are the quantities available at the door:
+
+| Quantity | Limit |
+| --- | --- |
+| Blocks (paragraphs, tables, images) | 25,000 (≈ 500 pages) |
+| Images | 1,000 |
+| Tables | 500 |
+| Footnotes and endnotes | 1,000 |
+
+The first limit exceeded is the one named: "This document is too large to edit
+(1,240 images; the limit is 1,000). It's open for reading only." Read-only means
+the editing commands are unavailable; opening, scrolling, find, print, PDF export
+and download all still work — a document you cannot edit is still a document you
+came to read.
+
+SPEC-009's 50 MB file-size limit is a separate gate and still applies first: it
+is about bytes at the door, this is about complexity after parse. A 4 MB `.docx`
+can hold 40,000 paragraphs, and a 40 MB one can hold twelve pages of
+photographs.
