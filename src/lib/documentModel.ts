@@ -187,6 +187,8 @@ export interface Run {
   /** Marks this run as a footnote/endnote reference mark (SPEC-031); see
    * NoteRef. Mutually exclusive with `field` by construction. */
   note?: NoteRef;
+  /** Pending tracked-change state (SPEC-039); see RunTrackedChanges. */
+  changes?: RunTrackedChanges;
 }
 
 /** A field run's placeholder text — a single character so it occupies
@@ -534,6 +536,86 @@ export interface CommentThread {
   resolved: boolean;
 }
 
+// --- track changes (SPEC-039) -----------------------------------------------
+
+/** One tracked edit's author and timestamp — the common shape every kind of
+ * tracked change (insertion, deletion, formatting change) carries. Not
+ * named `id` (same equality.ts IGNORED_KEYS reason as BookmarkAnchor);
+ * `changeId` mirrors the threadId/messageId/noteId convention. */
+export interface TrackedChangeInfo {
+  changeId: string;
+  /** The settable identity (lib/commentIdentity.ts) at the time of the edit. */
+  author: string;
+  /** ISO 8601 timestamp. */
+  date: string;
+}
+
+/** A run's pending formatting change (SPEC-039, `w:rPrChange` / ODF
+ * `text:format-change`): the formatting the run had before the change,
+ * restored verbatim if the change is rejected (AC "rejecting... restores
+ * the exact original text and formatting"). */
+export interface RunFormatChange extends TrackedChangeInfo {
+  previous: RunFormatting;
+}
+
+/** Tracked-change state carried on a single run (SPEC-039). A run can be
+ * both inserted and deleted at once: editing over another author's
+ * still-pending insertion nests the deletion on top of it instead of
+ * losing the insertion outright (AC "produces a nested change, not a lost
+ * one") — accepting the deletion then removes the run, rejecting it drops
+ * back to the plain pending insertion. */
+export interface RunTrackedChanges {
+  insert?: TrackedChangeInfo;
+  delete?: TrackedChangeInfo;
+  formatChange?: RunFormatChange;
+}
+
+/** A paragraph's pending formatting change (SPEC-039, `w:pPrChange`). */
+export interface ParagraphFormatChange extends TrackedChangeInfo {
+  previous: ParagraphFormatting | undefined;
+}
+
+/** Tracked-change state carried on a paragraph (SPEC-039): its own trailing
+ * mark (the paragraph break) and/or its block-level formatting. A split
+ * (Enter) sets `markInsert` on the paragraph before the new break; a merge
+ * (Backspace at a paragraph start) sets `markDelete` on the paragraph being
+ * folded into its successor rather than physically merging it, so rejecting
+ * the deletion simply clears the marker and the paragraphs stay apart. */
+export interface ParagraphTrackedChanges {
+  markInsert?: TrackedChangeInfo;
+  markDelete?: TrackedChangeInfo;
+  formatChange?: ParagraphFormatChange;
+}
+
+/** Tracked insertion/deletion of a whole block (SPEC-039): a table row or an
+ * image added or removed while tracking is on (AC "changes made by list,
+ * table and image operations are tracked"). Unlike a run/paragraph, a
+ * deleted block has nothing to render struck through in place, so the
+ * review pane and margin change bar are its only visible trace until
+ * accepted/rejected. */
+export interface BlockTrackedChanges {
+  insert?: TrackedChangeInfo;
+  delete?: TrackedChangeInfo;
+}
+
+/** A fresh, session-unique tracked-change id. */
+export function createChangeId(): string {
+  return `change-${crypto.randomUUID()}`;
+}
+
+/** The review pane's display-mode selector (SPEC-039 AC): "All markup"
+ * shows every insertion/deletion/formatting mark; "Simple markup" shows
+ * only the margin change bars; "No markup" renders as if every change were
+ * accepted; "Original" renders as if every change were rejected. Documents
+ * always open in `"all"`. */
+export type TrackChangesDisplayMode = "all" | "simple" | "noMarkup" | "original";
+
+/** Typed pass-through for a display mode coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asTrackChangesDisplayMode(value: string): TrackChangesDisplayMode {
+  return value as TrackChangesDisplayMode;
+}
+
 /** A paragraph is a block-level element made of inline runs. */
 export interface Paragraph {
   type: "paragraph";
@@ -561,6 +643,9 @@ export interface Paragraph {
    * `offset`. See `CommentAnchor`; offsets are maintained by the
    * textEditing primitives the same way `bookmarks` are. */
   commentAnchors?: CommentAnchor[];
+  /** Pending tracked-change state for this paragraph's own mark/formatting
+   * (SPEC-039); see ParagraphTrackedChanges. */
+  changes?: ParagraphTrackedChanges;
 }
 
 // --- images (SPEC-024) -------------------------------------------------------
@@ -597,6 +682,8 @@ export interface Image {
   wrap: ImageWrapMode;
   /** `wp:docPr/@descr` (.docx) / `svg:desc` (.odt) — AC-7, AC-23..25. */
   altText?: string;
+  /** Pending tracked insertion/deletion of this image block (SPEC-039). */
+  changes?: BlockTrackedChanges;
 }
 
 /** Typed pass-through for a wrap mode coming from a `.vue` template's plain
@@ -718,6 +805,9 @@ export interface TableRow {
   docxTrPr?: string;
   /** `table:style-name` of the source .odt row. */
   odtStyleName?: string;
+  /** Pending tracked insertion/deletion of this row (SPEC-039 AC "table
+   * row/cell insert/delete"). */
+  changes?: BlockTrackedChanges;
 }
 
 /** Table alignment on the page (SPEC-023 AC-22). */
@@ -1225,6 +1315,14 @@ export interface DocumentModel {
    * `notes`) so block-tree walks (word count, pagination, TOC, outline, …)
    * never need to know comments exist. */
   comments?: CommentThread[];
+  /** Whether track-changes recording was ON when the document was last
+   * saved (SPEC-039) — round-trips through `.docx` settings.xml
+   * (`w:trackChanges`) and `.odt` settings.xml (`RecordChanges`), but never
+   * drives the toggle's initial UI state on open (AC "leaves the toggle
+   * OFF"): that is always session-local, starting OFF regardless of this
+   * flag's value, per the explicit AC covering documents that already
+   * contain tracked changes. */
+  trackChangesRecording?: boolean;
 }
 
 export const DEFAULT_TITLE = "Untitled document";
