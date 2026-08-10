@@ -45,6 +45,7 @@ import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
+import PropertiesDialog from "../components/PropertiesDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
@@ -71,6 +72,7 @@ import { useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
+import { useDocumentProperties } from "./document/useDocumentProperties";
 import { noSpellContextMenu, noSpellUnderlineRect, useSpellCheck } from "./document/useSpellCheck";
 import { useDocumentLanguage } from "./document/useDocumentLanguage";
 import { documentExists } from "../lib/documents";
@@ -3913,6 +3915,21 @@ const {
   onSessionClose,
 });
 
+// --- document properties and metadata (SPEC-041) ---------------------------
+const {
+  propertiesOpen,
+  propertiesFileSize,
+  openProperties,
+  closeProperties,
+  updateDocumentProperties,
+  updateAuthorIdentity,
+} = useDocumentProperties({
+  doc,
+  touchDocument,
+  commentAuthorName,
+  trackChangesAuthorName,
+});
+
 // Every markDirty() call site also feeds the version-history cadence timer
 // (SPEC-040 AC-1) — the same activity signal, one order of magnitude
 // coarser (see versionCadenceScheduler.ts's header comment).
@@ -4137,7 +4154,26 @@ async function handleDownload(format = "") {
     return;
   }
   const odt = format === "odt";
-  const { bytes, dropped } = odt ? await writeOdt(doc.value) : await writeDocx(doc.value);
+  // The dcterms:created/dc:date (SPEC-041 AC-2) stamp: `created` is set only
+  // the first time (kept stable on every later save, matching what General
+  // tab shows once it has a value), `modified` refreshes every save. Both
+  // writers read `model.properties.created`/`modified` — see
+  // docProps.ts/meta.ts's buildCorePropertiesXml/buildMetaXml — so this
+  // must be resolved into the model *before* writing, then mirrored back so
+  // the in-memory model (and so the Properties dialog, without a reopen)
+  // agrees with what was just written.
+  const modified = new Date();
+  const properties = {
+    ...doc.value.properties,
+    created: doc.value.properties?.created ?? modified.toISOString(),
+    modified: modified.toISOString(),
+  };
+  doc.value.properties = properties;
+  const { bytes, dropped } = odt
+    ? await writeOdt(doc.value, { modified })
+    : await writeDocx(doc.value, { modified });
+  triggerRef(doc);
+  touchDocument(doc.value.id);
   const fileName = odt ? odtFileName(doc.value.title) : docxFileName(doc.value.title);
   // A transient anchor pointed at an object URL is the download mechanism
   // that needs no new browser permissions; revocation is deferred so the
@@ -4374,6 +4410,11 @@ async function menuPastePlain() {
             testid="page-setup-button"
             :disabled="!editable"
             @select="openPageSetup"
+          />
+          <MenuItem
+            label="Properties…"
+            testid="file-menu-properties"
+            @select="openProperties"
           />
           <MenuItem
             label="Version history"
@@ -5516,6 +5557,17 @@ async function menuPastePlain() {
       :include-notes="statisticsIncludeNotes"
       @update-include-notes="statisticsIncludeNotes = $event"
       @close="closeStatistics"
+    />
+    <PropertiesDialog
+      v-if="propertiesOpen"
+      :model="doc"
+      :stats="statisticsStats"
+      :pages="pageCount"
+      :file-size="propertiesFileSize"
+      :author-identity="commentAuthorName"
+      @update-properties="updateDocumentProperties"
+      @update-author-identity="updateAuthorIdentity"
+      @close="closeProperties"
     />
     <SpecialCharacterDialog
       v-if="specialCharacterDialogOpen"
