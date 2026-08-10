@@ -217,6 +217,159 @@ describe("tracked table row round trip (AC-15)", () => {
   });
 });
 
+describe("tracked table cell insert/delete round trip (AC-15)", () => {
+  function tableModel(): DocumentModel {
+    const model = createDocument("spec-039-docx-cell");
+    const table: Table = {
+      type: "table",
+      columnWidthsCm: [5, 5],
+      rows: [
+        {
+          cells: [
+            { blocks: [paragraph("a1")] },
+            {
+              blocks: [paragraph("a2")],
+              changes: { insert: { changeId: "cc1", author: "Ada", date: "2026-04-04T00:00:00.000Z" } },
+            },
+          ],
+        },
+      ],
+    };
+    model.sections = [{ blocks: [table] }];
+    return model;
+  }
+
+  it("writes a tracked-inserted cell as w:tcPr/w:cellIns and reads it back", async () => {
+    const { parsed, documentXml } = await writeAndReadBack(tableModel());
+    expect(documentXml).toContain("<w:cellIns");
+
+    const reparsed = parsedModel(parsed);
+    const table = reparsed.sections[0].blocks[0] as Table;
+    expect(table.rows[0].cells[1].changes?.insert).toMatchObject({ author: "Ada", date: "2026-04-04T00:00:00.000Z" });
+    expect(table.rows[0].cells[0].changes).toBeUndefined();
+  });
+});
+
+describe("tracked cell property change (merge) round trip (AC-15)", () => {
+  function tableModel(): DocumentModel {
+    const model = createDocument("spec-039-docx-merge");
+    const table: Table = {
+      type: "table",
+      columnWidthsCm: [5, 5],
+      rows: [
+        {
+          cells: [
+            {
+              blocks: [paragraph("a1a2")],
+              colSpan: 2,
+              changes: {
+                propertyChange: {
+                  changeId: "cp1",
+                  author: "Ada",
+                  date: "2026-05-05T00:00:00.000Z",
+                  previous: { colSpan: undefined, rowSpan: undefined, shadingFill: "#ff0000" },
+                },
+              },
+            },
+            { blocks: [], covered: true },
+          ],
+        },
+      ],
+    };
+    model.sections = [{ blocks: [table] }];
+    return model;
+  }
+
+  it("writes w:tcPr/w:tcPrChange with the previous span/shading and reads it back", async () => {
+    const { parsed, documentXml } = await writeAndReadBack(tableModel());
+    expect(documentXml).toContain("<w:tcPrChange");
+
+    const reparsed = parsedModel(parsed);
+    const cell = (reparsed.sections[0].blocks[0] as Table).rows[0].cells[0];
+    expect(cell.colSpan).toBe(2);
+    expect(cell.changes?.propertyChange).toMatchObject({
+      author: "Ada",
+      date: "2026-05-05T00:00:00.000Z",
+      previous: { shadingFill: "#ff0000" },
+    });
+  });
+});
+
+describe("tracked row property change round trip (AC-15)", () => {
+  function tableModel(): DocumentModel {
+    const model = createDocument("spec-039-docx-row-prop");
+    const table: Table = {
+      type: "table",
+      columnWidthsCm: [5, 5],
+      rows: [
+        {
+          cells: [{ blocks: [paragraph("a1")] }, { blocks: [paragraph("a2")] }],
+          minHeightCm: 3,
+          changes: {
+            propertyChange: {
+              changeId: "rp1",
+              author: "Ada",
+              date: "2026-06-06T00:00:00.000Z",
+              previous: { minHeightCm: 1 },
+            },
+          },
+        },
+      ],
+    };
+    model.sections = [{ blocks: [table] }];
+    return model;
+  }
+
+  it("writes w:trPr/w:trPrChange with the previous height and reads it back", async () => {
+    const { parsed, documentXml } = await writeAndReadBack(tableModel());
+    expect(documentXml).toContain("<w:trPrChange");
+
+    const reparsed = parsedModel(parsed);
+    const row = (reparsed.sections[0].blocks[0] as Table).rows[0];
+    expect(row.minHeightCm).toBeCloseTo(3);
+    expect(row.changes?.propertyChange?.author).toBe("Ada");
+    expect(row.changes?.propertyChange?.date).toBe("2026-06-06T00:00:00.000Z");
+    expect(row.changes?.propertyChange?.previous.minHeightCm).toBeCloseTo(1);
+  });
+});
+
+describe("tracked table property change round trip (AC-15)", () => {
+  function tableModel(): DocumentModel {
+    const model = createDocument("spec-039-docx-table-prop");
+    const table: Table = {
+      type: "table",
+      columnWidthsCm: [6, 6],
+      alignment: "center",
+      rows: [{ cells: [{ blocks: [paragraph("a1")] }, { blocks: [paragraph("a2")] }] }],
+      changes: {
+        propertyChange: {
+          changeId: "tp1",
+          author: "Ada",
+          date: "2026-07-07T00:00:00.000Z",
+          previous: { alignment: undefined, columnWidthsCm: [5, 5] },
+        },
+      },
+    };
+    model.sections = [{ blocks: [table] }];
+    return model;
+  }
+
+  it("writes w:tblPr/w:tblPrChange (with a previous w:tblGrid) and reads it back", async () => {
+    const { parsed, documentXml } = await writeAndReadBack(tableModel());
+    expect(documentXml).toContain("<w:tblPrChange");
+
+    const reparsed = parsedModel(parsed);
+    const table = reparsed.sections[0].blocks[0] as Table;
+    expect(table.alignment).toBe("center");
+    expect(table.columnWidthsCm[0]).toBeCloseTo(6);
+    expect(table.columnWidthsCm[1]).toBeCloseTo(6);
+    expect(table.changes?.propertyChange?.author).toBe("Ada");
+    expect(table.changes?.propertyChange?.date).toBe("2026-07-07T00:00:00.000Z");
+    expect(table.changes?.propertyChange?.previous.columnWidthsCm?.[0]).toBeCloseTo(5);
+    expect(table.changes?.propertyChange?.previous.columnWidthsCm?.[1]).toBeCloseTo(5);
+  });
+});
+
 describe("persisted recording flag round trip (AC-3)", () => {
   it("writes w:trackChanges in settings.xml when the flag is set, and reads it back", async () => {
     const model = docWithText("hello world");

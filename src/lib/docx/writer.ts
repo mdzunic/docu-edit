@@ -844,14 +844,76 @@ function cellVAlignXml(align: CellVerticalAlign | undefined): string {
   return align !== undefined ? `<w:vAlign w:val="${align}"/>` : "";
 }
 
+/** A cell's tracked insert/delete marks (SPEC-039 AC-15): `w:cellIns`/
+ * `w:cellDel` inside `w:tcPr` — the cell-level analogue of a row's
+ * `w:trPr/w:ins`|`w:del`. A cell can carry only one of the two (a column
+ * insert and a column delete are different edit events). */
+function cellInsertDeleteXml(cell: TableCell, ctx: InlineWriteContext): string {
+  const insert = cell.changes?.insert;
+  const del = cell.changes?.delete;
+  const parts: string[] = [];
+  if (insert) {
+    parts.push(`<w:cellIns${trackedChangeAttrs(changeNumericId(ctx, insert.changeId), insert.author, insert.date)}/>`);
+  }
+  if (del) {
+    parts.push(`<w:cellDel${trackedChangeAttrs(changeNumericId(ctx, del.changeId), del.author, del.date)}/>`);
+  }
+  return parts.join("");
+}
+
+/** A cell's pending property change (SPEC-039 AC-15: a merge/split, or a
+ * border/shading/padding/vertical-alignment edit) as `w:tcPrChange` inside
+ * `w:tcPr`: the previous span/borders/shading/padding/vertical-alignment,
+ * nested in their own `w:tcPr` (the same shape `w:rPrChange`/`w:pPrChange`
+ * already use for a run/paragraph's previous formatting). The previous
+ * rowSpan has no standard `w:tcPr` slot (rowSpan is normally derived from
+ * `w:vMerge` chains spanning several rows, not a per-cell property), so it
+ * rides a non-standard `w:prevRowSpan` attribute on `w:tcPrChange` itself. */
+function cellPropertyChangeXml(cell: TableCell, ctx: InlineWriteContext): string {
+  const change = cell.changes?.propertyChange;
+  if (!change) {
+    return "";
+  }
+  const id = changeNumericId(ctx, change.changeId);
+  const prev = change.previous;
+  const prevRowSpanAttr = prev.rowSpan !== undefined ? ` w:prevRowSpan="${prev.rowSpan}"` : "";
+  const parts: string[] = [];
+  if (prev.colSpan !== undefined && prev.colSpan > 1) {
+    parts.push(`<w:gridSpan w:val="${prev.colSpan}"/>`);
+  }
+  const borders = cellBordersXml(prev.borders);
+  if (borders) {
+    parts.push(borders);
+  }
+  const shading = cellShadingXml(prev.shadingFill);
+  if (shading) {
+    parts.push(shading);
+  }
+  const margin = cellPaddingXml(prev.paddingCm);
+  if (margin) {
+    parts.push(margin);
+  }
+  const valign = cellVAlignXml(prev.verticalAlign);
+  if (valign) {
+    parts.push(valign);
+  }
+  return (
+    `<w:tcPrChange${trackedChangeAttrs(id, change.author, change.date)}${prevRowSpanAttr}>` +
+    `<w:tcPr>${parts.join("")}</w:tcPr></w:tcPrChange>`
+  );
+}
+
 /** A freshly generated `w:tcPr` (no preserved source XML to reuse): width,
  * then — in the schema's CT_TcPrBase sequence — gridSpan, vMerge,
- * tcBorders, shd, tcMar, vAlign. */
+ * tcBorders, shd, tcMar, vAlign, then any tracked-change marks (SPEC-039
+ * AC-15) last, mirroring `w:rPr`'s own `w:ins`/`w:del`/`w:rPrChange`
+ * ordering. */
 function generatedTcPrXml(
   cell: TableCell,
   widthTwips: number,
   colSpan: number,
   vMergeRestart: boolean,
+  ctx?: InlineWriteContext,
 ): string {
   const parts = [`<w:tcW w:w="${widthTwips}" w:type="dxa"/>`];
   if (colSpan > 1) {
@@ -876,6 +938,10 @@ function generatedTcPrXml(
   if (valign) {
     parts.push(valign);
   }
+  if (ctx) {
+    parts.push(cellInsertDeleteXml(cell, ctx));
+    parts.push(cellPropertyChangeXml(cell, ctx));
+  }
   return `<w:tcPr>${parts.join("")}</w:tcPr>`;
 }
 
@@ -887,15 +953,31 @@ function generatedTcPrXml(
  * would silently drop the tracked change, which SPEC-008's own "never
  * discard what wasn't understood" rule (and this spec's own "never
  * silently drop a tracked change") both forbid. */
+/** A row's pending property change (SPEC-039 AC-15: a height edit) as
+ * `w:trPrChange` inside `w:trPr`: the previous height, nested in its own
+ * `w:trPr` — same shape as `w:tcPrChange`. */
+function rowPropertyChangeXml(row: TableRow, ctx: InlineWriteContext): string {
+  const change = row.changes?.propertyChange;
+  if (!change) {
+    return "";
+  }
+  const id = changeNumericId(ctx, change.changeId);
+  const inner = change.previous.minHeightCm !== undefined
+    ? `<w:trHeight w:val="${cmToTwips(change.previous.minHeightCm)}" w:hRule="atLeast"/>`
+    : "";
+  return `<w:trPrChange${trackedChangeAttrs(id, change.author, change.date)}><w:trPr>${inner}</w:trPr></w:trPrChange>`;
+}
+
 function rowPropertiesXml(row: TableRow, includeOpaque: boolean, ctx?: InlineWriteContext): string {
   const insert = row.changes?.insert;
   const del = row.changes?.delete;
-  if ((insert || del) && ctx) {
+  const propertyChange = row.changes?.propertyChange;
+  if ((insert || del || propertyChange) && ctx) {
     // A tracked change always regenerates trPr from modelled properties
     // only — reusing preserved verbatim XML here risks producing an
     // invalid element if its source namespace prefix isn't "w:"; the only
     // loss is unmodelled row properties on a row that is, by definition,
-    // pending insertion or deletion.
+    // pending insertion, deletion or a property edit.
     const inner = row.minHeightCm !== undefined
       ? `<w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/>`
       : "";
@@ -905,6 +987,9 @@ function rowPropertiesXml(row: TableRow, includeOpaque: boolean, ctx?: InlineWri
     }
     if (del) {
       marks.push(`<w:del${trackedChangeAttrs(changeNumericId(ctx, del.changeId), del.author, del.date)}/>`);
+    }
+    if (propertyChange) {
+      marks.push(rowPropertyChangeXml(row, ctx));
     }
     return `<w:trPr>${inner}${marks.join("")}</w:trPr>`;
   }
@@ -952,6 +1037,40 @@ function tableAlignmentXml(table: Table): string {
  * `w:tc` marked `w:vMerge` (no `w:val` — "continue" is the schema default),
  * repeating the same `w:gridSpan` so every row's cells still sum to the
  * grid's column count. */
+/** A table's pending property change (SPEC-039 AC-15: alignment, width
+ * mode/percent, or column widths) as `w:tblPrChange` inside `w:tblPr`: the
+ * previous alignment/width, nested in their own `w:tblPr`, plus — when the
+ * column widths themselves changed — a nested previous `w:tblGrid` (OOXML
+ * gives grid changes their own `w:tblGridChange` sibling element; nesting
+ * it here instead keeps one edit event as one element with one id, the
+ * same "one changeId per edit" rule every other tracked-change kind
+ * follows). */
+function tablePropertyChangeXml(table: Table, ctx: InlineWriteContext): string {
+  const change = table.changes?.propertyChange;
+  if (!change) {
+    return "";
+  }
+  const id = changeNumericId(ctx, change.changeId);
+  const prev = change.previous;
+  const previousTable: Table = {
+    ...table,
+    alignment: prev.alignment,
+    widthMode: prev.widthMode,
+    widthPercent: prev.widthPercent,
+    columnWidthsCm: prev.columnWidthsCm ?? table.columnWidthsCm,
+  };
+  const previousTotalTwips = previousTable.columnWidthsCm.reduce((sum, cm) => sum + cmToTwips(cm), 0);
+  const innerTblPr = tableWidthXml(previousTable, previousTotalTwips) + tableAlignmentXml(previousTable);
+  const grid =
+    prev.columnWidthsCm !== undefined
+      ? "<w:tblGrid>" + prev.columnWidthsCm.map((cm) => `<w:gridCol w:w="${cmToTwips(cm)}"/>`).join("") + "</w:tblGrid>"
+      : "";
+  return (
+    `<w:tblPrChange${trackedChangeAttrs(id, change.author, change.date)}>` +
+    `<w:tblPr>${innerTblPr}</w:tblPr>${grid}</w:tblPrChange>`
+  );
+}
+
 function tableXml(
   table: Table,
   includeOpaque: boolean,
@@ -959,14 +1078,16 @@ function tableXml(
   cellNumRef: (row: number, col: number, cellBlock: number) => NumberingRef | undefined,
 ): string {
   const totalTwips = table.columnWidthsCm.reduce((sum, cm) => sum + cmToTwips(cm), 0);
+  const hasTrackedTableChange = !!table.changes?.propertyChange;
   const tblPr =
-    includeOpaque && table.docxTblPr !== undefined
+    includeOpaque && table.docxTblPr !== undefined && !hasTrackedTableChange
       ? table.docxTblPr
       : "<w:tblPr>" +
         tableWidthXml(table, totalTwips) +
         tableAlignmentXml(table) +
         GENERATED_TABLE_BORDERS +
         '<w:tblLayout w:type="fixed"/>' +
+        tablePropertyChangeXml(table, ctx) +
         "</w:tblPr>";
   const grid =
     "<w:tblGrid>" +
@@ -989,10 +1110,15 @@ function tableXml(
           .reduce((sum, cm) => sum + cmToTwips(cm), 0);
         if (owner.originRow === rowIndex) {
           const cell = row.cells[colIndex];
+          // A tracked cell change always regenerates tcPr from modelled
+          // properties (SPEC-039 AC-15) — same "never reuse stale preserved
+          // XML over a pending change" rule rowPropertiesXml already
+          // follows.
+          const hasTrackedChange = !!(cell.changes?.insert || cell.changes?.delete || cell.changes?.propertyChange);
           const tcPr =
-            includeOpaque && cell.docxTcPr !== undefined
+            includeOpaque && cell.docxTcPr !== undefined && !hasTrackedChange
               ? cell.docxTcPr
-              : generatedTcPrXml(cell, widthTwips, owner.colSpan, owner.rowSpan > 1);
+              : generatedTcPrXml(cell, widthTwips, owner.colSpan, owner.rowSpan > 1, ctx);
           const content =
             cell.blocks.length > 0
               ? cell.blocks

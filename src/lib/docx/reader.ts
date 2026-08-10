@@ -10,6 +10,7 @@ import type {
   BorderSide,
   BreakKind,
   CellBorders,
+  CellPropertyChange,
   CellVerticalAlign,
   CommentAnchor,
   CommentMessage,
@@ -31,6 +32,7 @@ import type {
   OpaquePart,
   PageNumberFormat,
   Paragraph,
+  RowPropertyChange,
   Run,
   RunFormatting,
   Section,
@@ -40,6 +42,7 @@ import type {
   Table,
   TableAlignment,
   TableCell,
+  TablePropertyChange,
   TableRow,
   TableWidthMode,
   TableOfContents,
@@ -1179,6 +1182,53 @@ function parseTableCell(
   if (tcPrXml !== undefined) {
     cell.docxTcPr = tcPrXml;
   }
+  // Tracked cell insert/delete/property-change (SPEC-039 AC-15): w:tcPr/
+  // w:cellIns|w:cellDel|w:tcPrChange, the cell-level analogue of a run's
+  // w:ins/w:del/w:rPrChange.
+  const cellInsEl = tcPrEl ? firstChildElement(tcPrEl, WORD_NAMESPACE, "cellIns") : undefined;
+  const cellDelEl = tcPrEl ? firstChildElement(tcPrEl, WORD_NAMESPACE, "cellDel") : undefined;
+  if (cellInsEl || cellDelEl) {
+    cell.changes = { ...cell.changes };
+    if (cellInsEl) {
+      cell.changes.insert = trackedChangeInfo(cellInsEl, "cellIns");
+    }
+    if (cellDelEl) {
+      cell.changes.delete = trackedChangeInfo(cellDelEl, "cellDel");
+    }
+  }
+  const tcPrChangeEl = tcPrEl ? firstChildElement(tcPrEl, WORD_NAMESPACE, "tcPrChange") : undefined;
+  if (tcPrChangeEl) {
+    const info = trackedChangeInfo(tcPrChangeEl, "tcPrChange");
+    const prevTcPr = firstChildElement(tcPrChangeEl, WORD_NAMESPACE, "tcPr");
+    const previous: CellPropertyChange["previous"] = {};
+    if (prevTcPr) {
+      const prevColSpan = parseGridSpan(prevTcPr);
+      if (prevColSpan !== undefined) {
+        previous.colSpan = prevColSpan;
+      }
+      const prevBorders = parseCellBorders(prevTcPr);
+      if (prevBorders) {
+        previous.borders = prevBorders;
+      }
+      const prevShading = parseCellShading(prevTcPr);
+      if (prevShading !== undefined) {
+        previous.shadingFill = prevShading;
+      }
+      const prevPadding = parseCellPadding(prevTcPr);
+      if (prevPadding !== undefined) {
+        previous.paddingCm = prevPadding;
+      }
+      const prevValign = parseCellVerticalAlign(prevTcPr);
+      if (prevValign !== undefined) {
+        previous.verticalAlign = prevValign;
+      }
+    }
+    const prevRowSpan = Number(wordAttr(tcPrChangeEl, "prevRowSpan") ?? "");
+    if (Number.isInteger(prevRowSpan) && prevRowSpan > 0) {
+      previous.rowSpan = prevRowSpan;
+    }
+    cell.changes = { ...cell.changes, propertyChange: { ...info, previous } };
+  }
   return { cell, colSpan: colSpan ?? 1, vMerge: tcPrEl ? parseVMerge(tcPrEl) : null };
 }
 
@@ -1348,13 +1398,25 @@ function parseTable(
     const insEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "ins") : undefined;
     const delEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "del") : undefined;
     if (insEl || delEl) {
-      row.changes = {};
+      row.changes = { ...row.changes };
       if (insEl) {
         row.changes.insert = trackedChangeInfo(insEl, "ins");
       }
       if (delEl) {
         row.changes.delete = trackedChangeInfo(delEl, "del");
       }
+    }
+    // Tracked row property change (SPEC-039 AC-15): w:trPr/w:trPrChange.
+    const trPrChangeEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "trPrChange") : undefined;
+    if (trPrChangeEl) {
+      const info = trackedChangeInfo(trPrChangeEl, "trPrChange");
+      const prevTrPr = firstChildElement(trPrChangeEl, WORD_NAMESPACE, "trPr");
+      const previous: RowPropertyChange["previous"] = {};
+      const prevMinHeight = parseRowMinHeight(prevTrPr);
+      if (prevMinHeight !== undefined) {
+        previous.minHeightCm = prevMinHeight;
+      }
+      row.changes = { ...row.changes, propertyChange: { ...info, previous } };
     }
     return row;
   });
@@ -1394,6 +1456,42 @@ function parseTable(
   const alignment = parseTableAlignment(tblPrEl);
   if (alignment !== undefined) {
     table.alignment = alignment;
+  }
+  // Tracked table property change (SPEC-039 AC-15): w:tblPr/w:tblPrChange,
+  // with an optional nested w:tblGrid for a column-widths edit (see
+  // writer.ts's tablePropertyChangeXml).
+  const tblPrChangeEl = tblPrEl ? firstChildElement(tblPrEl, WORD_NAMESPACE, "tblPrChange") : undefined;
+  if (tblPrChangeEl) {
+    const info = trackedChangeInfo(tblPrChangeEl, "tblPrChange");
+    const prevTblPr = firstChildElement(tblPrChangeEl, WORD_NAMESPACE, "tblPr");
+    const previous: TablePropertyChange["previous"] = {};
+    if (prevTblPr) {
+      const prevWidth = parseTableWidth(prevTblPr);
+      if (prevWidth.widthMode !== undefined) {
+        previous.widthMode = prevWidth.widthMode;
+      }
+      if (prevWidth.widthPercent !== undefined) {
+        previous.widthPercent = prevWidth.widthPercent;
+      }
+      const prevAlignment = parseTableAlignment(prevTblPr);
+      if (prevAlignment !== undefined) {
+        previous.alignment = prevAlignment;
+      }
+    }
+    const prevGridEl = firstChildElement(tblPrChangeEl, WORD_NAMESPACE, "tblGrid");
+    if (prevGridEl) {
+      const prevColumnWidthsCm: number[] = [];
+      for (const col of Array.from(prevGridEl.children)) {
+        const w = Number(wordAttr(col, "w") ?? "");
+        if (Number.isFinite(w) && w > 0) {
+          prevColumnWidthsCm.push(twipsToCm(w));
+        }
+      }
+      if (prevColumnWidthsCm.length > 0) {
+        previous.columnWidthsCm = prevColumnWidthsCm;
+      }
+    }
+    table.changes = { propertyChange: { ...info, previous } };
   }
   return table;
 }
