@@ -104,7 +104,7 @@ function componentFor(entry = noRenderEntries()[0]) {
           :data-caret-atom="run.caretAtom"
           :style="run.styleObj"
           :lang="run.lang"
-        ></span>
+        />
         <a
           v-else-if="run.href && !run.segments"
           data-doc-link=""

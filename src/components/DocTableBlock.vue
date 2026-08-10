@@ -110,7 +110,7 @@ function spanAttr(span = 1) {
                   contenteditable="false"
                   :data-caret-atom="run.text"
                   :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
-                ></span>
+                />
                 <span
                   v-else
                   :style="[runStyle(displayRunFormatting(run, asTrackChangesDisplayMode(displayMode))), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
