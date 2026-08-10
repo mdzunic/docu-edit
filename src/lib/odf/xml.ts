@@ -17,6 +17,8 @@ export const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 /** Dublin Core (SPEC-038) — `office:annotation`'s `dc:creator`/`dc:date`
  * child elements. */
 export const DC_NAMESPACE = "http://purl.org/dc/elements/1.1/";
+/** Metadata (SPEC-041) — `meta.xml`'s `office:meta` children. */
+export const META_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:meta:1.0";
 
 /** Reads an `office:*` attribute regardless of the bound prefix. */
 export function officeAttr(el: Element, localName: string): string | null {
