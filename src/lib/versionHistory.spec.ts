@@ -146,6 +146,26 @@ describe("recordVersion", () => {
     expect(blobRecords).toHaveLength(1);
     expect((blobRecords[0] as { refCount: number }).refCount).toBe(1); // only the baseline embeds the ref; the delta didn't touch media
   });
+
+  it("a quota error on the history write abandons that write, leaving no trace in the index (AC-40)", async () => {
+    const { lib, store } = await loadVersionHistory({
+      putVersionsRecord: async (record: { id: string; store: string }) => {
+        if (record.store === "payload") {
+          throw new Error("QuotaExceededError");
+        }
+        store.records.set(record.id, structuredClone(record));
+      },
+    });
+    const model = baseModel("doc-1", "hello world");
+    const result = await lib.recordVersion({ docId: "doc-1", model, author: "You", trigger: "commit", cachedPrev: null });
+    expect(result.written).toBe(false);
+    expect(result.index.versions).toHaveLength(0);
+    // Nothing this module touches lives in the `documents` store — a quota
+    // failure here has no path to the document's own committed/draft
+    // records at all.
+    const index = await lib.loadIndex("doc-1");
+    expect(index.versions).toHaveLength(0);
+  });
 });
 
 describe("decideBaseline", () => {
