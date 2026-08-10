@@ -443,7 +443,12 @@ function applySectionsPatch(before: Section[], patch: SectionsPatch): Section[] 
     }
     const prevSection = before[i];
     const blocks = p.blocks ? applyBlockRangePatch(prevSection.blocks, p.blocks) : prevSection.blocks;
-    after[i] = p.meta ? { ...prevSection, ...p.meta, blocks } : { ...prevSection, blocks };
+    // `p.meta` is a full replacement of every non-`blocks` field (see
+    // SectionPatch's doc comment), not a partial patch to merge onto
+    // `prevSection` — a field the newer section cleared (e.g. `docxSectPr`
+    // deleted by a page-setup edit) is simply absent from `meta`, and
+    // merging onto `prevSection` would let that stale value survive.
+    after[i] = p.meta ? { ...p.meta, blocks } : { ...prevSection, blocks };
   }
   return after;
 }

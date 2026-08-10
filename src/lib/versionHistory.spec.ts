@@ -122,6 +122,29 @@ describe("recordVersion", () => {
     expect(reconstructed!.title).toBe("Doc");
   });
 
+  it("does not resurrect a section-meta field that was cleared on a later version (docxSectPr)", async () => {
+    const { lib } = await loadVersionHistory();
+    // Enough body text that the meta-only change stays well under rule 4's
+    // wholesale-rewrite ratio, same reasoning as the "writes a delta" test
+    // above — otherwise this would (correctly) store as a fresh baseline
+    // and never exercise delta reconstruction at all.
+    const manyParagraphs = Array.from({ length: 40 }, (_, i) => `paragraph number ${i} has a bit of body text in it`);
+    const v1 = baseModel("doc-1", ...manyParagraphs);
+    v1.sections[0].docxSectPr = "<w:sectPr>stale</w:sectPr>";
+    const first = await lib.recordVersion({ docId: "doc-1", model: v1, author: "You", trigger: "commit", cachedPrev: null });
+
+    // A page-setup edit clears docxSectPr (commands.ts's `delete
+    // updated.docxSectPr` pattern) while also touching blocks, so this
+    // section's meta changes and stores as a delta.
+    const { docxSectPr: _dropped, ...clearedSection } = v1.sections[0];
+    const v2 = { ...v1, sections: [{ ...clearedSection, blocks: [...v1.sections[0].blocks, paragraph("second paragraph")] }] };
+    const second = await lib.recordVersion({ docId: "doc-1", model: v2, author: "You", trigger: "commit", cachedPrev: first.newEntry! });
+    expect(second.index.versions[1].kind).toBe("delta");
+
+    const reconstructed = await lib.reconstructVersion("doc-1", second.newEntry!.id);
+    expect(reconstructed!.sections[0].docxSectPr).toBeUndefined();
+  });
+
   it("skips writing while paused, except for restore-bracketing triggers", async () => {
     const { lib, store } = await loadVersionHistory();
     store.records.set("versions:doc-1", { id: "versions:doc-1", store: "index", docId: "doc-1", versions: [], paused: true });
