@@ -183,10 +183,11 @@ export function useSpellCheck(deps: SpellCheckDeps) {
 
   /** The spelling issues in one paragraph, resolving each run's language
    * independently (SPEC-035 AC-10, AC-10.1) and skipping noProof/code-styled
-   * runs (AC-11, AC-12.1, AC-12.2) and words already ignored or in the
-   * custom dictionary. A run whose language has no bundled dictionary, or
-   * whose dictionary has not finished loading yet, contributes nothing
-   * (AC-19) — the latter re-runs once the load resolves. */
+   * runs (AC-11, AC-12.1, AC-12.2), tracked deletions (SPEC-039 AC-17) and
+   * words already ignored or in the custom dictionary. A run whose language
+   * has no bundled dictionary, or whose dictionary has not finished loading
+   * yet, contributes nothing (AC-19) — the latter re-runs once the load
+   * resolves. */
   function computeIssues(
     section: number,
     block: number,
@@ -198,7 +199,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     for (const run of paragraph.runs) {
       const runStart = offset;
       offset += run.text.length;
-      if (!run.text || run.formatting.noProof || isCodeStyledFont(run.formatting.fontFamily)) {
+      if (!run.text || run.formatting.noProof || run.changes?.delete || isCodeStyledFont(run.formatting.fontFamily)) {
         continue;
       }
       const lang = effectiveLanguage(run.formatting.lang, model.defaultStyles.language);

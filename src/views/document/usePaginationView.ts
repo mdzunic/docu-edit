@@ -23,6 +23,7 @@ import {
   type DocumentModel,
   type NoteContent,
   type Paragraph,
+  type TrackChangesDisplayMode,
 } from "../../lib/documentModel";
 import {
   sectionColumnFlowWidthPx,
@@ -34,7 +35,18 @@ import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/not
 import { noRenderEntries, type RenderEntry } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
-import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../../lib/renderFormatting";
+import {
+  displayRunFormatting,
+  headingTag,
+  isExternalLink,
+  paragraphHasTrackedChange,
+  paragraphStyle,
+  runKey,
+  runLinkHref,
+  runStyle,
+  trackChangeRunHidden,
+  trackChangeRunStyle,
+} from "../../lib/renderFormatting";
 import { effectiveLanguage } from "../../lib/language";
 import { markSegments } from "../../lib/marks";
 import { splitRuns } from "../../lib/textEditing";
@@ -118,6 +130,9 @@ export interface PaginationViewDeps {
   hfRemountEpoch: Ref<number>;
   noteRemountEpoch: Ref<number>;
   tocPageNumberFor: (model: DocumentModel, anchor: string) => number | null;
+  /** The review pane's display-mode selector (SPEC-039 AC-9); drives
+   * whether body runs show inline tracked-change markup. */
+  trackChangesDisplayMode: Ref<TrackChangesDisplayMode>;
 }
 
 const SECTION_MARKER_LABELS: Record<string, string> = {
@@ -172,6 +187,7 @@ function renderEntryFor(
         flatEntry.imgSel,
         column,
         model.listDefinitions,
+        deps.trackChangesDisplayMode.value,
       ],
       kind: flatEntry.isTable ? "table" : "image",
       blockProp: block,
@@ -181,6 +197,7 @@ function renderEntryFor(
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       column,
+      trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
     } as RenderEntry;
   }
   if (flatEntry.isToc) {
@@ -229,7 +246,7 @@ function renderEntryFor(
     const tail = splitRuns(paragraph.runs, from)[1];
     runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
   }
-  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? []) };
+  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? [], deps.trackChangesDisplayMode.value) };
   const continuation = sliceStart !== undefined && sliceStart > 0;
   if (continuation) {
     // A continuation slice starts mid-paragraph: no space-before, no
@@ -261,7 +278,7 @@ function renderEntryFor(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: runStyle(run.formatting),
+        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
         text: label,
         segments: null,
         atomText: run.text,
@@ -270,18 +287,26 @@ function renderEntryFor(
         lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
       };
     }
-    const href = runLinkHref(run.formatting);
-    const external = href ? isExternalLink(run.formatting) : false;
-    const segments = marks ? markSegments(run.text) : null;
+    // SPEC-039 AC-9: "No markup"/"Original" render as if every change were
+    // already accepted/rejected — a hidden run (a pending deletion in "No
+    // markup", a pending insertion in "Original") shows no text at all, but
+    // stays a caret atom carrying its full model text (see
+    // trackChangeRunHidden/DocBlockEntries.vue's caretAtom branch).
+    const hidden = trackChangeRunHidden(run, deps.trackChangesDisplayMode.value);
+    const displayFormatting = displayRunFormatting(run, deps.trackChangesDisplayMode.value);
+    const href = hidden ? undefined : runLinkHref(displayFormatting);
+    const external = href ? isExternalLink(displayFormatting) : false;
+    const segments = !hidden && marks ? markSegments(run.text) : null;
     const marked = segments && segments.some((segment) => segment.kind !== "text");
     return {
       key: runKey(run, runIndex),
       href: href || "",
       target: external ? "_blank" : undefined,
       rel: external ? "noopener noreferrer" : undefined,
-      styleObj: runStyle(run.formatting),
-      text: run.text,
+      styleObj: { ...runStyle(displayFormatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+      text: hidden ? "" : run.text,
       segments: marked ? segments : null,
+      caretAtom: hidden ? run.text : undefined,
       lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
     };
   });
@@ -298,6 +323,7 @@ function renderEntryFor(
       noteSig,
       outlineToggle,
       outlineCollapsed,
+      deps.trackChangesDisplayMode.value,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
@@ -314,6 +340,9 @@ function renderEntryFor(
     outlineToggle: outlineToggle || undefined,
     outlineCollapsed: outlineCollapsed || undefined,
     column,
+    hasTrackedChange:
+      (deps.trackChangesDisplayMode.value === "all" || deps.trackChangesDisplayMode.value === "simple") &&
+      paragraphHasTrackedChange(paragraph),
   } as RenderEntry;
 }
 

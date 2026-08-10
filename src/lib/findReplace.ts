@@ -19,6 +19,7 @@ import {
   type CaretPosition,
 } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
+import { overlapsDeletion } from "./trackChanges";
 
 /** The three search options, each persisted for the session by the view. */
 export interface FindOptions {
@@ -135,7 +136,11 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
           // A zero-width match makes no progress; step past it so exec()
           // cannot loop forever, and don't record an empty highlight.
           regExp.lastIndex += 1;
-        } else {
+        } else if (block.type !== "paragraph" || !overlapsDeletion(block, match.index, match.index + length)) {
+          // A match inside a tracked deletion is invisible text (SPEC-039
+          // AC-17) — matching stays against the full (deletions-included)
+          // text so offsets keep lining up for a replace's splitRuns, but
+          // the match itself is dropped.
           matches.push({
             section: sectionIndex,
             block: blockIndex,

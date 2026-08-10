@@ -125,6 +125,22 @@ describe("countBlock / addCountStats", () => {
     expect(stats.words).toBe(0);
   });
 
+  it("excludes a tracked deletion's words (SPEC-039 AC-17)", () => {
+    const p: Paragraph = {
+      type: "paragraph",
+      runs: [
+        { text: "two words ", formatting: {} },
+        {
+          text: "three deleted words",
+          formatting: {},
+          changes: { delete: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } },
+        },
+      ],
+    };
+    const stats = countBlock(p);
+    expect(stats.words).toBe(2);
+  });
+
   it("sums a table's cell paragraphs, one per cell paragraph", () => {
     const table: Table = {
       type: "table",

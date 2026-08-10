@@ -11,12 +11,12 @@
 // referencedNotes) — never `Section.headers`/`Section.footers`, which live
 // in separate maps the walk never reaches, so header/footer text is
 // excluded by construction rather than by a filter that could drift out of
-// sync. Comments (SPEC-038) and tracked changes (SPEC-039) are not yet
-// modelled anywhere in DocumentModel — there is no run or block a comment
-// or a deleted edit could attach to — so there is nothing for this walk to
-// find and nothing extra to exclude; when those specs land, whatever they
-// add must stay outside `Section.blocks`/`NoteContent.blocks` (or be
-// filtered before reaching countBlock) for this contract to keep holding.
+// sync. Comments (SPEC-038) attach via a side-list the walk never reaches,
+// so there is nothing extra to exclude for those. Tracked deletions
+// (SPEC-039) are ordinary runs still sitting in `Paragraph.runs` (retained,
+// struck through, not removed) — visibleBlockText (lib/trackChanges.ts) is
+// blockText with those runs skipped, which is what this module counts with
+// instead (AC "Tracked deletions are excluded from word count").
 import {
   isBreak,
   isImage,
@@ -28,6 +28,7 @@ import {
 import { blockText, paragraphAt, paragraphSlicesInRange } from "./textEditing";
 import { isCollapsed, orderedRange, type ModelSelection } from "./commands";
 import { referencedNotes } from "./notes";
+import { visibleBlockText } from "./trackChanges";
 
 /** Character-classification counts derived straight from a text sample —
  * everything countBlock/countText can compute without knowing whether the
@@ -162,7 +163,8 @@ function countSentences(text: string): number {
 /** One block's statistics: for a table, the summed statistics of every
  * cell paragraph (the same recursive walk blockText uses); for an image,
  * break or table of contents, nothing (they carry no countable text); for
- * a paragraph, its text's counts plus one paragraph. */
+ * a paragraph, its visible text's counts (tracked deletions excluded,
+ * SPEC-039 AC-17) plus one paragraph. */
 export function countBlock(block: Block): CountStats {
   if (isTable(block)) {
     let stats = emptyCountStats();
@@ -178,7 +180,7 @@ export function countBlock(block: Block): CountStats {
   if (isImage(block) || isBreak(block) || isToc(block)) {
     return emptyCountStats();
   }
-  return { ...countText(blockText(block)), paragraphs: 1 };
+  return { ...countText(visibleBlockText(block)), paragraphs: 1 };
 }
 
 /** A block's cached statistics, computing and storing on a miss. `cache`

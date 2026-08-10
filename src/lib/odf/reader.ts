@@ -34,6 +34,7 @@ import type {
   ParagraphFormatting,
   Run,
   RunFormatting,
+  RunTrackedChanges,
   Section,
   SourceXml,
   Table,
@@ -43,6 +44,7 @@ import type {
   TableWidthMode,
   TableOfContents,
   TocEntry,
+  TrackedChangeInfo,
 } from "../documentModel";
 import {
   createDefaultStyles,
@@ -132,6 +134,9 @@ export interface ParsedOdtDocument {
   /** Comment threads (SPEC-038) from office:annotation elements anywhere in
    * the body; empty when the document holds none. */
   comments: CommentThread[];
+  /** Whether settings.xml declared `RecordChanges` true (SPEC-039) —
+   * round-trips onto DocumentModel.trackChangesRecording unchanged. */
+  trackChangesRecording: boolean;
 }
 
 // Transient markup LibreOffice regenerates on every open (rendered
@@ -195,6 +200,8 @@ interface TextPiece {
   field?: FieldSpec;
   /** Marks this piece as a footnote/endnote reference mark (SPEC-031). */
   note?: NoteRef;
+  /** Pending tracked-change state (SPEC-039). */
+  changes?: RunTrackedChanges;
 }
 
 // SPEC-031: the note contents collected while the body parses. Set by
@@ -211,6 +218,25 @@ let odtNoteCounter = 0;
 // exactly as before this spec.
 let odtCommentSink: CommentThread[] | null = null;
 let odtCommentCounter = 0;
+
+// SPEC-039: the document's text:tracked-changes definitions, parsed once
+// before the body walk and consulted by text:change-start/-end/-change
+// marks anywhere in it — the changed-region counterpart of odtCommentSink,
+// except definitions are collected up front (text:tracked-changes is one
+// block near the top of office:text) rather than while walking.
+interface OdtChangedRegion extends TrackedChangeInfo {
+  kind: "insert" | "delete" | "formatChange";
+  /** For a deletion (SPEC-039 AC-16): the deleted content stored verbatim
+   * inside text:deletion, since ODF's body flow carries only a point
+   * text:change marker for a deletion, not the text itself. Parsed as
+   * plain runs (no nested tracked changes inside a deletion's own stored
+   * copy — not a shape this reader/writer produce or need to round-trip). */
+  deletedRuns?: Run[];
+}
+let odtChangedRegions: Map<string, OdtChangedRegion> | null = null;
+// changeId -> the piece index text:change-start recorded it at, so the
+// matching text:change-end can stamp every piece appended in between.
+let odtPendingChangeStarts: Map<string, number> | null = null;
 
 interface InlineAccumulator {
   pieces: TextPiece[];
@@ -366,6 +392,126 @@ function collectAnnotation(el: Element, acc: InlineAccumulator, catalog: OdfStyl
   acc.commentAnchors.push({ threadId, boundary: "start", offset: accumulatedTextLength(acc) });
 }
 
+const UNKNOWN_TRACK_CHANGE_AUTHOR = "Unknown";
+
+/** The model change id for a source `text:changed-region`'s `text:id`
+ * (SPEC-039) — the identity, deliberately: unlike docx (which renumbers
+ * every tracked-change id from scratch on every save, so the reader can
+ * safely prefix), the .odt writer reuses the model's own changeId as
+ * text:id verbatim (odtChangeXmlId is a sanitize-only pass). Adding a
+ * prefix here would grow on every open/save cycle instead of reaching a
+ * fixed point. */
+function odtChangeId(sourceId: string): string {
+  return sourceId;
+}
+
+/** A changed-region's own author/date, from its `text:insertion`/
+ * `text:deletion`/`text:format-change` child's nested `office:change-info`. */
+function odtChangeInfo(el: Element, changeId: string): TrackedChangeInfo {
+  const info = firstChildElement(el, OFFICE_NAMESPACE, "change-info");
+  const creator = info ? firstChildElement(info, DC_NAMESPACE, "creator") : undefined;
+  const date = info ? firstChildElement(info, DC_NAMESPACE, "date") : undefined;
+  return {
+    changeId,
+    author: (creator?.textContent ?? "").trim() || UNKNOWN_TRACK_CHANGE_AUTHOR,
+    date: (date?.textContent ?? "").trim() || new Date(0).toISOString(),
+  };
+}
+
+/** A `text:deletion`'s verbatim stored content (SPEC-039 AC-16) as plain
+ * runs: inline content (a mid-paragraph deletion) is collected directly;
+ * a whole deleted paragraph's `text:p`/`text:h` children each contribute
+ * their runs, joined by "\n" so nothing is lost even though the model
+ * keeps a deletion's text inline in one run flow rather than as separate
+ * paragraphs. */
+function parseOdtDeletionContent(deletionEl: Element, catalog: OdfStyleCatalog): Run[] {
+  const paragraphChildren = Array.from(deletionEl.children).filter(
+    (child) => child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h"),
+  );
+  if (paragraphChildren.length > 0) {
+    const runs: Run[] = [];
+    paragraphChildren.forEach((pEl, index) => {
+      if (index > 0) {
+        runs.push({ text: "\n", formatting: {} });
+      }
+      runs.push(...parseTextBlock(pEl, catalog, false).runs);
+    });
+    return runs;
+  }
+  const acc: InlineAccumulator = {
+    pieces: [],
+    lastChar: "",
+    opaqueInlines: [],
+    mergeBarrier: false,
+    bookmarks: [],
+    commentAnchors: [],
+  };
+  collectInline(deletionEl, {}, catalog, acc);
+  return acc.pieces
+    .filter((piece) => piece.text.length > 0)
+    .map((piece) => ({ text: piece.text, formatting: { ...piece.formatting } }));
+}
+
+/** Parses `office:text`'s `text:tracked-changes` block (SPEC-039), if
+ * present — the changed-region definitions text:change-start/-end/-change
+ * marks anywhere in the body reference by id. Absent (no tracked changes
+ * in the source) is the common case and costs nothing. */
+function parseTrackedChangesRegions(textRoot: Element, catalog: OdfStyleCatalog): Map<string, OdtChangedRegion> {
+  const regions = new Map<string, OdtChangedRegion>();
+  const trackedChangesEl = firstChildElement(textRoot, TEXT_NAMESPACE, "tracked-changes");
+  if (!trackedChangesEl) {
+    return regions;
+  }
+  for (const regionEl of Array.from(trackedChangesEl.children)) {
+    if (regionEl.namespaceURI !== TEXT_NAMESPACE || regionEl.localName !== "changed-region") {
+      continue;
+    }
+    const sourceId = textAttr(regionEl, "id");
+    if (!sourceId) {
+      continue;
+    }
+    const changeId = odtChangeId(sourceId);
+    const insertionEl = firstChildElement(regionEl, TEXT_NAMESPACE, "insertion");
+    const deletionEl = firstChildElement(regionEl, TEXT_NAMESPACE, "deletion");
+    const formatChangeEl = firstChildElement(regionEl, TEXT_NAMESPACE, "format-change");
+    if (insertionEl) {
+      regions.set(sourceId, { ...odtChangeInfo(insertionEl, changeId), kind: "insert" });
+    } else if (deletionEl) {
+      regions.set(sourceId, {
+        ...odtChangeInfo(deletionEl, changeId),
+        kind: "delete",
+        deletedRuns: parseOdtDeletionContent(deletionEl, catalog),
+      });
+    } else if (formatChangeEl) {
+      regions.set(sourceId, { ...odtChangeInfo(formatChangeEl, changeId), kind: "formatChange" });
+    }
+  }
+  return regions;
+}
+
+/** Stamps every piece in `[start, end)` with `region`'s tracked-change
+ * marker (SPEC-039) — the retroactive-marking counterpart of the .docx
+ * reader's collectTrackedRun, since ODF brackets a change with a start/end
+ * pair rather than wrapping it in one element. Formatting changes carry no
+ * "previous formatting" here (ODF's text:format-change has no standard
+ * slot for it, unlike w:rPrChange) — a rejected formatting change from an
+ * .odt source falls back to clearing the marker only (documented gap). */
+function stampChangedPieces(pieces: TextPiece[], start: number, end: number, region: OdtChangedRegion): void {
+  for (let i = start; i < end && i < pieces.length; i++) {
+    const piece = pieces[i];
+    if (region.kind === "insert") {
+      piece.changes = { ...piece.changes, insert: region };
+    } else if (region.kind === "delete") {
+      piece.changes = { ...piece.changes, delete: region };
+    } else {
+      piece.changes = {
+        ...piece.changes,
+        formatChange: { ...region, previous: {} },
+      };
+    }
+  }
+}
+
 function collectInline(
   container: Element,
   formatting: RunFormatting,
@@ -431,6 +577,50 @@ function collectInline(
       }
       case "bookmark-end":
         break;
+      case "change-start": {
+        // A tracked change's opening bracket (SPEC-039): records where in
+        // `acc.pieces` it started so the matching change-end can stamp
+        // everything appended in between. mergeBarrier keeps the marked
+        // span from merging into whatever text preceded it.
+        const changeId = textAttr(el, "change-id");
+        if (changeId && odtPendingChangeStarts) {
+          odtPendingChangeStarts.set(changeId, acc.pieces.length);
+        }
+        acc.mergeBarrier = true;
+        break;
+      }
+      case "change-end": {
+        const changeId = textAttr(el, "change-id");
+        const start = changeId ? odtPendingChangeStarts?.get(changeId) : undefined;
+        const region = changeId ? odtChangedRegions?.get(changeId) : undefined;
+        if (start !== undefined && region) {
+          stampChangedPieces(acc.pieces, start, acc.pieces.length, region);
+        }
+        if (changeId) {
+          odtPendingChangeStarts?.delete(changeId);
+        }
+        acc.mergeBarrier = true;
+        break;
+      }
+      case "change": {
+        // A point deletion marker (SPEC-039 AC-16): the deleted text lives
+        // only in the changed-region's own text:deletion, not the body
+        // flow — inserted here inline (marked deleted), never lost. This
+        // app's own writer always uses change-start/-end pairs for text-
+        // level deletions instead (keeping the text inline directly, no
+        // separate storage needed), so this path is for a foreign file's
+        // structural deletion only.
+        const changeId = textAttr(el, "change-id");
+        const region = changeId ? odtChangedRegions?.get(changeId) : undefined;
+        if (region?.kind === "delete" && region.deletedRuns) {
+          for (const run of region.deletedRuns) {
+            acc.pieces.push({ ...run, changes: { ...run.changes, delete: region } });
+          }
+          acc.mergeBarrier = true;
+          acc.lastChar = region.deletedRuns.at(-1)?.text.at(-1) ?? acc.lastChar;
+        }
+        break;
+      }
       case "page-number":
         // SPEC-029 AC-25, AC-26: the current page's live number.
         appendField(acc, "page", fieldNumberFormat(el), formatting);
@@ -540,6 +730,7 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
       formatting: { ...piece.formatting },
       ...(piece.field ? { field: piece.field } : {}),
       ...(piece.note ? { note: piece.note } : {}),
+      ...(piece.changes ? { changes: piece.changes } : {}),
     }));
 
   // Fresh object per paragraph — the resolver may hand back the catalog's
@@ -558,6 +749,27 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   }
   if (acc.commentAnchors.length > 0) {
     paragraph.commentAnchors = acc.commentAnchors;
+  }
+  // SPEC-039 AC-16: the paragraph's own pending markInsert/markDelete —
+  // see writer.ts's paragraphMarkChangeXml — trails the paragraph's own
+  // content as a point text:change (unambiguous against a row/cell marker,
+  // which always LEADS a paragraph and is stripped before this point — see
+  // stripLeadingChangeMarkers). Two can coexist (an author's split pending
+  // right before another's merge), so every trailing text:change is read,
+  // not just the very last child.
+  const trailingChildren = Array.from(el.children);
+  for (let i = trailingChildren.length - 1; i >= 0; i--) {
+    const candidate = trailingChildren[i];
+    if (candidate.namespaceURI !== TEXT_NAMESPACE || candidate.localName !== "change") {
+      break;
+    }
+    const changeId = textAttr(candidate, "change-id");
+    const region = changeId ? odtChangedRegions?.get(changeId) : undefined;
+    if (region?.kind === "insert") {
+      paragraph.changes = { ...paragraph.changes, markInsert: region };
+    } else if (region?.kind === "delete") {
+      paragraph.changes = { ...paragraph.changes, markDelete: region };
+    }
   }
   if (isHeading) {
     // text:outline-level is 1-based; per ODF a text:h without one is level 1
@@ -1328,6 +1540,74 @@ function parseTableAlignmentAttr(tableEl: Element): TableAlignment | undefined {
   return undefined;
 }
 
+/** The leading tracked-change marker(s) SPEC-039 AC-16's writer prepends to
+ * a table row/cell's first paragraph — see writer.ts's rowChangeMarkerXml/
+ * cellChangeMarkerXml. A `table:change-scope="row"` marker is the row's
+ * own (only ever found on the row's first real cell); an unscoped one is
+ * this cell's own. Both can be present at once (the row's first cell also
+ * independently cell-tracked). Read-only — the caller strips them via
+ * stripLeadingChangeMarkers before parsing the paragraph's own content, so
+ * they are never mistaken for it (or for the paragraph's own trailing
+ * markInsert/markDelete marker, at the opposite end — see
+ * paragraphMarkChange). */
+interface LeadingCellMarkers {
+  rowMark?: OdtChangedRegion;
+  cellMark?: OdtChangedRegion;
+}
+
+function firstParagraphChild(el: Element): Element | undefined {
+  return Array.from(el.children).find(
+    (child) => child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h"),
+  );
+}
+
+function leadingCellChangeMarkers(cellEl: Element): LeadingCellMarkers {
+  const result: LeadingCellMarkers = {};
+  const firstPara = firstParagraphChild(cellEl);
+  if (!firstPara) {
+    return result;
+  }
+  for (const child of Array.from(firstPara.children)) {
+    if (child.namespaceURI !== TEXT_NAMESPACE || child.localName !== "change") {
+      break;
+    }
+    const changeId = textAttr(child, "change-id");
+    const region = changeId ? odtChangedRegions?.get(changeId) : undefined;
+    if (!region || (region.kind !== "insert" && region.kind !== "delete")) {
+      continue;
+    }
+    if (tableAttr(child, "change-scope") === "row") {
+      result.rowMark = region;
+    } else {
+      result.cellMark = region;
+    }
+  }
+  return result;
+}
+
+/** A clone of `cellEl` with its first paragraph's leading change markers
+ * (see leadingCellChangeMarkers) removed — cheap (cells are small); a
+ * no-op clone when there are none. */
+function stripLeadingChangeMarkers(cellEl: Element): Element {
+  const clone = cellEl.cloneNode(true) as Element;
+  const firstPara = firstParagraphChild(clone);
+  if (!firstPara) {
+    return clone;
+  }
+  const toRemove: Element[] = [];
+  for (const child of Array.from(firstPara.children)) {
+    if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "change") {
+      toRemove.push(child);
+      continue;
+    }
+    break;
+  }
+  for (const el of toRemove) {
+    firstPara.removeChild(el);
+  }
+  return clone;
+}
+
 function parseTableCellElement(
   cellEl: Element,
   catalog: OdfStyleCatalog,
@@ -1436,6 +1716,12 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         return null;
       }
       const cells: TableCell[] = [];
+      // SPEC-039 AC-16: a pending row/cell insert/delete's own marker —
+      // see writer.ts's rowChangeMarkerXml/cellChangeMarkerXml — leads the
+      // affected cell's first paragraph; the row's own marker always lands
+      // on the row's first real cell, so at most one is ever found per row.
+      let rowChange: TrackedChangeInfo | undefined;
+      let rowChangeKind: "insert" | "delete" | undefined;
       for (const cellEl of Array.from(child.children)) {
         if (cellEl.namespaceURI !== TABLE_NAMESPACE) {
           return null;
@@ -1446,7 +1732,17 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         }
         let cell: TableCell | null;
         if (cellEl.localName === "table-cell") {
-          cell = parseTableCellElement(cellEl, catalog, styleTables.cellStyles);
+          const markers = leadingCellChangeMarkers(cellEl);
+          const parseTarget =
+            markers.rowMark || markers.cellMark ? stripLeadingChangeMarkers(cellEl) : cellEl;
+          cell = parseTableCellElement(parseTarget, catalog, styleTables.cellStyles);
+          if (cell && markers.cellMark) {
+            cell.changes = { ...cell.changes, [markers.cellMark.kind]: markers.cellMark };
+          }
+          if (markers.rowMark) {
+            rowChange = markers.rowMark;
+            rowChangeKind = markers.rowMark.kind as "insert" | "delete";
+          }
         } else if (cellEl.localName === "covered-table-cell") {
           cell = { blocks: [], covered: true };
         } else {
@@ -1472,6 +1768,9 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         }
         if (minHeightCm !== undefined) {
           row.minHeightCm = minHeightCm;
+        }
+        if (rowChange && rowChangeKind) {
+          row.changes = { ...row.changes, [rowChangeKind]: rowChange };
         }
         rows.push(row);
       }
@@ -1756,7 +2055,14 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   const comments: CommentThread[] = [];
   odtCommentSink = comments;
   odtCommentCounter = 0;
+  // SPEC-039: the tracked-change definitions text:change-start/-end/-change
+  // marks anywhere in the body walk reference (see odtChangedRegions).
+  odtChangedRegions = parseTrackedChangesRegions(textRoot, catalog);
+  odtPendingChangeStarts = new Map();
   for (const child of Array.from(textRoot.children)) {
+    if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "tracked-changes") {
+      continue;
+    }
     if (child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h")) {
       const signals = paragraphAutoStyleSignals(catalog, textAttr(child, "style-name") ?? undefined);
       // SPEC-029 AC-22: a style:page-number on the document's very first
@@ -1851,6 +2157,8 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   finishSection();
   odtNoteSink = null;
   odtCommentSink = null;
+  odtChangedRegions = null;
+  odtPendingChangeStarts = null;
 
   const fallback = createDefaultStyles();
   // The document default page geometry is the master the body actually
@@ -1944,6 +2252,16 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     }
   }
 
+  // SPEC-039: settings.xml's RecordChanges config-item — the odt counterpart
+  // of docx settings.xml's w:trackChanges, read the same regex-on-raw-text
+  // way (settings.xml itself is otherwise unmodelled, travelling through
+  // `opaque` above).
+  const settingsBytes = parts.get("settings.xml");
+  const settingsText = settingsBytes ? decodeUtf8(settingsBytes) : undefined;
+  const trackChangesRecording =
+    !!settingsText &&
+    /<[\w:]*config-item\b[^>]*\bconfig:name="RecordChanges"[^>]*>\s*true\s*<\/[\w:]*config-item>/.test(settingsText);
+
   const result: ParsedOdtDocument = {
     sections,
     defaultStyles,
@@ -1954,6 +2272,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     listDefinitions: catalog.listRead?.definitions ?? [],
     notes,
     comments,
+    trackChangesRecording,
   };
   const footnoteSettings = parseOdtNoteSettings(stylesDoc, "footnote");
   if (footnoteSettings) {

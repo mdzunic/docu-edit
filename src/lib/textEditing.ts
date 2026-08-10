@@ -288,6 +288,22 @@ function sameFormatting(a: Run["formatting"], b: Run["formatting"]): boolean {
   );
 }
 
+/** Whether two runs' tracked-change state (SPEC-039) is the same — a plain
+ * reference/JSON comparison is enough since `Run.changes` is always built
+ * fresh by lib/trackChangesDiff.ts with a stable key order, never hand-
+ * edited. Absent on both sides (the overwhelming majority of runs, and
+ * every run when tracking has never been used) short-circuits on `a === b`
+ * so behaviour for a tracking-free document is unchanged. */
+function sameChanges(a: Run["changes"], b: Run["changes"]): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** A run whose text is a placeholder for a computed value — a page-number
  * field (SPEC-029) or a note reference mark (SPEC-031). Never coalesced
  * with neighbouring runs: merging would silently turn the marker into
@@ -312,7 +328,8 @@ export function normalizeRuns(runs: Run[]): Run[] {
       last &&
       !isMarkerRun(last) &&
       !isMarkerRun(run) &&
-      sameFormatting(last.formatting, run.formatting)
+      sameFormatting(last.formatting, run.formatting) &&
+      sameChanges(last.changes, run.changes)
     ) {
       result[result.length - 1] = { ...last, text: last.text + run.text };
     } else {
@@ -339,8 +356,8 @@ export function splitRuns(runs: Run[], offset: number): [Run[], Run[]] {
       after.push(run);
     } else {
       const cut = offset - consumed;
-      before.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
-      after.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
+      before.push({ ...run, text: run.text.slice(0, cut), formatting: { ...run.formatting } });
+      after.push({ ...run, text: run.text.slice(cut), formatting: { ...run.formatting } });
     }
     consumed = end;
   }

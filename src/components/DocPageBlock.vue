@@ -57,6 +57,7 @@ const entry = computed(() => asRenderEntry(props.entry));
     :block="entry.blockProp"
     :section="entry.sectionProp"
     :block-index="entry.blockIndexProp"
+    :display-mode="entry.trackChangesDisplayMode"
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
     :src="entry.imageSrc"
     :selected="entry.imageSelected"

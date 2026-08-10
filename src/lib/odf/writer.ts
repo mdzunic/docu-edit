@@ -55,9 +55,11 @@ import type {
   TableOfContents,
   TocEntry,
   TocOptions,
+  TrackedChangeInfo,
 } from "../documentModel";
 import {
   FIELD_PLACEHOLDER_TEXT,
+  isTable,
   NOTE_PLACEHOLDER_TEXT,
   resolveColumnWidthsCm,
   sectionMargins,
@@ -66,6 +68,7 @@ import {
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
+import { collectChanges } from "../trackChanges";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
@@ -1071,6 +1074,138 @@ function odtNoteXmlId(noteId: string): string {
 // through every serialiser.
 let odtCommentsContext: Map<string, CommentThread> | null = null;
 
+/** One `text:changed-region`'s worth of identity (SPEC-039): enough to emit
+ * both the definitions block and every body marker referencing it. Text-level
+ * changes reuse lib/trackChanges.ts's `collectChanges` (kind "insert"/
+ * "delete"/"format"); structural changes (paragraph mark, table row/cell —
+ * AC-16) are walked directly off the model instead, since `collectChanges`'
+ * review-pane-shaped `ChangeEntry` collapses a markInsert/markDelete pair (or
+ * a row/cell insert/delete pair) into one "paragraphMark"/"row"/"cell" kind
+ * with no insert-vs-delete distinction of its own. */
+interface OdtRegionDef {
+  changeId: string;
+  kind: "insert" | "delete" | "format";
+  author: string;
+  date: string;
+}
+
+// SPEC-039: every tracked change the .odt format can represent — text-level
+// (insert/delete/format) plus structural (paragraph mark, table row/cell
+// insert/delete, AC-16) — in the model being written, keyed by changeId; set
+// by buildContentXml around its body walk, mirroring odtCommentsContext, so a
+// marked run/paragraph/row/cell anywhere in the flow can emit its
+// text:change-start/-end/text:change through this context without threading
+// a parameter through every serialiser. The definitions block itself is
+// built from the same context. Table/row/cell *property* changes (a merge,
+// a border/shading/height/width edit) are not included — ODF has no
+// standard slot for a property change's "previous" state at all (the same
+// documented gap text-level formatChange already has), so those are
+// reported as a SPEC-008 DropRecord instead (AC-19) rather than represented
+// here; see collectOdtUnrepresentableTrackedChanges. */
+let odtChangedRegionsContext: Map<string, OdtRegionDef> | null = null;
+
+/** Walks paragraph marks and table row/cell insert/delete throughout
+ * `blocks` (recursing into table cells), reporting each one found — the
+ * structural half of odtChangedRegionsWriteContext (see its doc comment for
+ * why this cannot reuse lib/trackChanges.ts's collectChanges). */
+function walkOdtStructuralChanges(
+  blocks: Block[],
+  note: (info: TrackedChangeInfo | undefined, kind: "insert" | "delete") => void,
+): void {
+  for (const block of blocks) {
+    if (block.type === "paragraph") {
+      note(block.changes?.markInsert, "insert");
+      note(block.changes?.markDelete, "delete");
+      continue;
+    }
+    if (isTable(block)) {
+      for (const row of block.rows) {
+        note(row.changes?.insert, "insert");
+        note(row.changes?.delete, "delete");
+        for (const cell of row.cells) {
+          note(cell.changes?.insert, "insert");
+          note(cell.changes?.delete, "delete");
+          walkOdtStructuralChanges(cell.blocks, note);
+        }
+      }
+    }
+  }
+}
+
+function odtChangedRegionsWriteContext(model: DocumentModel): Map<string, OdtRegionDef> {
+  const byId = new Map<string, OdtRegionDef>();
+  for (const entry of collectChanges(model)) {
+    if (entry.kind === "insert" || entry.kind === "delete" || entry.kind === "format") {
+      byId.set(entry.changeId, { changeId: entry.changeId, kind: entry.kind, author: entry.author, date: entry.date });
+    }
+  }
+  const note = (info: TrackedChangeInfo | undefined, kind: "insert" | "delete") => {
+    if (info) {
+      byId.set(info.changeId, { changeId: info.changeId, kind, author: info.author, date: info.date });
+    }
+  };
+  for (const section of model.sections) {
+    walkOdtStructuralChanges(section.blocks, note);
+  }
+  return byId;
+}
+
+/** The model changeId as an XML-safe text:id — same sanitisation as
+ * odtNoteXmlId/odtCommentXmlName. */
+function odtChangeXmlId(changeId: string): string {
+  return changeId.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+/** The document's `text:tracked-changes` definitions block (SPEC-039
+ * AC-13): one `text:changed-region` per distinct tracked change, each
+ * naming its kind and `office:change-info` (author/date) — ODF has no
+ * standard slot for a format change's *previous* properties (unlike
+ * `.docx`'s `w:rPrChange`), so rejecting an .odt-sourced formatting change
+ * falls back to clearing the marker only (documented gap). Empty (and so
+ * omitted) for a document with no tracked changes. */
+function trackedChangesDefinitionsXml(ctx: Map<string, OdtRegionDef>): string {
+  if (ctx.size === 0) {
+    return "";
+  }
+  const regions = Array.from(ctx.values())
+    .map((entry) => {
+      const tag = entry.kind === "insert" ? "insertion" : entry.kind === "delete" ? "deletion" : "format-change";
+      return (
+        `<text:changed-region text:id="${odtChangeXmlId(entry.changeId)}">` +
+        `<text:${tag}><office:change-info>` +
+        `<dc:creator>${escapeXml(entry.author)}</dc:creator><dc:date>${escapeXml(entry.date)}</dc:date>` +
+        `</office:change-info></text:${tag}></text:changed-region>`
+      );
+    })
+    .join("");
+  return `<text:tracked-changes xmlns:dc="${DC_NAMESPACE}">${regions}</text:tracked-changes>`;
+}
+
+/** A run's tracked-change marks (SPEC-039), wrapping its content in
+ * `text:change-start`/`-end` pairs — one per insert/delete/formatChange it
+ * carries, so a nested change (AC "editing over an existing tracked
+ * insertion... produces a nested change") wraps with both. These are point
+ * markers, not containers, so nesting order is cosmetic; insert is written
+ * outermost to match the .docx writer's w:ins-outside-w:del convention. */
+function wrapTrackedChangeMarks(run: Run, inner: string): string {
+  const changes = run.changes;
+  if (!changes || !odtChangedRegionsContext) {
+    return inner;
+  }
+  let xml = inner;
+  const wrap = (mark: TrackedChangeInfo | undefined) => {
+    if (!mark || !odtChangedRegionsContext?.has(mark.changeId)) {
+      return;
+    }
+    const id = odtChangeXmlId(mark.changeId);
+    xml = `<text:change-start text:change-id="${id}"/>${xml}<text:change-end text:change-id="${id}"/>`;
+  };
+  wrap(changes.formatChange);
+  wrap(changes.delete);
+  wrap(changes.insert);
+  return xml;
+}
+
 function odtCommentsWriteContext(model: DocumentModel): Map<string, CommentThread> {
   const byThreadId = new Map<string, CommentThread>();
   for (const entry of visibleCommentThreads(model)) {
@@ -1161,11 +1296,14 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
     return noteXml(run, styles, state);
   }
   const styleName = styles.textNameFor(run.formatting);
+  let span: string;
   if (run.field) {
     state.lastChar = FIELD_PLACEHOLDER_TEXT;
-    return `<text:span text:style-name="${styleName}">${fieldContentXml(run.field)}</text:span>`;
+    span = `<text:span text:style-name="${styleName}">${fieldContentXml(run.field)}</text:span>`;
+  } else {
+    span = `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
   }
-  return `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
+  return wrapTrackedChangeMarks(run, span);
 }
 
 /** The paragraph's inline content: its runs, with any preserved opaque
@@ -1318,14 +1456,40 @@ function tocXml(toc: TableOfContents): string {
   );
 }
 
+/** A pending paragraph-mark change's own tracked-change marker (SPEC-039
+ * AC-16): a point `text:change` appended after the paragraph's own inline
+ * content. ODF has no `w:pPr/w:rPr/w:ins`-equivalent slot for "this
+ * paragraph's own trailing mark is pending", so the marker rides at the end
+ * of the paragraph's own content instead — unambiguous against a row/cell
+ * marker (see rowChangeMarkerXml/cellChangeMarkerXml), which always LEADS a
+ * paragraph's content, never trails one. */
+function paragraphMarkChangeXml(paragraph: Paragraph): string {
+  if (!odtChangedRegionsContext) {
+    return "";
+  }
+  const parts: string[] = [];
+  const markInsert = paragraph.changes?.markInsert;
+  const markDelete = paragraph.changes?.markDelete;
+  if (markInsert && odtChangedRegionsContext.has(markInsert.changeId)) {
+    parts.push(`<text:change text:change-id="${odtChangeXmlId(markInsert.changeId)}"/>`);
+  }
+  if (markDelete && odtChangedRegionsContext.has(markDelete.changeId)) {
+    parts.push(`<text:change text:change-id="${odtChangeXmlId(markDelete.changeId)}"/>`);
+  }
+  return parts.join("");
+}
+
 /** A paragraph as text:p — or text:h with text:outline-level when the model
  * carries a heading level, so the level survives re-opening regardless of
- * the style's definition. */
+ * the style's definition. `leadingXml` is a table row/cell's own tracked-
+ * change marker (SPEC-039 AC-16), prepended ahead of the paragraph's own
+ * content when this is a cell's first paragraph (see cellContentXml). */
 function paragraphXml(
   paragraph: Paragraph,
   styles: AutomaticStyles,
   includeOpaque: boolean,
   styleOptions?: ParagraphStyleOptions,
+  leadingXml = "",
 ): string {
   const styleName = styles.paragraphNameFor(paragraph, styleOptions);
   const tag = paragraph.headingLevel !== undefined ? "text:h" : "text:p";
@@ -1336,7 +1500,7 @@ function paragraphXml(
   if (paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null)) {
     attrs += LINK_XMLNS;
   }
-  const content = inlineContentXml(paragraph, styles, includeOpaque);
+  const content = leadingXml + inlineContentXml(paragraph, styles, includeOpaque) + paragraphMarkChangeXml(paragraph);
   return content.length > 0 ? `<${tag}${attrs}>${content}</${tag}>` : `<${tag}${attrs}/>`;
 }
 
@@ -1384,8 +1548,12 @@ function imageParagraphXml(
 
 /** A cell's block content (SPEC-022): paragraphs, with consecutive list
  * items grouped into text:list runs exactly like body content — a cell is
- * its own list context, so runs never join one outside the table. */
-function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpaque: boolean): string {
+ * its own list context, so runs never join one outside the table.
+ * `leadingMarkerXml` is a pending row/cell tracked-change marker (SPEC-039
+ * AC-16), prepended into the cell's first paragraph — dropped if that
+ * paragraph turns out to be a list item (text:list has no slot for it; a
+ * documented gap, the same shape as the cell/row-property DropRecord one). */
+function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpaque: boolean, leadingMarkerXml = ""): string {
   // The cell is its own numbering context (SPEC-022), so instance
   // continuity never crosses the cell boundary — a fresh map per cell.
   const continuity = new Map<string, string>();
@@ -1393,7 +1561,7 @@ function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpa
   let i = 0;
   while (i < blocks.length) {
     if (!blocks[i].list) {
-      xml += paragraphXml(blocks[i], styles, includeOpaque);
+      xml += paragraphXml(blocks[i], styles, includeOpaque, undefined, i === 0 ? leadingMarkerXml : "");
       i++;
       continue;
     }
@@ -1404,7 +1572,10 @@ function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpa
     xml += listRunsXml(blocks.slice(i, end), styles, includeOpaque, undefined, continuity);
     i = end;
   }
-  return xml.length > 0 ? xml : "<text:p/>";
+  if (xml.length > 0) {
+    return xml;
+  }
+  return leadingMarkerXml ? `<text:p>${leadingMarkerXml}</text:p>` : "<text:p/>";
 }
 
 /** A grid slot's owning real cell — the writer's own mirror of the same
@@ -1444,6 +1615,36 @@ function computeOwnerGrid(table: Table): CellOwner[][] {
   return grid;
 }
 
+/** A table row's own pending insert/delete tracked-change marker (SPEC-039
+ * AC-16): a point `text:change` leading its first (non-covered) cell's
+ * first paragraph. `table:change-scope="row"` distinguishes it from a
+ * cell-level marker that could otherwise land at the exact same position
+ * (that same first cell, if it independently carries its own cell-level
+ * change too — see cellChangeMarkerXml, which never sets this attribute). */
+function rowChangeMarkerXml(row: TableRow): string {
+  if (!odtChangedRegionsContext) {
+    return "";
+  }
+  const mark = row.changes?.insert ?? row.changes?.delete;
+  if (!mark || !odtChangedRegionsContext.has(mark.changeId)) {
+    return "";
+  }
+  return `<text:change text:change-id="${odtChangeXmlId(mark.changeId)}" table:change-scope="row"/>`;
+}
+
+/** A table cell's own pending insert/delete tracked-change marker (SPEC-039
+ * AC-16: a column insert/delete), leading its own first paragraph. */
+function cellChangeMarkerXml(cell: TableCell): string {
+  if (!odtChangedRegionsContext) {
+    return "";
+  }
+  const mark = cell.changes?.insert ?? cell.changes?.delete;
+  if (!mark || !odtChangedRegionsContext.has(mark.changeId)) {
+    return "";
+  }
+  return `<text:change text:change-id="${odtChangeXmlId(mark.changeId)}"/>`;
+}
+
 /** One table block as table:table markup (SPEC-022; formatting and merged
  * cells SPEC-023): column definitions referencing width-carrying styles,
  * then rows of cells. The table: namespace is declared on the element
@@ -1467,6 +1668,7 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
       includeOpaque && row.odtStyleName !== undefined ? row.odtStyleName : names.rowStyleName(row);
     const rowStyleAttr = rowStyleName !== undefined ? ` table:style-name="${escapeXml(rowStyleName)}"` : "";
     xml += `<table:table-row${rowStyleAttr}>`;
+    let firstRealCellInRow = true;
     for (let colIndex = 0; colIndex < table.columnWidthsCm.length; colIndex++) {
       const owner = ownerGrid[rowIndex][colIndex];
       if (owner.originRow !== rowIndex || owner.originCol !== colIndex) {
@@ -1483,9 +1685,14 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
       const spanAttrs =
         (owner.colSpan > 1 ? ` table:number-columns-spanned="${owner.colSpan}"` : "") +
         (owner.rowSpan > 1 ? ` table:number-rows-spanned="${owner.rowSpan}"` : "");
+      // SPEC-039 AC-16: a pending row change marks its first real cell; a
+      // pending cell change marks its own — both can coexist on the row's
+      // own first cell (table:change-scope tells them apart on read).
+      const marker = (firstRealCellInRow ? rowChangeMarkerXml(row) : "") + cellChangeMarkerXml(cell);
+      firstRealCellInRow = false;
       xml +=
         `<table:table-cell${cellStyleAttr}${spanAttrs} office:value-type="string">` +
-        cellContentXml(cell.blocks, styles, includeOpaque) +
+        cellContentXml(cell.blocks, styles, includeOpaque, marker) +
         "</table:table-cell>";
     }
     xml += "</table:table-row>";
@@ -1519,6 +1726,10 @@ export function buildContentXml(
   // emit their office:annotation/-end through this context; cleared with
   // odtNotesContext below.
   odtCommentsContext = odtCommentsWriteContext(model);
+  // Tracked changes (SPEC-039): a marked run anywhere in the body emits its
+  // text:change-start/-end through this context; cleared with the others
+  // below. The definitions block itself is built from the same context.
+  odtChangedRegionsContext = odtChangedRegionsWriteContext(model);
   // Defined-list instance continuity for the whole body (SPEC-032): one map
   // across every section, so an instance interrupted by a section break
   // still writes text:continue-list on its later segments.
@@ -1657,8 +1868,10 @@ export function buildContentXml(
     // cycle is a fixed point).
     blockXml.push(carrierParagraphXml(styles, { breakBefore: pendingBreak }));
   }
+  const trackedChanges = trackedChangesDefinitionsXml(odtChangedRegionsContext);
   odtNotesContext = null;
   odtCommentsContext = null;
+  odtChangedRegionsContext = null;
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
   const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
   const preservedStyles = includeOpaque ? (model.sourceXml?.odtAutomaticStyles ?? []) : [];
@@ -1666,7 +1879,7 @@ export function buildContentXml(
     `${XML_DECLARATION}<office:document-content${DOCUMENT_XMLNS} office:version="1.2">` +
     fontFaceDecls +
     `<office:automatic-styles>${styles.defs.join("")}${preservedStyles.join("")}</office:automatic-styles>` +
-    `<office:body><office:text>${body}</office:text></office:body>` +
+    `<office:body><office:text>${trackedChanges}${body}</office:text></office:body>` +
     "</office:document-content>"
   );
 }

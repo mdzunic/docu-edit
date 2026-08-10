@@ -10,6 +10,7 @@ import type {
   BorderSide,
   BreakKind,
   CellBorders,
+  CellPropertyChange,
   CellVerticalAlign,
   CommentAnchor,
   CommentMessage,
@@ -31,6 +32,7 @@ import type {
   OpaquePart,
   PageNumberFormat,
   Paragraph,
+  RowPropertyChange,
   Run,
   RunFormatting,
   Section,
@@ -40,11 +42,13 @@ import type {
   Table,
   TableAlignment,
   TableCell,
+  TablePropertyChange,
   TableRow,
   TableWidthMode,
   TableOfContents,
   TocEntry,
   TocOptions,
+  TrackedChangeInfo,
 } from "../documentModel";
 import {
   createDefaultStyles,
@@ -84,7 +88,9 @@ import {
   mergeRunFormatting,
   parseOutlineLevel,
   parseParagraphProperties,
+  parseParagraphPropertiesChange,
   parseRunProperties,
+  parseRunPropertiesChange,
 } from "./properties";
 import { eighthPointsToPt, ooxmlColorToCss, twipsToCm } from "./units";
 
@@ -119,6 +125,7 @@ const TRANSIENT_PARAGRAPH_CHILDREN = new Set(["proofErr"]);
 const MODELLED_RUN_CHILDREN = new Set([
   "rPr",
   "t",
+  "delText",
   "tab",
   "br",
   "cr",
@@ -177,6 +184,31 @@ function docxCommentId(sourceId: string): string {
   return `wc${sourceId}`;
 }
 
+/** The model change id for a source `w:ins`/`w:del`/`w:rPrChange`/
+ * `w:pPrChange`/`w:trPr` ins-or-del's `w:id`/its own identity (SPEC-039) —
+ * same "derive, don't randomise" convention as docxCommentId, so re-parsing
+ * the same file gives the same id and a same-format round trip compares
+ * structurally equal. `kind` keeps the numeric ids each element type
+ * happens to reuse from colliding (an insertion and a format change can
+ * both be `w:id="1"` in the same file). */
+function docxChangeId(kind: string, sourceId: string): string {
+  return `wtc-${kind}-${sourceId}`;
+}
+
+const UNKNOWN_TRACK_CHANGE_AUTHOR = "Unknown";
+
+/** A tracked-change range's author/date (SPEC-039), from the `w:author`/
+ * `w:date` attributes every `w:ins`/`w:del`/`w:rPrChange`/`w:pPrChange`
+ * carries — same fallback convention as word/comments.xml's author/date. */
+function trackedChangeInfo(el: Element, kind: string): TrackedChangeInfo {
+  const id = wordAttr(el, "id") ?? `${Math.random()}`;
+  return {
+    changeId: docxChangeId(kind, id),
+    author: wordAttr(el, "author") || UNKNOWN_TRACK_CHANGE_AUTHOR,
+    date: wordAttr(el, "date") || new Date(0).toISOString(),
+  };
+}
+
 /** Whether a run's only content (besides `w:rPr`) is a `w:commentReference`
  * (SPEC-038) — dropped on read like a footnoteRef/endnoteRef marker: the
  * model derives which comment a range belongs to from the range's own id
@@ -228,6 +260,9 @@ export interface ParsedDocxDocument {
   /** Comment threads (SPEC-038) from word/comments.xml; empty when the
    * package has no comments part. */
   comments: CommentThread[];
+  /** Whether settings.xml declared `w:trackChanges` (SPEC-039) — round-trips
+   * onto DocumentModel.trackChangesRecording unchanged. */
+  trackChangesRecording: boolean;
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -242,6 +277,9 @@ function decodeUtf8(bytes: Uint8Array): string {
 function runChildText(child: Element): string {
   switch (child.localName) {
     case "t":
+    case "delText":
+      // w:delText (SPEC-039): a tracked-deletion run's text — Word's
+      // substitute for w:t inside w:del, same content model otherwise.
       return child.textContent ?? "";
     case "tab":
       return "\t";
@@ -280,6 +318,7 @@ function runHasTypedBreak(rEl: Element): boolean {
 function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undefined {
   const rPr = firstChildElement(rEl, WORD_NAMESPACE, "rPr");
   const formatting = mergeRunFormatting(inheritedFormatting, parseRunProperties(rPr));
+  const formatChange = parseRunPropertiesChange(rPr);
 
   let text = "";
   for (const child of Array.from(rEl.children)) {
@@ -291,7 +330,7 @@ function parseRun(rEl: Element, inheritedFormatting: RunFormatting): Run | undef
   if (text.length === 0) {
     return undefined;
   }
-  return { text, formatting };
+  return formatChange ? { text, formatting, changes: { formatChange } } : { text, formatting };
 }
 
 /** The run formatting a `w:hyperlink`'s child runs inherit: the wrapper's
@@ -358,6 +397,22 @@ function collectCommentAnchor(child: Element, runs: Run[], commentAnchors: Comme
   });
 }
 
+/** A tracked insertion/deletion wrapper's runs (SPEC-039): recurse with the
+ * given `collect` callback (the caller's own collectRuns-shaped recursion,
+ * since `parseBodyParagraphBlocks` and `collectRuns` each walk children
+ * their own way), then stamp every run it produced with the wrapper's
+ * author/date. w:del's runs use w:delText instead of w:t (handled by
+ * runChildText) but are otherwise ordinary runs. */
+function collectTrackedRun(child: Element, runs: Run[], collect: () => void): void {
+  const kind = child.localName === "ins" ? "insert" : "delete";
+  const mark = trackedChangeInfo(child, child.localName);
+  const startIndex = runs.length;
+  collect();
+  for (let i = startIndex; i < runs.length; i++) {
+    runs[i] = { ...runs[i], changes: { ...runs[i].changes, [kind]: mark } };
+  }
+}
+
 function collectRuns(
   container: Element,
   inheritedFormatting: RunFormatting,
@@ -417,6 +472,10 @@ function collectRuns(
       (child.localName === "commentRangeStart" || child.localName === "commentRangeEnd")
     ) {
       collectCommentAnchor(child, runs, commentAnchors);
+    } else if (child.namespaceURI === WORD_NAMESPACE && (child.localName === "ins" || child.localName === "del")) {
+      collectTrackedRun(child, runs, () =>
+        collectRuns(child, inheritedFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors),
+      );
     } else if (
       child.namespaceURI === WORD_NAMESPACE &&
       TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)
@@ -452,6 +511,36 @@ interface ParagraphMeta {
   headingLevel: number | undefined;
   styleId: string | undefined;
   list: Paragraph["list"];
+  changes: Paragraph["changes"];
+}
+
+/** A paragraph's own tracked-change state (SPEC-039): `w:pPrChange` for a
+ * pending formatting change, and `w:pPr/w:rPr/w:ins`|`w:del` for the
+ * paragraph mark itself (the pilcrow) being tracked-inserted/deleted —
+ * Word nests these inside the mark's own run-properties element, distinct
+ * from the paragraph's other `w:pPr` children. */
+function parseParagraphChanges(pPr: Element | undefined): Paragraph["changes"] {
+  if (!pPr) {
+    return undefined;
+  }
+  const formatChange = parseParagraphPropertiesChange(pPr);
+  const markRPr = firstChildElement(pPr, WORD_NAMESPACE, "rPr");
+  const markInsertEl = markRPr ? firstChildElement(markRPr, WORD_NAMESPACE, "ins") : undefined;
+  const markDeleteEl = markRPr ? firstChildElement(markRPr, WORD_NAMESPACE, "del") : undefined;
+  if (!formatChange && !markInsertEl && !markDeleteEl) {
+    return undefined;
+  }
+  const changes: Paragraph["changes"] = {};
+  if (formatChange) {
+    changes.formatChange = formatChange;
+  }
+  if (markInsertEl) {
+    changes.markInsert = trackedChangeInfo(markInsertEl, "ins");
+  }
+  if (markDeleteEl) {
+    changes.markDelete = trackedChangeInfo(markDeleteEl, "del");
+  }
+  return changes;
 }
 
 function parseParagraphMeta(
@@ -502,7 +591,8 @@ function parseParagraphMeta(
     }
   }
 
-  return { resolved, formatting, headingLevel, styleId, list };
+  const changes = parseParagraphChanges(pPr);
+  return { resolved, formatting, headingLevel, styleId, list, changes };
 }
 
 function assembleParagraph(
@@ -531,6 +621,9 @@ function assembleParagraph(
   }
   if (commentAnchors.length > 0) {
     paragraph.commentAnchors = commentAnchors;
+  }
+  if (meta.changes) {
+    paragraph.changes = meta.changes;
   }
   return paragraph;
 }
@@ -895,6 +988,10 @@ function parseBodyParagraphBlocks(
       (child.localName === "commentRangeStart" || child.localName === "commentRangeEnd")
     ) {
       collectCommentAnchor(child, runs, commentAnchors);
+    } else if (child.namespaceURI === WORD_NAMESPACE && (child.localName === "ins" || child.localName === "del")) {
+      collectTrackedRun(child, runs, () =>
+        collectRuns(child, meta.resolved.runFormatting, runs, opaqueInlines, bookmarks, links, commentAnchors),
+      );
     } else if (child.namespaceURI === WORD_NAMESPACE && TRANSIENT_PARAGRAPH_CHILDREN.has(child.localName)) {
       // Regenerated by Word on open; deliberately not preserved.
     } else {
@@ -1085,6 +1182,53 @@ function parseTableCell(
   if (tcPrXml !== undefined) {
     cell.docxTcPr = tcPrXml;
   }
+  // Tracked cell insert/delete/property-change (SPEC-039 AC-15): w:tcPr/
+  // w:cellIns|w:cellDel|w:tcPrChange, the cell-level analogue of a run's
+  // w:ins/w:del/w:rPrChange.
+  const cellInsEl = tcPrEl ? firstChildElement(tcPrEl, WORD_NAMESPACE, "cellIns") : undefined;
+  const cellDelEl = tcPrEl ? firstChildElement(tcPrEl, WORD_NAMESPACE, "cellDel") : undefined;
+  if (cellInsEl || cellDelEl) {
+    cell.changes = { ...cell.changes };
+    if (cellInsEl) {
+      cell.changes.insert = trackedChangeInfo(cellInsEl, "cellIns");
+    }
+    if (cellDelEl) {
+      cell.changes.delete = trackedChangeInfo(cellDelEl, "cellDel");
+    }
+  }
+  const tcPrChangeEl = tcPrEl ? firstChildElement(tcPrEl, WORD_NAMESPACE, "tcPrChange") : undefined;
+  if (tcPrChangeEl) {
+    const info = trackedChangeInfo(tcPrChangeEl, "tcPrChange");
+    const prevTcPr = firstChildElement(tcPrChangeEl, WORD_NAMESPACE, "tcPr");
+    const previous: CellPropertyChange["previous"] = {};
+    if (prevTcPr) {
+      const prevColSpan = parseGridSpan(prevTcPr);
+      if (prevColSpan !== undefined) {
+        previous.colSpan = prevColSpan;
+      }
+      const prevBorders = parseCellBorders(prevTcPr);
+      if (prevBorders) {
+        previous.borders = prevBorders;
+      }
+      const prevShading = parseCellShading(prevTcPr);
+      if (prevShading !== undefined) {
+        previous.shadingFill = prevShading;
+      }
+      const prevPadding = parseCellPadding(prevTcPr);
+      if (prevPadding !== undefined) {
+        previous.paddingCm = prevPadding;
+      }
+      const prevValign = parseCellVerticalAlign(prevTcPr);
+      if (prevValign !== undefined) {
+        previous.verticalAlign = prevValign;
+      }
+    }
+    const prevRowSpan = Number(wordAttr(tcPrChangeEl, "prevRowSpan") ?? "");
+    if (Number.isInteger(prevRowSpan) && prevRowSpan > 0) {
+      previous.rowSpan = prevRowSpan;
+    }
+    cell.changes = { ...cell.changes, propertyChange: { ...info, previous } };
+  }
   return { cell, colSpan: colSpan ?? 1, vMerge: tcPrEl ? parseVMerge(tcPrEl) : null };
 }
 
@@ -1250,6 +1394,30 @@ function parseTable(
     if (minHeightCm !== undefined) {
       row.minHeightCm = minHeightCm;
     }
+    // Tracked row insert/delete (SPEC-039 AC-15): w:trPr/w:ins|w:del.
+    const insEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "ins") : undefined;
+    const delEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "del") : undefined;
+    if (insEl || delEl) {
+      row.changes = { ...row.changes };
+      if (insEl) {
+        row.changes.insert = trackedChangeInfo(insEl, "ins");
+      }
+      if (delEl) {
+        row.changes.delete = trackedChangeInfo(delEl, "del");
+      }
+    }
+    // Tracked row property change (SPEC-039 AC-15): w:trPr/w:trPrChange.
+    const trPrChangeEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "trPrChange") : undefined;
+    if (trPrChangeEl) {
+      const info = trackedChangeInfo(trPrChangeEl, "trPrChange");
+      const prevTrPr = firstChildElement(trPrChangeEl, WORD_NAMESPACE, "trPr");
+      const previous: RowPropertyChange["previous"] = {};
+      const prevMinHeight = parseRowMinHeight(prevTrPr);
+      if (prevMinHeight !== undefined) {
+        previous.minHeightCm = prevMinHeight;
+      }
+      row.changes = { ...row.changes, propertyChange: { ...info, previous } };
+    }
     return row;
   });
 
@@ -1288,6 +1456,42 @@ function parseTable(
   const alignment = parseTableAlignment(tblPrEl);
   if (alignment !== undefined) {
     table.alignment = alignment;
+  }
+  // Tracked table property change (SPEC-039 AC-15): w:tblPr/w:tblPrChange,
+  // with an optional nested w:tblGrid for a column-widths edit (see
+  // writer.ts's tablePropertyChangeXml).
+  const tblPrChangeEl = tblPrEl ? firstChildElement(tblPrEl, WORD_NAMESPACE, "tblPrChange") : undefined;
+  if (tblPrChangeEl) {
+    const info = trackedChangeInfo(tblPrChangeEl, "tblPrChange");
+    const prevTblPr = firstChildElement(tblPrChangeEl, WORD_NAMESPACE, "tblPr");
+    const previous: TablePropertyChange["previous"] = {};
+    if (prevTblPr) {
+      const prevWidth = parseTableWidth(prevTblPr);
+      if (prevWidth.widthMode !== undefined) {
+        previous.widthMode = prevWidth.widthMode;
+      }
+      if (prevWidth.widthPercent !== undefined) {
+        previous.widthPercent = prevWidth.widthPercent;
+      }
+      const prevAlignment = parseTableAlignment(prevTblPr);
+      if (prevAlignment !== undefined) {
+        previous.alignment = prevAlignment;
+      }
+    }
+    const prevGridEl = firstChildElement(tblPrChangeEl, WORD_NAMESPACE, "tblGrid");
+    if (prevGridEl) {
+      const prevColumnWidthsCm: number[] = [];
+      for (const col of Array.from(prevGridEl.children)) {
+        const w = Number(wordAttr(col, "w") ?? "");
+        if (Number.isFinite(w) && w > 0) {
+          prevColumnWidthsCm.push(twipsToCm(w));
+        }
+      }
+      if (prevColumnWidthsCm.length > 0) {
+        previous.columnWidthsCm = prevColumnWidthsCm;
+      }
+    }
+    table.changes = { propertyChange: { ...info, previous } };
   }
   return table;
 }
@@ -2028,6 +2232,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   const settingsPartPath = settingsRel ? resolvePartPath(mainPartPath, settingsRel.target) : "word/settings.xml";
   const settingsText = readPart(settingsPartPath);
   const evenAndOddHeaders = !!settingsText && /<[\w:]*evenAndOddHeaders\b/.test(settingsText);
+  const trackChangesRecording = !!settingsText && /<[\w:]*trackChanges\b/.test(settingsText);
   const headerFooterContentCache = new Map<string, { blocks: Block[]; media: MediaPart[] }>();
   rawSections.forEach((raw, index) => {
     const isFinal = index === rawSections.length - 1;
@@ -2109,6 +2314,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     listDefinitions: numberingCatalog.definitionsUsed(),
     notes,
     comments,
+    trackChangesRecording,
   };
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;

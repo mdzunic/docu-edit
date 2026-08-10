@@ -131,6 +131,22 @@ describe("findMatches", () => {
     const model = docOf(paragraph(["cat", { bold: true }], ["egory"]));
     expect(matchTexts(model, "category")).toEqual(["category"]);
   });
+
+  it("excludes a match inside a tracked deletion (SPEC-039 AC-17)", () => {
+    const deleted: Paragraph = {
+      type: "paragraph",
+      runs: [
+        { text: "keep cat ", formatting: {} },
+        {
+          text: "deleted cat",
+          formatting: {},
+          changes: { delete: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } },
+        },
+      ],
+    };
+    const model = docOf(deleted);
+    expect(matchTexts(model, "cat")).toEqual(["cat"]);
+  });
 });
 
 describe("matchSelection", () => {

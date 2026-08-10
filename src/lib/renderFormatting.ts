@@ -3,9 +3,22 @@
 // split out of DocumentView.vue because that file's <script setup> is
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
-import type { BorderSide, Image, ListDefinition, Paragraph, Run, RunFormatting, Table, TableCell, TableRow } from "./documentModel";
+import type {
+  BorderSide,
+  Image,
+  ListDefinition,
+  Paragraph,
+  ParagraphFormatting,
+  Run,
+  RunFormatting,
+  Table,
+  TableCell,
+  TableRow,
+  TrackChangesDisplayMode,
+} from "./documentModel";
 import { listIndentCm } from "./lists";
 import { definedTextIndentCm } from "./listDefinitions";
+import { authorColor } from "./trackChangesIdentity";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
 // name as-is.
@@ -92,11 +105,27 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
   return style;
 }
 
+/** A paragraph's formatting as this display mode should render it (SPEC-039
+ * AC-9): "Original" shows the pre-change formatting for a pending paragraph
+ * formatChange (as if it were rejected), every other mode shows the current
+ * (possibly already-changed) formatting, same as `paragraph.formatting`. */
+export function displayParagraphFormatting(
+  paragraph: Paragraph,
+  displayMode: TrackChangesDisplayMode,
+): ParagraphFormatting | undefined {
+  const formatChange = paragraph.changes?.formatChange;
+  if (displayMode === "original" && formatChange) {
+    return formatChange.previous;
+  }
+  return paragraph.formatting;
+}
+
 export function paragraphStyle(
   paragraph: Paragraph,
   listDefinitions: readonly ListDefinition[] = [],
+  displayMode: TrackChangesDisplayMode = "all",
 ): Record<string, string> {
-  const formatting = paragraph.formatting;
+  const formatting = displayParagraphFormatting(paragraph, displayMode);
   const style: Record<string, string> = { whiteSpace: "pre-wrap" };
   // A list item's text sits at the level's indent (SPEC-018 AC-5's per-level
   // indents); the marker itself hangs before it via the canvas's ::before
@@ -152,6 +181,105 @@ export function paragraphStyle(
 
 export function runKey(run: Run, index: number): string {
   return `${index}-${run.text.length}`;
+}
+
+// --- track changes (SPEC-039) ------------------------------------------
+
+/** A run's tracked-change markup, layered on top of `runStyle` (SPEC-039
+ * AC "inserted text renders underlined in the author's colour and deleted
+ * text renders struck through"): "All markup" only, since "Simple markup"
+ * shows plain text with the margin change bar doing the signalling, and
+ * "No markup"/"Original" render as if one side of the change already won
+ * (see `trackChangeRunHidden`, which decides whether this run's text shows
+ * at all in those two modes). */
+export function trackChangeRunStyle(run: Run, displayMode: TrackChangesDisplayMode): Record<string, string> {
+  const changes = run.changes;
+  if (!changes || displayMode !== "all") {
+    return {};
+  }
+  const style: Record<string, string> = {};
+  const decorations: string[] = [];
+  if (changes.insert) {
+    decorations.push("underline");
+    style.color = authorColor(changes.insert.author);
+  }
+  if (changes.delete) {
+    decorations.push("line-through");
+    style.color = authorColor(changes.delete.author);
+  }
+  if (decorations.length > 0) {
+    style.textDecorationLine = decorations.join(" ");
+    style.textDecorationColor = style.color;
+  }
+  return style;
+}
+
+/** Whether a run's text should render as invisible (zero rendered
+ * characters) under this display mode (SPEC-039 AC-9): "No markup" reads as
+ * if every change were already accepted, so a pending deletion's text is
+ * gone; "Original" reads as if every change were rejected, so a pending
+ * insertion's text never happened. The run itself always stays in the DOM
+ * (see DocBlockEntries.vue's `caretAtom` branch) — only its rendered text
+ * collapses to "", with the full text kept as the caret-atom's model text
+ * (lib/domCaret.ts) so caret/offset mapping stays exactly as if the text
+ * were showing. */
+export function trackChangeRunHidden(run: Run, displayMode: TrackChangesDisplayMode): boolean {
+  const changes = run.changes;
+  if (!changes) {
+    return false;
+  }
+  if (displayMode === "noMarkup" && changes.delete) {
+    return true;
+  }
+  if (displayMode === "original" && changes.insert) {
+    return true;
+  }
+  return false;
+}
+
+/** A run's formatting as this display mode should render it (SPEC-039
+ * AC-9): "Original" shows the pre-change formatting for a pending run
+ * formatChange (as if it were rejected), every other mode shows the
+ * current formatting. */
+export function displayRunFormatting(run: Run, displayMode: TrackChangesDisplayMode): RunFormatting {
+  const formatChange = run.changes?.formatChange;
+  if (displayMode === "original" && formatChange) {
+    return formatChange.previous;
+  }
+  return run.formatting;
+}
+
+/** Whether a paragraph carries any tracked change at all — text, its own
+ * mark, or block-level (SPEC-039 AC-5's margin change bar, shown in every
+ * display mode except "No markup"/"Original", which render as if the
+ * document already reflects one side of every change). */
+export function paragraphHasTrackedChange(paragraph: Paragraph): boolean {
+  if (paragraph.changes?.markInsert || paragraph.changes?.markDelete || paragraph.changes?.formatChange) {
+    return true;
+  }
+  return paragraph.runs.some((run) => run.changes?.insert || run.changes?.delete || run.changes?.formatChange);
+}
+
+/** Whether a whole tracked-inserted/deleted block (a table row or an image
+ * — see `BlockTrackedChanges`) should be hidden entirely under this display
+ * mode (SPEC-039 AC-9): "No markup" drops a pending deletion (as if
+ * accepted), "Original" drops a pending insertion (as if rejected). Unlike
+ * run-level hiding, a whole row/image is its own addressable block, so it
+ * is safe to omit outright rather than collapse to a caret atom. */
+export function trackChangeBlockHidden(
+  changes: { insert?: unknown; delete?: unknown } | undefined,
+  displayMode: TrackChangesDisplayMode,
+): boolean {
+  if (!changes) {
+    return false;
+  }
+  if (displayMode === "noMarkup" && changes.delete) {
+    return true;
+  }
+  if (displayMode === "original" && changes.insert) {
+    return true;
+  }
+  return false;
 }
 
 // --- tables (SPEC-023) -------------------------------------------------

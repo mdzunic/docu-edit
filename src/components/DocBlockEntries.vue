@@ -54,10 +54,12 @@ function componentFor(entry = noRenderEntries()[0]) {
     :data-marker-label="entry.markerLabel"
     :data-list-marker="entry.listMarker"
     :data-list-level="entry.listLevel"
+    :data-tracked-change="entry.hasTrackedChange ? '1' : undefined"
     :block="entry.blockProp"
     :section="entry.sectionProp"
     :block-index="entry.blockIndexProp"
     :list-definitions="entry.listDefinitions"
+    :display-mode="entry.trackChangesDisplayMode"
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
     :src="entry.imageSrc"
     :selected="entry.imageSelected"
@@ -92,6 +94,17 @@ function componentFor(entry = noRenderEntries()[0]) {
           :style="run.styleObj"
           :lang="run.lang"
         >{{ run.text }}</span>
+        <!-- A tracked-change run hidden by the current display mode
+             (SPEC-039 AC-9): renders no visible text, but still carries its
+             full model text via data-caret-atom so caret offsets land where
+             they would if the text were showing. -->
+        <span
+          v-else-if="run.caretAtom"
+          contenteditable="false"
+          :data-caret-atom="run.caretAtom"
+          :style="run.styleObj"
+          :lang="run.lang"
+        />
         <a
           v-else-if="run.href && !run.segments"
           data-doc-link=""
@@ -151,6 +164,14 @@ function componentFor(entry = noRenderEntries()[0]) {
   margin: 0;
   font-weight: normal;
   font-size: inherit;
+}
+
+/* SPEC-039 AC-5: a change bar in the margin for any paragraph carrying a
+   tracked change — a plain vertical rule outside the paragraph's own box
+   (a box-shadow, not a pseudo-element, so it never collides with the list
+   marker's ::before), shown in "All markup"/"Simple markup" only. */
+.doc-paragraph[data-tracked-change] {
+  box-shadow: -0.3cm 0 0 0 #1a73e8;
 }
 
 /* The list marker (SPEC-018): painted from the derived data-list-marker

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { imageDisplayStyle } from "../lib/renderFormatting";
-import { asImage } from "../lib/documentModel";
+import { imageDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { asImage, asTrackChangesDisplayMode } from "../lib/documentModel";
 
 // One image block on the canvas (SPEC-024). Runtime prop declarations, not
 // defineProps<{...}>() generics — see AppShell.vue's comment on the same
@@ -29,6 +29,10 @@ const props = defineProps({
    * looks this up — the block only carries a mediaId). */
   src: { type: String, required: true },
   selected: { type: Boolean, default: false },
+  /** The review pane's display mode (SPEC-039 AC-9) — a tracked-inserted
+   * image is hidden in "Original" (as if rejected), a tracked-deleted one
+   * hidden in "No markup" (as if accepted). */
+  displayMode: { type: String, default: "all" },
 });
 
 defineEmits(["select"]);
@@ -44,6 +48,7 @@ const floatingWrap = ["behind", "infront"];
     :data-block="blockIndex"
   >
     <img
+      v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
       class="doc-image"
       :class="{ 'doc-image-selected': selected }"
       :src="props.src"

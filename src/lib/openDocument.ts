@@ -69,6 +69,7 @@ function buildModel(
     footnoteSettings?: NoteSettings;
     endnoteSettings?: NoteSettings;
     comments?: CommentThread[];
+    trackChangesRecording?: boolean;
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -112,6 +113,11 @@ function buildModel(
   // Comments (SPEC-038) anchored in the body's commentAnchors side-lists.
   if (parsed.comments && parsed.comments.length > 0) {
     model.comments = parsed.comments;
+  }
+  // SPEC-039: the source's persisted recording flag round-trips unchanged
+  // but never turns the toggle on itself (see DocumentModel.trackChangesRecording).
+  if (parsed.trackChangesRecording) {
+    model.trackChangesRecording = true;
   }
   return model;
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { asListDefinitions } from "../lib/documentModel";
+import { asListDefinitions, asTrackChangesDisplayMode } from "../lib/documentModel";
 import {
+  displayRunFormatting,
   headingTag,
   paragraphStyle,
   runKey,
@@ -10,6 +11,9 @@ import {
   tableColumnWidth,
   tableRowStyle,
   tableStyle,
+  trackChangeBlockHidden,
+  trackChangeRunHidden,
+  trackChangeRunStyle,
 } from "../lib/renderFormatting";
 import { asCellRange, asTable, isCellInRange, visibleRowCells } from "../lib/tables";
 
@@ -30,6 +34,9 @@ const props = defineProps({
   /** The model's multilevel list definitions (SPEC-032) — cell paragraphs
    * derive defined-list markers and indents from them. */
   listDefinitions: { type: Array, default: () => [] },
+  /** The review pane's display mode (SPEC-039 AC-9) — drives whether cell
+   * runs show inline tracked-change markup. */
+  displayMode: { type: String, default: "all" },
 });
 
 /** A cell's colspan/rowspan attribute value: undefined (the HTML default,
@@ -56,6 +63,7 @@ function spanAttr(span = 1) {
     <tbody>
       <tr
         v-for="(row, rowIndex) in block.rows"
+        v-show="!trackChangeBlockHidden(row.changes, asTrackChangesDisplayMode(displayMode))"
         :key="rowIndex"
         :style="tableRowStyle(row)"
       >
@@ -78,7 +86,7 @@ function spanAttr(span = 1) {
             v-for="(paragraph, cellBlockIndex) in entry.cell.blocks"
             :key="cellBlockIndex"
             class="doc-paragraph"
-            :style="paragraphStyle(paragraph, asListDefinitions(listDefinitions))"
+            :style="paragraphStyle(paragraph, asListDefinitions(listDefinitions), asTrackChangesDisplayMode(displayMode))"
             :data-section="section"
             :data-block="blockIndex"
             :data-row="rowIndex"
@@ -88,11 +96,26 @@ function spanAttr(span = 1) {
             :data-list-level="paragraph.list ? paragraph.list.level : undefined"
           >
             <template v-if="paragraph.runs.length > 0">
-              <span
+              <template
                 v-for="(run, runIndex) in paragraph.runs"
                 :key="runKey(run, runIndex)"
-                :style="runStyle(run.formatting)"
-              >{{ run.text }}</span>
+              >
+                <!-- SPEC-039 AC-9: a run hidden by the current display mode
+                     (a pending deletion in "No markup", a pending insertion
+                     in "Original") renders no text, staying a caret atom
+                     carrying its full model text — see
+                     lib/renderFormatting.ts's trackChangeRunHidden. -->
+                <span
+                  v-if="trackChangeRunHidden(run, asTrackChangesDisplayMode(displayMode))"
+                  contenteditable="false"
+                  :data-caret-atom="run.text"
+                  :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                />
+                <span
+                  v-else
+                  :style="[runStyle(displayRunFormatting(run, asTrackChangesDisplayMode(displayMode))), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                >{{ run.text }}</span>
+              </template>
             </template>
             <br v-else>
           </component>

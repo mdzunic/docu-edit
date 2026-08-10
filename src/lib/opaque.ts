@@ -6,7 +6,7 @@
 // an item is and that it cannot be represented in the target format, so the
 // conversion report dialog and the tests both read the writer's `dropped`
 // array rather than diffing models.
-import { isBreak, isImage, isToc, type DocumentFormat, type DocumentModel } from "./documentModel";
+import { isBreak, isImage, isTable, isToc, type DocumentFormat, type DocumentModel } from "./documentModel";
 import { parseXml, XmlParseError } from "./docx/xml";
 
 // --- base64 ----------------------------------------------------------------
@@ -52,7 +52,8 @@ export type DropKind =
   | "opaqueInline"
   | "opaquePart"
   | "runShading"
-  | "svgImage";
+  | "svgImage"
+  | "trackedPropertyChange";
 
 /** One item a writer could not represent in its target format. */
 export interface DropRecord {
@@ -90,6 +91,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaquePart: "Package part",
   runShading: "Run shading",
   svgImage: "SVG image",
+  trackedPropertyChange: "Tracked table property change",
 };
 
 /** DROP_KIND_LABELS behind a plain-string lookup, for the dialog template
@@ -194,6 +196,8 @@ const REASONS: Record<DropKind, string> = {
   runShading:
     "the target format has a single text background, which the highlight colour occupies",
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
+  trackedPropertyChange:
+    "OpenDocument Text has no slot for a table/row/cell property change's previous state — the change is kept applied but no longer tracked",
 };
 
 const FORMAT_LABELS: Record<DocumentFormat, string> = {
@@ -259,6 +263,36 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
           // both writers regenerate its field/index markup fresh, so there
           // is nothing here that could be dropped by a format conversion.
           continue;
+        }
+        if (target === "odt" && isTable(blockAt)) {
+          // SPEC-039 AC-19: a table/row/cell property change (a merge/split,
+          // a border/shading/padding/height/width/alignment edit) has no
+          // .odt representation at all — unlike a paragraph mark or a table
+          // row/cell insert/delete, which the .odt writer does track
+          // (AC-16). The change is still applied (its current value is what
+          // gets written either way), just no longer tracked as pending —
+          // reported here rather than silently dropped.
+          if (blockAt.changes?.propertyChange) {
+            dropped.push(record("trackedPropertyChange", `table at paragraph ${paragraphNumber}`, target));
+          }
+          blockAt.rows.forEach((row, rowIndex) => {
+            if (row.changes?.propertyChange) {
+              dropped.push(
+                record("trackedPropertyChange", `table at paragraph ${paragraphNumber}, row ${rowIndex + 1}`, target),
+              );
+            }
+            row.cells.forEach((cell, colIndex) => {
+              if (cell.changes?.propertyChange) {
+                dropped.push(
+                  record(
+                    "trackedPropertyChange",
+                    `table at paragraph ${paragraphNumber}, row ${rowIndex + 1}, column ${colIndex + 1}`,
+                    target,
+                  ),
+                );
+              }
+            });
+          });
         }
         // A table's cell paragraphs are inspected too (SPEC-022); their
         // records locate by the table's own block position.
