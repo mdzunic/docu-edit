@@ -152,6 +152,50 @@ describe("applyTrackChanges — paragraph split/merge (AC-15)", () => {
   });
 });
 
+describe("applyTrackChanges — merging consecutive same-author edits (real typing/backspacing)", () => {
+  it("merges three separate keystrokes into one insert run and one change, not three", () => {
+    let model = docWithText("hello world");
+    const original = model;
+    let offset = 0;
+    for (const ch of ["X", "Y", "Z"]) {
+      const before = model;
+      const after = insertTextCommand(before, caretSelection(caret(0, offset)), ch).model;
+      model = applyTrackChanges(before, after, AUTHOR, DATE);
+      offset += 1;
+    }
+    const runs = runsOf(model);
+    expect(runs.map((r) => r.text)).toEqual(["XYZ", "hello world"]);
+    expect(runs[0].changes?.insert).toBeDefined();
+    expect(model.sections[0].blocks[0]).not.toBe(original.sections[0].blocks[0]);
+  });
+
+  it("merges three separate backspaces into one delete run, not three", () => {
+    let model = docWithText("hello");
+    for (let i = 0; i < 3; i++) {
+      const before = model;
+      const after = deleteRangeCommand(before, selection(caret(0, 5 - i - 1), caret(0, 5 - i))).model;
+      model = applyTrackChanges(before, after, AUTHOR, DATE);
+    }
+    const runs = runsOf(model);
+    // "hello" -> deleting the last 3 chars one at a time ("o", "l", "l") should
+    // leave "he" untouched and "llo" as one merged deleted run.
+    expect(runs.map((r) => r.text)).toEqual(["he", "llo"]);
+    expect(runs[1].changes?.delete).toBeDefined();
+  });
+
+  it("does not merge insertions from two different authors", () => {
+    const before = docWithText("hello world");
+    const afterA = insertTextCommand(before, caretSelection(caret(0, 0)), "A").model;
+    const trackedA = applyTrackChanges(before, afterA, "Ada", DATE);
+    const afterB = insertTextCommand(trackedA, caretSelection(caret(0, 1)), "B").model;
+    const trackedB = applyTrackChanges(trackedA, afterB, "Grace", DATE);
+    const runs = runsOf(trackedB);
+    expect(runs.map((r) => r.text)).toEqual(["A", "B", "hello world"]);
+    expect(runs[0].changes?.insert?.author).toBe("Ada");
+    expect(runs[1].changes?.insert?.author).toBe("Grace");
+  });
+});
+
 describe("applyTrackChanges — no-op paths", () => {
   it("returns the same model reference when nothing changed", () => {
     const before = docWithText("hello world");
