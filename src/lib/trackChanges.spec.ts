@@ -1,6 +1,6 @@
 // SPEC-039 — review-pane listing, navigation and accept/reject.
 import { describe, expect, it } from "vitest";
-import { asCharacterFormatKey, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
+import { asCharacterFormatKey, createDocument, type DocumentModel, type Paragraph, type Table } from "./documentModel";
 import {
   caretSelection,
   deleteBackward as deleteBackwardCommand,
@@ -10,6 +10,15 @@ import {
   splitBlock,
   type ModelSelection,
 } from "./commands";
+import {
+  deleteTableColumn,
+  insertTableColumn,
+  mergeCells,
+  setCellShading,
+  setRowMinHeight,
+  setTableAlignment,
+  type TableLocation,
+} from "./tables";
 import type { CaretPosition } from "./textEditing";
 import { applyTrackChanges } from "./trackChangesDiff";
 import {
@@ -203,5 +212,112 @@ describe("acceptAllChanges / rejectAllChanges", () => {
     const rejected = rejectAllChanges(tracked);
     expect(runsOf(rejected).map((r) => r.text).join("")).toBe("hello world");
     expect(collectChanges(rejected)).toHaveLength(0);
+  });
+});
+
+function tableDoc(): DocumentModel {
+  const model = createDocument("track-changes-table-cmd-test");
+  const table: Table = {
+    type: "table",
+    columnWidthsCm: [5, 5],
+    rows: [
+      { cells: [{ blocks: [paragraph("a1")] }, { blocks: [paragraph("a2")] }] },
+      { cells: [{ blocks: [paragraph("b1")] }, { blocks: [paragraph("b2")] }] },
+    ],
+  };
+  model.sections = [{ blocks: [table] }];
+  return model;
+}
+
+function tableOf(model: DocumentModel): Table {
+  return model.sections[0].blocks[0] as Table;
+}
+
+const LOCATION: TableLocation = { section: 0, block: 0, row: 0, col: 0 };
+
+describe("collectChanges / accept / reject — table structural changes (AC-5, AC-7, AC-15)", () => {
+  it("lists a column insert once, described by column, and accept clears the marker", () => {
+    const before = tableDoc();
+    const inserted = track(before, insertTableColumn(before, caretSelection(caret(0, 0)), LOCATION, "right").model);
+    const entries = collectChanges(inserted);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: "cell", description: "Inserted table cell" });
+    const accepted = acceptChange(inserted, entries[0].changeId);
+    expect(collectChanges(accepted)).toHaveLength(0);
+    expect(tableOf(accepted).rows[0].cells).toHaveLength(3);
+  });
+
+  it("rejecting an inserted column removes the whole column and its width entry", () => {
+    const before = tableDoc();
+    const inserted = track(before, insertTableColumn(before, caretSelection(caret(0, 0)), LOCATION, "right").model);
+    const entries = collectChanges(inserted);
+    const rejected = rejectChange(inserted, entries[0].changeId);
+    const table = tableOf(rejected);
+    expect(table.rows[0].cells).toHaveLength(2);
+    expect(table.rows[1].cells).toHaveLength(2);
+    expect(table.columnWidthsCm).toHaveLength(2);
+    expect(collectChanges(rejected)).toHaveLength(0);
+  });
+
+  it("rejecting a deleted column restores it (accept drops it)", () => {
+    const before = tableDoc();
+    const deleted = track(before, deleteTableColumn(before, caretSelection(caret(0, 0)), LOCATION).model);
+    const entries = collectChanges(deleted);
+    expect(entries[0]).toMatchObject({ kind: "cell", description: "Deleted table cell" });
+
+    const rejected = rejectChange(deleted, entries[0].changeId);
+    expect(tableOf(rejected).rows[0].cells).toHaveLength(2);
+    expect(collectChanges(rejected)).toHaveLength(0);
+
+    const accepted = acceptChange(deleted, entries[0].changeId);
+    expect(tableOf(accepted).rows[0].cells).toHaveLength(1);
+  });
+
+  it("tracks a merge's span as a cell property change; rejecting restores the original span", () => {
+    // A merge also moves the covered cell's content into the origin cell,
+    // which the generic diff engine tracks as its own insertion/deletion
+    // pair (same "no per-command special-casing" design as everything else
+    // in trackChangesDiff.ts) — the span change is one further, separate
+    // entry among those.
+    const before = tableDoc();
+    const range = { section: 0, block: 0, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } };
+    const merged = track(before, mergeCells(before, caretSelection(caret(0, 0)), range).model);
+    const entries = collectChanges(merged);
+    const spanChange = entries.find((entry) => entry.kind === "tableProperty");
+    expect(spanChange).toMatchObject({ description: "Formatted: Cell merge" });
+
+    const rejected = rejectChange(merged, spanChange!.changeId);
+    expect(tableOf(rejected).rows[0].cells[0].colSpan).toBeUndefined();
+
+    const accepted = acceptChange(merged, spanChange!.changeId);
+    expect(tableOf(accepted).rows[0].cells[0].colSpan).toBe(2);
+  });
+
+  it("tracks a cell shading edit; rejecting restores the previous fill", () => {
+    const before = tableDoc();
+    const range = { section: 0, block: 0, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } };
+    const shaded = track(before, setCellShading(before, caretSelection(caret(0, 0)), range, "#ff0000").model);
+    const entries = collectChanges(shaded);
+    expect(entries[0]).toMatchObject({ kind: "tableProperty", description: "Formatted: Cell shading" });
+    const rejected = rejectChange(shaded, entries[0].changeId);
+    expect(tableOf(rejected).rows[0].cells[0].shadingFill).toBeUndefined();
+  });
+
+  it("tracks a row-height edit; rejecting restores the previous height", () => {
+    const before = tableDoc();
+    const resized = track(before, setRowMinHeight(before, caretSelection(caret(0, 0)), LOCATION, 0, 3).model);
+    const entries = collectChanges(resized);
+    expect(entries[0]).toMatchObject({ kind: "tableProperty", description: "Formatted: Row height" });
+    const rejected = rejectChange(resized, entries[0].changeId);
+    expect(tableOf(rejected).rows[0].minHeightCm).toBeUndefined();
+  });
+
+  it("tracks a table alignment edit; rejecting restores the previous alignment", () => {
+    const before = tableDoc();
+    const aligned = track(before, setTableAlignment(before, caretSelection(caret(0, 0)), LOCATION, "center").model);
+    const entries = collectChanges(aligned);
+    expect(entries[0]).toMatchObject({ kind: "tableProperty", description: "Formatted: Table alignment" });
+    const rejected = rejectChange(aligned, entries[0].changeId);
+    expect(tableOf(rejected).alignment).toBeUndefined();
   });
 });

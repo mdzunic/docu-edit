@@ -6,15 +6,19 @@ import {
   isImage,
   isTable,
   type Block,
+  type CellPropertyChange,
   type DocumentModel,
   type Image,
   type Paragraph,
   type ParagraphFormatting,
   type ParagraphTrackedChanges,
+  type RowPropertyChange,
   type RunFormatting,
   type RunTrackedChanges,
   type Section,
   type Table,
+  type TableCell,
+  type TablePropertyChange,
   type TableRow,
   type TrackedChangeInfo,
 } from "./documentModel";
@@ -22,7 +26,7 @@ import { blockText, compareCaret, normalizeRuns, type CaretPosition, type CellPa
 
 // --- review-pane listing ------------------------------------------------
 
-export type ChangeKind = "insert" | "delete" | "format" | "paragraphMark" | "row" | "image";
+export type ChangeKind = "insert" | "delete" | "format" | "paragraphMark" | "row" | "cell" | "tableProperty" | "image";
 
 /** One tracked change as the review pane lists it (SPEC-039 AC "lists all
  * changes in document order"): every run/paragraph/row/image carrying the
@@ -68,6 +72,43 @@ function describeParagraphFormatChange(previous: ParagraphFormatting | undefined
     return "Formatted: Paragraph alignment";
   }
   return "Formatted: Paragraph";
+}
+
+/** A cell property change's description (SPEC-039 AC-5/AC-15): a span
+ * change is a merge/split, everything else a plain formatting edit. */
+function describeCellPropertyChange(previous: CellPropertyChange["previous"], current: TableCell): string {
+  if ((previous.colSpan ?? 1) !== (current.colSpan ?? 1) || (previous.rowSpan ?? 1) !== (current.rowSpan ?? 1)) {
+    return (current.colSpan ?? 1) * (current.rowSpan ?? 1) > (previous.colSpan ?? 1) * (previous.rowSpan ?? 1)
+      ? "Formatted: Cell merge"
+      : "Formatted: Cell split";
+  }
+  if (previous.shadingFill !== current.shadingFill) {
+    return "Formatted: Cell shading";
+  }
+  if (previous.paddingCm !== current.paddingCm) {
+    return "Formatted: Cell padding";
+  }
+  if (previous.verticalAlign !== current.verticalAlign) {
+    return "Formatted: Cell vertical alignment";
+  }
+  return "Formatted: Cell borders";
+}
+
+function describeRowPropertyChange(previous: RowPropertyChange["previous"], current: TableRow): string {
+  return previous.minHeightCm !== current.minHeightCm ? "Formatted: Row height" : "Formatted: Row";
+}
+
+function describeTablePropertyChange(previous: TablePropertyChange["previous"], current: Table): string {
+  if (previous.columnWidthsCm !== undefined) {
+    return "Formatted: Column widths";
+  }
+  if (previous.alignment !== current.alignment) {
+    return "Formatted: Table alignment";
+  }
+  if (previous.widthMode !== current.widthMode || previous.widthPercent !== current.widthPercent) {
+    return "Formatted: Table width";
+  }
+  return "Formatted: Table";
 }
 
 interface ChangeAccumulator {
@@ -156,6 +197,17 @@ function walkBlocksForChanges(blocks: Block[], sectionIndex: number, note: NoteF
       return;
     }
     if (isTable(block)) {
+      const tableAt: CaretPosition = { section: sectionIndex, block: blockIndex, offset: 0 };
+      if (block.changes?.propertyChange) {
+        note(
+          block.changes.propertyChange.changeId,
+          "tableProperty",
+          block.changes.propertyChange,
+          tableAt,
+          "[table]",
+          describeTablePropertyChange(block.changes.propertyChange.previous, block),
+        );
+      }
       block.rows.forEach((row, rowIndex) => {
         const at: CaretPosition = { section: sectionIndex, block: blockIndex, offset: 0, cell: { row: rowIndex, col: 0, block: 0 } };
         if (row.changes?.insert) {
@@ -164,7 +216,34 @@ function walkBlocksForChanges(blocks: Block[], sectionIndex: number, note: NoteF
         if (row.changes?.delete) {
           note(row.changes.delete.changeId, "row", row.changes.delete, at, "[table row]", "Deleted table row");
         }
+        if (row.changes?.propertyChange) {
+          note(
+            row.changes.propertyChange.changeId,
+            "tableProperty",
+            row.changes.propertyChange,
+            at,
+            "[table row]",
+            describeRowPropertyChange(row.changes.propertyChange.previous, row),
+          );
+        }
         row.cells.forEach((tableCell, colIndex) => {
+          const cellAt: CaretPosition = { section: sectionIndex, block: blockIndex, offset: 0, cell: { row: rowIndex, col: colIndex, block: 0 } };
+          if (tableCell.changes?.insert) {
+            note(tableCell.changes.insert.changeId, "cell", tableCell.changes.insert, cellAt, "[table cell]", "Inserted table cell");
+          }
+          if (tableCell.changes?.delete) {
+            note(tableCell.changes.delete.changeId, "cell", tableCell.changes.delete, cellAt, "[table cell]", "Deleted table cell");
+          }
+          if (tableCell.changes?.propertyChange) {
+            note(
+              tableCell.changes.propertyChange.changeId,
+              "tableProperty",
+              tableCell.changes.propertyChange,
+              cellAt,
+              "[table cell]",
+              describeCellPropertyChange(tableCell.changes.propertyChange.previous, tableCell),
+            );
+          }
           tableCell.blocks.forEach((paragraph, pIndex) => {
             walkParagraphForChanges(paragraph, sectionIndex, blockIndex, { row: rowIndex, col: colIndex, block: pIndex }, note);
           });
@@ -329,7 +408,89 @@ function transformParagraphRun(paragraphs: Paragraph[], changeId: string, verdic
   return result;
 }
 
+function applyRowPropertyChangeVerdict(row: TableRow, verdict: Verdict): TableRow {
+  const propertyChange = row.changes!.propertyChange!;
+  const next = { ...row, changes: cleanChanges({ ...row.changes, propertyChange: undefined }) };
+  return verdict === "reject" ? { ...next, minHeightCm: propertyChange.previous.minHeightCm } : next;
+}
+
+function applyCellPropertyChangeVerdict(cell: TableCell, verdict: Verdict): TableCell {
+  const propertyChange = cell.changes!.propertyChange!;
+  const next = { ...cell, changes: cleanChanges({ ...cell.changes, propertyChange: undefined }) };
+  if (verdict !== "reject") {
+    return next;
+  }
+  return {
+    ...next,
+    colSpan: propertyChange.previous.colSpan,
+    rowSpan: propertyChange.previous.rowSpan,
+    borders: propertyChange.previous.borders,
+    shadingFill: propertyChange.previous.shadingFill,
+    paddingCm: propertyChange.previous.paddingCm,
+    verticalAlign: propertyChange.previous.verticalAlign,
+  };
+}
+
+function applyTablePropertyChangeVerdict(table: Table, verdict: Verdict): Table {
+  const propertyChange = table.changes!.propertyChange!;
+  const next = { ...table, changes: cleanChanges({ ...table.changes, propertyChange: undefined }) };
+  if (verdict !== "reject") {
+    return next;
+  }
+  return {
+    ...next,
+    columnWidthsCm: propertyChange.previous.columnWidthsCm ?? next.columnWidthsCm,
+    alignment: propertyChange.previous.alignment,
+    widthMode: propertyChange.previous.widthMode,
+    widthPercent: propertyChange.previous.widthPercent,
+  };
+}
+
+/** The grid column index every row's cell with this changeId shares (a
+ * column insert/delete's cells are all marked with the one changeId — see
+ * trackChangesDiff.ts's diffRowCells), or -1 if no cell carries it. */
+function findCellChangeColumn(table: Table, changeId: string): number {
+  for (const row of table.rows) {
+    const index = row.cells.findIndex((cell) => cell.changes?.insert?.changeId === changeId || cell.changes?.delete?.changeId === changeId);
+    if (index >= 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/** A tracked column insert/delete's verdict (SPEC-039 AC-15): every row
+ * shares the one changeId across its cell at this column (see
+ * findCellChangeColumn), so committing it drops the whole column — cells
+ * and its `columnWidthsCm` entry — uniformly rather than per-row. */
+function transformCellInsertDeleteColumn(table: Table, column: number, changeId: string, verdict: Verdict): Table {
+  const isInsert = table.rows.some((row) => row.cells[column]?.changes?.insert?.changeId === changeId);
+  const drop = isInsert ? verdict === "reject" : verdict === "accept";
+  if (drop) {
+    const rows = table.rows.map((row) => ({ ...row, cells: row.cells.filter((_, index) => index !== column) }));
+    const columnWidthsCm = table.columnWidthsCm.filter((_, index) => index !== column);
+    return { ...table, rows, columnWidthsCm };
+  }
+  const rows = table.rows.map((row) => {
+    const cell = row.cells[column];
+    if (!cell) {
+      return row;
+    }
+    const cells = [...row.cells];
+    cells[column] = { ...cell, changes: cleanChanges({ ...cell.changes, insert: undefined, delete: undefined }) };
+    return { ...row, cells };
+  });
+  return { ...table, rows };
+}
+
 function transformTable(table: Table, changeId: string, verdict: Verdict): Table {
+  if (table.changes?.propertyChange?.changeId === changeId) {
+    return applyTablePropertyChangeVerdict(table, verdict);
+  }
+  const cellColumn = findCellChangeColumn(table, changeId);
+  if (cellColumn >= 0) {
+    return transformCellInsertDeleteColumn(table, cellColumn, changeId, verdict);
+  }
   const rows: TableRow[] = [];
   for (const row of table.rows) {
     if (row.changes?.insert?.changeId === changeId) {
@@ -346,10 +507,16 @@ function transformTable(table: Table, changeId: string, verdict: Verdict): Table
       rows.push({ ...row, changes: cleanChanges({ ...row.changes, delete: undefined }) });
       continue;
     }
-    const cells = row.cells.map((cell) => ({
-      ...cell,
-      blocks: transformParagraphRun(cell.blocks, changeId, verdict),
-    }));
+    if (row.changes?.propertyChange?.changeId === changeId) {
+      rows.push(applyRowPropertyChangeVerdict(row, verdict));
+      continue;
+    }
+    const cells = row.cells.map((cell) => {
+      if (cell.changes?.propertyChange?.changeId === changeId) {
+        return applyCellPropertyChangeVerdict(cell, verdict);
+      }
+      return { ...cell, blocks: transformParagraphRun(cell.blocks, changeId, verdict) };
+    });
     rows.push({ ...row, cells });
   }
   return { ...table, rows };

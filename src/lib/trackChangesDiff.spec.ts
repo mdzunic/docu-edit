@@ -1,7 +1,7 @@
 // SPEC-039 — the track-changes diff engine: converting an ordinary
 // command's before/after model pair into tracked-change markup.
 import { describe, expect, it } from "vitest";
-import { asCharacterFormatKey, createDocument, type DocumentModel, type Paragraph, type Run } from "./documentModel";
+import { asCharacterFormatKey, createDocument, type DocumentModel, type Paragraph, type Run, type Table } from "./documentModel";
 import {
   caretSelection,
   deleteBackward as deleteBackwardCommand,
@@ -11,6 +11,15 @@ import {
   splitBlock,
   type ModelSelection,
 } from "./commands";
+import {
+  deleteTableColumn,
+  insertTableColumn,
+  mergeCells,
+  setCellShading,
+  setRowMinHeight,
+  setTableAlignment,
+  type TableLocation,
+} from "./tables";
 import type { CaretPosition } from "./textEditing";
 import { applyTrackChanges } from "./trackChangesDiff";
 
@@ -193,6 +202,95 @@ describe("applyTrackChanges — merging consecutive same-author edits (real typi
     expect(runs.map((r) => r.text)).toEqual(["A", "B", "hello world"]);
     expect(runs[0].changes?.insert?.author).toBe("Ada");
     expect(runs[1].changes?.insert?.author).toBe("Grace");
+  });
+});
+
+function tableDoc(): DocumentModel {
+  const model = createDocument("track-changes-table-test");
+  const table: Table = {
+    type: "table",
+    columnWidthsCm: [5, 5],
+    rows: [
+      { cells: [{ blocks: [paragraph("a1")] }, { blocks: [paragraph("a2")] }] },
+      { cells: [{ blocks: [paragraph("b1")] }, { blocks: [paragraph("b2")] }] },
+    ],
+  };
+  model.sections = [{ blocks: [table] }];
+  return model;
+}
+
+function tableOf(model: DocumentModel): Table {
+  return model.sections[0].blocks[0] as Table;
+}
+
+const LOCATION: TableLocation = { section: 0, block: 0, row: 0, col: 0 };
+
+describe("applyTrackChanges — table structural changes (AC-15)", () => {
+  it("marks an inserted column's new cells as tracked-inserted", () => {
+    const before = tableDoc();
+    const after = insertTableColumn(before, caretSelection(caret(0, 0)), LOCATION, "right").model;
+    const tracked = applyTrackChanges(before, after, AUTHOR, DATE);
+    const table = tableOf(tracked);
+    expect(table.rows[0].cells[1].changes?.insert).toMatchObject({ author: AUTHOR });
+    expect(table.rows[1].cells[1].changes?.insert).toMatchObject({ author: AUTHOR });
+    // The untouched original cells are not marked.
+    expect(table.rows[0].cells[0].changes).toBeUndefined();
+    expect(table.rows[0].cells[2].changes).toBeUndefined();
+    // Both new cells share the one changeId (one edit event, AC-7).
+    expect(table.rows[0].cells[1].changes?.insert?.changeId).toBe(table.rows[1].cells[1].changes?.insert?.changeId);
+  });
+
+  it("marks a deleted column's cells as tracked-deleted instead of removing them", () => {
+    const before = tableDoc();
+    const after = deleteTableColumn(before, caretSelection(caret(0, 0)), LOCATION).model;
+    const tracked = applyTrackChanges(before, after, AUTHOR, DATE);
+    const table = tableOf(tracked);
+    // Retained (not removed) — same shape as a tracked row/text deletion.
+    expect(table.rows).toHaveLength(2);
+    expect(table.rows[0].cells).toHaveLength(2);
+    expect(table.rows[0].cells[0].changes?.delete).toMatchObject({ author: AUTHOR });
+    expect(table.rows[1].cells[0].changes?.delete).toMatchObject({ author: AUTHOR });
+  });
+
+  it("marks a cell merge as a pending property change recording the previous span", () => {
+    const before = tableDoc();
+    const range = { section: 0, block: 0, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } };
+    const after = mergeCells(before, caretSelection(caret(0, 0)), range).model;
+    const tracked = applyTrackChanges(before, after, AUTHOR, DATE);
+    const cell = tableOf(tracked).rows[0].cells[0];
+    expect(cell.colSpan).toBe(2);
+    expect(cell.changes?.propertyChange).toMatchObject({
+      author: AUTHOR,
+      previous: { colSpan: undefined, rowSpan: undefined },
+    });
+  });
+
+  it("marks a cell shading edit as a pending property change, restorable on reject", () => {
+    const before = tableDoc();
+    const range = { section: 0, block: 0, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } };
+    const after = setCellShading(before, caretSelection(caret(0, 0)), range, "#ff0000").model;
+    const tracked = applyTrackChanges(before, after, AUTHOR, DATE);
+    const cell = tableOf(tracked).rows[0].cells[0];
+    expect(cell.shadingFill).toBe("#ff0000");
+    expect(cell.changes?.propertyChange).toMatchObject({ author: AUTHOR, previous: { shadingFill: undefined } });
+  });
+
+  it("marks a row height edit as a pending row property change", () => {
+    const before = tableDoc();
+    const after = setRowMinHeight(before, caretSelection(caret(0, 0)), LOCATION, 0, 3).model;
+    const tracked = applyTrackChanges(before, after, AUTHOR, DATE);
+    const row = tableOf(tracked).rows[0];
+    expect(row.minHeightCm).toBeCloseTo(3);
+    expect(row.changes?.propertyChange).toMatchObject({ author: AUTHOR, previous: { minHeightCm: undefined } });
+  });
+
+  it("marks a table alignment edit as a pending table property change", () => {
+    const before = tableDoc();
+    const after = setTableAlignment(before, caretSelection(caret(0, 0)), LOCATION, "center").model;
+    const tracked = applyTrackChanges(before, after, AUTHOR, DATE);
+    const table = tableOf(tracked);
+    expect(table.alignment).toBe("center");
+    expect(table.changes?.propertyChange).toMatchObject({ author: AUTHOR, previous: { alignment: undefined } });
   });
 });
 

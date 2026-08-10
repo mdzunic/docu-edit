@@ -598,6 +598,66 @@ export interface BlockTrackedChanges {
   delete?: TrackedChangeInfo;
 }
 
+/** A table cell's pending property edit (SPEC-039 AC-15): a merge/split
+ * (colSpan/rowSpan changed) or a border/shading/padding/vertical-alignment
+ * edit — `w:tcPrChange`/`w:cellMerge` on `.docx`. Restored verbatim if
+ * rejected. `.odt` has no standard slot for "previous" cell-property state
+ * (the same documented gap as RunFormatChange on a `.odt` source), so an
+ * `.odt`-sourced cell property change is accepted (applied) and reported as
+ * a SPEC-008 DropRecord on a cross-format save to `.odt` (AC-19) rather
+ * than tracked there. */
+export interface CellPropertyChange extends TrackedChangeInfo {
+  previous: {
+    colSpan?: number;
+    rowSpan?: number;
+    borders?: CellBorders;
+    shadingFill?: string;
+    paddingCm?: number;
+    verticalAlign?: CellVerticalAlign;
+  };
+}
+
+/** Tracked-change state carried on a table cell (SPEC-039 AC-15): insertion/
+ * deletion (a column added/removed while tracking is on) alongside
+ * `BlockTrackedChanges`, plus a pending property change/merge. */
+export interface CellTrackedChanges extends BlockTrackedChanges {
+  propertyChange?: CellPropertyChange;
+}
+
+/** A table row's pending property edit (SPEC-039 AC-15): a height change —
+ * `w:trPrChange` on `.docx`. See CellPropertyChange for the `.odt`
+ * documented gap this shares. */
+export interface RowPropertyChange extends TrackedChangeInfo {
+  previous: { minHeightCm?: number };
+}
+
+/** Tracked-change state carried on a table row (SPEC-039): insertion/
+ * deletion alongside `BlockTrackedChanges`, plus a pending row-property
+ * change. */
+export interface RowTrackedChanges extends BlockTrackedChanges {
+  propertyChange?: RowPropertyChange;
+}
+
+/** A table's pending property edit (SPEC-039 AC-15): column widths,
+ * alignment or width-mode changed — `w:tblPrChange`/`w:tblGridChange` on
+ * `.docx`. See CellPropertyChange for the `.odt` documented gap this
+ * shares. */
+export interface TablePropertyChange extends TrackedChangeInfo {
+  previous: {
+    columnWidthsCm?: number[];
+    alignment?: TableAlignment;
+    widthMode?: TableWidthMode;
+    widthPercent?: number;
+  };
+}
+
+/** Tracked-change state carried on a table (SPEC-039): just its own pending
+ * property change — a table itself is never inserted/deleted as a unit
+ * (only its rows/cells are). */
+export interface TableTrackedChanges {
+  propertyChange?: TablePropertyChange;
+}
+
 /** A fresh, session-unique tracked-change id. */
 export function createChangeId(): string {
   return `change-${crypto.randomUUID()}`;
@@ -792,6 +852,10 @@ export interface TableCell {
    * again. Cleared the same way as `docxTcPr` when a command edits the
    * cell's modelled properties. */
   odtStyleName?: string;
+  /** Pending tracked insertion/deletion/property-change of this cell
+   * (SPEC-039 AC-15: a column insert/delete, a merge/split, or a border/
+   * shading/padding/vertical-alignment edit made while tracking is on). */
+  changes?: CellTrackedChanges;
 }
 
 /** One table row. */
@@ -805,9 +869,10 @@ export interface TableRow {
   docxTrPr?: string;
   /** `table:style-name` of the source .odt row. */
   odtStyleName?: string;
-  /** Pending tracked insertion/deletion of this row (SPEC-039 AC "table
-   * row/cell insert/delete"). */
-  changes?: BlockTrackedChanges;
+  /** Pending tracked insertion/deletion/property-change of this row
+   * (SPEC-039 AC "table row/cell insert/delete", AC-15's row property
+   * changes). */
+  changes?: RowTrackedChanges;
 }
 
 /** Table alignment on the page (SPEC-023 AC-22). */
@@ -855,6 +920,9 @@ export interface Table {
    * `table:table-column` elements; entries may be undefined for columns
    * inserted in the editor (the writer generates a style for those). */
   odtColumnStyleNames?: Array<string | undefined>;
+  /** Pending tracked property change of this table (SPEC-039 AC-15: column
+   * widths, alignment or width-mode edited while tracking is on). */
+  changes?: TableTrackedChanges;
 }
 
 /** Whether a block is a table — the one narrowing helper every consumer of
