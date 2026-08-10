@@ -36,6 +36,9 @@ function modelFrom(parsed: ParsedOdtDocument, title = "Field Report"): DocumentM
   if (parsed.media.length > 0) {
     model.media = parsed.media;
   }
+  if (Object.keys(parsed.properties).length > 0) {
+    model.properties = parsed.properties;
+  }
   return model;
 }
 
@@ -130,7 +133,12 @@ describe("writeOdt — same-format round trip (AC-2, AC-5, AC-6, AC-7)", () => {
 
   it("re-opens equalStructural after an unedited save", async () => {
     const opened = await parseOdt(fixture);
-    const { bytes, dropped } = await writeOdt(modelFrom(opened));
+    // The fixture's own dc:date is passed through explicitly (SPEC-041):
+    // see docx/roundTrip.spec.ts's identical comment on its "unedited save"
+    // test for why.
+    const { bytes, dropped } = await writeOdt(modelFrom(opened), {
+      modified: new Date(opened.properties.modified!),
+    });
     expect(dropped).toEqual([]);
     const reopened = await parseOdt(bytes);
     expect(firstStructuralDifference(opened, reopened)).toBeNull();
@@ -194,7 +202,7 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
     const intro = asParagraph(model.sections[0].blocks[1]);
     expect(intro.runs[0].text).toBe("Editable intro paragraph.");
     intro.runs[0].text = "Edited intro paragraph!";
-    const { bytes } = await writeOdt(model);
+    const { bytes } = await writeOdt(model, { modified: new Date(opened.properties.modified!) });
 
     const savedParts = await unzip(bytes);
     const originalParts = await unzip(fixture);

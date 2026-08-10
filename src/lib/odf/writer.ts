@@ -31,6 +31,7 @@ import type {
   BreakKind,
   CommentThread,
   DocumentModel,
+  DocumentProperties,
   FieldSpec,
   Image,
   ImageWrapMode,
@@ -99,6 +100,10 @@ import {
 } from "./xml";
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
+import { buildMetaXml, type OdfMetaInput } from "./meta";
+import { stripPersonalInfo } from "../personalInfo";
+
+export { buildMetaXml } from "./meta";
 
 export { ODT_MIMETYPE };
 
@@ -2747,22 +2752,22 @@ export function patchOdtSectionHeaderFooters(
   return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
 }
 
-/** A timestamp in the W3CDTF profile ODF metadata uses (whole seconds,
- * UTC), e.g. "2026-08-03T12:00:00Z". */
-function toW3CDTF(date: Date): string {
-  return date.toISOString().replace(/\.\d+Z$/, "Z");
-}
-
-/** meta.xml with the document title (AC-19) and dc:date, ODF's modification
- * timestamp (AC-20). */
-export function buildMetaXml(title: string, modified: Date): string {
-  return (
-    `${XML_DECLARATION}<office:document-meta xmlns:office="${OFFICE_NAMESPACE}"` +
-    ` xmlns:dc="${DC_NAMESPACE}" office:version="1.2">` +
-    `<office:meta><dc:title>${escapeXml(title)}</dc:title>` +
-    `<dc:date>${toW3CDTF(modified)}</dc:date></office:meta>` +
-    "</office:document-meta>"
-  );
+/** Resolves the model's `properties` into `buildMetaXml`'s input — the
+ * `.odt` mirror of docx/writer.ts's `coreInputFrom`. */
+function metaInputFrom(properties: DocumentProperties | undefined, fallbackTitle: string): OdfMetaInput {
+  const title = properties?.title?.trim() ? properties.title : fallbackTitle;
+  return {
+    title,
+    subject: properties?.subject,
+    author: properties?.author,
+    lastModifiedBy: properties?.lastModifiedBy,
+    keywords: properties?.keywords,
+    comments: properties?.comments,
+    created: properties?.created,
+    extraFields: properties?.extraFields,
+    customProperties: properties?.customProperties,
+    unsupportedCustomProperties: properties?.unsupportedCustomProperties,
+  };
 }
 
 /** settings.xml (AC-7). The app has no settings to persist; office:settings
@@ -2828,11 +2833,16 @@ function withManifestEntries(manifestXml: string, entries: OdtManifestEntry[]): 
  * and META-INF/manifest.xml (AC-4..AC-8), with unrepresentable .docx
  * content reported in `dropped`. */
 export async function writeOdt(
-  model: DocumentModel,
+  sourceModel: DocumentModel,
   options: WriteOdtOptions = {},
 ): Promise<WriteResult> {
+  // "Remove personal information on save" (SPEC-041 AC-12..14) — see
+  // docx/writer.ts's writeDocx for why this is a single model-level
+  // transform shared by both writers rather than format-specific logic.
+  const model = sourceModel.properties?.removePersonalInfoOnSave ? stripPersonalInfo(sourceModel) : sourceModel;
   const modified = options.modified ?? new Date();
   const title = model.title.trim().length > 0 ? model.title : UNTITLED_ODT_TITLE;
+  const metaInput = metaInputFrom(model.properties, title);
   const encoder = new TextEncoder();
 
   const preservedParts = model.format === "odt" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
@@ -2859,7 +2869,7 @@ export async function writeOdt(
       { name: "mimetype", data: encoder.encode(ODT_MIMETYPE), store: true },
       { name: "content.xml", data: encoder.encode(content) },
       { name: "styles.xml", data: encoder.encode(buildStylesXml(model)) },
-      { name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) },
+      { name: "meta.xml", data: encoder.encode(buildMetaXml(metaInput, modified)) },
       { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
       { name: "META-INF/manifest.xml", data: encoder.encode(buildManifestXml(mediaPlan.manifestEntries)) },
       ...mediaPlan.zipEntries,
@@ -2914,7 +2924,7 @@ export async function writeOdt(
       entries.push({ name, data });
     }
   }
-  entries.push({ name: "meta.xml", data: encoder.encode(buildMetaXml(title, modified)) });
+  entries.push({ name: "meta.xml", data: encoder.encode(buildMetaXml(metaInput, modified)) });
   entries.push(...mediaPlan.zipEntries);
   if (addSettings) {
     entries.push({ name: "settings.xml", data: encoder.encode(buildSettingsXml()) });

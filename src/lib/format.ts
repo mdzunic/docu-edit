@@ -1,4 +1,5 @@
 import type { DocumentFormat } from "./documentStore";
+import type { DocumentFormat as ModelDocumentFormat } from "./documentModel";
 
 /**
  * Format a date for display as a document title, e.g. "2026-08-02 14:35".
@@ -51,4 +52,34 @@ const BADGE_LABELS: Record<DocumentFormat, string> = {
 /** The display label for a library row's format badge. */
 export function formatBadgeLabel(format: DocumentFormat): string {
   return BADGE_LABELS[format];
+}
+
+const DOCUMENT_FORMAT_LABELS: Record<ModelDocumentFormat, string> = {
+  docx: "Word (.docx)",
+  odt: "OpenDocument Text (.odt)",
+};
+
+/** The full format name for the Properties dialog's General tab (SPEC-041
+ * AC-2) — "" for a document with no source/saved format yet (AC-18a). */
+export function documentFormatLabel(format?: ModelDocumentFormat): string {
+  return format ? DOCUMENT_FORMAT_LABELS[format] : "";
+}
+
+/** A byte count as a human-readable size (SPEC-041 AC-2's General tab),
+ * e.g. 245_000 -> "245 KB". Binary units (1 KB = 1024 B), one decimal place
+ * from MB up, none below it — file sizes don't need sub-byte/sub-KB
+ * precision. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${Math.round(kb)} KB`;
+  }
+  const mb = kb / 1024;
+  if (mb < 1024) {
+    return `${mb.toFixed(1)} MB`;
+  }
+  return `${(mb / 1024).toFixed(1)} GB`;
 }

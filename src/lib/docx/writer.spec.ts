@@ -98,7 +98,7 @@ describe("writeDocx — docProps/core.xml (AC-14, AC-15)", () => {
   });
 
   it("escapes XML metacharacters in the title", () => {
-    const xml = buildCorePropertiesXml('Q3 <Report> & "Friends"', modified);
+    const xml = buildCorePropertiesXml({ title: 'Q3 <Report> & "Friends"' }, modified);
     const doc = parseXml(xml);
     expect(
       doc.getElementsByTagNameNS("http://purl.org/dc/elements/1.1/", "title")[0].textContent,

@@ -16,6 +16,7 @@ import type {
   CommentMessage,
   CommentThread,
   DefaultStyles,
+  DocumentProperties,
   FieldKind,
   HeaderFooterKind,
   HeaderFooterPart,
@@ -93,6 +94,7 @@ import {
   parseRunPropertiesChange,
 } from "./properties";
 import { eighthPointsToPt, ooxmlColorToCss, twipsToCm } from "./units";
+import { parseCoreProperties, parseCustomProperties } from "./docProps";
 
 export class DocxOpenError extends Error {}
 export class LegacyDocError extends Error {}
@@ -104,6 +106,8 @@ const OFFICE_DOCUMENT_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDo
 const STYLES_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 const CORE_PROPERTIES_RELATIONSHIP =
   "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
+const CUSTOM_PROPERTIES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
 const HYPERLINK_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 // The `r:` attribute namespace (w:hyperlink/@r:id) — same URI drawing.ts
@@ -263,6 +267,9 @@ export interface ParsedDocxDocument {
   /** Whether settings.xml declared `w:trackChanges` (SPEC-039) — round-trips
    * onto DocumentModel.trackChangesRecording unchanged. */
   trackChangesRecording: boolean;
+  /** Document properties and metadata (SPEC-041) read from docProps/core.xml
+   * and docProps/custom.xml; `{}` when the package had neither. */
+  properties: DocumentProperties;
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -1971,6 +1978,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
 
   let mainPartPath = "word/document.xml";
   let corePartPath: string | undefined;
+  let customPartPath: string | undefined;
   const rootRelsText = readPart("_rels/.rels");
   if (rootRelsText) {
     const rootRels = parseRelationships(rootRelsText);
@@ -1980,14 +1988,20 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     if (officeDocRel) {
       mainPartPath = resolvePartPath("", officeDocRel.target);
     }
-    // Core properties are rebuilt on save (they carry the edited title), so
-    // the original core part is the one part besides the main document that
-    // is not retained verbatim.
+    // Core/custom properties are rebuilt on save (SPEC-041), so these are
+    // the only parts besides the main document that are not retained
+    // verbatim.
     const coreRel = Array.from(rootRels.values()).find(
       (rel) => rel.type === CORE_PROPERTIES_RELATIONSHIP,
     );
     if (coreRel) {
       corePartPath = resolvePartPath("", coreRel.target);
+    }
+    const customRel = Array.from(rootRels.values()).find(
+      (rel) => rel.type === CUSTOM_PROPERTIES_RELATIONSHIP,
+    );
+    if (customRel) {
+      customPartPath = resolvePartPath("", customRel.target);
     }
   }
 
@@ -2295,10 +2309,26 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     if (
       name !== mainPartPath &&
       name !== corePartPath &&
+      name !== customPartPath &&
       !mediaById.has(name) &&
       !consumedHeaderFooterParts.has(name)
     ) {
       opaque.push({ name, data: bytesToBase64(data) });
+    }
+  }
+
+  // Document properties and metadata (SPEC-041): core.xml's fields plus
+  // custom.xml's typed properties. `docProps/app.xml` is not parsed here —
+  // see docProps.ts's header comment — so it stays a plain OpaquePart in the
+  // loop above.
+  const properties: DocumentProperties = corePartPath ? parseCoreProperties(readPart(corePartPath) ?? "") : {};
+  if (customPartPath) {
+    const { customProperties, unsupportedCustomProperties } = parseCustomProperties(readPart(customPartPath) ?? "");
+    if (customProperties.length > 0) {
+      properties.customProperties = customProperties;
+    }
+    if (unsupportedCustomProperties.length > 0) {
+      properties.unsupportedCustomProperties = unsupportedCustomProperties;
     }
   }
 
@@ -2315,6 +2345,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     notes,
     comments,
     trackChangesRecording,
+    properties,
   };
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;

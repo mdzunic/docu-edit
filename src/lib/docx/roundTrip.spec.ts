@@ -25,7 +25,7 @@ function loadFixture(name: string): Uint8Array {
 /** Unlike SPEC-006's modelFrom, this carries the retained source package —
  * the model an opened document actually holds (see openDocument.ts). */
 function modelFrom(parsed: ParsedDocxDocument, title = "Annual Metrics"): DocumentModel {
-  return {
+  const model: DocumentModel = {
     id: "test-doc",
     title,
     sections: parsed.sections,
@@ -34,6 +34,10 @@ function modelFrom(parsed: ParsedDocxDocument, title = "Annual Metrics"): Docume
     opaque: parsed.opaque,
     sourceXml: parsed.sourceXml,
   };
+  if (Object.keys(parsed.properties).length > 0) {
+    model.properties = parsed.properties;
+  }
+  return model;
 }
 
 const decoder = new TextDecoder();
@@ -93,7 +97,15 @@ describe("writeDocx — same-format round trip (AC-2, AC-5, AC-6, AC-7)", () => 
 
   it("re-opens equalStructural after an unedited save", async () => {
     const opened = await parseDocx(fixture);
-    const { bytes, dropped } = await writeDocx(modelFrom(opened));
+    // The fixture's own dcterms:modified is passed through explicitly
+    // (SPEC-041): an unedited save otherwise still refreshes "modified" to
+    // the real current time (a real save's correct behaviour), which would
+    // make this "nothing changed" comparison spuriously fail on that one
+    // field — the same reason writer.spec.ts's own core.xml tests inject an
+    // explicit `modified` rather than relying on the wall clock.
+    const { bytes, dropped } = await writeDocx(modelFrom(opened), {
+      modified: new Date(opened.properties.modified!),
+    });
     expect(dropped).toEqual([]);
     const reopened = await parseDocx(bytes);
     expect(firstStructuralDifference(opened, reopened)).toBeNull();
@@ -161,7 +173,7 @@ describe("writeDocx — editing one paragraph leaves opaque content untouched (A
     const intro = asParagraph(model.sections[0].blocks[1]);
     expect(intro.runs[0].text).toBe("Editable intro paragraph.");
     intro.runs[0].text = "Edited intro paragraph!";
-    const { bytes } = await writeDocx(model);
+    const { bytes } = await writeDocx(model, { modified: new Date(opened.properties.modified!) });
     return { opened, bytes };
   }
 

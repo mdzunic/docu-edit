@@ -26,6 +26,7 @@ import type {
   CellBorders,
   CellVerticalAlign,
   DocumentModel,
+  DocumentProperties,
   FieldSpec,
   HeaderFooterKind,
   HeaderFooterPart,
@@ -106,6 +107,10 @@ import {
   type MediaWritePlan,
 } from "./media";
 import { zip, type ZipEntryInput } from "./zipWriter";
+import { buildCorePropertiesXml, buildCustomPropertiesXml, type CorePropertiesInput } from "./docProps";
+import { stripPersonalInfo } from "../personalInfo";
+
+export { buildCorePropertiesXml, buildCustomPropertiesXml } from "./docProps";
 
 export const DOCX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -120,6 +125,10 @@ const STYLES_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 const CORE_PROPERTIES_RELATIONSHIP =
   "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
+const CUSTOM_PROPERTIES_RELATIONSHIP =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
+const CUSTOM_PROPERTIES_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.custom-properties+xml";
 
 // Word's default header/footer distance (0.5"), in twips. The model does not
 // carry header/footer distances, but CT_PageMar requires the attributes.
@@ -2131,27 +2140,22 @@ export function patchStylesXml(model: DocumentModel, originalXml: string): strin
   return `${XML_DECLARATION}${serializeElement(root)}`;
 }
 
-/** A timestamp in the W3CDTF profile core.xml requires (whole seconds,
- * UTC), e.g. "2026-08-03T12:00:00Z". */
-function toW3CDTF(date: Date): string {
-  return date.toISOString().replace(/\.\d+Z$/, "Z");
-}
-
-/** docProps/core.xml with the document title (AC-14) and created/modified
- * timestamps (AC-15). */
-export function buildCorePropertiesXml(title: string, modified: Date): string {
-  const stamp = toW3CDTF(modified);
-  return (
-    `${XML_DECLARATION}<cp:coreProperties` +
-    ' xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"' +
-    ' xmlns:dc="http://purl.org/dc/elements/1.1/"' +
-    ' xmlns:dcterms="http://purl.org/dc/terms/"' +
-    ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
-    `<dc:title>${escapeXml(title)}</dc:title>` +
-    `<dcterms:created xsi:type="dcterms:W3CDTF">${stamp}</dcterms:created>` +
-    `<dcterms:modified xsi:type="dcterms:W3CDTF">${stamp}</dcterms:modified>` +
-    "</cp:coreProperties>"
-  );
+/** Resolves the model's `properties` into `buildCorePropertiesXml`'s input:
+ * the Description-tab "Title" field falls back to the model's own title
+ * (SPEC-002) when blank, matching this writer's pre-SPEC-041 behaviour for a
+ * document that never set one explicitly. */
+function coreInputFrom(properties: DocumentProperties | undefined, fallbackTitle: string): CorePropertiesInput {
+  const title = properties?.title?.trim() ? properties.title : fallbackTitle;
+  return {
+    title,
+    subject: properties?.subject,
+    author: properties?.author,
+    lastModifiedBy: properties?.lastModifiedBy,
+    keywords: properties?.keywords,
+    comments: properties?.comments,
+    created: properties?.created,
+    extraFields: properties?.extraFields,
+  };
 }
 
 /** `<Default>` entries for the image extensions the model's media plan
@@ -2239,6 +2243,48 @@ function withCoreRelationship(relsXml: string): string {
   );
 }
 
+/** Adds the custom-properties Override to a preserved [Content_Types].xml —
+ * needed when a save adds docProps/custom.xml to a package that had none
+ * (SPEC-041: the model gained its first custom property). */
+function withCustomPropsContentType(contentTypesXml: string): string {
+  if (contentTypesXml.includes('PartName="/docProps/custom.xml"')) {
+    return contentTypesXml;
+  }
+  return contentTypesXml.replace(
+    /<\/Types>\s*$/,
+    `<Override PartName="/docProps/custom.xml" ContentType="${CUSTOM_PROPERTIES_CONTENT_TYPE}"/></Types>`,
+  );
+}
+
+/** Adds a custom-properties relationship (under a fresh, unused rId) to a
+ * preserved _rels/.rels for the same missing-custom.xml case. */
+function withCustomPropsRelationship(relsXml: string): string {
+  const rels = parseRelationships(relsXml);
+  let n = rels.size + 1;
+  while (rels.has(`rId${n}`)) {
+    n++;
+  }
+  return relsXml.replace(
+    /<\/Relationships>\s*$/,
+    `<Relationship Id="rId${n}" Type="${CUSTOM_PROPERTIES_RELATIONSHIP}" Target="docProps/custom.xml"/>` +
+      "</Relationships>",
+  );
+}
+
+/** Removes the custom-properties Override from a preserved
+ * [Content_Types].xml — the inverse of `withCustomPropsContentType`, needed
+ * when the last custom property is deleted from a source that had declared
+ * the part. */
+function withoutCustomPropsContentType(contentTypesXml: string): string {
+  return contentTypesXml.replace(/<Override PartName="\/docProps\/custom\.xml"[^>]*\/>/, "");
+}
+
+/** Removes the custom-properties relationship — the inverse of
+ * `withCustomPropsRelationship`. */
+function withoutCustomPropsRelationship(relsXml: string): string {
+  return relsXml.replace(new RegExp(`<Relationship[^>]*Type="${CUSTOM_PROPERTIES_RELATIONSHIP}"[^>]*/>`), "");
+}
+
 /** Adds the numbering Override to a preserved [Content_Types].xml — needed
  * when a save adds a numbering part to a package that had none (SPEC-018). */
 function withNumberingContentType(contentTypesXml: string, partName: string): string {
@@ -2301,11 +2347,22 @@ function withMediaRelationships(relsXml: string, relationshipsXml: string): stri
  * docProps/core.xml (SPEC-006 AC-3..8), with unrepresentable .odt content
  * reported in `dropped`. */
 export async function writeDocx(
-  model: DocumentModel,
+  sourceModel: DocumentModel,
   options: WriteDocxOptions = {},
 ): Promise<WriteResult> {
+  // "Remove personal information on save" (SPEC-041 AC-12..14): a pure
+  // model transform applied before anything below ever reads an author name
+  // or a comment/tracked-change timestamp, so every write path downstream
+  // (fresh or same-format) automatically writes the sanitised values with no
+  // format-specific stripping logic of its own.
+  const model = sourceModel.properties?.removePersonalInfoOnSave ? stripPersonalInfo(sourceModel) : sourceModel;
   const modified = options.modified ?? new Date();
   const title = model.title.trim().length > 0 ? model.title : DEFAULT_TITLE;
+  const coreInput = coreInputFrom(model.properties, title);
+  const customPropsXml = buildCustomPropertiesXml(
+    model.properties?.customProperties ?? [],
+    model.properties?.unsupportedCustomProperties ?? [],
+  );
   const encoder = new TextEncoder();
 
   const preservedParts = model.format === "docx" ? opaquePartBytes(model) : new Map<string, Uint8Array>();
@@ -2350,13 +2407,24 @@ export async function writeDocx(
     const settingsOverride = needsSettingsPart
       ? `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/>`
       : "";
+    const customPropsOverride =
+      customPropsXml !== undefined
+        ? `<Override PartName="/docProps/custom.xml" ContentType="${CUSTOM_PROPERTIES_CONTENT_TYPE}"/>`
+        : "";
     const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
       /<\/Types>\s*$/,
-      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${settingsOverride}</Types>`,
+      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${settingsOverride}${customPropsOverride}</Types>`,
     );
+    const customPropsRel =
+      customPropsXml !== undefined
+        ? `<Relationship Id="rId3" Type="${CUSTOM_PROPERTIES_RELATIONSHIP}" Target="docProps/custom.xml"/>`
+        : "";
     const entries: ZipEntryInput[] = [
       { name: "[Content_Types].xml", data: encoder.encode(contentTypesXml) },
-      { name: "_rels/.rels", data: encoder.encode(buildPackageRelsXml()) },
+      {
+        name: "_rels/.rels",
+        data: encoder.encode(buildPackageRelsXml().replace(/<\/Relationships>\s*$/, `${customPropsRel}</Relationships>`)),
+      },
       {
         name: "word/document.xml",
         data: encoder.encode(
@@ -2377,9 +2445,12 @@ export async function writeDocx(
         ),
       },
       { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
-      { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(title, modified)) },
+      { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(coreInput, modified)) },
       ...mediaPlan.zipEntries,
     ];
+    if (customPropsXml !== undefined) {
+      entries.push({ name: "docProps/custom.xml", data: encoder.encode(customPropsXml) });
+    }
     if (!plan.isEmpty) {
       entries.splice(5, 0, {
         name: "word/numbering.xml",
@@ -2435,6 +2506,16 @@ export async function writeDocx(
   const mainPartName = officeDocRel ? resolvePartPath("", officeDocRel.target) : "word/document.xml";
   const coreRel = rels.find((rel) => rel.type === CORE_PROPERTIES_RELATIONSHIP);
   const corePartName = coreRel ? resolvePartPath("", coreRel.target) : "docProps/core.xml";
+  const customRel = rels.find((rel) => rel.type === CUSTOM_PROPERTIES_RELATIONSHIP);
+  const customPartName = customRel ? resolvePartPath("", customRel.target) : "docProps/custom.xml";
+  // A save always fully regenerates custom.xml from the model's typed
+  // properties (SPEC-041), so it is dropped from `preservedParts` below like
+  // core.xml. Its content-type/relationship declarations are added when the
+  // model gains its first custom property, and removed when the last one is
+  // deleted from a source that had declared the part (an Override pointing
+  // at a part the save no longer writes would make the package invalid).
+  const addCustomPropsDecls = customPropsXml !== undefined && !customRel;
+  const removeCustomPropsDecls = customPropsXml === undefined && !!customRel;
 
   // Numbering (SPEC-018). When the model holds lists, its plan allocates
   // ids above whatever the preserved numbering part already defines and the
@@ -2557,7 +2638,7 @@ export async function writeDocx(
     entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
   }
   for (const [name, data] of preservedParts) {
-    if (name === mainPartName || name === corePartName) {
+    if (name === mainPartName || name === corePartName || name === customPartName) {
       continue; // Rebuilt below (the reader excludes them from opaque anyway).
     }
     if (numberingOut !== null && name === numberingPartName) {
@@ -2602,8 +2683,18 @@ export async function writeDocx(
         );
       }
       entries.push({ name, data: encoder.encode(rels) });
-    } else if (!coreRel && name === "_rels/.rels") {
-      entries.push({ name, data: encoder.encode(withCoreRelationship(relsText)) });
+    } else if ((!coreRel || addCustomPropsDecls || removeCustomPropsDecls) && name === "_rels/.rels") {
+      let rootRels = relsText;
+      if (!coreRel) {
+        rootRels = withCoreRelationship(rootRels);
+      }
+      if (addCustomPropsDecls) {
+        rootRels = withCustomPropsRelationship(rootRels);
+      }
+      if (removeCustomPropsDecls) {
+        rootRels = withoutCustomPropsRelationship(rootRels);
+      }
+      entries.push({ name, data: encoder.encode(rootRels) });
     } else if (
       name === "[Content_Types].xml" &&
       (!coreRel ||
@@ -2612,11 +2703,19 @@ export async function writeDocx(
         addNotesDecls ||
         addCommentsDecls ||
         addHeaderFooterDecls ||
-        addSettingsPart)
+        addSettingsPart ||
+        addCustomPropsDecls ||
+        removeCustomPropsDecls)
     ) {
       let contentTypes = decoder.decode(data);
       if (!coreRel) {
         contentTypes = withCoreContentType(contentTypes);
+      }
+      if (addCustomPropsDecls) {
+        contentTypes = withCustomPropsContentType(contentTypes);
+      }
+      if (removeCustomPropsDecls) {
+        contentTypes = withoutCustomPropsContentType(contentTypes);
       }
       if (addNumberingDecls) {
         contentTypes = withNumberingContentType(contentTypes, numberingPartName);
@@ -2684,7 +2783,10 @@ export async function writeDocx(
       buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
     ),
   });
-  entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(title, modified)) });
+  entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(coreInput, modified)) });
+  if (customPropsXml !== undefined) {
+    entries.push({ name: customPartName, data: encoder.encode(customPropsXml) });
+  }
   entries.push(...mediaPlan.zipEntries);
 
   return { bytes: await zip(entries), dropped: [] };

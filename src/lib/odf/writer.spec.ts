@@ -156,7 +156,7 @@ describe("writeOdt — meta.xml (AC-19, AC-20)", () => {
   });
 
   it("escapes XML metacharacters in the title", () => {
-    const xml = buildMetaXml('Q3 <Report> & "Friends"', modified);
+    const xml = buildMetaXml({ title: 'Q3 <Report> & "Friends"' }, modified);
     const doc = parseXml(xml);
     expect(
       doc.getElementsByTagNameNS("http://purl.org/dc/elements/1.1/", "title")[0].textContent,

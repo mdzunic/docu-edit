@@ -14,6 +14,7 @@ import type {
   CommentMessage,
   CommentThread,
   DefaultStyles,
+  DocumentProperties,
   FieldKind,
   FieldSpec,
   ImageWrapMode,
@@ -67,6 +68,7 @@ import {
 } from "../lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
+import { parseOdfCustomProperties, parseOdfMeta } from "./meta";
 import {
   DC_NAMESPACE,
   DRAW_NAMESPACE,
@@ -137,6 +139,9 @@ export interface ParsedOdtDocument {
   /** Whether settings.xml declared `RecordChanges` true (SPEC-039) —
    * round-trips onto DocumentModel.trackChangesRecording unchanged. */
   trackChangesRecording: boolean;
+  /** Document properties and metadata (SPEC-041) read from meta.xml; `{}`
+   * when the package had none. */
+  properties: DocumentProperties;
 }
 
 // Transient markup LibreOffice regenerates on every open (rendered
@@ -2262,6 +2267,20 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     !!settingsText &&
     /<[\w:]*config-item\b[^>]*\bconfig:name="RecordChanges"[^>]*>\s*true\s*<\/[\w:]*config-item>/.test(settingsText);
 
+  // Document properties and metadata (SPEC-041).
+  const metaBytes = parts.get("meta.xml");
+  const metaText = metaBytes ? decodeUtf8(metaBytes) : undefined;
+  const properties: DocumentProperties = metaText ? parseOdfMeta(metaText) : {};
+  if (metaText) {
+    const { customProperties, unsupportedCustomProperties } = parseOdfCustomProperties(metaText);
+    if (customProperties.length > 0) {
+      properties.customProperties = customProperties;
+    }
+    if (unsupportedCustomProperties.length > 0) {
+      properties.unsupportedCustomProperties = unsupportedCustomProperties;
+    }
+  }
+
   const result: ParsedOdtDocument = {
     sections,
     defaultStyles,
@@ -2273,6 +2292,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     notes,
     comments,
     trackChangesRecording,
+    properties,
   };
   const footnoteSettings = parseOdtNoteSettings(stylesDoc, "footnote");
   if (footnoteSettings) {
