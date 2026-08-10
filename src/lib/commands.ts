@@ -2987,7 +2987,10 @@ export function deleteStyle(
     return { model: next, selection };
   }
   const type = styleTypeOf(target);
-  const fallbackId = target.basedOn;
+  // Only a parent that still resolves to a real catalogue entry is a valid
+  // fallback (AC-8) — a basedOn left dangling by an earlier delete degrades
+  // to "no parent", the same as never having had one.
+  const fallbackId = target.basedOn && styleById(next, target.basedOn) ? target.basedOn : undefined;
 
   if (type === "paragraph" || type === "list") {
     for (const address of touchedBlocks(next, selectAll(next))) {
