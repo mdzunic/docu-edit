@@ -123,3 +123,4 @@ Any spec asserting a round trip must name one of the three relations —
 | SPEC-046 | Template gallery and mail merge |
 | SPEC-047 | Large document performance |
 | SPEC-048 | Font fallback and embedding |
+| SPEC-050 | Markdown — open, edit visually, and convert to and from .docx/.odt |
