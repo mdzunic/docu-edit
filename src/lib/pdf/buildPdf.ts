@@ -42,12 +42,42 @@ export interface PdfHeading {
   yPt: number;
 }
 
+/** One placed image. Coordinates match PdfLinkItem — the box's top-left, in
+ * points from the page's TOP-left. */
+export interface PdfImageItem {
+  /** Key into PdfBuildInput.images; the same source placed twice is
+   * embedded once. */
+  src: string;
+  xPt: number;
+  yPt: number;
+  widthPt: number;
+  heightPt: number;
+  /** Painted over the text rather than under it — an image whose wrap puts
+   * it in front of text (SPEC-024). */
+  onTop?: boolean;
+}
+
+/** A decoded image, in exactly the form its PDF stream carries. */
+export interface PdfImageData {
+  widthPx: number;
+  heightPx: number;
+  /** "DCTDecode" for JPEG bytes passed through, "FlateDecode" for
+   * zlib-compressed 8-bit samples. */
+  filter: "DCTDecode" | "FlateDecode";
+  colorSpace: "DeviceRGB" | "DeviceGray";
+  data: Uint8Array;
+  /** zlib-compressed 8-bit alpha, present only when the image is not fully
+   * opaque; becomes the XObject's /SMask. */
+  alpha?: Uint8Array;
+}
+
 export interface PdfPageInput {
   widthPt: number;
   heightPt: number;
   items: PdfTextItem[];
   links: PdfLinkItem[];
   headings: PdfHeading[];
+  images: PdfImageItem[];
 }
 
 export interface PdfBuildInput {
@@ -57,6 +87,10 @@ export interface PdfBuildInput {
   /** Parsed faces available for embedding; only faces the items actually
    * use are written into the file. */
   fonts: Map<FaceKey, SfntFont>;
+  /** Decoded images by src. A placed image missing from this map (one that
+   * could not be decoded) is skipped, so the rest of the page still
+   * exports. */
+  images?: Map<string, PdfImageData>;
 }
 
 export const PDF_MIME_TYPE = "application/pdf";
@@ -396,12 +430,61 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
     return usage;
   };
 
+  // Image XObjects are written before the content streams that reference
+  // them, so every draw already knows its resource name. One object per
+  // distinct source, however many pages place it.
+  const imageNames = new Map<string, string>();
+  const imageIds = new Map<string, number>();
+  for (const page of input.pages) {
+    for (const item of page.images) {
+      const image = input.images?.get(item.src);
+      if (!image || imageNames.has(item.src)) {
+        continue;
+      }
+      const size = `/Width ${image.widthPx} /Height ${image.heightPx}`;
+      let dict =
+        `/Type /XObject /Subtype /Image ${size} /ColorSpace /${image.colorSpace}` +
+        ` /BitsPerComponent 8 /Filter /${image.filter}`;
+      if (image.alpha) {
+        const smaskId = objects.stream(
+          `/Type /XObject /Subtype /Image ${size} /ColorSpace /DeviceGray` +
+            ` /BitsPerComponent 8 /Filter /FlateDecode`,
+          image.alpha,
+        );
+        dict += ` /SMask ${smaskId} 0 R`;
+      }
+      const name = `Im${imageNames.size + 1}`;
+      imageNames.set(item.src, name);
+      imageIds.set(name, objects.stream(dict, image.data));
+    }
+  }
+
+  /** The draw operators for one page's images, in the requested layer: the
+   * unit image square is scaled to the placed box and moved into PDF's
+   * bottom-up space. */
+  const drawImages = (page: PdfPageInput, onTop: boolean): string => {
+    let ops = "";
+    for (const item of page.images) {
+      const name = imageNames.get(item.src);
+      if (!name || Boolean(item.onTop) !== onTop) {
+        continue;
+      }
+      const y = page.heightPt - item.yPt - item.heightPt;
+      ops +=
+        `q ${fmt(item.widthPt)} 0 0 ${fmt(item.heightPt)} ${fmt(item.xPt)} ${fmt(y)} cm` +
+        ` /${name} Do Q\n`;
+    }
+    return ops;
+  };
+
   const outlineEntries: OutlineEntry[] = [];
   const pageAnnotIds: number[][] = [];
   const contentIds: number[] = [];
 
   input.pages.forEach((page, pageIndex) => {
-    let content = "";
+    // Behind-the-text images first, then the text, then the images that sit
+    // in front of it — PDF paints in content-stream order.
+    let content = drawImages(page, false);
     for (const item of page.items) {
       if (item.text.length === 0) {
         continue;
@@ -414,6 +497,7 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
         `1 0 0 1 ${fmt(item.xPt)} ${fmt(page.heightPt - item.yPt)} Tm ` +
         `<${encodeText(usage, item.text)}> Tj ET\n`;
     }
+    content += drawImages(page, true);
     contentIds.push(objects.stream("", content));
     const annotIds: number[] = [];
     for (const link of page.links) {
@@ -459,7 +543,15 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
           .map(([name, id]) => `/${name} ${id} 0 R`)
           .join(" ")} >>`
       : "";
-  const resourcesId = objects.add(`<< ${fontResources} >>`);
+  const imageResources =
+    imageIds.size > 0
+      ? `/XObject << ${Array.from(imageIds.entries())
+          .map(([name, id]) => `/${name} ${id} 0 R`)
+          .join(" ")} >>`
+      : "";
+  const resourcesId = objects.add(
+    `<< ${[fontResources, imageResources].filter((part) => part.length > 0).join(" ")} >>`,
+  );
 
   input.pages.forEach((page, pageIndex) => {
     const annots =

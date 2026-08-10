@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildPdf, pdfFileName, type PdfBuildInput, type PdfPageInput } from "./buildPdf";
+import {
+  buildPdf,
+  pdfFileName,
+  type PdfBuildInput,
+  type PdfImageData,
+  type PdfImageItem,
+  type PdfPageInput,
+} from "./buildPdf";
 import type { FaceKey } from "./fontMap";
 import { parseSfnt, type SfntFont } from "./sfnt";
 
@@ -34,8 +41,30 @@ function page(overrides: Partial<PdfPageInput> = {}): PdfPageInput {
     ],
     links: [],
     headings: [],
+    images: [],
     ...overrides,
   };
+}
+
+function imageItem(overrides: Partial<PdfImageItem> = {}): PdfImageItem {
+  return { src: "img", xPt: 72, yPt: 100, widthPt: 100, heightPt: 50, ...overrides };
+}
+
+/** Decoded-image stand-ins keyed by src; the bytes never have to be a real
+ * JPEG because the builder only ever passes them through. */
+function imageMap(srcs: string[] = ["img"]): Map<string, PdfImageData> {
+  return new Map(
+    srcs.map((src) => [
+      src,
+      {
+        widthPx: 8,
+        heightPx: 4,
+        filter: "DCTDecode" as const,
+        colorSpace: "DeviceRGB" as const,
+        data: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      },
+    ]),
+  );
 }
 
 /** The file as a latin-1 string, for structural assertions. */
@@ -215,6 +244,73 @@ describe("buildPdf", () => {
     expect(pdf).toContain("/MediaBox [0 0 595.28 841.89]");
     expect(pdf).toContain("/MediaBox [0 0 612 792]");
     expect(pdf).toContain("/Count 2");
+  });
+
+  it("embeds a placed image as an XObject and draws it at the placed box", () => {
+    const pdf = build({
+      pages: [page({ images: [imageItem()] })],
+      images: imageMap(),
+    });
+    expect(pdf).toContain("/Subtype /Image /Width 8 /Height 4");
+    expect(pdf).toContain("/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode");
+    expect(pdf).toContain("/XObject << /Im1");
+    // 100×50pt box at (72, 100) from the page top on an 841.89pt page:
+    // PDF's origin is bottom-left, so y = 841.89 − 100 − 50.
+    expect(pdf).toContain("q 100 0 0 50 72 691.89 cm /Im1 Do Q");
+  });
+
+  it("paints images under the text, and in-front images over it", () => {
+    const pdf = build({
+      pages: [
+        page({
+          images: [imageItem({ src: "under" }), imageItem({ src: "over", onTop: true })],
+        }),
+      ],
+      images: imageMap(["under", "over"]),
+    });
+    const under = pdf.indexOf("/Im1 Do");
+    const over = pdf.indexOf("/Im2 Do");
+    const text = pdf.indexOf(" Tj ");
+    expect(under).toBeGreaterThan(-1);
+    expect(under).toBeLessThan(text);
+    expect(text).toBeLessThan(over);
+  });
+
+  it("embeds one XObject for a source placed on several pages", () => {
+    const pdf = build({
+      pages: [page({ images: [imageItem()] }), page({ items: [], images: [imageItem()] })],
+      images: imageMap(),
+    });
+    expect(pdf.split("/Subtype /Image").length - 1).toBe(1);
+    expect(pdf.split("/Im1 Do").length - 1).toBe(2);
+  });
+
+  it("writes a transparent image's alpha as an /SMask", () => {
+    const pdf = build({
+      pages: [page({ images: [imageItem()] })],
+      images: new Map([
+        [
+          "img",
+          {
+            widthPx: 8,
+            heightPx: 4,
+            filter: "FlateDecode" as const,
+            colorSpace: "DeviceRGB" as const,
+            data: new Uint8Array([1, 2, 3]),
+            alpha: new Uint8Array([9, 9]),
+          },
+        ],
+      ]),
+    });
+    expect(pdf).toContain("/SMask");
+    expect(pdf).toContain("/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode");
+  });
+
+  it("skips a placed image that has no decoded data, keeping the rest", () => {
+    const pdf = build({ pages: [page({ images: [imageItem()] })], images: new Map() });
+    expect(pdf).not.toContain("/Subtype /Image");
+    expect(pdf).not.toContain("/XObject");
+    expect(pdf).toContain(" Tj ");
   });
 });
 

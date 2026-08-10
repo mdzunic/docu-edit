@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 import { extend, MOD, WORD_LEFT, WORD_RIGHT } from "./keys";
 
 // SPEC-034 — print preview and client-side PDF export: Ctrl/Cmd+P opens an
@@ -59,6 +60,55 @@ function paragraphLines(count: number, prefix = "Paragraph"): string {
   return Array.from({ length: count }, (_, i) => `${prefix} ${i} lorem ipsum dolor sit amet`).join(
     "\n",
   );
+}
+
+/** A minimal truecolour PNG, built the same way e2e/SPEC-024.spec.ts builds
+ * its fixtures — the image-export test needs a real decodable bitmap. */
+function buildPng(width: number, height: number, [r, g, b]: [number, number, number]): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    return c >>> 0;
+  });
+  const crc32 = (buf: Buffer) => {
+    let c = 0xffffffff;
+    for (const byte of buf) {
+      c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length, 0);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body), 0);
+    return Buffer.concat([length, body, crc]);
+  };
+  const rowBytes = width * 3;
+  const raw = Buffer.alloc((rowBytes + 1) * height);
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * (rowBytes + 1);
+    for (let x = 0; x < width; x++) {
+      const px = rowStart + 1 + x * 3;
+      raw[px] = r;
+      raw[px + 1] = g;
+      raw[px + 2] = b;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 /** Downloads via Download → PDF and returns the file bytes as latin-1 text
@@ -247,6 +297,39 @@ test("Download → PDF exports searchable text with embedded fonts, outline, lin
   // The hyperlink as a clickable URI annotation (AC-19).
   expect(pdf).toContain("/Subtype /Link");
   expect(pdf).toContain("/S /URI /URI (https://example.com/spec034)");
+});
+
+test("an inserted image is embedded in the exported PDF and drawn where it sits on the page", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Text beside the picture");
+  await page.getByTestId("insert-image-file-input").setInputFiles({
+    name: "photo.png",
+    mimeType: "image/png",
+    buffer: buildPng(200, 100, [0x33, 0x77, 0xbb]),
+  });
+  await expect(content(page).locator('[data-testid="doc-image"]')).toHaveCount(1);
+  await waitForPagination(page);
+
+  const pdf = await downloadPdfText(page);
+  // The image rides along as a real image XObject, sampled and Flate'd from
+  // the rendered bitmap, and is drawn by name in the page's content stream.
+  expect(pdf).toContain("/Type /XObject /Subtype /Image");
+  expect(pdf).toContain("/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode");
+  expect(pdf).toContain("/XObject << /Im1");
+  expect(pdf).toMatch(/q [\d.]+ 0 0 [\d.]+ [\d.]+ [\d.]+ cm \/Im1 Do Q/);
+  // The text still exports as text — the image does not turn the page into
+  // a raster (AC-15).
+  expect(pdf).toContain(" Tj ET");
+
+  // The draw box matches the image's aspect ratio (200×100 → 2:1) rather
+  // than being stretched to some default.
+  const draw = /q ([\d.]+) 0 0 ([\d.]+) [\d.]+ [\d.]+ cm \/Im1 Do Q/.exec(pdf);
+  expect(draw).not.toBeNull();
+  const [width, height] = [Number(draw![1]), Number(draw![2])];
+  expect(width / height).toBeCloseTo(2, 1);
 });
 
 test("headers print and export in position (AC-8, AC-10)", async ({ page }) => {

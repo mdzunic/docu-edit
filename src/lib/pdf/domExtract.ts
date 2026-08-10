@@ -8,7 +8,13 @@
 // Framework-free (no Vue imports) but browser-bound: it needs real layout
 // geometry (Range.getClientRects), so its coverage lives in the e2e suite;
 // the pure helpers are unit-tested.
-import type { PdfHeading, PdfLinkItem, PdfPageInput, PdfTextItem } from "./buildPdf";
+import type {
+  PdfHeading,
+  PdfImageItem,
+  PdfLinkItem,
+  PdfPageInput,
+  PdfTextItem,
+} from "./buildPdf";
 import { faceKeyFor } from "./fontMap";
 
 /** CSS px (96dpi) to PDF points (72dpi). */
@@ -111,10 +117,11 @@ export function extractPageContent(
   const items: PdfTextItem[] = [];
   const links: PdfLinkItem[] = [];
   const headings: PdfHeading[] = [];
+  const images: PdfImageItem[] = [];
   const doc = pageEl.ownerDocument;
   const view = doc.defaultView;
   if (!view) {
-    return { widthPt, heightPt, items, links, headings };
+    return { widthPt, heightPt, items, links, headings, images };
   }
 
   const walker = doc.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
@@ -157,6 +164,33 @@ export function extractPageContent(
         color,
       });
     }
+  }
+
+  // Images are placed by their rendered border box, so a resized, floated or
+  // absolutely positioned (wrap behind/in front) image lands in the PDF
+  // exactly where the pagination engine put it on screen.
+  for (const element of Array.from(pageEl.querySelectorAll("img.doc-image"))) {
+    if (element.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const image = element as HTMLImageElement;
+    const src = image.currentSrc || image.src;
+    const rect = image.getBoundingClientRect();
+    if (src.length === 0 || rect.width <= 0.1 || rect.height <= 0.1) {
+      continue;
+    }
+    // "In front of text" is the only wrap that paints above the text, and
+    // renderFormatting's imageDisplayStyle gives exactly those a positive
+    // z-index.
+    const zIndex = Number.parseInt(view.getComputedStyle(image).zIndex, 10);
+    images.push({
+      src,
+      xPt: (rect.left - pageRect.left) * scale,
+      yPt: (rect.top - pageRect.top) * scale,
+      widthPt: rect.width * scale,
+      heightPt: rect.height * scale,
+      onTop: Number.isFinite(zIndex) && zIndex > 0,
+    });
   }
 
   for (const anchor of Array.from(pageEl.querySelectorAll("a[data-doc-link]"))) {
@@ -210,5 +244,5 @@ export function extractPageContent(
     });
   }
 
-  return { widthPt, heightPt, items, links, headings };
+  return { widthPt, heightPt, items, links, headings, images };
 }
