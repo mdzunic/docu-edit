@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  displayParagraphFormatting,
+  displayRunFormatting,
   headingTag,
   paragraphHasTrackedChange,
   paragraphStyle,
@@ -9,6 +11,8 @@ import {
   tableColumnWidth,
   tableRowStyle,
   tableStyle,
+  trackChangeBlockHidden,
+  trackChangeRunHidden,
   trackChangeRunStyle,
 } from "./renderFormatting";
 import type { Paragraph, Run, Table, TableCell, TableRow } from "./documentModel";
@@ -310,6 +314,93 @@ describe("trackChangeRunStyle (SPEC-039 AC-4)", () => {
 
   it("returns no style for a run with no tracked change", () => {
     expect(trackChangeRunStyle({ text: "x", formatting: {} }, "all")).toEqual({});
+  });
+});
+
+describe("trackChangeRunHidden (SPEC-039 AC-9)", () => {
+  const insertedRun: Run = {
+    text: "x",
+    formatting: {},
+    changes: { insert: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } },
+  };
+  const deletedRun: Run = {
+    text: "x",
+    formatting: {},
+    changes: { delete: { changeId: "c2", author: "Grace", date: "2026-01-01T00:00:00.000Z" } },
+  };
+  const plainRun: Run = { text: "x", formatting: {} };
+
+  it("hides a pending deletion in 'No markup' (as if already accepted)", () => {
+    expect(trackChangeRunHidden(deletedRun, "noMarkup")).toBe(true);
+    expect(trackChangeRunHidden(insertedRun, "noMarkup")).toBe(false);
+  });
+
+  it("hides a pending insertion in 'Original' (as if rejected)", () => {
+    expect(trackChangeRunHidden(insertedRun, "original")).toBe(true);
+    expect(trackChangeRunHidden(deletedRun, "original")).toBe(false);
+  });
+
+  it("hides nothing in 'All markup' or 'Simple markup'", () => {
+    expect(trackChangeRunHidden(insertedRun, "all")).toBe(false);
+    expect(trackChangeRunHidden(deletedRun, "all")).toBe(false);
+    expect(trackChangeRunHidden(insertedRun, "simple")).toBe(false);
+    expect(trackChangeRunHidden(deletedRun, "simple")).toBe(false);
+  });
+
+  it("never hides a run with no tracked change", () => {
+    expect(trackChangeRunHidden(plainRun, "noMarkup")).toBe(false);
+    expect(trackChangeRunHidden(plainRun, "original")).toBe(false);
+  });
+});
+
+describe("displayRunFormatting (SPEC-039 AC-9)", () => {
+  it("shows the previous formatting in 'Original' for a pending format change", () => {
+    const run: Run = {
+      text: "x",
+      formatting: { bold: true },
+      changes: { formatChange: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z", previous: { bold: false } } },
+    };
+    expect(displayRunFormatting(run, "original")).toEqual({ bold: false });
+    expect(displayRunFormatting(run, "all")).toEqual({ bold: true });
+    expect(displayRunFormatting(run, "noMarkup")).toEqual({ bold: true });
+  });
+
+  it("returns the run's own formatting with no pending format change", () => {
+    const run: Run = { text: "x", formatting: { italic: true } };
+    expect(displayRunFormatting(run, "original")).toEqual({ italic: true });
+  });
+});
+
+describe("displayParagraphFormatting (SPEC-039 AC-9)", () => {
+  it("shows the previous formatting in 'Original' for a pending paragraph format change", () => {
+    const p = paragraph([{ text: "x", formatting: {} }]);
+    p.formatting = { alignment: "center" };
+    p.changes = {
+      formatChange: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z", previous: { alignment: "left" } },
+    };
+    expect(displayParagraphFormatting(p, "original")).toEqual({ alignment: "left" });
+    expect(displayParagraphFormatting(p, "all")).toEqual({ alignment: "center" });
+  });
+});
+
+describe("trackChangeBlockHidden (SPEC-039 AC-9)", () => {
+  const insert = { insert: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } };
+  const del = { delete: { changeId: "c2", author: "Grace", date: "2026-01-01T00:00:00.000Z" } };
+
+  it("hides a tracked-deleted block in 'No markup'", () => {
+    expect(trackChangeBlockHidden(del, "noMarkup")).toBe(true);
+    expect(trackChangeBlockHidden(insert, "noMarkup")).toBe(false);
+  });
+
+  it("hides a tracked-inserted block in 'Original'", () => {
+    expect(trackChangeBlockHidden(insert, "original")).toBe(true);
+    expect(trackChangeBlockHidden(del, "original")).toBe(false);
+  });
+
+  it("hides nothing without pending changes, or outside noMarkup/original", () => {
+    expect(trackChangeBlockHidden(undefined, "noMarkup")).toBe(false);
+    expect(trackChangeBlockHidden(insert, "all")).toBe(false);
+    expect(trackChangeBlockHidden(insert, "simple")).toBe(false);
   });
 });
 

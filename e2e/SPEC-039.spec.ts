@@ -147,6 +147,43 @@ test("the display-mode selector offers all four modes and defaults to All markup
   await select.selectOption("original");
 });
 
+test("'No markup' hides tracked deletions and 'Original' hides tracked insertions (AC-9)", async ({ page }) => {
+  await createDocument(page);
+  await seedParagraph(page, "hello world");
+  await toggleRecording(page);
+
+  // Insert "XYZ" then, with the caret left right after it, forward-delete
+  // "hello " — the paragraph ends up with one pending insertion ("XYZ") and
+  // one separate pending deletion ("hello "), not one merged edit.
+  await content(page).click();
+  await page.keyboard.press(LINE_START);
+  await page.keyboard.type("XYZ");
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Shift+ArrowRight");
+  }
+  await page.keyboard.press("Delete");
+  await expect(content(page)).toContainText("XYZ");
+  await expect(content(page)).toContainText("hello");
+
+  await openTrackChangesPane(page);
+  const select = pane(page).getByTestId("track-changes-display-mode-select");
+
+  // "No markup": as if accepted — the insertion shows, the deletion is gone.
+  await select.selectOption("noMarkup");
+  await expect(content(page)).toContainText("XYZworld");
+  await expect(content(page)).not.toContainText("hello");
+
+  // "Original": as if rejected — the deletion shows, the insertion is gone.
+  await select.selectOption("original");
+  await expect(content(page)).toContainText("hello world");
+  await expect(content(page)).not.toContainText("XYZ");
+
+  // Back to "All markup": both sides show again.
+  await select.selectOption("all");
+  await expect(content(page)).toContainText("XYZ");
+  await expect(content(page)).toContainText("hello");
+});
+
 test("opening a document that already contains tracked changes leaves the toggle off (AC-3)", async ({ page }) => {
   await createDocument(page);
   await seedParagraph(page, "hello world");

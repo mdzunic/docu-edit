@@ -36,6 +36,7 @@ import { noRenderEntries, type RenderEntry } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
 import {
+  displayRunFormatting,
   headingTag,
   isExternalLink,
   paragraphHasTrackedChange,
@@ -43,6 +44,7 @@ import {
   runKey,
   runLinkHref,
   runStyle,
+  trackChangeRunHidden,
   trackChangeRunStyle,
 } from "../../lib/renderFormatting";
 import { effectiveLanguage } from "../../lib/language";
@@ -195,7 +197,7 @@ function renderEntryFor(
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       column,
-      trackChangesDisplayMode: flatEntry.isTable ? deps.trackChangesDisplayMode.value : undefined,
+      trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
     } as RenderEntry;
   }
   if (flatEntry.isToc) {
@@ -244,7 +246,7 @@ function renderEntryFor(
     const tail = splitRuns(paragraph.runs, from)[1];
     runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
   }
-  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? []) };
+  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? [], deps.trackChangesDisplayMode.value) };
   const continuation = sliceStart !== undefined && sliceStart > 0;
   if (continuation) {
     // A continuation slice starts mid-paragraph: no space-before, no
@@ -285,18 +287,26 @@ function renderEntryFor(
         lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
       };
     }
-    const href = runLinkHref(run.formatting);
-    const external = href ? isExternalLink(run.formatting) : false;
-    const segments = marks ? markSegments(run.text) : null;
+    // SPEC-039 AC-9: "No markup"/"Original" render as if every change were
+    // already accepted/rejected — a hidden run (a pending deletion in "No
+    // markup", a pending insertion in "Original") shows no text at all, but
+    // stays a caret atom carrying its full model text (see
+    // trackChangeRunHidden/DocBlockEntries.vue's caretAtom branch).
+    const hidden = trackChangeRunHidden(run, deps.trackChangesDisplayMode.value);
+    const displayFormatting = displayRunFormatting(run, deps.trackChangesDisplayMode.value);
+    const href = hidden ? undefined : runLinkHref(displayFormatting);
+    const external = href ? isExternalLink(displayFormatting) : false;
+    const segments = !hidden && marks ? markSegments(run.text) : null;
     const marked = segments && segments.some((segment) => segment.kind !== "text");
     return {
       key: runKey(run, runIndex),
       href: href || "",
       target: external ? "_blank" : undefined,
       rel: external ? "noopener noreferrer" : undefined,
-      styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
-      text: run.text,
+      styleObj: { ...runStyle(displayFormatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+      text: hidden ? "" : run.text,
       segments: marked ? segments : null,
+      caretAtom: hidden ? run.text : undefined,
       lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
     };
   });

@@ -94,6 +94,17 @@ function componentFor(entry = noRenderEntries()[0]) {
           :style="run.styleObj"
           :lang="run.lang"
         >{{ run.text }}</span>
+        <!-- A tracked-change run hidden by the current display mode
+             (SPEC-039 AC-9): renders no visible text, but still carries its
+             full model text via data-caret-atom so caret offsets land where
+             they would if the text were showing. -->
+        <span
+          v-else-if="run.caretAtom"
+          contenteditable="false"
+          :data-caret-atom="run.caretAtom"
+          :style="run.styleObj"
+          :lang="run.lang"
+        ></span>
         <a
           v-else-if="run.href && !run.segments"
           data-doc-link=""

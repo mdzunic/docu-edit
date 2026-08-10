@@ -33,6 +33,12 @@ export interface RenderRun {
    * assistive technology; always set, unlike the model field it derives
    * from (see lib/language.ts's effectiveLanguage). */
   lang: string;
+  /** SPEC-039 AC-9's "No markup"/"Original" collapse: when set, this run
+   * renders NO visible text (an empty, `contenteditable="false"` atom) but
+   * still carries its full model text via `data-caret-atom` (this value),
+   * so lib/domCaret.ts's offset mapping counts it exactly as if the text
+   * were showing (see lib/renderFormatting.ts's trackChangeRunHidden). */
+  caretAtom?: string;
 }
 
 /** One page item's precomputed rendering — a paragraph (possibly a slice of
@@ -84,7 +90,8 @@ export interface RenderEntry {
   column?: number;
   /** The review pane's display mode (SPEC-039 AC-9) — a table entry's cell
    * runs need it passed down since DocTableBlock renders its own runs
-   * rather than through RenderRun. */
+   * rather than through RenderRun, and an image entry needs it to hide a
+   * tracked-inserted/deleted image in "Original"/"No markup". */
   trackChangesDisplayMode?: TrackChangesDisplayMode;
   /** Whether this paragraph carries a tracked change (SPEC-039 AC-5's
    * margin change bar) — suppressed in "No markup"/"Original" display
