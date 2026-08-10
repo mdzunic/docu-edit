@@ -33,6 +33,9 @@ export interface TrackChangesDeps {
     result: CommandResult | null,
     beforeSelection: ModelSelection | null,
     label: string,
+    groupable?: boolean,
+    keepPasteChip?: boolean,
+    skipTrackChanges?: boolean,
   ) => void;
   getCaret: () => CaretPosition | null;
   applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
@@ -88,14 +91,20 @@ export function useTrackChanges(deps: TrackChangesDeps) {
 
   /** Accept/reject one change (AC-7), routed through the ordinary
    * applyEdit/undo-history path so it is undoable (AC-10) exactly like any
-   * other command. */
+   * other command. `skipTrackChanges: true` — the result IS the final state
+   * a reviewer chose, not a new edit to re-diff; without it, applyEdit's own
+   * diff engine (still armed while recording is on) would see the rejected
+   * content disappear and immediately re-track it as a fresh deletion,
+   * turning "reject" into a no-op (or worse, for a row/cell removed
+   * entirely — see trackChangesDiff.ts's diffTable, which has no
+   * insert-your-own-then-undo short-circuit the way run text does). */
   function acceptChange(changeId: string): void {
     const model = doc.value;
     if (!model) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: acceptChangeCommand(model, changeId), selection }, selection, "accept change");
+    applyEdit({ model: acceptChangeCommand(model, changeId), selection }, selection, "accept change", false, false, true);
   }
 
   function rejectChange(changeId: string): void {
@@ -104,7 +113,7 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: rejectChangeCommand(model, changeId), selection }, selection, "reject change");
+    applyEdit({ model: rejectChangeCommand(model, changeId), selection }, selection, "reject change", false, false, true);
   }
 
   /** "Accept all" (AC-7). */
@@ -114,7 +123,7 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: acceptAllChanges(model), selection }, selection, "accept all changes");
+    applyEdit({ model: acceptAllChanges(model), selection }, selection, "accept all changes", false, false, true);
   }
 
   /** "Reject all" (AC-7). */
@@ -124,7 +133,7 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: rejectAllChanges(model), selection }, selection, "reject all changes");
+    applyEdit({ model: rejectAllChanges(model), selection }, selection, "reject all changes", false, false, true);
   }
 
   // --- navigation (AC-8) --------------------------------------------------

@@ -184,6 +184,27 @@ test("'No markup' hides tracked deletions and 'Original' hides tracked insertion
   await expect(content(page)).toContainText("hello");
 });
 
+test("a table row insert while tracking is on is tracked, not silently applied (AC-15, AC-18)", async ({ page }) => {
+  await createDocument(page);
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("table-grid-cell-2-2").click();
+  await expect(content(page).locator("table.doc-table")).toHaveCount(1);
+
+  await toggleRecording(page);
+  await content(page).getByTestId("table-cell-0-0").locator(".doc-paragraph").first().click({ button: "right" });
+  await page.getByTestId("context-menu-insert-row-below").click();
+  await expect(content(page).locator("table.doc-table tr")).toHaveCount(3);
+
+  await openTrackChangesPane(page);
+  await expect(pane(page).locator(".track-change-item")).toHaveCount(1);
+  await expect(pane(page).locator(".track-change-item").first()).toContainText("table");
+
+  // Reject: the inserted row is removed again (AC-10, AC-11's "restore
+  // exact original" spirit applied to a structural change).
+  await pane(page).getByTestId("track-change-reject").click();
+  await expect(content(page).locator("table.doc-table tr")).toHaveCount(2);
+});
+
 test("opening a document that already contains tracked changes leaves the toggle off (AC-3)", async ({ page }) => {
   await createDocument(page);
   await seedParagraph(page, "hello world");
