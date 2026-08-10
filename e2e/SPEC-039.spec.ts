@@ -60,8 +60,12 @@ test("with tracking on, inserted text underlines and deleted text stays struck t
   const inserted = content(page).locator("span", { hasText: "XYZ" }).first();
   await expect(inserted).toHaveCSS("text-decoration-line", /underline/);
 
-  // Select "hello" and delete it — it must remain visible, struck through.
+  // Select "hello" (now at offset 3, after the inserted "XYZ") and delete
+  // it — it must remain visible, struck through.
   await page.keyboard.press(LINE_START);
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press("ArrowRight");
+  }
   for (let i = 0; i < 5; i++) {
     await page.keyboard.press("Shift+ArrowRight");
   }
