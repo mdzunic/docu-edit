@@ -64,6 +64,39 @@ describe("collectDropRecords", () => {
       expect(record.reason).toContain("OpenDocument Text (.odt)");
     }
   });
+
+  it("reports a tracked table/row/cell property change as dropped on a cross-format save to .odt (SPEC-039 AC-19)", () => {
+    const model = { ...createDocument("id-4"), format: "docx" as const };
+    const change = { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z", previous: {} };
+    model.sections[0].blocks = [
+      {
+        type: "table",
+        columnWidthsCm: [5, 5],
+        changes: { propertyChange: change },
+        rows: [
+          {
+            changes: { propertyChange: change },
+            cells: [
+              { blocks: [{ type: "paragraph", runs: [] }], changes: { propertyChange: change } },
+              { blocks: [{ type: "paragraph", runs: [] }] },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const dropped = collectDropRecords(model, "odt");
+    expect(dropped.map((d) => [d.kind, d.location])).toEqual([
+      ["trackedPropertyChange", "table at paragraph 1"],
+      ["trackedPropertyChange", "table at paragraph 1, row 1"],
+      ["trackedPropertyChange", "table at paragraph 1, row 1, column 1"],
+    ]);
+    expect(dropped[0].reason).toContain("OpenDocument Text");
+
+    // Not reported for a .docx target (w:tblPrChange/w:trPrChange/
+    // w:tcPrChange represent it — AC-15) or a same-format .docx save.
+    expect(collectDropRecords(model, "docx")).toEqual([]);
+  });
 });
 
 describe("noConversionReport", () => {

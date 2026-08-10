@@ -750,6 +750,27 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   if (acc.commentAnchors.length > 0) {
     paragraph.commentAnchors = acc.commentAnchors;
   }
+  // SPEC-039 AC-16: the paragraph's own pending markInsert/markDelete —
+  // see writer.ts's paragraphMarkChangeXml — trails the paragraph's own
+  // content as a point text:change (unambiguous against a row/cell marker,
+  // which always LEADS a paragraph and is stripped before this point — see
+  // stripLeadingChangeMarkers). Two can coexist (an author's split pending
+  // right before another's merge), so every trailing text:change is read,
+  // not just the very last child.
+  const trailingChildren = Array.from(el.children);
+  for (let i = trailingChildren.length - 1; i >= 0; i--) {
+    const candidate = trailingChildren[i];
+    if (candidate.namespaceURI !== TEXT_NAMESPACE || candidate.localName !== "change") {
+      break;
+    }
+    const changeId = textAttr(candidate, "change-id");
+    const region = changeId ? odtChangedRegions?.get(changeId) : undefined;
+    if (region?.kind === "insert") {
+      paragraph.changes = { ...paragraph.changes, markInsert: region };
+    } else if (region?.kind === "delete") {
+      paragraph.changes = { ...paragraph.changes, markDelete: region };
+    }
+  }
   if (isHeading) {
     // text:outline-level is 1-based; per ODF a text:h without one is level 1
     // unless its style chain says otherwise (style:default-outline-level).
@@ -1519,6 +1540,74 @@ function parseTableAlignmentAttr(tableEl: Element): TableAlignment | undefined {
   return undefined;
 }
 
+/** The leading tracked-change marker(s) SPEC-039 AC-16's writer prepends to
+ * a table row/cell's first paragraph — see writer.ts's rowChangeMarkerXml/
+ * cellChangeMarkerXml. A `table:change-scope="row"` marker is the row's
+ * own (only ever found on the row's first real cell); an unscoped one is
+ * this cell's own. Both can be present at once (the row's first cell also
+ * independently cell-tracked). Read-only — the caller strips them via
+ * stripLeadingChangeMarkers before parsing the paragraph's own content, so
+ * they are never mistaken for it (or for the paragraph's own trailing
+ * markInsert/markDelete marker, at the opposite end — see
+ * paragraphMarkChange). */
+interface LeadingCellMarkers {
+  rowMark?: OdtChangedRegion;
+  cellMark?: OdtChangedRegion;
+}
+
+function firstParagraphChild(el: Element): Element | undefined {
+  return Array.from(el.children).find(
+    (child) => child.namespaceURI === TEXT_NAMESPACE && (child.localName === "p" || child.localName === "h"),
+  );
+}
+
+function leadingCellChangeMarkers(cellEl: Element): LeadingCellMarkers {
+  const result: LeadingCellMarkers = {};
+  const firstPara = firstParagraphChild(cellEl);
+  if (!firstPara) {
+    return result;
+  }
+  for (const child of Array.from(firstPara.children)) {
+    if (child.namespaceURI !== TEXT_NAMESPACE || child.localName !== "change") {
+      break;
+    }
+    const changeId = textAttr(child, "change-id");
+    const region = changeId ? odtChangedRegions?.get(changeId) : undefined;
+    if (!region || (region.kind !== "insert" && region.kind !== "delete")) {
+      continue;
+    }
+    if (tableAttr(child, "change-scope") === "row") {
+      result.rowMark = region;
+    } else {
+      result.cellMark = region;
+    }
+  }
+  return result;
+}
+
+/** A clone of `cellEl` with its first paragraph's leading change markers
+ * (see leadingCellChangeMarkers) removed — cheap (cells are small); a
+ * no-op clone when there are none. */
+function stripLeadingChangeMarkers(cellEl: Element): Element {
+  const clone = cellEl.cloneNode(true) as Element;
+  const firstPara = firstParagraphChild(clone);
+  if (!firstPara) {
+    return clone;
+  }
+  const toRemove: Element[] = [];
+  for (const child of Array.from(firstPara.children)) {
+    if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "change") {
+      toRemove.push(child);
+      continue;
+    }
+    break;
+  }
+  for (const el of toRemove) {
+    firstPara.removeChild(el);
+  }
+  return clone;
+}
+
 function parseTableCellElement(
   cellEl: Element,
   catalog: OdfStyleCatalog,
@@ -1627,6 +1716,12 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         return null;
       }
       const cells: TableCell[] = [];
+      // SPEC-039 AC-16: a pending row/cell insert/delete's own marker —
+      // see writer.ts's rowChangeMarkerXml/cellChangeMarkerXml — leads the
+      // affected cell's first paragraph; the row's own marker always lands
+      // on the row's first real cell, so at most one is ever found per row.
+      let rowChange: TrackedChangeInfo | undefined;
+      let rowChangeKind: "insert" | "delete" | undefined;
       for (const cellEl of Array.from(child.children)) {
         if (cellEl.namespaceURI !== TABLE_NAMESPACE) {
           return null;
@@ -1637,7 +1732,17 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         }
         let cell: TableCell | null;
         if (cellEl.localName === "table-cell") {
-          cell = parseTableCellElement(cellEl, catalog, styleTables.cellStyles);
+          const markers = leadingCellChangeMarkers(cellEl);
+          const parseTarget =
+            markers.rowMark || markers.cellMark ? stripLeadingChangeMarkers(cellEl) : cellEl;
+          cell = parseTableCellElement(parseTarget, catalog, styleTables.cellStyles);
+          if (cell && markers.cellMark) {
+            cell.changes = { ...cell.changes, [markers.cellMark.kind]: markers.cellMark };
+          }
+          if (markers.rowMark) {
+            rowChange = markers.rowMark;
+            rowChangeKind = markers.rowMark.kind as "insert" | "delete";
+          }
         } else if (cellEl.localName === "covered-table-cell") {
           cell = { blocks: [], covered: true };
         } else {
@@ -1663,6 +1768,9 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         }
         if (minHeightCm !== undefined) {
           row.minHeightCm = minHeightCm;
+        }
+        if (rowChange && rowChangeKind) {
+          row.changes = { ...row.changes, [rowChangeKind]: rowChange };
         }
         rows.push(row);
       }

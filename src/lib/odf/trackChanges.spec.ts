@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
 import { unzip } from "../docx/zip";
-import { createDocument, type DocumentModel, type Paragraph } from "../documentModel";
+import { createDocument, type DocumentModel, type Paragraph, type Table } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
 
 const decoder = new TextDecoder();
@@ -126,5 +126,100 @@ describe("same-format save of an already-tracked document (AC-14 analog)", () =>
     const { parsed: secondParsed } = await writeAndReadBack(reopened);
     const resaved = parsedModel(secondParsed);
     expect(firstStructuralDifference(reopened, resaved)).toBeNull();
+  });
+});
+
+describe("tracked paragraph mark round trip (AC-16)", () => {
+  it("writes a split's markInsert as a trailing text:change and reads it back", async () => {
+    const model = docWithText("hello", "world");
+    (model.sections[0].blocks[0] as Paragraph).changes = {
+      markInsert: { changeId: "pm1", author: "Ada", date: "2026-01-01T00:00:00.000Z" },
+    };
+    const { parsed, contentXml } = await writeAndReadBack(model);
+    expect(contentXml).toContain("<text:insertion>");
+    expect(contentXml).toMatch(/hello<\/text:span><text:change text:change-id="pm1"\/>/);
+
+    const reparsed = parsedModel(parsed);
+    const first = reparsed.sections[0].blocks[0] as Paragraph;
+    expect(first.changes?.markInsert).toMatchObject({ author: "Ada", date: "2026-01-01T00:00:00.000Z" });
+  });
+
+  it("writes a pending merge's markDelete as a trailing text:change and reads it back", async () => {
+    const model = docWithText("hello", "world");
+    (model.sections[0].blocks[0] as Paragraph).changes = {
+      markDelete: { changeId: "pm2", author: "Grace", date: "2026-02-02T00:00:00.000Z" },
+    };
+    const { parsed, contentXml } = await writeAndReadBack(model);
+    expect(contentXml).toContain("<text:deletion>");
+
+    const reparsed = parsedModel(parsed);
+    const first = reparsed.sections[0].blocks[0] as Paragraph;
+    expect(first.changes?.markDelete).toMatchObject({ author: "Grace", date: "2026-02-02T00:00:00.000Z" });
+  });
+});
+
+describe("tracked table row round trip (AC-16)", () => {
+  function tableModel(): DocumentModel {
+    const model = createDocument("spec-039-odt-table");
+    const table: Table = {
+      type: "table",
+      columnWidthsCm: [5, 5],
+      rows: [
+        { cells: [{ blocks: [paragraph("a1")] }, { blocks: [paragraph("a2")] }] },
+        {
+          cells: [{ blocks: [paragraph("b1")] }, { blocks: [paragraph("b2")] }],
+          changes: { insert: { changeId: "row1", author: "Ada", date: "2026-03-03T00:00:00.000Z" } },
+        },
+      ],
+    };
+    model.sections = [{ blocks: [table] }];
+    return model;
+  }
+
+  it("writes a tracked-inserted row as a leading table:change-scope=row text:change and reads it back", async () => {
+    const { parsed, contentXml } = await writeAndReadBack(tableModel());
+    expect(contentXml).toContain('table:change-scope="row"');
+
+    const reparsed = parsedModel(parsed);
+    const table = reparsed.sections[0].blocks[0] as Table;
+    expect(table.rows).toHaveLength(2);
+    expect(table.rows[1].changes?.insert).toMatchObject({ author: "Ada", date: "2026-03-03T00:00:00.000Z" });
+    expect(table.rows[0].changes).toBeUndefined();
+    // The row's own content is unaffected by the marker.
+    expect(table.rows[1].cells[0].blocks[0].runs[0].text).toBe("b1");
+  });
+});
+
+describe("tracked table cell round trip (AC-16)", () => {
+  function tableModel(): DocumentModel {
+    const model = createDocument("spec-039-odt-cell");
+    const table: Table = {
+      type: "table",
+      columnWidthsCm: [5, 5],
+      rows: [
+        {
+          cells: [
+            { blocks: [paragraph("a1")] },
+            {
+              blocks: [paragraph("a2")],
+              changes: { insert: { changeId: "cell1", author: "Ada", date: "2026-04-04T00:00:00.000Z" } },
+            },
+          ],
+        },
+      ],
+    };
+    model.sections = [{ blocks: [table] }];
+    return model;
+  }
+
+  it("writes a tracked-inserted cell as a leading (unscoped) text:change and reads it back", async () => {
+    const { parsed, contentXml } = await writeAndReadBack(tableModel());
+    expect(contentXml).toContain("<text:change");
+
+    const reparsed = parsedModel(parsed);
+    const table = reparsed.sections[0].blocks[0] as Table;
+    expect(table.rows[0].cells[1].changes?.insert).toMatchObject({ author: "Ada", date: "2026-04-04T00:00:00.000Z" });
+    expect(table.rows[0].cells[0].changes).toBeUndefined();
+    expect(table.rows[0].cells[1].blocks[0].runs[0].text).toBe("a2");
   });
 });
