@@ -462,3 +462,33 @@ export function visibleBlockText(block: Block): string {
   }
   return text;
 }
+
+/** A paragraph's tracked-deletion spans, as half-open `[start, end)` ranges
+ * into its concatenated (full, deletions included) run text — the offset
+ * space `blockText`/`FindMatch`/spell-check tokens use. Find/replace and
+ * spell check keep matching against the full text (offsets a replace's
+ * `splitRuns` relies on must stay valid) and instead skip any match that
+ * overlaps one of these ranges. */
+export function deletedRanges(paragraph: Paragraph): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let offset = 0;
+  for (const run of paragraph.runs) {
+    const start = offset;
+    offset += run.text.length;
+    if (run.changes?.delete) {
+      const last = ranges[ranges.length - 1];
+      if (last && last.end === start) {
+        last.end = offset;
+      } else {
+        ranges.push({ start, end: offset });
+      }
+    }
+  }
+  return ranges;
+}
+
+/** Whether `[start, end)` overlaps any tracked-deletion span of `paragraph`
+ * (SPEC-039 AC-17). */
+export function overlapsDeletion(paragraph: Paragraph, start: number, end: number): boolean {
+  return deletedRanges(paragraph).some((range) => start < range.end && end > range.start);
+}
