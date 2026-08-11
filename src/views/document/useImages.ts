@@ -26,7 +26,7 @@ import {
   noImageCommand,
   type ImageLocation,
 } from "../../lib/images";
-import { asImageWrapMode } from "../../lib/documentModel";
+import { asImageWrapMode, type DocumentFormat } from "../../lib/documentModel";
 import { prepareImageInsert, ImageInsertError } from "../../lib/imageInsert";
 import { withHeaderFooterModel } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";
@@ -97,9 +97,12 @@ export function useImages(deps: ImagesDeps) {
   }
 
   /** The document's own effective save format — decides whether an inserted
-   * SVG is converted to PNG (AC-2) or kept as-is (AC-3). */
-  function effectiveFormat(): "docx" | "odt" {
-    return doc.value && doc.value.format === "odt" ? "odt" : "docx";
+   * SVG is converted to PNG (AC-2) or kept as-is (AC-3). A `.md` document
+   * (SPEC-050) keeps SVG as-is: Markdown images are written as data URIs,
+   * format-agnostic, so there is no docx-style "cannot store SVG" reason to
+   * convert. */
+  function effectiveFormat(): DocumentFormat {
+    return doc.value?.format === "odt" || doc.value?.format === "md" ? doc.value.format : "docx";
   }
 
   function remeasureImageHandles() {

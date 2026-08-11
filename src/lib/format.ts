@@ -46,6 +46,7 @@ export function formatRelativeTime(timestampMs: number, nowMs: number): string {
 const BADGE_LABELS: Record<DocumentFormat, string> = {
   docx: "DOCX",
   odt: "ODT",
+  md: "MD",
   new: "New",
 };
 
@@ -57,6 +58,7 @@ export function formatBadgeLabel(format: DocumentFormat): string {
 const DOCUMENT_FORMAT_LABELS: Record<ModelDocumentFormat, string> = {
   docx: "Word (.docx)",
   odt: "OpenDocument Text (.odt)",
+  md: "Markdown (.md)",
 };
 
 /** The full format name for the Properties dialog's General tab (SPEC-041

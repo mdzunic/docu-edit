@@ -166,6 +166,23 @@ function componentFor(entry = noRenderEntries()[0]) {
   font-size: inherit;
 }
 
+/* SPEC-050: a Markdown thematic break (`---`) — an ordinary empty editable
+   paragraph in the "Horizontal Rule" style, drawn with a rule so it reads as
+   one instead of a blank line. A pseudo-element (not a real `<hr>`) so the
+   paragraph keeps the same editable/caret DOM shape as any other. */
+.doc-horizontal-rule {
+  min-height: 0.1cm;
+  position: relative;
+}
+.doc-horizontal-rule::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid #9aa0a6;
+}
+
 /* SPEC-039 AC-5: a change bar in the margin for any paragraph carrying a
    tracked change — a plain vertical rule outside the paragraph's own box
    (a box-shadow, not a pseudo-element, so it never collides with the list

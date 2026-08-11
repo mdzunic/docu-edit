@@ -104,7 +104,7 @@ async function handleFileChosen() {
     <input
       ref="fileInput"
       type="file"
-      accept=".docx,.odt"
+      accept=".docx,.odt,.md,.markdown"
       data-testid="open-from-url-input"
       class="visually-hidden"
       @change="handleFileChosen"

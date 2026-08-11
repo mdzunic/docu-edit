@@ -13,6 +13,7 @@ import {
   LegacyDocError,
   FILE_TOO_LARGE_MESSAGE,
   MAX_FILE_SIZE_BYTES,
+  UNSUPPORTED_FILE_TYPE_MESSAGE,
 } from "./openDocument";
 import { FLAT_ODF_MESSAGE } from "./odf/reader";
 
@@ -141,9 +142,46 @@ describe("hasSupportedExtension", () => {
     expect(hasSupportedExtension("Notes.ODT")).toBe(true);
   });
 
+  it("accepts .md and .markdown, case-insensitively (SPEC-050)", () => {
+    expect(hasSupportedExtension("Notes.md")).toBe(true);
+    expect(hasSupportedExtension("Notes.MD")).toBe(true);
+    expect(hasSupportedExtension("Notes.markdown")).toBe(true);
+  });
+
   it("rejects other extensions and extensionless names", () => {
     expect(hasSupportedExtension("Report.pdf")).toBe(false);
     expect(hasSupportedExtension("Report.doc")).toBe(false);
     expect(hasSupportedExtension("Report")).toBe(false);
+  });
+});
+
+describe("SPEC-050 — Markdown detection", () => {
+  it("names all three formats in the unsupported-file-type message", () => {
+    expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe("We can only open .docx, .odt and .md files");
+  });
+
+  it("opens a .md file by extension — the deliberate exception to content sniffing", async () => {
+    const file = new File([new TextEncoder().encode("# Hello\n")], "notes.md");
+    const doc = await openDocumentFile(file);
+    expect(doc.format).toBe("md");
+    expect(doc.title).toBe("notes");
+  });
+
+  it("opens a .markdown file the same way", async () => {
+    const file = new File([new TextEncoder().encode("Hello\n")], "notes.markdown");
+    const doc = await openDocumentFile(file);
+    expect(doc.format).toBe("md");
+  });
+
+  it("still takes the .docx path for a ZIP package merely named .md (ZIP packages stay content-sniffed)", async () => {
+    const bytes = readFileSync(join(fixturesDir, "word-authored.docx"));
+    const doc = await openDocumentFile(new File([bytes], "renamed.md"));
+    expect(doc.format).toBe("docx");
+  });
+
+  it("strips the .md/.markdown extension from the title (AC-29)", () => {
+    expect(titleFromFileName("Notes.md")).toBe("Notes");
+    expect(titleFromFileName("Notes.MD")).toBe("Notes");
+    expect(titleFromFileName("Notes.markdown")).toBe("Notes");
   });
 });

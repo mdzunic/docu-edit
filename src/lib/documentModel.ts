@@ -446,6 +446,12 @@ export type StyleType = "paragraph" | "character" | "list" | "table";
  * on each paragraph/run, so the catalogue is not needed to render — it
  * drives the style picker/pane, the diff that separates direct formatting
  * from style formatting, and the writers' style definitions. */
+/** SPEC-050: the built-in style id a Markdown thematic break (`---`) round-
+ * trips through — declared here (not lib/styles.ts, which defines the style
+ * itself) so lib/renderFormatting.ts can key its `<hr>` rendering off it
+ * without an import cycle (styles.ts already imports renderFormatting.ts). */
+export const HORIZONTAL_RULE_STYLE_ID = "HorizontalRule";
+
 export interface NamedStyle {
   /** Style identity as referenced by `Paragraph.styleId`/`Run.styleId`. */
   id: string;
@@ -466,6 +472,12 @@ export interface NamedStyle {
   /** ODF-only: a proportional font size ("130%" in the source), resolved
    * against the inherited size during chain resolution. */
   fontSizePercent?: number;
+  /** Markdown-only (SPEC-050): a fenced code block's info string (the text
+   * after the opening ` ``` `), carried by a style based on the built-in
+   * "Code" paragraph style so paragraphs from fences with different info
+   * strings resolve to distinct styles (`Code:<language>`) instead of
+   * colliding on one shared id. Absent for a fence with no info string. */
+  language?: string;
   /** 1-based outline level; presence makes this a heading style. */
   headingLevel?: number;
   /** List-type styles only (SPEC-042): the `DocumentModel.listDefinitions`
@@ -1361,8 +1373,11 @@ export interface DefaultStyles {
 }
 
 /** The source format a document was opened from, if any — drives the format
- * badge in the app bar. Undefined for documents created blank (SPEC-002). */
-export type DocumentFormat = "docx" | "odt";
+ * badge in the app bar. Undefined for documents created blank (SPEC-002).
+ * `"md"` (SPEC-050) is Markdown — a plain-text format with no package, held
+ * to the same three-way union everywhere a source/target format is decided
+ * so a missing branch is a compile error rather than a silent fallback. */
+export type DocumentFormat = "docx" | "odt" | "md";
 
 /** A package part the reader does not model (SPEC-008) — `customXml/`,
  * charts, themes, embedded objects, images, `word/webSettings.xml`, … —
@@ -1572,6 +1587,11 @@ export interface DocumentModel {
   /** Document properties and metadata (SPEC-041) — absent means a document
    * with no known metadata (e.g. never opened from or saved to a file). */
   properties?: DocumentProperties;
+  /** A `.md` source's YAML front matter (SPEC-050), verbatim including its
+   * `---` delimiters — never parsed, re-emitted at the top of the file
+   * unchanged on a `.md` save. Absent for a document with none, and never
+   * set by a `.docx`/`.odt` reader. */
+  frontMatter?: string;
 }
 
 export const DEFAULT_TITLE = "Untitled document";

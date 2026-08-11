@@ -283,7 +283,7 @@ function confirmDelete() {
     <input
       ref="fileInput"
       type="file"
-      accept=".docx,.odt"
+      accept=".docx,.odt,.md,.markdown"
       data-testid="open-document-input"
       class="visually-hidden"
       @change="handleFileChosen"

@@ -33,6 +33,7 @@ import {
 import { documentFormatLabel, formatFileSize, formatTimestamp } from "../lib/format";
 import { docxFileName } from "../lib/docx/writer";
 import { odtFileName } from "../lib/odf/writer";
+import { mdFileName } from "../lib/md/writer";
 import { CORE_EXTRA_FIELD_LABELS } from "../lib/docx/docProps";
 import { META_EXTRA_FIELD_LABELS } from "../lib/odf/meta";
 
@@ -97,7 +98,13 @@ const fileName = computed(() => {
   if (!model.format) {
     return "";
   }
-  return model.format === "odt" ? odtFileName(model.title) : docxFileName(model.title);
+  if (model.format === "odt") {
+    return odtFileName(model.title);
+  }
+  if (model.format === "md") {
+    return mdFileName(model.title);
+  }
+  return docxFileName(model.title);
 });
 const formatLabel = computed(() => documentFormatLabel(modelRef.value.format));
 const sizeLabel = computed(() => {

@@ -9,16 +9,17 @@
 // formatting and that resolution is its direct formatting. Styles the
 // document does not define fall back to the built-in set below, which is
 // also the whole picker list for a blank document.
-import type {
-  BorderLineStyle,
-  CellBorders,
-  DocumentModel,
-  NamedStyle,
-  Paragraph,
-  ParagraphAlignment,
-  ParagraphFormatting,
-  RunFormatting,
-  StyleType,
+import {
+  HORIZONTAL_RULE_STYLE_ID,
+  type BorderLineStyle,
+  type CellBorders,
+  type DocumentModel,
+  type NamedStyle,
+  type Paragraph,
+  type ParagraphAlignment,
+  type ParagraphFormatting,
+  type RunFormatting,
+  type StyleType,
 } from "./documentModel";
 import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 import { runStyle } from "./renderFormatting";
@@ -111,6 +112,45 @@ const BUILT_IN_STYLES: readonly NamedStyle[] = [
     runFormatting: { fontFamily: "Courier New" },
   },
 ];
+
+// SPEC-050: Markdown-only styles a `.md` reader adds to a document's *own*
+// catalogue (never here — BUILT_IN_STYLES is every document's picker
+// fallback, and SPEC-019 AC-2 pins its exact contents) when the document
+// actually uses the construct. `mdBuiltInStyles()` seeds the full built-in
+// set alongside them so that document's picker still offers Normal/Heading/…
+// instead of just the Markdown-specific additions (see stylePickerEntries's
+// "document's own styles instead of the built-in set" fallback rule).
+
+/** An inline code span (`` `code` ``) is a run styled with this character
+ * style rather than direct RunFormatting, so a save to Markdown can tell
+ * "this run came from a code span" apart from a run a user simply set to a
+ * monospace font (formatting Markdown cannot otherwise carry — see
+ * opaque.ts's "runFormatting" drop kind). */
+export const CODE_CHAR_STYLE_ID = "CodeChar";
+
+const MD_CODE_CHAR_STYLE: NamedStyle = {
+  id: CODE_CHAR_STYLE_ID,
+  name: "Code",
+  type: "character",
+  runFormatting: { fontFamily: "Courier New" },
+};
+
+/** A thematic break (`---`) becomes an empty paragraph in this style — a
+ * pure marker with no formatting of its own, the same convention BreakBlock
+ * uses for a break that carries no content. */
+const MD_HORIZONTAL_RULE_STYLE: NamedStyle = {
+  id: HORIZONTAL_RULE_STYLE_ID,
+  name: "Horizontal Rule",
+  basedOn: NORMAL_STYLE_ID,
+};
+
+/** Fresh copies of every built-in style plus the two Markdown-only ones
+ * above — the catalogue seed for a `.md` document that uses a thematic
+ * break, an inline code span or a fenced code block (which adds its own
+ * `Code:<language>` entries on top, based on "Code"). */
+export function mdBuiltInStyles(): NamedStyle[] {
+  return [...builtInStyles(), structuredClone(MD_CODE_CHAR_STYLE), structuredClone(MD_HORIZONTAL_RULE_STYLE)];
+}
 
 /** Fresh copies of the built-in styles — the catalogue seed when a
  * document without one of its own has a style updated, so the picker keeps

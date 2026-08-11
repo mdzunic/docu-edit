@@ -14,6 +14,11 @@ export class OpenFromUrlError extends Error {}
 
 const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const ODT_CONTENT_TYPE = "application/vnd.oasis.opendocument.text";
+// SPEC-050: Markdown's registered content type. Plain "text/plain" is
+// deliberately not included here — unlike the extension check below (which
+// only ever matches an actual .md/.markdown URL), that would accept any
+// plain-text link at all and defeat the "not a document" error entirely.
+const MARKDOWN_CONTENT_TYPE = "text/markdown";
 // Servers that serve document downloads without a precise content type
 // commonly fall back to one of these — treated as "could be a document",
 // deferring to the extension check and, ultimately, content sniffing.
@@ -21,7 +26,7 @@ const GENERIC_BINARY_CONTENT_TYPES = ["application/zip", "application/octet-stre
 
 function hasDocumentExtension(url: string): boolean {
   try {
-    return /\.(docx|odt)$/i.test(new URL(url).pathname);
+    return /\.(docx|odt|md|markdown)$/i.test(new URL(url).pathname);
   } catch {
     return false;
   }
@@ -32,7 +37,12 @@ function isSupportedContentType(contentType: string | null): boolean {
     return true;
   }
   const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  return type === DOCX_CONTENT_TYPE || type === ODT_CONTENT_TYPE || GENERIC_BINARY_CONTENT_TYPES.includes(type);
+  return (
+    type === DOCX_CONTENT_TYPE ||
+    type === ODT_CONTENT_TYPE ||
+    type === MARKDOWN_CONTENT_TYPE ||
+    GENERIC_BINARY_CONTENT_TYPES.includes(type)
+  );
 }
 
 function fileNameFromContentDisposition(header: string | null): string | undefined {
@@ -83,7 +93,9 @@ export async function openDocumentFromUrl(url: string): Promise<DocumentModel> {
 
   const contentType = response.headers.get("content-type");
   if (!isSupportedContentType(contentType) && !hasDocumentExtension(url)) {
-    throw new OpenFromUrlError(`The link returned ${contentType ?? "an unrecognised file type"}, not a .docx or .odt document`);
+    throw new OpenFromUrlError(
+      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt or .md document`,
+    );
   }
 
   const contentLength = response.headers.get("content-length");
@@ -94,7 +106,11 @@ export async function openDocumentFromUrl(url: string): Promise<DocumentModel> {
   const buffer = await response.arrayBuffer();
   const file = new File([buffer], deriveFileName(response, url));
   try {
-    return await openDocumentFile(file);
+    // SPEC-050: a relative image `src` in a Markdown file opened this way
+    // resolves against the document's own URL — the one open path that has
+    // one (a picked/dropped file has no base to resolve a relative path
+    // against at all).
+    return await openDocumentFile(file, { baseUrl: url });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpenFromUrlError(reason);

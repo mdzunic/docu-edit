@@ -13,7 +13,7 @@ product linkable from other tools.
 ## Acceptance criteria
 - [ ] Dragging a file over the app window shows a full-window drop overlay reading "Drop to open"
 - [ ] Dropping a `.docx` or `.odt` file opens it, exactly as the file picker would
-- [ ] Dropping an unsupported file type shows the error "We can only open .docx and .odt files" and does not navigate away
+- [ ] Dropping an unsupported file type shows the error "We can only open .docx, .odt and .md files" and does not navigate away
 - [ ] Dropping multiple files opens the first and shows a toast "Opened <name> — only one file at a time"
 - [ ] Dragging over the window while a document is open does not modify the open document until the drop completes successfully
 - [ ] `/open?url=<encoded-url>` fetches the document at that URL and opens it, showing a loading state while fetching

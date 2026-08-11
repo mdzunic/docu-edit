@@ -11,6 +11,7 @@ import type { Ref, ShallowRef } from "vue";
 import type { DocumentModel, DocumentProperties } from "../../lib/documentModel";
 import { writeDocx } from "../../lib/docx/writer";
 import { writeOdt } from "../../lib/odf/writer";
+import { writeMd } from "../../lib/md/writer";
 
 export interface DocumentPropertiesDeps {
   doc: ShallowRef<DocumentModel | null>;
@@ -43,7 +44,8 @@ export function useDocumentProperties(deps: DocumentPropertiesDeps) {
     if (!model || !model.format) {
       return;
     }
-    const result = model.format === "odt" ? await writeOdt(model) : await writeDocx(model);
+    const result =
+      model.format === "odt" ? await writeOdt(model) : model.format === "md" ? await writeMd(model) : await writeDocx(model);
     // The dialog may have been closed, or a different document opened,
     // while the (async) write was in flight — stale results are dropped.
     if (propertiesOpen.value && doc.value === model) {

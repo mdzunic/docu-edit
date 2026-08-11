@@ -8,9 +8,16 @@
 //    with XML canonicalization (C14N-style), so attribute order, namespace
 //    prefixes and quoting can never cause false failures.
 //
+//  - `equalSemantic`    — `equalStructural(resolve(a), resolve(b))`, the
+//    relation for cross-format conversion, always paired with an exclusion
+//    list (SPEC-008's `dropped`/`withoutDropped`, see lib/opaque.ts).
+//
 // Framework-free on purpose: this must run under Vitest (jsdom) and in the
 // browser with nothing but DOMParser.
 import { parseXml, XmlParseError } from "./docx/xml";
+import type { Block, DocumentModel, HeaderFooterContent, Paragraph } from "./documentModel";
+import { resolveNamedStyle } from "./styles";
+import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 
 /** Byte identity between two buffers — the relation preserved opaque parts
  * are compared with before and after a save. */
@@ -206,4 +213,93 @@ export function firstStructuralDifference(a: unknown, b: unknown): string | null
  * `canonicalizeXml`. */
 export function equalStructural(a: unknown, b: unknown): boolean {
   return firstStructuralDifference(a, b) === null;
+}
+
+// --- semantic equality (specs/002, "Implementation status") ----------------
+
+function resolveParagraph(model: DocumentModel, paragraph: Paragraph): void {
+  const styleResolved = resolveNamedStyle(model, paragraph.styleId);
+  // mergeParagraphFormatting/mergeRunFormatting are a plain `{...base,
+  // ...override}` (docx/properties.ts) — the style's own contribution
+  // underneath whatever the paragraph/run already bakes, so a fully-baked
+  // run (every reader's own convention) is unaffected (its keys already
+  // cover the style's) while a run that merely references a style for a
+  // property it never baked directly picks that property up here instead.
+  paragraph.formatting = mergeParagraphFormatting(styleResolved.paragraphFormatting, paragraph.formatting ?? {});
+  for (const run of paragraph.runs) {
+    const runStyleResolved = run.styleId ? resolveNamedStyle(model, run.styleId).runFormatting : {};
+    run.formatting = mergeRunFormatting(
+      mergeRunFormatting(styleResolved.runFormatting, runStyleResolved),
+      run.formatting,
+    );
+    delete run.styleId;
+  }
+  delete paragraph.styleId;
+}
+
+function resolveBlocks(model: DocumentModel, blocks: Block[]): void {
+  for (const block of blocks) {
+    if (block.type === "paragraph") {
+      resolveParagraph(model, block);
+    } else if (block.type === "table") {
+      delete block.styleId;
+      for (const row of block.rows) {
+        for (const cell of row.cells) {
+          for (const paragraph of cell.blocks) {
+            resolveParagraph(model, paragraph);
+          }
+        }
+      }
+    }
+  }
+}
+
+function resolveHeaderFooter(model: DocumentModel, content: HeaderFooterContent | undefined): void {
+  if (content) {
+    resolveBlocks(model, content.blocks);
+  }
+}
+
+/** Flattens a model's paragraph/run/table style *references* into the
+ * effective formatting they resolve to, merged underneath whatever
+ * formatting is already baked (specs/002 "Equality", relation 3: "so a
+ * directly-bolded run and a run bolded by its style compare equal"). Every
+ * reader in this codebase bakes resolved formatting onto a paragraph/run
+ * unconditionally, which is what makes the merge a no-op for them — the
+ * style contributes nothing baked formatting doesn't already carry — but a
+ * writer that instead emits a style reference *in place of* baked
+ * formatting (specs/002-create-blank-document.md's "Implementation status")
+ * is resolved correctly here too, since the merge fills in exactly what
+ * baked formatting left out. Resolution reads `model.styles` (and its
+ * built-in fallback, lib/styles.ts) as they stand on the model passed in —
+ * call this on each side of a comparison separately, each against its own
+ * style catalogue, never on a model whose styles have already been merged
+ * with another's. */
+export function resolve(model: DocumentModel): DocumentModel {
+  const clone = structuredClone(model);
+  for (const section of clone.sections) {
+    resolveBlocks(clone, section.blocks);
+    for (const header of Object.values(section.headers ?? {})) {
+      resolveHeaderFooter(clone, header);
+    }
+    for (const footer of Object.values(section.footers ?? {})) {
+      resolveHeaderFooter(clone, footer);
+    }
+  }
+  for (const note of clone.notes ?? []) {
+    resolveBlocks(clone, note.blocks);
+  }
+  return clone;
+}
+
+/** Semantic equality between two document models (specs/002 "Equality",
+ * relation 3): structural equality once style *references* are flattened
+ * away (see `resolve`). This is the relation for a cross-format conversion,
+ * and — per specs/008-round-trip-preservation.md's "Writer API" — it must
+ * always be paired with an explicit exclusion list naming what the
+ * conversion is permitted to lose, applied to the source side as a mask
+ * (`lib/opaque.ts`'s `withoutDropped`) rather than a hand-rolled subset
+ * comparison. */
+export function equalSemantic(a: DocumentModel, b: DocumentModel): boolean {
+  return equalStructural(resolve(a), resolve(b));
 }
