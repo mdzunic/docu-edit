@@ -7,3 +7,4 @@ playwright-report/
 blob-report/
 .vite/
 coverage/
+examples/output/
