@@ -1,0 +1,199 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://docu-edit.example/schema/document-description.json",
+  "title": "docu-edit document description",
+  "description": "Generates a .docx/.odt document from data (SPEC-045). Maps 1:1 to the DocumentBuilder fluent API — see docs/generate-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string" },
+    "body": { "type": "array", "items": { "$ref": "#/definitions/block" } },
+    "header": { "$ref": "#/definitions/headerFooterContent" },
+    "footer": { "$ref": "#/definitions/headerFooterContent" }
+  },
+
+  "definitions": {
+    "length": {
+      "description": "A measurement, converted to an integer Emu on entry. Exactly one key.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "cm": { "type": "number", "minimum": 0 },
+        "pt": { "type": "number", "minimum": 0 },
+        "in": { "type": "number", "minimum": 0 },
+        "emu": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "runObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string" },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "underline": { "type": "boolean" },
+        "strikethrough": { "type": "boolean" },
+        "fontFamily": { "type": "string" },
+        "fontSizePt": { "type": "number", "exclusiveMinimum": 0 },
+        "color": { "$ref": "#/definitions/hexColor" },
+        "highlight": { "$ref": "#/definitions/hexColor" }
+      }
+    },
+    "run": {
+      "description": "A run of text: a plain string (unformatted), or an object naming its text and formatting.",
+      "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/runObject" }]
+    },
+    "runs": { "type": "array", "items": { "$ref": "#/definitions/run" } },
+    "hexColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+
+    "paragraphContent": {
+      "description": "A block's text: a plain string, an array of runs, or exactly one of text/runs.",
+      "oneOf": [
+        { "type": "string" },
+        { "$ref": "#/definitions/runs" }
+      ]
+    },
+
+    "alignment": { "type": "string", "enum": ["left", "center", "right", "justify"] },
+
+    "headingBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "level"],
+      "properties": {
+        "type": { "const": "heading" },
+        "text": { "type": "string" },
+        "runs": { "$ref": "#/definitions/runs" },
+        "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+        "alignment": { "$ref": "#/definitions/alignment" }
+      }
+    },
+    "paragraphBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "paragraph" },
+        "text": { "type": "string" },
+        "runs": { "$ref": "#/definitions/runs" },
+        "alignment": { "$ref": "#/definitions/alignment" },
+        "spaceBeforePt": { "type": "number", "minimum": 0 },
+        "spaceAfterPt": { "type": "number", "minimum": 0 }
+      }
+    },
+    "listBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "items"],
+      "properties": {
+        "type": { "const": "list" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/paragraphContent" }
+        },
+        "style": { "type": "string", "enum": ["bullet", "number"] },
+        "startAt": { "type": "integer", "minimum": 1, "maximum": 9999 }
+      }
+    },
+    "tableCell": {
+      "description": "A cell's content — same shorthand as a paragraph's.",
+      "$ref": "#/definitions/paragraphContent"
+    },
+    "tableBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "rows"],
+      "properties": {
+        "type": { "const": "table" },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/definitions/tableCell" }
+          }
+        },
+        "columnWidths": { "type": "array", "items": { "$ref": "#/definitions/length" } },
+        "header": { "type": "boolean" },
+        "alignment": { "type": "string", "enum": ["left", "center", "right"] },
+        "widthMode": { "type": "string", "enum": ["auto", "fixed", "percent"] },
+        "widthPercent": { "type": "number", "minimum": 0 }
+      }
+    },
+    "imageBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data", "contentType"],
+      "properties": {
+        "type": { "const": "image" },
+        "data": {
+          "type": "string",
+          "description": "Base64-encoded image bytes (the JSON format's only shape; the JS builder API also accepts a Uint8Array/ArrayBuffer/Buffer directly)."
+        },
+        "contentType": { "type": "string", "enum": ["image/png", "image/jpeg", "image/gif"] },
+        "width": { "$ref": "#/definitions/length" },
+        "height": { "$ref": "#/definitions/length" },
+        "altText": { "type": "string" },
+        "wrap": { "type": "string", "enum": ["inline", "square", "behind", "infront"] }
+      }
+    },
+    "pageBreakBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "pageBreak" } }
+    },
+    "tocBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "toc" },
+        "levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 1, "maximum": 6 }
+        },
+        "showPageNumbers": { "type": "boolean" },
+        "hyperlinksOnly": { "type": "boolean" }
+      }
+    },
+
+    "block": {
+      "description": "One document-body construct — the same set the builder's addHeading/addParagraph/addList/addTable/addImage/addPageBreak/addTableOfContents methods produce.",
+      "oneOf": [
+        { "$ref": "#/definitions/headingBlock" },
+        { "$ref": "#/definitions/paragraphBlock" },
+        { "$ref": "#/definitions/listBlock" },
+        { "$ref": "#/definitions/tableBlock" },
+        { "$ref": "#/definitions/imageBlock" },
+        { "$ref": "#/definitions/pageBreakBlock" },
+        { "$ref": "#/definitions/tocBlock" }
+      ]
+    },
+    "headerFooterBlock": {
+      "description": "A header/footer body construct — everything a body block supports except pageBreak/toc, which are document/section-level and never repeat per page.",
+      "oneOf": [
+        { "$ref": "#/definitions/headingBlock" },
+        { "$ref": "#/definitions/paragraphBlock" },
+        { "$ref": "#/definitions/listBlock" },
+        { "$ref": "#/definitions/tableBlock" },
+        { "$ref": "#/definitions/imageBlock" }
+      ]
+    },
+    "headerFooterContent": {
+      "description": "A header/footer's content: the paragraph-content shorthand for a plain single line, or an array of block-spec objects for anything richer.",
+      "oneOf": [
+        { "type": "string" },
+        { "$ref": "#/definitions/runs" },
+        { "type": "array", "items": { "$ref": "#/definitions/headerFooterBlock" } }
+      ]
+    }
+  }
+}
