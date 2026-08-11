@@ -30,7 +30,7 @@ history. Version history (SPEC-040).
 ### Equality
 `equalStructural` is defined normatively in
 `specs/002-create-blank-document.md` ("Equality") and exported from
-`src/model/equality.ts`: deep equality after canonicalization, which drops
+`src/lib/equality.ts`: deep equality after canonicalization, which drops
 runtime `id` fields and default-valued props and merges adjacent runs with
 equal formatting. It is the right relation for undo because a command may
 legitimately rebuild nodes with new ids or split and re-merge runs while

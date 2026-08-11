@@ -32,21 +32,23 @@ Defined normatively in `specs/002-create-blank-document.md` ("Canonical
 document model") and in `docs/document-model.md`. **Read one of those before
 starting.** The builder API produces exactly that model — it is a fluent
 front end over `Doc`, not a second representation — and the JSON
-document-description format is a 1:1 serialisation of it. Every length in both
-is an integer `Emu`; the API may accept `{ cm: 2.54 }` / `{ pt: 12 }` helpers
-at its edge, but converts immediately on the way in.
+document-description format is a 1:1 serialisation of it. Lengths in both are
+centimetres and type sizes points, in fields named `…Cm` and `…Pt`; the API may
+accept `{ in: 1 }` / `{ pt: 12 }` helpers at its edge, but converts immediately
+on the way in.
 
 ### Existing I/O surface
 ```ts
-// src/io/docx/write.ts  writeDocx(doc, opts?): Promise<Blob>   — SPEC-006
-// src/io/odt/write.ts   writeOdt(doc, opts?): Promise<Blob>    — SPEC-007
-// src/io/docx/read.ts   readDocx(bytes): Promise<ReadResult>   — SPEC-004
-// src/io/odt/read.ts    readOdt(bytes):  Promise<ReadResult>   — SPEC-005
+// src/lib/docx/writer.ts  writeDocx(model, options?): Promise<WriteResult>  — SPEC-006/008
+// src/lib/odf/writer.ts   writeOdt(model, options?):  Promise<WriteResult>  — SPEC-007/008
+// src/lib/docx/reader.ts  parseDocx(data): Promise<ParsedDocxDocument>      — SPEC-004
+// src/lib/odf/reader.ts   parseOdt(data):  Promise<ParsedOdtDocument>       — SPEC-005
+// src/lib/opaque.ts       WriteResult = { bytes: Uint8Array; dropped: DropRecord[] }
 ```
 This spec adds no new serialisation code. If a construct cannot be written,
 the fix belongs in the writer, not in a parallel generation path.
 
 ### Equality
-`equalStructural` from `src/model/equality.ts`, defined in
+`equalStructural` from `src/lib/equality.ts`, defined in
 `specs/002-create-blank-document.md` ("Equality"), is the relation for the
 generate → write → read assertion above.

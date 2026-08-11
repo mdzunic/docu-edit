@@ -38,7 +38,10 @@ rejecting SPEC-007 as ambiguous:
    `docs/document-model.md`. The I/O API surface is defined in
    `specs/004-open-docx-text-and-paragraphs.md` (readers) and
    `specs/006-save-as-docx.md` (writers). The shared fixture set and its
-   `manifest.json` are defined in SPEC-004. Nothing redefines these.
+   `manifest.json` are defined in SPEC-004. The anchored drawing object —
+   position, wrap, z-order, grouping and the canvas/ARIA-proxy rendering every
+   floating object uses — is defined in
+   `specs/051-drawing-shapes-and-text-boxes.md`. Nothing redefines these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -47,7 +50,9 @@ rejecting SPEC-007 as ambiguous:
 
 Any spec asserting a round trip must name one of the three relations —
 `equalBytes`, `equalStructural`, `equalSemantic` — and use the helpers in
-`src/model/equality.ts`. "Asserts model equality" is not a specification.
+`src/lib/equality.ts`. "Asserts model equality" is not a specification. Note
+that `equalSemantic` is specified but not yet implemented; see SPEC-002's
+"Implementation status".
 
 ---
 
@@ -124,3 +129,17 @@ Any spec asserting a round trip must name one of the three relations —
 | SPEC-047 | Large document performance |
 | SPEC-048 | Font fallback and embedding |
 | SPEC-050 | Markdown — open, edit visually, and convert to and from .docx/.odt |
+
+### Phase 7 — Drawing objects and fields
+| Spec | Title |
+| --- | --- |
+| SPEC-051 | Drawing shapes and text boxes |
+| SPEC-052 | Charts — render, insert and edit data |
+| SPEC-053 | Fields — date, time, document information and cross-references |
+
+### Phase 8 — Authoring precision
+| Spec | Title |
+| --- | --- |
+| SPEC-054 | Tab stops and the tab ruler — resolves the SPEC-014/SPEC-032 conflict |
+| SPEC-055 | Captions, caption cross-references and the table of figures |
+| SPEC-056 | Equations |

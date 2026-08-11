@@ -22,8 +22,8 @@ later specs extend.
 - [ ] The document title in the app bar comes from the file name without extension; the format badge reads DOCX
 - [ ] A file that is not a valid ZIP, or is a ZIP without `word/document.xml`, shows the error "This file isn't a Word document we can open" and leaves the previous state untouched
 - [ ] A `.doc` (binary Word 97) file is detected and rejected with "Old .doc files aren't supported — save as .docx first"
-- [ ] The reader is exposed as `readDocx` in `src/io/docx/read.ts` with the signature given in "Reader API" below, and does no DOM work so it can run in a worker and in Node tests
-- [ ] Anything the reader cannot map is reported as a `Warning` rather than thrown or silently dropped
+- [ ] The reader is exposed as `parseDocx` in `src/lib/docx/reader.ts` with the signature given in "Reader API" below, and does no DOM work so it can run in a worker and in Node tests
+- [ ] Anything the reader cannot map is preserved rather than thrown or silently dropped — as opaque parts and nodes once SPEC-008 lands, and never as a thrown error short of an unopenable package
 - [ ] The fixture set described in "Fixtures" below is committed with its `manifest.json`, and every fixture's provenance (which application produced it) is recorded there
 - [ ] Fixture-based tests open `word-basic.docx`, `libreoffice-basic.docx` and `gdocs-basic.docx` and assert paragraph count, text content, heading levels and run formatting against the expectations in the manifest
 
@@ -38,26 +38,41 @@ protected documents. Macros.
 Defined normatively in `specs/002-create-blank-document.md` ("Canonical
 document model") and, once SPEC-002 is merged, in `docs/document-model.md` in
 the repo. **Read one of those before starting.** In short: a plain-JSON tree
-`Doc → Section → Block → Paragraph → Inline(Run | LineBreak)`; every length is
-an integer `Emu` (914400/inch, 635/twip); font size is an integer in
-half-points; colours are lowercase `#rrggbb`. This reader converts OOXML's
-twips and half-points into those units — it never stores twips.
+`DocumentModel → Section → Block → Paragraph → Run`, blocks discriminated by a
+`type` string and runs holding plain text with `"\t"` and `"\n"` for tabs and
+forced breaks; lengths are centimetres and type sizes points, in fields named
+`…Cm` and `…Pt`; colours are lowercase `"#rrggbb"`. This reader converts
+OOXML's twips and half-points into those units — it never stores twips.
 
 ### Reader API
 ```ts
-// src/io/detect.ts
-detectFormat(bytes: ArrayBuffer): 'docx' | 'odt' | 'doc' | 'fodt' | 'unknown'
+// src/lib/docx/reader.ts
+parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedDocxDocument>
 
-// src/io/docx/read.ts
-readDocx(bytes: ArrayBuffer): Promise<ReadResult>
-
-type ReadResult = { doc: Doc; warnings: Warning[] }
-type Warning    = { code: string; message: string; path?: string }
+// src/lib/openDocument.ts — the caller that picks a reader
+openDocumentFile(file: File): Promise<DocumentModel>
 ```
-`readDocx` never throws for content it does not understand — that is a
-`Warning`. It throws only for a package it cannot open at all, and the caller
-turns that into the user-facing error text in the criteria above. SPEC-005
-adds `readOdt` with the identical shape; SPEC-006 adds `writeDocx`.
+`ParsedDocxDocument` is the parsed package: `sections`, `defaultStyles`,
+`styles`, `opaque`, `sourceXml`, `media` and the per-feature fields later specs
+add. `openDocumentFile` turns it into a `DocumentModel` via `buildModel(name,
+format, parsed)`, so the reader itself never constructs the model's identity or
+title.
+
+**Format detection is by content, not extension**, and lives in the caller
+rather than in a separate module: `openDocumentFile` calls `detectOdf(bytes)`
+(`src/lib/odf/reader.ts`), which returns `"package" | "flat" | "none"` by
+reading the ODF `mimetype` entry. `"package"` takes the `parseOdt` path,
+`"flat"` raises `FlatOdfError`, and anything else falls through to `parseDocx`,
+which recognises a legacy `.doc` itself. SPEC-050 documents markdown as the one
+deliberate exception to content sniffing.
+
+`parseDocx` does not return warnings. Content it does not understand is
+preserved as opaque parts and nodes (SPEC-008) rather than reported, and it
+throws for a package it cannot open at all — `LegacyDocError` for a Word
+97-2003 `.doc` and `DocxOpenError` otherwise, each carrying the user-facing
+message the criteria above name (`LEGACY_DOC_MESSAGE`, `INVALID_DOCX_MESSAGE`).
+SPEC-005 adds `parseOdt` with the same shape (`OdtOpenError`,
+`INVALID_ODT_MESSAGE`); SPEC-006 adds `writeDocx`.
 
 ### Fixtures
 Committed under `fixtures/`, shared by every I/O spec:

@@ -99,7 +99,7 @@ extension-trust to the one format that admits nothing else.
 // src/lib/openDocument.ts   openDocumentFile(file): Promise<DocumentModel>
 // src/lib/docx/reader.ts    parseDocx(bytes): Promise<ParsedDocxDocument>   — SPEC-004
 // src/lib/odf/reader.ts     parseOdt(bytes):  Promise<ParsedOdtDocument>    — SPEC-005
-// src/lib/opaque.ts         type WriteResult = { blob: Blob; dropped: DropRecord[] }  — SPEC-008
+// src/lib/opaque.ts         WriteResult = { bytes: Uint8Array; dropped: DropRecord[] }  — SPEC-008
 ```
 This spec adds `src/lib/md/reader.ts` and `src/lib/md/writer.ts` alongside the
 existing two pairs, matching their signatures, and extends the model's format

@@ -21,7 +21,7 @@ accept both formats so nothing downstream cares which one a document came from.
 - [ ] Page layout (`style:page-layout`) sets page size, orientation and margins
 - [ ] The format badge reads ODT
 - [ ] A `.fodt` (flat XML ODF) file is rejected with "Flat ODF files aren't supported yet"
-- [ ] The reader is exposed as `readOdt` in `src/io/odt/read.ts` with the same `ReadResult` shape as `readDocx`, and reports anything it cannot map as a `Warning`
+- [ ] The reader is exposed as `parseOdt` in `src/lib/odf/reader.ts` returning `ParsedOdtDocument`, mirroring `parseDocx`, and preserves anything it cannot map per SPEC-008 rather than dropping it
 - [ ] `fixtures/odt/libreoffice-basic.odt` and `fixtures/odt/openoffice-legacy.odt` are added to the shared fixture set with `manifest.json` entries
 - [ ] Fixture tests open both and assert text content, heading levels and run formatting against the manifest expectations
 - [ ] A test asserts that `libreoffice-basic.odt` and `word-basic.docx` — the same document saved from both applications — produce `equalSemantic` models
@@ -36,22 +36,27 @@ specs). `.ott` templates (SPEC-046). Encrypted ODF.
 Defined normatively in `specs/002-create-blank-document.md` ("Canonical
 document model"), and in `docs/document-model.md` in the repo once SPEC-002 is
 merged. **Read one of those before starting.** Key point for this spec: the
-model is format-neutral. ODF's `cm`/`in`/`pt` values convert to integer `Emu`
-(360000/cm, 914400/in, 12700/pt) on read, and ODF point font sizes convert to
-integer half-points. Nothing ODF-specific may leak into the model.
+model is format-neutral. Lengths are centimetres and type sizes points, in
+fields named `…Cm` and `…Pt`, so ODF's `in`/`pt`/`pc` lengths convert on read
+while its `cm` values pass through unchanged. Nothing ODF-specific may leak
+into the model — an ODF unit-suffixed string never reaches it.
 
 ### Reader API — established by SPEC-004
 `specs/004-open-docx-text-and-paragraphs.md` defines the I/O surface this spec
 mirrors:
 ```ts
-// src/io/detect.ts
-detectFormat(bytes: ArrayBuffer): 'docx' | 'odt' | 'doc' | 'fodt' | 'unknown'
+// src/lib/odf/reader.ts   (this spec; src/lib/docx/reader.ts already exists)
+parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOdtDocument>
 
-// src/io/odt/read.ts   (this spec; src/io/docx/read.ts already exists)
-readOdt(bytes: ArrayBuffer): Promise<ReadResult>
-type ReadResult = { doc: Doc; warnings: Warning[] }
-type Warning    = { code: string; message: string; path?: string }
+// detection by content, in the caller — src/lib/openDocument.ts
+detectOdf(bytes): Promise<'package' | 'flat' | 'none'>   // src/lib/odf/reader.ts
 ```
+`ParsedOdtDocument` mirrors `ParsedDocxDocument` field for field: `sections`,
+`defaultStyles`, `styles`, `opaque`, `sourceXml`, `media` and the per-feature
+fields later specs add. Neither reader returns warnings — content they do not
+model is preserved (SPEC-008), and a package they cannot open at all throws:
+`FlatOdfError` for flat ODF and `OdtOpenError` otherwise, carrying
+`FLAT_ODF_MESSAGE` / `INVALID_ODT_MESSAGE`.
 
 ### Fixtures
 The shared set at `fixtures/` with `fixtures/manifest.json`, created by

@@ -17,7 +17,7 @@ cannot edit, we carry through untouched, and we tell the user when we cannot.
 - [ ] XML elements inside `document.xml` / `content.xml` that the reader does not model are retained as opaque nodes in the document model, anchored to their position, and re-emitted in place on save
 - [ ] Opening a file and saving it to the same format without editing produces `equalStructural(openedModel, reopenedModel)` and an `equalBytes` result for every preserved opaque part — see "Equality" below
 - [ ] Editing one paragraph and saving does not alter unrelated opaque content elsewhere in the document
-- [ ] Both writers return `{ blob, dropped }` instead of a bare `Blob`, where `dropped` is a `DropRecord[]` naming every item the writer could not represent in the target format — see "Writer API" below
+- [ ] Both writers return `WriteResult` — `{ bytes, dropped }` — instead of a bare package, where `dropped` is a `DropRecord[]` naming every item the writer could not represent in the target format — see "Writer API" below
 - [ ] Content that cannot be preserved when converting between formats is listed in a "Conversion report" dialog shown once after a cross-format save, naming each dropped item type and its approximate location (e.g. "Chart on page 3 — not converted"); the dialog renders `dropped` and derives no part of its contents by comparing models
 - [ ] The conversion report has a "Don't show again for this document" checkbox
 - [ ] A test opens a `.docx` containing a chart, a content control and a custom XML part, edits one paragraph, saves, and asserts all three are still present and intact in the output
@@ -33,32 +33,40 @@ the part rule above but macro execution is never supported.
 ### Canonical document model
 Defined normatively in `specs/002-create-blank-document.md` ("Canonical
 document model"), and in `docs/document-model.md` once SPEC-002 is merged.
-**Read one of those before starting.** Two fields exist for this spec:
+**Read one of those before starting.** Preserved content is held in three
+places, and **none of them is a union member** — each is a side-list, so
+`blocks` stays a renderable union and `runs` stays a plain `Run[]`:
 ```ts
-type Doc = { …; opaque: OpaquePart[] }        // package parts we do not model
-type Block  = Paragraph | OpaqueBlock          // unmodelled block-level XML
-type Inline = Run | LineBreak | OpaqueInline   // unmodelled inline XML
+interface DocumentModel { …; opaque?: OpaquePart[]; sourceXml?: SourceXml }
+interface Section   { …; opaqueBlocks?: OpaqueBlock[] }
+interface Paragraph { …; opaqueInlines?: OpaqueInline[] }
+
+interface OpaqueBlock  { xml: string; blockIndex: number }  // before blocks[blockIndex]
+interface OpaqueInline { xml: string; runIndex: number }    // before runs[runIndex]
+interface OpaquePart   { name: string; data: string }       // base64 part bytes
 ```
-`OpaqueBlock` / `OpaqueInline` hold the original XML subtree verbatim plus its
-position; `OpaquePart` holds the original part bytes plus its part name,
-content type and relationship entries. Opaque nodes are compared with XML
-canonicalization (C14N) by `canonicalize`, so insignificant whitespace and
-attribute order do not cause false failures.
+An index equal to the list's length means "after the last one". `OpaquePart.data`
+is base64 rather than a `Uint8Array` because the model must survive
+`JSON.stringify`. Opaque XML is compared with `canonicalizeXml`, so namespace
+prefixes, attribute order and insignificant whitespace cannot cause false
+failures — which is why `xml` is on SPEC-002's XML-valued key list.
 
 ### Existing I/O surface
 ```ts
-// src/io/docx/read.ts   readDocx(bytes): Promise<ReadResult>       — SPEC-004
-// src/io/odt/read.ts    readOdt(bytes):  Promise<ReadResult>       — SPEC-005
-// src/io/docx/write.ts  writeDocx(doc, opts?): Promise<WriteResult> — SPEC-006, widened here
-// src/io/odt/write.ts   writeOdt(doc, opts?): Promise<WriteResult>  — SPEC-007, widened here
-type WriteOptions = { preserveOpaque?: boolean }
+// src/lib/docx/reader.ts  parseDocx(data): Promise<ParsedDocxDocument>        — SPEC-004
+// src/lib/odf/reader.ts   parseOdt(data):  Promise<ParsedOdtDocument>         — SPEC-005
+// src/lib/docx/writer.ts  writeDocx(model, options?): Promise<WriteResult>    — SPEC-006, widened here
+// src/lib/odf/writer.ts   writeOdt(model, options?):  Promise<WriteResult>    — SPEC-007, widened here
+// src/lib/opaque.ts       WriteResult, DropRecord, DropKind — defined below
 ```
-This spec makes `preserveOpaque` the default behaviour rather than an option,
-extends both readers to produce opaque nodes instead of dropping content, and
-widens both writers' return type from `Blob` to `WriteResult` (below).
-SPEC-006 and SPEC-007 ship the `Promise<Blob>` form; migrating both writers and
-their existing call sites is part of this spec's work.
-Read `specs/006-save-as-docx.md` and `specs/007-save-as-odt.md` first.
+This spec makes preserving opaque content the default and unconditional
+behaviour rather than an option flag — neither `WriteDocxOptions` nor
+`WriteOdtOptions` carries a `preserveOpaque` switch. It extends both readers to
+produce opaque parts and nodes instead of dropping content (`ParsedDocxDocument
+.opaque` and `.sourceXml`), and widens both writers' return type from a bare
+package to `WriteResult`. SPEC-006 and SPEC-007 ship the bare-package form;
+migrating both writers and their existing call sites is part of this spec's
+work. Read `specs/006-save-as-docx.md` and `specs/007-save-as-odt.md` first.
 
 ### Writer API — where the exclusion list comes from
 `equalSemantic` is a boolean relation (`equalStructural(resolve(a), resolve(b))`)
@@ -69,14 +77,26 @@ absent, and a diff over the models can only report a missing node at a path, not
 that knows both facts at the moment it decides an item cannot be represented, so
 it is the single source both consumers read:
 ```ts
-type WriteResult = { blob: Blob; dropped: DropRecord[] }
-type DropRecord  = {
-  kind: 'chart' | 'contentControl' | 'customXml' | 'embeddedObject'
-      | 'macro' | 'opaqueBlock' | 'opaqueInline' | 'opaquePart'
-  location: string   // human-readable, e.g. "page 3", "paragraph 12"
+// src/lib/opaque.ts
+export type DropKind =
+  | 'chart' | 'contentControl' | 'customXml' | 'embeddedObject'
+  | 'macro' | 'opaqueBlock' | 'opaqueInline' | 'opaquePart'
+export interface DropRecord {
+  kind: DropKind
+  location: string   // human-readable, e.g. "page 3", 'package part "customXml/item1.xml"'
   reason: string     // why the target format cannot carry it
 }
+export interface WriteResult { bytes: Uint8Array; dropped: DropRecord[] }
 ```
+`bytes` rather than a `Blob` because the writers carry no DOM dependency
+(SPEC-006); wrapping them for download is the caller's job.
+
+**`DropKind` is an open list, widened by the spec that needs a new member** —
+never reused loosely because an existing member is close enough. Later specs
+have already added `runShading` (SPEC-013), `svgImage` (SPEC-024) and
+`trackedPropertyChange` (SPEC-039); each widening belongs in the PR of the spec
+that introduces it, and `DROP_KIND_LABELS` in the same module gains the
+matching user-facing label so the conversion report needs no change.
 `dropped` is empty for a same-format save — opaque content round-trips
 untouched, so there is nothing to report. The conversion report dialog renders
 `dropped` directly; the cross-format test compares `dropped` against the
@@ -91,7 +111,10 @@ with manifest entries listing the parts that must survive.
 
 ### Equality
 Defined normatively in `specs/002-create-blank-document.md` ("Equality"),
-implemented in `src/model/equality.ts`. All three relations are used here:
+implemented in `src/lib/equality.ts`, whose XML canonicalization is exported as
+`canonicalizeXml`. All three relations are used here — note that
+`equalSemantic` is specified by SPEC-002 but **not yet implemented**, so the
+first spec to need it builds it (see SPEC-002's "Implementation status"):
 - **`equalBytes`** — for each preserved opaque part, before and after a save.
   This is the only place byte equality is required.
 - **`equalStructural`** — for the no-edit same-format round trip, and for
