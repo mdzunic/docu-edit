@@ -1316,6 +1316,12 @@ function parseRowMinHeight(trPr: Element | undefined): number | undefined {
   return Number.isFinite(val) && val > 0 ? twipsToCm(val) : undefined;
 }
 
+/** Whether a row repeats as the table's header row: `w:trPr/w:tblHeader`
+ * (SPEC-043's "table without a header row" check). */
+function parseRowIsHeader(trPr: Element | undefined): boolean {
+  return trPr !== undefined && firstChildElement(trPr, WORD_NAMESPACE, "tblHeader") !== undefined;
+}
+
 /** A table's `w:tblW` (SPEC-023 AC-23, AC-27): `pct` is fiftieths of a
  * percent (5000 = 100%), `auto` sizes to content, anything else (including
  * no `w:tblW` at all) is a fixed width — the `columnWidthsCm` sum. */
@@ -1423,6 +1429,9 @@ function parseTable(
     const minHeightCm = parseRowMinHeight(trPrEl);
     if (minHeightCm !== undefined) {
       row.minHeightCm = minHeightCm;
+    }
+    if (parseRowIsHeader(trPrEl)) {
+      row.isHeader = true;
     }
     // Tracked row insert/delete (SPEC-039 AC-15): w:trPr/w:ins|w:del.
     const insEl = trPrEl ? firstChildElement(trPrEl, WORD_NAMESPACE, "ins") : undefined;

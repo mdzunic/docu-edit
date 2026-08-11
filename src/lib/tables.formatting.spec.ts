@@ -13,6 +13,7 @@ import {
   setCellShading,
   setCellVerticalAlign,
   setColumnWidths,
+  setRowIsHeader,
   setRowMinHeight,
   setTableAlignment,
   setTableWidthMode,
@@ -187,6 +188,40 @@ describe("setRowMinHeight (AC-4, AC-5)", () => {
     expect(table(next).rows[0].minHeightCm).toBeCloseTo(2, 2);
     const { model: tooSmall } = setRowMinHeight(model, someSelection(), loc(0, 0), 1, 0.01);
     expect(table(tooSmall).rows[1].minHeightCm).toBeCloseTo(MIN_ROW_HEIGHT_CM, 2);
+  });
+});
+
+describe("setRowIsHeader (SPEC-043 mark-header-row fix)", () => {
+  it("marks a row as header and clears its preserved source markup", () => {
+    const model = doc(grid([["A1"], ["A2"]]));
+    const withStale: DocumentModel = {
+      ...model,
+      sections: [
+        {
+          blocks: [
+            {
+              ...(table(model) as Table),
+              rows: [
+                { ...table(model).rows[0], docxTrPr: "<w:trPr/>", odtStyleName: "Stale" },
+                table(model).rows[1],
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const { model: next } = setRowIsHeader(withStale, someSelection(), loc(0, 0), 0, true);
+    expect(table(next).rows[0].isHeader).toBe(true);
+    expect(table(next).rows[0].docxTrPr).toBeUndefined();
+    expect(table(next).rows[0].odtStyleName).toBeUndefined();
+    expect(table(next).rows[1].isHeader).toBeUndefined();
+  });
+
+  it("unmarks a header row", () => {
+    const model = doc(grid([["A1"], ["A2"]]));
+    const { model: marked } = setRowIsHeader(model, someSelection(), loc(0, 0), 0, true);
+    const { model: unmarked } = setRowIsHeader(marked, someSelection(), loc(0, 0), 0, false);
+    expect(table(unmarked).rows[0].isHeader).toBeUndefined();
   });
 });
 

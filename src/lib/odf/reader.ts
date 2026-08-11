@@ -1748,6 +1748,86 @@ function parseTableCellElement(
  * elements in the source — unlike `.docx`'s inferred `w:gridSpan`/`w:vMerge`
  * chains, ODF already lists one element per grid slot, so no second pass is
  * needed: each becomes a `covered: true` placeholder directly. */
+/** Parses one `table:table-row` (repeated `number-rows-repeated` times) into
+ * its `TableRow`s, or null on a shape the model cannot express — shared by
+ * the plain row branch and the `table:table-header-rows` wrapper branch of
+ * `parseTableElement`, which differ only in whether the resulting rows are
+ * tagged `isHeader` (SPEC-043). */
+function parseTableRowElement(
+  rowEl: Element,
+  isHeaderRow: boolean,
+  catalog: OdfStyleCatalog,
+  styleTables: TableStyleTables,
+): TableRow[] | null {
+  const repeat = repeatCount(rowEl, "number-rows-repeated");
+  if (repeat === null) {
+    return null;
+  }
+  const cells: TableCell[] = [];
+  // SPEC-039 AC-16: a pending row/cell insert/delete's own marker — see
+  // writer.ts's rowChangeMarkerXml/cellChangeMarkerXml — leads the affected
+  // cell's first paragraph; the row's own marker always lands on the row's
+  // first real cell, so at most one is ever found per row.
+  let rowChange: TrackedChangeInfo | undefined;
+  let rowChangeKind: "insert" | "delete" | undefined;
+  for (const cellEl of Array.from(rowEl.children)) {
+    if (cellEl.namespaceURI !== TABLE_NAMESPACE) {
+      return null;
+    }
+    const cellRepeat = repeatCount(cellEl, "number-columns-repeated");
+    if (cellRepeat === null) {
+      return null;
+    }
+    let cell: TableCell | null;
+    if (cellEl.localName === "table-cell") {
+      const markers = leadingCellChangeMarkers(cellEl);
+      const parseTarget = markers.rowMark || markers.cellMark ? stripLeadingChangeMarkers(cellEl) : cellEl;
+      cell = parseTableCellElement(parseTarget, catalog, styleTables.cellStyles);
+      if (cell && markers.cellMark) {
+        cell.changes = { ...cell.changes, [markers.cellMark.kind]: markers.cellMark };
+      }
+      if (markers.rowMark) {
+        rowChange = markers.rowMark;
+        rowChangeKind = markers.rowMark.kind as "insert" | "delete";
+      }
+    } else if (cellEl.localName === "covered-table-cell") {
+      cell = { blocks: [], covered: true };
+    } else {
+      return null;
+    }
+    if (!cell) {
+      return null;
+    }
+    cells.push(cell);
+    for (let i = 1; i < cellRepeat; i++) {
+      cells.push(structuredClone(cell));
+    }
+  }
+  if (cells.length === 0) {
+    return null;
+  }
+  const rowStyleName = tableAttr(rowEl, "style-name");
+  const minHeightCm = rowStyleName ? styleTables.rowMinHeights.get(rowStyleName) : undefined;
+  const rows: TableRow[] = [];
+  for (let i = 0; i < repeat; i++) {
+    const row: TableRow = { cells: i === 0 ? cells : structuredClone(cells) };
+    if (rowStyleName !== null) {
+      row.odtStyleName = rowStyleName;
+    }
+    if (minHeightCm !== undefined) {
+      row.minHeightCm = minHeightCm;
+    }
+    if (isHeaderRow) {
+      row.isHeader = true;
+    }
+    if (rowChange && rowChangeKind) {
+      row.changes = { ...row.changes, [rowChangeKind]: rowChange };
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
 function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTables: TableStyleTables): Table | null {
   const columnStyleNames: Array<string | undefined> = [];
   const rows: TableRow[] = [];
@@ -1765,72 +1845,28 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
         columnStyleNames.push(styleName);
       }
     } else if (child.localName === "table-row") {
-      const repeat = repeatCount(child, "number-rows-repeated");
-      if (repeat === null) {
+      const parsedRows = parseTableRowElement(child, false, catalog, styleTables);
+      if (!parsedRows) {
         return null;
       }
-      const cells: TableCell[] = [];
-      // SPEC-039 AC-16: a pending row/cell insert/delete's own marker —
-      // see writer.ts's rowChangeMarkerXml/cellChangeMarkerXml — leads the
-      // affected cell's first paragraph; the row's own marker always lands
-      // on the row's first real cell, so at most one is ever found per row.
-      let rowChange: TrackedChangeInfo | undefined;
-      let rowChangeKind: "insert" | "delete" | undefined;
-      for (const cellEl of Array.from(child.children)) {
-        if (cellEl.namespaceURI !== TABLE_NAMESPACE) {
+      rows.push(...parsedRows);
+    } else if (child.localName === "table-header-rows") {
+      // The leading run of header rows (SPEC-043): a structural wrapper
+      // around plain table-row elements, not a per-row attribute — each row
+      // inside it is otherwise parsed exactly like an ordinary table-row.
+      for (const headerChild of Array.from(child.children)) {
+        if (headerChild.namespaceURI !== TABLE_NAMESPACE || headerChild.localName !== "table-row") {
           return null;
         }
-        const cellRepeat = repeatCount(cellEl, "number-columns-repeated");
-        if (cellRepeat === null) {
+        const parsedRows = parseTableRowElement(headerChild, true, catalog, styleTables);
+        if (!parsedRows) {
           return null;
         }
-        let cell: TableCell | null;
-        if (cellEl.localName === "table-cell") {
-          const markers = leadingCellChangeMarkers(cellEl);
-          const parseTarget =
-            markers.rowMark || markers.cellMark ? stripLeadingChangeMarkers(cellEl) : cellEl;
-          cell = parseTableCellElement(parseTarget, catalog, styleTables.cellStyles);
-          if (cell && markers.cellMark) {
-            cell.changes = { ...cell.changes, [markers.cellMark.kind]: markers.cellMark };
-          }
-          if (markers.rowMark) {
-            rowChange = markers.rowMark;
-            rowChangeKind = markers.rowMark.kind as "insert" | "delete";
-          }
-        } else if (cellEl.localName === "covered-table-cell") {
-          cell = { blocks: [], covered: true };
-        } else {
-          return null;
-        }
-        if (!cell) {
-          return null;
-        }
-        cells.push(cell);
-        for (let i = 1; i < cellRepeat; i++) {
-          cells.push(structuredClone(cell));
-        }
-      }
-      if (cells.length === 0) {
-        return null;
-      }
-      const rowStyleName = tableAttr(child, "style-name");
-      const minHeightCm = rowStyleName ? styleTables.rowMinHeights.get(rowStyleName) : undefined;
-      for (let i = 0; i < repeat; i++) {
-        const row: TableRow = { cells: i === 0 ? cells : structuredClone(cells) };
-        if (rowStyleName !== null) {
-          row.odtStyleName = rowStyleName;
-        }
-        if (minHeightCm !== undefined) {
-          row.minHeightCm = minHeightCm;
-        }
-        if (rowChange && rowChangeKind) {
-          row.changes = { ...row.changes, [rowChangeKind]: rowChange };
-        }
-        rows.push(row);
+        rows.push(...parsedRows);
       }
     } else {
-      // table-header-rows, sub-tables, title/desc, … — the model cannot
-      // express these; keep the table verbatim.
+      // sub-tables, title/desc, … — the model cannot express these; keep
+      // the table verbatim.
       return null;
     }
   }

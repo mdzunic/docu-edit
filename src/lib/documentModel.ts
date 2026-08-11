@@ -914,6 +914,12 @@ export interface TableRow {
    * boundary sets this floor, but the row still grows taller to fit its
    * content — it is never a fixed height. */
   minHeightCm?: number;
+  /** Whether this row repeats as the table's header row (SPEC-043's "table
+   * without a header row" check): `w:tblHeader` (.docx) — a per-row flag —
+   * or membership in a leading `table:table-header-rows` wrapper (.odt),
+   * which only supports one contiguous leading run of header rows. Absent
+   * means an ordinary body row. */
+  isHeader?: boolean;
   /** Verbatim `w:trPr` from a .docx source (row height, header flag, …). */
   docxTrPr?: string;
   /** `table:style-name` of the source .odt row. */

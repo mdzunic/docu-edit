@@ -1682,6 +1682,17 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
     xml += `<table:table-column table:style-name="${escapeXml(columnName)}"/>`;
   }
   const ownerGrid = computeOwnerGrid(table);
+  // The leading contiguous run of isHeader rows (SPEC-043) becomes ODF's
+  // table:table-header-rows wrapper — a structural container, not a per-row
+  // attribute, so only a leading run is representable; an isHeader row after
+  // a non-header one has nothing to wrap it and is written as a plain row.
+  let headerRunLength = 0;
+  while (headerRunLength < table.rows.length && table.rows[headerRunLength].isHeader) {
+    headerRunLength += 1;
+  }
+  if (headerRunLength > 0) {
+    xml += "<table:table-header-rows>";
+  }
   table.rows.forEach((row, rowIndex) => {
     const rowStyleName =
       includeOpaque && row.odtStyleName !== undefined ? row.odtStyleName : names.rowStyleName(row);
@@ -1715,6 +1726,9 @@ function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean)
         "</table:table-cell>";
     }
     xml += "</table:table-row>";
+    if (rowIndex === headerRunLength - 1) {
+      xml += "</table:table-header-rows>";
+    }
   });
   return `${xml}</table:table>`;
 }
