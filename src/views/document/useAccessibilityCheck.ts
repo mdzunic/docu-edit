@@ -172,14 +172,6 @@ export function useAccessibilityCheck(deps: AccessibilityCheckDeps) {
     cancelScan();
   }
 
-  function toggleAccessibilityPane(): void {
-    if (accessibilityPaneOpen.value) {
-      closeAccessibilityPane();
-    } else {
-      openAccessibilityPane();
-    }
-  }
-
   /** Selecting an issue (AC-25): scrolls to and highlights (selects) its
    * offending content — a collapsed caret at `at` alone would only point at
    * it, not highlight it. */
@@ -241,7 +233,6 @@ export function useAccessibilityCheck(deps: AccessibilityCheckDeps) {
     accessibilityScanning,
     openAccessibilityPane,
     closeAccessibilityPane,
-    toggleAccessibilityPane,
     goToAccessibilityIssue,
     applyAccessibilityFix,
     rescanAccessibility: rescan,
