@@ -128,8 +128,15 @@ function findClosingParen(text: string, start: number): number {
  * block-level `Image` (mirroring how the .docx/.odt readers split a
  * paragraph around one), so an inline `![]()` mid-paragraph is left as
  * literal text (SPEC-050's supported subset covers a standalone image
- * paragraph — see "Fixtures"). */
-function parseInline(text: string): Run[] {
+ * paragraph — see "Fixtures"). `resolveCodeFormatting` is called (and only
+ * called) once a `` `code` `` span is actually found — it seeds the
+ * document's style catalogue with `CodeChar` on first use and returns its
+ * resolved formatting, which is merged onto the code run's baked
+ * formatting the same way a paragraph's own style contribution is baked
+ * elsewhere in this reader (every caller must route through the same
+ * lazily-seeding resolver so a code span renders monospace regardless of
+ * which other constructs the document happens to contain). */
+function parseInline(text: string, resolveCodeFormatting: () => RunFormatting): Run[] {
   const runs: Run[] = [];
   let bold = false;
   let italic = false;
@@ -167,7 +174,7 @@ function parseInline(text: string): Run[] {
       const code = text.slice(i + fenceLen, close);
       runs.push({
         text: code,
-        formatting: currentFormatting(bold, italic, strikethrough),
+        formatting: { ...currentFormatting(bold, italic, strikethrough), ...resolveCodeFormatting() },
         styleId: CODE_CHAR_STYLE_ID,
       });
       i = close + fenceLen;
@@ -206,7 +213,7 @@ function parseInline(text: string): Run[] {
           const linkText = text.slice(i + 1, closeBracket);
           const href = text.slice(closeBracket + 2, closeParen).trim();
           const outer = currentFormatting(bold, italic, strikethrough);
-          for (const run of parseInline(linkText)) {
+          for (const run of parseInline(linkText, resolveCodeFormatting)) {
             runs.push({ ...run, formatting: { ...outer, ...run.formatting, linkHref: href } });
           }
           i = closeParen + 1;
@@ -422,6 +429,14 @@ export async function parseMd(
   const bakeParagraphFormatting = (base: ResolvedNamedStyle) =>
     Object.keys(base.paragraphFormatting).length > 0 ? base.paragraphFormatting : undefined;
 
+  // Passed to every `parseInline` call so an inline code span seeds the
+  // catalogue and gets its monospace formatting baked in regardless of
+  // which block it's found in — see `parseInline`'s doc comment.
+  const codeCharFormatting = (): RunFormatting => {
+    ensureMdStyles();
+    return resolveStyle(CODE_CHAR_STYLE_ID).runFormatting;
+  };
+
   const media: MediaPart[] = [];
   const mediaBySrc = new Map<string, string>();
   let mediaCounter = 0;
@@ -495,7 +510,7 @@ export async function parseMd(
       const base = resolveStyle(styleId);
       blocks.push({
         type: "paragraph",
-        runs: parseInline(heading[2].trim()).map((run) => bakeRun(run, base.runFormatting)),
+        runs: parseInline(heading[2].trim(), codeCharFormatting).map((run) => bakeRun(run, base.runFormatting)),
         formatting: bakeParagraphFormatting(base),
         styleId,
         headingLevel: level,
@@ -520,7 +535,7 @@ export async function parseMd(
       const base = resolveStyle("Quote");
       blocks.push({
         type: "paragraph",
-        runs: parseInline(joinLines(quoteLines)).map((run) => bakeRun(run, base.runFormatting)),
+        runs: parseInline(joinLines(quoteLines), codeCharFormatting).map((run) => bakeRun(run, base.runFormatting)),
         formatting: bakeParagraphFormatting(base),
         styleId: "Quote",
       });
@@ -538,7 +553,7 @@ export async function parseMd(
       }
       const buildRow = (cells: string[]): TableRow => ({
         cells: Array.from({ length: columnCount }, (_, col) => ({
-          blocks: [{ type: "paragraph", runs: parseInline(cells[col] ?? "") }],
+          blocks: [{ type: "paragraph", runs: parseInline(cells[col] ?? "", codeCharFormatting) }],
         })),
       });
       const table: Table = {
@@ -572,7 +587,7 @@ export async function parseMd(
           list.startAt = startAt;
         }
       }
-      blocks.push({ type: "paragraph", runs: parseInline(itemText.trim()), list });
+      blocks.push({ type: "paragraph", runs: parseInline(itemText.trim(), codeCharFormatting), list });
       i++;
       continue;
     }
@@ -617,7 +632,7 @@ export async function parseMd(
       paraLines.push(lines[i]);
       i++;
     }
-    blocks.push({ type: "paragraph", runs: parseInline(joinLines(paraLines)) });
+    blocks.push({ type: "paragraph", runs: parseInline(joinLines(paraLines), codeCharFormatting) });
   }
 
   if (blocks.length === 0) {

@@ -33,6 +33,25 @@ describe("SPEC-050 — parseMd", () => {
     expect(p.runs[2].formatting.italic).toBe(true);
     expect(p.runs[4].formatting.strikethrough).toBe(true);
     expect(p.runs[6].styleId).toBe("CodeChar");
+    // Baked formatting, not just the style reference (equality.ts's
+    // resolve() and every other reader in this codebase relies on the
+    // effective formatting living on the run itself — see reader.ts's
+    // bakeRun/codeCharFormatting).
+    expect(p.runs[6].formatting.fontFamily).toBe("Courier New");
+  });
+
+  it("bakes CodeChar's monospace formatting for an inline code span even when the document has no thematic break or languaged fenced block", async () => {
+    // Regression: CodeChar used to only end up in the document's style
+    // catalogue as a side effect of a thematic break or a languaged fence
+    // seeding it (reader.ts's ensureMdStyles) — a plain paragraph with
+    // nothing but an inline code span rendered it in the default
+    // proportional font instead of monospace.
+    const parsed = await parseMd(bytes("Run `npm test` to test.\n"));
+    const [p] = paragraphs(parsed.sections[0].blocks);
+    const codeRun = p.runs.find((r) => r.styleId === "CodeChar");
+    expect(codeRun?.text).toBe("npm test");
+    expect(codeRun?.formatting.fontFamily).toBe("Courier New");
+    expect(parsed.styles.some((s) => s.id === "CodeChar")).toBe(true);
   });
 
   it("parses a hyperlink", async () => {
