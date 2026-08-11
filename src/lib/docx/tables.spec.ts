@@ -204,6 +204,47 @@ describe("parseDocx — table shapes (AC-26..28, SPEC-008 fallback)", () => {
     expect(cellParagraph.formatting?.alignment).toBe("center");
     expect(cellParagraph.runs[0].formatting.bold).toBe(true);
   });
+
+  it("models a row's w:tblHeader as isHeader (SPEC-043)", async () => {
+    const headered =
+      "<w:tbl>" +
+      "<w:tblGrid><w:gridCol w:w=\"9026\"/></w:tblGrid>" +
+      "<w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>h</w:t></w:r></w:p></w:tc></w:tr>" +
+      "<w:tr><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr>" +
+      "</w:tbl>";
+    const parsed = await parseDocx(await makeDocx(bodyDocx(`<w:p/>${headered}`)));
+    const table = parsed.sections[0].blocks[1];
+    if (!isTable(table)) {
+      throw new Error("expected a table");
+    }
+    expect(table.rows[0].isHeader).toBe(true);
+    expect(table.rows[1].isHeader).toBeUndefined();
+  });
+});
+
+describe("writeDocx — w:tblHeader emission (SPEC-043)", () => {
+  it("emits w:tblHeader for a row marked isHeader and round-trips it", async () => {
+    const model = createDocument("docx-header-row");
+    const table: Table = {
+      type: "table",
+      rows: [
+        { cells: [{ blocks: [paragraph("h")] }], isHeader: true },
+        { cells: [{ blocks: [paragraph("b")] }] },
+      ],
+      columnWidthsCm: [9.0],
+    };
+    model.sections = [{ blocks: [paragraph("before"), table] }];
+    const xml = buildDocumentXml(model);
+    expect(xml).toContain("<w:tblHeader/>");
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    const reopenedTable = reopened.sections[0].blocks[1];
+    if (!isTable(reopenedTable)) {
+      throw new Error("expected a table");
+    }
+    expect(reopenedTable.rows[0].isHeader).toBe(true);
+    expect(reopenedTable.rows[1].isHeader).toBeUndefined();
+  });
 });
 
 describe("writeDocx — lists inside cells reference a numbering plan (AC-8)", () => {

@@ -174,7 +174,7 @@ describe("parseOdt — table shapes (AC-25, SPEC-008 fallback)", () => {
     expect(table.rows[0].cells[1].covered).toBe(true);
   });
 
-  it("keeps a header-rows table opaque (repetition is out of scope)", async () => {
+  it("models a table:table-header-rows leading run as isHeader rows (SPEC-043)", async () => {
     const body =
       "<table:table>" +
       "<table:table-column/>" +
@@ -182,7 +182,16 @@ describe("parseOdt — table shapes (AC-25, SPEC-008 fallback)", () => {
       "<table:table-row><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>" +
       "</table:table><text:p/>";
     const parsed = await parseOdt(await makeOdt(contentWith(body)));
-    expect(parsed.sections[0].opaqueBlocks).toHaveLength(1);
+    expect(parsed.sections[0].opaqueBlocks ?? []).toHaveLength(0);
+    const table = parsed.sections[0].blocks[0];
+    expect(isTable(table)).toBe(true);
+    if (!isTable(table)) {
+      return;
+    }
+    expect(table.rows[0].isHeader).toBe(true);
+    expect(table.rows[0].cells[0].blocks.map(blockText)).toEqual(["h"]);
+    expect(table.rows[1].isHeader).toBeUndefined();
+    expect(table.rows[1].cells[0].blocks.map(blockText)).toEqual(["b"]);
   });
 
   it("falls back to equal columns over the text area when widths are undeclared", async () => {

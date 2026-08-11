@@ -1242,3 +1242,34 @@ export function setRowMinHeight(
   replaceTable(next, location, { ...table, rows });
   return { model: next, selection };
 }
+
+/** Marks (or unmarks) a row as the table's repeating header row (SPEC-043's
+ * "mark header row" mechanical fix). Clears the row's preserved source
+ * markup the same way `setRowMinHeight` does — `isHeader` is a modelled
+ * field now, so the writer must regenerate this row's properties instead of
+ * reproducing a stale `docxTrPr`/`odtStyleName` that disagrees with it. */
+export function setRowIsHeader(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  rowIndex: number,
+  isHeader: boolean,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  if (!table || !table.rows[rowIndex]) {
+    return { model: next, selection };
+  }
+  const rows = [...table.rows];
+  const row = { ...rows[rowIndex] };
+  if (isHeader) {
+    row.isHeader = true;
+  } else {
+    delete row.isHeader;
+  }
+  delete row.docxTrPr;
+  delete row.odtStyleName;
+  rows[rowIndex] = row;
+  replaceTable(next, location, { ...table, rows });
+  return { model: next, selection };
+}

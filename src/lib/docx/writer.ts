@@ -995,9 +995,11 @@ function rowPropertiesXml(row: TableRow, includeOpaque: boolean, ctx?: InlineWri
     // invalid element if its source namespace prefix isn't "w:"; the only
     // loss is unmodelled row properties on a row that is, by definition,
     // pending insertion, deletion or a property edit.
-    const inner = row.minHeightCm !== undefined
-      ? `<w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/>`
-      : "";
+    const inner =
+      (row.isHeader ? "<w:tblHeader/>" : "") +
+      (row.minHeightCm !== undefined
+        ? `<w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/>`
+        : "");
     const marks: string[] = [];
     if (insert) {
       marks.push(`<w:ins${trackedChangeAttrs(changeNumericId(ctx, insert.changeId), insert.author, insert.date)}/>`);
@@ -1013,8 +1015,12 @@ function rowPropertiesXml(row: TableRow, includeOpaque: boolean, ctx?: InlineWri
   if (includeOpaque && row.docxTrPr !== undefined) {
     return row.docxTrPr;
   }
-  if (row.minHeightCm !== undefined) {
-    return `<w:trPr><w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/></w:trPr>`;
+  if (row.minHeightCm !== undefined || row.isHeader) {
+    const height =
+      row.minHeightCm !== undefined
+        ? `<w:trHeight w:val="${cmToTwips(row.minHeightCm)}" w:hRule="atLeast"/>`
+        : "";
+    return `<w:trPr>${row.isHeader ? "<w:tblHeader/>" : ""}${height}</w:trPr>`;
   }
   return "";
 }
