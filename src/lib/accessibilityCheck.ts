@@ -644,9 +644,11 @@ export function finalizeAccessibilityScan(state: AccessibilityScanState, issues:
 }
 
 /** Document order: section, then block, then cell (row/col/block), then
- * offset — what the results pane lists within each severity group. */
-function compareIssues(a: AccessibilityIssue, b: AccessibilityIssue): number {
-  return compareCaret(a.at, b.at);
+ * offset — what the results pane lists within each severity group. Exported
+ * so the idle-chunked composable can sort its own accumulated array the
+ * same way `checkAccessibility` sorts its synchronous result. */
+export function sortAccessibilityIssues(issues: AccessibilityIssue[]): AccessibilityIssue[] {
+  return issues.sort((a, b) => compareCaret(a.at, b.at));
 }
 
 /** The whole scan, synchronously — used directly by tests and by a fix's
@@ -663,5 +665,5 @@ export function checkAccessibility(model: DocumentModel): AccessibilityIssue[] {
     scanAccessibilityTarget(model, target, state, issues);
   }
   finalizeAccessibilityScan(state, issues);
-  return issues.sort(compareIssues);
+  return sortAccessibilityIssues(issues);
 }

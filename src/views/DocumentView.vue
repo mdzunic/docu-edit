@@ -28,6 +28,7 @@ import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
 import TrackChangesPane from "../components/TrackChangesPane.vue";
+import AccessibilityPane from "../components/AccessibilityPane.vue";
 import VersionHistoryPane from "../components/VersionHistoryPane.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
@@ -60,6 +61,7 @@ import { useClipboard } from "./document/useClipboard";
 import { asCommentFilter, useComments } from "./document/useComments";
 import { asChangeEntries, useTrackChanges } from "./document/useTrackChanges";
 import { useVersionHistory } from "./document/useVersionHistory";
+import { useAccessibilityCheck } from "./document/useAccessibilityCheck";
 import { useFindReplace } from "./document/useFindReplace";
 import { usePdfExport } from "./document/usePdfExport";
 import { usePrintPreview } from "./document/usePrintPreview";
@@ -4187,6 +4189,37 @@ const {
   onSessionClose,
 });
 
+// --- accessibility checker (SPEC-043) ---------------------------------------
+const {
+  accessibilityPaneOpen,
+  accessibilityIssues,
+  accessibilityScanning,
+  openAccessibilityPane,
+  closeAccessibilityPane,
+  goToAccessibilityIssue,
+  applyAccessibilityFix,
+  rescanAccessibility,
+} = useAccessibilityCheck({
+  doc,
+  applyEdit,
+  applyCaretMove,
+  scrollModelCaretIntoView,
+  imageSelection,
+  openImageOptions,
+  onSessionClose,
+});
+
+/** The Image options dialog's Apply (SPEC-024) also commits the accessibility
+ * checker's "Add alt text" fix (AC-27, AC-28) — its own Apply handler has no
+ * reason to know the checker exists, so this thin wrapper is what refreshes
+ * the pane's list once the user actually applies the alt text they typed. */
+function handleImageOptionsApplyAndRescan(payload = { altText: "", widthCm: 0, heightCm: 0 }) {
+  handleImageOptionsApply(payload);
+  if (accessibilityPaneOpen.value) {
+    rescanAccessibility();
+  }
+}
+
 // --- document properties and metadata (SPEC-041) ---------------------------
 const {
   propertiesOpen,
@@ -5088,6 +5121,12 @@ async function menuPastePlain() {
             testid="tools-menu-dictionary"
             @select="openCustomDictionaryDialog"
           />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Check accessibility"
+            testid="tools-menu-accessibility"
+            @select="openAccessibilityPane"
+          />
         </template>
       </MenuBar>
       <!-- The Insert menu's "Image…" command drives this hidden picker
@@ -5323,6 +5362,18 @@ async function menuPastePlain() {
           @remove-name="removeVersionHistoryName"
           @delete="deleteVersionHistoryVersion"
           @download="downloadVersionHistoryVersion"
+        />
+      </div>
+      <div
+        v-if="accessibilityPaneOpen"
+        class="accessibility-dock print-exclude"
+      >
+        <AccessibilityPane
+          :issues="accessibilityIssues"
+          :scanning="accessibilityScanning"
+          @close="closeAccessibilityPane"
+          @select="goToAccessibilityIssue"
+          @fix="applyAccessibilityFix"
         />
       </div>
       <div class="page-wrap">
@@ -5915,7 +5966,7 @@ async function menuPastePlain() {
     <ImageOptionsDialog
       v-if="imageOptionsOpen"
       :initial="imageOptionsInitial"
-      @apply="handleImageOptionsApply"
+      @apply="handleImageOptionsApplyAndRescan"
       @cancel="imageOptionsOpen = false"
     />
     <PrintPreviewDialog
@@ -6222,6 +6273,22 @@ async function menuPastePlain() {
 }
 
 .version-history-dock :deep(.version-history-pane) {
+  pointer-events: auto;
+}
+
+/* The accessibility checker's own dock (SPEC-043) — same shape as the other
+   docked panes, on the same edge (not normally opened together with them). */
+.accessibility-dock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.accessibility-dock :deep(.accessibility-pane) {
   pointer-events: auto;
 }
 
