@@ -5,18 +5,19 @@
 // errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
 // propagate unchanged — the caller only mutates app state once this
 // resolves, so a rejected file leaves the previous state untouched.
-import type {
-  CommentThread,
-  DocumentFormat,
-  DocumentModel,
-  DocumentProperties,
-  ListDefinition,
-  MediaPart,
-  NamedStyle,
-  NoteContent,
-  NoteSettings,
-  OpaquePart,
-  SourceXml,
+import {
+  DEFAULT_TITLE,
+  type CommentThread,
+  type DocumentFormat,
+  type DocumentModel,
+  type DocumentProperties,
+  type ListDefinition,
+  type MediaPart,
+  type NamedStyle,
+  type NoteContent,
+  type NoteSettings,
+  type OpaquePart,
+  type SourceXml,
 } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
@@ -56,8 +57,14 @@ export function titleFromFileName(fileName: string): string {
   return withoutExtension.length > 0 ? withoutExtension : fileName;
 }
 
-function buildModel(
-  fileName: string,
+/** Assembles a parsed package into a fresh `DocumentModel` (SPEC-004/005):
+ * the shared tail of every open path, byte-based and DOM-free beyond what
+ * `parsed` itself already required to produce (parseDocx/parseOdt) — no
+ * `File`/browser dependency here, which is what lets `readDocxBytes`/
+ * `readOdtBytes` below serve a Node caller directly (see
+ * src/lib/generate/read.ts, SPEC-045 AC-17). */
+export function assembleDocumentModel(
+  title: string,
   format: DocumentFormat,
   parsed: {
     sections: DocumentModel["sections"];
@@ -77,7 +84,7 @@ function buildModel(
 ): DocumentModel {
   const model: DocumentModel = {
     id: crypto.randomUUID(),
-    title: titleFromFileName(fileName),
+    title,
     format,
     sections: parsed.sections,
     defaultStyles: parsed.defaultStyles,
@@ -149,14 +156,34 @@ export async function openDocumentFile(file: File): Promise<DocumentModel> {
     throw new FlatOdfError(FLAT_ODF_MESSAGE);
   }
   if (odf === "package") {
-    return buildModel(file.name, "odt", await parseOdt(bytes));
+    return assembleDocumentModel(titleFromFileName(file.name), "odt", await parseOdt(bytes));
   }
-  return buildModel(file.name, "docx", await parseDocx(bytes));
+  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(bytes));
 }
 
 /** Reads and parses a `.docx` File into a new DocumentModel (not yet
  * stored or navigated to — the caller does that once this resolves). */
 export async function openDocxFile(file: File): Promise<DocumentModel> {
   const buffer = await readFileAsArrayBuffer(file);
-  return buildModel(file.name, "docx", await parseDocx(buffer));
+  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(buffer));
+}
+
+/** Reads and parses `.docx` bytes directly into a new DocumentModel, with
+ * no `File`/FileReader involved (SPEC-045 AC-17): the Node/Buffer-friendly
+ * counterpart of `openDocxFile`, used by src/lib/generate/read.ts. `title`
+ * defaults to DEFAULT_TITLE the same way a blank document does — callers
+ * that have a meaningful name (e.g. from their own file path) pass it. */
+export async function readDocxBytes(
+  bytes: Uint8Array | ArrayBuffer,
+  title: string = DEFAULT_TITLE,
+): Promise<DocumentModel> {
+  return assembleDocumentModel(title, "docx", await parseDocx(bytes));
+}
+
+/** The `.odt` counterpart of `readDocxBytes` (SPEC-045 AC-17). */
+export async function readOdtBytes(
+  bytes: Uint8Array | ArrayBuffer,
+  title: string = DEFAULT_TITLE,
+): Promise<DocumentModel> {
+  return assembleDocumentModel(title, "odt", await parseOdt(bytes));
 }
