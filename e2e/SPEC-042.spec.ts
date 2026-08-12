@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { MOD } from "./keys";
 
 // SPEC-042 — the custom styles manager: a "Styles" side pane lists every
 // style grouped by type with in-use tracking (AC-1, AC-2); New/Modify/
@@ -198,12 +199,12 @@ test.describe("New / Modify style (AC-3, AC-4, AC-5, AC-11)", () => {
     await page.keyboard.type("Child paragraph.");
     await openStylesPane(page);
 
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await editor(page).click();
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await newStyle(page, "paragraph", "Parent Style", { bold: true });
 
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press(`${MOD}+End`);
     await newStyle(page, "paragraph", "Child Style", { basedOn: "Parent Style", italic: true });
 
     // Both styles are in use before the modify.
@@ -223,7 +224,7 @@ test.describe("New / Modify style (AC-3, AC-4, AC-5, AC-11)", () => {
 
     // The caret's readout on the child paragraph still names Child Style.
     await editor(page).click();
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press(`${MOD}+End`);
     await expect(page.getByTestId("caret-paragraph-style")).toHaveText("Child Style");
   });
 
@@ -248,7 +249,7 @@ test.describe("Delete style (AC-7, AC-8)", () => {
     await page.keyboard.type("Styled paragraph.");
     await openStylesPane(page);
 
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await newStyle(page, "paragraph", "Temp Style", { bold: true });
 
     await styleRow(page, "Temp Style").getByTestId(/style-delete-/).click();
@@ -295,7 +296,7 @@ test.describe("Custom style round trip (AC-13, AC-14)", () => {
     await editor(page).click();
     await page.keyboard.type("Custom styled paragraph.");
     await openStylesPane(page);
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await newStyle(page, "paragraph", "RoundTrip Style", { bold: true });
 
     await page.getByTestId("download-menu").click();
@@ -311,7 +312,7 @@ test.describe("Custom style round trip (AC-13, AC-14)", () => {
     await expect(page).toHaveURL(/\/doc\/.+/);
     await openStylesPane(page);
     await expect(styleRow(page, "RoundTrip Style")).toBeVisible();
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await expect(page.getByTestId("caret-paragraph-style")).toHaveText("RoundTrip Style");
   });
 });
@@ -324,7 +325,7 @@ test.describe("Import styles from another document (AC-19..24)", () => {
     await editor(page).click();
     await page.keyboard.type("Source doc text.");
     await openStylesPane(page);
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await newStyle(page, "paragraph", "Shared Name", { bold: true });
     await newStyle(page, "paragraph", "Imported Unique Style", { italic: true });
 
@@ -341,7 +342,7 @@ test.describe("Import styles from another document (AC-19..24)", () => {
     await editor(page).click();
     await page.keyboard.type("Target doc text.");
     await openStylesPane(page);
-    await page.keyboard.press("Control+Home");
+    await page.keyboard.press(`${MOD}+Home`);
     await newStyle(page, "paragraph", "Shared Name", { italic: true });
 
     await page.getByTestId("menu-title-format").click();
