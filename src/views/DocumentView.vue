@@ -89,6 +89,7 @@ import {
 import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../lib/outlinePane";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
+import { MD_MIME_TYPE, mdFileName, writeMd } from "../lib/md/writer";
 import { noConversionReport } from "../lib/opaque";
 import {
   deleteDocument,
@@ -4432,9 +4433,18 @@ function handleTogglePagination(key = "") {
 
 const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
 
-const downloadFormat = computed(() =>
-  doc.value && doc.value.format === "odt" ? "odt" : "docx",
-);
+const downloadFormat = computed(() => {
+  if (!doc.value) {
+    return "docx";
+  }
+  if (doc.value.format === "odt") {
+    return "odt";
+  }
+  if (doc.value.format === "md") {
+    return "md";
+  }
+  return "docx";
+});
 
 function handleTitleUpdate(newTitle = "") {
   if (!doc.value) {
@@ -4455,18 +4465,19 @@ async function handleDownload(format = "") {
     void exportPdf();
     return;
   }
-  if (!doc.value || (format !== "docx" && format !== "odt")) {
+  if (!doc.value || (format !== "docx" && format !== "odt" && format !== "md")) {
     return;
   }
-  const odt = format === "odt";
   // The dcterms:created/dc:date (SPEC-041 AC-2) stamp: `created` is set only
   // the first time (kept stable on every later save, matching what General
   // tab shows once it has a value), `modified` refreshes every save. Both
-  // writers read `model.properties.created`/`modified` — see
+  // .docx/.odt writers read `model.properties.created`/`modified` — see
   // docProps.ts/meta.ts's buildCorePropertiesXml/buildMetaXml — so this
   // must be resolved into the model *before* writing, then mirrored back so
   // the in-memory model (and so the Properties dialog, without a reopen)
-  // agrees with what was just written.
+  // agrees with what was just written. Markdown never reads `properties`
+  // (SPEC-050: front matter is carried verbatim, never interpreted), but the
+  // stamp is still recorded so a later save as .docx/.odt keeps it.
   const modified = new Date();
   const properties = {
     ...doc.value.properties,
@@ -4474,16 +4485,21 @@ async function handleDownload(format = "") {
     modified: modified.toISOString(),
   };
   doc.value.properties = properties;
-  const { bytes, dropped } = odt
-    ? await writeOdt(doc.value, { modified })
-    : await writeDocx(doc.value, { modified });
+  const { bytes, dropped } =
+    format === "odt"
+      ? await writeOdt(doc.value, { modified })
+      : format === "md"
+        ? await writeMd(doc.value)
+        : await writeDocx(doc.value, { modified });
   triggerRef(doc);
   touchDocument(doc.value.id);
-  const fileName = odt ? odtFileName(doc.value.title) : docxFileName(doc.value.title);
+  const fileName =
+    format === "odt" ? odtFileName(doc.value.title) : format === "md" ? mdFileName(doc.value.title) : docxFileName(doc.value.title);
   // A transient anchor pointed at an object URL is the download mechanism
   // that needs no new browser permissions; revocation is deferred so the
   // browser has started streaming the blob before the URL disappears.
-  const url = URL.createObjectURL(new Blob([bytes], { type: odt ? ODT_MIMETYPE : DOCX_MIME_TYPE }));
+  const mimeType = format === "odt" ? ODT_MIMETYPE : format === "md" ? MD_MIME_TYPE : DOCX_MIME_TYPE;
+  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = fileName;

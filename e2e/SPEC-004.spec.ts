@@ -10,9 +10,11 @@ test("'Open document' opens a file picker limited to supported formats (AC-1)", 
   await page.goto("/");
   const input = page.getByTestId("open-document-input");
   // SPEC-004 shipped this as ".docx"; SPEC-005's AC-1 ("the file picker
-  // accepts .odt alongside .docx") supersedes that exact value. The picker
-  // must still be limited to formats the app can open.
-  await expect(input).toHaveAttribute("accept", ".docx,.odt");
+  // accepts .odt alongside .docx") and then SPEC-050's AC-1 ("opening a .md
+  // or .markdown file — from the library, the file picker, or a drop")
+  // supersede that exact value. The picker must still be limited to formats
+  // the app can open.
+  await expect(input).toHaveAttribute("accept", ".docx,.odt,.md,.markdown");
 });
 
 test("choosing a .docx file parses it and opens it at /doc/:id (AC-2)", async ({ page }) => {

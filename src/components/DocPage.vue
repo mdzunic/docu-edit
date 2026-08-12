@@ -417,6 +417,20 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
   font-size: inherit;
 }
 
+/* SPEC-050: kept in sync with DocBlockEntries.vue's copy of this rule. */
+.doc-horizontal-rule {
+  min-height: 0.1cm;
+  position: relative;
+}
+.doc-horizontal-rule::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid #9aa0a6;
+}
+
 /* The list marker (SPEC-018): painted from the derived data-list-marker
    attribute, never part of the editable text — caret offsets and the
    model/DOM text equality check stay untouched. */

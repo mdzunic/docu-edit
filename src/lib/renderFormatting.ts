@@ -3,18 +3,19 @@
 // split out of DocumentView.vue because that file's <script setup> is
 // linted by ESLint's plain espree parser, which rejects TypeScript type
 // annotations (see AppShell.vue's comment on the same constraint).
-import type {
-  BorderSide,
-  Image,
-  ListDefinition,
-  Paragraph,
-  ParagraphFormatting,
-  Run,
-  RunFormatting,
-  Table,
-  TableCell,
-  TableRow,
-  TrackChangesDisplayMode,
+import {
+  HORIZONTAL_RULE_STYLE_ID,
+  type BorderSide,
+  type Image,
+  type ListDefinition,
+  type Paragraph,
+  type ParagraphFormatting,
+  type Run,
+  type RunFormatting,
+  type Table,
+  type TableCell,
+  type TableRow,
+  type TrackChangesDisplayMode,
 } from "./documentModel";
 import { listIndentCm } from "./lists";
 import { definedTextIndentCm } from "./listDefinitions";
@@ -31,6 +32,12 @@ export function headingTag(level: number | undefined): string {
     return "p";
   }
   return `h${Math.min(Math.max(level, 1), 6)}`;
+}
+
+/** The CSS class a paragraph's render entry carries — the shared
+ * "doc-paragraph" plus SPEC-050's horizontal-rule modifier. */
+export function paragraphClassName(paragraph: Paragraph): string {
+  return paragraph.styleId === HORIZONTAL_RULE_STYLE_ID ? "doc-paragraph doc-horizontal-rule" : "doc-paragraph";
 }
 
 /** The hyperlink colour (SPEC-025 AC-4) — the blue Word and Docs both use

@@ -5,7 +5,8 @@ import { onMounted, onUnmounted, ref } from "vue";
 // ESLint parses .vue scripts with espree, which rejects TS-only syntax;
 // vue-tsc still infers the emit signature from it. The payload is the
 // chosen format id — "docx" for Word (.docx), "odt" for OpenDocument
-// Text (.odt), "pdf" for PDF export (SPEC-034).
+// Text (.odt), "md" for Markdown (SPEC-050), "pdf" for PDF export
+// (SPEC-034).
 const emit = defineEmits(["download"]);
 
 const open = ref(false);
@@ -63,6 +64,14 @@ function choose(format = "") {
         @click="choose('odt')"
       >
         OpenDocument Text (.odt)
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="download-md"
+        @click="choose('md')"
+      >
+        Markdown (.md)
       </button>
       <button
         type="button"

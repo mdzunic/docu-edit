@@ -10,7 +10,7 @@ import type { CaretPosition } from "./textEditing";
 
 /** Where a document's content last came from or went to. "new" means it was
  * created in the app and has never been opened from or saved as a file. */
-export type DocumentFormat = "docx" | "odt" | "new";
+export type DocumentFormat = "docx" | "odt" | "md" | "new";
 
 /** What the library persists per document: the model plus its metadata.
  * This is the COMMITTED record (SPEC-010): the last clean state, which the

@@ -6,8 +6,29 @@
 // an item is and that it cannot be represented in the target format, so the
 // conversion report dialog and the tests both read the writer's `dropped`
 // array rather than diffing models.
-import { isBreak, isImage, isTable, isToc, type DocumentFormat, type DocumentModel } from "./documentModel";
+import {
+  createDefaultStyles,
+  isBreak,
+  isImage,
+  isTable,
+  isToc,
+  type DocumentFormat,
+  type DocumentModel,
+  type Paragraph,
+  type Run,
+  type RunFormatting,
+  type Table,
+} from "./documentModel";
 import { parseXml, XmlParseError } from "./docx/xml";
+import { mergeRunFormatting } from "./docx/properties";
+import {
+  diffParagraphFormatting,
+  paragraphStyleBase,
+  resolveCharacterStyle,
+  splitRunFormatting,
+} from "./styles";
+import { paragraphHasTrackedChange } from "./renderFormatting";
+import { equalColumnWidthsCm } from "./tables";
 
 // --- base64 ----------------------------------------------------------------
 
@@ -53,7 +74,22 @@ export type DropKind =
   | "opaquePart"
   | "runShading"
   | "svgImage"
-  | "trackedPropertyChange";
+  | "trackedPropertyChange"
+  // SPEC-050: content-level kinds a Markdown save can lose — Markdown has no
+  // package, so unlike the kinds above these are detected by walking the
+  // model's content rather than its unmodelled parts/nodes.
+  | "pageSetup"
+  | "headerFooter"
+  | "pageNumberField"
+  | "columns"
+  | "note"
+  | "comment"
+  | "tableOfContents"
+  | "bookmark"
+  | "runFormatting"
+  | "paragraphFormatting"
+  | "tableStyling"
+  | "trackedChange";
 
 /** One item a writer could not represent in its target format. */
 export interface DropRecord {
@@ -92,6 +128,18 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   runShading: "Run shading",
   svgImage: "SVG image",
   trackedPropertyChange: "Tracked table property change",
+  pageSetup: "Page setup",
+  headerFooter: "Header/footer",
+  pageNumberField: "Page number field",
+  columns: "Multi-column layout",
+  note: "Footnote/endnote",
+  comment: "Comment",
+  tableOfContents: "Table of contents field",
+  bookmark: "Bookmark",
+  runFormatting: "Character formatting",
+  paragraphFormatting: "Paragraph formatting",
+  tableStyling: "Table styling",
+  trackedChange: "Tracked change",
 };
 
 /** DROP_KIND_LABELS behind a plain-string lookup, for the dialog template
@@ -198,11 +246,24 @@ const REASONS: Record<DropKind, string> = {
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
   trackedPropertyChange:
     "OpenDocument Text has no slot for a table/row/cell property change's previous state — the change is kept applied but no longer tracked",
+  pageSetup: "Markdown carries no page geometry or section breaks",
+  headerFooter: "Markdown has no header/footer concept",
+  pageNumberField: "Markdown has no live page-number field",
+  columns: "Markdown has no multi-column layout",
+  note: "Markdown has no footnote/endnote mechanism",
+  comment: "Markdown has no review-comment mechanism",
+  tableOfContents: "Markdown cannot carry a live table of contents field — its rendered text is kept instead",
+  bookmark: "Markdown has no bookmark mechanism",
+  runFormatting: "Markdown carries only bold, italic, strikethrough and code — other character formatting is lost",
+  paragraphFormatting: "Markdown has no alignment, indent or spacing properties",
+  tableStyling: "Markdown tables cannot merge cells or carry table styling",
+  trackedChange: "Markdown cannot track pending changes — the change is kept applied but no longer tracked",
 };
 
 const FORMAT_LABELS: Record<DocumentFormat, string> = {
   docx: "Word (.docx)",
   odt: "OpenDocument Text (.odt)",
+  md: "Markdown (.md)",
 };
 
 function record(kind: DropKind, location: string, target: DocumentFormat): DropRecord {
@@ -213,17 +274,16 @@ function record(kind: DropKind, location: string, target: DocumentFormat): DropR
   };
 }
 
-/** Everything a cross-format save of `model` will drop, in document order
- * (opaque nodes first, then unmodelled package parts). Empty when the model
- * carries no opaque content — a blank document converts losslessly. The
- * "approximate location" is expressed in paragraph numbers: the product
- * does not paginate, so page numbers do not exist to report. */
-export function collectDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
-  const source = model.format;
-  if (source === undefined || source === target) {
-    return [];
-  }
-
+/** The `.docx`/`.odt` package-level drops (opaque nodes/parts, SVG images,
+ * run shading, tracked table-property changes): everything a cross-format
+ * save between the two package formats will drop, in document order (opaque
+ * nodes first, then unmodelled package parts). Empty when the model carries
+ * no opaque content — a blank document converts losslessly between them.
+ * The "approximate location" is expressed in paragraph numbers: the product
+ * does not paginate, so page numbers do not exist to report. Unlike
+ * `collectDropRecords`, this is only ever meaningful for a genuine format
+ * change — a same-format save round-trips opaque content untouched. */
+function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat, target: DocumentFormat): DropRecord[] {
   const dropped: DropRecord[] = [];
   let paragraphOffset = 0;
   for (const section of model.sections) {
@@ -327,4 +387,431 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
   }
 
   return dropped;
+}
+
+// --- SPEC-050: Markdown content-level drops ---------------------------------
+
+/** The only run-formatting a Markdown save carries (the "Supported subset"
+ * table): everything else — including anything a paragraph/character style
+ * itself sets — must be flagged, but *only* the direct layer beyond a run's
+ * style chain, so a heading's baked bold or a Quote paragraph's baked italic
+ * (both style-driven, both representable via the construct itself) are not
+ * mistaken for unsupported direct formatting. */
+const ALLOWED_RUN_DIFF_KEYS = new Set(["bold", "italic", "strikethrough"]);
+
+/** A run's formatting resolved from its paragraph's and its own style chain
+ * alone (no direct formatting) — what `checkParagraph`/`withoutDropped` both
+ * diff a run's actual formatting against. */
+function runStyleBase(model: DocumentModel, paragraph: Paragraph, run: Run): RunFormatting {
+  const paragraphBase = paragraphStyleBase(model, paragraph).runFormatting;
+  return run.styleId ? mergeRunFormatting(paragraphBase, resolveCharacterStyle(model, run.styleId)) : paragraphBase;
+}
+
+/** Whether a table has merged cells or per-cell/row/table styling GFM's
+ * plain pipe-table grid cannot carry (SPEC-050's "Supported subset": "Table
+ * without merged cells"). */
+function tableHasUnsupportedStyling(model: DocumentModel, table: Table): boolean {
+  const hasMerge = table.rows.some((row) =>
+    row.cells.some((cell) => (cell.colSpan ?? 1) > 1 || (cell.rowSpan ?? 1) > 1 || cell.covered),
+  );
+  const hasCellOrRowStyling = table.rows.some(
+    (row, rowIndex) =>
+      row.minHeightCm !== undefined ||
+      // A header row is only representable as GFM's implicit first row
+      // (the writer always treats row 0 as the header) — a header
+      // anywhere else is what's actually unsupported.
+      (row.isHeader && rowIndex !== 0) ||
+      row.cells.some(
+        (cell) =>
+          cell.borders !== undefined ||
+          cell.shadingFill !== undefined ||
+          cell.paddingCm !== undefined ||
+          cell.verticalAlign !== undefined,
+      ),
+  );
+  const hasTableStyling =
+    (table.alignment !== undefined && table.alignment !== "left") ||
+    (table.widthMode !== undefined && table.widthMode !== "fixed") ||
+    table.widthPercent !== undefined ||
+    table.styleId !== undefined;
+  // GFM tables carry no column-width info at all — a Markdown save always
+  // reflows to an equal split of the text area, so any table whose widths
+  // are not *already* that equal split loses them for real (a table
+  // Markdown itself produced round-trips clean, since it starts equal).
+  const equalWidths = equalColumnWidthsCm(model, table.columnWidthsCm.length);
+  const hasCustomWidths = table.columnWidthsCm.some((width, index) => Math.abs(width - equalWidths[index]) >= 0.01);
+  return hasMerge || hasCellOrRowStyling || hasTableStyling || hasCustomWidths;
+}
+
+/** Whether a table (or one of its rows/cells) carries pending tracked-change
+ * state (SPEC-039) — Markdown has nowhere to keep it. */
+function tableHasTrackedChanges(table: Table): boolean {
+  if (table.changes?.propertyChange) {
+    return true;
+  }
+  return table.rows.some(
+    (row) =>
+      row.changes?.insert ||
+      row.changes?.delete ||
+      row.changes?.propertyChange ||
+      row.cells.some((cell) => cell.changes?.insert || cell.changes?.delete || cell.changes?.propertyChange),
+  );
+}
+
+/** Everything a save to Markdown will drop that a `.docx`/`.odt` save never
+ * would (SPEC-050's "What markdown cannot carry"): unlike
+ * `collectPackageDropRecords`, this runs for *every* save to `.md`,
+ * including one whose source is already `.md` — Markdown is not a
+ * full-fidelity format the way `.docx`/`.odt` are, so content the editor
+ * itself can create (a header, a tracked change) can be unrepresentable even
+ * when re-saving a document that was already Markdown. */
+function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
+  const target: DocumentFormat = "md";
+  const dropped: DropRecord[] = [];
+  const seenThreads = new Set<string>();
+  const seenNotes = new Set<string>();
+
+  function checkParagraph(paragraph: Paragraph, paragraphNumber: number): void {
+    if (paragraphHasTrackedChange(paragraph)) {
+      dropped.push(record("trackedChange", `paragraph ${paragraphNumber}`, target));
+    }
+    const paragraphBase = paragraphStyleBase(model, paragraph).paragraphFormatting;
+    if (Object.keys(diffParagraphFormatting(paragraph.formatting ?? {}, paragraphBase)).length > 0) {
+      dropped.push(record("paragraphFormatting", `paragraph ${paragraphNumber}`, target));
+    }
+    const hasUnsupportedRunFormatting = paragraph.runs.some((run) => {
+      const base = runStyleBase(model, paragraph, run);
+      // splitRunFormatting (not a raw diff against `base`) so a run's font
+      // family/size baked in only because it happens to match the
+      // document's own defaults — the "underlay" every reader bakes onto
+      // every run regardless of any real override — is not mistaken for a
+      // direct override Markdown would have to drop.
+      const { diff } = splitRunFormatting(model, run.formatting, base);
+      return (
+        Object.keys(diff).some((key) => !ALLOWED_RUN_DIFF_KEYS.has(key)) ||
+        run.formatting.lang !== undefined ||
+        run.formatting.noProof === true
+      );
+    });
+    if (hasUnsupportedRunFormatting) {
+      dropped.push(record("runFormatting", `paragraph ${paragraphNumber}`, target));
+    }
+    if (paragraph.runs.some((run) => run.field)) {
+      dropped.push(record("pageNumberField", `paragraph ${paragraphNumber}`, target));
+    }
+    for (const _bookmark of paragraph.bookmarks ?? []) {
+      dropped.push(record("bookmark", `paragraph ${paragraphNumber}`, target));
+    }
+    for (const anchor of paragraph.commentAnchors ?? []) {
+      if (!seenThreads.has(anchor.threadId)) {
+        seenThreads.add(anchor.threadId);
+        dropped.push(record("comment", `paragraph ${paragraphNumber}`, target));
+      }
+    }
+    for (const run of paragraph.runs) {
+      if (run.note && !seenNotes.has(run.note.noteId)) {
+        seenNotes.add(run.note.noteId);
+        dropped.push(record("note", `paragraph ${paragraphNumber}`, target));
+      }
+    }
+  }
+
+  // A single-section document's own page geometry lives on `defaultStyles`
+  // directly, not `sections[0].pageSize`/`margins` (SPEC-028's "absent
+  // falls back to defaultStyles" — the docx/odt readers never populate a
+  // lone section's own override when the document has only one). A tenth
+  // of a millimetre of slack absorbs the twip-grid rounding a value that
+  // started life as a clean cm figure picks up on its way through .docx.
+  const EPSILON_CM = 0.01;
+  const nearlyEqual = (a: number, b: number): boolean => Math.abs(a - b) < EPSILON_CM;
+  const standard = createDefaultStyles();
+  const hasCustomDocumentPageSetup =
+    !nearlyEqual(model.defaultStyles.pageSize.widthCm, standard.pageSize.widthCm) ||
+    !nearlyEqual(model.defaultStyles.pageSize.heightCm, standard.pageSize.heightCm) ||
+    !nearlyEqual(model.defaultStyles.margins.topCm, standard.margins.topCm) ||
+    !nearlyEqual(model.defaultStyles.margins.rightCm, standard.margins.rightCm) ||
+    !nearlyEqual(model.defaultStyles.margins.bottomCm, standard.margins.bottomCm) ||
+    !nearlyEqual(model.defaultStyles.margins.leftCm, standard.margins.leftCm);
+  if (hasCustomDocumentPageSetup) {
+    dropped.push(record("pageSetup", "document page setup", target));
+  }
+
+  model.sections.forEach((section, sectionIndex) => {
+    if (
+      sectionIndex > 0 ||
+      section.pageSize !== undefined ||
+      section.margins !== undefined ||
+      section.docxSectPr !== undefined ||
+      section.pageNumberStart !== undefined ||
+      section.titlePage ||
+      section.evenAndOddHeaders
+    ) {
+      dropped.push(record("pageSetup", `section ${sectionIndex + 1}`, target));
+    }
+    if (section.columns && section.columns.count > 1) {
+      dropped.push(record("columns", `section ${sectionIndex + 1}`, target));
+    }
+    const hasHeader = section.headers && Object.keys(section.headers).length > 0;
+    const hasFooter = section.footers && Object.keys(section.footers).length > 0;
+    if (hasHeader || hasFooter) {
+      dropped.push(record("headerFooter", `section ${sectionIndex + 1}`, target));
+    }
+  });
+
+  let paragraphOffset = 0;
+  for (const section of model.sections) {
+    section.blocks.forEach((block, index) => {
+      const paragraphNumber = paragraphOffset + index + 1;
+      if (isToc(block)) {
+        dropped.push(record("tableOfContents", `paragraph ${paragraphNumber}`, target));
+        return;
+      }
+      if (isTable(block)) {
+        if (tableHasUnsupportedStyling(model, block)) {
+          dropped.push(record("tableStyling", `table at paragraph ${paragraphNumber}`, target));
+        }
+        if (tableHasTrackedChanges(block)) {
+          dropped.push(record("trackedChange", `table at paragraph ${paragraphNumber}`, target));
+        }
+        for (const row of block.rows) {
+          for (const cell of row.cells) {
+            for (const paragraph of cell.blocks) {
+              checkParagraph(paragraph, paragraphNumber);
+            }
+          }
+        }
+        return;
+      }
+      if (isImage(block) || isBreak(block)) {
+        return;
+      }
+      checkParagraph(block, paragraphNumber);
+    });
+    paragraphOffset += section.blocks.length;
+  }
+
+  return dropped;
+}
+
+/** Everything a cross-format save of `model` will drop. Two independent
+ * passes, both able to fire on the same save: the package-level pass (any
+ * genuine format change — its `.docx`/`.odt`-specific checks, e.g.
+ * `svgImage`, stay inert when `target` is `"md"` since they gate on that
+ * exact target format) and the Markdown content-level pass (every save to
+ * `.md`, regardless of source — see `collectMarkdownDropRecords`, which
+ * covers what the package-level pass cannot: content a `.md` *source* never
+ * has opaque parts/nodes for in the first place). */
+export function collectDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
+  const source = model.format;
+  const dropped: DropRecord[] = [];
+  if (source !== undefined && source !== target) {
+    dropped.push(...collectPackageDropRecords(model, source, target));
+  }
+  if (target === "md") {
+    dropped.push(...collectMarkdownDropRecords(model));
+  }
+  return dropped;
+}
+
+// --- SPEC-050: withoutDropped ------------------------------------------------
+
+/** Masks `run`'s formatting down to what a real save-to-`.md`-and-reopen
+ * would leave: its style chain's own contribution, plus whichever of the
+ * allowed direct keys (bold/italic/strikethrough) it actually set, plus its
+ * link target (a Markdown-representable hyperlink is never dropped). */
+function maskRunFormatting(model: DocumentModel, paragraph: Paragraph, run: Run): RunFormatting {
+  const base = runStyleBase(model, paragraph, run);
+  const { underlay, diff } = splitRunFormatting(model, run.formatting, base);
+  const allowedDirect: RunFormatting = {};
+  for (const key of ALLOWED_RUN_DIFF_KEYS) {
+    const value = diff[key as keyof RunFormatting];
+    if (value !== undefined) {
+      (allowedDirect as Record<string, unknown>)[key] = value;
+    }
+  }
+  const masked = mergeRunFormatting(mergeRunFormatting(base, underlay), allowedDirect);
+  if (run.formatting.linkHref !== undefined) {
+    masked.linkHref = run.formatting.linkHref;
+  }
+  if (run.formatting.linkAnchor !== undefined) {
+    masked.linkAnchor = run.formatting.linkAnchor;
+  }
+  return masked;
+}
+
+/** Masks one paragraph in place to what a real save-to-`.md`-and-reopen
+ * would leave: its style's own paragraph formatting (direct alignment/
+ * indent/spacing dropped), its runs' formatting similarly masked (field/note
+ * runs removed — Markdown has nowhere to keep a computed value), its
+ * tracked-change state cleared (current content kept, per the same
+ * "kept applied but no longer tracked" convention `trackedPropertyChange`
+ * already uses), and its bookmarks/comment anchors removed. */
+function maskParagraph(model: DocumentModel, paragraph: Paragraph): void {
+  const base = paragraphStyleBase(model, paragraph).paragraphFormatting;
+  paragraph.formatting = Object.keys(base).length > 0 ? base : undefined;
+  paragraph.runs = paragraph.runs.filter((run) => !run.field && !run.note);
+  for (const run of paragraph.runs) {
+    run.formatting = maskRunFormatting(model, paragraph, run);
+    delete run.changes;
+  }
+  delete paragraph.changes;
+  delete paragraph.bookmarks;
+  delete paragraph.commentAnchors;
+}
+
+/** `source` with every item named in `dropped` masked out — the transform
+ * `equalSemantic(withoutDropped(source, dropped), reopened)` compares
+ * against (SPEC-008's "Writer API"), so the source's own now-unrepresentable
+ * content never causes a false mismatch. Kind-driven, not location-driven:
+ * `dropped`'s free-text `location` is for the conversion report a person
+ * reads, not for this transform to parse back apart. Masking every instance
+ * of a *kind* present anywhere in `dropped` is sound here because each mask
+ * step recomputes its target from the model's own style chain — a paragraph
+ * that never had unsupported formatting masks back to exactly what it
+ * already had, so masking the whole document is a no-op wherever `dropped`
+ * did not actually apply. A no-op `dropped` (nothing to mask) returns
+ * `source` itself, unmodified. */
+export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): DocumentModel {
+  if (dropped.length === 0) {
+    return source;
+  }
+  const kinds = new Set(dropped.map((item) => item.kind));
+  const model = structuredClone(source);
+
+  if (kinds.has("pageSetup") || kinds.has("headerFooter") || kinds.has("columns")) {
+    // Markdown has no section concept at all: a real save flattens every
+    // section's blocks into one continuous flow, carrying no page setup,
+    // headers/footers or columns forward.
+    const blocks = model.sections.flatMap((section) => section.blocks);
+    model.sections = [{ blocks }];
+  }
+  if (kinds.has("pageSetup")) {
+    // AC-5: a Markdown document always opens with the *default* page setup
+    // — a real reopen never carries the source's own page size/margins
+    // forward, even the document-wide defaults (Markdown has no geometry of
+    // any kind, only content).
+    model.defaultStyles = createDefaultStyles();
+  }
+
+  const OPAQUE_FAMILY_KINDS: DropKind[] = [
+    "chart",
+    "contentControl",
+    "customXml",
+    "embeddedObject",
+    "macro",
+    "opaqueBlock",
+    "opaqueInline",
+    "opaquePart",
+  ];
+  if (OPAQUE_FAMILY_KINDS.some((kind) => kinds.has(kind))) {
+    // Markdown carries no package and no unmodelled-XML side-lists at all —
+    // a real save loses every preserved opaque part/node outright, the same
+    // "preserved .docx/.odt opaque parts and nodes" bucket
+    // collectMarkdownDropRecords's caller (collectPackageDropRecords) is
+    // the one actually reporting, since a .md source never has any of this
+    // to begin with.
+    delete model.opaque;
+    for (const section of model.sections) {
+      delete section.opaqueBlocks;
+    }
+  }
+
+  if (kinds.has("tableOfContents")) {
+    for (const section of model.sections) {
+      section.blocks = section.blocks.flatMap((block) =>
+        isToc(block)
+          ? block.entries.map((entry): Paragraph => ({ type: "paragraph", runs: [{ text: entry.text, formatting: {} }] }))
+          : [block],
+      );
+    }
+  }
+
+  if (kinds.has("comment")) {
+    delete model.comments;
+  }
+  if (kinds.has("note")) {
+    delete model.notes;
+    delete model.footnoteSettings;
+    delete model.endnoteSettings;
+  }
+
+  const paragraphs: Paragraph[] = [];
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      if (isTable(block)) {
+        if (kinds.has("tableStyling")) {
+          block.rows.forEach((row, rowIndex) => {
+            row.minHeightCm = undefined;
+            // Row 0 as the header is exactly what a GFM table represents
+            // (the writer always treats it that way) — only a header
+            // anywhere else is actually unsupported (see
+            // tableHasUnsupportedStyling).
+            if (rowIndex !== 0) {
+              row.isHeader = undefined;
+            }
+            row.docxTrPr = undefined;
+            row.odtStyleName = undefined;
+            for (const cell of row.cells) {
+              cell.colSpan = undefined;
+              cell.rowSpan = undefined;
+              cell.covered = undefined;
+              cell.borders = undefined;
+              cell.shadingFill = undefined;
+              cell.paddingCm = undefined;
+              cell.verticalAlign = undefined;
+              cell.docxTcPr = undefined;
+              cell.odtStyleName = undefined;
+              if (cell.blocks.length === 0) {
+                cell.blocks = [{ type: "paragraph", runs: [] }];
+              }
+            }
+          });
+          block.alignment = undefined;
+          block.widthMode = undefined;
+          block.widthPercent = undefined;
+          block.styleId = undefined;
+          block.docxTblPr = undefined;
+          block.odtStyleName = undefined;
+          block.odtColumnStyleNames = undefined;
+          // GFM carries no column-width info — a real save always reflows
+          // to an equal split of the text area (see
+          // tableHasUnsupportedStyling).
+          block.columnWidthsCm = equalColumnWidthsCm(model, block.columnWidthsCm.length);
+        }
+        if (kinds.has("trackedChange")) {
+          delete block.changes;
+          for (const row of block.rows) {
+            delete row.changes;
+            for (const cell of row.cells) {
+              delete cell.changes;
+            }
+          }
+        }
+        for (const row of block.rows) {
+          for (const cell of row.cells) {
+            paragraphs.push(...cell.blocks);
+          }
+        }
+      } else if (!isImage(block) && !isBreak(block) && !isToc(block)) {
+        paragraphs.push(block);
+      }
+    }
+  }
+
+  for (const paragraph of paragraphs) {
+    if (kinds.has("paragraphFormatting") || kinds.has("runFormatting") || kinds.has("pageNumberField") || kinds.has("trackedChange")) {
+      maskParagraph(model, paragraph);
+    }
+    if (kinds.has("bookmark")) {
+      delete paragraph.bookmarks;
+    }
+    if (kinds.has("comment")) {
+      delete paragraph.commentAnchors;
+    }
+    if (OPAQUE_FAMILY_KINDS.some((kind) => kinds.has(kind))) {
+      delete paragraph.opaqueInlines;
+    }
+  }
+
+  return model;
 }

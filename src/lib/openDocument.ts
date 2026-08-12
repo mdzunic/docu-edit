@@ -21,6 +21,8 @@ import {
 } from "./documentModel";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
+import { unzip, ZipError } from "./docx/zip";
+import { parseMd, type ParseMdOptions } from "./md/reader";
 import { inferListStyleTypes } from "./styles";
 
 export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
@@ -34,11 +36,32 @@ export class FileTooLargeError extends Error {}
 /** SPEC-009 AC-4: drag-and-drop is the one open path with no OS-level file
  * filter (the picker's `accept` attribute has no drop equivalent), so it
  * checks the name itself before ever reading the file. Format is still
- * detected from content, never the extension, once a file passes this. */
-export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx and .odt files";
+ * detected from content, never the extension, once a file passes this —
+ * except Markdown (SPEC-050), which has no content signature at all and is
+ * admitted by extension as the deliberate, documented exception (see
+ * `openDocumentFile`). */
+export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt and .md files";
 
 export function hasSupportedExtension(fileName: string): boolean {
-  return /\.(docx|odt)$/i.test(fileName);
+  return /\.(docx|odt|md|markdown)$/i.test(fileName);
+}
+
+/** Whether `bytes` is a ZIP package, regardless of what kind — the one
+ * content signature Markdown detection needs (SPEC-050's "Detection"):
+ * a `.md`/`.markdown`-named file is only admitted by extension when it is
+ * *not* a ZIP, so a same-named ZIP (a mis-saved/renamed .docx, say) still
+ * takes the content-sniffed path below and fails there on its own terms
+ * rather than being silently misread as Markdown. */
+async function isZipPackage(bytes: Uint8Array): Promise<boolean> {
+  try {
+    await unzip(bytes);
+    return true;
+  } catch (error) {
+    if (error instanceof ZipError) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
@@ -53,7 +76,7 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 /** The app-bar title for an opened document: its file name with the
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
-  const withoutExtension = fileName.replace(/\.(docx|odt)$/i, "");
+  const withoutExtension = fileName.replace(/\.(docx|odt|md|markdown)$/i, "");
   return withoutExtension.length > 0 ? withoutExtension : fileName;
 }
 
@@ -80,6 +103,9 @@ export function assembleDocumentModel(
     comments?: CommentThread[];
     trackChangesRecording?: boolean;
     properties: DocumentProperties;
+    /** A `.md` source's verbatim front matter (SPEC-050); never set by a
+     * `.docx`/`.odt` parse. */
+    frontMatter?: string;
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -89,6 +115,9 @@ export function assembleDocumentModel(
     sections: parsed.sections,
     defaultStyles: parsed.defaultStyles,
   };
+  if (parsed.frontMatter !== undefined) {
+    model.frontMatter = parsed.frontMatter;
+  }
   // The document's own style catalogue (SPEC-019): what the picker lists
   // and the writers re-declare on save.
   if (parsed.styles.length > 0) {
@@ -144,8 +173,15 @@ export function assembleDocumentModel(
  * or navigated to — the caller does that once this resolves). The format is
  * detected from the file's contents: a ZIP whose `mimetype` entry declares
  * OpenDocument text opens as .odt, a flat XML ODF file (.fodt) is rejected
- * with its specific message, and everything else takes the .docx path. */
-export async function openDocumentFile(file: File): Promise<DocumentModel> {
+ * with its specific message, and anything else that is a ZIP takes the
+ * .docx path. Markdown has no magic bytes and no container (SPEC-050's
+ * "Detection"), so content sniffing cannot decide it — the deliberate
+ * exception: a file that is not a ZIP package is Markdown if its name ends
+ * `.md`/`.markdown`, and takes the .docx path (where parseDocx rejects it on
+ * its own terms) otherwise. `hasSupportedExtension` has already rejected
+ * anything else for the one open path (drag-and-drop) that checks a name at
+ * all; the picker/URL paths reach here for any file they were handed. */
+export async function openDocumentFile(file: File, options: ParseMdOptions = {}): Promise<DocumentModel> {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     throw new FileTooLargeError(FILE_TOO_LARGE_MESSAGE);
   }
@@ -157,6 +193,9 @@ export async function openDocumentFile(file: File): Promise<DocumentModel> {
   }
   if (odf === "package") {
     return assembleDocumentModel(titleFromFileName(file.name), "odt", await parseOdt(bytes));
+  }
+  if (/\.(md|markdown)$/i.test(file.name) && !(await isZipPackage(bytes))) {
+    return assembleDocumentModel(titleFromFileName(file.name), "md", await parseMd(bytes, options));
   }
   return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(bytes));
 }
@@ -186,4 +225,14 @@ export async function readOdtBytes(
   title: string = DEFAULT_TITLE,
 ): Promise<DocumentModel> {
   return assembleDocumentModel(title, "odt", await parseOdt(bytes));
+}
+
+/** The `.md` counterpart of `readDocxBytes` (SPEC-050, matching SPEC-045
+ * AC-17's Node-friendly convention). */
+export async function readMdBytes(
+  bytes: Uint8Array | ArrayBuffer,
+  title: string = DEFAULT_TITLE,
+  options: ParseMdOptions = {},
+): Promise<DocumentModel> {
+  return assembleDocumentModel(title, "md", await parseMd(bytes, options));
 }

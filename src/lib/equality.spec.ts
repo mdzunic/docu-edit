@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   canonicalizeXml,
   equalBytes,
+  equalSemantic,
   equalStructural,
   firstStructuralDifference,
+  resolve,
 } from "./equality";
 import { createDocument } from "./documentModel";
 
@@ -81,5 +83,55 @@ describe("equalStructural / firstStructuralDifference", () => {
     const a = { sections: [{ blocks: [{ type: "paragraph", runs: [{ text: "one" }] }] }] };
     const b = { sections: [{ blocks: [{ type: "paragraph", runs: [{ text: "two" }] }] }] };
     expect(firstStructuralDifference(a, b)).toBe("sections[0].blocks[0].runs[0].text");
+  });
+});
+
+describe("resolve / equalSemantic (specs/002 'Equality', relation 3)", () => {
+  it("strips the style reference but changes no formatting on an already-fully-baked model", () => {
+    const doc = createDocument("id");
+    doc.sections[0].blocks = [
+      {
+        type: "paragraph",
+        styleId: "Heading1",
+        headingLevel: 1,
+        formatting: { spaceBeforePt: 20, spaceAfterPt: 6 },
+        runs: [{ text: "Title", formatting: { bold: true, fontSizePt: 20 } }],
+      },
+    ];
+    const originalRuns = (doc.sections[0].blocks[0] as { runs: unknown }).runs;
+    const resolved = resolve(doc);
+    const paragraph = resolved.sections[0].blocks[0] as { styleId?: string; formatting?: unknown; runs: unknown };
+    expect(paragraph.styleId).toBeUndefined();
+    expect(paragraph.formatting).toEqual({ spaceBeforePt: 20, spaceAfterPt: 6 });
+    expect(paragraph.runs).toEqual(originalRuns);
+    expect(equalSemantic(doc, doc)).toBe(true); // reflexive
+  });
+
+  it("makes a directly-bolded run and one bolded only by its style compare equal", () => {
+    const styled = createDocument("id-a");
+    styled.sections[0].blocks = [
+      { type: "paragraph", styleId: "Heading1", headingLevel: 1, runs: [{ text: "Title", formatting: {} }] },
+    ];
+    const direct = createDocument("id-b");
+    direct.sections[0].blocks = [
+      {
+        type: "paragraph",
+        headingLevel: 1,
+        formatting: { spaceBeforePt: 20, spaceAfterPt: 6 },
+        runs: [{ text: "Title", formatting: { bold: true, fontSizePt: 20 } }],
+      },
+    ];
+    // Not structurally equal (styleId differs, direct formatting is bare on
+    // one side) — this is exactly the gap equalSemantic exists to close.
+    expect(equalStructural(styled, direct)).toBe(false);
+    expect(equalSemantic(styled, direct)).toBe(true);
+  });
+
+  it("still finds a genuine content difference after resolving", () => {
+    const a = createDocument("id-a");
+    a.sections[0].blocks = [{ type: "paragraph", runs: [{ text: "one", formatting: {} }] }];
+    const b = createDocument("id-b");
+    b.sections[0].blocks = [{ type: "paragraph", runs: [{ text: "two", formatting: {} }] }];
+    expect(equalSemantic(a, b)).toBe(false);
   });
 });

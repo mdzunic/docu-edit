@@ -5,6 +5,7 @@ import {
   collectDropRecords,
   DROP_KIND_LABELS,
   noConversionReport,
+  withoutDropped,
 } from "./opaque";
 import { createDocument } from "./documentModel";
 
@@ -102,5 +103,81 @@ describe("collectDropRecords", () => {
 describe("noConversionReport", () => {
   it("is the dialog's hidden state", () => {
     expect(noConversionReport()).toBeNull();
+  });
+});
+
+describe("SPEC-050 — collectDropRecords for a .md target", () => {
+  it("is empty for a blank document with no unsupported content", () => {
+    const blank = createDocument("id-5");
+    expect(collectDropRecords(blank, "md")).toEqual([]);
+  });
+
+  it("reports paragraph formatting, run formatting and bookmarks even for a document that is already .md-sourced", () => {
+    // Markdown is not full-fidelity for content this editor can create —
+    // unlike a .docx<->.odt save, "already this format" is not a same-
+    // format short-circuit (see collectDropRecords's own doc comment).
+    const model = { ...createDocument("id-6"), format: "md" as const };
+    model.sections[0].blocks = [
+      {
+        type: "paragraph",
+        runs: [{ text: "centered", formatting: { color: "#ff0000" } }],
+        formatting: { alignment: "center" },
+        bookmarks: [{ name: "anchor1", offset: 0 }],
+      },
+    ];
+    const dropped = collectDropRecords(model, "md");
+    expect(dropped.map((d) => d.kind).sort()).toEqual(["bookmark", "paragraphFormatting", "runFormatting"]);
+    for (const record of dropped) {
+      expect(DROP_KIND_LABELS[record.kind]).toBeTruthy();
+      expect(record.reason).toContain("Markdown (.md)");
+    }
+  });
+
+  it("does not flag a run's baked style/underlay formatting as unsupported (SPEC-019's Quote style)", () => {
+    const model = { ...createDocument("id-7"), format: "docx" as const };
+    model.sections[0].blocks = [
+      {
+        type: "paragraph",
+        styleId: "Quote",
+        runs: [{ text: "quoted", formatting: { italic: true, color: "#666666", fontFamily: "Calibri" } }],
+        formatting: { indentStartCm: 1.27, spaceBeforePt: 10, spaceAfterPt: 10 },
+      },
+    ];
+    expect(collectDropRecords(model, "md")).toEqual([]);
+  });
+
+  it("reports a header, non-default page margins and a footnote reference", () => {
+    const model = { ...createDocument("id-8"), format: "docx" as const };
+    model.sections[0].margins = { topCm: 5, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 };
+    model.sections[0].headers = { default: { blocks: [{ type: "paragraph", runs: [] }] } };
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "1", formatting: {}, note: { noteId: "n1", kind: "footnote" } }] },
+    ];
+    const dropped = collectDropRecords(model, "md");
+    expect(dropped.map((d) => d.kind).sort()).toEqual(["headerFooter", "note", "pageSetup"]);
+  });
+});
+
+describe("SPEC-050 — withoutDropped", () => {
+  it("returns the source unchanged when nothing was dropped", () => {
+    const model = createDocument("id-9");
+    expect(withoutDropped(model, [])).toBe(model);
+  });
+
+  it("clears only what the reported kinds cover, leaving the rest of the model alone", () => {
+    const model = { ...createDocument("id-10"), format: "md" as const };
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "kept", formatting: { bold: true } }] },
+      {
+        type: "paragraph",
+        runs: [{ text: "centered", formatting: {} }],
+        formatting: { alignment: "center" },
+      },
+    ];
+    const dropped = collectDropRecords(model, "md");
+    expect(dropped.map((d) => d.kind)).toEqual(["paragraphFormatting"]);
+    const masked = withoutDropped(model, dropped);
+    expect(masked.sections[0].blocks[0]).toEqual(model.sections[0].blocks[0]);
+    expect((masked.sections[0].blocks[1] as { formatting?: unknown }).formatting).toBeUndefined();
   });
 });
