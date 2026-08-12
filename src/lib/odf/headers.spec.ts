@@ -184,7 +184,7 @@ describe("text:page-number / text:page-count fields (SPEC-029 AC-16..18, AC-25, 
     expect(decoder.decode(parts.get("styles.xml")!)).toMatch(/<text:page-number style:num-format="i">/);
     const runs = (parsed.sections[0].footers!.default!.blocks[0] as Paragraph).runs;
     expect(runs.map((r) => r.field?.kind ?? r.text)).toEqual(["page", " of ", "numpages"]);
-    expect(runs[0].field?.format).toBe("lowerRoman");
+    expect((runs[0].field as { format?: string } | undefined)?.format).toBe("lowerRoman");
   });
 });
 
