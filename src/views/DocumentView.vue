@@ -47,6 +47,7 @@ import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
 import PropertiesDialog from "../components/PropertiesDialog.vue";
+import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
@@ -96,6 +97,7 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
+import { saveAsTemplate } from "../lib/templateStore";
 import {
   asBorderLineStyle,
   asCellVerticalAlign,
@@ -4512,6 +4514,17 @@ function closeConversionReport(dontShowAgain = false) {
 
 const confirmingDelete = ref(false);
 
+const savingAsTemplate = ref(false);
+
+function saveCurrentAsTemplate(name = "") {
+  savingAsTemplate.value = false;
+  if (!doc.value) {
+    return;
+  }
+  const record = saveAsTemplate(doc.value, name);
+  addToast(`Saved template "${record.title}"`);
+}
+
 function deleteOpenDocument() {
   if (!doc.value) {
     return;
@@ -4725,6 +4738,12 @@ async function menuPastePlain() {
             label="Version history"
             testid="file-menu-version-history"
             @select="toggleVersionHistoryPane"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Save as template"
+            testid="file-menu-save-as-template"
+            @select="savingAsTemplate = true"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -5776,6 +5795,14 @@ async function menuPastePlain() {
       :document-title="doc.title"
       @confirm="deleteOpenDocument"
       @cancel="confirmingDelete = false"
+    />
+    <RenameDialog
+      v-if="savingAsTemplate && doc"
+      :current-title="doc.title"
+      heading="Save as template"
+      confirm-label="Save"
+      @save="saveCurrentAsTemplate"
+      @cancel="savingAsTemplate = false"
     />
     <ConversionReportDialog
       v-if="conversionReport"

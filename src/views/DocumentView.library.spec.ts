@@ -17,6 +17,9 @@ beforeEach(() => {
     loadAllRecords: vi.fn().mockResolvedValue([]),
     putRecord,
     deleteRecord: vi.fn().mockResolvedValue(undefined),
+    loadAllTemplateRecords: vi.fn().mockResolvedValue([]),
+    putTemplateRecord: vi.fn().mockResolvedValue(undefined),
+    deleteTemplateRecord: vi.fn().mockResolvedValue(undefined),
   }));
   // Every routable id resolves to a document (SPEC-001 decision); the stub
   // itself is tested in ../lib/documents.spec.ts.
@@ -105,6 +108,37 @@ describe("DocumentView document deletion", () => {
     expect(wrapper.find('[data-testid="delete-dialog"]').exists()).toBe(false);
     expect(store.getDocument("open-doc")).toBeDefined();
     expect(router.currentRoute.value.path).toBe("/doc/open-doc");
+  });
+});
+
+describe("DocumentView save as template (SPEC-046 AC-5)", () => {
+  it("prompts for a name, prefilled with the document's title, and stores a user template", async () => {
+    const { wrapper } = await mountAt("/doc/save-template-doc");
+
+    expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="file-menu-save-as-template"]').trigger("click");
+
+    const input = wrapper.get('[data-testid="rename-input"]');
+    expect((input.element as HTMLInputElement).value).toBe("Untitled document");
+    await input.setValue("My Invoice Template");
+    await wrapper.get('[data-testid="rename-save"]').trigger("click");
+
+    const { listUserTemplates } = await import("../lib/templateStore");
+    expect(listUserTemplates().some((t) => t.title === "My Invoice Template")).toBe(true);
+    expect(wrapper.get('[data-testid="toast"]').text()).toBe('Saved template "My Invoice Template"');
+    expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
+  });
+
+  it("cancelling saves nothing", async () => {
+    const { wrapper } = await mountAt("/doc/save-template-doc-2");
+    const { listUserTemplates } = await import("../lib/templateStore");
+    const before = listUserTemplates().length;
+
+    await wrapper.get('[data-testid="file-menu-save-as-template"]').trigger("click");
+    await wrapper.get('[data-testid="rename-cancel"]').trigger("click");
+
+    expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
+    expect(listUserTemplates().length).toBe(before);
   });
 });
 
