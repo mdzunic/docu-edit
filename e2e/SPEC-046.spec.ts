@@ -97,6 +97,49 @@ test("a merge field chip renders as {{name}}, is a single caret atom, and surviv
   await expect(chips(page).first()).toHaveText("{{client_name}}");
 });
 
+test("a merge chip inside a table cell renders as the same {{name}} pill as in the body, never the raw placeholder (AC-13, AC-29)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Body: ");
+  await openMenu(page, "insert");
+  await page.getByTestId("insert-menu-merge-field").click();
+  await page.getByTestId("merge-field-picker-custom-input").fill("client_name");
+  await page.getByTestId("merge-field-picker-custom-insert").click();
+  await expect(chips(page)).toHaveCount(1);
+
+  // A table, then the same insertion inside a cell. The cell renderer paints
+  // runs itself (DocTableBlock, not usePaginationView's precomputed entries),
+  // which is exactly where a QA round caught chips surfacing as the raw
+  // one-character field placeholder "1" instead of their {{...}} label.
+  await openMenu(page, "insert");
+  await page.getByTestId("table-grid-cell-2-2").click();
+  await expect(content(page).locator("table.doc-table")).toHaveCount(1);
+
+  const firstCell = page.getByTestId("table-cell-0-0");
+  await firstCell.locator(".doc-paragraph").first().click();
+  await openMenu(page, "insert");
+  await page.getByTestId("insert-menu-merge-field").click();
+  await page.getByTestId("merge-field-picker-custom-input").fill("sku");
+  await page.getByTestId("merge-field-picker-custom-insert").click();
+
+  await expect(firstCell.locator(".doc-merge-chip")).toHaveText(["{{sku}}"]);
+  // The paragraph's whole rendered text is the label — nothing of the model
+  // placeholder character leaks into the cell.
+  await expect(firstCell.locator(".doc-paragraph").first()).toHaveText("{{sku}}");
+
+  // "Repeat row for each…" (AC-29) plants an {{#each …}} chip at the start
+  // of the row's first cell — the repeating-row authoring surface lives in
+  // cells, so it must render as a chip there too.
+  await firstCell.locator(".doc-paragraph").first().click({ button: "right" });
+  await page.getByTestId("context-menu-repeat-row").click();
+  await page.getByTestId("merge-field-picker-custom-input").fill("line_items");
+  await page.getByTestId("merge-field-picker-custom-insert").click();
+
+  await expect(firstCell.locator(".doc-merge-chip")).toHaveText(["{{#each line_items}}", "{{sku}}"]);
+});
+
 test("Save as template stores the document, it appears in the gallery, and can be renamed and deleted (AC-5..8)", async ({
   page,
 }) => {
