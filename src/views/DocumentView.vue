@@ -46,6 +46,7 @@ import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
+import MergeFieldPickerDialog from "../components/MergeFieldPickerDialog.vue";
 import PropertiesDialog from "../components/PropertiesDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
@@ -92,6 +93,7 @@ import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
 import { noConversionReport } from "../lib/opaque";
 import { convertLiteralChipsToRuns, hasConvertibleLiteralChips } from "../lib/mergeChips";
+import { namedArrayFieldList, namedFieldList, noParsedDataSource } from "../lib/merge";
 import {
   deleteDocument,
   getOrCreateDocument,
@@ -334,6 +336,7 @@ import {
   INDENT_STEP_CM,
   insertBreak,
   insertLineBreak,
+  insertMergeChip,
   insertNote,
   insertPageNumberCommand,
   insertSectionBreak,
@@ -595,6 +598,7 @@ let autocorrectSuppressedAt = -1;
 const splitCellDialogOpen = ref(false);
 const tablePropertiesOpen = ref(false);
 const tablePropertiesInitial = ref({});
+const repeatRowDialogOpen = ref(false);
 let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
@@ -2387,6 +2391,7 @@ const {
   openTableProperties,
   handleTablePropertiesApply,
   handleInsertTable,
+  confirmRepeatRow,
 } = useTables({
   doc,
   contentRoot,
@@ -2405,6 +2410,7 @@ const {
   insertTableDialogOpen,
   splitCellDialogOpen,
   tablePropertiesOpen,
+  repeatRowDialogOpen,
   tablePropertiesInitial,
   getTableFormattingLocation: () => tableFormattingLocation,
   setTableFormattingLocation: (location) => {
@@ -4542,6 +4548,28 @@ const confirmingDelete = ref(false);
 
 const savingAsTemplate = ref(false);
 
+// --- mail-merge chip insertion (SPEC-046 AC-12, AC-15, AC-30) ---------------
+// The attached data source (if any) is shared between "Insert -> Merge
+// field...", "Table -> Repeat row for each..." and the merge run dialog —
+// attaching it once populates every named field list, and running the merge
+// re-parses the same file rather than trusting stale state across a session.
+const mergeDataSource = ref(noParsedDataSource());
+const mergeFieldPickerOpen = ref(false);
+const mergeFieldPickerFields = computed(() => (doc.value ? namedFieldList(mergeDataSource.value, doc.value) : []));
+const repeatRowFieldOptions = computed(() => (doc.value ? namedArrayFieldList(mergeDataSource.value, doc.value) : []));
+
+function insertMergeFieldFromPicker(name = "") {
+  mergeFieldPickerOpen.value = false;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!name || !root || !model) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  const result = insertMergeChip(model, selection, { kind: "merge", name });
+  applyEdit(result, selection, "insert merge field");
+}
+
 function saveCurrentAsTemplate(name = "") {
   savingAsTemplate.value = false;
   if (!doc.value) {
@@ -5002,6 +5030,13 @@ async function menuPastePlain() {
             testid="hf-menu-options"
             :disabled="!editable"
             @select="openHeaderFooterOptions"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Merge field…"
+            testid="insert-menu-merge-field"
+            :disabled="!editable"
+            @select="mergeFieldPickerOpen = true"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -5841,6 +5876,20 @@ async function menuPastePlain() {
       v-if="conversionReport"
       :items="conversionReport"
       @close="closeConversionReport"
+    />
+    <MergeFieldPickerDialog
+      v-if="mergeFieldPickerOpen"
+      heading="Insert merge field"
+      :fields="mergeFieldPickerFields"
+      @insert="insertMergeFieldFromPicker"
+      @cancel="mergeFieldPickerOpen = false"
+    />
+    <MergeFieldPickerDialog
+      v-if="repeatRowDialogOpen"
+      heading="Repeat row for each…"
+      :fields="repeatRowFieldOptions"
+      @insert="confirmRepeatRow"
+      @cancel="repeatRowDialogOpen = false"
     />
     <CustomSpacingDialog
       v-if="customSpacingOpen"

@@ -35,6 +35,13 @@ export interface ParsedDataSource {
   records: MergeRecord[];
 }
 
+/** Typed `null` seed for a `.vue` script's attached-source ref, which espree
+ * bars from writing the `ParsedDataSource | null` annotation directly (same
+ * convention as commands.ts's noSelection). */
+export function noParsedDataSource(): ParsedDataSource | null {
+  return null;
+}
+
 export class MergeDataSourceError extends Error {}
 
 /** A full CSV text into rows of raw string cells — a hand-rolled parser (no
