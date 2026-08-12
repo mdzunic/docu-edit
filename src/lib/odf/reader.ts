@@ -106,6 +106,12 @@ export const FLAT_ODF_MESSAGE = "Flat ODF files aren't supported yet";
 
 /** The package mimetype identifying an OpenDocument text document. */
 export const ODT_MIMETYPE = "application/vnd.oasis.opendocument.text";
+/** An .ott template's mimetype entry (SPEC-046 AC-10) — same package shape
+ * as .odt, ODF's own "this is a template" flag. `parseOdt` reads it exactly
+ * like a plain .odt: opening one always creates a new document (see
+ * openDocument.ts's `assembleDocumentModel`, which mints a fresh id for
+ * every open), so no separate parse path is needed. */
+export const OTT_MIMETYPE = "application/vnd.oasis.opendocument.text-template";
 
 export interface ParsedOdtDocument {
   sections: Section[];
@@ -188,7 +194,8 @@ export async function detectOdf(data: ArrayBuffer | Uint8Array): Promise<"packag
     throw error;
   }
   const mimetype = parts.get("mimetype");
-  return mimetype && decodeUtf8(mimetype).trim() === ODT_MIMETYPE ? "package" : "none";
+  const declared = mimetype && decodeUtf8(mimetype).trim();
+  return declared === ODT_MIMETYPE || declared === OTT_MIMETYPE ? "package" : "none";
 }
 
 // --- inline content --------------------------------------------------------

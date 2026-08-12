@@ -17,6 +17,7 @@ import {
 } from "../lib/documentStore";
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
 import { instantiateTemplate } from "../lib/templateStore";
+import { createDocument } from "../lib/documentModel";
 import { formatBadgeLabel, formatRelativeTime } from "../lib/format";
 
 const router = useRouter();
@@ -90,6 +91,12 @@ function chooseBuiltinTemplate(id = "") {
 function chooseUserTemplate(id = "") {
   showGallery.value = false;
   const doc = instantiateTemplate(id);
+  storeDocument(doc);
+  router.push(`/doc/${doc.id}`);
+}
+
+function chooseTemplateFile(doc = createDocument("")) {
+  showGallery.value = false;
   storeDocument(doc);
   router.push(`/doc/${doc.id}`);
 }
@@ -341,6 +348,7 @@ function confirmDelete() {
       @choose-blank="chooseBlankDocument"
       @choose-builtin="chooseBuiltinTemplate"
       @choose-user="chooseUserTemplate"
+      @choose-file="chooseTemplateFile"
       @close="showGallery = false"
     />
   </AppShell>

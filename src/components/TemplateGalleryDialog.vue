@@ -1,15 +1,42 @@
 <script setup lang="ts">
-// The template gallery (SPEc-046 AC-1, AC-6, AC-7, AC-8): offered alongside
-// "Blank document" from the library's "New document" flow. Lists the six
-// shipped templates plus any user templates ("Save as template"), each with
-// a short preview, and lets a user template be renamed or deleted in place.
-import { computed, ref } from "vue";
+// The template gallery (SPEC-046 AC-1, AC-6, AC-7, AC-8, AC-9, AC-10):
+// offered alongside "Blank document" from the library's "New document"
+// flow. Lists the six shipped templates plus any user templates ("Save as
+// template"), each with a short preview, lets a user template be renamed or
+// deleted in place, and offers importing a .dotx/.ott file as a template.
+import { computed, ref, useTemplateRef } from "vue";
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
 import { deleteTemplate, listUserTemplates, renameTemplate } from "../lib/templateStore";
+import { openTemplateFile } from "../lib/openDocument";
 import RenameDialog from "./RenameDialog.vue";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog.vue";
 
-const emit = defineEmits(["choose-blank", "choose-builtin", "choose-user", "close"]);
+const emit = defineEmits(["choose-blank", "choose-builtin", "choose-user", "choose-file", "close"]);
+
+const fileInput = useTemplateRef("fileInput");
+const importError = ref("");
+
+function pickTemplateFile() {
+  importError.value = "";
+  fileInput.value?.click();
+}
+
+async function handleTemplateFileChosen() {
+  const file = fileInput.value?.files?.[0];
+  if (fileInput.value) {
+    fileInput.value.value = "";
+  }
+  if (!file) {
+    return;
+  }
+  try {
+    const model = await openTemplateFile(file);
+    importError.value = "";
+    emit("choose-file", model);
+  } catch (error) {
+    importError.value = error instanceof Error ? error.message : String(error);
+  }
+}
 
 const userTemplatesVersion = ref(0);
 const userTemplates = computed(() => {
@@ -59,16 +86,42 @@ function confirmDelete() {
         <h2 class="dialog-title">
           New document
         </h2>
-        <button
-          type="button"
-          class="close-button"
-          aria-label="Close"
-          data-testid="template-gallery-close"
-          @click="emit('close')"
-        >
-          ✕
-        </button>
+        <div class="header-actions">
+          <button
+            type="button"
+            class="import-button"
+            data-testid="template-gallery-import"
+            @click="pickTemplateFile"
+          >
+            Import template file…
+          </button>
+          <button
+            type="button"
+            class="close-button"
+            aria-label="Close"
+            data-testid="template-gallery-close"
+            @click="emit('close')"
+          >
+            ✕
+          </button>
+        </div>
       </div>
+      <input
+        ref="fileInput"
+        type="file"
+        accept=".dotx,.ott"
+        data-testid="template-gallery-import-input"
+        class="visually-hidden"
+        @change="handleTemplateFileChosen"
+      >
+      <p
+        v-if="importError"
+        class="import-error"
+        role="alert"
+        data-testid="template-gallery-import-error"
+      >
+        {{ importError }}
+      </p>
       <div class="gallery-grid">
         <button
           type="button"
@@ -198,6 +251,40 @@ function confirmDelete() {
   color: #5f6368;
   font-size: 1rem;
   padding: 0.25rem 0.5rem;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-button {
+  font: inherit;
+  padding: 0.375rem 0.75rem;
+  border: 1px solid #bdbdbd;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.import-error {
+  margin: 0 0 0.75rem;
+  color: #b3261e;
+  font-size: 0.8125rem;
 }
 
 .section-heading {
