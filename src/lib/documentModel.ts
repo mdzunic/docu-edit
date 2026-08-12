@@ -135,6 +135,24 @@ export function asTableWidthMode(value: string): TableWidthMode {
  * `text:page-number`/`text:page-count` (.odt). */
 export type FieldKind = "page" | "numpages";
 
+/** Mail-merge chip kinds (SPEC-046): `merge` substitutes a named field's
+ * value, `if`/`endif` delimit a conditional block, `each` marks a table row
+ * that repeats over an array field. See "Merge chips in the model" in
+ * specs/046-template-gallery-and-mail-merge.md. */
+export type MergeChipKind = "merge" | "if" | "endif" | "each";
+
+/** A mail-merge chip's spec (SPEC-046). `name` holds the field or array
+ * name — deliberately not `id`: lib/equality.ts's IGNORED_KEYS drops bare
+ * `id` keys from structural comparison, which would let a chip pointing at
+ * the wrong field pass a round-trip test (the same reasoning as
+ * BookmarkAnchor). `endif` carries no name — it only closes the nearest
+ * open `if`. */
+export type MergeFieldSpec =
+  | { kind: "merge"; name: string }
+  | { kind: "if"; name: string }
+  | { kind: "endif" }
+  | { kind: "each"; name: string };
+
 /** The numbering formats Insert → Page number offers (SPEC-029 AC-16..18)
  * — deliberately the same vocabulary as lib/lists.ts's `ListMarkerStyle`
  * (its `formatOrdinal` is reused to render a field's value), just narrowed
@@ -147,15 +165,25 @@ export function asPageNumberFormat(value: string): PageNumberFormat {
   return value as PageNumberFormat;
 }
 
+/** Typed pass-through for a `DocumentModel` passed into a `.vue` component
+ * as a runtime `Object` prop (espree bars writing `PropType<DocumentModel>`
+ * — see CommentsPane.vue's header comment for the same constraint). */
+export function asDocumentModel(value: unknown): DocumentModel {
+  return value as DocumentModel;
+}
+
 /** A run that renders as a computed value instead of literal text
- * (SPEC-029): the current page number or the document's total page count.
- * `Run.text` still holds a one-character placeholder so the field behaves
- * like a normal single-character atom for caret/selection arithmetic
- * (blockLength, splitRuns, …) — every renderer substitutes the live value
- * at paint time instead of reading it. */
-export interface FieldSpec {
-  kind: FieldKind;
-  format: PageNumberFormat;
+ * (SPEC-029, widened by SPEC-046): a page-number/page-count field, or a
+ * mail-merge chip. `Run.text` still holds a one-character placeholder so
+ * the field behaves like a normal single-character atom for
+ * caret/selection arithmetic (blockLength, splitRuns, …) — every renderer
+ * substitutes the live value at paint time instead of reading it. */
+export type FieldSpec = { kind: "page" | "numpages"; format: PageNumberFormat } | MergeFieldSpec;
+
+/** Narrows a `FieldSpec` to a merge chip (SPEC-046), as opposed to a
+ * SPEC-029 page-number/page-count field. */
+export function isMergeChipField(field: FieldSpec): field is MergeFieldSpec {
+  return field.kind === "merge" || field.kind === "if" || field.kind === "endif" || field.kind === "each";
 }
 
 /** Which note stream a reference belongs to (SPEC-031): footnotes render at
@@ -212,6 +240,13 @@ export function createFieldRun(
   formatting: RunFormatting = {},
 ): Run {
   return { text: FIELD_PLACEHOLDER_TEXT, formatting, field: { kind, format } };
+}
+
+/** Builds a mail-merge chip run (SPEC-046) — the same one-character
+ * placeholder convention as createFieldRun, so a chip is atomic for
+ * caret/selection arithmetic. */
+export function createChipRun(field: MergeFieldSpec, formatting: RunFormatting = {}): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, field };
 }
 
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";

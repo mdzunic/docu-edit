@@ -46,7 +46,10 @@ import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
+import MergeFieldPickerDialog from "../components/MergeFieldPickerDialog.vue";
+import MergeRunDialog from "../components/MergeRunDialog.vue";
 import PropertiesDialog from "../components/PropertiesDialog.vue";
+import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
@@ -91,12 +94,15 @@ import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
 import { MD_MIME_TYPE, mdFileName, writeMd } from "../lib/md/writer";
 import { noConversionReport } from "../lib/opaque";
+import { convertLiteralChipsToRuns, hasConvertibleLiteralChips } from "../lib/mergeChips";
+import { namedArrayFieldList, namedFieldList, noParsedDataSource } from "../lib/merge";
 import {
   deleteDocument,
   getOrCreateDocument,
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
+import { saveAsTemplate } from "../lib/templateStore";
 import {
   asBorderLineStyle,
   asCellVerticalAlign,
@@ -332,6 +338,7 @@ import {
   INDENT_STEP_CM,
   insertBreak,
   insertLineBreak,
+  insertMergeChip,
   insertNote,
   insertPageNumberCommand,
   insertSectionBreak,
@@ -593,6 +600,7 @@ let autocorrectSuppressedAt = -1;
 const splitCellDialogOpen = ref(false);
 const tablePropertiesOpen = ref(false);
 const tablePropertiesInitial = ref({});
+const repeatRowDialogOpen = ref(false);
 let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
@@ -2385,6 +2393,7 @@ const {
   openTableProperties,
   handleTablePropertiesApply,
   handleInsertTable,
+  confirmRepeatRow,
 } = useTables({
   doc,
   contentRoot,
@@ -2403,6 +2412,7 @@ const {
   insertTableDialogOpen,
   splitCellDialogOpen,
   tablePropertiesOpen,
+  repeatRowDialogOpen,
   tablePropertiesInitial,
   getTableFormattingLocation: () => tableFormattingLocation,
   setTableFormattingLocation: (location) => {
@@ -2967,6 +2977,31 @@ function confirmImportStyles() {
   applyEdit({ model: result.model, selection }, selection, "import styles", false);
   importSummaryState.value = result.summary;
   importPhase.value = "summary";
+}
+
+// --- mail-merge: convert literal {{...}} text (SPEC-046) --------------------
+
+/** Whether "Convert {{…}} text to merge fields" has anything to do — offered
+ * when a document holds at least one well-formed `{{…}}` literal outside an
+ * existing chip (AC-20, "Literal text is not a chip"). */
+const canConvertLiteralChips = computed(() => (doc.value ? hasConvertibleLiteralChips(doc.value) : false));
+
+/** Scans the whole document and converts every literal `{{…}}` match into a
+ * chip in one undo step — explicit and undoable, never automatic on open
+ * (SPEC-046 "Literal text is not a chip"). */
+function convertLiteralChips() {
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!model || !root) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  const { model: next, converted } = convertLiteralChipsToRuns(model);
+  if (converted === 0) {
+    return;
+  }
+  applyEdit({ model: next, selection }, selection, "convert merge fields", false);
+  addToast(converted === 1 ? "Converted 1 merge field" : `Converted ${converted} merge fields`);
 }
 
 // --- clear formatting and format painter (SPEC-020) -------------------------
@@ -4528,6 +4563,44 @@ function closeConversionReport(dontShowAgain = false) {
 
 const confirmingDelete = ref(false);
 
+const savingAsTemplate = ref(false);
+
+// --- mail-merge chip insertion (SPEC-046 AC-12, AC-15, AC-30) ---------------
+// The attached data source (if any) is shared between "Insert -> Merge
+// field...", "Table -> Repeat row for each..." and the merge run dialog —
+// attaching it once populates every named field list, and running the merge
+// re-parses the same file rather than trusting stale state across a session.
+const mergeDataSource = shallowRef(noParsedDataSource());
+const mergeFieldPickerOpen = ref(false);
+const mergeRunDialogOpen = ref(false);
+
+function attachMergeDataSource(parsed = noParsedDataSource()) {
+  mergeDataSource.value = parsed;
+}
+const mergeFieldPickerFields = computed(() => (doc.value ? namedFieldList(mergeDataSource.value, doc.value) : []));
+const repeatRowFieldOptions = computed(() => (doc.value ? namedArrayFieldList(mergeDataSource.value, doc.value) : []));
+
+function insertMergeFieldFromPicker(name = "") {
+  mergeFieldPickerOpen.value = false;
+  const root = contentRoot.value;
+  const model = doc.value;
+  if (!name || !root || !model) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  const result = insertMergeChip(model, selection, { kind: "merge", name });
+  applyEdit(result, selection, "insert merge field");
+}
+
+function saveCurrentAsTemplate(name = "") {
+  savingAsTemplate.value = false;
+  if (!doc.value) {
+    return;
+  }
+  const record = saveAsTemplate(doc.value, name);
+  addToast(`Saved template "${record.title}"`);
+}
+
 function deleteOpenDocument() {
   if (!doc.value) {
     return;
@@ -4741,6 +4814,17 @@ async function menuPastePlain() {
             label="Version history"
             testid="file-menu-version-history"
             @select="toggleVersionHistoryPane"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Save as template"
+            testid="file-menu-save-as-template"
+            @select="savingAsTemplate = true"
+          />
+          <MenuItem
+            label="Mail merge…"
+            testid="file-menu-mail-merge"
+            @select="mergeRunDialogOpen = true"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -4976,6 +5060,13 @@ async function menuPastePlain() {
           />
           <hr class="menu-separator">
           <MenuItem
+            label="Merge field…"
+            testid="insert-menu-merge-field"
+            :disabled="!editable"
+            @select="mergeFieldPickerOpen = true"
+          />
+          <hr class="menu-separator">
+          <MenuItem
             label="Footnote"
             testid="notes-menu-footnote"
             :shortcut="shortcutLabel('insert.footnote')"
@@ -5142,6 +5233,13 @@ async function menuPastePlain() {
             label="Check accessibility"
             testid="tools-menu-accessibility"
             @select="openAccessibilityPane"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Convert {{…}} text to merge fields"
+            testid="tools-menu-convert-merge-fields"
+            :disabled="!editable || !canConvertLiteralChips"
+            @select="convertLiteralChips"
           />
         </template>
       </MenuBar>
@@ -5793,10 +5891,39 @@ async function menuPastePlain() {
       @confirm="deleteOpenDocument"
       @cancel="confirmingDelete = false"
     />
+    <RenameDialog
+      v-if="savingAsTemplate && doc"
+      :current-title="doc.title"
+      heading="Save as template"
+      confirm-label="Save"
+      @save="saveCurrentAsTemplate"
+      @cancel="savingAsTemplate = false"
+    />
     <ConversionReportDialog
       v-if="conversionReport"
       :items="conversionReport"
       @close="closeConversionReport"
+    />
+    <MergeFieldPickerDialog
+      v-if="mergeFieldPickerOpen"
+      heading="Insert merge field"
+      :fields="mergeFieldPickerFields"
+      @insert="insertMergeFieldFromPicker"
+      @cancel="mergeFieldPickerOpen = false"
+    />
+    <MergeFieldPickerDialog
+      v-if="repeatRowDialogOpen"
+      heading="Repeat row for each…"
+      :fields="repeatRowFieldOptions"
+      @insert="confirmRepeatRow"
+      @cancel="repeatRowDialogOpen = false"
+    />
+    <MergeRunDialog
+      v-if="mergeRunDialogOpen && doc"
+      :model="doc"
+      :initial-source="mergeDataSource ?? undefined"
+      @attach-source="attachMergeDataSource"
+      @close="mergeRunDialogOpen = false"
     />
     <CustomSpacingDialog
       v-if="customSpacingOpen"

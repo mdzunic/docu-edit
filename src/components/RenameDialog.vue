@@ -9,6 +9,12 @@ import { MAX_TITLE_LENGTH } from "../lib/documentStore";
 const props = defineProps({
   /** The document's current title; prefills the input. */
   currentTitle: { type: String, required: true },
+  /** Dialog heading and aria-label (SPEC-046 reuses this dialog for naming
+   * a new template — "Save as template" — where "Rename document" would be
+   * misleading). Defaults to the original behaviour. */
+  heading: { type: String, default: "Rename document" },
+  /** The submit button's label. */
+  confirmLabel: { type: String, default: "Rename" },
 });
 
 const emit = defineEmits(["save", "cancel"]);
@@ -51,10 +57,10 @@ function save() {
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Rename document"
+      :aria-label="props.heading"
     >
       <h2 class="dialog-title">
-        Rename document
+        {{ props.heading }}
       </h2>
       <input
         ref="input"
@@ -88,7 +94,7 @@ function save() {
           :disabled="!!error"
           @click="save"
         >
-          Rename
+          {{ props.confirmLabel }}
         </button>
       </div>
     </div>

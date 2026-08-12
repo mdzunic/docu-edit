@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "../router";
+import type { Paragraph } from "../lib/documentModel";
 
 // SPEC-003 — deleting the currently open document (AC-19, AC-20) and
 // persisting title edits. Fresh modules per test; the idb seam is mocked so
@@ -17,6 +18,9 @@ beforeEach(() => {
     loadAllRecords: vi.fn().mockResolvedValue([]),
     putRecord,
     deleteRecord: vi.fn().mockResolvedValue(undefined),
+    loadAllTemplateRecords: vi.fn().mockResolvedValue([]),
+    putTemplateRecord: vi.fn().mockResolvedValue(undefined),
+    deleteTemplateRecord: vi.fn().mockResolvedValue(undefined),
   }));
   // Every routable id resolves to a document (SPEC-001 decision); the stub
   // itself is tested in ../lib/documents.spec.ts.
@@ -105,6 +109,121 @@ describe("DocumentView document deletion", () => {
     expect(wrapper.find('[data-testid="delete-dialog"]').exists()).toBe(false);
     expect(store.getDocument("open-doc")).toBeDefined();
     expect(router.currentRoute.value.path).toBe("/doc/open-doc");
+  });
+});
+
+describe("DocumentView save as template (SPEC-046 AC-5)", () => {
+  it("prompts for a name, prefilled with the document's title, and stores a user template", async () => {
+    const { wrapper } = await mountAt("/doc/save-template-doc");
+
+    expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="file-menu-save-as-template"]').trigger("click");
+
+    const input = wrapper.get('[data-testid="rename-input"]');
+    expect((input.element as HTMLInputElement).value).toBe("Untitled document");
+    await input.setValue("My Invoice Template");
+    await wrapper.get('[data-testid="rename-save"]').trigger("click");
+
+    const { listUserTemplates } = await import("../lib/templateStore");
+    expect(listUserTemplates().some((t) => t.title === "My Invoice Template")).toBe(true);
+    expect(wrapper.get('[data-testid="toast"]').text()).toBe('Saved template "My Invoice Template"');
+    expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
+  });
+
+  it("cancelling saves nothing", async () => {
+    const { wrapper } = await mountAt("/doc/save-template-doc-2");
+    const { listUserTemplates } = await import("../lib/templateStore");
+    const before = listUserTemplates().length;
+
+    await wrapper.get('[data-testid="file-menu-save-as-template"]').trigger("click");
+    await wrapper.get('[data-testid="rename-cancel"]').trigger("click");
+
+    expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
+    expect(listUserTemplates().length).toBe(before);
+  });
+});
+
+describe("DocumentView insert merge field (SPEC-046 AC-12, AC-13, AC-14, AC-15)", () => {
+  it("opens a picker listing names already used by a chip, inserting one at the caret", async () => {
+    const { wrapper, store } = await mountAt("/doc/insert-merge-doc");
+    const model = store.getOrCreateDocument("insert-merge-doc");
+    model.sections = [
+      { blocks: [{ type: "paragraph", runs: [{ text: "Dear ", formatting: {} }, { text: "1", formatting: {}, field: { kind: "merge", name: "existing_field" } }] }] },
+    ];
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="merge-field-picker-dialog"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="insert-menu-merge-field"]').trigger("click");
+
+    const options = wrapper.findAll('[data-testid="merge-field-picker-option"]').map((el) => el.text());
+    expect(options).toContain("existing_field");
+
+    await wrapper.get('[data-testid="merge-field-picker-custom-input"]').setValue("client_name");
+    await wrapper.get('[data-testid="merge-field-picker-custom-insert"]').trigger("click");
+
+    expect(wrapper.find('[data-testid="merge-field-picker-dialog"]').exists()).toBe(false);
+    const runs = (store.getDocument("insert-merge-doc")!.sections[0].blocks[0] as { runs: { field?: unknown }[] }).runs;
+    expect(runs.some((r) => r.field && (r.field as { name?: string }).name === "client_name")).toBe(true);
+  });
+
+  it("rejects a malformed field name with an inline error", async () => {
+    const { wrapper } = await mountAt("/doc/insert-merge-invalid-doc");
+    await wrapper.get('[data-testid="insert-menu-merge-field"]').trigger("click");
+
+    await wrapper.get('[data-testid="merge-field-picker-custom-input"]').setValue("not a valid name");
+    expect(wrapper.get('[data-testid="merge-field-picker-error"]').text().length).toBeGreaterThan(0);
+    expect(wrapper.get('[data-testid="merge-field-picker-custom-insert"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("cancelling inserts nothing", async () => {
+    const { wrapper, store } = await mountAt("/doc/insert-merge-cancel-doc");
+    await wrapper.get('[data-testid="insert-menu-merge-field"]').trigger("click");
+    await wrapper.get('[data-testid="merge-field-picker-cancel"]').trigger("click");
+
+    expect(wrapper.find('[data-testid="merge-field-picker-dialog"]').exists()).toBe(false);
+    const runs = (store.getDocument("insert-merge-cancel-doc")!.sections[0].blocks[0] as { runs: { field?: unknown }[] }).runs;
+    expect(runs.every((r) => !r.field)).toBe(true);
+  });
+});
+
+describe("DocumentView convert literal {{...}} text to merge fields (SPEC-046 AC-20)", () => {
+  async function mountWithBody(id: string, text: string) {
+    const store = await import("../lib/documentStore");
+    const model = store.getOrCreateDocument(id);
+    model.sections = [{ blocks: [{ type: "paragraph", runs: [{ text, formatting: {} }] }] }];
+    const { wrapper, router } = await mountAt(`/doc/${id}`);
+    return { wrapper, router, store };
+  }
+
+  it("is disabled with no candidates, enabled once a well-formed {{...}} literal exists", async () => {
+    const { wrapper: noneWrapper } = await mountWithBody("convert-none", "Dear client,");
+    expect(noneWrapper.get('[data-testid="tools-menu-convert-merge-fields"]').attributes("disabled")).toBeDefined();
+
+    const { wrapper } = await mountWithBody("convert-some", "Dear {{client_name}},");
+    expect(wrapper.get('[data-testid="tools-menu-convert-merge-fields"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("converts every literal match in one step and toasts a count", async () => {
+    const { wrapper, store } = await mountWithBody("convert-doc", "Dear {{client_name}}, re {{invoice_no}}.");
+
+    await wrapper.get('[data-testid="tools-menu-convert-merge-fields"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="toast"]').text()).toBe("Converted 2 merge fields");
+    const model = store.getDocument("convert-doc");
+    const run = (model!.sections[0].blocks[0] as Paragraph).runs[1];
+    expect(run.field).toEqual({ kind: "merge", name: "client_name" });
+  });
+
+  it("is undoable in one step", async () => {
+    const { wrapper, store } = await mountWithBody("convert-undo-doc", "Dear {{client_name}},");
+
+    await wrapper.get('[data-testid="tools-menu-convert-merge-fields"]').trigger("click");
+    expect((store.getDocument("convert-undo-doc")!.sections[0].blocks[0] as Paragraph).runs[1].field).toBeDefined();
+
+    await wrapper.get('[data-testid="edit-menu-undo"]').trigger("click");
+    const undone = (store.getDocument("convert-undo-doc")!.sections[0].blocks[0] as Paragraph).runs;
+    expect(undone.every((r) => !r.field)).toBe(true);
+    expect(undone.map((r) => r.text).join("")).toBe("Dear {{client_name}},");
   });
 });
 

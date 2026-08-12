@@ -3,12 +3,13 @@ import { createRouter, createWebHistory } from "vue-router";
 import App from "./App.vue";
 import { routes } from "./router";
 import { initLibrary } from "./lib/documentStore";
+import { initTemplates } from "./lib/templateStore";
 
 const router = createRouter({ history: createWebHistory(), routes });
 
-// Hydrate the document library before first render so views can read it
-// synchronously. initLibrary never rejects — when storage is unavailable the
-// app still mounts, in-memory, with the warning banner shown.
-initLibrary().then(() => {
+// Hydrate the document library and the user template gallery before first
+// render so views can read them synchronously. Neither ever rejects — when
+// storage is unavailable the app still mounts, in-memory.
+Promise.all([initLibrary(), initTemplates()]).then(() => {
   createApp(App).use(router).mount("#app");
 });
