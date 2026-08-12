@@ -5,6 +5,7 @@ import { openDocumentFile } from "../lib/openDocument";
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
+import TemplateGalleryDialog from "../components/TemplateGalleryDialog.vue";
 import {
   deleteDocument,
   duplicateDocument,
@@ -14,6 +15,8 @@ import {
   renameDocument,
   storeDocument
 } from "../lib/documentStore";
+import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
+import { instantiateTemplate } from "../lib/templateStore";
 import { formatBadgeLabel, formatRelativeTime } from "../lib/format";
 
 const router = useRouter();
@@ -61,8 +64,33 @@ onUnmounted(() => {
   clearInterval(clockTimer);
 });
 
+const showGallery = ref(false);
+
 function createNewDocument() {
+  showGallery.value = true;
+}
+
+function chooseBlankDocument() {
+  showGallery.value = false;
   const doc = getOrCreateDocument(crypto.randomUUID());
+  router.push(`/doc/${doc.id}`);
+}
+
+function chooseBuiltinTemplate(id = "") {
+  showGallery.value = false;
+  const template = BUILTIN_TEMPLATES.find((entry) => entry.id === id);
+  if (!template) {
+    return;
+  }
+  const doc = template.build();
+  storeDocument(doc);
+  router.push(`/doc/${doc.id}`);
+}
+
+function chooseUserTemplate(id = "") {
+  showGallery.value = false;
+  const doc = instantiateTemplate(id);
+  storeDocument(doc);
   router.push(`/doc/${doc.id}`);
 }
 
@@ -307,6 +335,13 @@ function confirmDelete() {
       :document-title="deleteTarget.title"
       @confirm="confirmDelete"
       @cancel="deleteFor = ''"
+    />
+    <TemplateGalleryDialog
+      v-if="showGallery"
+      @choose-blank="chooseBlankDocument"
+      @choose-builtin="chooseBuiltinTemplate"
+      @choose-user="chooseUserTemplate"
+      @close="showGallery = false"
     />
   </AppShell>
 </template>

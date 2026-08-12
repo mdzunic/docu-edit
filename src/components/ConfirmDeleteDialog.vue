@@ -2,9 +2,13 @@
 // Confirmation modal for deleting a document; names the document (AC-14) so
 // the user knows exactly what is being removed. Emits confirm/cancel only —
 // the caller owns the actual deletion.
-defineProps({
-  /** Title of the document about to be deleted; shown in the message. */
+const props = defineProps({
+  /** Title of the document (or template — see `kind`) about to be deleted;
+   * shown in the message. */
   documentTitle: { type: String, required: true },
+  /** What's being deleted, for the heading/message noun (SPEC-046 reuses
+   * this dialog for user templates). Defaults to the original behaviour. */
+  kind: { type: String, default: "document" },
 });
 
 const emit = defineEmits(["confirm", "cancel"]);
@@ -20,10 +24,10 @@ const emit = defineEmits(["confirm", "cancel"]);
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Delete document"
+      :aria-label="`Delete ${props.kind}`"
     >
       <h2 class="dialog-title">
-        Delete document
+        Delete {{ props.kind }}
       </h2>
       <p
         class="dialog-message"
