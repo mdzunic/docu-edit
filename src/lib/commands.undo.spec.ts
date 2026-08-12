@@ -126,6 +126,8 @@ const REGISTRY: Record<string, Scenario> = {
     }),
   // SPEC-031: footnotes and endnotes.
   insertNote: (model) => commands.insertNote(model, caretSelection(caret(0, 3)), "footnote"),
+  // SPEC-046: mail-merge chips.
+  insertMergeChip: (model) => commands.insertMergeChip(model, caretSelection(caret(0, 3)), { kind: "merge", name: "client_name" }),
   setNoteSettings: (model) =>
     commands.setNoteSettings(model, caretSelection(caret(0, 0)), "footnote", {
       numberFormat: "lowerRoman",
