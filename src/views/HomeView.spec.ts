@@ -36,10 +36,20 @@ describe("HomeView", () => {
     expect(openButton.isVisible()).toBe(true);
   });
 
-  it("opens the template gallery on click, offering 'Blank document' alongside templates (SPEC-046 AC-1)", async () => {
+  it("creates a document and navigates to /doc/:id on click (AC-1)", async () => {
+    const { wrapper, router } = mountHome();
+    await wrapper.get('[data-testid="new-document"]').trigger("click");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toMatch(/^\/doc\/.+/);
+    const id = router.currentRoute.value.params.id as string;
+    expect(getDocument(id)?.title).toBe(DEFAULT_TITLE);
+  });
+
+  it("'New from template…' opens the template gallery, offering 'Blank document' alongside templates (SPEC-046 AC-1)", async () => {
     const { wrapper } = mountHome();
     expect(wrapper.find('[data-testid="template-gallery-dialog"]').exists()).toBe(false);
-    await wrapper.get('[data-testid="new-document"]').trigger("click");
+    await wrapper.get('[data-testid="new-from-template"]').trigger("click");
 
     expect(wrapper.find('[data-testid="template-gallery-dialog"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="template-card-blank"]').text()).toContain("Blank document");
@@ -48,7 +58,7 @@ describe("HomeView", () => {
 
   it("choosing 'Blank document' from the gallery creates a document and navigates to /doc/:id (AC-1)", async () => {
     const { wrapper, router } = mountHome();
-    await wrapper.get('[data-testid="new-document"]').trigger("click");
+    await wrapper.get('[data-testid="new-from-template"]').trigger("click");
     await wrapper.get('[data-testid="template-card-blank"]').trigger("click");
     await router.isReady();
 

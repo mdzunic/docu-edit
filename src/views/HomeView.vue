@@ -68,6 +68,11 @@ onUnmounted(() => {
 const showGallery = ref(false);
 
 function createNewDocument() {
+  const doc = getOrCreateDocument(crypto.randomUUID());
+  router.push(`/doc/${doc.id}`);
+}
+
+function openTemplateGallery() {
   showGallery.value = true;
 }
 
@@ -181,6 +186,13 @@ function confirmDelete() {
         </button>
         <button
           type="button"
+          data-testid="new-from-template"
+          @click="openTemplateGallery"
+        >
+          New from template…
+        </button>
+        <button
+          type="button"
           data-testid="open-document"
           @click="pickFile"
         >
@@ -205,6 +217,14 @@ function confirmDelete() {
             @click="createNewDocument"
           >
             New document
+          </button>
+          <button
+            type="button"
+            class="new-button"
+            data-testid="new-from-template"
+            @click="openTemplateGallery"
+          >
+            New from template…
           </button>
           <button
             type="button"
