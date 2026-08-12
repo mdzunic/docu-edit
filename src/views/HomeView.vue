@@ -5,6 +5,7 @@ import { openDocumentFile } from "../lib/openDocument";
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
+import TemplateGalleryDialog from "../components/TemplateGalleryDialog.vue";
 import {
   deleteDocument,
   duplicateDocument,
@@ -14,6 +15,9 @@ import {
   renameDocument,
   storeDocument
 } from "../lib/documentStore";
+import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
+import { instantiateTemplate } from "../lib/templateStore";
+import { createDocument } from "../lib/documentModel";
 import { formatBadgeLabel, formatRelativeTime } from "../lib/format";
 
 const router = useRouter();
@@ -61,8 +65,44 @@ onUnmounted(() => {
   clearInterval(clockTimer);
 });
 
+const showGallery = ref(false);
+
 function createNewDocument() {
   const doc = getOrCreateDocument(crypto.randomUUID());
+  router.push(`/doc/${doc.id}`);
+}
+
+function openTemplateGallery() {
+  showGallery.value = true;
+}
+
+function chooseBlankDocument() {
+  showGallery.value = false;
+  const doc = getOrCreateDocument(crypto.randomUUID());
+  router.push(`/doc/${doc.id}`);
+}
+
+function chooseBuiltinTemplate(id = "") {
+  showGallery.value = false;
+  const template = BUILTIN_TEMPLATES.find((entry) => entry.id === id);
+  if (!template) {
+    return;
+  }
+  const doc = template.build();
+  storeDocument(doc);
+  router.push(`/doc/${doc.id}`);
+}
+
+function chooseUserTemplate(id = "") {
+  showGallery.value = false;
+  const doc = instantiateTemplate(id);
+  storeDocument(doc);
+  router.push(`/doc/${doc.id}`);
+}
+
+function chooseTemplateFile(doc = createDocument("")) {
+  showGallery.value = false;
+  storeDocument(doc);
   router.push(`/doc/${doc.id}`);
 }
 
@@ -146,6 +186,13 @@ function confirmDelete() {
         </button>
         <button
           type="button"
+          data-testid="new-from-template"
+          @click="openTemplateGallery"
+        >
+          New from template…
+        </button>
+        <button
+          type="button"
           data-testid="open-document"
           @click="pickFile"
         >
@@ -170,6 +217,14 @@ function confirmDelete() {
             @click="createNewDocument"
           >
             New document
+          </button>
+          <button
+            type="button"
+            class="new-button"
+            data-testid="new-from-template"
+            @click="openTemplateGallery"
+          >
+            New from template…
           </button>
           <button
             type="button"
@@ -307,6 +362,14 @@ function confirmDelete() {
       :document-title="deleteTarget.title"
       @confirm="confirmDelete"
       @cancel="deleteFor = ''"
+    />
+    <TemplateGalleryDialog
+      v-if="showGallery"
+      @choose-blank="chooseBlankDocument"
+      @choose-builtin="chooseBuiltinTemplate"
+      @choose-user="chooseUserTemplate"
+      @choose-file="chooseTemplateFile"
+      @close="showGallery = false"
     />
   </AppShell>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { asListDefinitions, asTrackChangesDisplayMode } from "../lib/documentModel";
+import { asListDefinitions, asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
+import { chipLabel } from "../lib/mergeChips";
 import {
   displayRunFormatting,
   headingTag,
@@ -100,13 +101,27 @@ function spanAttr(span = 1) {
                 v-for="(run, runIndex) in paragraph.runs"
                 :key="runKey(run, runIndex)"
               >
+                <!-- A mail-merge chip (SPEC-046 AC-13): the same paint-time
+                     substitution usePaginationView applies to body runs —
+                     the canonical {{...}} label rendered as one caret atom
+                     standing for the one-character model placeholder — so a
+                     chip in a cell reads and deletes exactly like the same
+                     chip in the body. First in precedence, as in the body. -->
+                <span
+                  v-if="run.field && isMergeChipField(run.field)"
+                  class="doc-merge-chip"
+                  contenteditable="false"
+                  data-testid="merge-chip"
+                  :data-caret-atom="run.text"
+                  :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                >{{ chipLabel(run.field) }}</span>
                 <!-- SPEC-039 AC-9: a run hidden by the current display mode
                      (a pending deletion in "No markup", a pending insertion
                      in "Original") renders no text, staying a caret atom
                      carrying its full model text — see
                      lib/renderFormatting.ts's trackChangeRunHidden. -->
                 <span
-                  v-if="trackChangeRunHidden(run, asTrackChangesDisplayMode(displayMode))"
+                  v-else-if="trackChangeRunHidden(run, asTrackChangesDisplayMode(displayMode))"
                   contenteditable="false"
                   :data-caret-atom="run.text"
                   :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
@@ -165,5 +180,15 @@ function spanAttr(span = 1) {
   min-width: 0.635cm;
   margin-inline-start: -0.635cm;
   white-space: nowrap;
+}
+
+/* The mail-merge chip pill (SPEC-046) — restated from DocBlockEntries.vue
+   for the same reason as .doc-paragraph above: scoped styles don't cross
+   the component boundary, and cells render their own runs. */
+.doc-merge-chip {
+  background: #e8f0fe;
+  border-radius: 3px;
+  padding: 0 2px;
+  color: #1a73e8;
 }
 </style>

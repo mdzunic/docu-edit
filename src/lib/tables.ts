@@ -10,6 +10,7 @@
 // by reference with the input model — so every command here is undoable by
 // the snapshot-based history for free (SPEC-015 AC-20).
 import {
+  createChipRun,
   isBreak,
   isImage,
   isTable,
@@ -277,6 +278,41 @@ export function insertTableRow(
       ),
     ),
   };
+}
+
+/** Toggles "Table -> Repeat row for each..." on a row (SPEC-046 AC-29,
+ * AC-30): the `{{#each name}}` chip is the entire state — no
+ * `TableRow.repeat` attribute (see "Repeating table rows" in
+ * specs/046-template-gallery-and-mail-merge.md for why) — inserted at the
+ * start of the row's first cell's first paragraph. Called again on an
+ * already-repeating row, it removes the chip instead. No-op on a header row
+ * or an out-of-range location. */
+export function toggleRowRepeat(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: TableLocation,
+  name: string,
+): CommandResult {
+  const next = cloneContainers(model);
+  const table = tableAt(next, location.section, location.block);
+  const row = table?.rows[location.row];
+  const firstCell = row?.cells[0];
+  const firstParagraph = firstCell?.blocks[0];
+  if (!table || !row || !firstCell || !firstParagraph || row.isHeader) {
+    return { model: next, selection };
+  }
+  const existingIndex = firstParagraph.runs.findIndex((run) => run.field?.kind === "each");
+  const runs =
+    existingIndex !== -1
+      ? firstParagraph.runs.filter((_, index) => index !== existingIndex)
+      : [createChipRun({ kind: "each", name }), ...firstParagraph.runs];
+  const rows = [...table.rows];
+  rows[location.row] = {
+    ...row,
+    cells: [{ ...firstCell, blocks: [{ ...firstParagraph, runs }, ...firstCell.blocks.slice(1)] }, ...row.cells.slice(1)],
+  };
+  replaceTable(next, location, { ...table, rows });
+  return { model: next, selection };
 }
 
 /** Inserts an empty column left or right of the location's column (AC-18,

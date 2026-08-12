@@ -164,8 +164,8 @@ describe("insertPageNumber / insertPageNumberCommand (SPEC-029 AC-14..20)", () =
     });
     const p = model.sections[0].headers?.default?.blocks[0] as Paragraph;
     expect(p.runs.map((r) => r.field?.kind ?? r.text)).toEqual(["page", " of ", "numpages"]);
-    expect(p.runs[0].field?.format).toBe("lowerRoman");
-    expect(p.runs[2].field?.format).toBe("lowerRoman");
+    expect((p.runs[0].field as { format?: string } | undefined)?.format).toBe("lowerRoman");
+    expect((p.runs[2].field as { format?: string } | undefined)?.format).toBe("lowerRoman");
   });
 
   it("appends after existing content rather than replacing it", () => {

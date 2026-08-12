@@ -57,11 +57,13 @@ import type {
 } from "../documentModel";
 import {
   DEFAULT_TITLE,
+  isMergeChipField,
   resolveColumnWidthsCm,
   sectionContentWidthCm,
   sectionMargins,
   sectionPageSize,
 } from "../documentModel";
+import { chipLabel } from "../mergeChips";
 import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
@@ -297,6 +299,11 @@ const FIELD_FORMAT_SWITCH: Record<PageNumberFormat, string> = {
 };
 
 function fieldInstr(field: FieldSpec): string {
+  if (isMergeChipField(field)) {
+    // Always quoted (SPEC-046 "Chip serialisation"), so the writer has no
+    // has-a-space branch and the reader has one pattern.
+    return `MERGEFIELD "${chipLabel(field)}"`;
+  }
   const kind = field.kind === "page" ? "PAGE" : "NUMPAGES";
   return `${kind}${FIELD_FORMAT_SWITCH[field.format]}`;
 }
@@ -329,11 +336,19 @@ function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContex
   const inserted = run.changes?.insert;
   const formatChange = run.changes?.formatChange;
   const rPr = runPropertiesXml(run.formatting, run.styleId, formatChange, ctx);
+  if (run.field) {
+    // The cached run carries the canonical chip text (not the model's
+    // one-character placeholder) for a merge chip, so a consumer that does
+    // not evaluate fields still shows `{{client_name}}`; the reader
+    // rebuilds from the instruction and ignores this cached text, exactly
+    // as it does for PAGE (SPEC-046 "Chip serialisation").
+    const cachedText = isMergeChipField(run.field) ? chipLabel(run.field) : run.text;
+    const fieldContent = runContentXml(cachedText, deleted ? "delText" : "t");
+    const fieldInner = `<w:r>${rPr}${fieldContent}</w:r>`;
+    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${fieldInner}</w:fldSimple>`;
+  }
   const content = runContentXml(run.text, deleted ? "delText" : "t");
   const inner = `<w:r>${rPr}${content}</w:r>`;
-  if (run.field) {
-    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${inner}</w:fldSimple>`;
-  }
   let xml = inner;
   if (deleted && ctx) {
     const id = changeNumericId(ctx, deleted.changeId);

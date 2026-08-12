@@ -60,12 +60,14 @@ import type {
 } from "../documentModel";
 import {
   FIELD_PLACEHOLDER_TEXT,
+  isMergeChipField,
   isTable,
   NOTE_PLACEHOLDER_TEXT,
   resolveColumnWidthsCm,
   sectionMargins,
   sectionPageSize,
 } from "../documentModel";
+import { chipLabel } from "../mergeChips";
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
@@ -1048,6 +1050,12 @@ const FIELD_NUM_FORMAT: Record<PageNumberFormat, string> = {
  * producer's own field elements carry (their content is the last-rendered
  * result, recomputed live by the consuming application). */
 function fieldContentXml(field: FieldSpec): string {
+  if (isMergeChipField(field)) {
+    // A placeholder carries its own text, needs no declarations, and
+    // LibreOffice renders it as a grey placeholder — visually a chip
+    // (SPEC-046 "Chip serialisation").
+    return `<text:placeholder text:placeholder-type="text">${escapeXml(chipLabel(field))}</text:placeholder>`;
+  }
   const tag = field.kind === "page" ? "page-number" : "page-count";
   return `<text:${tag}${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:${tag}>`;
 }

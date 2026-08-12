@@ -64,6 +64,13 @@ async function isZipPackage(bytes: Uint8Array): Promise<boolean> {
   }
 }
 
+/** SPEC-046: the template gallery's "Import template file…" picker, a
+ * separate entry point from the regular "Open document" one above — a
+ * `.dotx`/`.ott` is a template, not a document to resume editing. */
+export function hasTemplateFileExtension(fileName: string): boolean {
+  return /\.(dotx|ott)$/i.test(fileName);
+}
+
 function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -76,7 +83,7 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 /** The app-bar title for an opened document: its file name with the
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
-  const withoutExtension = fileName.replace(/\.(docx|odt|md|markdown)$/i, "");
+  const withoutExtension = fileName.replace(/\.(docx|dotx|odt|ott|md|markdown)$/i, "");
   return withoutExtension.length > 0 ? withoutExtension : fileName;
 }
 
@@ -198,6 +205,30 @@ export async function openDocumentFile(file: File, options: ParseMdOptions = {})
     return assembleDocumentModel(titleFromFileName(file.name), "md", await parseMd(bytes, options));
   }
   return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(bytes));
+}
+
+/** Reads and parses a `.dotx`/`.ott` File as a template (SPEC-046 AC-9..11):
+ * same content-based format detection and parse path as `openDocumentFile`
+ * (a `.dotx` is byte-for-byte an OPC docx package; a `.ott`'s mimetype entry
+ * is now recognised by `detectOdf` alongside plain .odt), so the result is
+ * assembled the same way — including the fresh id every open already mints,
+ * which is what makes this "a new untitled document from it rather than
+ * editing the template" (there is no "the template file" in this app to
+ * edit in the first place; every open is already a copy into the library).
+ *
+ * The one thing this adds on top of `openDocumentFile`: a template's
+ * package declares itself as a template (a `.dotx`'s `[Content_Types].xml`
+ * Override for the main part, a `.ott`'s `mimetype` entry) — carried
+ * forward as a same-format document's preserved opaque parts (SPEC-008),
+ * that declaration would resurface on every later save, so a "new document
+ * from a template" would quietly keep re-saving as a template too. Dropping
+ * the retained package here makes every future save rebuild a fresh,
+ * ordinary .docx/.odt from the model instead of reusing the template's. */
+export async function openTemplateFile(file: File): Promise<DocumentModel> {
+  const model = await openDocumentFile(file);
+  delete model.opaque;
+  delete model.sourceXml;
+  return model;
 }
 
 /** Reads and parses a `.docx` File into a new DocumentModel (not yet

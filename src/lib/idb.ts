@@ -7,14 +7,19 @@
 // keep working in-memory.
 import type { PersistedRecord } from "./documentStore";
 import type { VersionStoreRecord } from "./versionHistory";
+import type { StoredTemplateRecord } from "./templateStore";
 
 const DB_NAME = "docu-edit";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = "documents";
 // SPEC-040: version history's own store, kept separate from `documents` so
 // rendering the library never reads 50 MB of version payloads per document
 // into memory at startup (see versionHistory.ts's header comment).
 const VERSIONS_STORE_NAME = "versions";
+// SPEC-046: user templates get their own store too, for the same reason —
+// the gallery reads every template's metadata without touching the
+// `documents` store's much larger population.
+const TEMPLATES_STORE_NAME = "templates";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -30,6 +35,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(VERSIONS_STORE_NAME)) {
         db.createObjectStore(VERSIONS_STORE_NAME, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(TEMPLATES_STORE_NAME)) {
+        db.createObjectStore(TEMPLATES_STORE_NAME, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -109,5 +117,28 @@ export async function putVersionsRecord(record: VersionStoreRecord): Promise<voi
 export async function deleteVersionsRecord(id: string): Promise<void> {
   const db = await getDb();
   const store = db.transaction(VERSIONS_STORE_NAME, "readwrite").objectStore(VERSIONS_STORE_NAME);
+  await requestToPromise(store.delete(id));
+}
+
+// --- user templates (SPEC-046) ----------------------------------------------
+
+/** Reads every persisted user template. */
+export async function loadAllTemplateRecords(): Promise<StoredTemplateRecord[]> {
+  const db = await getDb();
+  const store = db.transaction(TEMPLATES_STORE_NAME, "readonly").objectStore(TEMPLATES_STORE_NAME);
+  return requestToPromise(store.getAll() as IDBRequest<StoredTemplateRecord[]>);
+}
+
+/** Writes (inserts or replaces) one user template record. */
+export async function putTemplateRecord(record: StoredTemplateRecord): Promise<void> {
+  const db = await getDb();
+  const store = db.transaction(TEMPLATES_STORE_NAME, "readwrite").objectStore(TEMPLATES_STORE_NAME);
+  await requestToPromise(store.put(record));
+}
+
+/** Removes one user template record by id. Resolves even if absent. */
+export async function deleteTemplateRecord(id: string): Promise<void> {
+  const db = await getDb();
+  const store = db.transaction(TEMPLATES_STORE_NAME, "readwrite").objectStore(TEMPLATES_STORE_NAME);
   await requestToPromise(store.delete(id));
 }

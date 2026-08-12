@@ -44,6 +44,11 @@ const TABLE_ACTIONS = [
   { key: "delete-row", label: "Delete row" },
   { key: "delete-col", label: "Delete column" },
   { key: "delete-table", label: "Delete table" },
+  // SPEC-046 AC-29, AC-30: "Table -> Repeat row for each..." — an
+  // already-repeating row toggles off immediately when this is chosen
+  // (see useTables.ts's handleRepeatRowAction), otherwise opens the
+  // array-field picker.
+  { key: "repeat-row", label: "Repeat row for each…" },
 ];
 
 // The cell-formatting section's entries (SPEC-023 AC-8, AC-10..23), always

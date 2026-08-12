@@ -27,6 +27,7 @@ import {
   setTableWidthMode,
   splitCell,
   tableAt,
+  toggleRowRepeat,
   type CellRange,
 } from "../../lib/tables";
 import {
@@ -93,6 +94,10 @@ export interface TablesDeps {
   insertTableDialogOpen: Ref<boolean>;
   splitCellDialogOpen: Ref<boolean>;
   tablePropertiesOpen: Ref<boolean>;
+  /** "Table -> Repeat row for each..." (SPEC-046 AC-29, AC-30) — opened only
+   * when the right-clicked row does not already repeat; an already-repeating
+   * row toggles off immediately with no dialog. */
+  repeatRowDialogOpen: Ref<boolean>;
   tablePropertiesInitial: Ref<any>;
   getTableFormattingLocation: () => TableLoc;
   setTableFormattingLocation: (location: TableLoc) => void;
@@ -120,6 +125,7 @@ export function useTables(deps: TablesDeps) {
     insertTableDialogOpen,
     splitCellDialogOpen,
     tablePropertiesOpen,
+    repeatRowDialogOpen,
     tablePropertiesInitial,
     getTableFormattingLocation,
     setTableFormattingLocation,
@@ -366,9 +372,54 @@ export function useTables(deps: TablesDeps) {
       openSplitCellDialog(target);
     } else if (action === "table-properties") {
       openTableProperties(target);
+    } else if (action === "repeat-row") {
+      handleRepeatRowAction(target);
     } else {
       applyTableAction(action, target);
     }
+  }
+
+  /** True when the row at `target` already carries an `{{#each}}` chip in
+   * one of its cells (SPEC-046 "Repeating table rows" — the chip is the
+   * entire repeat state). */
+  function rowAlreadyRepeats(model: DocumentModel, target: TableLoc): boolean {
+    const table = tableAt(model, target.section, target.block);
+    const row = table?.rows[target.row];
+    return !!row?.cells.some((cell) =>
+      cell.blocks.some((paragraph) => paragraph.runs.some((run) => run.field?.kind === "each")),
+    );
+  }
+
+  /** "Repeat row for each..." (SPEC-046 AC-29, AC-30): an already-repeating
+   * row toggles off immediately (no field to choose for removal); otherwise
+   * remembers the target and opens the array-field picker dialog the view
+   * renders, whose choice `confirmRepeatRow` below applies. */
+  function handleRepeatRowAction(target: TableLoc) {
+    const model = doc.value;
+    if (!model || !editable.value) {
+      return;
+    }
+    setTableFormattingLocation(target);
+    if (rowAlreadyRepeats(model, target)) {
+      const root = contentRoot.value as HTMLElement | null;
+      const selection = paragraphSelection(root);
+      applyEdit(toggleRowRepeat(model, selection, target, ""), selection, "stop repeating row");
+      return;
+    }
+    repeatRowDialogOpen.value = true;
+  }
+
+  /** The array-field picker's choice (empty = cancelled). */
+  function confirmRepeatRow(name = "") {
+    repeatRowDialogOpen.value = false;
+    const model = doc.value;
+    if (!model || !name) {
+      return;
+    }
+    const target = getTableFormattingLocation();
+    const root = contentRoot.value as HTMLElement | null;
+    const selection = paragraphSelection(root);
+    applyEdit(toggleRowRepeat(model, selection, target, name), selection, "repeat row for each");
   }
 
   /** "Merge cells" (AC-6, AC-7): the active cell-range selection. */
@@ -561,5 +612,6 @@ export function useTables(deps: TablesDeps) {
     openTableProperties,
     handleTablePropertiesApply,
     handleInsertTable,
+    confirmRepeatRow,
   };
 }

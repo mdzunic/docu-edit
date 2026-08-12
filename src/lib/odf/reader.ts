@@ -57,6 +57,7 @@ import { ZipError, unzip } from "../docx/zip";
 import { cmToTwips } from "../docx/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { sanitizeHref } from "../links";
+import { parseChipText } from "../mergeChips";
 import { createMessageId, parseReplyParagraphText } from "../comments";
 import { blockText } from "../textEditing";
 import {
@@ -105,6 +106,12 @@ export const FLAT_ODF_MESSAGE = "Flat ODF files aren't supported yet";
 
 /** The package mimetype identifying an OpenDocument text document. */
 export const ODT_MIMETYPE = "application/vnd.oasis.opendocument.text";
+/** An .ott template's mimetype entry (SPEC-046 AC-10) — same package shape
+ * as .odt, ODF's own "this is a template" flag. `parseOdt` reads it exactly
+ * like a plain .odt: opening one always creates a new document (see
+ * openDocument.ts's `assembleDocumentModel`, which mints a fresh id for
+ * every open), so no separate parse path is needed. */
+export const OTT_MIMETYPE = "application/vnd.oasis.opendocument.text-template";
 
 export interface ParsedOdtDocument {
   sections: Section[];
@@ -187,7 +194,8 @@ export async function detectOdf(data: ArrayBuffer | Uint8Array): Promise<"packag
     throw error;
   }
   const mimetype = parts.get("mimetype");
-  return mimetype && decodeUtf8(mimetype).trim() === ODT_MIMETYPE ? "package" : "none";
+  const declared = mimetype && decodeUtf8(mimetype).trim();
+  return declared === ODT_MIMETYPE || declared === OTT_MIMETYPE ? "package" : "none";
 }
 
 // --- inline content --------------------------------------------------------
@@ -677,6 +685,22 @@ function collectInline(
         // SPEC-029 AC-25, AC-26: the document's total page count.
         appendField(acc, "numpages", fieldNumberFormat(el), formatting);
         break;
+      case "placeholder": {
+        // A mail-merge chip (SPEC-046): its content is the same canonical
+        // text the .docx MERGEFIELD instruction quotes. A placeholder
+        // whose content isn't valid chip syntax stays what it was — an
+        // opaque inline (SPEC-008) — same as an unrecognised w:fldSimple.
+        const chip = textAttr(el, "placeholder-type") === "text" ? parseChipText(el.textContent ?? "") : null;
+        if (chip) {
+          acc.pieces.push({ text: FIELD_PLACEHOLDER_TEXT, formatting, field: chip });
+          acc.mergeBarrier = true;
+          acc.lastChar = FIELD_PLACEHOLDER_TEXT;
+        } else {
+          acc.opaqueInlines.push({ xml: serializeElement(el), runIndex: acc.pieces.length });
+          acc.mergeBarrier = true;
+        }
+        break;
+      }
       case "note": {
         // Footnotes/endnotes (SPEC-031 AC-23/24): the citation becomes a
         // superscript marker run (numbers are derived, so the citation text

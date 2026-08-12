@@ -17,6 +17,7 @@ import {
   createEmptyHeaderFooterContent,
   isBreak,
   isImage,
+  isMergeChipField,
   isTable,
   isToc,
   type Block,
@@ -25,6 +26,7 @@ import {
   type Paragraph,
   type TrackChangesDisplayMode,
 } from "../../lib/documentModel";
+import { chipLabel } from "../../lib/mergeChips";
 import {
   sectionColumnFlowWidthPx,
   type PageColumns,
@@ -269,6 +271,23 @@ function renderEntryFor(
   const outlineCollapsed = outlineToggle && deps.collapsedHeadings.value.has(headingKey);
   let noteSig = "";
   const renderRuns = runs.map((run, runIndex) => {
+    // A mail-merge chip (SPEC-046): renders its canonical `{{...}}` label
+    // as a caret atom standing for the one-character model placeholder —
+    // the same atomText/data-caret-atom mechanism as a note reference mark
+    // just below, so one Backspace removes the whole chip (AC-14).
+    if (run.field && isMergeChipField(run.field)) {
+      const label = chipLabel(run.field);
+      return {
+        key: runKey(run, runIndex),
+        href: "",
+        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        text: label,
+        segments: null,
+        atomText: run.text,
+        atomClass: "doc-merge-chip",
+        lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
+      };
+    }
     // A note reference mark (SPEC-031): renders its computed number as a
     // caret atom standing for the one-character model placeholder, with the
     // note's text as its tooltip (AC-14).
@@ -387,9 +406,24 @@ function headerFooterRenderEntries(
     const paragraph = asParagraphBlock(block);
     const styleObj = { ...paragraphStyle(paragraph) };
     const renderRuns = paragraph.runs.map((run, runIndex) => {
-      const text = run.field
-        ? fieldValueText(run.field.kind, run.field.format, pageNumber, totalPages)
-        : run.text;
+      if (run.field && isMergeChipField(run.field)) {
+        // A merge chip in a header/footer (SPEC-046): resolution happens on
+        // the model before the writers, so a header still holding a chip
+        // here just means an unresolved template — show the canonical
+        // label, same as the body.
+        const label = chipLabel(run.field);
+        return {
+          key: runKey(run, runIndex),
+          href: "",
+          styleObj: runStyle(run.formatting),
+          text: label,
+          segments: null,
+          atomText: run.text,
+          atomClass: "doc-merge-chip",
+          lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
+        };
+      }
+      const text = run.field ? fieldValueText(run.field.kind, run.field.format, pageNumber, totalPages) : run.text;
       const segments = marks ? markSegments(text) : null;
       const marked = segments && segments.some((segment) => segment.kind !== "text");
       return {
