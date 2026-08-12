@@ -165,6 +165,13 @@ export function asPageNumberFormat(value: string): PageNumberFormat {
   return value as PageNumberFormat;
 }
 
+/** Typed pass-through for a `DocumentModel` passed into a `.vue` component
+ * as a runtime `Object` prop (espree bars writing `PropType<DocumentModel>`
+ * — see CommentsPane.vue's header comment for the same constraint). */
+export function asDocumentModel(value: unknown): DocumentModel {
+  return value as DocumentModel;
+}
+
 /** A run that renders as a computed value instead of literal text
  * (SPEC-029, widened by SPEC-046): a page-number/page-count field, or a
  * mail-merge chip. `Run.text` still holds a one-character placeholder so

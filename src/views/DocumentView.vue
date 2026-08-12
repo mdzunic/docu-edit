@@ -47,6 +47,7 @@ import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
 import MergeFieldPickerDialog from "../components/MergeFieldPickerDialog.vue";
+import MergeRunDialog from "../components/MergeRunDialog.vue";
 import PropertiesDialog from "../components/PropertiesDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
@@ -4553,8 +4554,13 @@ const savingAsTemplate = ref(false);
 // field...", "Table -> Repeat row for each..." and the merge run dialog —
 // attaching it once populates every named field list, and running the merge
 // re-parses the same file rather than trusting stale state across a session.
-const mergeDataSource = ref(noParsedDataSource());
+const mergeDataSource = shallowRef(noParsedDataSource());
 const mergeFieldPickerOpen = ref(false);
+const mergeRunDialogOpen = ref(false);
+
+function attachMergeDataSource(parsed = noParsedDataSource()) {
+  mergeDataSource.value = parsed;
+}
 const mergeFieldPickerFields = computed(() => (doc.value ? namedFieldList(mergeDataSource.value, doc.value) : []));
 const repeatRowFieldOptions = computed(() => (doc.value ? namedArrayFieldList(mergeDataSource.value, doc.value) : []));
 
@@ -4798,6 +4804,11 @@ async function menuPastePlain() {
             label="Save as template"
             testid="file-menu-save-as-template"
             @select="savingAsTemplate = true"
+          />
+          <MenuItem
+            label="Mail merge…"
+            testid="file-menu-mail-merge"
+            @select="mergeRunDialogOpen = true"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -5890,6 +5901,13 @@ async function menuPastePlain() {
       :fields="repeatRowFieldOptions"
       @insert="confirmRepeatRow"
       @cancel="repeatRowDialogOpen = false"
+    />
+    <MergeRunDialog
+      v-if="mergeRunDialogOpen && doc"
+      :model="doc"
+      :initial-source="mergeDataSource ?? undefined"
+      @attach-source="attachMergeDataSource"
+      @close="mergeRunDialogOpen = false"
     />
     <CustomSpacingDialog
       v-if="customSpacingOpen"

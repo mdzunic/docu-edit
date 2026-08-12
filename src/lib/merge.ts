@@ -42,7 +42,28 @@ export function noParsedDataSource(): ParsedDataSource | null {
   return null;
 }
 
+/** Typed pass-through for a `ParsedDataSource | null` passed into a `.vue`
+ * component as a runtime `Object` prop (same espree constraint as
+ * documentModel.ts's asDocumentModel) — null stays null. */
+export function asParsedDataSourceOrNull(value: unknown): ParsedDataSource | null {
+  return (value as ParsedDataSource | null) ?? null;
+}
+
 export class MergeDataSourceError extends Error {}
+
+/** Reads a picked File's text content — the same FileReader-based approach
+ * openDocument.ts's readFileAsArrayBuffer uses for bytes, since jsdom's
+ * File/Blob polyfill (this project's unit-test environment) has no
+ * `.text()`, only the FileReader API every browser and jsdom both
+ * implement. Used by the merge dialog to read an attached CSV/JSON file. */
+export function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(reader.result as string));
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read file")));
+    reader.readAsText(file);
+  });
+}
 
 /** A full CSV text into rows of raw string cells — a hand-rolled parser (no
  * dependency added, per CLAUDE.md's protected package.json) handling quoted
@@ -240,6 +261,12 @@ function evaluateCondition(scope: Scope, name: string): boolean {
 export interface NamedField {
   name: string;
   array: boolean;
+}
+
+/** Typed pass-through for a `NamedField[]` passed into a `.vue` component as
+ * a runtime `Array` prop (same espree constraint as asDocumentModel). */
+export function asNamedFieldList(value: unknown): NamedField[] {
+  return value as NamedField[];
 }
 
 /** Every merge/if/each chip name already used anywhere in the document
@@ -840,12 +867,31 @@ export interface MergeRunResult {
   report: MergeRunReport;
 }
 
+/** Typed `null` seed for a `.vue` script's post-run report ref (same
+ * convention as noParsedDataSource above). */
+export function noMergeRunReport(): MergeRunReport | null {
+  return null;
+}
+
 export interface MergeRunOptions {
   format: "docx" | "odt";
   delivery: "zip" | "single";
   /** A scalar column/property used to build the zip entry slug; omit for
    * plain `NNN.<ext>` names. Ignored for single-document delivery. */
   nameField?: string;
+}
+
+/** Typed pass-through for a merge output format coming from a `.vue`
+ * template's plain string (same espree constraint as
+ * documentModel.ts's asPageNumberFormat). */
+export function asMergeFormat(value: string): "docx" | "odt" {
+  return value as "docx" | "odt";
+}
+
+/** Typed pass-through for a merge delivery mode coming from a `.vue`
+ * template's plain string. */
+export function asMergeDelivery(value: string): "zip" | "single" {
+  return value as "zip" | "single";
 }
 
 async function writeResolved(model: DocumentModel, format: "docx" | "odt"): Promise<Uint8Array> {

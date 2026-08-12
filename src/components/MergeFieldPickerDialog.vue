@@ -7,6 +7,7 @@
 // validated against the same grammar chip insertion enforces.
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { isValidChipName } from "../lib/mergeChips";
+import { asNamedFieldList } from "../lib/merge";
 
 const props = defineProps({
   /** Dialog heading and aria-label. */
@@ -17,6 +18,11 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["insert", "cancel"]);
+
+// Runtime Array prop carries no element type (the espree constraint bars
+// PropType<NamedField[]> here) — this typed pass-through gives the template
+// below typed access.
+const fields = computed(() => asNamedFieldList(props.fields));
 
 const customName = ref("");
 const input = useTemplateRef("input");
@@ -62,12 +68,12 @@ function insertCustom() {
         {{ props.heading }}
       </h2>
       <ul
-        v-if="props.fields.length > 0"
+        v-if="fields.length > 0"
         class="field-list"
         data-testid="merge-field-picker-list"
       >
         <li
-          v-for="field in props.fields"
+          v-for="field in fields"
           :key="field.name"
         >
           <button
