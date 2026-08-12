@@ -86,10 +86,11 @@ function componentFor(entry = noRenderEntries()[0]) {
              data-caret-atom (see lib/domCaret.ts's caret-atom mapping). -->
         <span
           v-if="run.atomText"
-          class="doc-note-ref"
+          :class="run.atomClass || 'doc-note-ref'"
           contenteditable="false"
           :data-caret-atom="run.atomText"
           :data-note-id="run.noteId"
+          :data-testid="run.atomClass === 'doc-merge-chip' ? 'merge-chip' : undefined"
           :title="run.title"
           :style="run.styleObj"
           :lang="run.lang"
@@ -281,5 +282,15 @@ function componentFor(entry = noRenderEntries()[0]) {
 
 .doc-note-ref:hover {
   text-decoration: underline;
+}
+
+/* A mail-merge chip (SPEC-046): a pill so it reads as one atomic unit
+   distinct from surrounding text, matching the "chip" language the spec
+   itself uses. */
+.doc-merge-chip {
+  background: #e8f0fe;
+  border-radius: 3px;
+  padding: 0 2px;
+  color: #1a73e8;
 }
 </style>

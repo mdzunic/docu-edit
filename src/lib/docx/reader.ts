@@ -52,12 +52,14 @@ import type {
   TrackedChangeInfo,
 } from "../documentModel";
 import {
+  createChipRun,
   createDefaultStyles,
   createFieldRun,
   createNoteRun,
   DEFAULT_COLUMN_GAP_CM,
   MAX_COLUMN_COUNT,
 } from "../documentModel";
+import { parseChipText } from "../mergeChips";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
 import { bytesToBase64 } from "../opaque";
@@ -1658,13 +1660,29 @@ function fieldInstrParts(instr: string): { kind: FieldKind; format: PageNumberFo
   return { kind, format };
 }
 
-/** A `w:fldSimple` as a page-number/page-count field run (SPEC-029), or
- * null when its instruction is something else — the caller falls back to
- * preserving it as an opaque inline the same way it always has. */
+/** A `MERGEFIELD "..."` instruction's canonical text, or null when the
+ * instruction isn't a (quoted) MERGEFIELD — always quoted per SPEC-046
+ * "Chip serialisation", so this is the one pattern the reader needs. */
+function mergeFieldInstrText(instr: string): string | null {
+  const match = /^\s*MERGEFIELD\s+"([^"]*)"\s*$/i.exec(instr);
+  return match ? match[1] : null;
+}
+
+/** A `w:fldSimple` as a mail-merge chip (SPEC-046) or page-number/page-count
+ * field run (SPEC-029), or null when its instruction is something else —
+ * the caller falls back to preserving it as an opaque inline the same way
+ * it always has. A `MERGEFIELD` whose quoted text isn't valid chip syntax
+ * also falls through: "a chip form the reader does not recognise stays
+ * what it was" (SPEC-008). */
 function parseFieldSimple(el: Element): Run | null {
   const instr = wordAttr(el, "instr");
   if (!instr) {
     return null;
+  }
+  const mergeText = mergeFieldInstrText(instr);
+  if (mergeText !== null) {
+    const chip = parseChipText(mergeText);
+    return chip ? createChipRun(chip) : null;
   }
   const parsed = fieldInstrParts(instr);
   return parsed ? createFieldRun(parsed.kind, parsed.format) : null;
