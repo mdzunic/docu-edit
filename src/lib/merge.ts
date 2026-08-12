@@ -620,54 +620,56 @@ function withRunRemoved(paragraph: Paragraph, runIndex: number): Paragraph {
  * chip runs when true, or the whole range (paragraph-joined) when false —
  * mirroring the editor's own range deletion. Non-paragraph blocks (tables,
  * images) pass through a surviving region untouched at this stage; they are
- * resolved (row expansion, chip substitution) by the caller afterwards. */
+ * resolved (row expansion, chip substitution) by the caller afterwards.
+ *
+ * Resolves exactly the leftmost if/endif pair in the range, splices the
+ * result back in, and recurses over the (shorter) spliced range rather than
+ * finalizing the touched paragraphs immediately. A merged paragraph — the
+ * opening or closing fragment of an inline conditional, or the joined
+ * before/after of a false one — can itself carry further if-chips (a
+ * sibling conditional sharing the paragraph, or one nested inside the
+ * fragment); recursing over the splice point re-scans it instead of letting
+ * those chips survive unresolved into the output. */
 function resolveConditionalRegion(blocks: Block[], start: number, end: number, scope: Scope): Block[] {
-  const result: Block[] = [];
-  let i = start;
-  while (i < end) {
+  for (let i = start; i < end; i++) {
     const block = blocks[i];
-    if (block.type === "paragraph") {
-      const ifRunIndex = findChipRunIndex(block, ["if"]);
-      if (ifRunIndex !== -1) {
-        const field = chipFieldOf(block.runs[ifRunIndex]) as Extract<MergeFieldSpec, { kind: "if" }>;
-        const endif = findMatchingEndif(blocks, i, ifRunIndex, end);
-        const endifParagraph = blocks[endif.block] as Paragraph;
-        const blockForm = isChipAloneInParagraph(block, ifRunIndex) && isChipAloneInParagraph(endifParagraph, endif.run);
-        const truthy = evaluateCondition(scope, field.name);
-        if (blockForm) {
-          if (truthy) {
-            result.push(...resolveConditionalRegion(blocks, i + 1, endif.block, scope));
-          }
-          i = endif.block + 1;
-          continue;
-        }
-        if (truthy) {
-          result.push(withRunRemoved(block, ifRunIndex));
-          if (endif.block !== i) {
-            result.push(...resolveConditionalRegion(blocks, i + 1, endif.block, scope));
-            result.push(withRunRemoved(endifParagraph, endif.run));
-          } else {
-            // Same paragraph as pushed above already dropped ifRunIndex;
-            // drop the endif run too, adjusting for that removal.
-            result[result.length - 1] = withRunRemoved(result[result.length - 1] as Paragraph, endif.run - 1);
-          }
-        } else if (endif.block === i) {
-          const before = block.runs.slice(0, ifRunIndex);
-          const after = block.runs.slice(endif.run + 1);
-          result.push({ ...block, runs: [...before, ...after] });
-        } else {
-          const before = block.runs.slice(0, ifRunIndex);
-          const after = endifParagraph.runs.slice(endif.run + 1);
-          result.push({ ...block, runs: [...before, ...after] });
-        }
-        i = endif.block + 1;
-        continue;
-      }
+    if (block.type !== "paragraph") {
+      continue;
     }
-    result.push(block);
-    i += 1;
+    const ifRunIndex = findChipRunIndex(block, ["if"]);
+    if (ifRunIndex === -1) {
+      continue;
+    }
+    const field = chipFieldOf(block.runs[ifRunIndex]) as Extract<MergeFieldSpec, { kind: "if" }>;
+    const endif = findMatchingEndif(blocks, i, ifRunIndex, end);
+    const endifParagraph = blocks[endif.block] as Paragraph;
+    const blockForm = isChipAloneInParagraph(block, ifRunIndex) && isChipAloneInParagraph(endifParagraph, endif.run);
+    const truthy = evaluateCondition(scope, field.name);
+
+    let replacement: Block[];
+    if (blockForm) {
+      replacement = truthy ? blocks.slice(i + 1, endif.block) : [];
+    } else if (truthy) {
+      replacement =
+        endif.block === i
+          ? [withRunRemoved(withRunRemoved(block, ifRunIndex), endif.run - 1)]
+          : [withRunRemoved(block, ifRunIndex), ...blocks.slice(i + 1, endif.block), withRunRemoved(endifParagraph, endif.run)];
+    } else if (endif.block === i) {
+      const before = block.runs.slice(0, ifRunIndex);
+      const after = block.runs.slice(endif.run + 1);
+      replacement = [{ ...block, runs: [...before, ...after] }];
+    } else {
+      const before = block.runs.slice(0, ifRunIndex);
+      const after = endifParagraph.runs.slice(endif.run + 1);
+      replacement = [{ ...block, runs: [...before, ...after] }];
+    }
+
+    const removedCount = endif.block - i + 1;
+    const spliced = [...blocks.slice(0, i), ...replacement, ...blocks.slice(endif.block + 1)];
+    const newEnd = end - removedCount + replacement.length;
+    return [...blocks.slice(start, i), ...resolveConditionalRegion(spliced, i, newEnd, scope)];
   }
-  return result;
+  return blocks.slice(start, end);
 }
 
 function findEachChip(row: TableRow): { cellIndex: number; blockIndex: number; runIndex: number; name: string } | null {

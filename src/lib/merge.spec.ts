@@ -258,6 +258,61 @@ describe("conditional block resolution", () => {
     const resolvedOuterTrueInnerFalse = resolveRecordToModel(model, { outer: true, inner: false }, "json", 0);
     expect((resolvedOuterTrueInnerFalse.sections[0].blocks as Paragraph[]).map((p) => p.runs.map((r) => r.text).join(""))).toEqual([]);
   });
+
+  it("two sibling inline conditionals sharing one paragraph both resolve", () => {
+    // "A {{#if x}}X{{/if}} B {{#if y}}Y{{/if}} C", x false, y true.
+    const model = docWith([
+      paragraph(
+        textRun("A "),
+        createIfChipRun("x"),
+        textRun("X"),
+        createEndifChipRun(),
+        textRun(" B "),
+        createIfChipRun("y"),
+        textRun("Y"),
+        createEndifChipRun(),
+        textRun(" C"),
+      ),
+    ]);
+    const resolved = resolveRecordToModel(model, { x: false, y: true }, "json", 0);
+    const blocks = resolved.sections[0].blocks as Paragraph[];
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].runs.map((r) => r.text).join("")).toBe("A  B Y C");
+    // No if/endif chip runs may survive into the resolved output.
+    expect(blocks[0].runs.some((r) => r.field && (r.field.kind === "if" || r.field.kind === "endif"))).toBe(false);
+  });
+
+  it("three sibling inline conditionals in one paragraph all resolve, in either truth combination", () => {
+    const model = docWith([
+      paragraph(
+        createIfChipRun("a"),
+        textRun("A"),
+        createEndifChipRun(),
+        createIfChipRun("b"),
+        textRun("B"),
+        createEndifChipRun(),
+        createIfChipRun("c"),
+        textRun("C"),
+        createEndifChipRun(),
+      ),
+    ]);
+    const resolved = resolveRecordToModel(model, { a: true, b: false, c: true }, "json", 0);
+    const blocks = resolved.sections[0].blocks as Paragraph[];
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].runs.map((r) => r.text).join("")).toBe("AC");
+    expect(blocks[0].runs.some((r) => r.field && (r.field.kind === "if" || r.field.kind === "endif"))).toBe(false);
+  });
+
+  it("a sibling conditional carried into the closing fragment of a block-spanning conditional resolves", () => {
+    const model = docWith([
+      paragraph(textRun("Start "), createIfChipRun("outer")),
+      paragraph(createEndifChipRun(), textRun(" mid "), createIfChipRun("inner"), textRun("Y"), createEndifChipRun(), textRun(" end")),
+    ]);
+    const resolved = resolveRecordToModel(model, { outer: true, inner: false }, "json", 0);
+    const blocks = resolved.sections[0].blocks as Paragraph[];
+    expect(blocks.map((p) => p.runs.map((r) => r.text).join(""))).toEqual(["Start ", " mid  end"]);
+    expect(blocks.every((p) => p.runs.every((r) => !r.field || (r.field.kind !== "if" && r.field.kind !== "endif")))).toBe(true);
+  });
 });
 
 describe("truthiness table", () => {
