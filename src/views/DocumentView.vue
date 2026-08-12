@@ -91,6 +91,7 @@ import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../lib/outlinePane";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
 import { noConversionReport } from "../lib/opaque";
+import { convertLiteralChipsToRuns, hasConvertibleLiteralChips } from "../lib/mergeChips";
 import {
   deleteDocument,
   getOrCreateDocument,
@@ -2970,6 +2971,31 @@ function confirmImportStyles() {
   importPhase.value = "summary";
 }
 
+// --- mail-merge: convert literal {{...}} text (SPEC-046) --------------------
+
+/** Whether "Convert {{…}} text to merge fields" has anything to do — offered
+ * when a document holds at least one well-formed `{{…}}` literal outside an
+ * existing chip (AC-20, "Literal text is not a chip"). */
+const canConvertLiteralChips = computed(() => (doc.value ? hasConvertibleLiteralChips(doc.value) : false));
+
+/** Scans the whole document and converts every literal `{{…}}` match into a
+ * chip in one undo step — explicit and undoable, never automatic on open
+ * (SPEC-046 "Literal text is not a chip"). */
+function convertLiteralChips() {
+  const model = doc.value;
+  const root = contentRoot.value;
+  if (!model || !root) {
+    return;
+  }
+  const selection = paragraphSelection(root);
+  const { model: next, converted } = convertLiteralChipsToRuns(model);
+  if (converted === 0) {
+    return;
+  }
+  applyEdit({ model: next, selection }, selection, "convert merge fields", false);
+  addToast(converted === 1 ? "Converted 1 merge field" : `Converted ${converted} merge fields`);
+}
+
 // --- clear formatting and format painter (SPEC-020) -------------------------
 
 /** The "Clear formatting" toolbar button and Ctrl/Cmd+\ (AC-1, AC-2, AC-3):
@@ -5145,6 +5171,13 @@ async function menuPastePlain() {
             label="Check accessibility"
             testid="tools-menu-accessibility"
             @select="openAccessibilityPane"
+          />
+          <hr class="menu-separator">
+          <MenuItem
+            label="Convert {{…}} text to merge fields"
+            testid="tools-menu-convert-merge-fields"
+            :disabled="!editable || !canConvertLiteralChips"
+            @select="convertLiteralChips"
           />
         </template>
       </MenuBar>

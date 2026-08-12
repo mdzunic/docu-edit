@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "../router";
+import type { Paragraph } from "../lib/documentModel";
 
 // SPEC-003 — deleting the currently open document (AC-19, AC-20) and
 // persisting title edits. Fresh modules per test; the idb seam is mocked so
@@ -139,6 +140,47 @@ describe("DocumentView save as template (SPEC-046 AC-5)", () => {
 
     expect(wrapper.find('[data-testid="rename-dialog"]').exists()).toBe(false);
     expect(listUserTemplates().length).toBe(before);
+  });
+});
+
+describe("DocumentView convert literal {{...}} text to merge fields (SPEC-046 AC-20)", () => {
+  async function mountWithBody(id: string, text: string) {
+    const store = await import("../lib/documentStore");
+    const model = store.getOrCreateDocument(id);
+    model.sections = [{ blocks: [{ type: "paragraph", runs: [{ text, formatting: {} }] }] }];
+    const { wrapper, router } = await mountAt(`/doc/${id}`);
+    return { wrapper, router, store };
+  }
+
+  it("is disabled with no candidates, enabled once a well-formed {{...}} literal exists", async () => {
+    const { wrapper: noneWrapper } = await mountWithBody("convert-none", "Dear client,");
+    expect(noneWrapper.get('[data-testid="tools-menu-convert-merge-fields"]').attributes("disabled")).toBeDefined();
+
+    const { wrapper } = await mountWithBody("convert-some", "Dear {{client_name}},");
+    expect(wrapper.get('[data-testid="tools-menu-convert-merge-fields"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("converts every literal match in one step and toasts a count", async () => {
+    const { wrapper, store } = await mountWithBody("convert-doc", "Dear {{client_name}}, re {{invoice_no}}.");
+
+    await wrapper.get('[data-testid="tools-menu-convert-merge-fields"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="toast"]').text()).toBe("Converted 2 merge fields");
+    const model = store.getDocument("convert-doc");
+    const run = (model!.sections[0].blocks[0] as Paragraph).runs[1];
+    expect(run.field).toEqual({ kind: "merge", name: "client_name" });
+  });
+
+  it("is undoable in one step", async () => {
+    const { wrapper, store } = await mountWithBody("convert-undo-doc", "Dear {{client_name}},");
+
+    await wrapper.get('[data-testid="tools-menu-convert-merge-fields"]').trigger("click");
+    expect((store.getDocument("convert-undo-doc")!.sections[0].blocks[0] as Paragraph).runs[1].field).toBeDefined();
+
+    await wrapper.get('[data-testid="edit-menu-undo"]').trigger("click");
+    const undone = (store.getDocument("convert-undo-doc")!.sections[0].blocks[0] as Paragraph).runs;
+    expect(undone.every((r) => !r.field)).toBe(true);
+    expect(undone.map((r) => r.text).join("")).toBe("Dear {{client_name}},");
   });
 });
 
