@@ -13,6 +13,8 @@ import { CM_PER_PX } from "../../lib/tableResize";
 import {
   constrainedDragSizeCm,
   defaultClickSizeCm,
+  DEFAULT_NEW_SHAPE_FILL,
+  DEFAULT_NEW_SHAPE_OUTLINE,
   deleteShape,
   duplicateShape,
   freshGroupOrdinal,
@@ -38,7 +40,14 @@ import {
   type ShapeLocation,
   type ZOrderCommand,
 } from "../../lib/shapes";
-import { asImageWrapMode, isShape, type DocumentModel, type ShapeGeometry, type ShapeOutline } from "../../lib/documentModel";
+import {
+  asImageWrapMode,
+  isShape,
+  LINE_GEOMETRIES,
+  type DocumentModel,
+  type ShapeGeometry,
+  type ShapeOutline,
+} from "../../lib/documentModel";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
 
@@ -406,9 +415,9 @@ export function useShapes(deps: ShapesDeps) {
     drawGeometry.value = null;
   }
 
-  /** Finds the anchor CaretPosition + its page-relative top-left (AC-4..6):
-   * the current caret's own paragraph, matching insertShape's own
-   * caret-anchored insertion. */
+  /** Finds the anchor CaretPosition + its page-relative top-left, in cm
+   * (AC-4..6): the current caret's own paragraph, matching insertShape's
+   * own caret-anchored insertion. */
   function currentAnchor(): { anchor: CaretPosition; left: number; top: number } | null {
     const root = contentRoot.value as HTMLElement | null;
     const pageEl = pageRef.value;
@@ -422,7 +431,7 @@ export function useShapes(deps: ShapesDeps) {
     }
     const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    return { anchor, left: rect.left - pageRect.left, top: rect.top - pageRect.top };
+    return { anchor, left: (rect.left - pageRect.left) * CM_PER_PX, top: (rect.top - pageRect.top) * CM_PER_PX };
   }
 
   function startShapeDraw(event: MouseEvent) {
@@ -494,7 +503,15 @@ export function useShapes(deps: ShapesDeps) {
     const offsetYCm = topCm - drag.anchorTop;
     const result = isTextBox
       ? insertTextBox(model, selection)
-      : insertShape(model, selection, { geometry: realGeometry, widthCm, heightCm, offsetXCm, offsetYCm });
+      : insertShape(model, selection, {
+          geometry: realGeometry,
+          widthCm,
+          heightCm,
+          offsetXCm,
+          offsetYCm,
+          outline: DEFAULT_NEW_SHAPE_OUTLINE,
+          ...(LINE_GEOMETRIES.has(realGeometry) ? {} : { fill: DEFAULT_NEW_SHAPE_FILL }),
+        });
     applyEdit(result, selection, isTextBox ? "insert text box" : "insert shape");
     disarmShapeDraw();
     const inserted = shapeInsertedLocation(result.model, drag.anchor);

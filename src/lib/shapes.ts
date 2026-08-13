@@ -216,6 +216,18 @@ export function defaultClickSizeCm(geometry: ShapeGeometry): { widthCm: number; 
   return LINE_GEOMETRIES.has(geometry) ? DEFAULT_LINE_SIZE_CM : DEFAULT_AREA_SIZE_CM;
 }
 
+/** The fill a gallery-drawn area shape starts with — nothing in the spec
+ * mandates a colour (AC-45 only pins alt text absent), but a shape with no
+ * fill and no outline paints nothing at all, which is not a usable starting
+ * point for a shape someone just drew. Matches the accent blue Word/Writer
+ * both default new shapes to. Never applied to a text box (AC-9 requires
+ * fill/outline absent) or to a Line/Arrow (no area to fill). */
+export const DEFAULT_NEW_SHAPE_FILL = "#4472c4";
+
+/** The outline a gallery-drawn shape (area or Line/Arrow) starts with —
+ * same reasoning as DEFAULT_NEW_SHAPE_FILL. */
+export const DEFAULT_NEW_SHAPE_OUTLINE: ShapeOutline = { color: "#2e5395", widthPt: 1, dash: "solid" };
+
 /** Shift-constrained drag size (AC-7, AC-8): an area geometry snaps to a
  * square (a circle for the ellipse — same "square bounding box" rule, the
  * renderer inscribes the ellipse in it); a Line/Arrow snaps its own
