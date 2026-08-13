@@ -4,6 +4,7 @@ import { asShape } from "../lib/documentModel";
 import { shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintShape } from "../lib/shapeCanvas";
+import { shapeClipPath } from "../lib/shapeGeometry";
 import { cmToPx } from "../lib/images";
 
 // One shape/text-box block on the page (SPEC-051). Runtime prop
@@ -64,6 +65,18 @@ watch(() => props.block, repaint, { deep: true });
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 
+/** Restricts the proxy's own hit-testing to the shape's painted region for
+ * a filled shape ("Selection and hit testing", AC-11) — a click outside the
+ * clip falls through to whatever is beneath (the page background, or a
+ * shape further down in z-order). Text-frame clicks still land on the text
+ * span itself, which sits inside the proxy and is unaffected by its
+ * parent's clip. */
+function proxyStyle() {
+  const shape = asShape(props.block);
+  const clip = shapeClipPath(shape.geometry, !!shape.fill);
+  return clip ? { clipPath: clip } : {};
+}
+
 function onTextInput(event = new Event("input")) {
   const target = event.target;
   if (target instanceof HTMLElement) {
@@ -109,6 +122,7 @@ function shapeTextPreview() {
       />
       <span
         class="doc-shape-proxy"
+        :style="proxyStyle()"
         :data-testid="`drawing-${drawingIndex}`"
         :role="block.text ? 'group' : 'img'"
         :aria-label="block.altText || ''"

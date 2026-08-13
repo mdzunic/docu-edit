@@ -830,11 +830,11 @@ describe("rotateGroup (AC-38)", () => {
 
 // --- Re-anchoring: "the nearest paragraph" --------------------------------------
 
-describe("nearestParagraph", () => {
-  function span(section: number, block: number, topCm: number, bottomCm: number): ParagraphSpan {
-    return { section, block, topCm, bottomCm };
-  }
+function span(section: number, block: number, topCm: number, bottomCm: number): ParagraphSpan {
+  return { section, block, topCm, bottomCm };
+}
 
+describe("nearestParagraph", () => {
   it("scores 0 (and wins) when the centre falls inside the candidate's span", () => {
     const candidates = [span(0, 0, 0, 5), span(0, 1, 5, 10)];
     expect(nearestParagraph(7, candidates)).toEqual(candidates[1]);

@@ -298,3 +298,25 @@ export function pointHitsShape(point: Point, opts: ShapeHitOptions): boolean {
 /** 3pt in cm — the fixed hit-tolerance "Selection and hit testing" defines
  * for an unfilled shape's outline. 1pt = 1/72in = 2.54/72cm. */
 export const HIT_TOLERANCE_CM = (3 * 2.54) / 72;
+
+/** A CSS `clip-path` value restricting a filled shape's DOM proxy to its
+ * painted region ("Selection and hit testing" — a click must land on the
+ * topmost *painted* region, never a bounding box). Returns null for an
+ * unfilled shape (the proxy stays a full rectangle, since an unfilled
+ * shape's own hit region is its outline/text — a coarser but harmless
+ * simplification, see the implement summary) and for `"rect"`, whose clip
+ * is the box itself. */
+export function shapeClipPath(geometry: ShapeGeometry, filled: boolean): string | null {
+  if (!filled || geometry === "rect" || LINE_GEOMETRIES.has(geometry)) {
+    return null;
+  }
+  if (geometry === "ellipse") {
+    return "ellipse(50% 50% at 50% 50%)";
+  }
+  const unit = shapePolygon(geometry);
+  if (!unit) {
+    return null;
+  }
+  const points = unit.map((p) => `${(p.x * 100).toFixed(2)}% ${(p.y * 100).toFixed(2)}%`).join(", ");
+  return `polygon(${points})`;
+}

@@ -113,17 +113,21 @@ function resolveGraphicStyleProps(
   let outline: ShapeOutline | undefined;
   let wrap: ImageWrapMode = "inline";
   if (props) {
-    const fillAttr = styleAttr(props, "fill");
+    // draw:fill/draw:fill-color/draw:stroke live in the draw: namespace;
+    // stroke colour/width reuse SVG's own attribute names (svg: namespace,
+    // ODF's convention for stroke details) — matches graphicPropertiesXml's
+    // own emission below, which is what a same-format save must read back.
+    const fillAttr = drawAttr(props, "fill");
     if (fillAttr === "solid") {
-      const color = styleAttr(props, "fill-color");
+      const color = drawAttr(props, "fill-color");
       if (color) {
         fill = color.toLowerCase();
       }
     }
-    const strokeAttr = styleAttr(props, "stroke");
+    const strokeAttr = drawAttr(props, "stroke");
     if (strokeAttr && strokeAttr !== "none") {
-      const color = styleAttr(props, "stroke-color") ?? "#000000";
-      const widthCm = odfLengthToCm(styleAttr(props, "stroke-width")) ?? 0.03;
+      const color = svgAttr(props, "stroke-color") ?? "#000000";
+      const widthCm = odfLengthToCm(svgAttr(props, "stroke-width")) ?? 0.03;
       const widthPt = (widthCm / 2.54) * 72;
       const dash: ShapeOutline["dash"] = strokeAttr === "dash" ? "dash" : "solid";
       outline = { color: color.toLowerCase(), widthPt, dash };
@@ -179,6 +183,8 @@ export function parseShapeElement(
   let geometry: ShapeGeometry;
   let unsupportedGeometryXml: string | undefined;
 
+  let lineOffsetXCm: number | undefined;
+  let lineOffsetYCm: number | undefined;
   if (isLine) {
     const x1 = odfLengthToCm(svgAttr(el, "x1")) ?? 0;
     const y1 = odfLengthToCm(svgAttr(el, "y1")) ?? 0;
@@ -186,6 +192,11 @@ export function parseShapeElement(
     const y2 = odfLengthToCm(svgAttr(el, "y2")) ?? 0;
     widthCm = Math.abs(x2 - x1);
     heightCm = Math.abs(y2 - y1);
+    // shapeElementXml always writes x1/y1 as the box origin (x2/y2 = origin
+    // + width/height) — a draw:line has no separate svg:x/svg:y, unlike
+    // draw:custom-shape below.
+    lineOffsetXCm = x1;
+    lineOffsetYCm = y1;
     geometry = drawAttr(el, "marker-end") ? "arrow" : "line";
   } else {
     const w = odfLengthToCm(svgAttr(el, "width"));
@@ -226,13 +237,13 @@ export function parseShapeElement(
   if (wrap !== "inline") {
     shape.relativeToH = "column";
     shape.relativeToV = "paragraph";
-    const svgX = odfLengthToCm(svgAttr(el, "x"));
-    const svgY = odfLengthToCm(svgAttr(el, "y"));
-    if (svgX !== undefined) {
-      shape.offsetXCm = svgX;
+    const offsetXCm = isLine ? lineOffsetXCm : odfLengthToCm(svgAttr(el, "x"));
+    const offsetYCm = isLine ? lineOffsetYCm : odfLengthToCm(svgAttr(el, "y"));
+    if (offsetXCm !== undefined) {
+      shape.offsetXCm = offsetXCm;
     }
-    if (svgY !== undefined) {
-      shape.offsetYCm = svgY;
+    if (offsetYCm !== undefined) {
+      shape.offsetYCm = offsetYCm;
     }
   }
   if (!isLine) {

@@ -148,20 +148,11 @@ describe("parseShapeElement — draw:line (Line/Arrow)", () => {
 
 // --- resolveGraphicStyleProps: fill/outline/wrap from the referenced style -------
 
-// KNOWN BUG (found while writing this test, not fixed here — this file may
-// only add tests, not touch src/lib/odf/shape.ts): resolveGraphicStyleProps
-// (odf/shape.ts ~lines 116-129) reads fill/fill-color/stroke/stroke-color/
-// stroke-width via `styleAttr` (STYLE_NAMESPACE, i.e. a `style:fill`
-// attribute). Real ODF — and this same module's own writer,
-// graphicPropertiesXml a few lines down — puts these on `draw:fill`,
-// `draw:fill-color`, `draw:stroke`, `svg:stroke-color` and
-// `svg:stroke-width` instead (only `style:wrap`/`style:run-through` are
-// genuinely in the style: namespace). The mismatch means a Shape's fill and
-// outline can never survive a real .odt round trip today — see the
-// "round-trips fill"/"round-trips an outline" tests below, which pin the
-// resulting (currently broken) behaviour. The tests in *this* block instead
-// document resolveGraphicStyleProps's own resolution logic in isolation, by
-// feeding it the style: namespace it actually reads.
+// resolveGraphicStyleProps (odf/shape.ts) reads fill/fill-color/stroke via
+// `drawAttr` (DRAW_NAMESPACE, i.e. a `draw:fill` attribute) and
+// stroke-color/stroke-width via `svgAttr` (SVG_NAMESPACE) — matching real
+// ODF and this same module's own writer, graphicPropertiesXml. Only
+// wrap/run-through are genuinely in the style: namespace.
 describe("parseShapeElement — fill/outline/wrap resolved through the graphic style", () => {
   function customShapeWithStyle(styleProps: string, anchorType: string | null = "paragraph"): { el: Element; doc: Document } {
     const anchorAttr = anchorType === null ? "" : ` text:anchor-type="${anchorType}"`;
@@ -174,26 +165,26 @@ describe("parseShapeElement — fill/outline/wrap resolved through the graphic s
     return { el: doc.documentElement.lastElementChild!, doc };
   }
 
-  it("reads a solid fill colour (from style:fill/style:fill-color, per the bug noted above)", () => {
-    const { el, doc } = customShapeWithStyle('style:fill="solid" style:fill-color="#ff0000"');
+  it("reads a solid fill colour from draw:fill/draw:fill-color", () => {
+    const { el, doc } = customShapeWithStyle('draw:fill="solid" draw:fill-color="#ff0000"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
     expect(result.shape.fill).toBe("#ff0000");
   });
 
   it("fill='none' means no fill", () => {
-    const { el, doc } = customShapeWithStyle('style:fill="none"');
+    const { el, doc } = customShapeWithStyle('draw:fill="none"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
     expect(result.shape.fill).toBeUndefined();
   });
 
-  it("real ODF's draw:fill/draw:fill-color (what this module's own writer emits) is NOT read — pins the bug", () => {
-    const { el, doc } = customShapeWithStyle('draw:fill="solid" draw:fill-color="#ff0000"');
+  it("style:fill/style:fill-color (the wrong namespace) is NOT read", () => {
+    const { el, doc } = customShapeWithStyle('style:fill="solid" style:fill-color="#ff0000"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
     expect(result.shape.fill).toBeUndefined();
   });
 
-  it("reads a stroke into an outline (colour/width/solid) from style:stroke/style:stroke-color/style:stroke-width", () => {
-    const { el, doc } = customShapeWithStyle('style:stroke="solid" style:stroke-color="#000000" style:stroke-width="0.035cm"');
+  it("reads a stroke into an outline (colour/width/solid) from draw:stroke/svg:stroke-color/svg:stroke-width", () => {
+    const { el, doc } = customShapeWithStyle('draw:stroke="solid" svg:stroke-color="#000000" svg:stroke-width="0.035cm"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
     expect(result.shape.outline?.color).toBe("#000000");
     expect(result.shape.outline?.dash).toBe("solid");
@@ -201,13 +192,13 @@ describe("parseShapeElement — fill/outline/wrap resolved through the graphic s
   });
 
   it("stroke='dash' maps to dash", () => {
-    const { el, doc } = customShapeWithStyle('style:stroke="dash" style:stroke-color="#000000" style:stroke-width="0.035cm"');
+    const { el, doc } = customShapeWithStyle('draw:stroke="dash" svg:stroke-color="#000000" svg:stroke-width="0.035cm"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
     expect(result.shape.outline?.dash).toBe("dash");
   });
 
   it("stroke='none' means no outline", () => {
-    const { el, doc } = customShapeWithStyle('style:stroke="none"');
+    const { el, doc } = customShapeWithStyle('draw:stroke="none"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
     expect(result.shape.outline).toBeUndefined();
   });
@@ -245,7 +236,7 @@ describe("parseShapeElement — fill/outline/wrap resolved through the graphic s
   });
 
   it("falls back to the stylesDoc when the style isn't in contentDoc", () => {
-    const stylesDoc = wrapDoc(`<style:style style:name="gr1" style:family="graphic"><style:graphic-properties style:fill="solid" style:fill-color="#00ff00"/></style:style>`);
+    const stylesDoc = wrapDoc(`<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#00ff00"/></style:style>`);
     const contentDoc = wrapDoc(
       `<draw:custom-shape text:anchor-type="paragraph" draw:style-name="gr1" svg:width="5cm" svg:height="3cm">` +
         `<draw:enhanced-geometry draw:type="rectangle"/></draw:custom-shape>`,
@@ -376,24 +367,22 @@ describe("shapeElementXml round-trips through parseShapeElement", () => {
     expect(result.shape.wrap).toBe("topAndBottom");
   });
 
-  it("does NOT round-trip fill end-to-end through the real writer+reader — pins the resolveGraphicStyleProps namespace bug documented above", () => {
-    // shapeElementXml/shapeGraphicStyleXml correctly write draw:fill/
-    // draw:fill-color (see graphicPropertiesXml), but parseShapeElement
-    // looks for style:fill/style:fill-color instead, so a fill set through
-    // the public API is silently lost on a real .odt round trip today.
+  it("round-trips fill end-to-end through the real writer+reader", () => {
     const result = roundTrip(baseShape({ fill: "#336699" }))!;
-    expect(result.shape.fill).toBeUndefined();
+    expect(result.shape.fill).toBe("#336699");
   });
 
-  it("does NOT round-trip an outline end-to-end either, for the same reason", () => {
+  it("round-trips an outline end-to-end", () => {
     const result = roundTrip(baseShape({ outline: { color: "#123456", widthPt: 2.25, dash: "dot" } }))!;
-    expect(result.shape.outline).toBeUndefined();
+    expect(result.shape.outline?.color).toBe("#123456");
+    expect(result.shape.outline?.dash).toBe("dash");
+    expect(result.shape.outline?.widthPt).toBeGreaterThan(0);
   });
 
-  it("round-trips a Line's width/height (derived from x1/y1/x2/y2), but NOT its anchored offset — a second gap: the reader only ever reads plain svg:x/svg:y (which draw:custom-shape carries), never derives an offset from a Line's own x1/y1", () => {
+  it("round-trips a Line's width/height (derived from x1/y1/x2/y2) and its anchored offset (derived from x1/y1, which a draw:line carries instead of svg:x/svg:y)", () => {
     const source = baseShape({ geometry: "line", wrap: "square", offsetXCm: 1, offsetYCm: 2, widthCm: 5, heightCm: 3 });
     const xml = shapeElementXml(source, "gr1", writeCtx);
-    // The writer does place the anchored position in x1/y1 (there is no
+    // The writer places the anchored position in x1/y1 (there is no
     // separate svg:x/svg:y on a draw:line at all).
     expect(xml).toContain('svg:x1="1cm"');
     expect(xml).toContain('svg:y1="2cm"');
@@ -401,8 +390,8 @@ describe("shapeElementXml round-trips through parseShapeElement", () => {
     expect(result.shape.geometry).toBe("line");
     expect(result.shape.widthCm).toBeCloseTo(5, 5);
     expect(result.shape.heightCm).toBeCloseTo(3, 5);
-    expect(result.shape.offsetXCm).toBeUndefined();
-    expect(result.shape.offsetYCm).toBeUndefined();
+    expect(result.shape.offsetXCm).toBeCloseTo(1, 5);
+    expect(result.shape.offsetYCm).toBeCloseTo(2, 5);
   });
 
   it("round-trips an Arrow with its marker-end", () => {
