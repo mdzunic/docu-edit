@@ -150,9 +150,14 @@ function shapeTextEntries() {
         @click.stop="(event) => $emit('select', event.shiftKey)"
         @dblclick.stop="$emit('edit-text')"
       >
+        <!-- data-canvas-ignore (same as header/footer bands and note areas):
+             this frame's paragraphs carry synthetic section-0 addressing that
+             must never shadow the body's own blocks in domCaret resolution;
+             the shape's own editing uses this frame as its root (SPEC-051). -->
         <div
           v-if="block.text"
           class="doc-shape-text"
+          data-canvas-ignore="1"
           :class="`doc-shape-valign-${block.text.vAlign}`"
           data-testid="shape-text"
           :data-shape-text-editable="editingText ? '1' : undefined"

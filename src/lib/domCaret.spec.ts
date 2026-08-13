@@ -147,6 +147,41 @@ describe("domPointForCaret", () => {
     expect(domPointForCaret(root, { section: 0, block: 7, offset: 0 })).toBeNull();
     root.remove();
   });
+
+  // SPEC-051: a shape's text frame (and any other data-canvas-ignore subtree
+  // — header/footer bands, note areas) renders its paragraphs with synthetic
+  // section-0 addressing. Without the ignore marker they would shadow the
+  // body's own blocks: the LAST DOM match on a data-slice-start tie is a
+  // shape paragraph inside the frame, so the body caret at {0,0} would land
+  // inside the shape. The fix asserts the real body block wins.
+  it("does not let a synthetic block in a data-canvas-ignore subtree shadow a body block", () => {
+    const root = document.createElement("div");
+    const body = document.createElement("p");
+    body.setAttribute("data-section", "0");
+    body.setAttribute("data-block", "0");
+    body.textContent = "X";
+    const frame = document.createElement("div");
+    frame.setAttribute("data-canvas-ignore", "1");
+    const shadow = document.createElement("p");
+    shadow.setAttribute("data-section", "0");
+    shadow.setAttribute("data-block", "0");
+    shadow.textContent = "shape";
+    frame.appendChild(shadow);
+    root.append(body, frame);
+    document.body.appendChild(root);
+    // Both carry data-slice-start 0 and the shadow sits later in the DOM;
+    // without the ignore marker the last-match rule would pick the shadow.
+    const point = domPointForCaret(root, { section: 0, block: 0, offset: 0 });
+    expect(point?.node).toBe(body.firstChild);
+    expect(point?.offset).toBe(0);
+    setDomCaret(root, { section: 0, block: 0, offset: 0 });
+    const range = modelRangeFromSelection(root, window.getSelection());
+    expect(range).toEqual({
+      start: { section: 0, block: 0, offset: 0 },
+      end: { section: 0, block: 0, offset: 0 },
+    });
+    root.remove();
+  });
 });
 
 describe("setDomSelection / extendDomSelection", () => {
