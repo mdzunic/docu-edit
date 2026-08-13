@@ -302,6 +302,13 @@ export const NUDGE_FINE_PT_CM = NUDGE_PT_CM / 10;
 
 export type NudgeDirection = "up" | "down" | "left" | "right";
 
+/** Typed pass-through for a nudge direction coming from a `.vue` template's
+ * plain string (same espree constraint as documentModel.ts's
+ * asImageWrapMode). */
+export function asNudgeDirection(value: string): NudgeDirection {
+  return value as NudgeDirection;
+}
+
 /** Arrow-key nudge (AC-40) / Ctrl+arrow fine nudge (AC-41): 1pt or 0.1pt in
  * the given direction. */
 export function nudgeShape(

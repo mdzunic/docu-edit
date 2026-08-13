@@ -18,6 +18,7 @@ import {
   isBreak,
   isImage,
   isMergeChipField,
+  isShape,
   isTable,
   isToc,
   type Block,
@@ -59,6 +60,7 @@ import { mediaDataUri } from "../../lib/images";
 import type { PaginationController } from "../../composables/usePagination";
 import type { CellRange } from "../../lib/tables";
 import type { ImageLocation } from "../../lib/images";
+import type { ShapeLocation } from "../../lib/shapes";
 
 /** One flattened block row — the section-flattened list a single v-for carries
  * (the v-memo keys that keep typing responsive on very large documents). */
@@ -68,9 +70,14 @@ export interface FlatEntry {
   paragraph: Paragraph;
   isTable: boolean;
   isImage: boolean;
+  isShape: boolean;
   isToc: boolean;
   imageSrc: string;
   imageSelected: boolean;
+  shapeSelected: boolean;
+  /** This shape's 0-based index among every Shape block in the document, in
+   * document order (SPEC-051's `data-testid="drawing-<index>"`). */
+  drawingIndex: number;
   section: number;
   blockIndex: number;
   marker: string | undefined;
@@ -125,6 +132,8 @@ export interface PaginationViewDeps {
   editable: Ref<boolean>;
   cellSelection: Ref<CellRange | null>;
   imageSelection: Ref<ImageLocation | null>;
+  /** The selected shape (SPEC-051), if any — mirrors imageSelection. */
+  shapeSelection: Ref<ShapeLocation | null>;
   /** Body headings collapsed in the document body (SPEC-037 AC-16), keyed by
    * their "section:block" address — drives the chevron direction. */
   collapsedHeadings: Ref<ReadonlySet<string>>;
@@ -178,7 +187,7 @@ function renderEntryFor(
       column,
     } as RenderEntry;
   }
-  if (flatEntry.isTable || flatEntry.isImage) {
+  if (flatEntry.isTable || flatEntry.isImage || flatEntry.isShape) {
     return {
       key: flatEntry.key,
       memo: [
@@ -188,17 +197,20 @@ function renderEntryFor(
         flatEntry.marker,
         flatEntry.cellSel,
         flatEntry.imgSel,
+        flatEntry.shapeSelected,
         column,
         model.listDefinitions,
         deps.trackChangesDisplayMode.value,
       ],
-      kind: flatEntry.isTable ? "table" : "image",
+      kind: flatEntry.isTable ? "table" : flatEntry.isImage ? "image" : "shape",
       blockProp: block,
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
       listDefinitions: flatEntry.isTable ? model.listDefinitions ?? [] : undefined,
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
+      shapeSelected: flatEntry.isShape ? flatEntry.shapeSelected : undefined,
+      drawingIndex: flatEntry.isShape ? flatEntry.drawingIndex : undefined,
       column,
       trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
     } as RenderEntry;
@@ -633,12 +645,15 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     const markers = listMarkers(deps.doc.value);
     const range = deps.cellSelection.value;
     const selectedImage = deps.imageSelection.value;
+    const selectedShape = deps.shapeSelection.value;
+    let drawingCounter = 0;
     return deps.doc.value.sections.flatMap((section, sectionIndex) =>
       section.blocks.map((block, blockIndex) => {
         const address = `${sectionIndex}:${blockIndex}`;
         const suffix = bump.key === address ? `:${bump.count}` : "";
         const table = isTable(block);
         const image = isImage(block);
+        const shape = isShape(block);
         const toc = isToc(block);
         const cellSel =
           table && range && range.section === sectionIndex && range.block === blockIndex
@@ -646,15 +661,20 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
             : "";
         const imgSelected =
           image && !!selectedImage && selectedImage.section === sectionIndex && selectedImage.block === blockIndex;
+        const shapeSelected =
+          shape && !!selectedShape && selectedShape.section === sectionIndex && selectedShape.block === blockIndex;
         return {
           key: `${bump.epoch}:${address}${suffix}`,
           block,
           paragraph: asParagraphBlock(block),
           isTable: table,
           isImage: image,
+          isShape: shape,
           isToc: toc,
           imageSrc: image ? mediaSrc(deps.doc.value, block) : "",
           imageSelected: imgSelected,
+          shapeSelected,
+          drawingIndex: shape ? drawingCounter++ : -1,
           section: sectionIndex,
           blockIndex,
           marker: markers[sectionIndex][blockIndex],

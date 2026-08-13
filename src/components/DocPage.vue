@@ -62,6 +62,8 @@ const props = defineProps({
 
 defineEmits([
   "image-select",
+  "shape-select",
+  "shape-edit-text",
   "toc-action",
   "dblclick-header",
   "dblclick-footer",
@@ -164,6 +166,8 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               :entry="entry"
               :cell-range="cellRange"
               @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
+              @shape-select="(section, blockIndex) => $emit('shape-select', section, blockIndex)"
+              @shape-edit-text="(section, blockIndex) => $emit('shape-edit-text', section, blockIndex)"
               @toc-action="(payload) => $emit('toc-action', payload)"
               @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
             />
@@ -182,6 +186,8 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             :entries="entries"
             :cell-range="cellRange"
             @image-select="(section, block) => $emit('image-select', section, block)"
+            @shape-select="(section, block) => $emit('shape-select', section, block)"
+            @shape-edit-text="(section, block) => $emit('shape-edit-text', section, block)"
             @toc-action="(payload) => $emit('toc-action', payload)"
             @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"
           />

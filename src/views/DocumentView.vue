@@ -24,6 +24,8 @@ import { SUPPORTED_LANGUAGES } from "../lib/language";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
+import ShapeToolbar from "../components/ShapeToolbar.vue";
+import ShapeGallery from "../components/ShapeGallery.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
@@ -71,6 +73,7 @@ import { usePrintPreview } from "./document/usePrintPreview";
 import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
+import { useShapes } from "./document/useShapes";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
 import { useTables } from "./document/useTables";
@@ -110,6 +113,8 @@ import {
   asHeaderFooterPart,
   asImage,
   asImageWrapMode,
+  asShape,
+  asShapeGeometry,
   asListLevelDefinitions,
   asListMarkerStyle,
   asListType,
@@ -132,6 +137,7 @@ import {
   DEFAULT_TITLE,
   isBreak,
   isImage,
+  isShape,
   isTable,
   isToc,
   asToc,
@@ -414,6 +420,7 @@ import {
   setImageWrap,
 } from "../lib/images";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
+import { asNudgeDirection, shapeAt } from "../lib/shapes";
 import {
   asImageHandle,
   IMAGE_HANDLES,
@@ -857,6 +864,51 @@ const {
   activeHeaderFooter,
   currentHfSelection,
   applyHeaderFooterEdit,
+  getCaret: () => caret,
+});
+
+// --- shapes and text boxes (SPEC-051) ---------------------------------------
+// Shape selection/handles/toolbar and draw-mode insertion + resize/rotate
+// live in useShapes; the canvas and applyEdit reach them through these
+// returned bindings, the same shape useImages follows.
+const {
+  shapeSelection,
+  shapeHandles,
+  drawGeometry,
+  editingShapeText,
+  clearShapeSelection,
+  handleShapeSelect,
+  handleShapeEditText,
+  shapeHandleStyle,
+  rotationHandleStyle,
+  shapeToolbarStyle,
+  remeasureShapeHandles,
+  handleShapeDelete,
+  handleShapeDuplicate,
+  handleShapeNudge,
+  handleShapeFill,
+  handleShapeOutline,
+  handleShapeRotationInput,
+  handleShapeWrap,
+  handleShapeAltText,
+  handleShapeZOrder,
+  handleGroupSelected,
+  handleUngroupSelected,
+  currentGroupMembers,
+  startShapeResize,
+  startShapeRotate,
+  armShapeDraw,
+  disarmShapeDraw,
+  startShapeDraw,
+  insertTextBoxAction,
+} = useShapes({
+  doc,
+  contentRoot,
+  pageRef,
+  editable,
+  currentSelection,
+  applyEdit,
+  clearCellSelection,
   getCaret: () => caret,
 });
 
@@ -2239,6 +2291,13 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   if (event.button !== 0) {
     return;
   }
+  // Draw mode (SPEC-051 AC-3, AC-4): a gallery pick armed drawGeometry, so
+  // this mousedown draws the shape instead of doing anything else the
+  // canvas would normally do with a click.
+  if (drawGeometry.value) {
+    startShapeDraw(event);
+    return;
+  }
   // Clicking the body while a note is being edited leaves note editing
   // (SPEC-031) — clicks inside the note area stop propagation before here.
   exitNoteEditing();
@@ -2250,6 +2309,12 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   const imageTarget = event.target instanceof Element ? event.target.closest(".doc-image-anchor") : null;
   if (!imageTarget) {
     clearImageSelection();
+  }
+  // Same for a selected shape (SPEC-051) — a click on one is handled by
+  // DocShapeBlock's own @select, which fires afterward.
+  const shapeTarget = event.target instanceof Element ? event.target.closest(".doc-shape-anchor") : null;
+  if (!shapeTarget) {
+    clearShapeSelection();
   }
   // Same for a selected TOC (SPEC-033) — a click on one is handled by
   // DocTocBlock's own @action "select", which fires afterward.
@@ -3376,10 +3441,38 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     clearCellSelection();
     disarmPainter();
     clearImageSelection();
+    clearShapeSelection();
+    disarmShapeDraw();
     clearTocSelection();
     exitHeaderFooterEditing();
     exitNoteEditing();
     return;
+  }
+  if (shapeSelection.value && !editingShapeText.value) {
+    // A selected shape's keyboard interactions (SPEC-051 AC-40..43): a
+    // dedicated keydown path, the same reason images.ts's own image-delete
+    // path is one — a shape click never places a DOM caret/selection inside
+    // the contenteditable region.
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      handleShapeDelete();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      handleShapeDuplicate();
+      return;
+    }
+    const direction =
+      event.key === "ArrowUp" ? "up" :
+      event.key === "ArrowDown" ? "down" :
+      event.key === "ArrowLeft" ? "left" :
+      event.key === "ArrowRight" ? "right" : "";
+    if (direction) {
+      event.preventDefault();
+      handleShapeNudge(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
+      return;
+    }
   }
   if (tocSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
     // Deleting a selected TOC (SPEC-033 AC-16) is the same dedicated
@@ -4344,6 +4437,7 @@ const { pagedViews } = usePaginationView({
   editable,
   cellSelection,
   imageSelection,
+  shapeSelection,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -4719,6 +4813,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
   hoverTableGrid(0, 0);
 }
 
+/** "Insert -> Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
+ * next drag/click on the canvas draws the chosen geometry. */
+function handleShapePick(geometry = "rect") {
+  armShapeDraw(asShapeGeometry(geometry));
+}
+
 // The multilevel-list presets (SPEC-032), absorbed into the Format menu.
 const MULTILEVEL_PRESETS = GALLERY_PRESETS;
 
@@ -5006,6 +5106,17 @@ async function menuPastePlain() {
             testid="insert-image-button"
             :disabled="!editable"
             @select="triggerImageInsert"
+          />
+          <hr class="menu-separator">
+          <div class="menu-section-label">
+            Shape
+          </div>
+          <ShapeGallery @pick="handleShapePick" />
+          <MenuItem
+            label="Text box"
+            testid="insert-textbox-button"
+            :disabled="!editable"
+            @select="insertTextBoxAction"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -5732,6 +5843,26 @@ async function menuPastePlain() {
             />
           </div>
           <div
+            v-if="shapeHandles"
+            class="shape-handles print-exclude"
+            data-testid="shape-handles"
+          >
+            <div
+              v-for="handle in IMAGE_HANDLES"
+              :key="handle"
+              class="shape-resize-handle"
+              :data-testid="`shape-resize-${handle}`"
+              :style="shapeHandleStyle(handle)"
+              @mousedown="startShapeResize($event, handle)"
+            />
+            <div
+              class="shape-rotation-handle"
+              data-testid="shape-rotation-handle"
+              :style="rotationHandleStyle()"
+              @mousedown="startShapeRotate($event)"
+            />
+          </div>
+          <div
             ref="contentRoot"
             class="document-content"
             :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
@@ -5778,6 +5909,8 @@ async function menuPastePlain() {
               :endnote-area="pageView.endnoteArea ?? undefined"
               :print-hidden="printHiddenPages.has(pageIndex)"
               @image-select="handleImageSelect"
+              @shape-select="handleShapeSelect"
+              @shape-edit-text="handleShapeEditText"
               @toc-action="handleTocAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"
               @dblclick-footer="handleDblclickFooter(pageIndex)"
@@ -5961,6 +6094,31 @@ async function menuPastePlain() {
       @wrap="handleImageWrap"
       @options="openImageOptions"
       @delete="handleImageDelete"
+    />
+    <ShapeToolbar
+      v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection)"
+      class="print-exclude"
+      :left="shapeToolbarStyle().left"
+      :top="shapeToolbarStyle().top"
+      :fill="shapeAt(doc, shapeSelection)?.fill || ''"
+      :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
+      :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
+      :outline-dash="shapeAt(doc, shapeSelection)?.outline?.dash || 'solid'"
+      :rotation-deg="shapeAt(doc, shapeSelection)?.rotationDeg ?? 0"
+      :wrap="shapeAt(doc, shapeSelection)?.wrap || 'inline'"
+      :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
+      :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
+      :can-group="false"
+      @fill="handleShapeFill"
+      @outline="handleShapeOutline"
+      @rotation="handleShapeRotationInput"
+      @wrap="handleShapeWrap"
+      @alt-text="handleShapeAltText"
+      @z-order="handleShapeZOrder"
+      @group="handleGroupSelected(currentGroupMembers())"
+      @ungroup="handleUngroupSelected"
+      @delete="handleShapeDelete"
+      @duplicate="handleShapeDuplicate"
     />
     <EditorContextMenu
       v-if="contextMenu.visible"
@@ -6630,6 +6788,38 @@ async function menuPastePlain() {
   border: 1px solid #1a73e8;
   border-radius: 2px;
   background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+/* The selected shape's eight resize handles plus rotation handle (SPEC-051
+   AC-10, AC-16) — same overlay convention as .image-handles. */
+.shape-handles {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.shape-resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  width: 8px;
+  height: 8px;
+  border: 1px solid #1a73e8;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+.shape-rotation-handle {
+  position: absolute;
+  pointer-events: auto;
+  width: 8px;
+  height: 8px;
+  border: 1px solid #1a73e8;
+  border-radius: 50%;
+  background: #fff;
+  cursor: grab;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 

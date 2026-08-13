@@ -9,7 +9,7 @@ import {
   SEVERITY_BY_KIND,
   type AccessibilityIssue,
 } from "./accessibilityCheck";
-import { createDocument, type Block, type DocumentModel, type Image, type Paragraph, type Table } from "./documentModel";
+import { createDocument, type Block, type DocumentModel, type Image, type Paragraph, type Shape, type Table } from "./documentModel";
 
 function paragraph(...runs: Array<[string, Record<string, unknown>?]>): Paragraph {
   return {
@@ -83,6 +83,41 @@ describe("images without alt text (AC-4)", () => {
 
   it("does not flag an image with real alt text", () => {
     expect(withKind(checkAccessibility(doc(image("A chart of quarterly revenue"))), "missing-alt-text")).toHaveLength(0);
+  });
+});
+
+function shape(altText?: string): Shape {
+  return {
+    type: "shape",
+    geometry: "rect",
+    widthCm: 3,
+    heightCm: 2,
+    wrap: "square",
+    altText,
+  };
+}
+
+// SPEC-051 AC-48: no new detection — Shape carries altText in the same field
+// Image does, so checkImageAltText (accessibilityCheck.ts) is reused as-is.
+describe("shapes without alt text (SPEC-051 AC-48, no change to SPEC-043's own detection)", () => {
+  it("flags a shape with no alt text, offering the add-alt-text fix", () => {
+    const issues = withKind(checkAccessibility(doc(shape(undefined))), "missing-alt-text");
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe("error");
+    expect(issues[0].fix).toBe("add-alt-text");
+  });
+
+  it("flags whitespace-only alt text the same as missing", () => {
+    expect(withKind(checkAccessibility(doc(shape("   "))), "missing-alt-text")).toHaveLength(1);
+  });
+
+  it("does not flag a shape with real alt text", () => {
+    expect(withKind(checkAccessibility(doc(shape("A callout pointing at the total"))), "missing-alt-text")).toHaveLength(0);
+  });
+
+  it("an image and a shape missing alt text are both reported, in document order", () => {
+    const issues = withKind(checkAccessibility(doc(image(undefined), shape(undefined))), "missing-alt-text");
+    expect(issues).toHaveLength(2);
   });
 });
 

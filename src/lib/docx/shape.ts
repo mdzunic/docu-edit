@@ -6,7 +6,7 @@
 // touches Shape, per SPEC-024's "no shipped call site changes".
 import type { Block, Paragraph, Shape, ShapeGeometry, ShapeOutline } from "../documentModel";
 import { LINE_GEOMETRIES } from "../documentModel";
-import { firstChildElement, childElements, serializeElement } from "./xml";
+import { firstChildElement, serializeElement } from "./xml";
 import { cmToEmu, emuToCm, cssColorToOoxml, ooxmlColorToCss } from "./units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";

@@ -52,7 +52,7 @@ export interface RenderEntry {
   key: string;
   /** The v-memo array: every value the entry's DOM depends on. */
   memo: unknown[];
-  kind: "paragraph" | "table" | "image" | "break" | "toc" | "marker";
+  kind: "paragraph" | "table" | "image" | "shape" | "break" | "toc" | "marker";
   /** Element tag for paragraph/break/marker entries ("p", "h2", "div"). */
   tag?: string;
   className?: string;
@@ -78,6 +78,10 @@ export interface RenderEntry {
   listDefinitions?: ListDefinition[];
   imageSrc?: string;
   imageSelected?: boolean;
+  /** Index into the document-order drawing list (SPEC-051): the `<index>`
+   * in the shape's ARIA proxy's `data-testid="drawing-<index>"`. */
+  drawingIndex?: number;
+  shapeSelected?: boolean;
   /** Staleness flags a TOC entry's update control reacts to (SPEC-033
    * AC-10, AC-11). */
   tocStaleHeadings?: boolean;

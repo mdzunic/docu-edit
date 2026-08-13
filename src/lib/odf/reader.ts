@@ -37,7 +37,6 @@ import type {
   RunFormatting,
   RunTrackedChanges,
   Section,
-  Shape,
   SourceXml,
   Table,
   TableAlignment,
