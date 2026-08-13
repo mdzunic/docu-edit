@@ -1,13 +1,13 @@
 {
-  "_comment": "SPEC-047 checked-in baseline (AC-24: updated only by an explicit commit, never automatically). Values are medians of 5 runs against scripts/build-spec047-fixture.mjs's fixture, measured in this container, padded a little above the observed range so ordinary run-to-run variance doesn't trip AC-23's 15% relative gate on its own. Three rows still exceed AC-22's absolute ceiling in 'The budgets' table as of this commit: typingLatencyP95Ms (~59ms vs 50ms), mainThreadBlockDuringSaveMs (~188ms vs 100ms) and mainThreadBlockDuringOpenMs (~157ms vs 150ms) — see /lane/implement-summary.md for the profiled root cause of each (media base64 decode + XML string assembly for save, the initial pagination mount for open, both out of this pass's safe-refactor scope) and why they are recorded honestly here rather than inflated to a passing number.",
-  "firstPageMs": 400,
-  "fullyInteractiveMs": 600,
-  "typingLatencyP95Ms": 65,
+  "_comment": "SPEC-047 checked-in baseline (AC-24: updated only by an explicit commit, never automatically). Values are medians of 5 runs against scripts/build-spec047-fixture.mjs's fixture, measured in this container, padded a little above the observed range so ordinary run-to-run variance doesn't trip AC-23's 15% relative gate on its own. This fix-forward round profiled and fixed the root causes behind the two previously-failing rows that were fixable in scope: mainThreadBlockDuringSaveMs (touchDocument's IndexedDB.put() was structured-cloning the whole in-memory model, images included, on every save-flow write — documentStore.ts now persists media as its own record, written only when its array reference actually changed, plus a real macrotask yield before every IndexedDB write and a chunked crc32/document-XML/media-decode save path) and typingLatencyP95Ms (layoutWithNotes' footnote fixed-point loop restarted from empty reserves on every keystroke even when nothing footnote-related had changed — it now seeds from the previous relayout's converged reserves once the document has settled once, converging on pass 0 for the common case). mainThreadBlockDuringOpenMs is still recorded above AC-22's 150ms ceiling (~154-158ms, down from this round's own starting ~156-158ms after a real fix — footnote/endnote parsing during open now yields too): CPU-profiling (Chrome DevTools Profiler, correlated against Long Task entries) traces the remaining longest task to specs/047's own documented exception — the SPEC-028 pagination mount's fused watcher chain (document watcher + hidden-body-blocks watcher + document.fonts.ready + viewport-range watcher, chained with no macrotask yield between them), which the spec explicitly excludes from this spec's scope to redesign. See /lane/implement-summary.md for the full profiling trail.",
+  "firstPageMs": 420,
+  "fullyInteractiveMs": 560,
+  "typingLatencyP95Ms": 35,
   "scrollFps": 45,
-  "mainThreadBlockDuringSaveMs": 210,
-  "mainThreadBlockDuringScrollMs": 120,
-  "mainThreadBlockDuringTypingMs": 70,
-  "mainThreadBlockDuringOpenMs": 175,
-  "saveMs": 1500,
-  "heapAfterSettleMB": 35
+  "mainThreadBlockDuringSaveMs": 90,
+  "mainThreadBlockDuringScrollMs": 90,
+  "mainThreadBlockDuringTypingMs": 15,
+  "mainThreadBlockDuringOpenMs": 158,
+  "saveMs": 1100,
+  "heapAfterSettleMB": 30
 }
