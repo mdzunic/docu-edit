@@ -400,19 +400,34 @@ export function layoutWithNotes(
 
   if (footnoteRefs.length > 0) {
     let reserves: number[] = [];
+    // SPEC-047 AC-6's typing-latency budget: with hundreds of footnotes,
+    // this fixed-point loop's assign+plan pass is a full O(document) walk,
+    // run on every keystroke via usePagination's synchronous relayout.
+    // `converged` tracks whether the loop broke because `plan`/`refPages`
+    // already agreed with `pages` (computed against it at the top of the
+    // very iteration that broke) — in that case the "re-plan against the
+    // final pages" pass below would recompute the identical result from the
+    // identical inputs. Only a loop that exhausts MAX_NOTE_LAYOUT_PASSES
+    // without converging leaves `pages` (reassigned at the bottom of the
+    // last iteration) ahead of the `refPages`/`plan` computed at that
+    // iteration's top, which is what the final pass is actually for.
+    let converged = false;
     for (let pass = 0; pass < MAX_NOTE_LAYOUT_PASSES; pass += 1) {
       refPages = assignRefsToPages(model, pages, footnoteRefs, lineOffsetsOf);
       plan = planFootnoteAreas(model, pages, footnoteRefs, refPages, noteMetrics);
       if (sameReserves(plan.reserves, reserves)) {
+        converged = true;
         break;
       }
       reserves = plan.reserves;
       pages = paginate(model, metrics, (page) => reserves[page] ?? 0, isHidden);
     }
-    // The last pagination may have shifted references: the rendered areas
-    // must match the final pages, so re-plan once against them.
-    refPages = assignRefsToPages(model, pages, footnoteRefs, lineOffsetsOf);
-    plan = planFootnoteAreas(model, pages, footnoteRefs, refPages, noteMetrics);
+    if (!converged) {
+      // The last pagination may have shifted references: the rendered areas
+      // must match the final pages, so re-plan once against them.
+      refPages = assignRefsToPages(model, pages, footnoteRefs, lineOffsetsOf);
+      plan = planFootnoteAreas(model, pages, footnoteRefs, refPages, noteMetrics);
+    }
   }
 
   const allPages = [...pages];
