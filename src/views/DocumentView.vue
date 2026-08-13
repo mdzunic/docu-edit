@@ -3903,6 +3903,31 @@ const paginationPages = pagination.pages;
 const paginationBusy = pagination.busy;
 const paginationState = pagination.state;
 
+// --- open progress indicator (SPEC-047 AC-3..5): shown from this
+// document's mount until pagination first reports settled, distinct from
+// paginationBusy above (which reappears on every later edit-triggered
+// relayout too — this one only ever fires once per document open). ------
+const documentOpening = ref(true);
+watch(documentId, () => {
+  documentOpening.value = true;
+});
+watch(paginationState, (state) => {
+  if (state === "clean") {
+    documentOpening.value = false;
+  }
+});
+onMounted(() => {
+  // A document whose pagination never needs to measure (nothing realized
+  // yet misses the cache) never transitions through "measuring", so the
+  // watcher above never observes a change to react to — checked once,
+  // after the initial schedule() call above has had a chance to run.
+  void nextTick(() => {
+    if (paginationState.value === "clean") {
+      documentOpening.value = false;
+    }
+  });
+});
+
 // --- note numbering (SPEC-031 AC-7..9, AC-17..20) ---------------------------
 // Displayed note numbers, derived fresh from mark order and the numbering
 // settings on every model change — never persisted, like list numbering.
