@@ -77,6 +77,24 @@ async function canvasPixelAt(
   return { r, g, b, a };
 }
 
+/** Whether ANY pixel on the canvas immediately preceding `proxy` is opaque
+ * (alpha > 0) — used where a single sampled point can't reliably land on a
+ * thin painted line (AC-15's outline-removal check). */
+async function canvasHasOpaquePixel(proxy: Locator): Promise<boolean> {
+  const canvas = proxy.locator("xpath=preceding-sibling::canvas[1]");
+  return canvas.evaluate((el) => {
+    const canvasEl = el as HTMLCanvasElement;
+    const ctx = canvasEl.getContext("2d")!;
+    const data = ctx.getImageData(0, 0, canvasEl.width, canvasEl.height).data;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 0) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
 /** Registers the shared AC-63/AC-64 assertions against one fixture — the
  * two fixtures are structurally identical (same geometries, same document
  * order, same alt text), so this runs once per format instead of
@@ -209,6 +227,119 @@ test.describe("SPEC-051 — interactive shape editing", () => {
     await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
   });
 
+/** Groups the two insert-order-0/1 shapes and returns their locators,
+ * left-to-right, with the group selected (leftShape single-selected, per
+ * handleGroupSelected's own "leaves the group's first member selected"
+ * contract — so leftShape is also what the resize/rotate handles measure
+ * against). */
+async function groupFirstTwoShapes(page: Page): Promise<{ leftShape: Locator; rightShape: Locator }> {
+  const [first, second] = [drawingAt(page, 0), drawingAt(page, 1)];
+  const firstBox = await first.boundingBox();
+  const secondBox = await second.boundingBox();
+  if (!firstBox || !secondBox) {
+    throw new Error("a drawing has no bounding box");
+  }
+  const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+  await leftShape.click();
+  await rightShape.click({ modifiers: ["Shift"] });
+  await page.getByTestId("shape-group-button").click();
+  await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+  return { leftShape, rightShape };
+}
+
+test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", () => {
+  test("dragging a grouped member moves every member by the same delta, sizes untouched (AC-36)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    const { leftShape, rightShape } = await groupFirstTwoShapes(page);
+
+    const beforeA = await leftShape.boundingBox();
+    const beforeB = await rightShape.boundingBox();
+    if (!beforeA || !beforeB) {
+      throw new Error("a group member has no bounding box");
+    }
+    await leftShape.hover();
+    await page.mouse.down();
+    await page.mouse.move(beforeA.x + beforeA.width / 2 + 80, beforeA.y + beforeA.height / 2 + 60, { steps: 10 });
+    await page.mouse.up();
+
+    const afterA = await leftShape.boundingBox();
+    const afterB = await rightShape.boundingBox();
+    if (!afterA || !afterB) {
+      throw new Error("a group member has no bounding box after the drag");
+    }
+    // Both members move by the same on-screen delta — relative positions
+    // and sizes are preserved.
+    expect(afterA.x - beforeA.x).toBeCloseTo(afterB.x - beforeB.x, 0);
+    expect(afterA.y - beforeA.y).toBeCloseTo(afterB.y - beforeB.y, 0);
+    expect(afterA.x).toBeGreaterThan(beforeA.x + 40);
+    expect(afterA.width).toBeCloseTo(beforeA.width, 0);
+    expect(afterB.width).toBeCloseTo(beforeB.width, 0);
+  });
+
+  test("dragging a resize handle scales every member about the group's bounding-box centre (AC-37)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    const { leftShape, rightShape } = await groupFirstTwoShapes(page);
+
+    const beforeA = await leftShape.boundingBox();
+    const beforeB = await rightShape.boundingBox();
+    const handle = page.getByTestId("shape-resize-se");
+    const handleBox = await handle.boundingBox();
+    if (!beforeA || !beforeB || !handleBox) {
+      throw new Error("missing bounding box");
+    }
+    await handle.hover();
+    await page.mouse.down();
+    await page.mouse.move(
+      handleBox.x + handleBox.width / 2 + 60,
+      handleBox.y + handleBox.height / 2 + 40,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+
+    const afterA = await leftShape.boundingBox();
+    const afterB = await rightShape.boundingBox();
+    if (!afterA || !afterB) {
+      throw new Error("a group member has no bounding box after the resize");
+    }
+    // Both members grow — the resize applies to the whole group, not just
+    // the member whose own handle was dragged.
+    expect(afterA.width).toBeGreaterThan(beforeA.width + 5);
+    expect(afterB.width).toBeGreaterThan(beforeB.width + 5);
+  });
+
+  test("dragging the rotation handle rotates every member (AC-38)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    await groupFirstTwoShapes(page);
+
+    const handle = page.getByTestId("shape-rotation-handle");
+    const handleBox = await handle.boundingBox();
+    if (!handleBox) {
+      throw new Error("rotation handle has no bounding box");
+    }
+    await handle.hover();
+    await page.mouse.down();
+    // Sweep the handle a quarter-turn around the shape's centre.
+    await page.mouse.move(handleBox.x + 80, handleBox.y + 80, { steps: 8 });
+    await page.mouse.up();
+
+    // Both members carry a live rotation — read it back off the model via
+    // the shape toolbar's rotation input, which reflects the currently
+    // selected (first) member; the other member's own rotation is asserted
+    // at the unit level (rotateGroup's own tests) since only one member is
+    // ever individually selected at a time in this UI.
+    const rotationInput = page.getByTestId("shape-rotation");
+    await expect(rotationInput).toBeVisible();
+    const rotation = Number(await rotationInput.inputValue());
+    expect(rotation).not.toBe(0);
+  });
+});
+
   test("an unfilled, textless shape's interior is click-through, never selectable by bounding box (AC-11)", async ({
     page,
   }) => {
@@ -264,5 +395,82 @@ test.describe("SPEC-051 — interactive shape editing", () => {
     }
     expect(after.x).toBeGreaterThan(before.x + 40);
     expect(after.y).toBeGreaterThan(before.y + 40);
+  });
+
+  test("Insert -> Text box lands already in text-editing mode with the caret inside (AC-9, AC-51)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("insert-textbox-button").click();
+    const proxy = drawingAt(page, 0);
+    const text = proxy.locator('[data-testid="shape-text"]');
+    await expect(text).toHaveAttribute("contenteditable", "true");
+    await page.keyboard.type("New text box");
+    await expect(text).toContainText("New text box");
+    // block.text is now populated, so the proxy's role switches from img
+    // to group (AC-51).
+    await expect(proxy).toHaveAttribute("role", "group");
+  });
+
+  test("removing a Line's outline stops it painting (AC-15)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-line").click();
+    await content(page).click({ position: { x: 300, y: 300 } });
+    const proxy = drawingAt(page, 0);
+    await expect(canvasHasOpaquePixel(proxy)).resolves.toBe(true);
+    await page.getByTestId("shape-outline-none").click();
+    await expect(canvasHasOpaquePixel(proxy)).resolves.toBe(false);
+  });
+
+  test("the overflow indicator shows only while a shape with clipped text is selected (AC-22, AC-23)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    const proxy = drawingAt(page, 0);
+    await proxy.dblclick();
+    const text = proxy.locator('[data-testid="shape-text"]');
+    await expect(text).toHaveAttribute("contenteditable", "true");
+    // 15 short lines overflow a 3x2cm box (matches AC-21's own coverage).
+    for (let i = 0; i < 15; i++) {
+      await page.keyboard.type(`line ${i}`);
+      await page.keyboard.press("Enter");
+    }
+    const indicator = page.getByTestId("shape-overflow-indicator");
+    await expect(indicator).toBeVisible();
+    // Deselecting hides it even though the text is still clipped (AC-23).
+    await content(page).click({ position: { x: 550, y: 550 } });
+    await expect(indicator).toHaveCount(0);
+  });
+
+  test("z-order commands change which shape paints on top (AC-29..33)", async ({ page }) => {
+    await createDocument(page);
+    // Two overlapping filled shapes so one visibly occludes the other.
+    await insertShapeAt(page, "rect", 400, 300);
+    await insertShapeAt(page, "rect", 430, 300);
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    // The actual pixel overlap between the two shapes' boxes.
+    const overlapPoint = {
+      x: Math.max(firstBox.x, secondBox.x) + 5,
+      y: Math.max(firstBox.y, secondBox.y) + 5,
+    };
+    const topmostTestId = () =>
+      page.evaluate(
+        (p) => document.elementFromPoint(p.x, p.y)?.closest("[data-testid^='drawing-']")?.getAttribute("data-testid") ?? null,
+        overlapPoint,
+      );
+    // The later-inserted shape (second) paints on top by default (higher
+    // zOrder from insertion order).
+    await expect.poll(topmostTestId).toBe(await second.getAttribute("data-testid"));
+    // Select the bottom shape and send it to the front.
+    await first.click({ position: { x: 5, y: 5 }, force: true });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await page.getByTestId("shape-zorder").selectOption("front");
+    await expect.poll(topmostTestId).toBe(await first.getAttribute("data-testid"));
   });
 });
