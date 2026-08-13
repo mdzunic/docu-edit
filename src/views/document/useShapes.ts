@@ -39,6 +39,7 @@ import {
   duplicateShape,
   ensureShapeTextFrame,
   freshGroupOrdinal,
+  groupBoundingBoxCm,
   groupMembers,
   groupShapes,
   insertShape,
@@ -347,9 +348,27 @@ export function useShapes(deps: ShapesDeps) {
   /** Armed by picking a gallery entry (AC-3): the geometry the next
    * drag/click on the canvas draws, or "textbox" — cleared once drawn. */
   const drawGeometry = ref<ShapeGeometry | "textbox" | null>(null);
-  let resizeDrag: { location: ShapeLocation; handle: string; startClientX: number; startClientY: number; start: { widthCm: number; heightCm: number }; el: HTMLElement } | null = null;
+  let resizeDrag: {
+    location: ShapeLocation;
+    handle: string;
+    startClientX: number;
+    startClientY: number;
+    start: { widthCm: number; heightCm: number };
+    el: HTMLElement;
+    groupOrdinal: number | undefined;
+    currentWidthCm: number;
+    currentHeightCm: number;
+  } | null = null;
   let resizeDragMoved = false;
-  let rotateDrag: { location: ShapeLocation; centerClientX: number; centerClientY: number; startRotation: number; startAngle: number } | null = null;
+  let rotateDrag: {
+    location: ShapeLocation;
+    centerClientX: number;
+    centerClientY: number;
+    startRotation: number;
+    startAngle: number;
+    groupOrdinal: number | undefined;
+    appliedDeg: number;
+  } | null = null;
   let drawDrag: { startClientX: number; startClientY: number; anchor: CaretPosition; anchorLeft: number; anchorTop: number } | null = null;
 
   function clearShapeSelection() {
@@ -749,6 +768,9 @@ export function useShapes(deps: ShapesDeps) {
       startClientY: event.clientY,
       start: { widthCm: shape.widthCm, heightCm: shape.heightCm },
       el,
+      groupOrdinal: shape.groupOrdinal,
+      currentWidthCm: shape.widthCm,
+      currentHeightCm: shape.heightCm,
     };
     window.addEventListener("mousemove", handleShapeResizeMove);
     window.addEventListener("mouseup", finishShapeResize);
@@ -763,7 +785,15 @@ export function useShapes(deps: ShapesDeps) {
     const deltaXCm = (event.clientX - drag.startClientX) * CM_PER_PX;
     const deltaYCm = (event.clientY - drag.startClientY) * CM_PER_PX;
     const size = resizedImageSize(drag.start, asImageHandle(drag.handle), deltaXCm, deltaYCm, event.shiftKey);
-    previewImageSize(drag.el, size.widthCm, size.heightCm);
+    drag.currentWidthCm = size.widthCm;
+    drag.currentHeightCm = size.heightCm;
+    // A grouped member previews only on release, same as a grouped move
+    // (finishShapeResize's resizeGroup scales every member about the
+    // group's own bounding-box centre — live-previewing just the dragged
+    // element here would show the rest of the group left behind).
+    if (drag.groupOrdinal === undefined) {
+      previewImageSize(drag.el, size.widthCm, size.heightCm);
+    }
   }
 
   function finishShapeResize() {
@@ -774,10 +804,36 @@ export function useShapes(deps: ShapesDeps) {
     if (!drag || !resizeDragMoved) {
       return;
     }
-    const widthCm = parseFloat(drag.el.style.width) || drag.start.widthCm;
-    const heightCm = parseFloat(drag.el.style.height) || drag.start.heightCm;
+    if (drag.groupOrdinal !== undefined) {
+      const model = doc.value;
+      const root = contentRoot.value as HTMLElement | null;
+      if (!model || !root) {
+        return;
+      }
+      const selection = currentSelection(root) ?? caretSelection(getCaret() ?? documentStart());
+      const sx = drag.start.widthCm > 0 ? drag.currentWidthCm / drag.start.widthCm : 1;
+      const sy = drag.start.heightCm > 0 ? drag.currentHeightCm / drag.start.heightCm : 1;
+      const bbox = groupBoundingBoxCm(model, drag.groupOrdinal);
+      // Scale about the group's own bounding-box centre (AC-37): translate
+      // that centre to the origin, scale from there (resizeGroup's own
+      // formula scales offsets from whatever origin is current), then
+      // translate back — the centre lands exactly where it started.
+      let result: CommandResult;
+      if (bbox) {
+        const cx = bbox.leftCm + bbox.widthCm / 2;
+        const cy = bbox.topCm + bbox.heightCm / 2;
+        const centred = moveGroup(model, selection, drag.groupOrdinal, -cx, -cy).model;
+        const scaled = resizeGroup(centred, selection, drag.groupOrdinal, sx, sy).model;
+        result = moveGroup(scaled, selection, drag.groupOrdinal, cx, cy);
+      } else {
+        result = resizeGroup(model, selection, drag.groupOrdinal, sx, sy);
+      }
+      applyEdit(result, selection, "resize group");
+      void nextTick().then(remeasureShapeHandles);
+      return;
+    }
     applyShapeEdit(
-      (model, selection) => setShapeSize(model, selection, drag.location, widthCm, heightCm),
+      (model, selection) => setShapeSize(model, selection, drag.location, drag.currentWidthCm, drag.currentHeightCm),
       "resize shape",
     );
     void nextTick().then(remeasureShapeHandles);
@@ -823,6 +879,7 @@ export function useShapes(deps: ShapesDeps) {
     if (!shape || shape.wrap === "inline" || !(el instanceof HTMLElement)) {
       return;
     }
+    event.preventDefault();
     const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
     moveDragMoved = false;
@@ -941,7 +998,15 @@ export function useShapes(deps: ShapesDeps) {
     const centerClientX = pageRect.left + geometry.left + geometry.width / 2;
     const centerClientY = pageRect.top + geometry.top + geometry.height / 2;
     const startAngle = Math.atan2(event.clientY - centerClientY, event.clientX - centerClientX);
-    rotateDrag = { location, centerClientX, centerClientY, startRotation: shape.rotationDeg ?? 0, startAngle };
+    rotateDrag = {
+      location,
+      centerClientX,
+      centerClientY,
+      startRotation: shape.rotationDeg ?? 0,
+      startAngle,
+      groupOrdinal: shape.groupOrdinal,
+      appliedDeg: 0,
+    };
     window.addEventListener("mousemove", handleShapeRotateMove);
     window.addEventListener("mouseup", finishShapeRotate);
   }
@@ -953,6 +1018,22 @@ export function useShapes(deps: ShapesDeps) {
     }
     const angle = Math.atan2(event.clientY - drag.centerClientY, event.clientX - drag.centerClientX);
     const deltaDeg = ((angle - drag.startAngle) * 180) / Math.PI;
+    if (drag.groupOrdinal !== undefined) {
+      const model = doc.value;
+      const root = contentRoot.value as HTMLElement | null;
+      if (!model || !root) {
+        return;
+      }
+      const selection = currentSelection(root) ?? caretSelection(getCaret() ?? documentStart());
+      // rotateGroup adds a delta to each member's CURRENT rotationDeg, so
+      // each mousemove applies only the increment since the last one —
+      // applying the full deltaDeg fresh every time would compound.
+      const increment = deltaDeg - drag.appliedDeg;
+      drag.appliedDeg = deltaDeg;
+      const result = rotateGroup(model, selection, drag.groupOrdinal, increment);
+      applyEdit(result, selection, "rotate group");
+      return;
+    }
     const next = normalizeRotationDeg(drag.startRotation + deltaDeg);
     applyShapeEdit(
       (model, selection) => setShapeRotation(model, selection, drag.location, next),
@@ -1120,8 +1201,10 @@ export function useShapes(deps: ShapesDeps) {
     disarmShapeDraw();
     const inserted = shapeInsertedLocation(result.model, anchorInfo.anchor);
     if (inserted) {
-      shapeSelection.value = inserted;
-      void nextTick().then(remeasureShapeHandles);
+      // AC-9: land already in text-editing mode with the caret inside,
+      // matching the double-click gesture (handleShapeEditText also
+      // populates Shape.text, which AC-51's role="group" depends on).
+      handleShapeEditText(inserted.section, inserted.block);
     }
   }
 
