@@ -431,7 +431,16 @@ export function shapeDisplayStyle(shape: Shape): Record<string, string> {
     style.position = "absolute";
     style.left = `${shape.offsetXCm ?? 0}cm`;
     style.top = `${shape.offsetYCm ?? 0}cm`;
-    style.zIndex = shape.wrap === "behind" ? "0" : "5";
+    // Base tier matches Image's own behind/in-front split; the document-wide
+    // zOrder (reorderShapeZ assigns a dense 0..N-1 across every drawing,
+    // shapes and images alike) breaks ties *within* a tier so bring-to-
+    // front/forward/send-backward/back (AC-29..33) actually change the
+    // painted stacking order, not just the model. The two tiers are kept far
+    // enough apart that no realistic document's zOrder range can cross
+    // them — "behind" must always paint under the text regardless of how
+    // high its zOrder climbs relative to an "in front" shape's own.
+    const order = shape.zOrder ?? 0;
+    style.zIndex = String(shape.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
 }
