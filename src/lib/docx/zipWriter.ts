@@ -38,12 +38,15 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+function crc32Range(crc: number, bytes: Uint8Array, start: number, end: number): number {
+  for (let i = start; i < end; i++) {
+    crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
   }
-  return (crc ^ 0xffffffff) >>> 0;
+  return crc;
+}
+
+export function crc32(bytes: Uint8Array): number {
+  return (crc32Range(0xffffffff, bytes, 0, bytes.length) ^ 0xffffffff) >>> 0;
 }
 
 /** How long the entries loop below may run before it must yield (SPEC-047
@@ -53,6 +56,31 @@ export function crc32(bytes: Uint8Array): number {
  * as a microtask, not a real yield back to the browser's input/render
  * queue, so a few hundred entries in a row still reads as one long task). */
 const SAVE_YIELD_BUDGET_MS = 4;
+
+// A single entry can itself be the long task: `word/document.xml` for a
+// 300-page fixture is several MB on its own, and CRC-32's tight per-byte
+// loop has nowhere to yield mid-entry — the entries-loop check above only
+// ever fires *between* entries. Chunked in ~1MB slices with the same
+// time-budgeted yield, so one huge entry reads as several short tasks
+// instead of the one multi-hundred-ms task profiling this fixture's save
+// actually found (crc32 was the single largest self-time contributor).
+const CRC_CHUNK_BYTES = 1_000_000;
+
+async function crc32Chunked(bytes: Uint8Array): Promise<number> {
+  let crc = 0xffffffff;
+  let offset = 0;
+  let lastYield = performance.now();
+  while (offset < bytes.length) {
+    const end = Math.min(bytes.length, offset + CRC_CHUNK_BYTES);
+    crc = crc32Range(crc, bytes, offset, end);
+    offset = end;
+    if (offset < bytes.length && performance.now() - lastYield > SAVE_YIELD_BUDGET_MS) {
+      await yieldToMainThread();
+      lastYield = performance.now();
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
 
 async function deflateRaw(data: Uint8Array): Promise<Uint8Array> {
   const stream = new ReadableStream<Uint8Array>({
@@ -147,7 +175,7 @@ export async function zip(entries: ZipEntryInput[]): Promise<Uint8Array> {
       nameBytes,
       compressed,
       compressionMethod: entry.store ? COMPRESSION_STORE : COMPRESSION_DEFLATE,
-      crc: crc32(entry.data),
+      crc: await crc32Chunked(entry.data),
       uncompressedSize: entry.data.length,
       localHeaderOffset: out.length,
     };

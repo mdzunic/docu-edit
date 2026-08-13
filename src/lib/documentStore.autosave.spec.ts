@@ -94,7 +94,11 @@ describe("commitDocument", () => {
     expect(record.lastModified).toBeGreaterThan(before);
     expect(record.caret).toEqual({ section: 0, block: 1, offset: 7 });
     expect(record.scroll).toBe(33);
-    expect(putRecord.mock.calls.at(-1)![0]).toBe(record);
+    // Not .toBe(record): commitDocument now writes a media-stripped shell
+    // (SPEC-047 AC-15 — putRecord()'s structured clone must not carry the
+    // in-memory model's `media` array), so the object identity changes even
+    // though every field but `model.media` matches the in-memory record.
+    expect(putRecord.mock.calls.at(-1)![0]).toEqual({ ...record, model: { ...record.model, media: [] } });
     expect(deleteRecord).toHaveBeenCalledWith("draft:doc-5");
   });
 
