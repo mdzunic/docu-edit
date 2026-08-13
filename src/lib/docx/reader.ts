@@ -1890,13 +1890,13 @@ function parseNoteSettings(
  * marker elements inside the note text are Word's rendering of the note's
  * own number and are dropped: the model derives numbers from mark order,
  * and the writer re-emits a fresh marker run on save. */
-function parseNotesPart(
+async function parseNotesPart(
   partPath: string,
   parts: Map<string, Uint8Array>,
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
   kind: NoteKind,
-): { notes: NoteContent[]; media: MediaPart[] } {
+): Promise<{ notes: NoteContent[]; media: MediaPart[] }> {
   const raw = parts.get(partPath);
   if (!raw) {
     return { notes: [], media: [] };
@@ -1928,7 +1928,17 @@ function parseNotesPart(
   const refTag = kind === "footnote" ? "footnoteRef" : "endnoteRef";
   const notes: NoteContent[] = [];
   const media: MediaPart[] = [];
+  // SPEC-047 AC-16's ≤150ms main-thread-block-during-open ceiling: unlike
+  // the body walk above, this loop had no `await` of its own — a fixture
+  // with hundreds of footnotes/endnotes (each parsed exactly like a body
+  // paragraph) read as one long synchronous task on top of the chunked body
+  // walk's own budget.
+  let lastNoteYield = performance.now();
   for (const noteEl of childElements(root, WORD_NAMESPACE, tag)) {
+    if (performance.now() - lastNoteYield > 4) {
+      await yieldToMainThread();
+      lastNoteYield = performance.now();
+    }
     if (wordAttr(noteEl, "type") !== null) {
       continue; // separator / continuationSeparator / continuationNotice
     }
@@ -2307,7 +2317,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       continue;
     }
     const partPath = resolvePartPath(mainPartPath, rel.target);
-    const parsed = parseNotesPart(partPath, parts, styleCatalog, numberingCatalog, kind);
+    const parsed = await parseNotesPart(partPath, parts, styleCatalog, numberingCatalog, kind);
     notes.push(...parsed.notes);
     for (const part of parsed.media) {
       mediaById.set(part.mediaId, part);
