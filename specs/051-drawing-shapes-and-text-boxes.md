@@ -194,6 +194,86 @@ above in front, and absent means zero. Writers map it to
 `wp:anchor/@relativeHeight` and to `draw:frame/@draw:z-index`, which are the
 same concept in both formats.
 
+### Default position — when offsets are absent
+`offsetXCm`/`offsetYCm` absent means one thing, never "recentre" or "undefined":
+**the default the shipped writer already emits** for a floating object —
+`src/lib/docx/drawing.ts:237-238` writes `wp:positionH @relativeFrom="column"`
+with `wp:posOffset 0` and `wp:positionV @relativeFrom="paragraph"` with
+`wp:posOffset 0`. So the canonical default is:
+
+```
+relativeToH: "column", relativeToV: "paragraph", offsetXCm: 0, offsetYCm: 0
+```
+
+This default is identical for **every** non-inline wrap mode — `square`,
+`topAndBottom`, `behind` and `infront` all mean "top of the anchor column at
+the anchor paragraph" when no explicit position is present. Word or Writer
+files specify positions explicitly, so a `behind` object that was centered on
+the page arrives with its own `posOffset`/`draw:frame` values and is preserved
+verbatim; the default only ever applies to reader input that omits a position
+and to objects we insert. `"inline"` is the exception: it has no anchor, so it
+**ignores** `offsetXCm`, `offsetYCm`, `relativeToH` and `relativeToV`
+entirely — `wp:inline` carries none, and the writer discards them rather than
+writing an anchor around your offsets.
+
+Keeping one default for all four anchored modes matters for round-trip
+honesty: because opening a document never synthesises offsets, and we never
+store a value for what the file didn't have, a no-edit round trip of a
+position-less anchored object stays structurally equal.
+
+### Re-anchoring — "the nearest paragraph"
+Re-anchor when a drag crosses a paragraph boundary; horizontal position is
+**irrelevant**, because anchoring is a vertical relationship in both formats
+(`relativeFrom="paragraph"` and `text:anchor-type="paragraph"`). The decision
+is deterministic:
+
+- Compute the object's **vertical centre** `cy = top + heightCm / 2` in page
+  coordinates at its dragged position.
+- A candidate paragraph's vertical span is `[top, bottom]`. Score it by
+  `dist = max(top − cy, 0, cy − bottom)` — zero when the centre falls inside the
+  paragraph, otherwise the distance to the nearer edge.
+- The nearest paragraph is the lowest-scoring one; **ties go to the earlier
+  paragraph in document order** (lower block index), so the result never
+  depends on iteration order.
+- Candidate paragraphs are only those **at the same container level** as the
+  object's current anchor — a shape anchored at body level never re-anchors
+  into a paragraph inside a table, and vice versa. If no candidate exists the
+  object keeps its current anchor.
+
+Re-anchoring moves the block into that paragraph's position in the block list.
+It does **not** reset the offsets: after re-anchoring, `offsetYCm` is adjusted
+by the delta between the old and new paragraph tops so the object stays exactly
+where the mouse dropped it (Word's behaviour). `relativeToH`/`relativeToV` are
+unchanged. The anchor marker (AC-7) moves to the new paragraph to show the
+lineage.
+
+### Grouping — move, resize, rotate
+Members of a group are the `Shape`/`Image` blocks sharing a `groupOrdinal`;
+the group's bounding box is **derived** from its members' current positions —
+there is no stored group box. Group members are always floating: grouping an
+`inline` member first converts it to `square` so every member has anchors and
+offsets to express a relative position.
+
+- **Move** — dragging the group adds the same `(dx, dy)` to every member's
+  `offsetXCm`/`offsetYCm`. Sizes are untouched.
+- **Resize** — scaling about the group's bounding-box centre, per axis.
+  Non-Shift resizing scales the X and Y axes independently; Shift makes it
+  uniform (`s = newBox / oldBox` on the binding axis). For every member,
+  both its **dimensions and its offsets** are scaled by that axis's factor:
+  `widthCm *= s_x`, `heightCm *= s_y`, `offsetXCm *= s_x`,
+  `offsetYCm *= s_y` (measured against the same reference). So members keep
+  their *relative size* to the group and their *relative position* to the
+  centre — the group is "one unit", and that is what AC-23's "preserves its
+  members' relative positions" is defined to mean. Member `rotationDeg` is
+  unchanged by a resize.
+- **Rotate** — rotating the group by `Δ` adds `Δ` to each member's
+  `rotationDeg` and leaves its centre fixed relative to the group centre; the
+  group's painted outline and its members enter their new orientations
+  together.
+
+Ungrouping clears each member's `groupOrdinal`; positions, sizes and rotations
+already on the members are kept, so a group ungroups without any visual jump.
+
 ### Selection and hit testing
 A click selects the **topmost object whose painted region contains the point**,
 where painted region means:
