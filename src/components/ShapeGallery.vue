@@ -52,35 +52,37 @@ function itemsFor(group = "") {
 .shape-gallery {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem;
+  gap: 0.1875rem;
+  padding: 0.1875rem;
   min-width: 220px;
 }
 
 .shape-gallery-group-label {
-  font-size: 0.7rem;
+  font-size: 0.5625rem;
   font-weight: 600;
   text-transform: uppercase;
   color: #5f6368;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.0625rem;
 }
 
 .shape-gallery-items {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.25rem;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.125rem;
 }
 
 .shape-gallery-item {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.375rem 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1.1;
+  padding: 0.0625rem 0.3rem;
   border: 1px solid #dadce0;
   border-radius: 4px;
   background: #fff;
   color: #202124;
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
 }
 
 .shape-gallery-item:hover {
