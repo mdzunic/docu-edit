@@ -1,23 +1,23 @@
-// Live word count and the statistics dialog (SPEC-036). Owns a per-block
-// count cache the same way usePagination.ts owns its measurement cache (a
-// plain `WeakMap<Block, CountStats>` local to this composable instance) so
-// a keystroke re-tokenizes only the paragraph it touched (AC-26). The
-// document-wide total recomputes on a throttle (AC-2: never delays input);
-// the selection-aware count recomputes synchronously on every selection
-// change (DocumentView's updateCaretStatus calls setSelection alongside its
-// other per-selection state, cheap since a selection is normally small).
+// Live word count and the statistics dialog (SPEC-036). The document-wide
+// total and the statistics dialog both compute via a worker (SPEC-047
+// AC-12: wordCountClient.ts) rather than the per-block WeakMap cache this
+// composable used to own directly — a worker round trip loses cross-call
+// object identity anyway (postMessage's structured clone mints fresh
+// objects every call), so there is nothing left for a local cache to hit;
+// the worker recomputes the walk fresh each time instead. The document-wide
+// total recomputes on a throttle (AC-2: never delays input); the
+// selection-aware count recomputes synchronously on every selection change
+// (DocumentView's updateCaretStatus calls setSelection alongside its other
+// per-selection state) — bounded by selection size, not document size, so
+// it stays on the main thread rather than paying a worker round trip for
+// something already cheap.
 import { computed, ref, watch } from "vue";
 import type { Ref } from "vue";
 import { isCollapsed, type ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { Block, DocumentModel } from "../../lib/documentModel";
-import {
-  documentBodyStats,
-  documentStats,
-  emptyCountStats,
-  selectionWordCount,
-  type CountStats,
-} from "../../lib/wordCount";
+import type { DocumentModel } from "../../lib/documentModel";
+import { emptyCountStats, selectionWordCount, type CountStats } from "../../lib/wordCount";
+import { computeDocumentStats } from "../../lib/workers/wordCountClient";
 
 /** Coalesces bursts of recomputation into at most one run per window, with
  * both a leading run (the first change after a quiet period lands right
@@ -59,8 +59,6 @@ export interface WordCountDeps {
 export function useWordCount(deps: WordCountDeps) {
   const { doc, onUnmount } = deps;
 
-  const cache = new WeakMap<Block, CountStats>();
-
   const liveWordCount = ref(0);
   /** The visible/hidden status text's last announced word count — a
    * screen-reader-facing region only re-announces when its text actually
@@ -69,9 +67,20 @@ export function useWordCount(deps: WordCountDeps) {
    * "material" (AC-28) without any separate threshold bookkeeping. */
   const announcement = ref("0 words");
 
-  function recomputeLiveCount() {
+  // Guards against an in-flight worker reply landing after a later request
+  // has already superseded it (a burst of edits can have more than one
+  // count in flight at once) — only the most recently issued request's
+  // reply is ever applied.
+  let liveRequestToken = 0;
+
+  async function recomputeLiveCount() {
     const model = doc.value;
-    const words = model ? documentBodyStats(model, cache).words : 0;
+    const token = ++liveRequestToken;
+    const stats = model ? await computeDocumentStats(model, { includeNotes: false }) : emptyCountStats();
+    if (token !== liveRequestToken) {
+      return;
+    }
+    const words = stats.words;
     if (words === liveWordCount.value) {
       return;
     }
@@ -79,12 +88,14 @@ export function useWordCount(deps: WordCountDeps) {
     announcement.value = `${words} ${words === 1 ? "word" : "words"}`;
   }
 
-  const throttle = createThrottle(recomputeLiveCount, THROTTLE_MS);
+  const throttle = createThrottle(() => {
+    void recomputeLiveCount();
+  }, THROTTLE_MS);
 
   // The first count (opening/creating a document) is visible immediately
   // rather than waiting out the throttle window; every later change goes
   // through the throttle.
-  recomputeLiveCount();
+  void recomputeLiveCount();
   watch(doc, () => {
     throttle.schedule();
   });
@@ -136,18 +147,31 @@ export function useWordCount(deps: WordCountDeps) {
    * dialog reopens, matching TocOptionsDialog/PageSetupDialog's own
    * per-open-prefill convention rather than persisting across sessions. */
   const includeNotes = ref(false);
+  const dialogStats = ref<CountStats>(emptyCountStats());
 
-  const dialogStats = computed<CountStats>(() => {
+  let dialogRequestToken = 0;
+
+  async function refreshDialogStats() {
     const model = doc.value;
-    if (!model) {
-      return emptyCountStats();
+    const token = ++dialogRequestToken;
+    const stats = model ? await computeDocumentStats(model, { includeNotes: includeNotes.value }) : emptyCountStats();
+    if (token !== dialogRequestToken) {
+      return;
     }
-    return documentStats(model, { includeNotes: includeNotes.value }, cache);
+    dialogStats.value = stats;
+  }
+
+  watch([doc, includeNotes], () => {
+    if (statisticsOpen.value) {
+      void refreshDialogStats();
+    }
   });
 
   function openStatistics() {
     includeNotes.value = false;
+    dialogStats.value = emptyCountStats();
     statisticsOpen.value = true;
+    void refreshDialogStats();
   }
 
   function closeStatistics() {
