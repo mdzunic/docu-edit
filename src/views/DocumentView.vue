@@ -6866,7 +6866,13 @@ async function menuPastePlain() {
 .shape-handles {
   position: absolute;
   inset: 0;
-  z-index: 15;
+  /* Above .shape-toolbar (z-index: 30, ShapeToolbar.vue) — the toolbar
+     renders 44px above the shape (shapeToolbarStyle) and the rotation
+     handle sits 24px above it (ROTATION_HANDLE_OFFSET_PX), so their boxes
+     always overlap for a normally sized toolbar; without this the handle
+     is visually present but never receives the click/drag that starts a
+     rotation (AC-16, AC-38). */
+  z-index: 31;
   pointer-events: none;
 }
 

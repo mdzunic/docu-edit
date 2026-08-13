@@ -11,6 +11,7 @@ import {
   duplicateShape,
   ensureShapeTextFrame,
   freshGroupOrdinal,
+  groupBoundingBoxCm,
   groupMembers,
   groupShapes,
   insertShape,
@@ -773,6 +774,20 @@ describe("moveGroup (AC-36's 'a group moves as one unit')", () => {
     expect(blocks[1].offsetYCm).toBeCloseTo(1, 10);
     expect(blocks[0].widthCm).toBe(3);
     expect(blocks[1].widthCm).toBe(4);
+  });
+});
+
+describe("groupBoundingBoxCm (AC-37's resize pivot)", () => {
+  it("spans the union of every member's box", () => {
+    const model = doc(
+      shape({ groupOrdinal: 1, offsetXCm: 1, offsetYCm: 1, widthCm: 3, heightCm: 2 }),
+      shape({ groupOrdinal: 1, offsetXCm: 5, offsetYCm: 0, widthCm: 2, heightCm: 4 }),
+    );
+    expect(groupBoundingBoxCm(model, 1)).toEqual({ leftCm: 1, topCm: 0, widthCm: 6, heightCm: 4 });
+  });
+
+  it("is null for an ordinal with no members", () => {
+    expect(groupBoundingBoxCm(doc(shape({ groupOrdinal: 1 })), 42)).toBeNull();
   });
 });
 

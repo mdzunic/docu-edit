@@ -722,6 +722,36 @@ export function moveGroup(
   return { model: next, selection };
 }
 
+/** The page-space box spanning every member of a group — the pivot the
+ * resize-handle drag scales about (AC-37). `null` for an ordinal with no
+ * members (nothing to bound). */
+export interface GroupBoundingBox {
+  leftCm: number;
+  topCm: number;
+  widthCm: number;
+  heightCm: number;
+}
+
+export function groupBoundingBoxCm(model: DocumentModel, groupOrdinal: number): GroupBoundingBox | null {
+  const members = groupMembers(model, groupOrdinal);
+  if (members.length === 0) {
+    return null;
+  }
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const { block } of members) {
+    const x = block.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm;
+    const y = block.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm;
+    left = Math.min(left, x);
+    top = Math.min(top, y);
+    right = Math.max(right, x + block.widthCm);
+    bottom = Math.max(bottom, y + block.heightCm);
+  }
+  return { leftCm: left, topCm: top, widthCm: right - left, heightCm: bottom - top };
+}
+
 /** Scales every group member's dimensions and offsets by the given per-axis
  * factor ("Grouping — resize", AC-37) — the caller (the group resize-handle
  * drag) computes `sx`/`sy` from the dragged box against the group's
