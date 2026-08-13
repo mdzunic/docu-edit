@@ -133,6 +133,26 @@ export function useSpellCheck(deps: SpellCheckDeps) {
   // on every model change — cheap (a Map.clear()); only the visible subset
   // is ever recomputed (AC-16.1), so document size never matters here.
   let issueCache = new Map<string, SpellCheckIssue[]>();
+  // Bumped by every cache invalidation below (never by runSpellCheck itself
+  // — it only reads this at the start of a pass). A worker round trip means
+  // a check started against one document/language state can resolve after
+  // a *later* invalidation already changed what's true — the two
+  // invalidateIssueCache*/spellCheckToken helpers make that resolution a
+  // guaranteed no-op instead of silently overwriting fresh results with a
+  // stale answer (SPEC-047's async spell-check rewrite surfaced this: a run
+  // checked against German, then re-checked against English, could have the
+  // German worker reply land second and win).
+  let spellCheckToken = 0;
+
+  function invalidateIssueCache(): void {
+    issueCache.clear();
+    spellCheckToken++;
+  }
+
+  function invalidateIssueCacheKey(key: string): void {
+    issueCache.delete(key);
+    spellCheckToken++;
+  }
   // Dictionaries resolved so far, and the languages currently loading
   // (AC-17: on demand, not at startup) — module-external cache
   // (lib/spellcheck/dictionaries) does the actual fetch/memoize; these are
@@ -155,7 +175,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
   let spellIdleHandle = noIdleHandle();
   const unsubscribeCustomDictionary = subscribeCustomDictionary(() => {
     customDictionaryList.value = [...customDictionaryEntries()];
-    issueCache.clear();
+    invalidateIssueCache();
     scheduleSpellCheck();
   });
 
@@ -322,13 +342,11 @@ export function useSpellCheck(deps: SpellCheckDeps) {
   /** Recomputes (from cache where possible) and measures the visible
    * region's issues. The expensive halves — dictionary scanning of
    * newly-visible paragraphs and DOM rect measurement — both only ever
-   * touch the visible-plus-margin set (AC-16, AC-16.1, AC-16.2). */
-  // Guards against an in-flight worker reply landing after a later pass has
-  // already superseded it (a scroll mid-check can retarget the visible set
-  // before the previous pass's dictionary round trip returns) — only the
-  // most recently scheduled pass's results are ever painted.
-  let spellCheckToken = 0;
-
+   * touch the visible-plus-margin set (AC-16, AC-16.1, AC-16.2). Reads
+   * `spellCheckToken` rather than bumping it: only invalidation (the model,
+   * the language, ignore/custom-dictionary state changing) marks a pass
+   * stale, not the mere act of running another one, so two passes racing
+   * over an *unchanged* cache generation both still get to write. */
   async function runSpellCheck(): Promise<void> {
     const root = contentRoot.value as HTMLElement | null;
     const pageEl = pageRef.value as HTMLElement | null;
@@ -337,7 +355,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
       spellUnderlineRects.value = [];
       return;
     }
-    const token = ++spellCheckToken;
+    const token = spellCheckToken;
     const visible = visibleParagraphKeys(root, viewportBounds());
     const misses: Array<{ section: number; block: number; key: string; paragraph: Paragraph }> = [];
     for (const { section, block, key } of visible) {
@@ -400,7 +418,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
    * session. */
   function ignoreOccurrence(issue: SpellCheckIssue): void {
     ignoredOccurrences.add(occurrenceKey(issue.section, issue.block, issue.start, issue.word));
-    issueCache.delete(`${issue.section}:${issue.block}`);
+    invalidateIssueCacheKey(`${issue.section}:${issue.block}`);
     scheduleSpellCheck();
   }
 
@@ -408,7 +426,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
    * document, for the session. */
   function ignoreAllOccurrences(word: string): void {
     ignoredWords.add(word.toLowerCase());
-    issueCache.clear();
+    invalidateIssueCache();
     scheduleSpellCheck();
   }
 
@@ -440,12 +458,13 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     ignoredOccurrences.clear();
     ignoredWords.clear();
     issueCache = new Map();
+    spellCheckToken++;
     spellUnderlineRects.value = [];
     cancelSpellCheckScheduled();
   }
 
   watch(doc, () => {
-    issueCache.clear();
+    invalidateIssueCache();
     scheduleSpellCheck();
   });
 

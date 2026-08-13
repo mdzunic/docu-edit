@@ -21,7 +21,7 @@ interface CheckRequest {
 // See wordCount.worker.ts's comment on why `self` is cast rather than the
 // tsconfig gaining a "webworker" lib entry.
 const ctx = self as unknown as {
-  onmessage: ((event: MessageEvent<CheckRequest>) => void) | null;
+  addEventListener: (type: "message", listener: (event: MessageEvent<CheckRequest>) => void) => void;
   postMessage: (message: unknown) => void;
 };
 
@@ -40,7 +40,7 @@ function dictionaryFor(lang: string): Promise<Dictionary | null> {
   return cached;
 }
 
-ctx.onmessage = (event) => {
+ctx.addEventListener("message", (event) => {
   const { id, items } = event.data;
   void Promise.all(
     items.map(async (item) => {
@@ -48,6 +48,9 @@ ctx.onmessage = (event) => {
       return { key: item.key, matches: dictionary ? checkText(item.text, dictionary) : [] };
     }),
   ).then((results) => {
+    // See wordCount.worker.ts's comment on why targetOrigin does not apply
+    // to a dedicated worker's postMessage.
+    // eslint-disable-next-line unicorn/require-post-message-target-origin
     ctx.postMessage({ id, results });
   });
-};
+});

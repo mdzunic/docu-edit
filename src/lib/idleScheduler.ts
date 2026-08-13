@@ -99,3 +99,16 @@ export function scheduleEagerWork(
     },
   };
 }
+
+/** A single macrotask yield (SPEC-047 AC-15/AC-16's main-thread-block
+ * ceilings): `await`ed inside a long synchronous loop (parseDocx's body
+ * walk, the zip writer's entry loop) so a large document's parse/save
+ * reads as many short tasks instead of one long one. Unlike awaiting a
+ * promise that resolves via microtask (which never actually hands control
+ * back to the browser's input/render queue), scheduleEagerWork's
+ * MessageChannel post is a real macrotask boundary. */
+export function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => {
+    scheduleEagerWork(() => resolve(), 1);
+  });
+}

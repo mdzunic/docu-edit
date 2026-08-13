@@ -4,6 +4,7 @@
 // constraint) unless marked `store`, sizes and CRC-32 are written into the
 // local headers (no data descriptors), and there is no ZIP64 or encryption —
 // document packages are always small, single-disk, unencrypted ZIPs.
+import { yieldToMainThread } from "../idleScheduler";
 
 const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
@@ -44,6 +45,14 @@ export function crc32(bytes: Uint8Array): number {
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
+
+/** How long the entries loop below may run before it must yield (SPEC-047
+ * AC-15's ≤100ms main-thread-block-during-save ceiling): a large fixture's
+ * per-entry CRC-32 pass has no `await` of its own (unlike `deflateRaw`,
+ * which already awaits a stream read per entry — but that await resolves
+ * as a microtask, not a real yield back to the browser's input/render
+ * queue, so a few hundred entries in a row still reads as one long task). */
+const SAVE_YIELD_BUDGET_MS = 4;
 
 async function deflateRaw(data: Uint8Array): Promise<Uint8Array> {
   const stream = new ReadableStream<Uint8Array>({
@@ -125,8 +134,13 @@ export async function zip(entries: ZipEntryInput[]): Promise<Uint8Array> {
   const encoder = new TextEncoder();
   const out = new ByteWriter();
   const prepared: PreparedEntry[] = [];
+  let lastYield = performance.now();
 
   for (const entry of entries) {
+    if (performance.now() - lastYield > SAVE_YIELD_BUDGET_MS) {
+      await yieldToMainThread();
+      lastYield = performance.now();
+    }
     const nameBytes = encoder.encode(entry.name);
     const compressed = entry.store ? entry.data : await deflateRaw(entry.data);
     const record: PreparedEntry = {

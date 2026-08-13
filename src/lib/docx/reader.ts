@@ -63,6 +63,7 @@ import {
 import { parseChipText } from "../mergeChips";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
+import { yieldToMainThread } from "../idleScheduler";
 import { bytesToBase64 } from "../opaque";
 import { blockText } from "../textEditing";
 import { ZipError, unzip } from "./zip";
@@ -2157,7 +2158,18 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   const mediaById = new Map<string, MediaPart>();
   let sectPr: Element | undefined;
   const bodyChildren = Array.from(body.children);
+  // SPEC-047 AC-16's ≤150ms main-thread-block-during-open ceiling: a large
+  // document's body walk (thousands of paragraphs/tables/images, each doing
+  // real DOM/XML work) has no `await` of its own otherwise, so it reads as
+  // one long task. Time-budgeted rather than every-N-elements because a
+  // table or a paragraph with a `w:drawing` costs far more per element than
+  // a plain paragraph does.
+  let lastBodyWalkYield = performance.now();
   for (let bodyIndex = 0; bodyIndex < bodyChildren.length; bodyIndex += 1) {
+    if (performance.now() - lastBodyWalkYield > 4) {
+      await yieldToMainThread();
+      lastBodyWalkYield = performance.now();
+    }
     const child = bodyChildren[bodyIndex];
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "p") {
       // A TOC field (SPEC-033 AC-19, AC-20): its own paragraphs are the

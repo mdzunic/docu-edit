@@ -17,12 +17,16 @@ interface StatsRequest {
 // narrows the ambient `self` locally instead of changing a global compiler
 // setting for three files.
 const ctx = self as unknown as {
-  onmessage: ((event: MessageEvent<StatsRequest>) => void) | null;
+  addEventListener: (type: "message", listener: (event: MessageEvent<StatsRequest>) => void) => void;
   postMessage: (message: unknown) => void;
 };
 
-ctx.onmessage = (event) => {
+ctx.addEventListener("message", (event) => {
   const { id, model, includeNotes } = event.data;
   const stats = documentStats(model, { includeNotes });
+  // A dedicated worker's postMessage has no targetOrigin parameter (that's
+  // Window.postMessage's cross-origin concern) — the same non-applicability
+  // idleScheduler.ts's MessagePort.postMessage call notes.
+  // eslint-disable-next-line unicorn/require-post-message-target-origin
   ctx.postMessage({ id, stats });
-};
+});
