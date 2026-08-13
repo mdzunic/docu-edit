@@ -10,6 +10,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   isBreak,
   isImage,
+  isShape,
   isTable,
   isToc,
   type Block,
@@ -186,6 +187,12 @@ function renderBlock(
   listCounters: Array<number | undefined>,
 ): string | null {
   if (isBreak(block)) {
+    return null;
+  }
+  if (isShape(block)) {
+    // Shapes have no Markdown representation (SPEC-051 is out of SPEC-050's
+    // scope) — dropped the same way a manual break is.
+    listCounters.length = 0;
     return null;
   }
   if (isToc(block)) {

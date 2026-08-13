@@ -5,6 +5,7 @@
 import {
   isBreak,
   isImage,
+  isShape,
   isTable,
   isToc,
   sectionPageSize,
@@ -63,7 +64,7 @@ export function parsePageRange(input: string, totalPages: number): PageRangeResu
 export function isDocumentContentEmpty(model: DocumentModel): boolean {
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (isTable(block) || isImage(block) || isBreak(block) || isToc(block)) {
+      if (isTable(block) || isImage(block) || isShape(block) || isBreak(block) || isToc(block)) {
         return false;
       }
       for (const run of block.runs) {

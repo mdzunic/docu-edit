@@ -50,6 +50,7 @@ import type {
   RunFormatting,
   Section,
   SectionColumns,
+  Shape,
   Table,
   TableCell,
   TableRow,
@@ -88,6 +89,7 @@ import { zip, type ZipEntryInput } from "../docx/zipWriter";
 import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
+import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
@@ -526,6 +528,10 @@ interface AutomaticStyles {
    * shared by every image with the same wrap mode; undefined for "inline",
    * which needs no positioning style of its own (see drawFrameXml). */
   graphicStyleNameFor(wrap: ImageWrapMode): string | undefined;
+  /** A shape's own graphic-family style (SPEC-051): unlike an image, never
+   * shared across shapes (fill/outline/wrap all vary per shape), so this
+   * always mints a fresh name. */
+  shapeStyleNameFor(shape: Shape): string;
 }
 
 function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
@@ -569,6 +575,14 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         continue;
       }
       if (block.type === "image" || block.type === "break" || block.type === "toc") {
+        continue;
+      }
+      if (block.type === "shape") {
+        for (const shapeBlock of block.text?.blocks ?? []) {
+          if (shapeBlock.type === "paragraph" && shapeBlock.styleId) {
+            takenNames.add(shapeBlock.styleId);
+          }
+        }
         continue;
       }
       if (block.styleId) {
@@ -814,6 +828,12 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       const name = claimName("fr", "");
       graphicNames.set(wrap, name);
       defs.push(graphicStyleXml(name, wrap));
+      return name;
+    },
+
+    shapeStyleNameFor(shape: Shape): string {
+      const name = claimName("shfr", "");
+      defs.push(shapeGraphicStyleXml(name, shape));
       return name;
     },
   };
@@ -1573,6 +1593,27 @@ function imageParagraphXml(
   return `<text:p${wrapperAttr}>${drawFrameXml(image, href, graphicStyleName)}</text:p>`;
 }
 
+/** A Shape block (SPEC-051): the shape-flavoured sibling of
+ * imageParagraphXml — one `text:p` holding the `draw:custom-shape`/
+ * `draw:line` (see shape.ts's shapeElementXml). Its text frame's paragraphs
+ * are serialised through the same paragraphXml every body paragraph uses. */
+function shapeParagraphXml(
+  shape: Shape,
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+  styleOptions?: ParagraphStyleOptions,
+): string {
+  const wrapperName = styleOptions
+    ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, styleOptions)
+    : undefined;
+  const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
+  const styleName = styles.shapeStyleNameFor(shape);
+  const element = shapeElementXml(shape, styleName, {
+    paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque),
+  });
+  return `<text:p${wrapperAttr}>${element}</text:p>`;
+}
+
 /** A cell's block content (SPEC-022): paragraphs, with consecutive list
  * items grouped into text:list runs exactly like body content — a cell is
  * its own list context, so runs never join one outside the table.
@@ -1850,6 +1891,11 @@ export function buildContentXml(
       }
       if (block.type === "image") {
         blockXml.push(imageParagraphXml(block, styles, mediaPlan, takeStyleOptions()));
+        i++;
+        continue;
+      }
+      if (block.type === "shape") {
+        blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
         i++;
         continue;
       }
@@ -2237,6 +2283,9 @@ function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
     },
     graphicStyleNameFor(): string | undefined {
       throw new Error("images are not supported in header/footer content (SPEC-029)");
+    },
+    shapeStyleNameFor(): string {
+      throw new Error("shapes are not supported in header/footer content (SPEC-029)");
     },
   };
 }

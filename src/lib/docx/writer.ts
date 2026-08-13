@@ -48,6 +48,7 @@ import type {
   Section,
   SectionColumns,
   SectionStart,
+  Shape,
   Table,
   TableCell,
   TableRow,
@@ -101,6 +102,7 @@ import {
   type NumberingRef,
 } from "./numbering";
 import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
+import { shapeDrawingXml } from "./shape";
 import {
   nextFreeRelId,
   planMediaWrite,
@@ -759,6 +761,18 @@ function imageParagraphXml(image: Image, mediaPlan: MediaWritePlan, docPrId: num
   return `<w:p><w:r>${drawingXml(image, relId, docPrId)}</w:r></w:p>`;
 }
 
+/** A Shape block (SPEC-051): the shape-flavoured sibling of
+ * imageParagraphXml — one paragraph holding one run holding the
+ * `w:drawing` (see shape.ts's shapeDrawingXml). Its text frame's paragraphs
+ * are serialised through the same paragraphXml every body paragraph uses,
+ * so a shape's text gets the identical character/paragraph-level markup. */
+function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWriteContext, docPrId: number): string {
+  const drawing = shapeDrawingXml(shape, docPrId, {
+    paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, ctx),
+  });
+  return `<w:p><w:r>${drawing}</w:r></w:p>`;
+}
+
 // Word's default single-line borders for a table created in this editor —
 // self-contained (no style reference), so the table is visible in any
 // consumer without touching styles.xml. Sized 4 eighth-points, Word's own
@@ -1409,6 +1423,12 @@ function headerFooterPartXml(
       if (block.type === "image") {
         return imageParagraphXml(block, plan.mediaPlan, docPrId++);
       }
+      if (block.type === "shape") {
+        // A drawn shape (SPEC-051) is a body-level feature; one is never
+        // inserted into a header/footer, but the Block union covers it
+        // structurally the same way a TOC does below.
+        return "";
+      }
       if (block.type === "break") {
         return "";
       }
@@ -1545,11 +1565,11 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
           if (block.type === "table") {
             return tableXml(block, includeOpaque, inlineCtx, () => undefined);
           }
-          if (block.type === "image" || block.type === "break" || block.type === "toc") {
+          if (block.type === "image" || block.type === "shape" || block.type === "break" || block.type === "toc") {
             // A note body holds paragraphs (and its first block must, to
-            // carry the reference marker); images/breaks/TOCs have no valid
-            // per-note serialisation, so they are omitted here the way they
-            // are omitted from the note areas.
+            // carry the reference marker); images/shapes/breaks/TOCs have no
+            // valid per-note serialisation, so they are omitted here the way
+            // they are omitted from the note areas.
             return "";
           }
           if (markerPending) {
@@ -1910,6 +1930,8 @@ export function buildDocumentXml(
           );
         } else if (block.type === "image") {
           blockXml.push(imageParagraphXml(block, mediaPlan, docPrId++));
+        } else if (block.type === "shape") {
+          blockXml.push(shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++));
         } else if (block.type === "break") {
           // A manual break block (SPEC-028 AC-30): a paragraph holding just
           // the typed w:br run, the shape the reader folds back into a
@@ -1980,6 +2002,14 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   for (const section of model.sections) {
     for (const block of section.blocks) {
       if (block.type === "image" || block.type === "break" || block.type === "toc") {
+        continue;
+      }
+      if (block.type === "shape") {
+        for (const shapeBlock of block.text?.blocks ?? []) {
+          if (shapeBlock.type === "paragraph" && shapeBlock.styleId) {
+            referencedIds.add(shapeBlock.styleId);
+          }
+        }
         continue;
       }
       const paragraphs =

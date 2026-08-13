@@ -807,10 +807,41 @@ export interface Paragraph {
 // --- images (SPEC-024) -------------------------------------------------------
 
 /** How an image sits relative to the surrounding text (SPEC-024 AC-13,
- * AC-14): `"inline"` flows with the text like a character; `"square"` floats
- * with text wrapping around its rectangle; `"behind"`/`"infront"` float
- * without wrapping, stacked behind or in front of the text. */
-export type ImageWrapMode = "inline" | "square" | "behind" | "infront";
+ * AC-14; widened with `"topAndBottom"` by SPEC-051): `"inline"` flows with
+ * the text like a character; `"square"` floats with text wrapping around its
+ * rectangle; `"topAndBottom"` floats with no side wrapping but keeps text
+ * flow above and below it; `"behind"`/`"infront"` float without wrapping,
+ * stacked behind or in front of the text. */
+export type ImageWrapMode = "inline" | "square" | "topAndBottom" | "behind" | "infront";
+
+/** Everything a block needs in order to sit somewhere other than in the text
+ * flow (SPEC-051). Extended by `Image` (SPEC-024), `Shape` (here) and `Chart`
+ * (SPEC-052) — every field `Image` already shipped keeps its exact path, so
+ * lifting them here is additive, not a rename. */
+export interface DrawingPlacement {
+  widthCm: number;
+  heightCm: number;
+  wrap: ImageWrapMode;
+  /** `wp:docPr/@descr` (.docx) / `svg:desc` (.odt). */
+  altText?: string;
+  /** Offset from the reference edges; absent means the wrap mode's default
+   * (see "Default position" in specs/051-drawing-shapes-and-text-boxes.md) —
+   * never "recentre" or "undefined". Ignored entirely when `wrap` is
+   * `"inline"`. */
+  offsetXCm?: number;
+  offsetYCm?: number;
+  relativeToH?: "page" | "margin" | "column";
+  relativeToV?: "page" | "margin" | "paragraph";
+  /** Ascending = nearer the reader; negative renders behind body text;
+   * absent means zero. Only meaningful for `"behind"`/`"infront"` wrap. */
+  zOrder?: number;
+  /** Whole degrees clockwise, 0-359. */
+  rotationDeg?: number;
+  /** Group membership as an ordinal — deliberately not named `id`: see
+   * IGNORED_KEYS in lib/equality.ts, the same trap `NoteRef.noteId` is named
+   * around. */
+  groupOrdinal?: number;
+}
 
 /** An image block (SPEC-024): a block-level object addressed by `CaretPosition`
  * the same way `Table` is — a length-1 atom (see textEditing.blockLength) a
@@ -823,7 +854,7 @@ export type ImageWrapMode = "inline" | "square" | "behind" | "infront";
  * plain block (no float); `"square"` floats with text wrapping around it;
  * `"behind"`/`"infront"` float out of flow, stacked behind or in front of
  * surrounding text (AC-13, AC-14). */
-export interface Image {
+export interface Image extends DrawingPlacement {
   type: "image";
   /** References a `DocumentModel.media` entry's `mediaId`. */
   mediaId: string;
@@ -832,15 +863,119 @@ export interface Image {
    * input (AC-5, AC-6), both independent of the current display size below. */
   naturalWidthPx: number;
   naturalHeightPx: number;
-  /** Current display size in cm (AC-16, AC-19, AC-20). */
-  widthCm: number;
-  heightCm: number;
-  wrap: ImageWrapMode;
-  /** `wp:docPr/@descr` (.docx) / `svg:desc` (.odt) — AC-7, AC-23..25. */
-  altText?: string;
   /** Pending tracked insertion/deletion of this image block (SPEC-039). */
   changes?: BlockTrackedChanges;
 }
+
+// --- shapes and text boxes (SPEC-051) ---------------------------------------
+
+/** The closed set of geometries the editor draws, resizes and round-trips
+ * natively — see "Shape catalogue" in specs/051-drawing-shapes-and-text-boxes.md.
+ * Anything else arriving from a file is preserved per SPEC-008, not
+ * approximated into one of these. */
+export type ShapeGeometry =
+  | "line"
+  | "arrow"
+  | "rect"
+  | "roundRect"
+  | "ellipse"
+  | "triangle"
+  | "diamond"
+  | "star5"
+  | "rightArrow"
+  | "leftArrow"
+  | "upArrow"
+  | "downArrow"
+  | "wedgeRectCallout"
+  | "wedgeRoundRectCallout";
+
+/** A shape's outline (border) — colour, width in points and dash style. */
+export interface ShapeOutline {
+  color: string;
+  widthPt: number;
+  dash: "solid" | "dash" | "dot";
+}
+
+/** Rich text held inside a shape (SPEC-051 AC-17..24): `blocks` rather than a
+ * flat run list so a shape can hold lists and tables, not only paragraphs —
+ * every character- and paragraph-level feature body text accepts. */
+export interface ShapeTextFrame {
+  blocks: Block[];
+  vAlign: "top" | "middle" | "bottom";
+}
+
+/** A shape or text box block (SPEC-051): a drawing placed on the page,
+ * painted on the canvas layer with an ARIA proxy element for hit testing,
+ * keyboard access and its editable text (see "Rendering and test surface").
+ * A text box is not a fourteenth geometry — it is `geometry: "rect"` with
+ * `fill`/`outline` absent and a `text` frame; both write/read as `wps:txbx`
+ * (.docx) / `draw:text-box` (.odt) so the two paths cannot drift. */
+export interface Shape extends DrawingPlacement {
+  type: "shape";
+  geometry: ShapeGeometry;
+  /** "#rrggbb"; absent means no fill. */
+  fill?: string;
+  /** Absent means no outline. */
+  outline?: ShapeOutline;
+  /** Text inside the shape. Absent for a shape that holds none, e.g. a line
+   * or arrow. */
+  text?: ShapeTextFrame;
+  /** Pending tracked insertion/deletion of this shape block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+  /** Present when the source file's geometry was outside "Shape catalogue"
+   * (SPEC-008 preservation, AC-60): the verbatim geometry XML
+   * (`a:custGeom`/an unrecognised `a:prstGeom` for `.docx`, an unrecognised
+   * `draw:enhanced-geometry` for `.odt`), re-emitted unchanged on a
+   * same-format save. `geometry` is then just a bounding-box stand-in
+   * (`"rect"`) — never painted or re-derived; the shape instead paints as a
+   * dashed placeholder at its true bounds (AC-60) and cannot have its
+   * geometry edited. A cross-format save of a shape with this field set
+   * cannot carry it and reports a `"shapeGeometry"` DropRecord (AC-61). */
+  unsupportedGeometryXml?: string;
+}
+
+/** Whether a block is a shape — the isTable-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isShape(block: Block | undefined): block is Shape {
+  return block?.type === "shape";
+}
+
+/** Typed pass-through for a Shape arriving as a runtime-declared Object prop
+ * (espree bars the type annotation — see tables.ts's asTable for the same
+ * pattern). */
+export function asShape(value: unknown): Shape {
+  return value as Shape;
+}
+
+/** Typed pass-through for a shape geometry coming from a `.vue` template's
+ * plain string (same espree constraint as asImageWrapMode). */
+export function asShapeGeometry(value: string): ShapeGeometry {
+  return value as ShapeGeometry;
+}
+
+/** The closed catalogue geometries, in "Shape catalogue" order — the gallery
+ * (AC-1) and the docx/odf readers' geometry lookup both walk this list. */
+export const SHAPE_CATALOGUE: { geometry: ShapeGeometry; group: "Lines" | "Basic shapes" | "Arrows" | "Callouts"; label: string }[] = [
+  { geometry: "line", group: "Lines", label: "Line" },
+  { geometry: "arrow", group: "Lines", label: "Arrow" },
+  { geometry: "rect", group: "Basic shapes", label: "Rectangle" },
+  { geometry: "roundRect", group: "Basic shapes", label: "Rounded rectangle" },
+  { geometry: "ellipse", group: "Basic shapes", label: "Ellipse" },
+  { geometry: "triangle", group: "Basic shapes", label: "Triangle" },
+  { geometry: "diamond", group: "Basic shapes", label: "Diamond" },
+  { geometry: "star5", group: "Basic shapes", label: "Star (5-point)" },
+  { geometry: "rightArrow", group: "Arrows", label: "Right arrow" },
+  { geometry: "leftArrow", group: "Arrows", label: "Left arrow" },
+  { geometry: "upArrow", group: "Arrows", label: "Up arrow" },
+  { geometry: "downArrow", group: "Arrows", label: "Down arrow" },
+  { geometry: "wedgeRectCallout", group: "Callouts", label: "Rectangular callout" },
+  { geometry: "wedgeRoundRectCallout", group: "Callouts", label: "Rounded callout" },
+];
+
+/** Geometries with zero area, drawn as a segment rather than a filled/outlined
+ * region (SPEC-051 AC-6, AC-8, "Selection and hit testing"). */
+export const LINE_GEOMETRIES: ReadonlySet<ShapeGeometry> = new Set(["line", "arrow"]);
 
 /** Typed pass-through for a wrap mode coming from a `.vue` template's plain
  * string (same espree constraint as asCharacterFormatKey). */
@@ -1311,7 +1446,7 @@ export function asToc(value: unknown): TableOfContents {
 /** Block-level children of a section: paragraphs, tables (SPEC-022),
  * images (SPEC-024), manual breaks (SPEC-028) and tables of contents
  * (SPEC-033). */
-export type Block = Paragraph | Table | Image | BreakBlock | TableOfContents;
+export type Block = Paragraph | Table | Image | BreakBlock | TableOfContents | Shape;
 
 /** A section groups block-level content; documents have one or more. A
  * section boundary IS the section break (SPEC-028): inserting a section
