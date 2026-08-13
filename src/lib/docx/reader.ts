@@ -39,6 +39,7 @@ import type {
   Section,
   SectionColumns,
   SectionStart,
+  Shape,
   SourceXml,
   Table,
   TableAlignment,
@@ -79,6 +80,7 @@ import {
   type Relationship,
 } from "./xml";
 import { parseDrawing, type ParsedDrawing } from "./drawing";
+import { parseShapeDrawing } from "./shape";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
   EMPTY_NUMBERING_CATALOG,
@@ -699,6 +701,29 @@ function imageRunDrawing(rEl: Element, ctx: DrawingContext): ParsedDrawing | nul
   return parseDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
 }
 
+/** A `w:r` whose only content is one `w:drawing` holding a `wps:wsp` this
+ * spec models (SPEC-051) — the shape-flavoured sibling of imageRunDrawing.
+ * Null for every other run, including one holding a drawing neither this
+ * spec nor SPEC-024 models (a chart, an unsupported wrap...), which keeps
+ * falling through to the opaque-inline path. */
+function shapeRunDrawing(
+  rEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+  links: LinkReadContext | undefined,
+): Shape | null {
+  const contentChildren = Array.from(rEl.children).filter(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
+  );
+  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+    return null;
+  }
+  const parsed = parseShapeDrawing(contentChildren[0], {
+    parseParagraph: (pEl) => parseParagraph(pEl, styleCatalog, numberingCatalog, links),
+  });
+  return parsed?.shape ?? null;
+}
+
 // --- table of contents (SPEC-033) -------------------------------------------
 
 /** The `w:fldChar` type of a run, or null for a run that carries none
@@ -912,6 +937,7 @@ function parseBodyParagraphBlocks(
     (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "r",
   );
   const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
+  const hasShapeRun = runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
   // A typed w:br in an otherwise-modelled run splits the paragraph the same
   // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
   // of that run's verbatim XML — splitting an unmodelled run could not
@@ -919,7 +945,7 @@ function parseBodyParagraphBlocks(
   const hasBreakRun = runElements.some(
     (r) => !runHasUnmodelledContent(r) && runHasTypedBreak(r),
   );
-  if (!hasImageRun && !hasBreakRun) {
+  if (!hasImageRun && !hasShapeRun && !hasBreakRun) {
     return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog, links)], media: [] };
   }
 
@@ -952,6 +978,12 @@ function parseBodyParagraphBlocks(
         flush();
         blocks.push(parsed.image);
         media.push(parsed.media);
+        continue;
+      }
+      const shape = shapeRunDrawing(child, styleCatalog, numberingCatalog, links);
+      if (shape) {
+        flush();
+        blocks.push(shape);
         continue;
       }
       if (isCommentReferenceRun(child)) {

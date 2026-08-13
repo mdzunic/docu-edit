@@ -7,6 +7,7 @@ import {
   paragraphStyle,
   runKey,
   runStyle,
+  shapeDisplayStyle,
   tableCellStyle,
   tableColumnWidth,
   tableRowStyle,
@@ -15,7 +16,7 @@ import {
   trackChangeRunHidden,
   trackChangeRunStyle,
 } from "./renderFormatting";
-import type { Paragraph, Run, Table, TableCell, TableRow } from "./documentModel";
+import type { Paragraph, Run, Shape, Table, TableCell, TableRow } from "./documentModel";
 
 function paragraph(runs: Run[]): Paragraph {
   return { type: "paragraph", runs };
@@ -421,5 +422,31 @@ describe("paragraphHasTrackedChange (SPEC-039 AC-5)", () => {
     const p = paragraph([{ text: "x", formatting: {} }]);
     p.changes = { markInsert: { changeId: "c1", author: "Ada", date: "2026-01-01T00:00:00.000Z" } };
     expect(paragraphHasTrackedChange(p)).toBe(true);
+  });
+});
+
+// SPEC-051 regression (AC-29..33): z-index was derived only from wrap mode,
+// never from Shape.zOrder, so bring-to-front/forward/send-backward/back had
+// no visual effect at all — every shape in the same wrap tier painted at the
+// same fixed z-index regardless of reorderShapeZ's model changes.
+describe("shapeDisplayStyle — z-order (SPEC-051 AC-29..33)", () => {
+  function shape(overrides: Partial<Shape> = {}): Shape {
+    return { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides };
+  }
+
+  it("breaks ties between same-tier shapes by zOrder, not a shared constant", () => {
+    const back = shapeDisplayStyle(shape({ zOrder: 0 }));
+    const front = shapeDisplayStyle(shape({ zOrder: 2 }));
+    expect(Number(front.zIndex)).toBeGreaterThan(Number(back.zIndex));
+  });
+
+  it("keeps a 'behind' shape's z-index below every 'infront'/'square'/'topAndBottom' shape regardless of zOrder", () => {
+    const behind = shapeDisplayStyle(shape({ wrap: "behind", zOrder: 99 }));
+    const inFront = shapeDisplayStyle(shape({ wrap: "infront", zOrder: 0 }));
+    expect(Number(behind.zIndex)).toBeLessThan(Number(inFront.zIndex));
+  });
+
+  it("defaults to zOrder 0 when absent, matching zOrderOf's own fallback", () => {
+    expect(shapeDisplayStyle(shape({ wrap: "square" })).zIndex).toBe(shapeDisplayStyle(shape({ wrap: "square", zOrder: 0 })).zIndex);
   });
 });

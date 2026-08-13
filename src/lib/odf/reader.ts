@@ -68,6 +68,7 @@ import {
   LIST_MARKER_WIDTH_CM,
 } from "../lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
+import { parseShapeElement } from "./shape";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "./meta";
 import {
@@ -859,6 +860,8 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
 export interface OdfDrawingContext {
   parts: Map<string, Uint8Array>;
   graphicWrapStyles: Map<string, ImageWrapMode>;
+  contentDoc: Document;
+  stylesDoc: Document | undefined;
 }
 
 /** collectInline run over a detached clone of `nodes` — reused so a
@@ -1003,7 +1006,14 @@ function parseBodyTextBlockOrSplit(
     (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "frame",
   );
   const hasImage = frameChildren.some((frame) => parseDrawFrame(frame, ctx.parts, ctx.graphicWrapStyles) !== null);
-  if (!hasImage) {
+  const shapeTextCtx = { parseParagraph: (pEl: Element) => parseTextBlock(pEl, catalog, pEl.localName === "h") };
+  const hasShape = Array.from(el.children).some(
+    (child) =>
+      child.namespaceURI === DRAW_NAMESPACE &&
+      (child.localName === "custom-shape" || child.localName === "line") &&
+      parseShapeElement(child, ctx.contentDoc, ctx.stylesDoc, shapeTextCtx) !== null,
+  );
+  if (!hasImage && !hasShape) {
     return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
   }
 
@@ -1069,6 +1079,17 @@ function parseBodyTextBlockOrSplit(
           flush();
           blocks.push(parsed.image);
           media.push(parsed.media);
+          continue;
+        }
+      }
+      if (
+        frameEl.namespaceURI === DRAW_NAMESPACE &&
+        (frameEl.localName === "custom-shape" || frameEl.localName === "line")
+      ) {
+        const parsedShape = parseShapeElement(frameEl, ctx.contentDoc, ctx.stylesDoc, shapeTextCtx);
+        if (parsedShape) {
+          flush();
+          blocks.push(parsedShape.shape);
           continue;
         }
       }
@@ -2113,7 +2134,12 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     throw new OdtOpenError(INVALID_ODT_MESSAGE);
   }
 
-  const drawingCtx: OdfDrawingContext = { parts, graphicWrapStyles: collectGraphicWrapStyles(contentDoc, stylesDoc) };
+  const drawingCtx: OdfDrawingContext = {
+    parts,
+    graphicWrapStyles: collectGraphicWrapStyles(contentDoc, stylesDoc),
+    contentDoc,
+    stylesDoc,
+  };
   const mediaById = new Map<string, MediaPart>();
   const sections: Section[] = [];
   let blocks: Block[] = [];

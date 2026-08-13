@@ -12,6 +12,7 @@ import {
   type ParagraphFormatting,
   type Run,
   type RunFormatting,
+  type Shape,
   type Table,
   type TableCell,
   type TableRow,
@@ -406,6 +407,40 @@ export function imageDisplayStyle(image: Image): Record<string, string> {
     style.left = "0";
     style.top = "0";
     style.zIndex = image.wrap === "behind" ? "0" : "5";
+  }
+  return style;
+}
+
+/** A shape's size and position rendering (SPEC-051): unlike Image, a Shape
+ * carries a real `offsetXCm`/`offsetYCm`, so every non-`inline` wrap mode
+ * positions absolutely at that offset from its anchor (see the anchor
+ * span's own `position: relative`, DocShapeBlock.vue) — `"square"`/
+ * `"topAndBottom"` do not reflow surrounding text around the box (the
+ * "honest, predictable" simplification SPEC-024's own "square" float
+ * already makes for a left-edge case; a shape's offset can be anywhere on
+ * the page, where a CSS float cannot follow it). `"behind"` paints under
+ * the text layer, the other three float above it. `"inline"` ignores the
+ * offset entirely, per "Default position — when offsets are absent". */
+export function shapeDisplayStyle(shape: Shape): Record<string, string> {
+  const heightCm = Math.max(shape.heightCm, 0.05);
+  const style: Record<string, string> = {
+    width: `${shape.widthCm}cm`,
+    height: `${heightCm}cm`,
+  };
+  if (shape.wrap !== "inline") {
+    style.position = "absolute";
+    style.left = `${shape.offsetXCm ?? 0}cm`;
+    style.top = `${shape.offsetYCm ?? 0}cm`;
+    // Base tier matches Image's own behind/in-front split; the document-wide
+    // zOrder (reorderShapeZ assigns a dense 0..N-1 across every drawing,
+    // shapes and images alike) breaks ties *within* a tier so bring-to-
+    // front/forward/send-backward/back (AC-29..33) actually change the
+    // painted stacking order, not just the model. The two tiers are kept far
+    // enough apart that no realistic document's zOrder range can cross
+    // them — "behind" must always paint under the text regardless of how
+    // high its zOrder climbs relative to an "in front" shape's own.
+    const order = shape.zOrder ?? 0;
+    style.zIndex = String(shape.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
 }

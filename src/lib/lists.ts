@@ -7,6 +7,7 @@
 import {
   isBreak,
   isImage,
+  isShape,
   isTable,
   isToc,
   type Block,
@@ -178,7 +179,7 @@ export function markerText(style: ListMarkerStyle, ordinal: number): string {
 }
 
 function listOf(block: Block | undefined): ListFormatting | undefined {
-  return block === undefined || isTable(block) || isImage(block) || isBreak(block) || isToc(block)
+  return block === undefined || isTable(block) || isImage(block) || isShape(block) || isBreak(block) || isToc(block)
     ? undefined
     : block.list;
 }
