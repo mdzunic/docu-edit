@@ -320,9 +320,20 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 <style scoped>
 /* A page-shaped surface sized by the layout's own geometry (inline style,
    real centimetres). 12px of margin is AC-2's visible gap between pages;
-   overflow clips provisional overhang while measurement settles. */
+   overflow clips provisional overhang while measurement settles.
+   `z-index: 0` (with `position: relative`) makes .page its own stacking
+   context (SPEC-051): shapeDisplayStyle gives floating shapes z-indices as
+   high as ~100000 and "behind"-wrapped shapes negative ones so z-order
+   commands (AC-29..33) and the behind/in-front wrap split (AC-25) work
+   *within* a page. Without a stacking context here those values escape to
+   compete directly with DocumentView's own overlays (.shape-handles,
+   z-index 31) and, for negative values, paint above .page's own opaque
+   background instead of trapped beneath it — a shape picking "behind"
+   would render fully invisible and a positive z-index would occlude the
+   resize handles. */
 .page {
   position: relative;
+  z-index: 0;
   margin: 0 auto 12px;
   background: #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);

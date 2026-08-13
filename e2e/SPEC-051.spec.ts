@@ -448,6 +448,15 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     // Two overlapping filled shapes so one visibly occludes the other.
     await insertShapeAt(page, "rect", 400, 300);
     await insertShapeAt(page, "rect", 430, 300);
+    // Insertion leaves the new shape selected, and the floating shape
+    // toolbar (a page-level overlay, always painted above a page's own
+    // content) sits right above a small shape's top edge — close enough to
+    // the two rects' own overlap region to cover it. Deselect first (via
+    // Escape, not a document click, since a click at a fixed viewport
+    // position can itself scroll the page and invalidate the bounding
+    // boxes read below) so the baseline z-order check hits the shapes
+    // themselves, not the toolbar.
+    await page.keyboard.press("Escape");
     const [first, second] = await drawings(page).all();
     const firstBox = await first.boundingBox();
     const secondBox = await second.boundingBox();
@@ -471,6 +480,9 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     await first.click({ position: { x: 5, y: 5 }, force: true });
     await expect(page.getByTestId("shape-toolbar")).toBeVisible();
     await page.getByTestId("shape-zorder").selectOption("front");
+    // Deselect again (Escape, for the same scroll-safety reason as above) so
+    // the toolbar doesn't shadow the repainted stacking order.
+    await page.keyboard.press("Escape");
     await expect.poll(topmostTestId).toBe(await first.getAttribute("data-testid"));
   });
 });
