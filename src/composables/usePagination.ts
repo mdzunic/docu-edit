@@ -224,6 +224,19 @@ export function usePagination(
   // fed back into layoutWithNotes as its seed — see that function's own
   // comment for why this is safe even when stale.
   let lastNoteReserves: number[] | undefined;
+  // How many blocks the last relayout found uncached (see `pending` below),
+  // gating whether the next call's seed above is worth offering: a small
+  // count (typing's steady state — one edited block always misses, since
+  // commands.ts replaces rather than mutates) means metrics are stable, so
+  // a seed is reliably still correct; a large one (open's initial settle,
+  // or any later bulk re-measure) means metrics are still shifting call to
+  // call, where a seed is as likely to be stale as right and its extra
+  // fixed-point pass just compounds on top of an already-in-flux layout.
+  // `running` alone doesn't distinguish these — the loop stays "running"
+  // for the rest of the session purely because there's always one pending
+  // block after an edit.
+  let lastPendingCount = Number.POSITIVE_INFINITY;
+  const SEED_PENDING_THRESHOLD = 3;
 
   // The canvas measurer's DOM probe host: the pages wrapper (the content
   // root's parent), OUTSIDE the contenteditable root so probe text can
@@ -306,24 +319,16 @@ export function usePagination(
       hidden.size === 0
         ? undefined
         : (sectionIndex: number, blockIndex: number) => hidden.has(`${sectionIndex}:${blockIndex}`);
-    // Only seed once the measure loop is idle (SPEC-047 AC-6 vs. AC-16):
-    // while `running` (the initial settle, or any later bulk re-measure),
-    // metrics are still shifting call to call, so a seed is as likely to be
-    // stale as right — and a wrong seed's extra fixed-point pass runs on
-    // top of that same in-flux pagination, compounding across the many
-    // relayouts a settle makes. The steady state after typing settles
-    // (nothing left to measure) is exactly where the seed is reliably
-    // still-correct, and exactly the case AC-6's typing-latency budget
-    // needs it for.
     const notesLayout = layoutWithNotes(
       model,
       provider,
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
       isHidden,
-      running ? undefined : lastNoteReserves,
+      lastPendingCount <= SEED_PENDING_THRESHOLD ? lastNoteReserves : undefined,
     );
     lastNoteReserves = notesLayout.reserves;
+    lastPendingCount = pending.length;
     const layout = notesLayout.pages;
     if (
       !sameAreaLists(noteAreas.value.footnotes, notesLayout.footnoteAreas) ||
@@ -652,6 +657,7 @@ export function usePagination(
     cache = new WeakMap();
     baseFont = null;
     lastNoteReserves = undefined;
+    lastPendingCount = Number.POSITIVE_INFINITY;
     measurer?.reset();
     schedule();
   }
