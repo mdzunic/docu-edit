@@ -221,6 +221,7 @@ import {
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
+import { ceilingWarningMessage, checkSupportedCeiling } from "../lib/supportedCeiling";
 import {
   BLOCK_SELECTOR,
   canvasModelText,
@@ -499,7 +500,25 @@ const lockState = ref("pending");
 // — the version history pane's own actions (restore, name, delete) stay
 // enabled while previewing; only the canvas itself goes read-only.
 const documentActionsEnabled = computed(() => lockState.value === "acquired" && !!doc.value);
-const editable = computed(() => documentActionsEnabled.value && !versionHistoryPreviewActive.value);
+
+// --- supported ceiling (SPEC-047: a document past the ceiling opens
+// read-only rather than the editor pretending it can hold arbitrarily large
+// content) -------------------------------------------------------------
+const ceilingResult = computed(() =>
+  doc.value ? checkSupportedCeiling(doc.value) : { exceeded: false },
+);
+const pastSupportedCeiling = computed(() => ceilingResult.value.exceeded);
+const ceilingWarning = computed(() => ceilingWarningMessage(ceilingResult.value));
+
+// Find and print are read commands (SPEC-047 AC-27: "opening, scrolling,
+// find, print, PDF export and download still work" while a too-large
+// document is read-only) — this stays what `editable` used to mean, before
+// the ceiling factored in, for the one handler (handleGlobalShortcut) that
+// must keep reacting to Ctrl/Cmd+F/H/P over a too-large document.
+const findAndPrintEnabled = computed(
+  () => documentActionsEnabled.value && !versionHistoryPreviewActive.value,
+);
+const editable = computed(() => findAndPrintEnabled.value && !pastSupportedCeiling.value);
 
 // --- caret and scroll (SPEC-010: restored on reopen) -----------------------
 // Plain variables, not refs: nothing renders from them, they are only read
@@ -4243,6 +4262,7 @@ const {
   contentRoot,
   pageRef,
   editable,
+  canSearch: findAndPrintEnabled,
   paginationPages,
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
   applyEdit,
@@ -4772,7 +4792,7 @@ function deleteOpenDocument() {
  * other registry shortcut (SPEC-021 AC-12..14): none of them act while
  * focus is inside a dialog, the find bar, or another text input. */
 function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
-  if (!doc.value || !editable.value || event.altKey) {
+  if (!doc.value || !findAndPrintEnabled.value || event.altKey) {
     return;
   }
   // Escape disarms the format painter regardless of where focus is (AC-17)
@@ -5514,6 +5534,14 @@ async function menuPastePlain() {
       data-testid="conflict-bar"
     >
       This document is open in another tab
+    </div>
+    <div
+      v-if="pastSupportedCeiling"
+      class="notice-bar"
+      role="status"
+      data-testid="too-large-bar"
+    >
+      {{ ceilingWarning }}
     </div>
     <div
       v-if="recovery"

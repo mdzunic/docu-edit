@@ -47,6 +47,11 @@ export interface FindReplaceDeps {
   contentRoot: Ref<Element | null>;
   pageRef: Ref<Element | null>;
   editable: Readonly<Ref<boolean>>;
+  /** Whether Find itself may open/search (SPEC-047 AC-27: find still works
+   * over a too-large read-only document). `editable` stays the gate for the
+   * mutating actions below it (Replace/Replace all) — this is strictly
+   * broader than `editable`, never narrower. */
+  canSearch: Readonly<Ref<boolean>>;
   paginationPages: Ref<PageLayout[]>;
   pageOfCaret: (caret: CaretPosition) => number;
   applyEdit: (
@@ -77,6 +82,7 @@ export function useFindReplace(deps: FindReplaceDeps) {
     contentRoot,
     pageRef,
     editable,
+    canSearch,
     paginationPages,
     pageOfCaret,
     applyEdit,
@@ -155,7 +161,7 @@ export function useFindReplace(deps: FindReplaceDeps) {
   }
 
   function openFind(expand = false) {
-    if (!doc.value || !editable.value) {
+    if (!doc.value || !canSearch.value) {
       return;
     }
     if (!findVisible.value) {
@@ -184,7 +190,7 @@ export function useFindReplace(deps: FindReplaceDeps) {
     findHighlightRects.value = noHighlightRects();
     cancelFindScheduled();
     const root = contentRoot.value as HTMLElement | null;
-    if (root && editable.value) {
+    if (root && canSearch.value) {
       root.focus();
       if (restoreCaret && caretBeforeFind) {
         setCaret(caretBeforeFind);
