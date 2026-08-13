@@ -222,22 +222,35 @@ export function usePagination(
   let lastInteraction = 0;
   // The last relayout's converged footnote-area reserves (SPEC-047 AC-6),
   // fed back into layoutWithNotes as its seed — see that function's own
-  // comment for why this is safe even when stale. Only offered on a
-  // schedule()-triggered relayout (an actual model change), never on one
-  // measureLoop() runs mid-settle: body pagination itself is still using
-  // *estimated* metrics for most of a large document during that bulk
-  // pass (real measurement is exactly what measureLoop is progressively
-  // filling in), which shifts which page each footnote reference lands on
-  // — and so shifts reserves — independently of whether the footnotes'
-  // own content changed. `pending.length` looked like it would tell
-  // "settled" from "settling" apart, but for a virtualized document most
-  // of it is a permanent backlog (off-screen pages estimate-only by
-  // design) that never reaches zero and barely moves call to call, so it
-  // couldn't actually distinguish the two either. Which function is
-  // calling can: schedule() is the one path a real edit (or the initial
-  // mount) takes; measureLoop() is background settling. `relayout`'s
-  // `fromSchedule` parameter carries that distinction down to here.
+  // comment for why this is safe even when stale. Gated on two things
+  // (both required) before it's offered:
+  //  - `fromSchedule`: only a schedule()-triggered relayout (an actual
+  //    model change) seeds, never one measureLoop() runs mid-settle, where
+  //    body pagination is still using *estimated* metrics for whatever it
+  //    hasn't measured yet — which page a footnote reference lands on (and
+  //    so its reserves) shifts between those calls independently of
+  //    whether the footnotes' own content changed.
+  //  - `hasEverSettled` (below): schedule() alone isn't enough — the
+  //    initial mount's fused watcher chain (the document watcher, the
+  //    hidden-body-blocks watcher, document.fonts.ready, the viewport-range
+  //    watcher — see specs/047's "the open-phase ceiling" note) fires
+  //    several schedule() calls in a synchronous burst with no macrotask
+  //    yield between them, so `fromSchedule` alone doesn't exclude it.
   let lastNoteReserves: number[] | undefined;
+  // Set once finish() first runs (see below) and never unset — a one-time
+  // latch, not a continuously-rechecked "is it settled right now" state.
+  // The latter was tried first via both `pending.length` and
+  // `state.value === "clean"`: a document with images/tables (deferred
+  // "keep the estimate until realized" blocks, never real-measured while
+  // virtualized — this fixture alone carries ~700 of them) never actually
+  // reaches zero unresolved work again after the first settle, so
+  // schedule() restarts the whole measure-loop machinery on every single
+  // keystroke and `state` spends most of a continuous typing burst back in
+  // "measuring" — reading either signal per-call reliably disabled seeding
+  // during typing too, the opposite of what AC-6 needs. Once true, later
+  // measuring cycles (typing's own re-triggers included) no longer need to
+  // prove themselves again.
+  let hasEverSettled = false;
 
   // The canvas measurer's DOM probe host: the pages wrapper (the content
   // root's parent), OUTSIDE the contenteditable root so probe text can
@@ -329,7 +342,7 @@ export function usePagination(
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
       isHidden,
-      fromSchedule ? lastNoteReserves : undefined,
+      fromSchedule && hasEverSettled ? lastNoteReserves : undefined,
     );
     lastNoteReserves = notesLayout.reserves;
     const layout = notesLayout.pages;
@@ -531,6 +544,7 @@ export function usePagination(
     }
     busy.value = false;
     state.value = "clean";
+    hasEverSettled = true;
   }
 
   // Measurement chains in budgeted macrotask slots: input events and
