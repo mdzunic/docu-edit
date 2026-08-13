@@ -94,6 +94,11 @@ export interface NotesLayout {
    * collectNoteRefs(model, "footnote") — the per-page numbering restart's
    * grouping input (AC-19). */
   footnoteRefPages: number[];
+  /** The footnote area heights this pass converged on, by page index — feed
+   * back in as `seedReserves` on the next call (SPEC-047 AC-6) so a call
+   * whose footnote layout hasn't actually changed can converge on its
+   * first pass instead of needing a from-scratch (unreserved) one first. */
+  reserves: number[];
 }
 
 /** The width (px) note content is measured and rendered at on a section's
@@ -383,23 +388,40 @@ function syntheticPage(model: DocumentModel, sectionIndex: number): PageLayout {
 }
 
 /** Lays the whole document out with its note areas (see the header
- * comment). Without any note references this is exactly `paginate`. */
+ * comment). Without any note references this is exactly `paginate`.
+ * `seedReserves` (SPEC-047 AC-6) is the previous call's converged
+ * `reserves`, if the caller has one: starting the fixed-point loop (and the
+ * very first pagination pass) from the last-known-good footnote-area
+ * heights lets a call whose footnote layout didn't actually change (the
+ * common case — most edits are nowhere near a footnote) converge on pass 0
+ * instead of needing an unreserved pass first purely to discover reserves
+ * it already knew. A wrong or stale seed (page count changed, footnotes
+ * moved) just fails the first `sameReserves` check exactly like an empty
+ * seed would — the loop still converges correctly, just over more passes,
+ * so a bad guess costs efficiency, never correctness. */
 export function layoutWithNotes(
   model: DocumentModel,
   metrics: MetricsProvider,
   noteMetrics: NoteMetricsProvider,
   lineOffsetsOf: (block: Block) => number[] | null,
   isHidden: (sectionIndex: number, blockIndex: number) => boolean = () => false,
+  seedReserves?: number[],
 ): NotesLayout {
   const footnoteRefs = collectNoteRefs(model, "footnote");
   const endnoteRefs = collectNoteRefs(model, "endnote");
 
-  let pages = paginate(model, metrics, undefined, isHidden);
+  const hasSeed = footnoteRefs.length > 0 && seedReserves !== undefined && seedReserves.length > 0;
+  let pages = paginate(
+    model,
+    metrics,
+    hasSeed ? (page) => seedReserves[page] ?? 0 : undefined,
+    isHidden,
+  );
   let refPages: number[] = [];
   let plan: FootnotePlan = { areas: pages.map(() => null), reserves: [], carry: [], pageByNote: new Map() };
 
   if (footnoteRefs.length > 0) {
-    let reserves: number[] = [];
+    let reserves: number[] = hasSeed ? seedReserves : [];
     // SPEC-047 AC-6's typing-latency budget: with hundreds of footnotes,
     // this fixed-point loop's assign+plan pass is a full O(document) walk,
     // run on every keystroke via usePagination's synchronous relayout.
@@ -507,5 +529,6 @@ export function layoutWithNotes(
     endnoteAreas,
     footnotePageByNote: plan.pageByNote,
     footnoteRefPages: refPages,
+    reserves: plan.reserves,
   };
 }

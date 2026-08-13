@@ -220,6 +220,10 @@ export function usePagination(
   let framesSinceLayout = 0;
   let measuredThisPass = 0;
   let lastInteraction = 0;
+  // The last relayout's converged footnote-area reserves (SPEC-047 AC-6),
+  // fed back into layoutWithNotes as its seed — see that function's own
+  // comment for why this is safe even when stale.
+  let lastNoteReserves: number[] | undefined;
 
   // The canvas measurer's DOM probe host: the pages wrapper (the content
   // root's parent), OUTSIDE the contenteditable root so probe text can
@@ -308,7 +312,9 @@ export function usePagination(
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
       isHidden,
+      lastNoteReserves,
     );
+    lastNoteReserves = notesLayout.reserves;
     const layout = notesLayout.pages;
     if (
       !sameAreaLists(noteAreas.value.footnotes, notesLayout.footnoteAreas) ||
@@ -636,6 +642,7 @@ export function usePagination(
   function invalidateAll(): void {
     cache = new WeakMap();
     baseFont = null;
+    lastNoteReserves = undefined;
     measurer?.reset();
     schedule();
   }
