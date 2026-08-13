@@ -98,6 +98,49 @@ describe("collectDropRecords", () => {
     // w:tcPrChange represent it — AC-15) or a same-format .docx save.
     expect(collectDropRecords(model, "docx")).toEqual([]);
   });
+
+  it("reports an unsupported shape geometry as dropped on a cross-format save (SPEC-051 AC-61)", () => {
+    const model = { ...createDocument("id-shape-1"), format: "docx" as const };
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [{ text: "before", formatting: {} }] },
+      {
+        type: "shape",
+        geometry: "rect",
+        widthCm: 3,
+        heightCm: 2,
+        wrap: "square",
+        unsupportedGeometryXml: '<a:prstGeom prst="cube"><a:avLst/></a:prstGeom>',
+      },
+    ];
+
+    const dropped = collectDropRecords(model, "odt");
+    expect(dropped.map((d) => [d.kind, d.location])).toEqual([["shapeGeometry", "paragraph 2"]]);
+    expect(dropped[0].reason).toContain("OpenDocument Text (.odt)");
+    expect(DROP_KIND_LABELS.shapeGeometry).toBe("Shape geometry");
+  });
+
+  it("does not report a shape's unsupported geometry on a same-format save", () => {
+    const model = { ...createDocument("id-shape-2"), format: "docx" as const };
+    model.sections[0].blocks = [
+      {
+        type: "shape",
+        geometry: "rect",
+        widthCm: 3,
+        heightCm: 2,
+        wrap: "square",
+        unsupportedGeometryXml: '<a:prstGeom prst="cube"><a:avLst/></a:prstGeom>',
+      },
+    ];
+    expect(collectDropRecords(model, "docx")).toEqual([]);
+  });
+
+  it("does not report a shape with a recognised (catalogue) geometry as dropped, even cross-format", () => {
+    const model = { ...createDocument("id-shape-3"), format: "docx" as const };
+    model.sections[0].blocks = [
+      { type: "shape", geometry: "ellipse", widthCm: 3, heightCm: 2, wrap: "square" },
+    ];
+    expect(collectDropRecords(model, "odt")).toEqual([]);
+  });
 });
 
 describe("noConversionReport", () => {

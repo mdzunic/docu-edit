@@ -17,6 +17,7 @@
 import {
   isBreak,
   isImage,
+  isShape,
   isTable,
   isToc,
   type CommentAnchor,
@@ -87,7 +88,7 @@ function forEachParagraph(
             });
           });
         });
-      } else if (!isImage(block) && !isBreak(block) && !isToc(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isBreak(block) && !isToc(block)) {
         visit(block, { section: sectionIndex, block: blockIndex });
       }
     });

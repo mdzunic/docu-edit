@@ -222,6 +222,11 @@ const QUERIES = new Set([
   // input model.
   "withNoteModel",
   "commitNoteModel",
+  // SPEC-051: the shape-text editing seam — the same throwaway
+  // single-section addressing as withNoteModel, never mutating the input
+  // model.
+  "withShapeModel",
+  "commitShapeModel",
   // SPEC-032: pure reads and the levels normaliser the two definition
   // commands are built from (applyListDefinition normalises through it; it
   // never touches a model itself).

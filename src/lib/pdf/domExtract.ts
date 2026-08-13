@@ -193,6 +193,47 @@ export function extractPageContent(
     });
   }
 
+  // Shapes (SPEC-051 AC-62) paint their geometry/fill/outline into a real
+  // <canvas> (DocShapeBlock.vue) — reading it back out as a PNG data URI and
+  // placing it exactly like an image reuses the entire image pipeline below
+  // instead of teaching the PDF builder a second, vector drawing path.
+  // Rotation is already baked into the canvas's own pixels (paintShape
+  // rotates before painting), so the canvas element's own on-screen
+  // (unrotated) bounding box is the right placement rectangle.
+  for (const element of Array.from(pageEl.querySelectorAll("canvas.doc-shape-canvas"))) {
+    if (element.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const anchorEl = element.closest(".doc-shape-anchor");
+    if (anchorEl && anchorEl.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const canvas = element as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0.1 || rect.height <= 0.1) {
+      continue;
+    }
+    let src = "";
+    try {
+      src = canvas.toDataURL("image/png");
+    } catch {
+      continue;
+    }
+    if (!src || src === "data:,") {
+      continue;
+    }
+    const shapeEl = canvas.closest(".doc-shape");
+    const zIndex = shapeEl ? Number.parseInt(view.getComputedStyle(shapeEl).zIndex, 10) : NaN;
+    images.push({
+      src,
+      xPt: (rect.left - pageRect.left) * scale,
+      yPt: (rect.top - pageRect.top) * scale,
+      widthPt: rect.width * scale,
+      heightPt: rect.height * scale,
+      onTop: Number.isFinite(zIndex) && zIndex > 0,
+    });
+  }
+
   for (const anchor of Array.from(pageEl.querySelectorAll("a[data-doc-link]"))) {
     if (anchor.closest(EXCLUDED_SELECTOR)) {
       continue;

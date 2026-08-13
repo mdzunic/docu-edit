@@ -10,6 +10,7 @@ import {
   createDefaultStyles,
   isBreak,
   isImage,
+  isShape,
   isTable,
   isToc,
   type DocumentFormat,
@@ -75,6 +76,9 @@ export type DropKind =
   | "runShading"
   | "svgImage"
   | "trackedPropertyChange"
+  // SPEC-051: a shape geometry outside the catalogue that a cross-format
+  // save cannot carry into the target format (AC-61).
+  | "shapeGeometry"
   // SPEC-050: content-level kinds a Markdown save can lose — Markdown has no
   // package, so unlike the kinds above these are detected by walking the
   // model's content rather than its unmodelled parts/nodes.
@@ -127,6 +131,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaquePart: "Package part",
   runShading: "Run shading",
   svgImage: "SVG image",
+  shapeGeometry: "Shape geometry",
   trackedPropertyChange: "Tracked table property change",
   pageSetup: "Page setup",
   headerFooter: "Header/footer",
@@ -244,6 +249,7 @@ const REASONS: Record<DropKind, string> = {
   runShading:
     "the target format has a single text background, which the highlight colour occupies",
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
+  shapeGeometry: "this shape's geometry is outside the catalogue and cannot be converted between formats",
   trackedPropertyChange:
     "OpenDocument Text has no slot for a table/row/cell property change's previous state — the change is kept applied but no longer tracked",
   pageSetup: "Markdown carries no page geometry or section breaks",
@@ -322,6 +328,16 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           // A TOC's generated entries are plain data, not preserved XML —
           // both writers regenerate its field/index markup fresh, so there
           // is nothing here that could be dropped by a format conversion.
+          continue;
+        }
+        if (isShape(blockAt)) {
+          // An unsupported geometry (SPEC-008 preservation) is verbatim XML
+          // this module never translates between formats — any cross-format
+          // save of it drops the geometry (SPEC-051 AC-61); a same-format
+          // save re-emits it unchanged and reports nothing.
+          if (blockAt.unsupportedGeometryXml && source !== target) {
+            dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
+          }
           continue;
         }
         if (target === "odt" && isTable(blockAt)) {
@@ -582,7 +598,7 @@ function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
         }
         return;
       }
-      if (isImage(block) || isBreak(block)) {
+      if (isImage(block) || isShape(block) || isBreak(block)) {
         return;
       }
       checkParagraph(block, paragraphNumber);
@@ -792,7 +808,7 @@ export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): Do
             paragraphs.push(...cell.blocks);
           }
         }
-      } else if (!isImage(block) && !isBreak(block) && !isToc(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isBreak(block) && !isToc(block)) {
         paragraphs.push(block);
       }
     }

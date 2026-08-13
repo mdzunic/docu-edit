@@ -7,6 +7,7 @@
 // inline template. Runtime prop/emit declarations (espree, see AppShell.vue).
 import { computed } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
+import DocShapeBlock from "./DocShapeBlock.vue";
 import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
 import DocHeadingToggle from "./DocHeadingToggle.vue";
@@ -18,7 +19,17 @@ const props = defineProps({
   cellRange: { type: Object, default: null },
 });
 
-defineEmits(["image-select", "toc-action", "outline-toggle"]);
+defineEmits([
+  "image-select",
+  "shape-select",
+  "shape-edit-text",
+  "shape-text-beforeinput",
+  "shape-text-keydown",
+  "shape-text-compositionstart",
+  "shape-text-compositionend",
+  "toc-action",
+  "outline-toggle",
+]);
 
 function componentFor(entry = noRenderEntries()[0]) {
   if (entry.kind === "table") {
@@ -26,6 +37,9 @@ function componentFor(entry = noRenderEntries()[0]) {
   }
   if (entry.kind === "image") {
     return DocImageBlock;
+  }
+  if (entry.kind === "shape") {
+    return DocShapeBlock;
   }
   if (entry.kind === "toc") {
     return DocTocBlock;
@@ -57,13 +71,21 @@ const entry = computed(() => asRenderEntry(props.entry));
     :block="entry.blockProp"
     :section="entry.sectionProp"
     :block-index="entry.blockIndexProp"
+    :list-definitions="entry.listDefinitions"
     :display-mode="entry.trackChangesDisplayMode"
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
     :src="entry.imageSrc"
-    :selected="entry.imageSelected"
+    :selected="entry.kind === 'shape' ? entry.shapeSelected : entry.imageSelected"
+    :drawing-index="entry.drawingIndex"
+    :editing-text="entry.kind === 'shape' ? entry.shapeEditing : undefined"
     :stale-headings="entry.kind === 'toc' ? entry.tocStaleHeadings : undefined"
     :stale-pagination="entry.kind === 'toc' ? entry.tocStalePagination : undefined"
-    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : undefined"
+    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
+    @edit-text="entry.kind === 'shape' ? $emit('shape-edit-text', entry.sectionProp, entry.blockIndexProp) : undefined"
+    @text-beforeinput="entry.kind === 'shape' ? $emit('shape-text-beforeinput', $event) : undefined"
+    @text-keydown="entry.kind === 'shape' ? $emit('shape-text-keydown', $event) : undefined"
+    @text-compositionstart="entry.kind === 'shape' ? $emit('shape-text-compositionstart') : undefined"
+    @text-compositionend="entry.kind === 'shape' ? $emit('shape-text-compositionend', $event) : undefined"
     @action="entry.kind === 'toc' ? $emit('toc-action', $event) : undefined"
   >
     <DocHeadingToggle
