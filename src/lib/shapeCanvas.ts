@@ -82,8 +82,12 @@ export function paintShape(ctx: CanvasRenderingContext2D, shape: Shape, widthPx:
   }
 
   if (LINE_GEOMETRIES.has(shape.geometry)) {
+    if (!shape.outline) {
+      ctx.restore();
+      return;
+    }
     const [a, b] = lineSegment(widthPx, heightPx);
-    applyOutline(ctx, shape.outline ?? { color: "#000000", widthPt: 1, dash: "solid" }, PX_PER_PT);
+    applyOutline(ctx, shape.outline, PX_PER_PT);
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
