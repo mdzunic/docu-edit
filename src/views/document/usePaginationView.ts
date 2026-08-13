@@ -75,6 +75,9 @@ export interface FlatEntry {
   imageSrc: string;
   imageSelected: boolean;
   shapeSelected: boolean;
+  /** Whether this exact shape is the one in text-editing mode (SPEC-051
+   * AC-17, AC-18) — true only when it's also shapeSelected. */
+  shapeEditing: boolean;
   /** This shape's 0-based index among every Shape block in the document, in
    * document order (SPEC-051's `data-testid="drawing-<index>"`). */
   drawingIndex: number;
@@ -134,6 +137,14 @@ export interface PaginationViewDeps {
   imageSelection: Ref<ImageLocation | null>;
   /** The selected shape (SPEC-051), if any — mirrors imageSelection. */
   shapeSelection: Ref<ShapeLocation | null>;
+  /** A Shift-click multi-selection of two or more shapes (SPEC-051 AC-34) —
+   * every member renders selected, not just shapeSelection's own. Empty
+   * outside multi-select mode. */
+  shapeMultiSelection: Ref<ShapeLocation[]>;
+  /** Whether shapeSelection's own shape is in text-editing mode (SPEC-051
+   * AC-17, AC-18) — only that one shape's entry renders its text frame
+   * `contenteditable`, real DOM the user's typing can reach. */
+  editingShapeText: Ref<boolean>;
   /** Body headings collapsed in the document body (SPEC-037 AC-16), keyed by
    * their "section:block" address — drives the chevron direction. */
   collapsedHeadings: Ref<ReadonlySet<string>>;
@@ -198,6 +209,7 @@ function renderEntryFor(
         flatEntry.cellSel,
         flatEntry.imgSel,
         flatEntry.shapeSelected,
+        flatEntry.shapeEditing,
         column,
         model.listDefinitions,
         deps.trackChangesDisplayMode.value,
@@ -206,10 +218,11 @@ function renderEntryFor(
       blockProp: block,
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
-      listDefinitions: flatEntry.isTable ? model.listDefinitions ?? [] : undefined,
+      listDefinitions: flatEntry.isTable || flatEntry.isShape ? model.listDefinitions ?? [] : undefined,
       imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       shapeSelected: flatEntry.isShape ? flatEntry.shapeSelected : undefined,
+      shapeEditing: flatEntry.isShape ? flatEntry.shapeEditing : undefined,
       drawingIndex: flatEntry.isShape ? flatEntry.drawingIndex : undefined,
       column,
       trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
@@ -646,6 +659,8 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     const range = deps.cellSelection.value;
     const selectedImage = deps.imageSelection.value;
     const selectedShape = deps.shapeSelection.value;
+    const multiSelectedShapes = deps.shapeMultiSelection.value;
+    const shapeTextEditing = deps.editingShapeText.value;
     let drawingCounter = 0;
     return deps.doc.value.sections.flatMap((section, sectionIndex) =>
       section.blocks.map((block, blockIndex) => {
@@ -661,8 +676,12 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
             : "";
         const imgSelected =
           image && !!selectedImage && selectedImage.section === sectionIndex && selectedImage.block === blockIndex;
+        const shapeIsPrimarySelection =
+          !!selectedShape && selectedShape.section === sectionIndex && selectedShape.block === blockIndex;
         const shapeSelected =
-          shape && !!selectedShape && selectedShape.section === sectionIndex && selectedShape.block === blockIndex;
+          shape &&
+          (shapeIsPrimarySelection ||
+            multiSelectedShapes.some((loc) => loc.section === sectionIndex && loc.block === blockIndex));
         return {
           key: `${bump.epoch}:${address}${suffix}`,
           block,
@@ -674,6 +693,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           imageSrc: image ? mediaSrc(deps.doc.value, block) : "",
           imageSelected: imgSelected,
           shapeSelected,
+          shapeEditing: shape && shapeIsPrimarySelection && shapeTextEditing,
           drawingIndex: shape ? drawingCounter++ : -1,
           section: sectionIndex,
           blockIndex,

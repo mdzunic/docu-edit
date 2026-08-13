@@ -95,6 +95,47 @@ export function shapeAt(model: DocumentModel, location: ShapeLocation): Shape | 
   return isShape(target) ? target : null;
 }
 
+/** Whether a shape's text frame holds any actual content — an absent
+ * `text`, or one whose only paragraph is empty, counts as no text
+ * ("Selection and hit testing"'s `hasText` only applies to a textFrame
+ * *holding text*). Any non-paragraph block (a table, say) counts as
+ * content without inspecting it further. */
+export function shapeHasVisibleText(shape: Shape): boolean {
+  if (!shape.text) {
+    return false;
+  }
+  return shape.text.blocks.some((block) =>
+    block.type === "paragraph" ? block.runs.some((run) => run.text.length > 0) : true,
+  );
+}
+
+/** Every Shape block (not Image — hit testing this fixes is shape-specific,
+ * see documentModel.ts's Shape doc comment), ordered topmost-first for
+ * "Selection and hit testing": descending `zOrder`, ties broken by later
+ * document position (later blocks paint on top of earlier ones at the same
+ * z-index bucket — see renderFormatting.ts's shapeDisplayStyle). */
+export function shapesInPaintOrder(model: DocumentModel): { location: ShapeLocation; shape: Shape }[] {
+  const drawings: { location: ShapeLocation; shape: Shape }[] = [];
+  model.sections.forEach((section, sectionIndex) => {
+    section.blocks.forEach((block, blockIndex) => {
+      if (isShape(block)) {
+        drawings.push({ location: { section: sectionIndex, block: blockIndex }, shape: block });
+      }
+    });
+  });
+  return drawings.sort((a, b) => {
+    const za = zOrderOf(a.shape);
+    const zb = zOrderOf(b.shape);
+    if (za !== zb) {
+      return zb - za;
+    }
+    if (a.location.section !== b.location.section) {
+      return b.location.section - a.location.section;
+    }
+    return b.location.block - a.location.block;
+  });
+}
+
 function replaceShape(model: DocumentModel, location: ShapeLocation, next: Shape): void {
   model.sections[location.section].blocks.splice(location.block, 1, next);
 }
@@ -201,6 +242,23 @@ export function insertTextBox(model: DocumentModel, selection: ModelSelection): 
     heightCm: 2,
     text: { blocks: [emptyParagraph()], vAlign: "top" },
   });
+}
+
+/** Double-clicking a shape with no text frame yet gives it one, empty, so
+ * the caret has somewhere to land (AC-17's "populating Shape.text if
+ * absent") — a no-op once the shape already has one. */
+export function ensureShapeTextFrame(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape || shape.text) {
+    return { model: next, selection };
+  }
+  replaceShape(next, location, { ...shape, text: { blocks: [emptyParagraph()], vAlign: "top" } });
+  return { model: next, selection };
 }
 
 /** The default click-placed size for an area geometry (AC-5): 3cm x 2cm. */

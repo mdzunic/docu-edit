@@ -151,3 +151,118 @@ function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: s
 
 registerFixtureTests("word-shapes.docx", docxShapesFixture, "AC-63");
 registerFixtureTests("lo-shapes.odt", odtShapesFixture, "AC-64");
+
+// --- interactive editing (fix-forward retry: AC-11, AC-17, AC-18, AC-27,
+// AC-28, AC-34 — previously unreachable from the UI or wrong) -------------
+
+async function createDocument(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.getByTestId("new-document").click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+}
+
+/** "Insert -> Shape" (AC-3) then a single click on the canvas at the given
+ * position places `geometry` at the default 3cm x 2cm size (AC-5). The
+ * caret first goes to a fixed, shape-free corner so the insertion always
+ * anchors near the same paragraph regardless of what an earlier insertion
+ * placed. */
+async function insertShapeAt(page: Page, geometry: string, x: number, y: number): Promise<void> {
+  await content(page).click({ position: { x: 20, y: 20 } });
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId(`shape-gallery-${geometry}`).click();
+  await content(page).click({ position: { x, y } });
+}
+
+test.describe("SPEC-051 — interactive shape editing", () => {
+  test("shift-clicking two shapes offers Group; grouping exposes Ungroup on either member (AC-34)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    // Well clear of the left margin/ruler, so neither shape's proxy ever
+    // lands partly under the page furniture (a click there can hit the
+    // wrong element).
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    await expect(page.getByTestId("shape-group-button")).toHaveCount(0);
+    await expect(drawings(page)).toHaveCount(2);
+    // A fresh shape lands relative to the caret's own block, an atom like an
+    // image (see shapes.ts's header comment) — inserting the second next to
+    // the first can land it either side, so identify the two by their
+    // left-to-right screen order rather than assume a fixed drawing index.
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    // A plain click establishes a known single-selection baseline, then
+    // Shift-click the other shape to build a two-member selection.
+    await leftShape.click();
+    await rightShape.click({ modifiers: ["Shift"] });
+    await expect(page.getByTestId("shape-group-button")).toBeVisible();
+    await page.getByTestId("shape-group-button").click();
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+    // The other member reports the same group once selected on its own.
+    await leftShape.click();
+    await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+  });
+
+  test("an unfilled, textless shape's interior is click-through, never selectable by bounding box (AC-11)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    await page.getByTestId("shape-fill-none").click();
+    await page.getByTestId("shape-outline-none").click();
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await content(page).click({ position: { x: 550, y: 550 } });
+    await expect(page.getByTestId("shape-toolbar")).toHaveCount(0);
+    // A click at the (now paint-free) shape's own bounding-box centre must
+    // not select it — with nothing filled, no outline and no text, its
+    // painted region is empty.
+    await drawingAt(page, 0).click({ force: true });
+    await expect(page.getByTestId("shape-toolbar")).toHaveCount(0);
+  });
+
+  test("double-clicking a shape enters text edit mode and typed text persists in the model (AC-17, AC-18)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    await drawingAt(page, 0).dblclick();
+    const text = drawingAt(page, 0).locator('[data-testid="shape-text"]');
+    await expect(text).toHaveAttribute("contenteditable", "true");
+    await page.keyboard.type("Hello shape");
+    await expect(text).toContainText("Hello shape");
+    // Click elsewhere to leave edit mode and re-render from the model —
+    // the text surviving that round trip proves it landed in Shape.text,
+    // not just the transient contenteditable DOM.
+    await content(page).click({ position: { x: 550, y: 550 } });
+    await expect(text).toContainText("Hello shape");
+  });
+
+  test("selecting a shape shows an anchor marker, and dragging it moves the shape (AC-27, AC-28)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    await expect(page.getByTestId("shape-anchor-marker")).toBeVisible();
+    const proxy = drawingAt(page, 0);
+    const before = await proxy.boundingBox();
+    if (!before) {
+      throw new Error("shape proxy has no bounding box");
+    }
+    await proxy.hover();
+    await page.mouse.down();
+    await page.mouse.move(before.x + before.width / 2 + 90, before.y + before.height / 2 + 90, { steps: 6 });
+    await page.mouse.up();
+    const after = await proxy.boundingBox();
+    if (!after) {
+      throw new Error("shape proxy lost its bounding box after the drag");
+    }
+    expect(after.x).toBeGreaterThan(before.x + 40);
+    expect(after.y).toBeGreaterThan(before.y + 40);
+  });
+});

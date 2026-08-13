@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onUpdated, useTemplateRef, watch } from "vue";
-import { asShape } from "../lib/documentModel";
+import { asListDefinitions, asShape } from "../lib/documentModel";
 import { shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintShape } from "../lib/shapeCanvas";
 import { shapeClipPath } from "../lib/shapeGeometry";
+import { shapeHasVisibleText } from "../lib/shapes";
+import { shapeTextRenderEntries } from "../lib/pageRender";
 import { cmToPx } from "../lib/images";
+import DocBlockEntries from "./DocBlockEntries.vue";
 
 // One shape/text-box block on the page (SPEC-051). Runtime prop
 // declarations, not defineProps<{...}>() generics — see DocImageBlock.vue's
@@ -31,9 +34,20 @@ const props = defineProps({
   overflowing: { type: Boolean, default: false },
   editingText: { type: Boolean, default: false },
   displayMode: { type: String, default: "all" },
+  /** The document's multilevel list definitions (SPEC-032) — a shape's own
+   * list paragraphs (AC-18) resolve defined markers/indents from the same
+   * catalogue the body does. */
+  listDefinitions: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(["select", "edit-text", "text-input"]);
+defineEmits([
+  "select",
+  "edit-text",
+  "text-beforeinput",
+  "text-keydown",
+  "text-compositionstart",
+  "text-compositionend",
+]);
 
 const canvasEl = useTemplateRef("canvasEl");
 
@@ -65,40 +79,45 @@ watch(() => props.block, repaint, { deep: true });
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 
-/** Restricts the proxy's own hit-testing to the shape's painted region for
- * a filled shape ("Selection and hit testing", AC-11) — a click outside the
- * clip falls through to whatever is beneath (the page background, or a
- * shape further down in z-order). Text-frame clicks still land on the text
- * span itself, which sits inside the proxy and is unaffected by its
- * parent's clip. */
+/** Restricts the proxy's own hit-testing to the shape's painted region
+ * ("Selection and hit testing", AC-11) so a click never selects by bounding
+ * box: a filled shape clips to its geometry (a click outside the clip falls
+ * through natively to whatever is beneath — the page background, or a
+ * shape further down in z-order); an unfilled shape with no visible text
+ * has nothing in its interior to click at all, so the whole proxy goes
+ * `pointer-events: none` and passes every click through — DocumentView's
+ * shapeAtClientPoint recovers the outline-tolerance click (and the
+ * dblclick-to-edit gesture) that this can no longer catch natively. A
+ * text-frame click still lands on `.doc-shape-text`, which sets its own
+ * `pointer-events: auto` regardless of the proxy's (see the scoped style
+ * below — pointer-events inherits, so that override is required, not
+ * cosmetic). */
 function proxyStyle() {
   const shape = asShape(props.block);
   const clip = shapeClipPath(shape.geometry, !!shape.fill);
   return clip ? { clipPath: clip } : {};
 }
 
-function onTextInput(event = new Event("input")) {
-  const target = event.target;
-  if (target instanceof HTMLElement) {
-    emit("text-input", target.innerHTML);
-  }
+/** Whether the proxy has nothing in its interior to click at all — an
+ * unfilled shape with no visible text (proxyStyle()'s own comment). Applied
+ * as a class, not an inline style, so `pointer-events` stays a plain CSS
+ * value Vue's typed `:style` binding never has to widen. */
+function proxyPassthrough() {
+  const shape = asShape(props.block);
+  return !shape.fill && !shapeHasVisibleText(shape);
 }
 
-/** A plain-text preview of the shape's text frame — every paragraph's runs
- * concatenated, one paragraph per line. Not yet the full rich-text render
- * (see the implement summary): character formatting inside a shape's text
- * currently displays unstyled. */
-function shapeTextPreview() {
+/** The shape's text frame as DocBlockEntries entries (AC-17..21): real,
+ * editable DOM inside the proxy — paragraphs (with lists) and tables, the
+ * same Block content body text accepts. Rendered whether or not this shape
+ * is the one actively being edited; only `editingText` toggles whether it's
+ * `contenteditable`. */
+function shapeTextEntries() {
   const shape = asShape(props.block);
   if (!shape.text) {
-    return "";
+    return [];
   }
-  return shape.text.blocks
-    .map((paragraphBlock) => {
-      const paragraph = paragraphBlock.type === "paragraph" ? paragraphBlock : null;
-      return paragraph ? paragraph.runs.map((run) => run.text).join("") : "";
-    })
-    .join("\n");
+  return shapeTextRenderEntries(shape, asListDefinitions(props.listDefinitions));
 }
 </script>
 
@@ -122,22 +141,30 @@ function shapeTextPreview() {
       />
       <span
         class="doc-shape-proxy"
+        :class="{ 'doc-shape-proxy-passthrough': proxyPassthrough() }"
         :style="proxyStyle()"
         :data-testid="`drawing-${drawingIndex}`"
         :role="block.text ? 'group' : 'img'"
         :aria-label="block.altText || ''"
         tabindex="0"
-        @click.stop="$emit('select')"
+        @click.stop="(event) => $emit('select', event.shiftKey)"
         @dblclick.stop="$emit('edit-text')"
       >
-        <span
+        <div
           v-if="block.text"
           class="doc-shape-text"
           :class="`doc-shape-valign-${block.text.vAlign}`"
           data-testid="shape-text"
+          :data-shape-text-editable="editingText ? '1' : undefined"
           :contenteditable="editingText"
-          @input="onTextInput"
-        >{{ shapeTextPreview() }}</span>
+          spellcheck="false"
+          @beforeinput.stop="editingText ? $emit('text-beforeinput', $event) : undefined"
+          @keydown.stop="editingText ? $emit('text-keydown', $event) : undefined"
+          @compositionstart.stop="editingText ? $emit('text-compositionstart') : undefined"
+          @compositionend.stop="editingText ? $emit('text-compositionend', $event) : undefined"
+        >
+          <DocBlockEntries :entries="shapeTextEntries()" />
+        </div>
         <span
           v-if="selected && overflowing"
           class="doc-shape-overflow print-exclude"
@@ -186,6 +213,14 @@ function shapeTextPreview() {
   outline-offset: 1px;
 }
 
+/* An unfilled, textless shape's proxy passes every click through to
+   whatever's beneath (AC-11) — DocumentView's shapeAtClientPoint recovers
+   the outline-tolerance click and dblclick-to-edit gesture natively lost
+   here (proxyPassthrough()'s own comment). */
+.doc-shape-proxy-passthrough {
+  pointer-events: none;
+}
+
 .doc-shape-text {
   display: flex;
   flex-direction: column;
@@ -196,6 +231,10 @@ function shapeTextPreview() {
   white-space: pre-wrap;
   word-wrap: break-word;
   cursor: text;
+  /* pointer-events inherits — this keeps the text frame clickable even when
+     the parent proxy goes pointer-events: none for an unfilled, textless
+     shape's *other* siblings' geometry (proxyStyle()'s own comment). */
+  pointer-events: auto;
 }
 
 .doc-shape-valign-top {

@@ -420,7 +420,7 @@ import {
   setImageWrap,
 } from "../lib/images";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
-import { asNudgeDirection, shapeAt } from "../lib/shapes";
+import { asNudgeDirection, noShapeLocation, shapeAt } from "../lib/shapes";
 import {
   asImageHandle,
   IMAGE_HANDLES,
@@ -873,12 +873,22 @@ const {
 // returned bindings, the same shape useImages follows.
 const {
   shapeSelection,
+  shapeMultiSelection,
   shapeHandles,
+  shapeAnchorMarker,
   drawGeometry,
   editingShapeText,
+  shapeTextRemountEpoch,
   clearShapeSelection,
   handleShapeSelect,
   handleShapeEditText,
+  exitShapeTextEditing,
+  handleShapeTextBeforeInput,
+  handleShapeTextKeyDown,
+  handleShapeTextCompositionStart,
+  handleShapeTextCompositionEnd,
+  shapeAtClientPoint,
+  canGroupSelection,
   shapeHandleStyle,
   rotationHandleStyle,
   shapeToolbarStyle,
@@ -896,6 +906,7 @@ const {
   handleUngroupSelected,
   currentGroupMembers,
   startShapeResize,
+  startShapeMove,
   startShapeRotate,
   armShapeDraw,
   disarmShapeDraw,
@@ -906,10 +917,13 @@ const {
   contentRoot,
   pageRef,
   editable,
+  documentId,
   currentSelection,
   applyEdit,
   clearCellSelection,
   getCaret: () => caret,
+  markDirty: () => noteEdit(),
+  refreshUndoRedoState,
 });
 
 // Footnotes and endnotes (SPEC-031) live in useNotes; it provides `activeNote` /
@@ -2311,16 +2325,59 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
     clearImageSelection();
   }
   // Same for a selected shape (SPEC-051) — a click on one is handled by
-  // DocShapeBlock's own @select, which fires afterward.
+  // DocShapeBlock's own @select, which fires afterward. An unfilled,
+  // textless shape's proxy is pointer-events: none over its whole box (AC-11
+  // — its own interior is not part of its painted region), so `event.target`
+  // never lands inside it; shapeAtClientPoint recovers that case by testing
+  // every shape's actual painted region (outline included) at this point.
   const shapeTarget = event.target instanceof Element ? event.target.closest(".doc-shape-anchor") : null;
-  if (!shapeTarget) {
-    clearShapeSelection();
+  let shapeMouseDownLocation = noShapeLocation();
+  if (shapeTarget instanceof HTMLElement) {
+    const section = Number(shapeTarget.dataset.section);
+    const block = Number(shapeTarget.dataset.block);
+    if (Number.isInteger(section) && Number.isInteger(block)) {
+      shapeMouseDownLocation = { section, block };
+    }
+  } else {
+    const recovered = shapeAtClientPoint(event.clientX, event.clientY);
+    if (recovered) {
+      handleShapeSelect(recovered.section, recovered.block, event.shiftKey);
+      shapeMouseDownLocation = recovered;
+    } else {
+      clearShapeSelection();
+    }
+  }
+  // A drag on the shape's own body moves (and, crossing a paragraph
+  // boundary, re-anchors) it (AC-28) — armed here rather than from
+  // DocShapeBlock's own click handler so it also covers a shape that was not
+  // already selected (mousedown's native hit-test target is the same
+  // element a plain click would land on) and the AC-11 recovery case above.
+  // Shift is reserved for the multi-select toggle (AC-34), not a drag.
+  if (shapeMouseDownLocation && !event.shiftKey) {
+    startShapeMove(event, shapeMouseDownLocation);
   }
   // Same for a selected TOC (SPEC-033) — a click on one is handled by
   // DocTocBlock's own @action "select", which fires afterward.
   const tocTarget = event.target instanceof Element ? event.target.closest(".doc-toc") : null;
   if (!tocTarget) {
     clearTocSelection();
+  }
+}
+
+/** Dblclick recovery for a shape DocShapeBlock's own proxy couldn't catch
+ * natively (AC-11's pointer-events: none case, same reasoning as
+ * handleCanvasMouseDown's shapeAtClientPoint call) — otherwise AC-17's
+ * "double-clicking a shape puts the caret inside it, populating Shape.text
+ * if absent" would be unreachable by mouse for an unfilled, textless shape
+ * whose only clickable region is its outline. */
+function handleCanvasDblClick(event = new MouseEvent("dblclick")) {
+  const shapeTarget = event.target instanceof Element ? event.target.closest(".doc-shape-anchor") : null;
+  if (shapeTarget) {
+    return;
+  }
+  const recovered = shapeAtClientPoint(event.clientX, event.clientY);
+  if (recovered) {
+    handleShapeEditText(recovered.section, recovered.block);
   }
 }
 
@@ -4438,6 +4495,8 @@ const { pagedViews } = usePaginationView({
   cellSelection,
   imageSelection,
   shapeSelection,
+  shapeMultiSelection,
+  editingShapeText,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -5863,6 +5922,12 @@ async function menuPastePlain() {
             />
           </div>
           <div
+            v-if="shapeAnchorMarker"
+            class="shape-anchor-marker print-exclude"
+            data-testid="shape-anchor-marker"
+            :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
+          />
+          <div
             ref="contentRoot"
             class="document-content"
             :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
@@ -5871,7 +5936,7 @@ async function menuPastePlain() {
             aria-multiline="true"
             aria-label="Document content"
             :aria-readonly="editable ? undefined : 'true'"
-            :contenteditable="editable && !activeHeaderFooter && !activeNote"
+            :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText"
             spellcheck="false"
             @beforeinput="handleBeforeInput"
             @keydown="handleKeyDown"
@@ -5885,6 +5950,7 @@ async function menuPastePlain() {
             @mousemove="handleCanvasMouseMove"
             @mouseup="handleCanvasMouseUp"
             @click="handleContentClick"
+            @dblclick="handleCanvasDblClick"
             @dragenter="handleCanvasDragEnter"
             @dragover="handleCanvasDragOver"
             @drop="handleCanvasDrop"
@@ -5911,6 +5977,10 @@ async function menuPastePlain() {
               @image-select="handleImageSelect"
               @shape-select="handleShapeSelect"
               @shape-edit-text="handleShapeEditText"
+              @shape-text-beforeinput="handleShapeTextBeforeInput"
+              @shape-text-keydown="handleShapeTextKeyDown"
+              @shape-text-compositionstart="handleShapeTextCompositionStart"
+              @shape-text-compositionend="handleShapeTextCompositionEnd"
               @toc-action="handleTocAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"
               @dblclick-footer="handleDblclickFooter(pageIndex)"
@@ -6108,7 +6178,7 @@ async function menuPastePlain() {
       :wrap="shapeAt(doc, shapeSelection)?.wrap || 'inline'"
       :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
       :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
-      :can-group="false"
+      :can-group="canGroupSelection()"
       @fill="handleShapeFill"
       @outline="handleShapeOutline"
       @rotation="handleShapeRotationInput"
@@ -6821,6 +6891,22 @@ async function menuPastePlain() {
   background: #fff;
   cursor: grab;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+/* The anchor marker (SPEC-051 AC-27): a small flag at the start of the
+   paragraph a selected shape is anchored to, moving with it on re-anchor
+   (AC-28) — same overlay convention as the resize/rotation handles, one
+   layer below them (z-index) since it never needs to receive a pointer. */
+.shape-anchor-marker {
+  position: absolute;
+  z-index: 14;
+  pointer-events: none;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -2px;
+  background: #1a73e8;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 
 /* Off-screen but rendered, so the aria-live caret announcements reach

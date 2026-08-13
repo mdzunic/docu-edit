@@ -64,6 +64,10 @@ defineEmits([
   "image-select",
   "shape-select",
   "shape-edit-text",
+  "shape-text-beforeinput",
+  "shape-text-keydown",
+  "shape-text-compositionstart",
+  "shape-text-compositionend",
   "toc-action",
   "dblclick-header",
   "dblclick-footer",
@@ -166,8 +170,12 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               :entry="entry"
               :cell-range="cellRange"
               @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
-              @shape-select="(section, blockIndex) => $emit('shape-select', section, blockIndex)"
+              @shape-select="(section, blockIndex, shiftKey) => $emit('shape-select', section, blockIndex, shiftKey)"
               @shape-edit-text="(section, blockIndex) => $emit('shape-edit-text', section, blockIndex)"
+              @shape-text-beforeinput="(event) => $emit('shape-text-beforeinput', event)"
+              @shape-text-keydown="(event) => $emit('shape-text-keydown', event)"
+              @shape-text-compositionstart="() => $emit('shape-text-compositionstart')"
+              @shape-text-compositionend="(event) => $emit('shape-text-compositionend', event)"
               @toc-action="(payload) => $emit('toc-action', payload)"
               @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
             />
@@ -186,8 +194,12 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             :entries="entries"
             :cell-range="cellRange"
             @image-select="(section, block) => $emit('image-select', section, block)"
-            @shape-select="(section, block) => $emit('shape-select', section, block)"
+            @shape-select="(section, block, shiftKey) => $emit('shape-select', section, block, shiftKey)"
             @shape-edit-text="(section, block) => $emit('shape-edit-text', section, block)"
+            @shape-text-beforeinput="(event) => $emit('shape-text-beforeinput', event)"
+            @shape-text-keydown="(event) => $emit('shape-text-keydown', event)"
+            @shape-text-compositionstart="() => $emit('shape-text-compositionstart')"
+            @shape-text-compositionend="(event) => $emit('shape-text-compositionend', event)"
             @toc-action="(payload) => $emit('toc-action', payload)"
             @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"
           />

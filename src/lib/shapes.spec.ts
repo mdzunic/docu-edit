@@ -9,6 +9,7 @@ import {
   defaultClickSizeCm,
   deleteShape,
   duplicateShape,
+  ensureShapeTextFrame,
   freshGroupOrdinal,
   groupMembers,
   groupShapes,
@@ -32,6 +33,8 @@ import {
   setShapeRotation,
   setShapeSize,
   setShapeWrap,
+  shapeHasVisibleText,
+  shapesInPaintOrder,
   normalizeRotationDeg,
   shapeAt,
   ungroupShapes,
@@ -39,7 +42,7 @@ import {
   type ParagraphSpan,
   type ShapeLocation,
 } from "./shapes";
-import { caretSelection, type ModelSelection } from "./commands";
+import { caretSelection, commitShapeModel, insertText, withShapeModel, type ModelSelection } from "./commands";
 import { equalStructural } from "./equality";
 import { blockText, type CaretPosition } from "./textEditing";
 import { createDocument, isImage, isShape, type DocumentModel, type Image, type Paragraph, type Shape, type Table } from "./documentModel";
@@ -934,5 +937,105 @@ describe("shapeAt", () => {
     expect(shapeAt(model, { section: 0, block: 1 })).toBeNull();
     expect(shapeAt(model, { section: 0, block: 2 })).toBeNull();
     expect(isImage(model.sections[0].blocks[1])).toBe(true);
+  });
+});
+
+// --- shape text editing (SPEC-051 AC-17, AC-18) ----------------------------
+
+describe("ensureShapeTextFrame", () => {
+  it("gives a textless shape one empty paragraph", () => {
+    const model = doc(shape());
+    const { model: next } = ensureShapeTextFrame(model, selectionAt(0, 0), { section: 0, block: 0 });
+    expect(shapeAt(next, { section: 0, block: 0 })?.text).toEqual({
+      blocks: [{ type: "paragraph", runs: [] }],
+      vAlign: "top",
+    });
+  });
+
+  it("is a no-op for a shape that already has a text frame", () => {
+    const withText = shape({ text: { blocks: [paragraph("hi")], vAlign: "middle" } });
+    const model = doc(withText);
+    const { model: next } = ensureShapeTextFrame(model, selectionAt(0, 0), { section: 0, block: 0 });
+    expect(shapeAt(next, { section: 0, block: 0 })?.text).toEqual(withText.text);
+  });
+
+  it("never mutates the input model", () => {
+    const model = doc(shape());
+    const snapshot = structuredClone(model);
+    ensureShapeTextFrame(model, selectionAt(0, 0), { section: 0, block: 0 });
+    expect(equalStructural(model, snapshot)).toBe(true);
+  });
+});
+
+describe("withShapeModel/commitShapeModel (SPEC-051 AC-17, AC-18)", () => {
+  it("edits a shape's text through the body-editing primitives — paragraphs, lists and tables all flow through unmodified", () => {
+    const model = doc(paragraph("before"), shape({ text: { blocks: [paragraph("")], vAlign: "top" } }));
+    const location = { section: 0, block: 1 };
+    const synthetic = withShapeModel(model, location);
+    expect(synthetic.sections).toHaveLength(1);
+    const typed = insertText(synthetic, selectionAt(0, 0), "Shape text");
+    const committed = commitShapeModel(model, location, typed.model);
+    expect((shapeAt(committed, location)!.text!.blocks[0] as Paragraph).runs[0].text).toBe("Shape text");
+    // The rest of the document (and the shape's own vAlign) is untouched.
+    expect((committed.sections[0].blocks[0] as Paragraph).runs[0].text).toBe("before");
+    expect(shapeAt(committed, location)!.text!.vAlign).toBe("top");
+  });
+
+  it("starts a shape with no text frame from one empty paragraph", () => {
+    const model = doc(shape());
+    const synthetic = withShapeModel(model, { section: 0, block: 0 });
+    expect(synthetic.sections[0].blocks).toEqual([{ type: "paragraph", runs: [] }]);
+  });
+
+  it("never mutates the input model", () => {
+    const model = doc(shape({ text: { blocks: [paragraph("x")], vAlign: "top" } }));
+    const snapshot = structuredClone(model);
+    const synthetic = withShapeModel(model, { section: 0, block: 0 });
+    insertText(synthetic, selectionAt(0, 0), "y");
+    expect(equalStructural(model, snapshot)).toBe(true);
+  });
+});
+
+// --- hit testing / paint order (SPEC-051 AC-11) ----------------------------
+
+describe("shapeHasVisibleText", () => {
+  it("is false for a shape with no text frame", () => {
+    expect(shapeHasVisibleText(shape())).toBe(false);
+  });
+
+  it("is false for a text frame holding only an empty paragraph", () => {
+    expect(shapeHasVisibleText(shape({ text: { blocks: [paragraph("")], vAlign: "top" } }))).toBe(false);
+  });
+
+  it("is true once a paragraph carries a run with text", () => {
+    expect(shapeHasVisibleText(shape({ text: { blocks: [paragraph("hi")], vAlign: "top" } }))).toBe(true);
+  });
+
+  it("is true for any non-paragraph block (e.g. a table) without inspecting it", () => {
+    const withTable = shape({ text: { blocks: [grid([["a", "b"]])], vAlign: "top" } });
+    expect(shapeHasVisibleText(withTable)).toBe(true);
+  });
+});
+
+describe("shapesInPaintOrder", () => {
+  it("orders by descending zOrder — the highest zOrder (nearest the reader) first", () => {
+    const low = shape({ zOrder: 0 });
+    const high = shape({ zOrder: 5 });
+    const model = doc(low, high);
+    const order = shapesInPaintOrder(model).map((d) => d.location.block);
+    expect(order).toEqual([1, 0]);
+  });
+
+  it("ties on zOrder break to later document order first (paints on top)", () => {
+    const a = shape();
+    const b = shape();
+    const model = doc(a, b);
+    const order = shapesInPaintOrder(model).map((d) => d.location.block);
+    expect(order).toEqual([1, 0]);
+  });
+
+  it("excludes images — Shape-only", () => {
+    const model = doc(shape(), image());
+    expect(shapesInPaintOrder(model)).toHaveLength(1);
   });
 });
