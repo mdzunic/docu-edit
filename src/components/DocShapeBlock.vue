@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUpdated, useTemplateRef, watch } from "vue";
+import { nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asListDefinitions, asShape } from "../lib/documentModel";
 import { shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
@@ -28,10 +28,6 @@ const props = defineProps({
   selected: { type: Boolean, default: false },
   /** This drawing's 0-based index in document order — data-testid="drawing-<n>". */
   drawingIndex: { type: Number, default: 0 },
-  /** Whether this shape's text is currently clipped past its box (AC-21,
-   * AC-22) — measured by the caller, which has access to the rendered text
-   * frame's scrollHeight. */
-  overflowing: { type: Boolean, default: false },
   editingText: { type: Boolean, default: false },
   displayMode: { type: String, default: "all" },
   /** The document's multilevel list definitions (SPEC-032) — a shape's own
@@ -76,6 +72,27 @@ function repaint() {
 onMounted(repaint);
 onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
+
+const textFrameEl = useTemplateRef("textFrameEl");
+/** Whether the shape's text is currently clipped past its box (AC-21,
+ * AC-22) — measured directly off the text frame's own scrollHeight vs
+ * clientHeight, since this component is the only place that DOM exists.
+ * Re-measured whenever the block (text or size) changes and after layout
+ * settles post-paint, via nextTick. */
+const overflowing = ref(false);
+
+function measureOverflow() {
+  const el = textFrameEl.value;
+  overflowing.value = !!el && el.scrollHeight - el.clientHeight > 1;
+}
+
+onMounted(measureOverflow);
+onUpdated(measureOverflow);
+watch(
+  () => props.block,
+  () => void nextTick().then(measureOverflow),
+  { deep: true },
+);
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 
@@ -156,6 +173,7 @@ function shapeTextEntries() {
              the shape's own editing uses this frame as its root (SPEC-051). -->
         <div
           v-if="block.text"
+          ref="textFrameEl"
           class="doc-shape-text"
           data-canvas-ignore="1"
           :class="`doc-shape-valign-${block.text.vAlign}`"
@@ -236,6 +254,14 @@ function shapeTextEntries() {
   white-space: pre-wrap;
   word-wrap: break-word;
   cursor: text;
+  /* .doc-shape-anchor resets line-height: 0 (so its own inline-block line
+     box adds no gutter) — that inherits all the way down into paragraphs
+     with no explicit lineSpacing (renderFormatting's paragraphStyle only
+     sets an inline line-height when the model has one), collapsing every
+     line to zero height. Reset back to normal here so shape text lays out
+     like body text; an explicit per-paragraph lineHeight still overrides
+     this via its own inline style regardless. */
+  line-height: normal;
   /* pointer-events inherits — this keeps the text frame clickable even when
      the parent proxy goes pointer-events: none for an unfilled, textless
      shape's *other* siblings' geometry (proxyStyle()'s own comment). */
