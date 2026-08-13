@@ -6406,17 +6406,17 @@ async function menuPastePlain() {
 .menu-table-grid {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .menu-table-grid-row {
   display: flex;
-  gap: 2px;
+  gap: 1px;
 }
 
 .menu-table-grid-cell {
-  width: 1rem;
-  height: 1rem;
+  width: 0.8125rem;
+  height: 0.8125rem;
   padding: 0;
   border: 1px solid #bdbdbd;
   border-radius: 2px;
@@ -6435,7 +6435,7 @@ async function menuPastePlain() {
 }
 
 .menu-table-grid-label {
-  margin-top: 0.35rem;
+  margin-top: 0.1875rem;
   font-size: 0.78rem;
   color: #5f6368;
 }

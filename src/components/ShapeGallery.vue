@@ -52,8 +52,8 @@ function itemsFor(group = "") {
 .shape-gallery {
   display: flex;
   flex-direction: column;
-  gap: 0.1875rem;
-  padding: 0.1875rem;
+  gap: 0.125rem;
+  padding: 0.125rem;
   min-width: 220px;
 }
 
