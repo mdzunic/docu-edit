@@ -235,6 +235,12 @@ function build() {
     tablesPlaced++;
   }
 
+  // A trailing plain paragraph, always: the interleave above can end on a
+  // table (its remainder loop runs last), and a caret can't sit "after" a
+  // table the way it can after a paragraph — AC-6's "typing at the document
+  // end" needs an ordinary paragraph there to type into.
+  blocks.push({ type: "paragraph", runs: [{ text: "End of document.", formatting: {} }] });
+
   model.sections = [{ blocks }];
   return model;
 }

@@ -6073,6 +6073,11 @@ async function menuPastePlain() {
     <template #status-bar>
       <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
       <span
+        v-if="documentOpening"
+        role="status"
+        data-testid="document-opening"
+      >Opening…</span>
+      <span
         v-if="paginationBusy"
         data-testid="pagination-busy"
       >Paginating…</span>
