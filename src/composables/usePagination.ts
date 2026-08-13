@@ -222,21 +222,22 @@ export function usePagination(
   let lastInteraction = 0;
   // The last relayout's converged footnote-area reserves (SPEC-047 AC-6),
   // fed back into layoutWithNotes as its seed — see that function's own
-  // comment for why this is safe even when stale.
+  // comment for why this is safe even when stale. Only offered on a
+  // schedule()-triggered relayout (an actual model change), never on one
+  // measureLoop() runs mid-settle: body pagination itself is still using
+  // *estimated* metrics for most of a large document during that bulk
+  // pass (real measurement is exactly what measureLoop is progressively
+  // filling in), which shifts which page each footnote reference lands on
+  // — and so shifts reserves — independently of whether the footnotes'
+  // own content changed. `pending.length` looked like it would tell
+  // "settled" from "settling" apart, but for a virtualized document most
+  // of it is a permanent backlog (off-screen pages estimate-only by
+  // design) that never reaches zero and barely moves call to call, so it
+  // couldn't actually distinguish the two either. Which function is
+  // calling can: schedule() is the one path a real edit (or the initial
+  // mount) takes; measureLoop() is background settling. `relayout`'s
+  // `fromSchedule` parameter carries that distinction down to here.
   let lastNoteReserves: number[] | undefined;
-  // How many blocks the last relayout found uncached (see `pending` below),
-  // gating whether the next call's seed above is worth offering: a small
-  // count (typing's steady state — one edited block always misses, since
-  // commands.ts replaces rather than mutates) means metrics are stable, so
-  // a seed is reliably still correct; a large one (open's initial settle,
-  // or any later bulk re-measure) means metrics are still shifting call to
-  // call, where a seed is as likely to be stale as right and its extra
-  // fixed-point pass just compounds on top of an already-in-flux layout.
-  // `running` alone doesn't distinguish these — the loop stays "running"
-  // for the rest of the session purely because there's always one pending
-  // block after an edit.
-  let lastPendingCount = Number.POSITIVE_INFINITY;
-  const SEED_PENDING_THRESHOLD = 3;
 
   // The canvas measurer's DOM probe host: the pages wrapper (the content
   // root's parent), OUTSIDE the contenteditable root so probe text can
@@ -272,7 +273,10 @@ export function usePagination(
     return entry && Math.abs(entry.metrics.contentWidthPx - contentWidthPx) < 0.5 ? entry : null;
   }
 
-  function relayout(model: DocumentModel): { unresolved: number; resolved: number } {
+  function relayout(
+    model: DocumentModel,
+    fromSchedule = false,
+  ): { unresolved: number; resolved: number } {
     pending = [];
     const seen = new Set<Block>();
     const provider: MetricsProvider = {
@@ -325,10 +329,9 @@ export function usePagination(
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
       isHidden,
-      lastPendingCount <= SEED_PENDING_THRESHOLD ? lastNoteReserves : undefined,
+      fromSchedule ? lastNoteReserves : undefined,
     );
     lastNoteReserves = notesLayout.reserves;
-    lastPendingCount = pending.length;
     const layout = notesLayout.pages;
     if (
       !sameAreaLists(noteAreas.value.footnotes, notesLayout.footnoteAreas) ||
@@ -638,7 +641,7 @@ export function usePagination(
       finish();
       return;
     }
-    const { unresolved } = relayout(model);
+    const { unresolved } = relayout(model, true);
     cursor = 0;
     framesSinceLayout = 0;
     if (unresolved === 0) {
@@ -657,7 +660,6 @@ export function usePagination(
     cache = new WeakMap();
     baseFont = null;
     lastNoteReserves = undefined;
-    lastPendingCount = Number.POSITIVE_INFINITY;
     measurer?.reset();
     schedule();
   }
