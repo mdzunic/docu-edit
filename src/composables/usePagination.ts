@@ -306,13 +306,22 @@ export function usePagination(
       hidden.size === 0
         ? undefined
         : (sectionIndex: number, blockIndex: number) => hidden.has(`${sectionIndex}:${blockIndex}`);
+    // Only seed once the measure loop is idle (SPEC-047 AC-6 vs. AC-16):
+    // while `running` (the initial settle, or any later bulk re-measure),
+    // metrics are still shifting call to call, so a seed is as likely to be
+    // stale as right — and a wrong seed's extra fixed-point pass runs on
+    // top of that same in-flux pagination, compounding across the many
+    // relayouts a settle makes. The steady state after typing settles
+    // (nothing left to measure) is exactly where the seed is reliably
+    // still-correct, and exactly the case AC-6's typing-latency budget
+    // needs it for.
     const notesLayout = layoutWithNotes(
       model,
       provider,
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
       isHidden,
-      lastNoteReserves,
+      running ? undefined : lastNoteReserves,
     );
     lastNoteReserves = notesLayout.reserves;
     const layout = notesLayout.pages;
