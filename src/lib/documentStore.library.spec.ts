@@ -34,11 +34,17 @@ function makeRecord(
   return { id, format: "new", lastModified, model };
 }
 
-// Flush the fire-and-forget persist chain (putRecord().catch(...)).
+// Flush the fire-and-forget persist chain: persist()/persistMedia() now
+// yield a real macrotask (idleScheduler's MessageChannel-based
+// yieldToMainThread, SPEC-047 AC-15/AC-16) before their putRecord call, so
+// a microtask-only flush no longer catches up with it. Several real ticks
+// (not just one) so every hop in yield -> putRecord -> .catch has had a
+// turn regardless of exactly how MessageChannel tasks and timer callbacks
+// interleave in this environment.
 async function flushMicrotasks() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 beforeEach(() => {

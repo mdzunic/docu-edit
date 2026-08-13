@@ -160,12 +160,24 @@ describe("DocumentView autosave", () => {
     await microtasks();
     event = new Event("beforeunload", { cancelable: true });
     expect(window.dispatchEvent(event)).toBe(true);
-    await microtasks();
+    // commitDocument's write now yields a real macrotask (idleScheduler's
+    // MessageChannel-based yieldToMainThread, SPEC-047 AC-15/AC-16) before
+    // its putRecord call — a microtask-only flush (microtasks()) never
+    // catches up with it under vi.useFakeTimers(), so this polls with
+    // vi.waitFor instead, which is fake-timer-aware. Waits for the commit
+    // specifically (offset 7), not just any "leave-doc" write, since the
+    // doc's initial creation already wrote one at offset 0.
+    await vi.waitFor(() => {
+      const found = putRecord.mock.calls
+        .map(([record]) => record)
+        .filter((record) => record.id === "leave-doc")
+        .at(-1);
+      expect(found?.caret).toEqual({ section: 0, block: 0, offset: 7 });
+    });
     const committed = putRecord.mock.calls
       .map(([record]) => record)
       .filter((record) => record.id === "leave-doc")
       .at(-1);
-    expect(committed).toBeDefined();
     expect(committed.caret).toEqual({ section: 0, block: 0, offset: 7 });
     expect(deleteRecord).toHaveBeenCalledWith("draft:leave-doc");
   });
@@ -218,6 +230,18 @@ describe("DocumentView autosave", () => {
 
     expect(w.find('[data-testid="recovery-bar"]').exists()).toBe(false);
     expect(w.get('[data-testid="document-content"]').text()).toContain("Keep me");
+    // See the "prompts on leave" test above: commitDocument's write now
+    // yields a real macrotask before its putRecord call, so this polls
+    // with vi.waitFor rather than relying on microtasks() alone. Waits for
+    // the post-Keep commit specifically, not just any "keep-doc" write,
+    // since the doc's initial (empty) creation already wrote one.
+    await vi.waitFor(() => {
+      const found = putRecord.mock.calls
+        .map(([record]) => record)
+        .filter((record) => record.id === "keep-doc")
+        .at(-1);
+      expect(found && asParagraph(found.model.sections[0].blocks[0]).runs[0]?.text).toBe("Keep me");
+    });
     const committed = putRecord.mock.calls
       .map(([record]) => record)
       .filter((record) => record.id === "keep-doc")

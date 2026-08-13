@@ -6,6 +6,7 @@
 // flips so the UI can show its warning banner.
 import { createDocument, type DocumentModel, type MediaPart } from "./documentModel";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
+import { yieldToMainThread } from "./idleScheduler";
 import type { CaretPosition } from "./textEditing";
 
 /** Where a document's content last came from or went to. "new" means it was
@@ -129,18 +130,34 @@ function markStorageUnavailable(): void {
 // round trip.
 const lastPersistedMedia = new Map<string, MediaPart[] | undefined>();
 
+/** A real macrotask yield (SPEC-047 AC-15/AC-16) before handing a record to
+ * `putRecord`: `IDBObjectStore.put()` structured-clones its argument
+ * synchronously, and `putRecord`'s own `await getDb()` resolves via
+ * microtask once the db handle is cached (true for every write after the
+ * first) — a microtask never hands control back to the browser's
+ * input/render queue, so without a real yield first, that clone runs in
+ * the SAME task as whatever triggered the write (open, a keystroke, a
+ * save's `touchDocument`). Same class of gap zipWriter.ts's `deflateRaw`
+ * comment documents for a different await. */
+async function putRecordYielding(record: PersistedRecord): Promise<void> {
+  await yieldToMainThread();
+  await putRecord(record);
+}
+
 /** Writes a doc's media as its own record — but only when `media`'s array
  * reference differs from what was last written for it. Returns the write's
  * promise so a caller that must reject on storage failure (saveDraft,
  * commitDocument) can await it; callers that are already fire-and-forget
- * (persist) can leave it unawaited. Returns null when skipped. */
+ * (persist) can leave it unawaited. Returns null when skipped — decided
+ * synchronously, before any yield, so callers can tell "skipped" from "in
+ * flight" without awaiting either way. */
 function persistMedia(docId: string, media: MediaPart[] | undefined): Promise<void> | null {
   if (lastPersistedMedia.get(docId) === media) {
     return null;
   }
   lastPersistedMedia.set(docId, media);
   const record: MediaRecord = { id: mediaKey(docId), docId, media: media ?? [] };
-  return putRecord(record);
+  return putRecordYielding(record);
 }
 
 /** A model with `media` stripped to `[]` for the shell record `persist`/
@@ -167,7 +184,7 @@ function rejoinMedia(model: DocumentModel, media: MediaPart[] | undefined): Docu
 // session — it only flips the storage status.
 function persist(record: StoredDocumentRecord): void {
   persistMedia(record.id, record.model.media)?.catch(() => markStorageUnavailable());
-  putRecord({ ...record, model: stripMedia(record.model) }).catch(() => markStorageUnavailable());
+  putRecordYielding({ ...record, model: stripMedia(record.model) }).catch(() => markStorageUnavailable());
 }
 
 // --- hydration -------------------------------------------------------------
@@ -364,7 +381,7 @@ export async function saveDraft(
     caret,
     scroll,
   };
-  await Promise.all([mediaWrite ?? Promise.resolve(), putRecord(draft)]);
+  await Promise.all([mediaWrite ?? Promise.resolve(), putRecordYielding(draft)]);
 }
 
 /** Reads a document's autosave draft; undefined when there is none or the
@@ -412,7 +429,7 @@ export async function commitDocument(
   const mediaWrite = persistMedia(id, record.model.media);
   await Promise.all([
     mediaWrite ?? Promise.resolve(),
-    putRecord({ ...record, model: stripMedia(record.model) }),
+    putRecordYielding({ ...record, model: stripMedia(record.model) }),
   ]);
   await deleteDraft(id);
 }

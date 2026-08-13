@@ -20,6 +20,18 @@ async function loadStore(overrides: Record<string, unknown> = {}) {
   return { store, putRecord, getRecord, deleteRecord, loadAllRecords };
 }
 
+// documentStore's write-through paths now yield a real macrotask (via
+// idleScheduler's MessageChannel-based yieldToMainThread, SPEC-047 AC-15/
+// AC-16) before their putRecord call — a getOrCreateDocument()'s
+// fire-and-forget persist() is still in flight when the synchronous test
+// body continues, so a test that reconfigures the mocked putRecord right
+// after must flush that pending macrotask first, or its deferred call
+// picks up the reconfigured mock instead of the one active when it was
+// issued.
+function flushMacrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 beforeEach(() => {
   vi.resetModules();
 });
@@ -45,6 +57,7 @@ describe("saveDraft", () => {
   it("rejects on write failure WITHOUT latching the SPEC-003 banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-2");
+    await flushMacrotask();
     putRecord.mockRejectedValue(
       new DOMException("quota", "QuotaExceededError"),
     );
@@ -105,6 +118,7 @@ describe("commitDocument", () => {
   it("rejects when the committed write fails, without latching the banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-6");
+    await flushMacrotask();
     putRecord.mockRejectedValue(new Error("full"));
     await expect(store.commitDocument("doc-6", null, 0)).rejects.toBeTruthy();
     expect(store.isStorageAvailable()).toBe(true);
