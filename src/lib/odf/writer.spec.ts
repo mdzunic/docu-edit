@@ -365,6 +365,78 @@ describe("writeOdt — content details", () => {
   });
 });
 
+// SPEC-051 regression: shapeGraphicStyleXml/shapeElementXml emit draw:/svg:
+// prefixed attributes but never declared those namespaces anywhere in the
+// document, so any .odt containing a shape had an unparseable content.xml
+// (an "unbound prefix" error) that neither this app nor any ODF reader could
+// reopen. Exercised at the full write+reopen level, not just the shape.ts
+// unit level, because the bug lived in the *absence* of a namespace
+// declaration on the emitted elements — invisible to tests that only assert
+// on individual attribute values.
+describe("writeOdt — Shape (SPEC-051)", () => {
+  it("writes well-formed content.xml for a filled, outlined shape and round-trips it", async () => {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      {
+        type: "shape",
+        geometry: "star5",
+        widthCm: 4,
+        heightCm: 4,
+        wrap: "square",
+        fill: "#00cc44",
+        outline: { color: "#cc0000", widthPt: 3, dash: "dash" },
+        altText: "A green star",
+      },
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    // parseXml throws on an unbound-prefix/malformed document — this alone
+    // would have caught the bug.
+    expect(() => parseXml(contentXml)).not.toThrow();
+    const reopened = await parseOdt((await writeOdt(model)).bytes);
+    const shape = reopened.sections[0].blocks[0];
+    expect(shape.type).toBe("shape");
+    if (shape.type !== "shape") {
+      return;
+    }
+    expect(shape.geometry).toBe("star5");
+    expect(shape.fill).toBe("#00cc44");
+    expect(shape.outline?.color).toBe("#cc0000");
+    expect(shape.outline?.dash).toBe("dash");
+    expect(shape.altText).toBe("A green star");
+  });
+
+  it("writes well-formed content.xml for a plain default text box (no fill/outline)", async () => {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "inline" },
+    ];
+    const contentXml = await partText((await writeOdt(model)).bytes, "content.xml");
+    expect(() => parseXml(contentXml)).not.toThrow();
+    const reopened = await parseOdt((await writeOdt(model)).bytes);
+    expect(reopened.sections[0].blocks[0].type).toBe("shape");
+  });
+
+  it("cross-format save of an unsupported geometry reports a shapeGeometry drop and still writes a well-formed, reopenable file (AC-61)", async () => {
+    const unsupportedGeometryXml = '<a:prstGeom xmlns:a="urn:example" prst="pentagon"/>';
+    const model = createDocument("id-1");
+    model.format = "docx";
+    model.sections[0].blocks = [
+      { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", unsupportedGeometryXml },
+    ];
+    const { bytes, dropped } = await writeOdt(model);
+    // AC-61: a cross-format save can't translate a foreign geometry into
+    // the target's own vocabulary, so it reports the loss...
+    expect(dropped.map((d) => d.kind)).toContain("shapeGeometry");
+    const contentXml = await partText(bytes, "content.xml");
+    // ...but still writes a well-formed file — the DropRecord is the user
+    // warning; a corrupt, unreadable package would be a second, undeclared
+    // loss on top of it (this exact bug: SHAPE_XMLNS, fixed above).
+    expect(() => parseXml(contentXml)).not.toThrow();
+    const reopened = await parseOdt(bytes);
+    expect(reopened.sections[0].blocks[0].type).toBe("shape");
+  });
+});
+
 describe("writeOdt — empty document", () => {
   it("a freshly created blank document produces a valid one-paragraph file", async () => {
     const reopened = await parseOdt((await writeOdt(createDocument("id-1"))).bytes);

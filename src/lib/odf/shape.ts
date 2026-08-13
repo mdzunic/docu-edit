@@ -26,6 +26,13 @@ import {
 // LibreOffice/Word, so this never corrupts a file another app opens.
 const DE_NAMESPACE = "urn:docu-edit:shape";
 
+// Declared locally on every shape-related element rather than on the
+// document root, so content.xml's bytes are unchanged for documents without
+// shapes (the TABLE_XMLNS/FRAME_XMLNS pattern from writer.ts/drawing.ts).
+// Needed on both the style:style (draw:fill/stroke, svg:stroke-*) and the
+// draw:custom-shape/draw:line element itself (svg:width/height/x/y, etc).
+const SHAPE_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}"`;
+
 const DRAW_TYPE_TO_GEOMETRY_TABLE: Record<string, ShapeGeometry> = {
   rectangle: "rect",
   "round-rectangle": "roundRect",
@@ -292,7 +299,7 @@ function graphicPropertiesXml(shape: Shape): string {
  * its own automatic style (no cross-shape dedup, unlike AutomaticStyles'
  * cached per-wrap-mode image styles) since fill/outline/wrap vary per shape. */
 export function shapeGraphicStyleXml(name: string, shape: Shape): string {
-  return `<style:style style:name="${escapeXml(name)}" style:family="graphic" style:parent-style-name="Graphics">${graphicPropertiesXml(shape)}</style:style>`;
+  return `<style:style style:name="${escapeXml(name)}"${SHAPE_XMLNS} style:family="graphic" style:parent-style-name="Graphics">${graphicPropertiesXml(shape)}</style:style>`;
 }
 
 export interface OdfShapeTextWriteContext {
@@ -328,7 +335,7 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
   if (LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml) {
     const markerAttr = shape.geometry === "arrow" ? ' draw:marker-end="Arrow" draw:marker-end-width="0.3cm"' : "";
     return (
-      `<draw:line text:anchor-type="${anchorType}" draw:style-name="${escapeXml(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
+      `<draw:line${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXml(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
       ` svg:x1="${cmToOdfLength(xCm ?? 0)}" svg:y1="${cmToOdfLength(yCm ?? 0)}"` +
       ` svg:x2="${cmToOdfLength((xCm ?? 0) + shape.widthCm)}" svg:y2="${cmToOdfLength((yCm ?? 0) + shape.heightCm)}"` +
       `${markerAttr}>` +
@@ -339,7 +346,7 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
 
   const geometryXml = shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"/>`;
   return (
-    `<draw:custom-shape text:anchor-type="${anchorType}" draw:style-name="${escapeXml(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
+    `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXml(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
     `${posAttrs} svg:width="${cmToOdfLength(shape.widthCm)}" svg:height="${cmToOdfLength(shape.heightCm)}">` +
     descXml +
     textBoxXml(shape, ctx) +
