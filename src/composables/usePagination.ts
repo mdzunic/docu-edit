@@ -680,9 +680,26 @@ export function usePagination(
     startMeasuring();
   }
 
+  /** The caller just told an ACTIVE measure loop that new work exists (a
+   * fresh realization, a cleared cache) without going through schedule()'s
+   * synchronous relayout: force the loop's next slot to re-lay-out — which
+   * rebuilds `pending` so the new work enters it — and clear the stall
+   * counters, because a pass that was about to settle for lack of progress
+   * must not count that stall against work it hasn't seen yet. Without the
+   * reset, an invalidateAll landing in the settle's stalled endgame could
+   * let the loop finish() on an all-estimates layout with nothing left to
+   * restart it. */
+  function kickRunningLoop(): void {
+    framesSinceLayout = 60; // >= the safety valve: next slot re-lays-out
+    stalledFrames = 0;
+    stalledPasses = 0;
+    measuredThisPass = 0;
+  }
+
   function scheduleMeasure(): void {
     if (running) {
-      return; // the active loop re-lays-out (rebuilding `pending`) at pass end
+      kickRunningLoop();
+      return;
     }
     schedule();
   }
@@ -692,15 +709,17 @@ export function usePagination(
     baseFont = null;
     lastNoteReserves = undefined;
     measurer?.reset();
-    // With the measure loop already running, the cache reset alone is enough:
-    // the loop's own end-of-pass relayout re-collects every (now missing)
-    // block, so the extra synchronous relayout here would recompute a layout
-    // the pass is about to replace — during open, document.fonts.ready
-    // resolves inside the mount task and this was one of the relayouts fused
-    // into it (SPEC-047 AC-16). The last-applied layout stays visible until
-    // that pass lands, which is also what the old immediate relayout's
-    // all-estimates layout was: an interim state, just a worse one.
+    // With the measure loop already running, the cache reset plus a kick is
+    // enough: the loop's next slot re-lays-out against the now-empty cache,
+    // re-collecting every block, so the extra synchronous relayout here
+    // would recompute a layout that pass is about to replace — during open,
+    // document.fonts.ready resolves inside the mount task and this was one
+    // of the relayouts fused into it (SPEC-047 AC-16). The last-applied
+    // layout stays visible until that pass lands, which is also what the
+    // old immediate relayout's all-estimates layout was: an interim state,
+    // just a worse one.
     if (running) {
+      kickRunningLoop();
       return;
     }
     schedule();
