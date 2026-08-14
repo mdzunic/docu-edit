@@ -90,4 +90,39 @@ describe("createWorkerRpcClient", () => {
     client.terminate();
     expect(fake.terminated).toBe(true);
   });
+
+  it("drops an errored worker and constructs a fresh one on the next call", async () => {
+    const workers: FakeWorker[] = [];
+    const client = createWorkerRpcClient<{ n: number }, { doubled: number }>(() => {
+      const fake = new FakeWorker();
+      workers.push(fake);
+      return fake as unknown as Worker;
+    });
+    const failed = client.call({ n: 1 });
+    workers[0].emit("error", { message: "boom" });
+    await expect(failed).rejects.toThrow("boom");
+    expect(workers[0].terminated).toBe(true);
+
+    // A dead-but-cached worker here would swallow this call forever.
+    const retried = client.call({ n: 2 });
+    expect(workers).toHaveLength(2);
+    workers[1].emit("message", { data: { id: 2, doubled: 4 } });
+    await expect(retried).resolves.toEqual({ doubled: 4 });
+  });
+
+  it("rejects pending calls on a messageerror instead of stranding them", async () => {
+    const fake = new FakeWorker();
+    const client = createWorkerRpcClient<{ n: number }, unknown>(() => fake as unknown as Worker);
+    const pending = client.call({ n: 1 });
+    fake.emit("messageerror", {});
+    await expect(pending).rejects.toThrow("deserialized");
+  });
+
+  it("terminate rejects in-flight calls, honouring its settle contract", async () => {
+    const fake = new FakeWorker();
+    const client = createWorkerRpcClient<{ n: number }, unknown>(() => fake as unknown as Worker);
+    const pending = client.call({ n: 1 });
+    client.terminate();
+    await expect(pending).rejects.toThrow("terminated");
+  });
 });
