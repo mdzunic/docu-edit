@@ -250,6 +250,20 @@ export function useCharts(deps: ChartsDeps) {
     };
     const copy = { ...chart, offsetXCm: (chart.offsetXCm ?? 0) + 0.5, offsetYCm: (chart.offsetYCm ?? 0) + 0.5 };
     delete copy.groupOrdinal;
+    // A catalogue-type chart's `sourcePart` names a package part the write
+    // plan keys by name (chartWritePlan.ts/odf's own) — reusing it here
+    // would give two live blocks the same part, and editing just the copy
+    // would silently overwrite the original's data on save. Stripping it
+    // makes the copy behave exactly like a freshly inserted chart (see
+    // insertChart in charts.ts): always regenerated fresh, with its own
+    // part. An unsupported chart's `sourcePart` bytes are never regenerated
+    // (AC-29..31), so two blocks safely sharing it is not a hazard — leave
+    // it, or duplicating an unsupported chart would call chartPartXml on
+    // its placeholder stand-in fields and write bogus chart content.
+    if (copy.unsupportedChartXml === undefined) {
+      delete copy.sourcePart;
+      delete copy.edited;
+    }
     next.sections[location.section].blocks.splice(location.block + 1, 0, copy);
     applyEdit({ model: next, selection }, selection, "duplicate chart");
     chartSelection.value = { section: location.section, block: location.block + 1 };

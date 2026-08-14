@@ -175,6 +175,41 @@ describe("writeDocx — an edited chart (AC-27, AC-28)", () => {
   });
 });
 
+describe("writeDocx — duplicating an opened chart", () => {
+  it("editing the duplicate never touches the original's part (regression: duplicates must not share sourcePart)", async () => {
+    const { model, chartPartName } = await openedModelWithChart(baseChart());
+    const originalXml = new TextDecoder().decode(base64ToBytes(model.opaque!.find((p) => p.name === chartPartName)!.data));
+    const original = model.sections[0].blocks[1] as Chart;
+    // Mirrors useCharts.ts's handleChartDuplicate: a catalogue-type
+    // duplicate carries no `sourcePart` (and no `edited`), so the write
+    // plan always regenerates it into its own fresh part rather than
+    // reusing — and overwriting — the original's.
+    const duplicate: Chart = { ...original, offsetXCm: (original.offsetXCm ?? 0) + 0.5, offsetYCm: (original.offsetYCm ?? 0) + 0.5 };
+    delete duplicate.sourcePart;
+    delete duplicate.edited;
+    duplicate.categories = ["Q1", "Q2", "Q3", "Q4"];
+    duplicate.series = [{ name: "Revenue", values: [10, 20, 30, 40], color: "#4e79a7" }];
+    model.sections[0].blocks.push(duplicate);
+
+    const { bytes, dropped } = await writeDocx(model);
+    expect(dropped).toEqual([]);
+    const parts = await unzip(bytes);
+
+    const writtenOriginal = new TextDecoder().decode(parts.get(chartPartName)!);
+    expect(writtenOriginal).toBe(originalXml);
+
+    const newChartParts = [...parts.keys()].filter((name) => name !== chartPartName && /^word\/charts\/chart\d+\.xml$/.test(name));
+    expect(newChartParts).toHaveLength(1);
+    expect(new TextDecoder().decode(parts.get(newChartParts[0])!)).toContain("Q4");
+
+    const reopened = await parseDocx(bytes);
+    const reopenedOriginal = asChart(reopened.sections[0].blocks[1]);
+    const reopenedDuplicate = asChart(reopened.sections[0].blocks[2]);
+    expect(reopenedOriginal.categories).toEqual(["Q1", "Q2", "Q3"]);
+    expect(reopenedDuplicate.categories).toEqual(["Q1", "Q2", "Q3", "Q4"]);
+  });
+});
+
 describe("writeDocx — deleting a chart (AC-32, AC-33)", () => {
   it("removes the part and relationship on save, and SPEC-008 preservation does not resurrect it", async () => {
     const { model, chartPartName } = await openedModelWithChart(baseChart());

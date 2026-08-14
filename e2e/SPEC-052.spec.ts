@@ -1,4 +1,6 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page, type Locator, type Download } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { inflateRawSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +56,43 @@ async function canvasHasOpaquePixel(proxy: Locator): Promise<boolean> {
 async function insertChart(page: Page, chartType = "columnClustered"): Promise<void> {
   await page.getByTestId("menu-title-insert").click();
   await page.getByTestId(`chart-gallery-${chartType}`).click();
+}
+
+/** Minimal central-directory walk over a downloaded archive — same shape as
+ * e2e/SPEC-006.spec.ts/SPEC-008.spec.ts's own copies — enough to compare
+ * preserved parts byte-for-byte from Node. */
+function unzipParts(buffer: Buffer): Map<string, Buffer> {
+  let eocd = buffer.length - 22;
+  while (eocd >= 0 && buffer.readUInt32LE(eocd) !== 0x06054b50) {
+    eocd--;
+  }
+  expect(eocd, "end-of-central-directory record should exist").toBeGreaterThanOrEqual(0);
+  const totalEntries = buffer.readUInt16LE(eocd + 10);
+  let offset = buffer.readUInt32LE(eocd + 16);
+  const parts = new Map<string, Buffer>();
+  for (let i = 0; i < totalEntries; i++) {
+    expect(buffer.readUInt32LE(offset), "central directory entry signature").toBe(0x02014b50);
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString("utf8", offset + 46, offset + 46 + nameLength);
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const data = buffer.subarray(dataStart, dataStart + compressedSize);
+    parts.set(name, method === 8 ? inflateRawSync(data) : Buffer.from(data));
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return parts;
+}
+
+async function downloadedBuffer(download: Download): Promise<Buffer> {
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  return readFileSync(path);
 }
 
 // --- opening the fixtures (AC-1, AC-40..43) ---------------------------------
@@ -117,6 +156,42 @@ test("clicking a chart selects it and shows the floating toolbar; Delete removes
   await expect(page.getByTestId("chart-toolbar")).toBeVisible();
   await page.keyboard.press("Delete");
   await expect(drawings(page)).toHaveCount(0);
+});
+
+// Regression: "Duplicate" on an opened (not freshly inserted) chart must not
+// leave the copy sharing the original's package part — editing just the
+// copy previously overwrote the original's data on save, since both blocks
+// pointed at the same word/charts/chartN.xml.
+test("duplicating an opened chart and editing the copy leaves the original's part byte-identical", async ({ page }) => {
+  await openFixture(page, docxChartsFixture);
+  await drawingAt(page, 0).click();
+  await page.getByTestId("chart-duplicate-button").click();
+  // The copy is spliced in right after the original (block index + 1).
+  await expect(drawings(page)).toHaveCount(13);
+
+  await drawingAt(page, 1).dblclick();
+  await expect(page.getByTestId("chart-data-sheet-dialog")).toBeVisible();
+  await page.getByTestId("chart-data-cell-1-1").fill("999");
+  await page.getByTestId("chart-data-cell-1-1").blur();
+  await page.getByTestId("chart-data-apply").click();
+
+  await page.getByTestId("download-menu").click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("download-docx").click();
+  const buffer = await downloadedBuffer(await downloadPromise);
+
+  const saved = unzipParts(buffer);
+  const original = unzipParts(readFileSync(docxChartsFixture));
+
+  // The original chart (word/charts/chart1.xml) survives byte-identical —
+  // the edit landed only on the duplicate's own, distinct part.
+  expect(saved.get("word/charts/chart1.xml")!.equals(original.get("word/charts/chart1.xml")!)).toBe(true);
+
+  const newChartParts = [...saved.keys()].filter(
+    (name) => /^word\/charts\/chart\d+\.xml$/.test(name) && !original.has(name),
+  );
+  expect(newChartParts).toHaveLength(1);
+  expect(saved.get(newChartParts[0])!.toString("utf8")).toContain("999");
 });
 
 // --- the data sheet (AC-4..AC-13) -------------------------------------------
