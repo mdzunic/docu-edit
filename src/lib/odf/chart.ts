@@ -16,7 +16,7 @@
 // mirrors shape.ts's own `de:rotation`/`de:group` simplification for
 // concepts ODF has no direct per-element slot for.
 import type { Chart, ChartOptions, ChartSeries, ChartType } from "../documentModel";
-import { DEFAULT_CHART_COLORS } from "../documentModel";
+import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../documentModel";
 import { parseXml, serializeElement, XmlParseError } from "../docx/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, svgAttr, textAttr, xlinkAttr } from "./xml";
@@ -323,15 +323,15 @@ function tableColumnLetter(index: number): string {
   return String.fromCharCode(66 + (index % 24));
 }
 
-function tableXml(chart: Chart): string {
-  const seriesCells = chart.series
+function tableXml(chart: Chart, series: ChartSeries[]): string {
+  const seriesCells = series
     .map((s) => `<table:table-cell office:value-type="string"><text:p>${escapeXmlText(s.name)}</text:p></table:table-cell>`)
     .join("");
   const headerRow = `<table:table-row><table:table-cell/>${seriesCells}</table:table-row>`;
   const bodyRows = chart.categories
     .map((cat, rowIndex) => {
       const catCell = `<table:table-cell office:value-type="string"><text:p>${escapeXmlText(cat)}</text:p></table:table-cell>`;
-      const valueCells = chart.series
+      const valueCells = series
         .map((s) => {
           const v = s.values[rowIndex];
           return v === null || v === undefined
@@ -342,7 +342,7 @@ function tableXml(chart: Chart): string {
       return `<table:table-row>${catCell}${valueCells}</table:table-row>`;
     })
     .join("");
-  const columns = chart.series.map(() => '<table:table-column/>').join("");
+  const columns = series.map(() => '<table:table-column/>').join("");
   return (
     `<table:table table:name="local-table">` +
     `<table:table-header-columns><table:table-column/></table:table-header-columns>` +
@@ -425,7 +425,11 @@ export function odfChartContentXml(chart: Chart): string {
     chart.options.legend === "none"
       ? ""
       : `<chart:legend chart:legend-position="${LEGEND_POS_TO_ODF[chart.options.legend]}"/>`;
-  const seriesXmlStr = chart.series.map((s, i) => seriesXml(chart, s, i)).join("");
+  // Pie/doughnut render (and so persist) only the first series — a real
+  // chart:circle/chart:ring holds exactly one chart:series; the model keeps
+  // the rest for the data sheet to still show (SPEC-052 "Chart catalogue").
+  const seriesToWrite = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
+  const seriesXmlStr = seriesToWrite.map((s, i) => seriesXml(chart, s, i)).join("");
   const dataLabelsAttr = chart.options.dataLabels ? ' chart:data-labels="true"' : "";
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
@@ -437,7 +441,7 @@ export function odfChartContentXml(chart: Chart): string {
     titleXml +
     legendXml +
     `<chart:plot-area${dataLabelsAttr}>${axesXml(chart)}${seriesXmlStr}</chart:plot-area>` +
-    tableXml(chart) +
+    tableXml(chart, seriesToWrite) +
     "</chart:chart>" +
     "</office:chart></office:body>" +
     "</office:document-content>"

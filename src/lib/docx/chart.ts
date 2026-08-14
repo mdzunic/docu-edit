@@ -11,7 +11,7 @@
 // chart). This module only ever produces the "regenerate from model" half —
 // `chartPartXml`; the writer decides which one to emit for a given chart.
 import type { Chart, ChartOptions, ChartSeries, ChartType } from "../documentModel";
-import { DEFAULT_CHART_COLORS } from "../documentModel";
+import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../documentModel";
 import { childElements, firstChildElement, parseXml, resolvePartPath, serializeElement, type Relationship, XmlParseError } from "./xml";
 import { cmToEmu, cssColorToOoxml } from "./units";
 
@@ -703,7 +703,11 @@ function axesXml(chart: Chart): string {
  * chart never calls this: its part's original bytes are re-emitted verbatim
  * from `DocumentModel.opaque` instead. */
 export function chartPartXml(chart: Chart): string {
-  const seriesXml = chart.series.map((s, i) => serXml(chart, s, i)).join("");
+  // Pie/doughnut render (and so persist) only the first series — a real
+  // c:pieChart/c:doughnutChart holds exactly one c:ser; the model keeps the
+  // rest for the data sheet to still show (SPEC-052 "Chart catalogue").
+  const seriesToWrite = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
+  const seriesXml = seriesToWrite.map((s, i) => serXml(chart, s, i)).join("");
   const typeXml = chartTypeXml(chart, seriesXml);
   const titleXml = chart.options.title ? axTitleXml(chart.options.title) : '<c:autoTitleDeleted val="1"/>';
   const legendXml =

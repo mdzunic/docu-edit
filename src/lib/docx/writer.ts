@@ -2574,6 +2574,26 @@ function withMediaRelationships(relsXml: string, relationshipsXml: string): stri
   return relsXml.replace(/<\/Relationships>\s*$/, `${relationshipsXml}</Relationships>`);
 }
 
+/** Strips every `<Relationship>` whose `Target` (resolved against `mainDir`)
+ * names one of `targets` — a deleted chart's own relationship (SPEC-052 AC
+ * "removes its part, its relationship and its data on save"). Unlike every
+ * other relationship patch in this file (which only ever appends), this is
+ * the one case a save actually needs to remove a preserved entry: nothing
+ * else references that target any more once the part itself is gone. */
+function withoutRelationshipsToTargets(relsXml: string, mainPartName: string, targets: Set<string>): string {
+  if (targets.size === 0) {
+    return relsXml;
+  }
+  return relsXml.replace(/<Relationship\b[^>]*\/>/g, (entry) => {
+    const match = /Target="([^"]+)"/.exec(entry);
+    const target = match?.[1];
+    if (target === undefined) {
+      return entry;
+    }
+    return targets.has(resolvePartPath(mainPartName, target)) ? "" : entry;
+  });
+}
+
 /** Serialises the model into `.docx` bytes plus the list of items that could
  * not be represented (SPEC-008).
  *
@@ -2947,6 +2967,7 @@ export async function writeDocx(
         addCommentsDecls ||
         addHeaderFooterDecls ||
         addChartDecls ||
+        chartPlan.orphanedPartNames.size > 0 ||
         addSettingsPart) &&
       name === mainRelsName
     ) {
@@ -2971,6 +2992,12 @@ export async function writeDocx(
       }
       if (addChartDecls) {
         rels = withMediaRelationships(rels, chartPlan.relationshipsXml);
+      }
+      if (chartPlan.orphanedPartNames.size > 0) {
+        // A deleted chart's own relationship (SPEC-052 AC "removes its
+        // part, its relationship and its data on save") — the one case
+        // this patch removes a preserved entry instead of only appending.
+        rels = withoutRelationshipsToTargets(rels, mainPartName, chartPlan.orphanedPartNames);
       }
       if (addSettingsPart) {
         rels = withMediaRelationships(

@@ -320,8 +320,30 @@ function record(kind: DropKind, location: string, target: DocumentFormat): DropR
  * does not paginate, so page numbers do not exist to report. Unlike
  * `collectDropRecords`, this is only ever meaningful for a genuine format
  * change — a same-format save round-trips opaque content untouched. */
+/** Every `sourcePart` a live, catalogue-type Chart block still references —
+ * its part-level opaque entry converts through the block-level path (a
+ * fresh part regenerated from the model in the target format) rather than
+ * being genuinely dropped, so the generic "every remaining opaque part is a
+ * drop" sweep below must not double-report it. An out-of-catalogue chart's
+ * source part is deliberately excluded from this set: that one really is
+ * dropped, and is already reported once via the isChart(blockAt) branch
+ * above — excluding it here too would just make the sweep silently skip a
+ * genuine drop instead of reporting it twice. */
+function liveConvertibleChartSourceParts(model: DocumentModel): Set<string> {
+  const parts = new Set<string>();
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      if (isChart(block) && block.sourcePart && block.unsupportedChartXml === undefined) {
+        parts.add(block.sourcePart);
+      }
+    }
+  }
+  return parts;
+}
+
 function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat, target: DocumentFormat): DropRecord[] {
   const dropped: DropRecord[] = [];
+  const convertibleChartParts = liveConvertibleChartSourceParts(model);
   let paragraphOffset = 0;
   for (const section of model.sections) {
     const opaqueBlocks = [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex);
@@ -442,7 +464,7 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
   }
 
   for (const part of model.opaque ?? []) {
-    if (!isInfrastructurePart(source, part.name)) {
+    if (!isInfrastructurePart(source, part.name) && !convertibleChartParts.has(part.name)) {
       dropped.push(record(partKind(source, part.name), `package part "${part.name}"`, target));
     }
   }
