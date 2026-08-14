@@ -83,12 +83,16 @@ describe("createWorkerRpcClient", () => {
     expect(created).toBe(1);
   });
 
-  it("terminate tears the worker down", () => {
+  it("terminate tears the worker down and rejects in-flight calls", async () => {
     const fake = new FakeWorker();
     const client = createWorkerRpcClient<{ n: number }, unknown>(() => fake as unknown as Worker);
-    void client.call({ n: 1 });
+    // Held, not voided: terminate() rejects pending calls (its settle
+    // contract), and a voided rejection is an unhandled-rejection failure
+    // for the whole vitest run.
+    const pending = client.call({ n: 1 });
     client.terminate();
     expect(fake.terminated).toBe(true);
+    await expect(pending).rejects.toThrow("terminated");
   });
 
   it("drops an errored worker and constructs a fresh one on the next call", async () => {
@@ -118,11 +122,4 @@ describe("createWorkerRpcClient", () => {
     await expect(pending).rejects.toThrow("deserialized");
   });
 
-  it("terminate rejects in-flight calls, honouring its settle contract", async () => {
-    const fake = new FakeWorker();
-    const client = createWorkerRpcClient<{ n: number }, unknown>(() => fake as unknown as Worker);
-    const pending = client.call({ n: 1 });
-    client.terminate();
-    await expect(pending).rejects.toThrow("terminated");
-  });
 });
