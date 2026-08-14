@@ -128,6 +128,35 @@ describe("write-through persistence", () => {
     expect(store.getDocument("quota-id")?.title).toBe("Still works");
   });
 
+  it("migrates a pre-media-split record: the first persist writes the images out instead of dropping them (SPEC-047 AC-15)", async () => {
+    // A record written before the media split carries its media inline in
+    // the shell and has no MediaRecord in storage. The first persist strips
+    // the shell (by design) — so it MUST also write the MediaRecord, or the
+    // images exist nowhere in storage after it.
+    const legacy = makeRecord("legacy-id", "Has images", 1000);
+    legacy.model.media = [{ mediaId: "m1", contentType: "image/png", data: "aGk=" }];
+    const { store, idb } = await loadStore({
+      loadAllRecords: vi.fn().mockResolvedValue([legacy]),
+    });
+    await store.initLibrary();
+
+    store.touchDocument("legacy-id");
+    await flushMicrotasks();
+
+    const written = idb.putRecord.mock.calls.map(([record]: [{ id: string }]) => record);
+    const mediaRecord = written.find((record) => record.id === "media:legacy-id") as
+      | { media: unknown[] }
+      | undefined;
+    expect(mediaRecord, "the media record must be written on the first post-migration persist").toBeDefined();
+    expect(mediaRecord!.media).toHaveLength(1);
+    const shell = written.find((record) => record.id === "legacy-id") as
+      | { model: { media: unknown[] } }
+      | undefined;
+    expect(shell!.model.media).toEqual([]);
+    // The in-memory model keeps its images throughout.
+    expect(store.getDocument("legacy-id")?.media).toHaveLength(1);
+  });
+
   it("notifies status listeners only on the first failure, and honours unsubscribe", async () => {
     const { store } = await loadStore({
       putRecord: vi.fn().mockRejectedValue(new Error("fail")),

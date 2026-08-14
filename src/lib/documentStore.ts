@@ -214,7 +214,15 @@ export function initLibrary(): Promise<void> {
         if (!records.has(record.id)) {
           const media = mediaByDocId.get(record.id);
           rejoinMedia(record.model, media);
-          lastPersistedMedia.set(record.id, record.model.media);
+          // Seed the skip-map ONLY when a MediaRecord actually exists in
+          // storage. A record written before the media split carries its
+          // media inline in the shell and has no MediaRecord — seeding from
+          // it would make the first persist skip the media write while
+          // stripping the shell, silently deleting every image from storage.
+          // Left unseeded, that first persist migrates the document instead.
+          if (media !== undefined) {
+            lastPersistedMedia.set(record.id, record.model.media);
+          }
           records.set(record.id, record);
         }
       }
@@ -452,8 +460,17 @@ export async function refreshDocumentFromStorage(
       (!current || stored.lastModified > current.lastModified)
     ) {
       const mediaRecord = await getRecord(mediaKey(id));
-      rejoinMedia(stored.model, mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined);
-      lastPersistedMedia.set(id, stored.model.media);
+      const media = mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined;
+      rejoinMedia(stored.model, media);
+      // Same rule as initLibrary: only a found MediaRecord may seed the
+      // skip-map. A legacy record (inline media, no MediaRecord) must leave
+      // the map unseeded so the next persist writes the media out rather
+      // than stripping the shell and skipping the media write.
+      if (media !== undefined) {
+        lastPersistedMedia.set(id, stored.model.media);
+      } else {
+        lastPersistedMedia.delete(id);
+      }
       records.set(id, stored);
       return stored;
     }
