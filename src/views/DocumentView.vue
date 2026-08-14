@@ -3897,8 +3897,17 @@ const pagination = usePagination(
   () => hiddenBodyBlocks.value,
 );
 // A body-heading collapse/expand changes only the hidden set, not the model,
-// so re-lay-out explicitly when it changes (AC-16).
-watch(hiddenBodyBlocks, () => pagination.schedule());
+// so re-lay-out explicitly when it changes (AC-16). Empty-to-empty is not a
+// change: the computed mints a fresh Set object whenever `doc` is replaced
+// (opening a document), and relaying out for that fused a second full
+// relayout into the open mount task (SPEC-047 AC-16) for a hidden set that
+// is still "nothing hidden".
+watch(hiddenBodyBlocks, (now, prev) => {
+  if (now.size === 0 && prev !== undefined && prev.size === 0) {
+    return;
+  }
+  pagination.schedule();
+});
 const paginationPages = pagination.pages;
 const paginationBusy = pagination.busy;
 const paginationState = pagination.state;
@@ -3977,7 +3986,11 @@ watch(noteLabelsMap, (labels) => {
 });
 
 watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
-onMounted(() => pagination.schedule());
+// A measurement kick, not a model change: the immediate sync watcher above
+// already laid out during setup (before `contentRoot` existed), so the mount
+// kick only needs to start measuring against the now-present DOM — see
+// scheduleMeasure's own comment (SPEC-047 AC-16).
+onMounted(() => pagination.scheduleMeasure());
 onBeforeUnmount(() => pagination.stop());
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
@@ -4191,7 +4204,10 @@ watch([viewportPageRange, caretPage], () => {
   if (!virtualizing.value) {
     return;
   }
-  void nextTick().then(() => pagination.schedule());
+  // Realization changed, the model didn't: measure the freshly rendered
+  // blocks without forcing a synchronous relayout of an unchanged layout
+  // (SPEC-047 AC-16 — see scheduleMeasure's own comment).
+  void nextTick().then(() => pagination.scheduleMeasure());
 });
 
 function refreshCaretPage() {

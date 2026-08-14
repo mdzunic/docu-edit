@@ -138,6 +138,16 @@ export interface PaginationController {
    * cache misses. Call on every model change (and when realization renders
    * previously virtual pages, so their blocks get exact DOM metrics). */
   schedule: () => void;
+  /** Kicks measurement WITHOUT `schedule()`'s synchronous relayout when the
+   * measure loop is already running (SPEC-047 AC-16): a running loop
+   * re-lays-out at the end of its pass anyway, so a caller whose model
+   * hasn't changed (a mount kick, newly realized pages) doesn't need — and
+   * during the open burst can't afford — a full extra relayout fused into
+   * the same task. Callers reacting to an actual model change must keep
+   * calling `schedule()`: its synchronous relayout is what keeps rendered
+   * pages agreeing with the new model's block indices before Vue patches
+   * the canvas. */
+  scheduleMeasure: () => void;
   /** Drops every cached measurement (formatting-marks toggle, font load —
    * anything that reflows text without replacing block objects). */
   invalidateAll: () => void;
@@ -670,11 +680,29 @@ export function usePagination(
     startMeasuring();
   }
 
+  function scheduleMeasure(): void {
+    if (running) {
+      return; // the active loop re-lays-out (rebuilding `pending`) at pass end
+    }
+    schedule();
+  }
+
   function invalidateAll(): void {
     cache = new WeakMap();
     baseFont = null;
     lastNoteReserves = undefined;
     measurer?.reset();
+    // With the measure loop already running, the cache reset alone is enough:
+    // the loop's own end-of-pass relayout re-collects every (now missing)
+    // block, so the extra synchronous relayout here would recompute a layout
+    // the pass is about to replace — during open, document.fonts.ready
+    // resolves inside the mount task and this was one of the relayouts fused
+    // into it (SPEC-047 AC-16). The last-applied layout stays visible until
+    // that pass lands, which is also what the old immediate relayout's
+    // all-estimates layout was: an interim state, just a worse one.
+    if (running) {
+      return;
+    }
     schedule();
   }
 
@@ -732,6 +760,7 @@ export function usePagination(
     state,
     canMeasureOffscreen: measurer !== null,
     schedule,
+    scheduleMeasure,
     invalidateAll,
     isMeasured,
     lineOffsetsFor,
