@@ -19,7 +19,11 @@ import { MOD } from "./keys";
 // samples — the median-of-5 plus the 15% relative allowance absorb typical
 // contention, but a timing failure seen only in a full-suite run should be
 // confirmed with a solo run of this file before being treated as a
-// regression.
+// regression. The same applies at HOST level: the factory's gate container
+// shares its host machine's CPU, so heavy work on the host during a gate
+// run (builds, other browser suites, review agents) starves the container
+// and inflates every row together — a gate failure whose rows all drifted
+// ~2x in unison is contention, and a quiet re-run is the diagnostic.
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_PATH = path.join(REPO_ROOT, "e2e", "fixtures", "spec-047-fixture.docx");
