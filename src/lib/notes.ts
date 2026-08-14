@@ -7,6 +7,7 @@
 // NoteContent's "deleting a mark deletes its note" contract.
 import {
   isBreak,
+  isChart,
   isImage,
   isShape,
   isTable,
@@ -92,7 +93,7 @@ export function collectNoteRefs(model: DocumentModel, kind: NoteKind): NoteRefLo
         }
         continue;
       }
-      if (isImage(target) || isShape(target) || isBreak(target) || isToc(target)) {
+      if (isImage(target) || isShape(target) || isChart(target) || isBreak(target) || isToc(target)) {
         continue;
       }
       collectParagraphRefs(target, kind, section, block, undefined, refs);

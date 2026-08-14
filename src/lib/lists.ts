@@ -6,6 +6,7 @@
 // bookkeeping in the editing commands.
 import {
   isBreak,
+  isChart,
   isImage,
   isShape,
   isTable,
@@ -179,7 +180,7 @@ export function markerText(style: ListMarkerStyle, ordinal: number): string {
 }
 
 function listOf(block: Block | undefined): ListFormatting | undefined {
-  return block === undefined || isTable(block) || isImage(block) || isShape(block) || isBreak(block) || isToc(block)
+  return block === undefined || isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block)
     ? undefined
     : block.list;
 }

@@ -14,7 +14,7 @@ import { unzip } from "./zip";
 import { canonicalizeXml, equalBytes, equalStructural, firstStructuralDifference } from "../equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel, Paragraph } from "../documentModel";
-import { asParagraph, createDocument } from "../documentModel";
+import { asChart, asParagraph, createDocument } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -64,24 +64,35 @@ describe("parseDocx — opaque capture (AC-1, AC-3, AC-4)", () => {
     }
   });
 
-  it("captures the chart's w:drawing run as an opaque inline anchored between the runs", async () => {
+  // SPEC-052: a chart's w:drawing run is no longer folded into an opaque
+  // inline — the reader now splits the paragraph around it and models a
+  // Chart block, the same way an image or shape already split (SPEC-024/
+  // SPEC-051). This fixture's chart part (built by build-spec008-fixtures.mjs
+  // as a minimal, deliberately unrealistic stub — non-standard `c:val`-
+  // prefixed attributes, `c:numLit` instead of a `c:numRef`/`c:numCache`, no
+  // `c:cat`) falls outside "Chart catalogue", so it becomes a Chart with
+  // `unsupportedChartXml` set — still preserved byte-identically via
+  // `sourcePart`/`DocumentModel.opaque`, exactly as an opaque inline was.
+  it("parses the chart's w:drawing run into a Chart block, preserved as an unsupported placeholder", async () => {
     const parsed = await parseDocx(fixture);
     const chartParagraph = asParagraph(parsed.sections[0].blocks[2]);
     expect(chartParagraph.runs.map((run) => run.text)).toEqual(["Quarterly results: "]);
-    expect(chartParagraph.opaqueInlines).toHaveLength(1);
-    expect(chartParagraph.opaqueInlines![0].runIndex).toBe(1);
-    expect(chartParagraph.opaqueInlines![0].xml).toContain("drawing");
-    expect(chartParagraph.opaqueInlines![0].xml).toContain("chart");
+    expect(chartParagraph.opaqueInlines ?? []).toHaveLength(0);
+    const chart = asChart(parsed.sections[0].blocks[3]);
+    expect(chart.type).toBe("chart");
+    expect(chart.sourcePart).toBe("word/charts/chart1.xml");
+    expect(chart.unsupportedChartXml).toBeDefined();
+    expect(chart.unsupportedChartXml).toContain("chart");
   });
 
   it("captures the block-level w:sdt content control as an opaque block anchored in the body", async () => {
     const parsed = await parseDocx(fixture);
-    // Blocks: heading, intro, chart paragraph, closing — the sdt sits
-    // before the closing paragraph.
-    expect(parsed.sections[0].blocks).toHaveLength(4);
+    // Blocks: heading, intro, chart-text paragraph, Chart block, closing —
+    // the sdt sits before the closing paragraph.
+    expect(parsed.sections[0].blocks).toHaveLength(5);
     expect(parsed.sections[0].opaqueBlocks).toHaveLength(1);
     const control = parsed.sections[0].opaqueBlocks![0];
-    expect(control.blockIndex).toBe(3);
+    expect(control.blockIndex).toBe(4);
     expect(control.xml).toContain("sdt");
     expect(control.xml).toContain("Controlled block text");
   });
@@ -186,7 +197,9 @@ describe("writeDocx — editing one paragraph leaves opaque content untouched (A
     }
   });
 
-  it("keeps the content control and the chart drawing intact, and only the edited paragraph differs", async () => {
+  // SPEC-052 AC: "a test asserts [byte-identical preservation of an
+  // unedited chart] after editing an unrelated paragraph".
+  it("keeps the content control and the chart intact (byte-identical), and only the edited paragraph differs", async () => {
     const { opened, bytes } = await editIntroAndSave();
     const reopened = await parseDocx(bytes);
 
@@ -197,9 +210,16 @@ describe("writeDocx — editing one paragraph leaves opaque content untouched (A
     expect(canonicalizeXml(reopened.sections[0].opaqueBlocks![0].xml)).toBe(
       canonicalizeXml(opened.sections[0].opaqueBlocks![0].xml),
     );
-    expect(canonicalizeXml(asParagraph(reopened.sections[0].blocks[2]).opaqueInlines![0].xml)).toBe(
-      canonicalizeXml(asParagraph(opened.sections[0].blocks[2]).opaqueInlines![0].xml),
-    );
+    // …the untouched chart (never edited: `edited` is never set here) is
+    // byte-identical on its own part, not just structurally equal…
+    const reopenedChart = asChart(reopened.sections[0].blocks[3]);
+    expect(reopenedChart.edited).toBeFalsy();
+    expect(reopenedChart.sourcePart).toBe("word/charts/chart1.xml");
+    const originalParts = await unzip(fixture);
+    const savedParts = await unzip(bytes);
+    expect(
+      equalBytes(savedParts.get("word/charts/chart1.xml")!, originalParts.get("word/charts/chart1.xml")!),
+    ).toBe(true);
 
     // …and so is every other block: the edited paragraph is the only
     // structural difference between the opened and re-opened models.
@@ -286,10 +306,15 @@ describe("writeOdt — converting a .docx model reports what it drops (SPEC-008 
     const opened = await parseDocx(fixture);
     const { bytes, dropped } = await writeOdt(modelFrom(opened));
 
-    const chart = dropped.find((d) => d.kind === "chart" && d.location === "paragraph 3");
-    expect(chart, "inline chart at paragraph 3").toBeDefined();
+    // SPEC-052: the chart is now its own Chart block (index 3, 0-based —
+    // heading, intro, chart-text paragraph, chart), not folded into the
+    // chart-text paragraph, so both this block's location and the content
+    // control's "before paragraph N" shift by one from their pre-SPEC-052
+    // numbers.
+    const chart = dropped.find((d) => d.kind === "chart" && d.location === "paragraph 4");
+    expect(chart, "chart block at paragraph 4").toBeDefined();
     const control = dropped.find((d) => d.kind === "contentControl");
-    expect(control?.location).toBe("before paragraph 4");
+    expect(control?.location).toBe("before paragraph 5");
     expect(dropped.some((d) => d.kind === "chart" && d.location.includes("word/charts/chart1.xml"))).toBe(true);
     expect(dropped.some((d) => d.kind === "customXml" && d.location.includes("customXml/item1.xml"))).toBe(true);
     for (const record of dropped) {

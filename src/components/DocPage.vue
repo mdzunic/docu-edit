@@ -68,6 +68,8 @@ defineEmits([
   "shape-text-keydown",
   "shape-text-compositionstart",
   "shape-text-compositionend",
+  "chart-select",
+  "chart-edit-data",
   "toc-action",
   "dblclick-header",
   "dblclick-footer",
@@ -176,6 +178,8 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               @shape-text-keydown="(event) => $emit('shape-text-keydown', event)"
               @shape-text-compositionstart="() => $emit('shape-text-compositionstart')"
               @shape-text-compositionend="(event) => $emit('shape-text-compositionend', event)"
+              @chart-select="(section, blockIndex, shiftKey) => $emit('chart-select', section, blockIndex, shiftKey)"
+              @chart-edit-data="(section, blockIndex) => $emit('chart-edit-data', section, blockIndex)"
               @toc-action="(payload) => $emit('toc-action', payload)"
               @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
             />
@@ -200,6 +204,8 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             @shape-text-keydown="(event) => $emit('shape-text-keydown', event)"
             @shape-text-compositionstart="() => $emit('shape-text-compositionstart')"
             @shape-text-compositionend="(event) => $emit('shape-text-compositionend', event)"
+            @chart-select="(section, block, shiftKey) => $emit('chart-select', section, block, shiftKey)"
+            @chart-edit-data="(section, block) => $emit('chart-edit-data', section, block)"
             @toc-action="(payload) => $emit('toc-action', payload)"
             @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"
           />

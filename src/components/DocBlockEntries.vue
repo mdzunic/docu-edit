@@ -9,6 +9,7 @@
 import { computed } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
 import DocShapeBlock from "./DocShapeBlock.vue";
+import DocChartBlock from "./DocChartBlock.vue";
 import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
 import DocHeadingToggle from "./DocHeadingToggle.vue";
@@ -27,6 +28,8 @@ defineEmits([
   "shape-text-keydown",
   "shape-text-compositionstart",
   "shape-text-compositionend",
+  "chart-select",
+  "chart-edit-data",
   "toc-action",
   "outline-toggle",
 ]);
@@ -42,6 +45,9 @@ function componentFor(entry = noRenderEntries()[0]) {
   }
   if (entry.kind === "shape") {
     return DocShapeBlock;
+  }
+  if (entry.kind === "chart") {
+    return DocChartBlock;
   }
   if (entry.kind === "toc") {
     return DocTocBlock;
@@ -76,13 +82,14 @@ function componentFor(entry = noRenderEntries()[0]) {
     :display-mode="entry.trackChangesDisplayMode"
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
     :src="entry.imageSrc"
-    :selected="entry.kind === 'shape' ? entry.shapeSelected : entry.imageSelected"
+    :selected="entry.kind === 'shape' ? entry.shapeSelected : entry.kind === 'chart' ? entry.chartSelected : entry.imageSelected"
     :drawing-index="entry.drawingIndex"
     :editing-text="entry.kind === 'shape' ? entry.shapeEditing : undefined"
     :stale-headings="entry.kind === 'toc' ? entry.tocStaleHeadings : undefined"
     :stale-pagination="entry.kind === 'toc' ? entry.tocStalePagination : undefined"
-    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
+    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'chart' ? $emit('chart-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
     @edit-text="entry.kind === 'shape' ? $emit('shape-edit-text', entry.sectionProp, entry.blockIndexProp) : undefined"
+    @edit-data="entry.kind === 'chart' ? $emit('chart-edit-data', entry.sectionProp, entry.blockIndexProp) : undefined"
     @text-beforeinput="entry.kind === 'shape' ? $emit('shape-text-beforeinput', $event) : undefined"
     @text-keydown="entry.kind === 'shape' ? $emit('shape-text-keydown', $event) : undefined"
     @text-compositionstart="entry.kind === 'shape' ? $emit('shape-text-compositionstart') : undefined"

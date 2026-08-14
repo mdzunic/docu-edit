@@ -26,6 +26,10 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeGallery from "../components/ShapeGallery.vue";
+import ChartToolbar from "../components/ChartToolbar.vue";
+import ChartGallery from "../components/ChartGallery.vue";
+import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
+import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
@@ -74,6 +78,7 @@ import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
+import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
 import { useTables } from "./document/useTables";
@@ -115,6 +120,10 @@ import {
   asImageWrapMode,
   asShape,
   asShapeGeometry,
+  asChart,
+  asChartType,
+  CHART_CATALOGUE,
+  SINGLE_SERIES_CHART_TYPES,
   asListLevelDefinitions,
   asListMarkerStyle,
   asListType,
@@ -422,6 +431,7 @@ import {
 } from "../lib/images";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
 import { asNudgeDirection, noShapeLocation, shapeAt } from "../lib/shapes";
+import { chartAt } from "../lib/charts";
 import {
   asImageHandle,
   IMAGE_HANDLES,
@@ -963,6 +973,80 @@ const {
   getCaret: () => caret,
   markDirty: () => noteEdit(),
   refreshUndoRedoState,
+});
+
+// --- charts (SPEC-052) -------------------------------------------------------
+// Chart selection/handles/toolbar, insertion at the caret and the data
+// sheet/options-panel commit paths live in useCharts, trimmed from
+// useShapes' own pattern (no drag/resize/rotate/multi-select-group gesture
+// — see that composable's header comment).
+const {
+  chartSelection,
+  chartHandles,
+  editingChartData,
+  editingChartOptions,
+  clearChartSelection,
+  remeasureChartHandles,
+  handleChartSelect,
+  handleChartEditData,
+  openChartOptions,
+  insertChartAction,
+  insertChartFromTableAction,
+  applyChartData,
+  applyChartOptions,
+  applyChartSeriesColor,
+  handleChartDelete,
+  handleChartDuplicate,
+  chartToolbarStyle,
+  chartAtClientPoint,
+} = useCharts({
+  doc,
+  contentRoot,
+  pageRef,
+  editable,
+  currentSelection,
+  applyEdit,
+  clearCellSelection,
+  getCaret: () => caret,
+});
+
+/** The data sheet dialog's prefill (AC-4..AC-13): the selected chart's
+ * current categories/series, and whether its type renders only the first
+ * series (AC "the data sheet says so", pie/doughnut). */
+const chartDataSheetInitial = computed(() => {
+  const model = doc.value;
+  const location = chartSelection.value;
+  const chart = model && location ? chartAt(model, location) : null;
+  if (!chart) {
+    return { categories: [], series: [], singleSeriesOnly: false };
+  }
+  return {
+    categories: chart.categories,
+    series: chart.series,
+    singleSeriesOnly: SINGLE_SERIES_CHART_TYPES.has(chart.chartType),
+  };
+});
+
+/** The options panel's prefill (AC-14..AC-20). */
+const chartOptionsInitial = computed(() => {
+  const model = doc.value;
+  const location = chartSelection.value;
+  const chart = model && location ? chartAt(model, location) : null;
+  if (!chart) {
+    return { legend: "none", dataLabels: false, gridlines: false, series: [], hasAxes: false };
+  }
+  return {
+    title: chart.options.title,
+    categoryAxisTitle: chart.options.categoryAxisTitle,
+    valueAxisTitle: chart.options.valueAxisTitle,
+    legend: chart.options.legend,
+    dataLabels: chart.options.dataLabels,
+    gridlines: chart.options.gridlines,
+    valueAxisMin: chart.options.valueAxisMin,
+    valueAxisMax: chart.options.valueAxisMax,
+    series: chart.series,
+    hasAxes: chart.chartType !== "pie" && chart.chartType !== "doughnut",
+  };
 });
 
 // Footnotes and endnotes (SPEC-031) live in useNotes; it provides `activeNote` /
@@ -2429,6 +2513,20 @@ function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
   if (shapeMouseDownLocation && !event.shiftKey) {
     startShapeMove(event, shapeMouseDownLocation);
   }
+  // Same for a selected chart (SPEC-052) — a click on one is handled by
+  // DocChartBlock's own @select, which fires afterward. A chart's proxy is
+  // always opaque over its full box (never pointer-events: none, unlike an
+  // unfilled/textless shape), so chartAtClientPoint recovery is mostly
+  // defensive here, kept for consistency with the shape path.
+  const chartTarget = event.target instanceof Element ? event.target.closest(".doc-chart-anchor") : null;
+  if (!chartTarget) {
+    const recoveredChart = chartAtClientPoint(event.clientX, event.clientY);
+    if (recoveredChart) {
+      handleChartSelect(recoveredChart.section, recoveredChart.block);
+    } else {
+      clearChartSelection();
+    }
+  }
   // Same for a selected TOC (SPEC-033) — a click on one is handled by
   // DocTocBlock's own @action "select", which fires afterward.
   const tocTarget = event.target instanceof Element ? event.target.closest(".doc-toc") : null;
@@ -2451,6 +2549,15 @@ function handleCanvasDblClick(event = new MouseEvent("dblclick")) {
   const recovered = shapeAtClientPoint(event.clientX, event.clientY);
   if (recovered) {
     handleShapeEditText(recovered.section, recovered.block);
+    return;
+  }
+  const chartTarget = event.target instanceof Element ? event.target.closest(".doc-chart-anchor") : null;
+  if (chartTarget) {
+    return;
+  }
+  const recoveredChart = chartAtClientPoint(event.clientX, event.clientY);
+  if (recoveredChart) {
+    handleChartEditData(recoveredChart.section, recoveredChart.block);
   }
 }
 
@@ -3573,6 +3680,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     clearImageSelection();
     clearShapeSelection();
     disarmShapeDraw();
+    clearChartSelection();
     clearTocSelection();
     exitHeaderFooterEditing();
     exitNoteEditing();
@@ -3601,6 +3709,21 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     if (direction) {
       event.preventDefault();
       handleShapeNudge(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
+      return;
+    }
+  }
+  if (chartSelection.value && !editingChartData.value && !editingChartOptions.value) {
+    // A selected chart's keyboard interactions (SPEC-052) — the same
+    // dedicated keydown path shapes/images use: a chart click never places
+    // a DOM caret/selection inside a contenteditable region.
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      handleChartDelete();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      handleChartDuplicate();
       return;
     }
   }
@@ -4694,6 +4817,7 @@ const { pagedViews } = usePaginationView({
   shapeSelection,
   shapeMultiSelection,
   editingShapeText,
+  chartSelection,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -4895,13 +5019,18 @@ async function handleDownload(format = "") {
   void autosave.commitNow().then(() => noteVersionHistoryCommitPoint());
   // SPEC-008: content that could not be preserved by a cross-format save is
   // reported once, after the download has been triggered, unless the user
-  // opted out for this document.
+  // opted out for this document. SPEC-052 widens this to a same-format save
+  // too, but only ever for an edited chart's lost properties (chartFeature)
+  // — "Conversion report" is the wrong heading there, since nothing
+  // converted; conversionReportSameFormat drives the dialog's own variant.
   if (dropped.length > 0 && !doc.value.suppressConversionReport) {
+    conversionReportSameFormat.value = doc.value.format === format;
     conversionReport.value = dropped;
   }
 }
 
 const conversionReport = ref(noConversionReport());
+const conversionReportSameFormat = ref(false);
 
 function closeConversionReport(dontShowAgain = false) {
   conversionReport.value = null;
@@ -5073,6 +5202,46 @@ function chooseTableGrid(rows = 0, cols = 0) {
  * next drag/click on the canvas draws the chosen geometry. */
 function handleShapePick(geometry = "rect") {
   armShapeDraw(asShapeGeometry(geometry));
+}
+
+/** "Insert -> Chart" gallery pick (SPEC-052 AC-2, AC-3): inserts at the
+ * caret immediately, sample data and all — a chart has no draw-mode gesture
+ * (unlike a shape's drag-to-size). */
+function handleChartPick(chartType = "columnClustered") {
+  insertChartAction(asChartType(chartType));
+}
+
+/** Whether a table is selected for "Insert -> Chart from table" (AC-21) —
+ * a table block is the target of the active cell-range selection. */
+function tableSelectedForChart() {
+  const model = doc.value;
+  const range = cellSelection.value;
+  if (!model || !range) {
+    return false;
+  }
+  const block = model.sections[range.section]?.blocks[range.block];
+  return !!block && block.type === "table";
+}
+
+/** "Insert -> Chart from table" (AC-21, AC-22): reads the selected table's
+ * cells (every row/column, not just the range selection — a whole-table
+ * source is the simplest, most predictable default), reports any cell that
+ * could not be read as a number. */
+function handleChartFromTable(chartType = "columnClustered") {
+  const model = doc.value;
+  const range = cellSelection.value;
+  if (!model || !range) {
+    return;
+  }
+  const table = model.sections[range.section]?.blocks[range.block];
+  if (!table || table.type !== "table") {
+    return;
+  }
+  const cellText = table.rows.map((row) => row.cells.map((cell) => cell.blocks.map((paragraph) => blockText(paragraph)).join(" ")));
+  const result = insertChartFromTableAction({ section: range.section, block: range.block }, asChartType(chartType), cellText);
+  if (result.unparsable.length > 0) {
+    addToast(`Chart from table: ${result.unparsable.length} cell(s) could not be read as a number and were left blank.`);
+  }
 }
 
 // The multilevel-list presets (SPEC-032), absorbed into the Format menu.
@@ -5373,6 +5542,17 @@ async function menuPastePlain() {
             testid="insert-textbox-button"
             :disabled="!editable"
             @select="insertTextBoxAction"
+          />
+          <hr class="menu-separator">
+          <div class="menu-section-label">
+            Chart
+          </div>
+          <ChartGallery @pick="handleChartPick" />
+          <MenuItem
+            label="Chart from table"
+            testid="insert-chart-from-table-button"
+            :disabled="!editable || !tableSelectedForChart()"
+            @select="handleChartFromTable()"
           />
           <hr class="menu-separator">
           <MenuItem
@@ -6186,6 +6366,8 @@ async function menuPastePlain() {
               @shape-text-keydown="handleShapeTextKeyDown"
               @shape-text-compositionstart="handleShapeTextCompositionStart"
               @shape-text-compositionend="handleShapeTextCompositionEnd"
+              @chart-select="handleChartSelect"
+              @chart-edit-data="handleChartEditData"
               @toc-action="handleTocAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"
               @dblclick-footer="handleDblclickFooter(pageIndex)"
@@ -6315,6 +6497,7 @@ async function menuPastePlain() {
     <ConversionReportDialog
       v-if="conversionReport"
       :items="conversionReport"
+      :same-format="conversionReportSameFormat"
       @close="closeConversionReport"
     />
     <MergeFieldPickerDialog
@@ -6399,6 +6582,17 @@ async function menuPastePlain() {
       @ungroup="handleUngroupSelected"
       @delete="handleShapeDelete"
       @duplicate="handleShapeDuplicate"
+    />
+    <ChartToolbar
+      v-if="chartSelection && chartHandles && doc && chartAt(doc, chartSelection)"
+      class="print-exclude"
+      :left="chartToolbarStyle().left"
+      :top="chartToolbarStyle().top"
+      :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
+      @edit-data="handleChartEditData(chartSelection.section, chartSelection.block)"
+      @options="openChartOptions"
+      @delete="handleChartDelete"
+      @duplicate="handleChartDuplicate"
     />
     <EditorContextMenu
       v-if="contextMenu.visible"
@@ -6549,6 +6743,20 @@ async function menuPastePlain() {
       :initial="imageOptionsInitial"
       @apply="handleImageOptionsApplyAndRescan"
       @cancel="imageOptionsOpen = false"
+    />
+    <ChartDataSheetDialog
+      v-if="editingChartData"
+      :initial="chartDataSheetInitial"
+      @preview="({ categories, series }) => applyChartData(categories, series)"
+      @apply="({ categories, series }) => { applyChartData(categories, series); editingChartData = false; }"
+      @cancel="editingChartData = false"
+    />
+    <ChartOptionsDialog
+      v-if="editingChartOptions"
+      :initial="chartOptionsInitial"
+      @apply="(options) => { applyChartOptions(options); editingChartOptions = false; }"
+      @series-color="(index, color) => applyChartSeriesColor(index, color)"
+      @cancel="editingChartOptions = false"
     />
     <PrintPreviewDialog
       v-if="printPreviewOpen"

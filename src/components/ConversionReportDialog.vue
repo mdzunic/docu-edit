@@ -11,6 +11,10 @@ import { asDropRecords, dropKindLabel } from "../lib/opaque";
 const props = defineProps({
   /** The writer's DropRecord[] — { kind, location, reason } per item. */
   items: { type: Array, required: true },
+  /** SPEC-052: true for the one same-format case a save can still report —
+   * an edited chart's lost properties (chartFeature). "Conversion report"
+   * is the wrong heading/message when nothing converted. */
+  sameFormat: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["close"]);
@@ -30,14 +34,24 @@ const records = computed(() => asDropRecords(props.items));
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Conversion report"
+      :aria-label="sameFormat ? 'Chart changes report' : 'Conversion report'"
     >
-      <h2 class="dialog-title">
-        Conversion report
+      <h2
+        class="dialog-title"
+        data-testid="conversion-report-title"
+      >
+        {{ sameFormat ? "Chart changes report" : "Conversion report" }}
       </h2>
       <p class="dialog-message">
-        Some content could not be converted to the saved format and was left
-        out of the downloaded file. Your open document still has it.
+        <template v-if="sameFormat">
+          Editing this chart rewrote its underlying data — some of its
+          original formatting could not be carried over and was left out of
+          the saved file.
+        </template>
+        <template v-else>
+          Some content could not be converted to the saved format and was left
+          out of the downloaded file. Your open document still has it.
+        </template>
       </p>
       <ul
         class="report-list"

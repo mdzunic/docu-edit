@@ -16,6 +16,7 @@ import {
   asToc,
   createEmptyHeaderFooterContent,
   isBreak,
+  isChart,
   isImage,
   isMergeChipField,
   isShape,
@@ -61,6 +62,7 @@ import type { PaginationController } from "../../composables/usePagination";
 import type { CellRange } from "../../lib/tables";
 import type { ImageLocation } from "../../lib/images";
 import type { ShapeLocation } from "../../lib/shapes";
+import type { ChartLocation } from "../../lib/charts";
 
 /** One flattened block row — the section-flattened list a single v-for carries
  * (the v-memo keys that keep typing responsive on very large documents). */
@@ -71,6 +73,7 @@ export interface FlatEntry {
   isTable: boolean;
   isImage: boolean;
   isShape: boolean;
+  isChart: boolean;
   isToc: boolean;
   imageSrc: string;
   imageSelected: boolean;
@@ -78,8 +81,11 @@ export interface FlatEntry {
   /** Whether this exact shape is the one in text-editing mode (SPEC-051
    * AC-17, AC-18) — true only when it's also shapeSelected. */
   shapeEditing: boolean;
-  /** This shape's 0-based index among every Shape block in the document, in
-   * document order (SPEC-051's `data-testid="drawing-<index>"`). */
+  /** This chart's own selection state (SPEC-052) — mirrors shapeSelected. */
+  chartSelected: boolean;
+  /** This shape/chart's 0-based index among every Shape/Chart block in the
+   * document, in document order (SPEC-051's `data-testid="drawing-<index>"`,
+   * shared by charts per SPEC-052 AC-24). */
   drawingIndex: number;
   section: number;
   blockIndex: number;
@@ -145,6 +151,9 @@ export interface PaginationViewDeps {
    * AC-17, AC-18) — only that one shape's entry renders its text frame
    * `contenteditable`, real DOM the user's typing can reach. */
   editingShapeText: Ref<boolean>;
+  /** The selected chart (SPEC-052), if any — mirrors shapeSelection; no
+   * multi-select array (no chart group-selection gesture). */
+  chartSelection: Ref<ChartLocation | null>;
   /** Body headings collapsed in the document body (SPEC-037 AC-16), keyed by
    * their "section:block" address — drives the chevron direction. */
   collapsedHeadings: Ref<ReadonlySet<string>>;
@@ -198,7 +207,7 @@ function renderEntryFor(
       column,
     } as RenderEntry;
   }
-  if (flatEntry.isTable || flatEntry.isImage || flatEntry.isShape) {
+  if (flatEntry.isTable || flatEntry.isImage || flatEntry.isShape || flatEntry.isChart) {
     return {
       key: flatEntry.key,
       memo: [
@@ -210,11 +219,12 @@ function renderEntryFor(
         flatEntry.imgSel,
         flatEntry.shapeSelected,
         flatEntry.shapeEditing,
+        flatEntry.chartSelected,
         column,
         model.listDefinitions,
         deps.trackChangesDisplayMode.value,
       ],
-      kind: flatEntry.isTable ? "table" : flatEntry.isImage ? "image" : "shape",
+      kind: flatEntry.isTable ? "table" : flatEntry.isImage ? "image" : flatEntry.isShape ? "shape" : "chart",
       blockProp: block,
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
@@ -223,7 +233,8 @@ function renderEntryFor(
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       shapeSelected: flatEntry.isShape ? flatEntry.shapeSelected : undefined,
       shapeEditing: flatEntry.isShape ? flatEntry.shapeEditing : undefined,
-      drawingIndex: flatEntry.isShape ? flatEntry.drawingIndex : undefined,
+      chartSelected: flatEntry.isChart ? flatEntry.chartSelected : undefined,
+      drawingIndex: flatEntry.isShape || flatEntry.isChart ? flatEntry.drawingIndex : undefined,
       column,
       trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
     } as RenderEntry;
@@ -661,6 +672,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     const selectedShape = deps.shapeSelection.value;
     const multiSelectedShapes = deps.shapeMultiSelection.value;
     const shapeTextEditing = deps.editingShapeText.value;
+    const selectedChart = deps.chartSelection.value;
     let drawingCounter = 0;
     return deps.doc.value.sections.flatMap((section, sectionIndex) =>
       section.blocks.map((block, blockIndex) => {
@@ -669,6 +681,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         const table = isTable(block);
         const image = isImage(block);
         const shape = isShape(block);
+        const chart = isChart(block);
         const toc = isToc(block);
         const cellSel =
           table && range && range.section === sectionIndex && range.block === blockIndex
@@ -682,6 +695,8 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           shape &&
           (shapeIsPrimarySelection ||
             multiSelectedShapes.some((loc) => loc.section === sectionIndex && loc.block === blockIndex));
+        const chartSelected =
+          chart && !!selectedChart && selectedChart.section === sectionIndex && selectedChart.block === blockIndex;
         return {
           key: `${bump.epoch}:${address}${suffix}`,
           block,
@@ -689,12 +704,14 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           isTable: table,
           isImage: image,
           isShape: shape,
+          isChart: chart,
           isToc: toc,
           imageSrc: image ? mediaSrc(deps.doc.value, block) : "",
           imageSelected: imgSelected,
           shapeSelected,
           shapeEditing: shape && shapeIsPrimarySelection && shapeTextEditing,
-          drawingIndex: shape ? drawingCounter++ : -1,
+          chartSelected,
+          drawingIndex: shape || chart ? drawingCounter++ : -1,
           section: sectionIndex,
           blockIndex,
           marker: markers[sectionIndex][blockIndex],

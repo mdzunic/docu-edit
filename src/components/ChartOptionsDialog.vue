@@ -1,0 +1,360 @@
+<script setup lang="ts">
+import { nextTick, onMounted, ref, useTemplateRef } from "vue";
+
+// The chart options panel (SPEC-052 AC-14..AC-20): title, axis titles,
+// legend position, data labels, gridlines, per-series colour and axis
+// minimum/maximum with an auto default. Same dialog shape as
+// ImageOptionsDialog.vue — a captured `initial` prefill, apply/cancel
+// emits, local draft refs, OK disabled while invalid.
+const props = defineProps({
+  /** Prefill: { title, categoryAxisTitle, valueAxisTitle, legend,
+   * dataLabels, gridlines, valueAxisMin, valueAxisMax, series: [{name,
+   * color}], hasAxes: boolean }. */
+  initial: { type: Object, required: true },
+});
+
+const emit = defineEmits(["apply", "series-color", "cancel"]);
+
+const title = ref(String(props.initial.title || ""));
+const categoryAxisTitle = ref(String(props.initial.categoryAxisTitle || ""));
+const valueAxisTitle = ref(String(props.initial.valueAxisTitle || ""));
+const legend = ref(String(props.initial.legend || "none"));
+const dataLabels = ref(!!props.initial.dataLabels);
+const gridlines = ref(!!props.initial.gridlines);
+const autoMin = ref(props.initial.valueAxisMin === undefined || props.initial.valueAxisMin === null);
+const autoMax = ref(props.initial.valueAxisMax === undefined || props.initial.valueAxisMax === null);
+const valueAxisMin = ref(props.initial.valueAxisMin !== undefined && props.initial.valueAxisMin !== null ? String(props.initial.valueAxisMin) : "0");
+const valueAxisMax = ref(props.initial.valueAxisMax !== undefined && props.initial.valueAxisMax !== null ? String(props.initial.valueAxisMax) : "100");
+const hasAxes = !!props.initial.hasAxes;
+const series = ref((props.initial.series || []).map((s = { name: "", color: "#000000" }) => ({ name: s.name, color: s.color })));
+
+const titleInput = useTemplateRef("titleInput");
+
+onMounted(async () => {
+  await nextTick();
+  titleInput.value?.focus();
+});
+
+function minMaxError() {
+  if (!autoMin.value && !Number.isFinite(Number(valueAxisMin.value))) {
+    return "Axis minimum must be a number";
+  }
+  if (!autoMax.value && !Number.isFinite(Number(valueAxisMax.value))) {
+    return "Axis maximum must be a number";
+  }
+  if (!autoMin.value && !autoMax.value && Number(valueAxisMin.value) >= Number(valueAxisMax.value)) {
+    return "Axis minimum must be less than the maximum";
+  }
+  return "";
+}
+
+function onSeriesColorInput(index = 0, event = new Event("input")) {
+  const target = event.target;
+  if (target instanceof HTMLInputElement) {
+    series.value[index].color = target.value;
+    emit("series-color", index, target.value);
+  }
+}
+
+function apply() {
+  if (minMaxError()) {
+    return;
+  }
+  emit("apply", {
+    title: title.value.trim() || undefined,
+    categoryAxisTitle: categoryAxisTitle.value.trim() || undefined,
+    valueAxisTitle: valueAxisTitle.value.trim() || undefined,
+    legend: legend.value,
+    dataLabels: dataLabels.value,
+    gridlines: gridlines.value,
+    valueAxisMin: autoMin.value ? undefined : Number(valueAxisMin.value),
+    valueAxisMax: autoMax.value ? undefined : Number(valueAxisMax.value),
+  });
+}
+</script>
+
+<template>
+  <div
+    class="dialog-backdrop"
+    data-testid="chart-options-dialog"
+    @click.self="emit('cancel')"
+    @keydown.escape="emit('cancel')"
+  >
+    <div
+      class="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Chart options"
+    >
+      <h2 class="dialog-title">
+        Chart options
+      </h2>
+
+      <label class="field">
+        <span class="field-label">Title</span>
+        <input
+          ref="titleInput"
+          v-model="title"
+          class="field-input"
+          data-testid="chart-options-title"
+          type="text"
+        >
+      </label>
+
+      <div
+        v-if="hasAxes"
+        class="field-row"
+      >
+        <label class="field">
+          <span class="field-label">Category axis title</span>
+          <input
+            v-model="categoryAxisTitle"
+            class="field-input"
+            data-testid="chart-options-category-axis-title"
+            type="text"
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Value axis title</span>
+          <input
+            v-model="valueAxisTitle"
+            class="field-input"
+            data-testid="chart-options-value-axis-title"
+            type="text"
+          >
+        </label>
+      </div>
+
+      <label class="field">
+        <span class="field-label">Legend position</span>
+        <select
+          v-model="legend"
+          class="field-input"
+          data-testid="chart-options-legend"
+        >
+          <option value="none">
+            None
+          </option>
+          <option value="top">
+            Top
+          </option>
+          <option value="right">
+            Right
+          </option>
+          <option value="bottom">
+            Bottom
+          </option>
+          <option value="left">
+            Left
+          </option>
+        </select>
+      </label>
+
+      <label class="field-inline">
+        <input
+          v-model="dataLabels"
+          type="checkbox"
+          data-testid="chart-options-data-labels"
+        >
+        <span>Data labels</span>
+      </label>
+
+      <label
+        v-if="hasAxes"
+        class="field-inline"
+      >
+        <input
+          v-model="gridlines"
+          type="checkbox"
+          data-testid="chart-options-gridlines"
+        >
+        <span>Gridlines</span>
+      </label>
+
+      <div
+        v-if="hasAxes"
+        class="field-row"
+      >
+        <label class="field-inline">
+          <input
+            v-model="autoMin"
+            type="checkbox"
+            data-testid="chart-options-auto-min"
+          >
+          <span>Auto minimum</span>
+        </label>
+        <input
+          v-model="valueAxisMin"
+          class="field-input"
+          data-testid="chart-options-value-min"
+          type="number"
+          step="any"
+          :disabled="autoMin"
+        >
+        <label class="field-inline">
+          <input
+            v-model="autoMax"
+            type="checkbox"
+            data-testid="chart-options-auto-max"
+          >
+          <span>Auto maximum</span>
+        </label>
+        <input
+          v-model="valueAxisMax"
+          class="field-input"
+          data-testid="chart-options-value-max"
+          type="number"
+          step="any"
+          :disabled="autoMax"
+        >
+      </div>
+      <p
+        v-if="minMaxError()"
+        class="dialog-error"
+        data-testid="chart-options-minmax-error"
+      >
+        {{ minMaxError() }}
+      </p>
+
+      <div class="field">
+        <span class="field-label">Series colours</span>
+        <label
+          v-for="(s, index) in series"
+          :key="index"
+          class="field-inline"
+        >
+          <input
+            type="color"
+            :data-testid="`chart-options-series-color-${index}`"
+            :value="s.color"
+            @input="onSeriesColorInput(index, $event)"
+          >
+          <span>{{ s.name }}</span>
+        </label>
+      </div>
+
+      <div class="dialog-actions">
+        <button
+          type="button"
+          data-testid="chart-options-cancel"
+          @click="emit('cancel')"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="primary"
+          data-testid="chart-options-apply"
+          :disabled="!!minMaxError()"
+          @click="apply"
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dialog {
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
+  padding: 1.25rem 1.5rem;
+  min-width: 24rem;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.dialog-title {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #202124;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.field-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.field-row .field {
+  flex: 1;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.field-label {
+  font-size: 0.8125rem;
+  color: #3c4043;
+}
+
+.field-input {
+  font: inherit;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid #bdbdbd;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.dialog-error {
+  margin: -0.5rem 0 0.75rem;
+  color: #b3261e;
+  font-size: 0.8125rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.dialog-actions button {
+  font: inherit;
+  padding: 0.375rem 1rem;
+  border: 1px solid #bdbdbd;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.dialog-actions button.primary {
+  background: #2c3e50;
+  border-color: #2c3e50;
+  color: #fff;
+}
+
+.dialog-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+</style>

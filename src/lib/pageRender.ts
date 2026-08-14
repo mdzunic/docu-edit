@@ -54,7 +54,7 @@ export interface RenderEntry {
   key: string;
   /** The v-memo array: every value the entry's DOM depends on. */
   memo: unknown[];
-  kind: "paragraph" | "table" | "image" | "shape" | "break" | "toc" | "marker";
+  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "break" | "toc" | "marker";
   /** Element tag for paragraph/break/marker entries ("p", "h2", "div"). */
   tag?: string;
   className?: string;
@@ -88,6 +88,10 @@ export interface RenderEntry {
   /** Whether this shape's text frame is in edit mode (SPEC-051 AC-17,
    * AC-18) — only true shapeSelected's own entry ever sets this. */
   shapeEditing?: boolean;
+  /** A chart entry's own selection state (SPEC-052) — mirrors shapeSelected;
+   * a chart shares the same document-order `drawingIndex` counter shapes do
+   * (SPEC-051's "Rendering and test surface"), never its own. */
+  chartSelected?: boolean;
   /** Staleness flags a TOC entry's update control reacts to (SPEC-033
    * AC-10, AC-11). */
   tocStaleHeadings?: boolean;

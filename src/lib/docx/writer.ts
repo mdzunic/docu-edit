@@ -25,6 +25,7 @@ import type {
   BorderSide,
   CellBorders,
   CellVerticalAlign,
+  Chart,
   DocumentModel,
   DocumentProperties,
   FieldSpec,
@@ -65,7 +66,7 @@ import {
   sectionPageSize,
 } from "../documentModel";
 import { chipLabel } from "../mergeChips";
-import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
@@ -103,6 +104,8 @@ import {
 } from "./numbering";
 import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
 import { shapeDrawingXml } from "./shape";
+import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
+import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";
 import {
   nextFreeRelId,
   planMediaWrite,
@@ -775,6 +778,19 @@ function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWrit
   return `<w:p><w:r>${drawing}</w:r></w:p>`;
 }
 
+/** A Chart block (SPEC-052): the chart-flavoured sibling of
+ * imageParagraphXml/shapeParagraphXml — one paragraph holding one run
+ * holding the `w:drawing` (see chart.ts's chartDrawingXml). Returns "" when
+ * `chartPlan` has no entry for this location (defensive; every Chart block
+ * always gets one from planChartWrite). */
+function chartParagraphXml(chart: Chart, chartPlan: ChartWritePlan, section: number, block: number, docPrId: number): string {
+  const entry = chartPlan.planFor(section, block);
+  if (!entry) {
+    return "";
+  }
+  return `<w:p><w:r>${chartDrawingXml(chart, entry.relId, docPrId)}</w:r></w:p>`;
+}
+
 // Word's default single-line borders for a table created in this editor —
 // self-contained (no style reference), so the table is visible in any
 // consumer without touching styles.xml. Sized 4 eighth-points, Word's own
@@ -1425,10 +1441,10 @@ function headerFooterPartXml(
       if (block.type === "image") {
         return imageParagraphXml(block, plan.mediaPlan, docPrId++);
       }
-      if (block.type === "shape") {
-        // A drawn shape (SPEC-051) is a body-level feature; one is never
-        // inserted into a header/footer, but the Block union covers it
-        // structurally the same way a TOC does below.
+      if (block.type === "shape" || block.type === "chart") {
+        // A drawn shape/chart (SPEC-051/SPEC-052) is a body-level feature;
+        // one is never inserted into a header/footer, but the Block union
+        // covers it structurally the same way a TOC does below.
         return "";
       }
       if (block.type === "break") {
@@ -1567,11 +1583,11 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
           if (block.type === "table") {
             return tableXml(block, includeOpaque, inlineCtx, () => undefined);
           }
-          if (block.type === "image" || block.type === "shape" || block.type === "break" || block.type === "toc") {
+          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "break" || block.type === "toc") {
             // A note body holds paragraphs (and its first block must, to
-            // carry the reference marker); images/shapes/breaks/TOCs have no
-            // valid per-note serialisation, so they are omitted here the way
-            // they are omitted from the note areas.
+            // carry the reference marker); images/shapes/charts/breaks/TOCs
+            // have no valid per-note serialisation, so they are omitted here
+            // the way they are omitted from the note areas.
             return "";
           }
           if (markerPending) {
@@ -1904,6 +1920,7 @@ function* documentBlockXml(
   headerFooterPlan: HeaderFooterWritePlan,
   notesPlan: NotesWritePlan,
   commentsPlan: CommentsWritePlan,
+  chartPlan: ChartWritePlan = EMPTY_CHART_PLAN,
 ): Generator<string> {
   const includeOpaque = model.format === "docx";
   const inlineCtx: InlineWriteContext = {
@@ -1953,6 +1970,8 @@ function* documentBlockXml(
           yield imageParagraphXml(block, mediaPlan, docPrId++);
         } else if (block.type === "shape") {
           yield shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++);
+        } else if (block.type === "chart") {
+          yield chartParagraphXml(block, chartPlan, sectionIndex, i, docPrId++);
         } else if (block.type === "break") {
           // A manual break block (SPEC-028 AC-30): a paragraph holding just
           // the typed w:br run, the shape the reader folds back into a
@@ -2025,9 +2044,10 @@ export function buildDocumentXml(
   headerFooterPlan: HeaderFooterWritePlan = planHeaderFooterWrite(model, new Set(), new Set()),
   notesPlan: NotesWritePlan = planNotesWrite(model),
   commentsPlan: CommentsWritePlan = planCommentsWrite(model),
+  chartPlan: ChartWritePlan = planChartWrite(model, new Set(), new Set()),
 ): string {
   const blockXml = Array.from(
-    documentBlockXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
+    documentBlockXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan, chartPlan),
   );
   return documentXmlFromBlocks(model, headerFooterPlan, blockXml);
 }
@@ -2050,6 +2070,7 @@ export async function buildDocumentXmlChunked(
   headerFooterPlan: HeaderFooterWritePlan,
   notesPlan: NotesWritePlan,
   commentsPlan: CommentsWritePlan,
+  chartPlan: ChartWritePlan = EMPTY_CHART_PLAN,
 ): Promise<string> {
   const blockXml: string[] = [];
   let lastYield = performance.now();
@@ -2061,6 +2082,7 @@ export async function buildDocumentXmlChunked(
     headerFooterPlan,
     notesPlan,
     commentsPlan,
+    chartPlan,
   )) {
     blockXml.push(chunk);
     if (performance.now() - lastYield > DOCUMENT_XML_YIELD_BUDGET_MS) {
@@ -2085,7 +2107,7 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (block.type === "image" || block.type === "break" || block.type === "toc") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "chart") {
         continue;
       }
       if (block.type === "shape") {
@@ -2552,6 +2574,26 @@ function withMediaRelationships(relsXml: string, relationshipsXml: string): stri
   return relsXml.replace(/<\/Relationships>\s*$/, `${relationshipsXml}</Relationships>`);
 }
 
+/** Strips every `<Relationship>` whose `Target` (resolved against `mainDir`)
+ * names one of `targets` — a deleted chart's own relationship (SPEC-052 AC
+ * "removes its part, its relationship and its data on save"). Unlike every
+ * other relationship patch in this file (which only ever appends), this is
+ * the one case a save actually needs to remove a preserved entry: nothing
+ * else references that target any more once the part itself is gone. */
+function withoutRelationshipsToTargets(relsXml: string, mainPartName: string, targets: Set<string>): string {
+  if (targets.size === 0) {
+    return relsXml;
+  }
+  return relsXml.replace(/<Relationship\b[^>]*\/>/g, (entry) => {
+    const match = /Target="([^"]+)"/.exec(entry);
+    const target = match?.[1];
+    if (target === undefined) {
+      return entry;
+    }
+    return targets.has(resolvePartPath(mainPartName, target)) ? "" : entry;
+  });
+}
+
 /** Serialises the model into `.docx` bytes plus the list of items that could
  * not be represented (SPEC-008).
  *
@@ -2620,6 +2662,21 @@ export async function writeDocx(
       ]),
       existingMediaPartNames,
     );
+    const chartPlan = planChartWrite(
+      model,
+      new Set([
+        ...baseTaken,
+        ...hyperlinkPlan.relIds,
+        ...mediaPlan.relIds,
+        ...notesPlan.relIds,
+        ...commentsPlan.relIds,
+        ...takenRelIdsOf(
+          parseRelationships(`<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${headerFooterPlan.relationshipsXml}</Relationships>`).values(),
+        ),
+      ]),
+      new Set(),
+      true,
+    );
     const needsSettingsPart = headerFooterPlan.evenAndOddHeaders || !!model.trackChangesRecording;
     const settingsOverride = needsSettingsPart
       ? `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/>`
@@ -2630,7 +2687,7 @@ export async function writeDocx(
         : "";
     const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
       /<\/Types>\s*$/,
-      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${settingsOverride}${customPropsOverride}</Types>`,
+      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${chartPlan.contentTypesXml}${settingsOverride}${customPropsOverride}</Types>`,
     );
     const customPropsRel =
       customPropsXml !== undefined
@@ -2645,7 +2702,7 @@ export async function writeDocx(
       {
         name: "word/document.xml",
         data: encoder.encode(
-          await buildDocumentXmlChunked(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
+          await buildDocumentXmlChunked(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan, chartPlan),
         ),
       },
       {
@@ -2657,6 +2714,7 @@ export async function writeDocx(
               mediaPlan.relationshipsXml +
               notesPlan.relationshipsXml +
               commentsPlan.relationshipsXml +
+              chartPlan.relationshipsXml +
               headerFooterPlan.relationshipsXml,
           ),
         ),
@@ -2664,6 +2722,7 @@ export async function writeDocx(
       { name: "word/styles.xml", data: encoder.encode(buildStylesXml(model)) },
       { name: "docProps/core.xml", data: encoder.encode(buildCorePropertiesXml(coreInput, modified)) },
       ...mediaPlan.zipEntries,
+      ...chartPlan.zipEntries,
     ];
     if (customPropsXml !== undefined) {
       entries.push({ name: "docProps/custom.xml", data: encoder.encode(customPropsXml) });
@@ -2835,6 +2894,37 @@ export async function writeDocx(
   );
   const addHeaderFooterDecls = headerFooterPlan.relationshipsXml.length > 0;
 
+  // Charts (SPEC-052): relationship ids mint past everything above too; an
+  // untouched chart reuses its own preserved part name AND its own
+  // preserved relationship id (so both the part and
+  // word/_rels/document.xml.rels stay byte-identical), an edited or freshly
+  // inserted one is regenerated from the model.
+  const chartRelIdByPart = new Map<string, string>();
+  if (mainRelsText) {
+    for (const rel of parseRelationships(mainRelsText).values()) {
+      if (rel.type === CHART_RELATIONSHIP) {
+        chartRelIdByPart.set(resolvePartPath(mainPartName, rel.target), rel.id);
+      }
+    }
+  }
+  const chartPlan = planChartWrite(
+    model,
+    new Set([
+      ...mainRelsTaken,
+      ...hyperlinkPlan.relIds,
+      ...mediaPlan.relIds,
+      ...notesPlan.relIds,
+      ...commentsPlan.relIds,
+      ...takenRelIdsOf(
+        parseRelationships(`<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${headerFooterPlan.relationshipsXml}</Relationships>`).values(),
+      ),
+    ]),
+    existingPartNames,
+    false,
+    chartRelIdByPart,
+  );
+  const addChartDecls = chartPlan.relationshipsXml.length > 0;
+
   // word/settings.xml (SPEC-029): patched in place when present (it carries
   // many other unmodelled document-wide flags), created fresh only when the
   // model wants different odd/even headers and the source had no settings
@@ -2858,12 +2948,17 @@ export async function writeDocx(
     if (name === mainPartName || name === corePartName || name === customPartName) {
       continue; // Rebuilt below (the reader excludes them from opaque anyway).
     }
+    if (chartPlan.orphanedPartNames.has(name)) {
+      continue; // A deleted chart's part — SPEC-008 preservation must not resurrect it (AC).
+    }
     if (numberingOut !== null && name === numberingPartName) {
       entries.push({ name, data: encoder.encode(numberingOut) });
     } else if (patchedStyles !== null && name === stylesPartName) {
       entries.push({ name, data: encoder.encode(patchedStyles) });
     } else if (patchedSettings !== null && name === settingsPartName) {
       entries.push({ name, data: encoder.encode(patchedSettings) });
+    } else if (chartPlan.regeneratedPartXml.has(name)) {
+      entries.push({ name, data: encoder.encode(chartPlan.regeneratedPartXml.get(name)!) });
     } else if (
       (addNumberingDecls ||
         addMediaDecls ||
@@ -2871,6 +2966,8 @@ export async function writeDocx(
         addNotesDecls ||
         addCommentsDecls ||
         addHeaderFooterDecls ||
+        addChartDecls ||
+        chartPlan.orphanedPartNames.size > 0 ||
         addSettingsPart) &&
       name === mainRelsName
     ) {
@@ -2892,6 +2989,15 @@ export async function writeDocx(
       }
       if (addHeaderFooterDecls) {
         rels = withMediaRelationships(rels, headerFooterPlan.relationshipsXml);
+      }
+      if (addChartDecls) {
+        rels = withMediaRelationships(rels, chartPlan.relationshipsXml);
+      }
+      if (chartPlan.orphanedPartNames.size > 0) {
+        // A deleted chart's own relationship (SPEC-052 AC "removes its
+        // part, its relationship and its data on save") — the one case
+        // this patch removes a preserved entry instead of only appending.
+        rels = withoutRelationshipsToTargets(rels, mainPartName, chartPlan.orphanedPartNames);
       }
       if (addSettingsPart) {
         rels = withMediaRelationships(
@@ -2920,6 +3026,7 @@ export async function writeDocx(
         addNotesDecls ||
         addCommentsDecls ||
         addHeaderFooterDecls ||
+        chartPlan.contentTypesXml.length > 0 ||
         addSettingsPart ||
         addCustomPropsDecls ||
         removeCustomPropsDecls)
@@ -2949,6 +3056,9 @@ export async function writeDocx(
       if (addHeaderFooterDecls) {
         contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${headerFooterPlan.contentTypesXml}</Types>`);
       }
+      if (chartPlan.contentTypesXml.length > 0) {
+        contentTypes = contentTypes.replace(/<\/Types>\s*$/, `${chartPlan.contentTypesXml}</Types>`);
+      }
       if (addSettingsPart) {
         contentTypes = contentTypes.replace(
           /<\/Types>\s*$/,
@@ -2963,6 +3073,7 @@ export async function writeDocx(
   if (numberingOut !== null && !preservedNumbering) {
     entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
   }
+  entries.push(...chartPlan.zipEntries);
   if (addSettingsPart) {
     entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml(trackChangesRecording)) });
   }
@@ -2997,7 +3108,7 @@ export async function writeDocx(
   entries.push({
     name: mainPartName,
     data: encoder.encode(
-      await buildDocumentXmlChunked(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
+      await buildDocumentXmlChunked(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan, chartPlan),
     ),
   });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(coreInput, modified)) });
@@ -3006,5 +3117,8 @@ export async function writeDocx(
   }
   entries.push(...mediaPlan.zipEntries);
 
-  return { bytes: await zip(entries), dropped: [] };
+  // SPEC-008's rule that a same-format save reports nothing still holds for
+  // every part except an edited chart's (SPEC-052 "Rewriting a chart" — the
+  // one narrow, documented exception).
+  return { bytes: await zip(entries), dropped: collectEditedChartDropRecords(model, "docx") };
 }
