@@ -33,13 +33,27 @@ async function attach(wrapper: ReturnType<typeof mount>, file: File) {
   const input = wrapper.get('[data-testid="merge-run-attach-input"]').element as HTMLInputElement;
   Object.defineProperty(input, "files", { value: [file], configurable: true });
   await wrapper.get('[data-testid="merge-run-attach-input"]').trigger("change");
-  // FileReader's load event is a real macrotask in jsdom, not a microtask —
-  // flushPromises alone (a single setTimeout(0) tick) is not reliably
-  // enough to observe it complete (same fix as TemplateGalleryDialog.spec.ts's
-  // import test).
+  // FileReader's load event is a real macrotask in jsdom, not a microtask,
+  // so wait for the attach to actually land (record count on success, the
+  // source-error node on a rejected file) rather than a fixed tick count —
+  // how many macrotask hops it takes varies with machine load (same fix as
+  // TemplateGalleryDialog.spec.ts's import test).
+  await vi.waitUntil(
+    () =>
+      wrapper.find('[data-testid="merge-run-record-count"]').exists() ||
+      wrapper.find('[data-testid="merge-run-source-error"]').exists(),
+    { timeout: 5000 },
+  );
+}
+
+/** Clicks Run and waits for the merge to finish — signalled by `testId`
+ * (the report element the caller asserts on) appearing. The merge writes
+ * real .docx bytes through the chunked writeDocx (SPEC-047), whose
+ * macrotask-hop count varies with machine load, so a fixed wait flakes. */
+async function runMergeUntil(wrapper: ReturnType<typeof mount>, testId: string) {
+  await wrapper.get('[data-testid="merge-run-run"]').trigger("click");
+  await vi.waitUntil(() => wrapper.find(`[data-testid="${testId}"]`).exists(), { timeout: 10_000 });
   await flushPromises();
-  await flushPromises();
-  await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 describe("MergeRunDialog (AC-21..24, AC-38..48)", () => {
@@ -116,10 +130,7 @@ describe("MergeRunDialog (AC-21..24, AC-38..48)", () => {
     // every record (an empty cell under a present column, by contrast,
     // resolves to "" — present, not missing; SPEC-046's field resolution).
     await attach(wrapper, csvFile("client_name\nAcme\nBeta\n"));
-    await wrapper.get('[data-testid="merge-run-run"]').trigger("click");
-    await flushPromises();
-    await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runMergeUntil(wrapper, "merge-run-report-summary");
 
     expect(URL.createObjectURL).toHaveBeenCalled();
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled();
@@ -134,10 +145,7 @@ describe("MergeRunDialog (AC-21..24, AC-38..48)", () => {
 
     await attach(wrapper, csvFile());
     await wrapper.get('[data-testid="merge-run-delivery"]').setValue("single");
-    await wrapper.get('[data-testid="merge-run-run"]').trigger("click");
-    await flushPromises();
-    await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runMergeUntil(wrapper, "merge-run-report-summary");
 
     expect(wrapper.get('[data-testid="merge-run-report-summary"]').text()).toContain("2 records merged");
   });
@@ -148,10 +156,7 @@ describe("MergeRunDialog (AC-21..24, AC-38..48)", () => {
     const wrapper = mount(MergeRunDialog, { props: { model, initialSource: undefined } });
 
     await attach(wrapper, jsonFile([{ payload: "{{#if x}}{{/if}} <script>alert(1)</script>" }]));
-    await wrapper.get('[data-testid="merge-run-run"]').trigger("click");
-    await flushPromises();
-    await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runMergeUntil(wrapper, "merge-run-report-summary");
 
     expect(wrapper.get('[data-testid="merge-run-report-summary"]').text()).toContain("1 record merged");
     expect(wrapper.find('[data-testid="merge-run-error"]').exists()).toBe(false);
@@ -168,10 +173,7 @@ describe("MergeRunDialog (AC-21..24, AC-38..48)", () => {
     const wrapper = mount(MergeRunDialog, { props: { model, initialSource: undefined } });
 
     await attach(wrapper, csvFile());
-    await wrapper.get('[data-testid="merge-run-run"]').trigger("click");
-    await flushPromises();
-    await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runMergeUntil(wrapper, "merge-run-report-array-errors");
 
     expect(wrapper.get('[data-testid="merge-run-report-array-errors"]').text()).toContain('"line_items" is not a list');
   });
