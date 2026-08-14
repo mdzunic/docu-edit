@@ -256,3 +256,8 @@ async function main() {
 }
 
 await main();
+// writeDocx's chunked save path yields through idleScheduler's shared
+// MessageChannel, whose started port keeps Node's event loop alive after
+// the file is fully written — without an explicit exit this script (and
+// the benchmark's execFileSync waiting on it) hangs forever.
+process.exit(0);
