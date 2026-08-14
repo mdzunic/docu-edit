@@ -214,10 +214,22 @@ test.describe("SPEC-051 — interactive shape editing", () => {
       throw new Error("a drawing has no bounding box");
     }
     const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    const rightBox = firstBox.x <= secondBox.x ? secondBox : firstBox;
     // A plain click establishes a known single-selection baseline, then
-    // Shift-click the other shape to build a two-member selection.
-    await leftShape.click();
-    await rightShape.click({ modifiers: ["Shift"] });
+    // Shift-click the other shape to build a two-member selection. Both
+    // clicks land in the shape's LOWER half: the floating shape toolbar
+    // renders across the page top overlapping the shapes' upper halves, and
+    // under CPU load its mount/positioning races the click's hit-target
+    // check — a centre click can land on the toolbar instead of the shape
+    // (the factory-gate flake). 72% height is still well inside the painted
+    // ellipse. Waiting for the toolbar between the clicks pins its final
+    // position before the second click's hit-testing starts.
+    await leftShape.click({ position: { x: firstBox.width / 2, y: firstBox.height * 0.72 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await rightShape.click({
+      modifiers: ["Shift"],
+      position: { x: rightBox.width / 2, y: rightBox.height * 0.72 },
+    });
     await expect(page.getByTestId("shape-group-button")).toBeVisible();
     await page.getByTestId("shape-group-button").click();
     await expect(page.getByTestId("shape-toolbar")).toBeVisible();
@@ -240,8 +252,17 @@ async function groupFirstTwoShapes(page: Page): Promise<{ leftShape: Locator; ri
     throw new Error("a drawing has no bounding box");
   }
   const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
-  await leftShape.click();
-  await rightShape.click({ modifiers: ["Shift"] });
+  const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
+  // Lower-half clicks with the toolbar settled in between — see the AC-34
+  // test's own comment: the floating toolbar overlaps the shapes' upper
+  // halves, and under load a centre click can hit it instead of the shape.
+  await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height * 0.72 } });
+  await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+  await rightShape.click({
+    modifiers: ["Shift"],
+    position: { x: rightBox.width / 2, y: rightBox.height * 0.72 },
+  });
+  await expect(page.getByTestId("shape-group-button")).toBeVisible();
   await page.getByTestId("shape-group-button").click();
   await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
   return { leftShape, rightShape };
