@@ -64,7 +64,7 @@ import { parseChipText } from "../mergeChips";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
 import { yieldToMainThread } from "../idleScheduler";
-import { bytesToBase64 } from "../opaque";
+import { bytesToBase64Async } from "../opaque";
 import { blockText } from "../textEditing";
 import { ZipError, unzip } from "./zip";
 import {
@@ -80,7 +80,7 @@ import {
   XmlParseError,
   type Relationship,
 } from "./xml";
-import { parseDrawing, type ParsedDrawing } from "./drawing";
+import { fillPendingMediaData, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
@@ -2417,8 +2417,20 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       !mediaById.has(name) &&
       !consumedHeaderFooterParts.has(name)
     ) {
-      opaque.push({ name, data: bytesToBase64(data) });
+      // Native async encoder (SPEC-047 AC-3/AC-16) — each await is also a
+      // natural yield, so a package with many preserved parts never encodes
+      // them all in one task.
+      opaque.push({ name, data: await bytesToBase64Async(data) });
     }
+  }
+
+  // The one deferred base64 pass for every image any walk above collected —
+  // see parseDrawing/fillPendingMediaData: encoding per drawing put ~0.6s of
+  // the benchmark fixture's open inside the body walk; the native encoder
+  // here does the same bytes in a small fraction of that, one real yield per
+  // image.
+  for (const part of mediaById.values()) {
+    await fillPendingMediaData(part);
   }
 
   // Document properties and metadata (SPEC-041): core.xml's fields plus
