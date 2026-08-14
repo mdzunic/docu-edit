@@ -426,13 +426,13 @@ test("scroll position is stable when off-screen pages are recycled (AC-9)", asyn
 // minute, ending within 110% of the first post-settle heap sample. A
 // single run, not the median-of-5 loop above — five 30-minute sessions
 // would take over two hours, which is not what running this benchmark can
-// mean in practice. Skipped by default: 30+ minutes is far past what any
-// single implement/review/QA stage in this factory can spend verifying one
-// test, so this is written to be run deliberately (`npx playwright test
-// e2e/SPEC-047.perf.spec.ts -g "30-minute"`), not as part of a routine pass.
-test.skip("a 30-minute editing session keeps heap growth within 10% of the first post-settle sample (AC-18)", async ({
+// mean in practice. Skipped by default (30+ minutes is far past a routine
+// pass) but deliberately runnable without editing source:
+// `SPEC047_LEAK=1 npx playwright test e2e/SPEC-047.perf.spec.ts -g "30-minute"`.
+test("a 30-minute editing session keeps heap growth within 10% of the first post-settle sample (AC-18)", async ({
   page,
 }) => {
+  test.skip(!process.env.SPEC047_LEAK, "set SPEC047_LEAK=1 to run the 30-minute leak session");
   test.setTimeout(32 * 60 * 1000);
   await installLongTaskCollector(page);
   await openFixture(page);
