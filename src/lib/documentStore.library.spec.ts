@@ -143,7 +143,7 @@ describe("write-through persistence", () => {
     store.touchDocument("legacy-id");
     await flushMicrotasks();
 
-    const written = idb.putRecord.mock.calls.map(([record]: [{ id: string }]) => record);
+    const written = idb.putRecord.mock.calls.map((call) => call[0] as { id: string; media?: unknown[]; model?: { media: unknown[] } });
     const mediaRecord = written.find((record) => record.id === "media:legacy-id") as
       | { media: unknown[] }
       | undefined;

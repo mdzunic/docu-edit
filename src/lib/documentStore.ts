@@ -67,6 +67,13 @@ export type PersistedRecord = StoredDocumentRecord | DraftRecord | MediaRecord;
 
 export const DRAFT_KEY_PREFIX = "draft:";
 export const MEDIA_KEY_PREFIX = "media:";
+/** A DRAFT's media copy (see persistDraftMedia): its own key, because the
+ * committed record rejoins from MEDIA_KEY_PREFIX and an autosave tick must
+ * never be able to overwrite the media the committed state depends on —
+ * "Discard" after a crash restores the committed shell, and if drafts
+ * shared the committed media record, a draft that deleted an image would
+ * already have destroyed the committed copy of it. */
+export const DRAFT_MEDIA_KEY_PREFIX = "draftmedia:";
 
 function draftKey(docId: string): string {
   return DRAFT_KEY_PREFIX + docId;
@@ -76,12 +83,20 @@ function mediaKey(docId: string): string {
   return MEDIA_KEY_PREFIX + docId;
 }
 
+function draftMediaKey(docId: string): string {
+  return DRAFT_MEDIA_KEY_PREFIX + docId;
+}
+
 export function isDraftRecord(record: PersistedRecord): record is DraftRecord {
   return record.id.startsWith(DRAFT_KEY_PREFIX);
 }
 
 export function isMediaRecord(record: PersistedRecord): record is MediaRecord {
   return record.id.startsWith(MEDIA_KEY_PREFIX);
+}
+
+export function isDraftMediaRecord(record: PersistedRecord): record is MediaRecord {
+  return record.id.startsWith(DRAFT_MEDIA_KEY_PREFIX);
 }
 
 /** Row-level metadata the library list renders; no document content. */
@@ -157,7 +172,50 @@ function persistMedia(docId: string, media: MediaPart[] | undefined): Promise<vo
   }
   lastPersistedMedia.set(docId, media);
   const record: MediaRecord = { id: mediaKey(docId), docId, media: media ?? [] };
-  return putRecordYielding(record);
+  return putRecordYielding(record).catch((error: unknown) => {
+    // The latch was set optimistically before the write; a failed write must
+    // clear it, or every later persist would skip the media (reference
+    // unchanged, "already persisted") while still stripping the shell —
+    // leaving the images nowhere in storage even after space frees up.
+    if (lastPersistedMedia.get(docId) === media) {
+      lastPersistedMedia.delete(docId);
+    }
+    throw error;
+  });
+}
+
+// The draft's own copy of the latch — see persistDraftMedia.
+const lastDraftPersistedMedia = new Map<string, MediaPart[] | undefined>();
+
+/** The draft-flavoured persistMedia (SPEC-047 AC-15): writes the draft's
+ * media under DRAFT_MEDIA_KEY_PREFIX so an autosave can never overwrite the
+ * committed media record ("Discard" restores the committed shell, which
+ * rejoins from mediaKey — that record must only ever be written by
+ * persist/commitDocument). When the draft's media IS the committed one
+ * (reference-equal to the last committed write — the overwhelmingly common
+ * case, most edits touch no image), nothing draft-specific is stored and
+ * any stale draft copy is dropped so loadDraft falls back to the committed
+ * record. */
+function persistDraftMedia(docId: string, media: MediaPart[] | undefined): Promise<void> | null {
+  if (lastPersistedMedia.get(docId) === media) {
+    if (lastDraftPersistedMedia.has(docId)) {
+      lastDraftPersistedMedia.delete(docId);
+      deleteRecord(draftMediaKey(docId)).catch(() => {});
+    }
+    return null;
+  }
+  if (lastDraftPersistedMedia.get(docId) === media) {
+    return null;
+  }
+  lastDraftPersistedMedia.set(docId, media);
+  const record: MediaRecord = { id: draftMediaKey(docId), docId, media: media ?? [] };
+  return putRecordYielding(record).catch((error: unknown) => {
+    // Same failed-write rule as persistMedia's latch above.
+    if (lastDraftPersistedMedia.get(docId) === media) {
+      lastDraftPersistedMedia.delete(docId);
+    }
+    throw error;
+  });
 }
 
 /** A model with `media` stripped to `[]` for the shell record `persist`/
@@ -200,6 +258,11 @@ export function initLibrary(): Promise<void> {
     .then((stored) => {
       const mediaByDocId = new Map<string, MediaPart[]>();
       for (const record of stored) {
+        // Strictly committed media only — a draft's media copy
+        // (isDraftMediaRecord) must never rejoin the committed shell.
+        if (isDraftMediaRecord(record)) {
+          continue;
+        }
         if (isMediaRecord(record)) {
           mediaByDocId.set(record.docId, record.media);
         }
@@ -208,7 +271,7 @@ export function initLibrary(): Promise<void> {
         // Drafts and media records live in the same object store but are
         // not library entries; the editor loads a draft explicitly via
         // loadDraft, and media rejoins its document record below.
-        if (isDraftRecord(record) || isMediaRecord(record)) {
+        if (isDraftRecord(record) || isMediaRecord(record) || isDraftMediaRecord(record)) {
           continue;
         }
         if (!records.has(record.id)) {
@@ -355,11 +418,13 @@ export function deleteDocument(id: string): void {
     return;
   }
   lastPersistedMedia.delete(id);
+  lastDraftPersistedMedia.delete(id);
   deleteRecord(id).catch(() => markStorageUnavailable());
   // Draft/media cleanup is best-effort and not a SPEC-003 write-through
   // failure.
   deleteRecord(draftKey(id)).catch(() => {});
   deleteRecord(mediaKey(id)).catch(() => {});
+  deleteRecord(draftMediaKey(id)).catch(() => {});
 }
 
 // --- autosave (SPEC-010) ---------------------------------------------------
@@ -380,7 +445,7 @@ export async function saveDraft(
   if (!record) {
     throw new Error(`No document with id ${id}`);
   }
-  const mediaWrite = persistMedia(id, record.model.media);
+  const mediaWrite = persistDraftMedia(id, record.model.media);
   const draft: DraftRecord = {
     id: draftKey(id),
     docId: id,
@@ -400,8 +465,16 @@ export async function loadDraft(id: string): Promise<DraftRecord | undefined> {
     if (!stored || !isDraftRecord(stored)) {
       return undefined;
     }
-    const mediaRecord = await getRecord(mediaKey(stored.docId));
-    rejoinMedia(stored.model, mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined);
+    // A draft whose media diverged from the committed state has its own
+    // copy under draftMediaKey; otherwise the committed media record is the
+    // right one (persistDraftMedia never wrote, or dropped its stale copy).
+    const draftMedia = await getRecord(draftMediaKey(stored.docId));
+    if (draftMedia && isDraftMediaRecord(draftMedia)) {
+      rejoinMedia(stored.model, draftMedia.media);
+    } else {
+      const mediaRecord = await getRecord(mediaKey(stored.docId));
+      rejoinMedia(stored.model, mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined);
+    }
     return stored;
   } catch {
     return undefined;
@@ -413,6 +486,8 @@ export async function loadDraft(id: string): Promise<DraftRecord | undefined> {
  * triggers on a draft NEWER than the committed record. */
 export async function deleteDraft(id: string): Promise<void> {
   try {
+    lastDraftPersistedMedia.delete(id);
+    deleteRecord(draftMediaKey(id)).catch(() => {});
     await deleteRecord(draftKey(id));
   } catch {
     // Ignored — see above.
