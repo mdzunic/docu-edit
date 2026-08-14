@@ -10,6 +10,7 @@ import {
   SINGLE_SERIES_CHART_TYPES,
   type Chart,
   type ChartSeries,
+  type ChartType,
 } from "./documentModel";
 
 const AXIS_COLOR = "#444444";
@@ -18,6 +19,23 @@ const TEXT_COLOR = "#222222";
 const LABEL_FONT = "10px sans-serif";
 const TITLE_FONT = "bold 13px sans-serif";
 const AXIS_TITLE_FONT = "11px sans-serif";
+
+/** How much of a category slot a bar/column group fills, the rest being the
+ * gap to the next category. Exported because the gallery icons draw their
+ * bars at the same duty cycle (chartIcons.ts) — an icon whose bars are
+ * spaced unlike the real thing's is a small lie. */
+export const BAR_CATEGORY_FILL = 0.6;
+
+/** A doughnut's hole, as a fraction of its outer radius. Shared with the
+ * gallery icon for the same reason as BAR_CATEGORY_FILL. */
+export const DOUGHNUT_HOLE_RATIO = 0.5;
+
+/** Whether a chart type is plotted against a category/value axis pair — the
+ * pie-likes are not, and reserve no room for axis labels. The gallery icons
+ * ask the same question to decide whether to draw an axis (chartIcons.ts). */
+export function chartHasAxes(chartType: ChartType): boolean {
+  return chartType !== "pie" && chartType !== "doughnut";
+}
 
 interface Layout {
   plotX: number;
@@ -147,7 +165,7 @@ function computeLayout(
   left += legendReserve.reservedLeft;
   right += legendReserve.reservedRight;
 
-  const hasAxes = chart.chartType !== "pie" && chart.chartType !== "doughnut";
+  const hasAxes = chartHasAxes(chart.chartType);
   if (hasAxes) {
     left += 34; // value axis labels
     bottom += 20; // category axis labels
@@ -295,7 +313,7 @@ function paintBarLike(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
     if (stacked) {
       let posY = zeroY;
       let negY = zeroY;
-      const barW = categoryW * 0.6;
+      const barW = categoryW * BAR_CATEGORY_FILL;
       const x = plotX + ci * categoryW + (categoryW - barW) / 2;
       for (const s of series) {
         const v = s.values[ci];
@@ -316,7 +334,7 @@ function paintBarLike(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
         }
       }
     } else if (horizontal) {
-      const barH = (plotH / n) * 0.6;
+      const barH = (plotH / n) * BAR_CATEGORY_FILL;
       const y = plotY + ci * (plotH / n) + (plotH / n - barH) / 2;
       const groupW = plotW / n;
       series.forEach((s, si) => {
@@ -342,7 +360,7 @@ function paintBarLike(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
       });
       void groupW;
     } else {
-      const barW = (categoryW * 0.6) / series.length;
+      const barW = (categoryW * BAR_CATEGORY_FILL) / series.length;
       const groupStartX = plotX + ci * categoryW + (categoryW - barW * series.length) / 2;
       series.forEach((s, si) => {
         const v = s.values[ci];
@@ -506,7 +524,7 @@ function paintPieLike(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
   if (chart.chartType === "doughnut") {
     ctx.fillStyle = "#ffffff";
     ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r * DOUGHNUT_HOLE_RATIO, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -553,7 +571,7 @@ export function paintChart(ctx: CanvasRenderingContext2D, chart: Chart, widthPx:
 
   const layout = computeLayout(ctx, chart, series, widthPx, heightPx);
   const { min, max } = valueExtent(chart, series);
-  const hasAxes = chart.chartType !== "pie" && chart.chartType !== "doughnut";
+  const hasAxes = chartHasAxes(chart.chartType);
   if (hasAxes) {
     paintAxes(ctx, chart, layout, min, max);
     if (chart.chartType === "columnClustered" || chart.chartType === "columnStacked" || chart.chartType === "barClustered") {

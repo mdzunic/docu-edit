@@ -9,7 +9,14 @@ import {
   type Shape,
   type ShapeOutline,
 } from "./documentModel";
-import { lineSegment, roundRectRadius, scalePolygon, shapePolygon, type Point } from "./shapeGeometry";
+import {
+  lineSegment,
+  roundedCalloutOutline,
+  roundRectRadius,
+  scalePolygon,
+  shapePolygon,
+  type Point,
+} from "./shapeGeometry";
 
 function applyOutline(ctx: CanvasRenderingContext2D, outline: ShapeOutline | undefined, widthPxPerPt: number): void {
   if (!outline) {
@@ -38,6 +45,23 @@ function roundRectPath(ctx: CanvasRenderingContext2D, widthPx: number, heightPx:
   ctx.arcTo(0, heightPx, 0, heightPx - r, r);
   ctx.lineTo(0, r);
   ctx.arcTo(0, 0, r, 0, r);
+  ctx.closePath();
+}
+
+/** The rounded callout: a rounded-rectangle body whose bottom edge detours
+ * into the tail. arcTo needs no radius maths of its own here — every step's
+ * endpoint is already the arc's tangent point (roundedCalloutOutline). */
+function roundedCalloutPath(ctx: CanvasRenderingContext2D, widthPx: number, heightPx: number): void {
+  const { start, steps, radius } = roundedCalloutOutline(widthPx, heightPx);
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  for (const step of steps) {
+    if (step.corner) {
+      ctx.arcTo(step.corner.x, step.corner.y, step.to.x, step.to.y, radius);
+    } else {
+      ctx.lineTo(step.to.x, step.to.y);
+    }
+  }
   ctx.closePath();
 }
 
@@ -102,13 +126,10 @@ export function paintShape(ctx: CanvasRenderingContext2D, shape: Shape, widthPx:
   if (shape.geometry === "ellipse") {
     ctx.beginPath();
     ctx.ellipse(cx, cy, Math.max(0, widthPx / 2), Math.max(0, heightPx / 2), 0, 0, Math.PI * 2);
-  } else if (shape.geometry === "roundRect" || shape.geometry === "wedgeRoundRectCallout") {
-    if (shape.geometry === "roundRect") {
-      roundRectPath(ctx, widthPx, heightPx);
-    } else {
-      const unit = shapePolygon(shape.geometry);
-      polygonPath(ctx, scalePolygon(unit ?? [], widthPx, heightPx));
-    }
+  } else if (shape.geometry === "roundRect") {
+    roundRectPath(ctx, widthPx, heightPx);
+  } else if (shape.geometry === "wedgeRoundRectCallout") {
+    roundedCalloutPath(ctx, widthPx, heightPx);
   } else {
     const unit = shapePolygon(shape.geometry);
     polygonPath(ctx, scalePolygon(unit ?? [], widthPx, heightPx));

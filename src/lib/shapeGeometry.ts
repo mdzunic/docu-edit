@@ -33,6 +33,35 @@ function star5Points(): Point[] {
   return points;
 }
 
+/** How much of a callout's box its body occupies — the bottom quarter is
+ * where the tail hangs. */
+const CALLOUT_BODY_FRACTION = 0.75;
+
+/** Where a callout's tail leaves the body's bottom edge and where it points,
+ * as fractions of the width. Both callouts use the same tail; the rounded
+ * one's simply sits further in, so its arced bottom-left corner has room to
+ * curve — a tail hard against that corner leaves nothing to round (see
+ * roundedCalloutRadius). */
+const WEDGE_CALLOUT_TAIL = { left: 0.05, tip: 0.15, right: 0.35 };
+const ROUND_CALLOUT_TAIL = { left: 0.25, tip: 0.35, right: 0.55 };
+
+type CalloutTail = { left: number; tip: number; right: number };
+
+/** A callout's seven vertices: the body rectangle, its bottom edge
+ * interrupted by the tail. */
+function calloutPolygon(tail: CalloutTail): Point[] {
+  const bottom = CALLOUT_BODY_FRACTION;
+  return [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: bottom },
+    { x: tail.right, y: bottom },
+    { x: tail.tip, y: 1 },
+    { x: tail.left, y: bottom },
+    { x: 0, y: bottom },
+  ];
+}
+
 /** The closed polygon for a catalogue geometry, in unit-square fractions
  * (0..1 of width, 0..1 of height) — multiply by widthCm/heightCm (or a pixel
  * equivalent) to get real coordinates. Returns null for `"ellipse"`, which
@@ -109,25 +138,9 @@ export function shapePolygon(geometry: ShapeGeometry): Point[] | null {
         { x: 0.3, y: 0.6 },
       ];
     case "wedgeRectCallout":
-      return [
-        { x: 0, y: 0 },
-        { x: 1, y: 0 },
-        { x: 1, y: 0.75 },
-        { x: 0.35, y: 0.75 },
-        { x: 0.15, y: 1 },
-        { x: 0.05, y: 0.75 },
-        { x: 0, y: 0.75 },
-      ];
+      return calloutPolygon(WEDGE_CALLOUT_TAIL);
     case "wedgeRoundRectCallout":
-      return [
-        { x: 0, y: 0 },
-        { x: 1, y: 0 },
-        { x: 1, y: 0.75 },
-        { x: 0.35, y: 0.75 },
-        { x: 0.15, y: 1 },
-        { x: 0.05, y: 0.75 },
-        { x: 0, y: 0.75 },
-      ];
+      return calloutPolygon(ROUND_CALLOUT_TAIL);
     default:
       return null;
   }
@@ -139,6 +152,66 @@ export function shapePolygon(geometry: ShapeGeometry): Point[] | null {
  * shorter side. */
 export function roundRectRadius(width: number, height: number): number {
   return Math.min(width, height) * 0.1667;
+}
+
+/** `"wedgeRoundRectCallout"`'s corner radius, in the same units as
+ * `width`/`height`: roundRect's own 16.7% rule, but measured against the
+ * BODY rather than the whole box (the tail's quarter is not part of the
+ * rectangle being rounded), and never wider than the run of bottom edge
+ * either side of the tail — a corner arc and the tail would otherwise
+ * cross. */
+export function roundedCalloutRadius(width: number, height: number): number {
+  const body = height * CALLOUT_BODY_FRACTION;
+  return Math.max(
+    0,
+    Math.min(
+      roundRectRadius(width, body),
+      ROUND_CALLOUT_TAIL.left * width,
+      (1 - ROUND_CALLOUT_TAIL.right) * width,
+      width / 2,
+      body / 2,
+    ),
+  );
+}
+
+/** One leg of a rounded callout's outline: a straight run to `to`, or — when
+ * `corner` is set — the 90° arc that turns at `corner` and rejoins the
+ * outline at `to`. `to` always sits exactly `roundedCalloutRadius` along
+ * the next edge, so a renderer needs no tangent maths of its own. */
+export interface CalloutOutlineStep {
+  to: Point;
+  corner?: Point;
+}
+
+/** `"wedgeRoundRectCallout"`'s outline in real units, walked clockwise from
+ * the top edge: a rounded-rectangle body whose bottom edge detours into the
+ * (sharp) tail. Shared so the page canvas and the gallery icon draw one
+ * outline in their own two idioms — `shapePolygon` stays the straight-edged
+ * approximation hit testing works against, as it does for `"roundRect"`. */
+export function roundedCalloutOutline(
+  width: number,
+  height: number,
+): { start: Point; steps: CalloutOutlineStep[]; radius: number } {
+  const radius = roundedCalloutRadius(width, height);
+  const bottom = height * CALLOUT_BODY_FRACTION;
+  const start = { x: radius, y: 0 };
+  return {
+    start,
+    radius,
+    steps: [
+      { to: { x: width - radius, y: 0 } },
+      { corner: { x: width, y: 0 }, to: { x: width, y: radius } },
+      { to: { x: width, y: bottom - radius } },
+      { corner: { x: width, y: bottom }, to: { x: width - radius, y: bottom } },
+      { to: { x: ROUND_CALLOUT_TAIL.right * width, y: bottom } },
+      { to: { x: ROUND_CALLOUT_TAIL.tip * width, y: height } },
+      { to: { x: ROUND_CALLOUT_TAIL.left * width, y: bottom } },
+      { to: { x: radius, y: bottom } },
+      { corner: { x: 0, y: bottom }, to: { x: 0, y: bottom - radius } },
+      { to: { x: 0, y: radius } },
+      { corner: { x: 0, y: 0 }, to: start },
+    ],
+  };
 }
 
 /** The two endpoints of a `"line"`/`"arrow"` geometry's segment, in real

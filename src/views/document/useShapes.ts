@@ -86,6 +86,19 @@ function sameShapeLocation(a: ShapeLocation, b: ShapeLocation): boolean {
 const HANDLE_SIZE = 8;
 const ROTATION_HANDLE_OFFSET_PX = 24;
 
+/** Gap the floating toolbar keeps above the shape's top edge (AC-12): enough
+ * to clear the rotation handle, which hangs ROTATION_HANDLE_OFFSET_PX above
+ * that edge and is HANDLE_SIZE tall, so the handle stays visible and
+ * clickable with the toolbar open (AC-16). */
+const SHAPE_TOOLBAR_CLEARANCE_PX = ROTATION_HANDLE_OFFSET_PX + HANDLE_SIZE / 2 + 6;
+
+/** Upper bound on the wrapped toolbar's own height — three rows of controls
+ * at its max-width, i.e. more than it ever needs. Only the "is there room
+ * above?" decision uses it (placing above needs no height at all, see
+ * shapeToolbarStyle), so erring high merely flips a shape very near the top
+ * of the viewport to a below placement a little sooner. */
+const SHAPE_TOOLBAR_MAX_HEIGHT_PX = 96;
+
 type ShapeMutate = (model: DocumentModel, selection: ModelSelection, location: ShapeLocation) => CommandResult;
 
 export interface ShapesDeps {
@@ -578,19 +591,28 @@ export function useShapes(deps: ShapesDeps) {
     };
   }
 
-  function shapeToolbarStyle(): { left: number; top: number } {
+  /** Where the floating toolbar sits relative to the selected shape (AC-12).
+   * `placement: "above"` means `top` is the line the toolbar's BOTTOM edge
+   * rests on — ShapeToolbar.vue pulls itself up by its own height from
+   * there. Anchoring the bottom edge rather than the top is what keeps the
+   * toolbar off the shape: it wraps to two or three rows depending on width
+   * and on which of Group/Ungroup apply, so no fixed height offset (this
+   * used to subtract a flat 44px) can clear a shape whose toolbar is
+   * taller than that. */
+  function shapeToolbarStyle(): { left: number; top: number; placement: string } {
     const geometry = shapeHandles.value;
     const pageEl = pageRef.value;
     if (!geometry || !pageEl) {
-      return { left: 0, top: 0 };
+      return { left: 0, top: 0, placement: "below" };
     }
     const pageRect = pageEl.getBoundingClientRect();
-    const viewportTop = pageRect.top + geometry.top;
-    const above = viewportTop - 44;
-    return {
-      left: pageRect.left + geometry.left,
-      top: above >= 0 ? above : pageRect.top + geometry.top + geometry.height + 8,
-    };
+    const shapeTop = pageRect.top + geometry.top;
+    const bottomEdge = shapeTop - SHAPE_TOOLBAR_CLEARANCE_PX;
+    const left = pageRect.left + geometry.left;
+    if (bottomEdge - SHAPE_TOOLBAR_MAX_HEIGHT_PX >= 0) {
+      return { left, top: bottomEdge, placement: "above" };
+    }
+    return { left, top: pageRect.top + geometry.top + geometry.height + 8, placement: "below" };
   }
 
   function applyShapeEdit(mutate: ShapeMutate | null, label = "") {

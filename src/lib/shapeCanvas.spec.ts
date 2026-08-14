@@ -22,7 +22,7 @@ function fakeCtx(): CanvasRenderingContext2D {
     closePath: () => {},
     moveTo: () => {},
     lineTo: () => {},
-    arcTo: () => {},
+    arcTo: () => calls.push("arcTo"),
     stroke: () => calls.push("stroke"),
     fill: () => calls.push("fill"),
     ellipse: () => {},
@@ -66,5 +66,23 @@ describe("paintShape — Line/Arrow outline (AC-15)", () => {
     paintShape(ctx as unknown as CanvasRenderingContext2D, baseLine({ geometry: "arrow" }), 100, 0);
     expect(ctx.calls).not.toContain("stroke");
     expect(ctx.calls).not.toContain("fill");
+  });
+});
+
+/** The calls paintShape makes for a filled 3cm x 2cm callout of `geometry`. */
+function paintCalls(geometry: Shape["geometry"]): string[] {
+  const shape: Shape = { type: "shape", geometry, widthCm: 3, heightCm: 2, wrap: "square", fill: "#ffffff" };
+  const ctx = fakeCtx() as unknown as { calls: string[] };
+  paintShape(ctx as unknown as CanvasRenderingContext2D, shape, 120, 80);
+  return ctx.calls;
+}
+
+describe("paintShape — the two callouts are painted differently", () => {
+  it("rounds wedgeRoundRectCallout's body corners", () => {
+    expect(paintCalls("wedgeRoundRectCallout").filter((call) => call === "arcTo")).toHaveLength(4);
+  });
+
+  it("leaves wedgeRectCallout's corners square", () => {
+    expect(paintCalls("wedgeRectCallout")).not.toContain("arcTo");
   });
 });

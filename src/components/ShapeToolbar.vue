@@ -18,6 +18,11 @@ const props = defineProps({
   altText: { type: String, default: "" },
   grouped: { type: Boolean, default: false },
   canGroup: { type: Boolean, default: false },
+  /** "above" anchors `top` at the toolbar's BOTTOM edge (it lifts itself by
+   * its own height in CSS), "below" at its top edge as usual — see
+   * useShapes.ts's shapeToolbarStyle for why the caller cannot resolve this
+   * to a plain `top` itself. */
+  placement: { type: String, default: "below" },
 });
 
 const emit = defineEmits([
@@ -130,6 +135,7 @@ function onZOrderChange(event = new Event("change")) {
 <template>
   <div
     class="shape-toolbar"
+    :class="{ 'shape-toolbar-above': placement === 'above' }"
     data-testid="shape-toolbar"
     role="toolbar"
     aria-label="Shape formatting"
@@ -340,6 +346,14 @@ function onZOrderChange(event = new Event("change")) {
   border: 1px solid #dadce0;
   border-radius: 6px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+}
+
+/* Placed above the shape, `top` is where the toolbar's bottom edge belongs:
+   lifting by its own rendered height is the one measurement CSS can do that
+   the caller cannot, and it is what keeps a two- or three-row toolbar off
+   the shape it belongs to. */
+.shape-toolbar-above {
+  transform: translateY(-100%);
 }
 
 .shape-toolbar-field {

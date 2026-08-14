@@ -10,6 +10,8 @@ import {
   pointHitsShape,
   pointInEllipse,
   pointInPolygon,
+  roundedCalloutOutline,
+  roundedCalloutRadius,
   roundRectRadius,
   scalePolygon,
   shapePolygon,
@@ -99,12 +101,89 @@ describe("shapePolygon", () => {
     expect(shapePolygon("downArrow")!.some((p) => p.x === 0.5 && p.y === 1)).toBe(true);
   });
 
-  it("wedgeRectCallout and wedgeRoundRectCallout share the same tail-and-body polygon", () => {
-    expect(shapePolygon("wedgeRectCallout")).toEqual(shapePolygon("wedgeRoundRectCallout"));
-    // A rectangular body (y 0..0.75) with a downward tail poking to y=1.
-    const polygon = shapePolygon("wedgeRectCallout")!;
-    expect(Math.max(...polygon.map((p) => p.y))).toBe(1);
-    expect(polygon.some((p) => p.y === 0)).toBe(true);
+  it("both callouts are a body with a downward tail, the rounded one's tail set in from the corner", () => {
+    const wedge = shapePolygon("wedgeRectCallout")!;
+    const round = shapePolygon("wedgeRoundRectCallout")!;
+    // Same seven-vertex construction either way: a rectangular body
+    // (y 0..0.75) with a downward tail poking to y=1.
+    for (const polygon of [wedge, round]) {
+      expect(polygon).toHaveLength(7);
+      expect(Math.max(...polygon.map((p) => p.y))).toBe(1);
+      expect(polygon.some((p) => p.y === 0)).toBe(true);
+      expect(polygon.filter((p) => p.y === 0.75)).toHaveLength(4);
+    }
+    // They are NOT the same polygon: the rounded one paints its body's
+    // bottom-left corner as an arc, so its tail is shifted clear of that
+    // corner — a tail hard against it leaves nothing to round. The tail
+    // itself is unchanged, just moved (same feet spacing, same tip offset).
+    expect(round).not.toEqual(wedge);
+    const shift = round[5].x - wedge[5].x;
+    expect(shift).toBeGreaterThan(0);
+    expect(round[4].x - wedge[4].x).toBeCloseTo(shift, 8);
+    expect(round[3].x - wedge[3].x).toBeCloseTo(shift, 8);
+  });
+});
+
+// --- roundedCalloutRadius / roundedCalloutOutline -----------------------------
+
+describe("roundedCalloutRadius", () => {
+  it("applies roundRect's 16.67% rule to the body, not the whole box", () => {
+    // 4 wide x 4 tall: the body is 3 tall, so the shorter side is 3.
+    expect(roundedCalloutRadius(4, 4)).toBeCloseTo(3 * 0.1667, 8);
+  });
+
+  it("never reaches past the bottom edge either side of the tail", () => {
+    // A very tall, narrow callout: the unclamped 16.67% radius would be
+    // 0.1667 of the width, still inside the tail's near foot at 0.25 —
+    // clamped cases are the wide ones, where the body dwarfs the width.
+    for (const [width, height] of [
+      [10, 2],
+      [2, 40],
+      [3, 2],
+      [1, 1],
+    ]) {
+      const radius = roundedCalloutRadius(width, height);
+      const polygon = shapePolygon("wedgeRoundRectCallout")!;
+      const tailLeft = polygon[5].x * width;
+      const tailRight = polygon[3].x * width;
+      expect(radius, `${width}x${height}`).toBeGreaterThan(0);
+      expect(radius, `${width}x${height}`).toBeLessThanOrEqual(tailLeft);
+      expect(radius, `${width}x${height}`).toBeLessThanOrEqual(width - tailRight);
+    }
+  });
+
+  it("is zero for a degenerate box rather than negative", () => {
+    expect(roundedCalloutRadius(0, 0)).toBe(0);
+  });
+});
+
+describe("roundedCalloutOutline", () => {
+  it("walks the body clockwise with four corner arcs and a sharp tail", () => {
+    const { start, steps, radius } = roundedCalloutOutline(20, 20);
+    const corners = steps.filter((step) => step.corner);
+    expect(corners).toHaveLength(4);
+    expect(corners.map((step) => step.corner)).toEqual([
+      { x: 20, y: 0 },
+      { x: 20, y: 15 },
+      { x: 0, y: 15 },
+      { x: 0, y: 0 },
+    ]);
+    // Closed: the last leg lands back on the starting tangent point.
+    expect(steps[steps.length - 1].to).toEqual(start);
+    // The tail's three vertices are straight legs, tip on the bottom edge.
+    expect(steps.some((step) => !step.corner && step.to.y === 20)).toBe(true);
+    expect(radius).toBeCloseTo(roundedCalloutRadius(20, 20), 8);
+  });
+
+  it("puts every corner's endpoint exactly one radius along the next edge", () => {
+    const { steps, radius } = roundedCalloutOutline(12, 8);
+    for (const step of steps) {
+      if (!step.corner) {
+        continue;
+      }
+      const distance = Math.hypot(step.to.x - step.corner.x, step.to.y - step.corner.y);
+      expect(distance).toBeCloseTo(radius, 8);
+    }
   });
 });
 

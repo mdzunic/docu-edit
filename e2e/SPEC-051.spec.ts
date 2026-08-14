@@ -418,6 +418,30 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     expect(after.y).toBeGreaterThan(before.y + 40);
   });
 
+  test("the floating toolbar sits fully clear above the shape, rotation handle included (AC-12, AC-16)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    const toolbar = page.getByTestId("shape-toolbar");
+    await expect(toolbar).toBeVisible();
+    const toolbarBox = await toolbar.boundingBox();
+    const shapeBox = await drawingAt(page, 0).boundingBox();
+    const handleBox = await page.getByTestId("shape-rotation-handle").boundingBox();
+    if (!toolbarBox || !shapeBox || !handleBox) {
+      throw new Error("the toolbar, shape or rotation handle has no bounding box");
+    }
+    // The toolbar wraps to more than one row, so a fixed offset from the
+    // shape's top edge used to leave its lower rows lying across the shape
+    // and over the rotation handle — the handle stayed visible but never
+    // received the drag that starts a rotation.
+    expect(toolbarBox.height).toBeGreaterThan(40);
+    expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(handleBox.y);
+    expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(shapeBox.y);
+    // Nothing of the toolbar is pushed off the top of the viewport either.
+    expect(toolbarBox.y).toBeGreaterThanOrEqual(0);
+  });
+
   test("Insert -> Text box lands already in text-editing mode with the caret inside (AC-9, AC-51)", async ({ page }) => {
     await createDocument(page);
     await content(page).click({ position: { x: 20, y: 20 } });

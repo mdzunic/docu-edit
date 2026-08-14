@@ -6563,6 +6563,7 @@ async function menuPastePlain() {
       class="print-exclude"
       :left="shapeToolbarStyle().left"
       :top="shapeToolbarStyle().top"
+      :placement="shapeToolbarStyle().placement"
       :fill="shapeAt(doc, shapeSelection)?.fill || ''"
       :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
       :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
@@ -7284,12 +7285,13 @@ async function menuPastePlain() {
 .shape-handles {
   position: absolute;
   inset: 0;
-  /* Above .shape-toolbar (z-index: 30, ShapeToolbar.vue) — the toolbar
-     renders 44px above the shape (shapeToolbarStyle) and the rotation
-     handle sits 24px above it (ROTATION_HANDLE_OFFSET_PX), so their boxes
-     always overlap for a normally sized toolbar; without this the handle
-     is visually present but never receives the click/drag that starts a
-     rotation (AC-16, AC-38). */
+  /* Above .shape-toolbar (z-index: 30, ShapeToolbar.vue). shapeToolbarStyle
+     now clears the rotation handle by design, but the toolbar is still a
+     wrapping box positioned against a single edge of the shape: any overlap
+     it does land in (a shape near the viewport top, where the toolbar flips
+     below) must leave the handles clickable, not merely visible — a covered
+     rotation handle never receives the drag that starts a rotation (AC-16,
+     AC-38). */
   z-index: 31;
   pointer-events: none;
 }
