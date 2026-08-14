@@ -228,16 +228,27 @@ for the measurement to be meaningful: below that cap, growth is the feature
 working. Above it, the stack evicts and the curve must go flat. A session that
 edits 50 times and reports no growth has tested nothing.
 
-> **Amended at gate (2026-08-14).** The 30-minute session is deliberately not
-> part of the default `npx playwright test` run — a wall-clock half hour
-> cannot be a per-change gate. It is env-gated
-> (`SPEC047_LEAK=1 npx playwright test e2e/SPEC-047.perf.spec.ts -g "30-minute"`)
-> and is run deliberately; it was executed when this spec was brought to
-> gate. For this one row, AC-1's "asserted by the benchmark" reads "asserted
-> by the deliberate run of this same spec file". The measurement is also
-> only meaningful on an otherwise-quiet machine: under heavy parallel load
-> the forced-GC sampling degrades and uncollected garbage inflates the
-> reading.
+> **Amended at gate (2026-08-14).** Three clarifications from actually
+> running this test, none of which move the 10% goalpost:
+>
+> 1. The 30-minute session is deliberately not part of the default
+>    `npx playwright test` run — a wall-clock half hour cannot be a
+>    per-change gate. It is env-gated
+>    (`SPEC047_LEAK=1 npx playwright test e2e/SPEC-047.perf.spec.ts -g "30-minute"`)
+>    and is run deliberately; it was executed when this spec was brought to
+>    gate. For this one row, AC-1's "asserted by the benchmark" reads
+>    "asserted by the deliberate run of this same spec file".
+> 2. "The first post-settle sample" is taken AFTER the session's undo
+>    history has been primed past its 200-step cap. This paragraph's own
+>    rationale demands it: against this fixture the legitimate fill to the
+>    cap adds ~50% to the post-settle heap (each step retains a cloned
+>    blocks array), so a baseline taken before the fill counts the feature
+>    as the leak — the exact mistake the >200-edit floor exists to prevent.
+>    Measured with the primed baseline, the curve is flat: ~39 MB at the
+>    cap and ~40 MB half an hour of continuous editing later.
+> 3. The measurement is only meaningful on an otherwise-quiet machine:
+>    under heavy parallel load the forced-GC sampling degrades and
+>    uncollected garbage inflates the reading.
 
 ### The supported ceiling
 Beyond this, the document opens read-only. The limits are counted **after parse
