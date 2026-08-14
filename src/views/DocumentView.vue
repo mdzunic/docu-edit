@@ -5019,13 +5019,18 @@ async function handleDownload(format = "") {
   void autosave.commitNow().then(() => noteVersionHistoryCommitPoint());
   // SPEC-008: content that could not be preserved by a cross-format save is
   // reported once, after the download has been triggered, unless the user
-  // opted out for this document.
+  // opted out for this document. SPEC-052 widens this to a same-format save
+  // too, but only ever for an edited chart's lost properties (chartFeature)
+  // — "Conversion report" is the wrong heading there, since nothing
+  // converted; conversionReportSameFormat drives the dialog's own variant.
   if (dropped.length > 0 && !doc.value.suppressConversionReport) {
+    conversionReportSameFormat.value = doc.value.format === format;
     conversionReport.value = dropped;
   }
 }
 
 const conversionReport = ref(noConversionReport());
+const conversionReportSameFormat = ref(false);
 
 function closeConversionReport(dontShowAgain = false) {
   conversionReport.value = null;
@@ -6492,6 +6497,7 @@ async function menuPastePlain() {
     <ConversionReportDialog
       v-if="conversionReport"
       :items="conversionReport"
+      :same-format="conversionReportSameFormat"
       @close="closeConversionReport"
     />
     <MergeFieldPickerDialog
