@@ -6,6 +6,7 @@
 import {
   HORIZONTAL_RULE_STYLE_ID,
   type BorderSide,
+  type Chart,
   type Image,
   type ListDefinition,
   type Paragraph,
@@ -441,6 +442,26 @@ export function shapeDisplayStyle(shape: Shape): Record<string, string> {
     // high its zOrder climbs relative to an "in front" shape's own.
     const order = shape.zOrder ?? 0;
     style.zIndex = String(shape.wrap === "behind" ? order - 100000 : 100000 + order);
+  }
+  return style;
+}
+
+/** A chart's size and position rendering (SPEC-052) — identical logic to
+ * shapeDisplayStyle since Chart extends the same DrawingPlacement fields;
+ * kept as its own function (not a shared helper Image/Shape/Chart all call)
+ * per this module's existing per-block-kind convention. */
+export function chartDisplayStyle(chart: Chart): Record<string, string> {
+  const heightCm = Math.max(chart.heightCm, 0.05);
+  const style: Record<string, string> = {
+    width: `${chart.widthCm}cm`,
+    height: `${heightCm}cm`,
+  };
+  if (chart.wrap !== "inline") {
+    style.position = "absolute";
+    style.left = `${chart.offsetXCm ?? 0}cm`;
+    style.top = `${chart.offsetYCm ?? 0}cm`;
+    const order = chart.zOrder ?? 0;
+    style.zIndex = String(chart.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
 }

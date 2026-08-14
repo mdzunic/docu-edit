@@ -114,7 +114,7 @@ function refOf(container: Element | undefined, tag: string): Element | undefined
 
 function categoriesFrom(ref: Element | undefined): string[] {
   const count = ptCountOf(ref);
-  const cats = new Array<string>(count).fill("");
+  const cats = Array.from<string>({ length: count }).fill("");
   for (const pt of ptsOf(ref)) {
     if (pt.idx >= 0 && pt.idx < count) {
       cats[pt.idx] = pt.v;
@@ -125,7 +125,7 @@ function categoriesFrom(ref: Element | undefined): string[] {
 
 function valuesFrom(ref: Element | undefined): (number | null)[] {
   const count = ptCountOf(ref);
-  const values = new Array<number | null>(count).fill(null);
+  const values = Array.from<number | null>({ length: count }).fill(null);
   for (const pt of ptsOf(ref)) {
     if (pt.idx >= 0 && pt.idx < count && pt.v !== "") {
       const n = Number(pt.v);

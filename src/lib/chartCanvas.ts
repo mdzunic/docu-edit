@@ -136,7 +136,7 @@ function computeLayout(
   if (chart.options.title) {
     top += 20;
   }
-  const legendReserve = paintLegendReserveOnly(ctx, chart, series, widthPx, heightPx);
+  const legendReserve = paintLegendReserveOnly(ctx, chart, series, widthPx);
   top += legendReserve.reservedTop;
   bottom += legendReserve.reservedBottom;
   left += legendReserve.reservedLeft;
@@ -168,7 +168,6 @@ function paintLegendReserveOnly(
   chart: Chart,
   series: ChartSeries[],
   widthPx: number,
-  heightPx: number,
 ): { reservedLeft: number; reservedRight: number; reservedTop: number; reservedBottom: number } {
   const pos = chart.options.legend;
   if (pos === "none" || series.length === 0) {

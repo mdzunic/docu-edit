@@ -91,13 +91,8 @@ import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
-import { chartFrameXml, odfChartContentXml } from "./chart";
-import {
-  chartObjectDirsInManifest,
-  planOdfChartWrite,
-  EMPTY_ODF_CHART_PLAN,
-  type OdfChartWritePlan,
-} from "./chartWritePlan";
+import { chartFrameXml } from "./chart";
+import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
