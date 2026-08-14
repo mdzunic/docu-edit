@@ -221,7 +221,7 @@ import {
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
-import { ceilingWarningMessage, checkSupportedCeiling } from "../lib/supportedCeiling";
+import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../lib/supportedCeiling";
 import {
   BLOCK_SELECTOR,
   canvasModelText,
@@ -504,8 +504,28 @@ const documentActionsEnabled = computed(() => lockState.value === "acquired" && 
 // --- supported ceiling (SPEC-047: a document past the ceiling opens
 // read-only rather than the editor pretending it can hold arbitrarily large
 // content) -------------------------------------------------------------
-const ceilingResult = computed(() =>
-  doc.value ? checkSupportedCeiling(doc.value) : { exceeded: false },
+// Counted once per document, at the door ("counted after parse and before
+// pagination" — the spec's own definition), NOT re-checked on every edit: a
+// live re-check would permanently lock a document the moment one paste
+// carried it over the limit, with undo — the way back under — disabled by
+// the very same flag. A document that grows past the ceiling mid-session
+// stays editable until it is next opened; the door check catches it then.
+// (Evaluating per-document rather than per-edit also keeps the O(blocks)
+// count walk off the keystroke path.)
+const ceilingResult = ref(withinCeiling());
+watch(
+  doc,
+  (model, prev) => {
+    if (!model) {
+      ceilingResult.value = withinCeiling();
+      return;
+    }
+    if (prev && prev.id === model.id) {
+      return; // the same document being edited — the door check already ran
+    }
+    ceilingResult.value = checkSupportedCeiling(model);
+  },
+  { immediate: true },
 );
 const pastSupportedCeiling = computed(() => ceilingResult.value.exceeded);
 const ceilingWarning = computed(() => ceilingWarningMessage(ceilingResult.value));
@@ -1257,6 +1277,14 @@ function applyEdit(
   skipTrackChanges = false,
 ) {
   if (!result || !beforeSelection) {
+    return;
+  }
+  // The read-only backstop for a too-large document (SPEC-047 AC-27):
+  // `editable` gates the canvas, the toolbar and the shortcut registry, but
+  // several composables reach applyEdit through their own UI (the status
+  // bar's language control, the accessibility pane's Fix buttons, …) — one
+  // gate here covers every such path, present and future.
+  if (pastSupportedCeiling.value) {
     return;
   }
   // Any edit other than the paste (or its chip re-application, which passes
@@ -4482,6 +4510,30 @@ const {
   commentAuthorName,
   trackChangesAuthorName,
 });
+
+// Write paths that bypass applyEdit still respect the too-large read-only
+// mode (SPEC-047 AC-27): restoring a version replaces the model wholesale,
+// and the Properties dialog mutates metadata directly — both are editing
+// commands, which "are unavailable" past the ceiling. (Reading properties,
+// like reading the document, stays allowed — only the writes are gated.)
+function restoreVersionRespectingCeiling(versionId = "") {
+  if (pastSupportedCeiling.value) {
+    return;
+  }
+  void restoreVersionHistoryVersion(versionId);
+}
+function updatePropertiesRespectingCeiling(next = {}) {
+  if (pastSupportedCeiling.value) {
+    return;
+  }
+  updateDocumentProperties(next);
+}
+function updateAuthorIdentityRespectingCeiling(name = "") {
+  if (pastSupportedCeiling.value) {
+    return;
+  }
+  updateAuthorIdentity(name);
+}
 // The Properties dialog's Statistics tab renders useWordCount's dialogStats
 // (SPEC-041 AC-4). Since the worker move (SPEC-047 AC-12) those stats are
 // computed on demand rather than by a doc-tracking computed, so this dialog
@@ -5721,12 +5773,12 @@ async function menuPastePlain() {
           :paused-message="versionHistoryPausedMessage ?? ''"
           :named-only-filter="versionHistoryNamedOnlyFilter"
           :preview-version-id="versionHistoryPreviewVersionId ?? ''"
-          :editable="documentActionsEnabled"
+          :editable="documentActionsEnabled && !pastSupportedCeiling"
           @close="toggleVersionHistoryPane"
           @update:named-only-filter="versionHistoryNamedOnlyFilter = $event"
           @select="selectVersionHistoryVersion"
           @exit-preview="exitVersionHistoryPreview"
-          @restore="restoreVersionHistoryVersion"
+          @restore="restoreVersionRespectingCeiling"
           @name="nameVersionHistoryVersion"
           @remove-name="removeVersionHistoryName"
           @delete="deleteVersionHistoryVersion"
@@ -6384,8 +6436,8 @@ async function menuPastePlain() {
       :pages="pageCount"
       :file-size="propertiesFileSize"
       :author-identity="commentAuthorName"
-      @update-properties="updateDocumentProperties"
-      @update-author-identity="updateAuthorIdentity"
+      @update-properties="updatePropertiesRespectingCeiling"
+      @update-author-identity="updateAuthorIdentityRespectingCeiling"
       @close="closeProperties"
     />
     <StyleEditorDialog

@@ -90,6 +90,20 @@ describe("checkSupportedCeiling", () => {
     expect(result.name).toBe("blocks");
   });
 
+  it("counts note content toward the block ceiling, not just the notes themselves", () => {
+    // 500 notes of 60 paragraphs each: within the 1,000-note limit but the
+    // 30,000 note-content paragraphs alone cross the 25,000-block ceiling.
+    const doc = docWithBlocks([paragraph()]);
+    doc.notes = Array.from({ length: 500 }, (_, i) => ({
+      noteId: `n${i}`,
+      kind: "footnote" as const,
+      blocks: Array.from({ length: 60 }, () => paragraph()),
+    }));
+    const result = checkSupportedCeiling(doc);
+    expect(result.exceeded).toBe(true);
+    expect(result.name).toBe("blocks");
+  });
+
   it("reports footnotes and endnotes exceeded", () => {
     const doc = docWithBlocks([paragraph()]);
     doc.notes = Array.from({ length: 1001 }, (_, i) => ({

@@ -3,7 +3,7 @@
 // hold arbitrarily large content. Counted after parse, before pagination —
 // page count is not known until the (expensive) layout pass has already run,
 // so these are the quantities available at the door.
-import { isImage, isTable, type Block, type DocumentModel } from "./documentModel";
+import { isImage, isShape, isTable, type Block, type DocumentModel } from "./documentModel";
 
 export interface CeilingLimit {
   /** The name used in the warning message, e.g. "images". */
@@ -29,8 +29,9 @@ export interface CeilingCounts {
 }
 
 /** Counts one block, recursing into a table's cells (SPEC-022: cells hold
- * only paragraphs, never nested tables/images) — a table counts as one block
- * itself, plus one block per cell paragraph. */
+ * only paragraphs, never nested tables/images) and a shape's text frame
+ * (SPEC-051: frames may hold lists and tables) — a container counts as one
+ * block itself, plus one per nested block. */
 function countBlock(block: Block, counts: CeilingCounts): void {
   counts.blocks += 1;
   if (isImage(block)) {
@@ -45,6 +46,12 @@ function countBlock(block: Block, counts: CeilingCounts): void {
           countBlock(paragraph, counts);
         }
       }
+    }
+    return;
+  }
+  if (isShape(block) && block.text) {
+    for (const nested of block.text.blocks) {
+      countBlock(nested, counts);
     }
   }
 }
@@ -62,6 +69,15 @@ export function ceilingCounts(model: DocumentModel): CeilingCounts {
       countBlock(block, counts);
     }
   }
+  // Note CONTENT counts toward the block/image/table quantities too — 1,000
+  // notes of one line each and 1,000 notes of a hundred paragraphs each are
+  // very different documents, and the block ceiling is the complexity
+  // measure that tells them apart.
+  for (const note of model.notes ?? []) {
+    for (const block of note.blocks) {
+      countBlock(block, counts);
+    }
+  }
   counts.notes = model.notes?.length ?? 0;
   return counts;
 }
@@ -73,6 +89,12 @@ export interface CeilingResult {
   name?: string;
   limit?: number;
   value?: number;
+}
+
+/** Typed "no limit exceeded" seed for refs in `.vue` scripts (espree bars
+ * the annotation — same pattern as domCaret.noElement). */
+export function withinCeiling(): CeilingResult {
+  return { exceeded: false };
 }
 
 const VALUE_BY_NAME: Record<string, keyof CeilingCounts> = {
