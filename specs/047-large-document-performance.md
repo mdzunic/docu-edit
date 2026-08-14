@@ -35,8 +35,8 @@ asserted by the benchmark, measured on the fixture below.
 
 | Budget | Ceiling | How it is measured |
 | --- | --- | --- |
-| First page visible | 2 s | `Date.now()` from navigation to the first `[data-testid=document-page]` with content |
-| Fully interactive | 8 s | to the progress indicator clearing and pagination reporting settled |
+| First page visible | 2 s | `Date.now()` from choosing the file to the first `[data-testid=document-page]` with content — see the amendment note below |
+| Fully interactive | 8 s | same start, to the progress indicator clearing and pagination reporting settled |
 | Typing latency, p95 | 50 ms | 200 keystrokes at the document end; keydown → model-updated paint |
 | Scroll | ≥ 30 fps | frame timestamps over a 5 s programmatic scroll |
 | Main-thread block, save/scroll/type | ≤ 100 ms | longest task during export, a scroll sweep and typing/spell check |
@@ -47,6 +47,16 @@ asserted by the benchmark, measured on the fixture below.
 
 The numbers are chosen against the fixture, not in the abstract. Change the
 fixture and they stop meaning anything.
+
+> **Amended at gate (2026-08-14).** The first two rows originally measured
+> "from navigation". In this SPA every expensive part of opening — read,
+> unzip, parse, store — happens *before* `router.push`, so that wording
+> excluded exactly the phase the 2 s budget exists to bound: the benchmark
+> reported ~0.3 s while a stopwatch from choosing the file read ~1.9 s.
+> Both rows now start at the moment the file is chosen. (The open path was
+> also made faster to honestly fit the ceiling under the new start: media
+> base64-encodes once through the browser's native encoder after the walk
+> instead of per-drawing inside it.)
 
 The open-phase ceiling is higher than the other three on purpose, and it is the
 number calibration found, not an excuse for no work. Once parsing has moved to
@@ -217,6 +227,17 @@ correct. Undo history legitimately grows to `MAX_HISTORY_STEPS = 200` steps
 for the measurement to be meaningful: below that cap, growth is the feature
 working. Above it, the stack evicts and the curve must go flat. A session that
 edits 50 times and reports no growth has tested nothing.
+
+> **Amended at gate (2026-08-14).** The 30-minute session is deliberately not
+> part of the default `npx playwright test` run — a wall-clock half hour
+> cannot be a per-change gate. It is env-gated
+> (`SPEC047_LEAK=1 npx playwright test e2e/SPEC-047.perf.spec.ts -g "30-minute"`)
+> and is run deliberately; it was executed when this spec was brought to
+> gate. For this one row, AC-1's "asserted by the benchmark" reads "asserted
+> by the deliberate run of this same spec file". The measurement is also
+> only meaningful on an otherwise-quiet machine: under heavy parallel load
+> the forced-GC sampling degrades and uncollected garbage inflates the
+> reading.
 
 ### The supported ceiling
 Beyond this, the document opens read-only. The limits are counted **after parse

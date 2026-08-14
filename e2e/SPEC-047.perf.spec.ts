@@ -12,6 +12,14 @@ import { MOD } from "./keys";
 // relative to the checked-in e2e/perf-baseline.json). No shared e2e helpers
 // module exists in this repo (see the other spec files) — every helper below
 // is local to this file, matching that convention.
+//
+// Timing validity: the baselines are calibrated for THIS FILE running with
+// the machine otherwise quiet. A full-suite `npx playwright test` runs
+// sibling spec files in parallel workers, whose CPU load can inflate these
+// samples — the median-of-5 plus the 15% relative allowance absorb typical
+// contention, but a timing failure seen only in a full-suite run should be
+// confirmed with a solo run of this file before being treated as a
+// regression.
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_PATH = path.join(REPO_ROOT, "e2e", "fixtures", "spec-047-fixture.docx");
@@ -108,7 +116,9 @@ function assertBudget(name: string, samples: number[], baseline: Baseline): void
 // "longest task" sample for. -------------------------------------------
 async function installLongTaskCollector(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    (window as unknown as { __longTasks: number[] }).__longTasks = [];
+    const w = window as unknown as { __longTasks: number[]; __longTasksSupported: boolean };
+    w.__longTasks = [];
+    w.__longTasksSupported = false;
     try {
       const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
@@ -116,13 +126,21 @@ async function installLongTaskCollector(page: Page): Promise<void> {
         }
       });
       observer.observe({ entryTypes: ["longtask"] });
+      // Support is asserted by the budget test: an "atMost" block budget
+      // reads 0 when the observer never fires, and a 0 from "no long tasks"
+      // must be distinguishable from a 0 from "the API never worked" — the
+      // latter would pass every main-thread-block gate vacuously.
+      w.__longTasksSupported = true;
     } catch {
-      // Long Tasks API unavailable: samples read back empty, which fails
-      // the budget's absolute gate loudly (0 tasks looks like 0ms, not a
-      // pass) rather than silently reporting a suspiciously perfect score.
-      // The pinned Chromium supports it, so this is a defensive no-op.
+      // Left false; the budget test fails loudly on it.
     }
   });
+}
+
+async function longTasksSupported(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () => (window as unknown as { __longTasksSupported?: boolean }).__longTasksSupported === true,
+  );
 }
 
 async function resetLongTasks(page: Page): Promise<void> {
@@ -182,9 +200,14 @@ async function measureOpen(page: Page): Promise<OpenSample> {
   await page.goto("/");
   await resetLongTasks(page);
   const navigated = page.waitForURL(/\/doc\/.+/, { timeout: 30_000 });
+  // t0 at the moment the file is chosen, NOT at the URL change: in this SPA
+  // every expensive part of opening (read, unzip, parse, store) happens
+  // BEFORE router.push, so "from navigation" — the spec's original wording,
+  // amended at gate — excluded exactly the phase AC-3's 2s budget exists to
+  // bound.
+  const t0 = Date.now();
   await page.getByTestId("open-document-input").setInputFiles(FIXTURE_PATH);
   await navigated;
-  const t0 = Date.now();
 
   await page.waitForFunction(
     () => {
@@ -359,6 +382,11 @@ test("holds every SPEC-047 performance budget on the fixture, median of 5 runs (
     await installLongTaskCollector(page);
 
     const open = await measureOpen(page);
+    // Every main-thread-block budget below reads the Long Tasks collector;
+    // a 0 is only meaningful when the observer actually installed.
+    expect(await longTasksSupported(page), "Long Tasks API available (block budgets would be vacuous without it)").toBe(
+      true,
+    );
     samples.firstPageMs.push(open.firstPageMs);
     samples.fullyInteractiveMs.push(open.fullyInteractiveMs);
     samples.mainThreadBlockDuringOpenMs.push(open.mainThreadBlockDuringOpenMs);
@@ -400,8 +428,10 @@ test("only pages inside the realization window are rendered to the DOM (AC-2, AC
   expect(totalPages, "the fixture is large enough to need virtualization").toBeGreaterThan(100);
 
   const domBlocks = await page.locator('[data-testid="document-page"] [data-section][data-block]').count();
-  // SPEC-028.spec.ts:687's own precedent ceiling for a virtualized document,
-  // unchanged here: only the realization window's pages carry real content.
+  // Same approach as SPEC-028.spec.ts:687's <1000 ceiling for its 3000-block
+  // document, re-sized for this fixture: its realization window carries
+  // denser pages (tables contribute a row element per data-block address),
+  // so the equivalent "only the window is realized" bound lands at 1500.
   expect(domBlocks, "only realized pages' blocks are in the DOM").toBeLessThan(1500);
 });
 
