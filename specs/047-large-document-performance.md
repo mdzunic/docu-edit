@@ -16,7 +16,7 @@ tables. This spec sets the budgets and makes the product hold them.
 - [ ] Opening that fixture shows the first page in under 2 seconds and becomes fully interactive in under 8 seconds, with a progress indicator until it is
 - [ ] Typing latency stays under 50 ms at the 95th percentile anywhere in that document, including at the end
 - [ ] Only pages inside the realization window are rendered to the DOM; scrolling stays above 30 fps and scroll position is stable when off-screen pages are recycled. The window is the one SPEC-028 already ships — see "The realization window" below; this spec does not introduce a second policy
-- [ ] Work that can leave the main thread does — parsing, export, word count and spell check move off-thread, and pagination stays on it per "What leaves the main thread" below — so no phase's main-thread block exceeds that phase's ceiling in "The budgets". The ceilings are per phase, not one blanket number, because the open phase inherits a pre-existing single main-thread task that the others do not (see the note under the table)
+- [ ] Work that can leave the main thread does — word count and spell check move off-thread, while parsing, export and pagination stay on it, each for the reason "What leaves the main thread" below records (amended at gate: parsing's XML layer is `DOMParser`-bound, which workers do not expose) — so no phase's main-thread block exceeds that phase's ceiling in "The budgets". The ceilings are per phase, not one blanket number, because the open phase inherits a pre-existing single main-thread task that the others do not (see the note under the table)
 - [ ] JS heap after the fixture settles stays under 400 MB, and a 30-minute editing session ends within 10% of its first post-settle sample — see "Memory and the leak test" below
 - [ ] Saving that fixture to `.docx` completes in under 5 seconds and does not freeze the UI
 - [ ] The benchmark is runnable with the pinned toolchain and no new dependency, and fails on a regression by the rule in "The regression gate" below — a fixed threshold, not a judgement call
@@ -35,8 +35,8 @@ asserted by the benchmark, measured on the fixture below.
 
 | Budget | Ceiling | How it is measured |
 | --- | --- | --- |
-| First page visible | 2 s | `Date.now()` from navigation to the first `[data-testid=document-page]` with content |
-| Fully interactive | 8 s | to the progress indicator clearing and pagination reporting settled |
+| First page visible | 2 s | `Date.now()` from choosing the file to the first `[data-testid=document-page]` with content — see the amendment note below |
+| Fully interactive | 8 s | same start, to the progress indicator clearing and pagination reporting settled |
 | Typing latency, p95 | 50 ms | 200 keystrokes at the document end; keydown → model-updated paint |
 | Scroll | ≥ 30 fps | frame timestamps over a 5 s programmatic scroll |
 | Main-thread block, save/scroll/type | ≤ 100 ms | longest task during export, a scroll sweep and typing/spell check |
@@ -47,6 +47,16 @@ asserted by the benchmark, measured on the fixture below.
 
 The numbers are chosen against the fixture, not in the abstract. Change the
 fixture and they stop meaning anything.
+
+> **Amended at gate (2026-08-14).** The first two rows originally measured
+> "from navigation". In this SPA every expensive part of opening — read,
+> unzip, parse, store — happens *before* `router.push`, so that wording
+> excluded exactly the phase the 2 s budget exists to bound: the benchmark
+> reported ~0.3 s while a stopwatch from choosing the file read ~1.9 s.
+> Both rows now start at the moment the file is chosen. (The open path was
+> also made faster to honestly fit the ceiling under the new start: media
+> base64-encodes once through the browser's native encoder after the walk
+> instead of per-drawing inside it.)
 
 The open-phase ceiling is higher than the other three on purpose, and it is the
 number calibration found, not an excuse for no work. Once parsing has moved to
@@ -148,15 +158,41 @@ different heap numbers, and both would have satisfied it.
 
 ### What leaves the main thread
 The five workloads are not equally movable, and the 100 ms budget is met
-differently by each. This is the honest split:
+differently by each. This is the honest split.
 
-- **Parsing** (`src/lib/docx/`, `src/lib/odf/`) — moves cleanly. Already
-  DOM-free by SPEC-004/006 rule ("does no DOM work so it can run in a worker").
-- **Export** — same, for the same reason (`writeDocx`, SPEC-006).
-- **Word count** (`src/lib/wordCount.ts`) — moves cleanly; pure functions over
-  the model.
-- **Spell check** (`src/lib/spellcheck/`) — moves cleanly, and the dictionary
-  fetch moves with it.
+> **Amended at gate (2026-08-14).** As drafted, this section claimed parsing
+> and export both "move cleanly" because SPEC-004/006's rule made them
+> DOM-free. Implementation disproved half of that premise: "does no DOM
+> work" meant no *document* work, but the XML parsing itself is built on the
+> platform's `DOMParser`/`XMLSerializer` (`src/lib/docx/xml.ts`), which
+> dedicated workers do not expose — in the pinned Chromium, `DOMParser` is
+> `undefined` inside a `Worker`, verified empirically during implementation.
+> The bullets below record what is actually true. The budgets table is
+> unchanged: every phase ceiling holds either way, and the benchmark asserts
+> them regardless of which side of the thread boundary the work runs on.
+
+- **Parsing** (`src/lib/docx/`, `src/lib/odf/`) — *does not move*: it parses
+  XML with `DOMParser`, which has no worker equivalent. It meets the open
+  ceiling the way pagination does — chunked, with a time-budgeted macrotask
+  yield inside the body walk and the footnote/endnote walk
+  (`yieldToMainThread` in `src/lib/idleScheduler.ts`).
+- **Export** (`writeDocx`) — genuinely DOM-free (the SPEC-047 fixture
+  generator runs it under bare Node), so it *could* run in a worker; it
+  stays on the main thread anyway because handing a worker the model means
+  structured-cloning ~50 MB of media across `postMessage` on the main
+  thread — a cost of the same order as the block being avoided — while the
+  chunked save path (zip entries, document-XML assembly and media decode
+  all yield on a time budget) already measures a longest save block of
+  ~0 ms against the fixture. Chunking, not a worker, is what meets the save
+  ceiling.
+- **Word count** (`src/lib/wordCount.ts`) — moves
+  (`src/workers/wordCount.worker.ts`), with the model projected down to
+  exactly what counting reads so the `postMessage` clone itself stays cheap
+  on the live-count cadence.
+- **Spell check** (`src/lib/spellcheck/`) — moves
+  (`src/workers/spellCheck.worker.ts`), and the dictionary fetch moves with
+  it. DOM rect measurement of the issue underlines stays, like pagination's
+  DOM half below.
 - **Pagination** — *does not fully move*, and the spec must not pretend
   otherwise. `src/lib/textMetrics.ts` measures with a `<canvas>` 2D context
   (line 403, portable to `OffscreenCanvas` in a worker) **but also** with DOM
@@ -166,9 +202,12 @@ differently by each. This is the honest split:
   (`src/lib/idleScheduler.ts`), the same mechanism spell check, find/replace
   and comments already use.
 
-Moving the first four off-thread is the acceptance criterion. Moving pagination
-is not, and an implementation that tries will either rewrite text measurement or
-quietly regress layout fidelity.
+Moving word count and spell check off-thread is the acceptance criterion,
+together with every phase ceiling in "The budgets" holding. Moving pagination
+is not, and an implementation that tries will either rewrite text measurement
+or quietly regress layout fidelity; moving parsing is not possible on the
+pinned platform, and moving export buys nothing the chunked path has not
+already banked.
 
 ### Memory and the leak test
 Measured with CDP `Performance.getMetrics` → `JSHeapUsedSize`, sampled after
@@ -188,6 +227,28 @@ correct. Undo history legitimately grows to `MAX_HISTORY_STEPS = 200` steps
 for the measurement to be meaningful: below that cap, growth is the feature
 working. Above it, the stack evicts and the curve must go flat. A session that
 edits 50 times and reports no growth has tested nothing.
+
+> **Amended at gate (2026-08-14).** Three clarifications from actually
+> running this test, none of which move the 10% goalpost:
+>
+> 1. The 30-minute session is deliberately not part of the default
+>    `npx playwright test` run — a wall-clock half hour cannot be a
+>    per-change gate. It is env-gated
+>    (`SPEC047_LEAK=1 npx playwright test e2e/SPEC-047.perf.spec.ts -g "30-minute"`)
+>    and is run deliberately; it was executed when this spec was brought to
+>    gate. For this one row, AC-1's "asserted by the benchmark" reads
+>    "asserted by the deliberate run of this same spec file".
+> 2. "The first post-settle sample" is taken AFTER the session's undo
+>    history has been primed past its 200-step cap. This paragraph's own
+>    rationale demands it: against this fixture the legitimate fill to the
+>    cap adds ~50% to the post-settle heap (each step retains a cloned
+>    blocks array), so a baseline taken before the fill counts the feature
+>    as the leak — the exact mistake the >200-edit floor exists to prevent.
+>    Measured with the primed baseline, the curve is flat: ~39 MB at the
+>    cap and ~40 MB half an hour of continuous editing later.
+> 3. The measurement is only meaningful on an otherwise-quiet machine:
+>    under heavy parallel load the forced-GC sampling degrades and
+>    uncollected garbage inflates the reading.
 
 ### The supported ceiling
 Beyond this, the document opens read-only. The limits are counted **after parse

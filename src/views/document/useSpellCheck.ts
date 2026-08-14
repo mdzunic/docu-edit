@@ -15,11 +15,11 @@ import { shallowRef, watch } from "vue";
 import type { Ref } from "vue";
 import type { DocumentModel, Paragraph } from "../../lib/documentModel";
 import { effectiveLanguage, isDictionaryAvailable, normalizeLanguageTag } from "../../lib/language";
-import { checkText } from "../../lib/spellcheck/checker";
 import { loadDictionary } from "../../lib/spellcheck/dictionaries";
 import type { Dictionary } from "../../lib/spellcheck/dictionary";
 import { isCodeStyledFont } from "../../lib/spellcheck/skip";
 import { getSuggestions } from "../../lib/spellcheck/suggestions";
+import { checkTextsInWorker } from "../../lib/workers/spellCheckClient";
 import {
   addCustomWord,
   customDictionaryEntries,
@@ -133,10 +133,35 @@ export function useSpellCheck(deps: SpellCheckDeps) {
   // on every model change — cheap (a Map.clear()); only the visible subset
   // is ever recomputed (AC-16.1), so document size never matters here.
   let issueCache = new Map<string, SpellCheckIssue[]>();
+  // Bumped by every cache invalidation below (never by runSpellCheck itself
+  // — it only reads this at the start of a pass). A worker round trip means
+  // a check started against one document/language state can resolve after
+  // a *later* invalidation already changed what's true — the two
+  // invalidateIssueCache*/spellCheckToken helpers make that resolution a
+  // guaranteed no-op instead of silently overwriting fresh results with a
+  // stale answer (SPEC-047's async spell-check rewrite surfaced this: a run
+  // checked against German, then re-checked against English, could have the
+  // German worker reply land second and win).
+  let spellCheckToken = 0;
+
+  function invalidateIssueCache(): void {
+    issueCache.clear();
+    spellCheckToken++;
+  }
+
+  function invalidateIssueCacheKey(key: string): void {
+    issueCache.delete(key);
+    spellCheckToken++;
+  }
   // Dictionaries resolved so far, and the languages currently loading
   // (AC-17: on demand, not at startup) — module-external cache
   // (lib/spellcheck/dictionaries) does the actual fetch/memoize; these are
-  // just this composable's synchronous view of what has resolved.
+  // just this composable's synchronous view of what has resolved. The actual
+  // dictionary *scan* (checkText) runs in a worker now (SPEC-047 AC-13,
+  // spellCheckClient.ts), which loads and caches its own dictionaries
+  // independently — this main-thread copy exists only so suggestionsFor
+  // (the right-click menu, SPEC-035 AC-3.1) has a Dictionary object to rank
+  // against without a worker round trip.
   const resolvedDictionaries = new Map<string, Dictionary>();
   const pendingLanguages = new Set<string>();
 
@@ -150,7 +175,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
   let spellIdleHandle = noIdleHandle();
   const unsubscribeCustomDictionary = subscribeCustomDictionary(() => {
     customDictionaryList.value = [...customDictionaryEntries()];
-    issueCache.clear();
+    invalidateIssueCache();
     scheduleSpellCheck();
   });
 
@@ -174,10 +199,6 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     void promise.then((dictionary) => {
       pendingLanguages.delete(normalized);
       resolvedDictionaries.set(normalized, dictionary);
-      // Runs in this language were skipped while it loaded; now that it has,
-      // they need a first pass.
-      issueCache.clear();
-      scheduleSpellCheck();
     });
   }
 
@@ -185,19 +206,20 @@ export function useSpellCheck(deps: SpellCheckDeps) {
    * independently (SPEC-035 AC-10, AC-10.1) and skipping noProof/code-styled
    * runs (AC-11, AC-12.1, AC-12.2), tracked deletions (SPEC-039 AC-17) and
    * words already ignored or in the custom dictionary. A run whose language
-   * has no bundled dictionary, or whose dictionary has not finished loading
-   * yet, contributes nothing (AC-19) — the latter re-runs once the load
-   * resolves. */
-  function computeIssues(
+   * has no bundled dictionary contributes nothing (AC-19). The dictionary
+   * scan itself runs in a worker (SPEC-047 AC-13): every checkable run in
+   * the paragraph batches into one round trip rather than one per run. */
+  async function computeIssuesAsync(
     section: number,
     block: number,
     paragraph: Paragraph,
     model: DocumentModel,
-  ): SpellCheckIssue[] {
-    const issues: SpellCheckIssue[] = [];
+  ): Promise<SpellCheckIssue[]> {
+    const runStarts: number[] = [];
+    const checkable: Array<{ key: string; lang: string; text: string; runStart: number }> = [];
     let offset = 0;
-    for (const run of paragraph.runs) {
-      const runStart = offset;
+    for (const [runIndex, run] of paragraph.runs.entries()) {
+      runStarts[runIndex] = offset;
       offset += run.text.length;
       if (!run.text || run.formatting.noProof || run.changes?.delete || isCodeStyledFont(run.formatting.fontFamily)) {
         continue;
@@ -206,18 +228,27 @@ export function useSpellCheck(deps: SpellCheckDeps) {
       if (!isDictionaryAvailable(lang)) {
         continue;
       }
-      const normalized = normalizeLanguageTag(lang);
-      const dictionary = resolvedDictionaries.get(normalized);
-      if (!dictionary) {
-        requestDictionary(lang);
-        continue;
-      }
-      for (const found of checkText(run.text, dictionary)) {
+      // Warms the main-thread suggestions cache (see the field's own
+      // comment) — independent of, and in parallel with, the worker's own
+      // dictionary load below.
+      requestDictionary(lang);
+      checkable.push({ key: String(runIndex), lang: normalizeLanguageTag(lang), text: run.text, runStart: runStarts[runIndex] });
+    }
+    if (checkable.length === 0) {
+      return [];
+    }
+    const results = await checkTextsInWorker(
+      checkable.map(({ key, lang, text }) => ({ key, lang, text })),
+    );
+    const byKey = new Map(results.map((result) => [result.key, result.matches]));
+    const issues: SpellCheckIssue[] = [];
+    for (const { key, lang, runStart } of checkable) {
+      for (const found of byKey.get(key) ?? []) {
         const start = runStart + found.start;
-        if (isIgnored(section, block, start, found.word) || hasCustomWord(found.word, normalized)) {
+        if (isIgnored(section, block, start, found.word) || hasCustomWord(found.word, lang)) {
           continue;
         }
-        issues.push({ section, block, start, end: runStart + found.end, word: found.word, lang: normalized });
+        issues.push({ section, block, start, end: runStart + found.end, word: found.word, lang });
       }
     }
     return issues;
@@ -311,8 +342,12 @@ export function useSpellCheck(deps: SpellCheckDeps) {
   /** Recomputes (from cache where possible) and measures the visible
    * region's issues. The expensive halves — dictionary scanning of
    * newly-visible paragraphs and DOM rect measurement — both only ever
-   * touch the visible-plus-margin set (AC-16, AC-16.1, AC-16.2). */
-  function runSpellCheck(): void {
+   * touch the visible-plus-margin set (AC-16, AC-16.1, AC-16.2). Reads
+   * `spellCheckToken` rather than bumping it: only invalidation (the model,
+   * the language, ignore/custom-dictionary state changing) marks a pass
+   * stale, not the mere act of running another one, so two passes racing
+   * over an *unchanged* cache generation both still get to write. */
+  async function runSpellCheck(): Promise<void> {
     const root = contentRoot.value as HTMLElement | null;
     const pageEl = pageRef.value as HTMLElement | null;
     const model = doc.value;
@@ -320,20 +355,36 @@ export function useSpellCheck(deps: SpellCheckDeps) {
       spellUnderlineRects.value = [];
       return;
     }
+    const token = spellCheckToken;
     const visible = visibleParagraphKeys(root, viewportBounds());
-    const pageRect = pageEl.getBoundingClientRect();
-    const rects: SpellUnderlineRect[] = [];
+    const misses: Array<{ section: number; block: number; key: string; paragraph: Paragraph }> = [];
     for (const { section, block, key } of visible) {
-      let issues = issueCache.get(key);
-      if (!issues) {
-        const target = model.sections[section]?.blocks[block];
-        if (!target || target.type !== "paragraph") {
-          continue;
-        }
-        issues = computeIssues(section, block, target, model);
+      if (issueCache.has(key)) {
+        continue;
+      }
+      const target = model.sections[section]?.blocks[block];
+      if (target && target.type === "paragraph") {
+        misses.push({ section, block, key, paragraph: target });
+      }
+    }
+    if (misses.length > 0) {
+      const computed = await Promise.all(
+        misses.map(async ({ section, block, key, paragraph }) => ({
+          key,
+          issues: await computeIssuesAsync(section, block, paragraph, model),
+        })),
+      );
+      if (token !== spellCheckToken) {
+        return;
+      }
+      for (const { key, issues } of computed) {
         issueCache.set(key, issues);
       }
-      for (const issue of issues) {
+    }
+    const pageRect = pageEl.getBoundingClientRect();
+    const rects: SpellUnderlineRect[] = [];
+    for (const { key } of visible) {
+      for (const issue of issueCache.get(key) ?? []) {
         pushIssueRects(rects, root, pageRect, issue);
       }
     }
@@ -350,7 +401,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     spellIdleHandle = scheduleIdleWork(
       () => {
         spellIdleHandle = null;
-        runSpellCheck();
+        void runSpellCheck();
       },
       { timeoutMs: 150, fallbackBudgetMs: 8, maxBudgetMs: 16 },
     );
@@ -367,7 +418,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
    * session. */
   function ignoreOccurrence(issue: SpellCheckIssue): void {
     ignoredOccurrences.add(occurrenceKey(issue.section, issue.block, issue.start, issue.word));
-    issueCache.delete(`${issue.section}:${issue.block}`);
+    invalidateIssueCacheKey(`${issue.section}:${issue.block}`);
     scheduleSpellCheck();
   }
 
@@ -375,7 +426,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
    * document, for the session. */
   function ignoreAllOccurrences(word: string): void {
     ignoredWords.add(word.toLowerCase());
-    issueCache.clear();
+    invalidateIssueCache();
     scheduleSpellCheck();
   }
 
@@ -407,12 +458,13 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     ignoredOccurrences.clear();
     ignoredWords.clear();
     issueCache = new Map();
+    spellCheckToken++;
     spellUnderlineRects.value = [];
     cancelSpellCheckScheduled();
   }
 
   watch(doc, () => {
-    issueCache.clear();
+    invalidateIssueCache();
     scheduleSpellCheck();
   });
 

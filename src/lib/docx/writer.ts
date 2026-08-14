@@ -106,11 +106,13 @@ import { shapeDrawingXml } from "./shape";
 import {
   nextFreeRelId,
   planMediaWrite,
+  planMediaWriteChunked,
   planMediaWriteForBlocks,
   takenRelIdsOf,
   type MediaWritePlan,
 } from "./media";
 import { zip, type ZipEntryInput } from "./zipWriter";
+import { yieldToMainThread } from "../idleScheduler";
 import { buildCorePropertiesXml, buildCustomPropertiesXml, type CorePropertiesInput } from "./docProps";
 import { stripPersonalInfo } from "../personalInfo";
 
@@ -1857,15 +1859,52 @@ function sectionPropertiesXml(
  * section properties survive. Cross-format models carry foreign (ODF) XML
  * in their opaque nodes, so those are excluded — the writer reports them as
  * dropped instead. */
-export function buildDocumentXml(
+// A section with any header/footer reference, title page or explicit
+// page-number start must never reuse a preserved verbatim sectPr
+// (SPEC-029): the writer mints fresh relationship ids for regenerated
+// header/footer parts every save, so a stale preserved sectPr's r:id
+// values would dangle — sectionHeaderFooterOfPlan's bySection entry (built
+// from the *current* model, not whatever the source file had) is always
+// the source of truth for whether that applies. Shared between the block
+// walk and the tail below, both of which need it.
+function sectionHeaderFooterOfPlan(
+  headerFooterPlan: HeaderFooterWritePlan,
+  index: number,
+): SectionHeaderFooterPlan {
+  return headerFooterPlan.bySection[index] ?? { headers: [], footers: [] };
+}
+
+function sectionNeedsFreshSectPrFor(
+  headerFooterPlan: HeaderFooterWritePlan,
+  section: Section,
+  index: number,
+): boolean {
+  const hf = sectionHeaderFooterOfPlan(headerFooterPlan, index);
+  return (
+    hf.headers.length > 0 ||
+    hf.footers.length > 0 ||
+    section.titlePage === true ||
+    section.pageNumberStart !== undefined
+  );
+}
+
+/** Yields the document body's block-level XML in document order — the one
+ * walk both `buildDocumentXml` (drained synchronously, for tests and small
+ * documents) and `buildDocumentXmlChunked` (drained with a macrotask yield
+ * between chunks, SPEC-047 AC-15) share. A generator rather than an array
+ * so the chunked drain has somewhere to insert an `await` mid-walk; a plain
+ * `blockXml.push` loop offers no such point without becoming async itself
+ * (and every existing caller of `buildDocumentXml` — a dozen `*.spec.ts`
+ * files — expects a synchronous string back). */
+function* documentBlockXml(
   model: DocumentModel,
-  plan: NumberingPlan = planNumbering(model),
-  mediaPlan: MediaWritePlan = planMediaWrite(model),
-  hyperlinkPlan: HyperlinkWritePlan = planHyperlinkWrite(model),
-  headerFooterPlan: HeaderFooterWritePlan = planHeaderFooterWrite(model, new Set(), new Set()),
-  notesPlan: NotesWritePlan = planNotesWrite(model),
-  commentsPlan: CommentsWritePlan = planCommentsWrite(model),
-): string {
+  plan: NumberingPlan,
+  mediaPlan: MediaWritePlan,
+  hyperlinkPlan: HyperlinkWritePlan,
+  headerFooterPlan: HeaderFooterWritePlan,
+  notesPlan: NotesWritePlan,
+  commentsPlan: CommentsWritePlan,
+): Generator<string> {
   const includeOpaque = model.format === "docx";
   const inlineCtx: InlineWriteContext = {
     hyperlinkPlan,
@@ -1874,37 +1913,21 @@ export function buildDocumentXml(
     commentIds: commentsPlan.commentIds,
     changeIds: new Map(),
   };
-  const blockXml: string[] = [];
   let docPrId = 1;
-  // A section with any header/footer reference, title page or explicit
-  // page-number start must never reuse a preserved verbatim sectPr
-  // (SPEC-029): the writer mints fresh relationship ids for regenerated
-  // header/footer parts every save, so a stale preserved sectPr's r:id
-  // values would dangle — sectionHeaderFooterOf's bySection entry (built
-  // from the *current* model, not whatever the source file had) is always
-  // the source of truth for whether that applies.
-  const sectionHeaderFooterOf = (index: number): SectionHeaderFooterPlan =>
-    headerFooterPlan.bySection[index] ?? { headers: [], footers: [] };
-  const sectionNeedsFreshSectPr = (section: Section, index: number): boolean => {
-    const hf = sectionHeaderFooterOf(index);
-    return (
-      hf.headers.length > 0 ||
-      hf.footers.length > 0 ||
-      section.titlePage === true ||
-      section.pageNumberStart !== undefined
-    );
-  };
-  model.sections.forEach((section, sectionIndex) => {
+  for (let sectionIndex = 0; sectionIndex < model.sections.length; sectionIndex++) {
+    const section = model.sections[sectionIndex];
     const isFinal = sectionIndex === model.sections.length - 1;
     const sectPrXml = isFinal
       ? undefined
-      : includeOpaque && section.docxSectPr !== undefined && !sectionNeedsFreshSectPr(section, sectionIndex)
+      : includeOpaque &&
+          section.docxSectPr !== undefined &&
+          !sectionNeedsFreshSectPrFor(headerFooterPlan, section, sectionIndex)
         ? section.docxSectPr
         : sectionPropertiesXml(
             sectionPageSize(model, sectionIndex),
             sectionMargins(model, sectionIndex),
             section.start,
-            sectionHeaderFooterOf(sectionIndex),
+            sectionHeaderFooterOfPlan(headerFooterPlan, sectionIndex),
             section.titlePage === true,
             section.pageNumberStart,
             section.columns,
@@ -1917,37 +1940,33 @@ export function buildDocumentXml(
     for (let i = 0; i <= section.blocks.length; i++) {
       for (const node of opaqueBlocks) {
         if (Math.min(node.blockIndex, section.blocks.length) === i) {
-          blockXml.push(node.xml);
+          yield node.xml;
         }
       }
       if (i < section.blocks.length) {
         const block = section.blocks[i];
         if (block.type === "table") {
-          blockXml.push(
-            tableXml(block, includeOpaque, inlineCtx, (row, col, cellBlock) =>
-              cellNumberingRefFor(plan, sectionIndex, i, row, col, cellBlock),
-            ),
+          yield tableXml(block, includeOpaque, inlineCtx, (row, col, cellBlock) =>
+            cellNumberingRefFor(plan, sectionIndex, i, row, col, cellBlock),
           );
         } else if (block.type === "image") {
-          blockXml.push(imageParagraphXml(block, mediaPlan, docPrId++));
+          yield imageParagraphXml(block, mediaPlan, docPrId++);
         } else if (block.type === "shape") {
-          blockXml.push(shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++));
+          yield shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++);
         } else if (block.type === "break") {
           // A manual break block (SPEC-028 AC-30): a paragraph holding just
           // the typed w:br run, the shape the reader folds back into a
           // BreakBlock on open.
-          blockXml.push(`<w:p><w:r><w:br w:type="${block.kind}"/></w:r></w:p>`);
+          yield `<w:p><w:r><w:br w:type="${block.kind}"/></w:r></w:p>`;
         } else if (block.type === "toc") {
-          blockXml.push(tocFieldXml(block, model, sectionIndex));
+          yield tocFieldXml(block, model, sectionIndex);
         } else {
-          blockXml.push(
-            paragraphXml(
-              block,
-              includeOpaque,
-              inlineCtx,
-              numberingRefFor(plan, sectionIndex, i),
-              embedSectPr && i === section.blocks.length - 1 ? sectPrXml : undefined,
-            ),
+          yield paragraphXml(
+            block,
+            includeOpaque,
+            inlineCtx,
+            numberingRefFor(plan, sectionIndex, i),
+            embedSectPr && i === section.blocks.length - 1 ? sectPrXml : undefined,
           );
         }
       }
@@ -1957,22 +1976,33 @@ export function buildDocumentXml(
       // empty section): the section break needs a paragraph mark to live
       // on, so an empty one is appended — the same shape Word itself uses
       // after a section-ending table.
-      blockXml.push(`<w:p><w:pPr>${sectPrXml}</w:pPr></w:p>`);
+      yield `<w:p><w:pPr>${sectPrXml}</w:pPr></w:p>`;
     }
-  });
+  }
+}
+
+/** Wraps a fully-assembled block list into the document part's XML — the
+ * tail both `buildDocumentXml` and `buildDocumentXmlChunked` share once
+ * `documentBlockXml` (or its chunked drain) has produced every block. */
+function documentXmlFromBlocks(
+  model: DocumentModel,
+  headerFooterPlan: HeaderFooterWritePlan,
+  blockXml: string[],
+): string {
+  const includeOpaque = model.format === "docx";
   const body = blockXml.length > 0 ? blockXml.join("") : "<w:p/>";
   const lastSection = model.sections.length - 1;
   const lastSectionModel = model.sections[lastSection];
   const sectPr =
     includeOpaque &&
     model.sourceXml?.docxSectPr !== undefined &&
-    !(lastSectionModel && sectionNeedsFreshSectPr(lastSectionModel, lastSection))
+    !(lastSectionModel && sectionNeedsFreshSectPrFor(headerFooterPlan, lastSectionModel, lastSection))
       ? model.sourceXml.docxSectPr
       : sectionPropertiesXml(
           sectionPageSize(model, lastSection),
           sectionMargins(model, lastSection),
           lastSectionModel?.start,
-          sectionHeaderFooterOf(lastSection),
+          sectionHeaderFooterOfPlan(headerFooterPlan, lastSection),
           lastSectionModel?.titlePage === true,
           lastSectionModel?.pageNumberStart,
           lastSectionModel?.columns,
@@ -1985,6 +2015,60 @@ export function buildDocumentXml(
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
     `<w:body>${body}${sectPr}</w:body></w:document>`
   );
+}
+
+export function buildDocumentXml(
+  model: DocumentModel,
+  plan: NumberingPlan = planNumbering(model),
+  mediaPlan: MediaWritePlan = planMediaWrite(model),
+  hyperlinkPlan: HyperlinkWritePlan = planHyperlinkWrite(model),
+  headerFooterPlan: HeaderFooterWritePlan = planHeaderFooterWrite(model, new Set(), new Set()),
+  notesPlan: NotesWritePlan = planNotesWrite(model),
+  commentsPlan: CommentsWritePlan = planCommentsWrite(model),
+): string {
+  const blockXml = Array.from(
+    documentBlockXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
+  );
+  return documentXmlFromBlocks(model, headerFooterPlan, blockXml);
+}
+
+const DOCUMENT_XML_YIELD_BUDGET_MS = 4;
+
+/** The chunked twin of `buildDocumentXml` (SPEC-047 AC-15's ≤100ms
+ * main-thread-block-during-save ceiling): walks the identical
+ * `documentBlockXml` generator but yields to the main thread every few ms
+ * instead of draining it in one synchronous pass, so a 300-page save's XML
+ * assembly reads as many short tasks rather than one long one. `writeDocx`
+ * is the only caller — every other caller (tests, small documents) uses the
+ * synchronous `buildDocumentXml` above, which has no reason to pay an
+ * await's overhead for a handful of blocks. */
+export async function buildDocumentXmlChunked(
+  model: DocumentModel,
+  plan: NumberingPlan,
+  mediaPlan: MediaWritePlan,
+  hyperlinkPlan: HyperlinkWritePlan,
+  headerFooterPlan: HeaderFooterWritePlan,
+  notesPlan: NotesWritePlan,
+  commentsPlan: CommentsWritePlan,
+): Promise<string> {
+  const blockXml: string[] = [];
+  let lastYield = performance.now();
+  for (const chunk of documentBlockXml(
+    model,
+    plan,
+    mediaPlan,
+    hyperlinkPlan,
+    headerFooterPlan,
+    notesPlan,
+    commentsPlan,
+  )) {
+    blockXml.push(chunk);
+    if (performance.now() - lastYield > DOCUMENT_XML_YIELD_BUDGET_MS) {
+      await yieldToMainThread();
+      lastYield = performance.now();
+    }
+  }
+  return documentXmlFromBlocks(model, headerFooterPlan, blockXml);
 }
 
 // "Heading1".."Heading9" get Word's built-in style names ("heading 1"...);
@@ -2507,7 +2591,7 @@ export async function writeDocx(
     const baseTaken = new Set(plan.isEmpty ? ["rId1"] : ["rId1", "rId2"]);
     const hyperlinkPlan = planHyperlinkWrite(model, baseTaken);
     const existingMediaPartNames = new Set<string>();
-    const mediaPlan = planMediaWrite(
+    const mediaPlan = await planMediaWriteChunked(
       model,
       new Set([...baseTaken, ...hyperlinkPlan.relIds]),
       existingMediaPartNames,
@@ -2561,7 +2645,7 @@ export async function writeDocx(
       {
         name: "word/document.xml",
         data: encoder.encode(
-          buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
+          await buildDocumentXmlChunked(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
         ),
       },
       {
@@ -2706,7 +2790,7 @@ export async function writeDocx(
   // part's own ids; media ids then start past both.
   const hyperlinkPlan = planHyperlinkWrite(model, mainRelsTaken);
   const existingPartNames = new Set(preservedParts.keys());
-  const mediaPlan = planMediaWrite(
+  const mediaPlan = await planMediaWriteChunked(
     model,
     new Set([...mainRelsTaken, ...hyperlinkPlan.relIds]),
     existingPartNames,
@@ -2913,7 +2997,7 @@ export async function writeDocx(
   entries.push({
     name: mainPartName,
     data: encoder.encode(
-      buildDocumentXml(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
+      await buildDocumentXmlChunked(model, plan, mediaPlan, hyperlinkPlan, headerFooterPlan, notesPlan, commentsPlan),
     ),
   });
   entries.push({ name: corePartName, data: encoder.encode(buildCorePropertiesXml(coreInput, modified)) });

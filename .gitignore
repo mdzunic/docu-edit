@@ -8,3 +8,7 @@ blob-report/
 .vite/
 coverage/
 examples/output/
+# SPEC-047: the performance-benchmark fixture is generated on demand
+# (scripts/build-spec047-fixture.mjs), never committed — see specs/047's
+# "The benchmark fixture".
+/e2e/fixtures/spec-047-fixture.docx

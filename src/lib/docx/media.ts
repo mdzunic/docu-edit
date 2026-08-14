@@ -11,6 +11,7 @@
 // module writes).
 import type { Block, DocumentModel, MediaPart } from "../documentModel";
 import { base64ToBytes } from "../opaque";
+import { yieldToMainThread } from "../idleScheduler";
 import { extensionForContentType } from "./drawing";
 import type { Relationship } from "./xml";
 import type { ZipEntryInput } from "./zipWriter";
@@ -82,6 +83,57 @@ const EMPTY_PLAN: MediaWritePlan = {
  * across calls so a document's images and its headers'/footers' images
  * never collide on `word/media/imageN.ext`), and returns the counter's new
  * value for the next call. */
+/** Mutable accumulator threaded through `planOneMedia` — factored out so the
+ * synchronous per-image step (base64 decode included) is identical whether
+ * it is driven by a plain `for` loop (`planMediaWriteFor`) or one that
+ * yields to the main thread between images (`planMediaWriteForChunked`). */
+interface MediaWriteAccum {
+  relIdOf: Map<string, string>;
+  zipEntries: ZipEntryInput[];
+  relParts: string[];
+  extensions: Set<string>;
+  taken: Set<string>;
+  existingPartNames: Set<string>;
+  n: number;
+}
+
+function planOneMedia(accum: MediaWriteAccum, mediaId: string, byId: Map<string, MediaPart>): void {
+  const part = byId.get(mediaId);
+  // .docx has no SVG representation (AC-2 converts on insert; this only
+  // ever fires on a cross-format Save As carrying a .odt SVG through) —
+  // dropped, not written; the caller skips the image block entirely.
+  if (!part || part.contentType === "image/svg+xml") {
+    return;
+  }
+  const ext = extensionForContentType(part.contentType);
+  let partName = `word/media/image${accum.n}.${ext}`;
+  while (accum.existingPartNames.has(partName)) {
+    accum.n++;
+    partName = `word/media/image${accum.n}.${ext}`;
+  }
+  accum.extensions.add(ext);
+  const relId = nextFreeRelId(accum.taken);
+  accum.taken.add(relId);
+  accum.relIdOf.set(mediaId, relId);
+  accum.zipEntries.push({ name: partName, data: base64ToBytes(part.data) });
+  accum.relParts.push(
+    `<Relationship Id="${relId}" Type="${IMAGE_RELATIONSHIP}" Target="media/image${accum.n}.${ext}"/>`,
+  );
+  accum.existingPartNames.add(partName);
+  accum.n++;
+}
+
+function planFromAccum(accum: MediaWriteAccum): MediaWritePlan & { nextCounter: number } {
+  return {
+    relIdFor: (mediaId: string) => accum.relIdOf.get(mediaId) ?? "",
+    zipEntries: accum.zipEntries,
+    relationshipsXml: accum.relParts.join(""),
+    extensions: Array.from(accum.extensions),
+    relIds: new Set(accum.relIdOf.values()),
+    nextCounter: accum.n,
+  };
+}
+
 function planMediaWriteFor(
   referenced: string[],
   mediaParts: MediaPart[] | undefined,
@@ -93,45 +145,58 @@ function planMediaWriteFor(
     return { ...EMPTY_PLAN, nextCounter: counter };
   }
   const byId = new Map((mediaParts ?? []).map((part) => [part.mediaId, part]));
-  const relIdOf = new Map<string, string>();
-  const zipEntries: ZipEntryInput[] = [];
-  const relParts: string[] = [];
-  const extensions = new Set<string>();
-  const taken = new Set(takenRelIds);
-  let n = counter;
-
-  for (const mediaId of referenced) {
-    const part = byId.get(mediaId);
-    // .docx has no SVG representation (AC-2 converts on insert; this only
-    // ever fires on a cross-format Save As carrying a .odt SVG through) —
-    // dropped, not written; the caller skips the image block entirely.
-    if (!part || part.contentType === "image/svg+xml") {
-      continue;
-    }
-    const ext = extensionForContentType(part.contentType);
-    let partName = `word/media/image${n}.${ext}`;
-    while (existingPartNames.has(partName)) {
-      n++;
-      partName = `word/media/image${n}.${ext}`;
-    }
-    extensions.add(ext);
-    const relId = nextFreeRelId(taken);
-    taken.add(relId);
-    relIdOf.set(mediaId, relId);
-    zipEntries.push({ name: partName, data: base64ToBytes(part.data) });
-    relParts.push(`<Relationship Id="${relId}" Type="${IMAGE_RELATIONSHIP}" Target="media/image${n}.${ext}"/>`);
-    existingPartNames.add(partName);
-    n++;
-  }
-
-  return {
-    relIdFor: (mediaId: string) => relIdOf.get(mediaId) ?? "",
-    zipEntries,
-    relationshipsXml: relParts.join(""),
-    extensions: Array.from(extensions),
-    relIds: new Set(relIdOf.values()),
-    nextCounter: n,
+  const accum: MediaWriteAccum = {
+    relIdOf: new Map(),
+    zipEntries: [],
+    relParts: [],
+    extensions: new Set(),
+    taken: new Set(takenRelIds),
+    existingPartNames,
+    n: counter,
   };
+  for (const mediaId of referenced) {
+    planOneMedia(accum, mediaId, byId);
+  }
+  return planFromAccum(accum);
+}
+
+// SPEC-047 AC-15's ≤100ms main-thread-block-during-save ceiling: each
+// image's base64 decode (media.ts's own `base64ToBytes`, an `atob` plus a
+// byte-by-byte copy) has no `await` of its own, so a fixture with hundreds
+// of images reads as one long synchronous task. Time-budgeted like
+// zipWriter.ts's SAVE_YIELD_BUDGET_MS, for the same reason: a large image
+// costs more to decode than a small one.
+const MEDIA_YIELD_BUDGET_MS = 4;
+
+async function planMediaWriteForChunked(
+  referenced: string[],
+  mediaParts: MediaPart[] | undefined,
+  takenRelIds: Set<string>,
+  existingPartNames: Set<string>,
+  counter: number,
+): Promise<MediaWritePlan & { nextCounter: number }> {
+  if (referenced.length === 0) {
+    return { ...EMPTY_PLAN, nextCounter: counter };
+  }
+  const byId = new Map((mediaParts ?? []).map((part) => [part.mediaId, part]));
+  const accum: MediaWriteAccum = {
+    relIdOf: new Map(),
+    zipEntries: [],
+    relParts: [],
+    extensions: new Set(),
+    taken: new Set(takenRelIds),
+    existingPartNames,
+    n: counter,
+  };
+  let lastYield = performance.now();
+  for (const mediaId of referenced) {
+    planOneMedia(accum, mediaId, byId);
+    if (performance.now() - lastYield > MEDIA_YIELD_BUDGET_MS) {
+      await yieldToMainThread();
+      lastYield = performance.now();
+    }
+  }
+  return planFromAccum(accum);
 }
 
 /** Builds a MediaWritePlan for every image the model's blocks still
@@ -147,6 +212,21 @@ export function planMediaWrite(
 ): MediaWritePlan {
   const referenced = referencedMediaIds(model);
   return planMediaWriteFor(referenced, model.media, takenRelIds, existingPartNames, 1);
+}
+
+/** The chunked twin of `planMediaWrite` (SPEC-047 AC-15): `writeDocx`'s own
+ * entry point for the body's media plan, yielding to the main thread
+ * between images instead of decoding every referenced image's base64 in
+ * one synchronous pass. Every other caller (tests, header/footer parts,
+ * which realistically hold at most a handful of images) uses the
+ * synchronous `planMediaWrite` above. */
+export async function planMediaWriteChunked(
+  model: DocumentModel,
+  takenRelIds: Set<string> = new Set(),
+  existingPartNames: Set<string> = new Set(),
+): Promise<MediaWritePlan> {
+  const referenced = referencedMediaIds(model);
+  return planMediaWriteForChunked(referenced, model.media, takenRelIds, existingPartNames, 1);
 }
 
 /** A header/footer part's own MediaWritePlan (SPEC-029 AC-6): images inside

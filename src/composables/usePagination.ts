@@ -138,6 +138,16 @@ export interface PaginationController {
    * cache misses. Call on every model change (and when realization renders
    * previously virtual pages, so their blocks get exact DOM metrics). */
   schedule: () => void;
+  /** Kicks measurement WITHOUT `schedule()`'s synchronous relayout when the
+   * measure loop is already running (SPEC-047 AC-16): a running loop
+   * re-lays-out at the end of its pass anyway, so a caller whose model
+   * hasn't changed (a mount kick, newly realized pages) doesn't need — and
+   * during the open burst can't afford — a full extra relayout fused into
+   * the same task. Callers reacting to an actual model change must keep
+   * calling `schedule()`: its synchronous relayout is what keeps rendered
+   * pages agreeing with the new model's block indices before Vue patches
+   * the canvas. */
+  scheduleMeasure: () => void;
   /** Drops every cached measurement (formatting-marks toggle, font load —
    * anything that reflows text without replacing block objects). */
   invalidateAll: () => void;
@@ -220,6 +230,37 @@ export function usePagination(
   let framesSinceLayout = 0;
   let measuredThisPass = 0;
   let lastInteraction = 0;
+  // The last relayout's converged footnote-area reserves (SPEC-047 AC-6),
+  // fed back into layoutWithNotes as its seed — see that function's own
+  // comment for why this is safe even when stale. Gated on two things
+  // (both required) before it's offered:
+  //  - `fromSchedule`: only a schedule()-triggered relayout (an actual
+  //    model change) seeds, never one measureLoop() runs mid-settle, where
+  //    body pagination is still using *estimated* metrics for whatever it
+  //    hasn't measured yet — which page a footnote reference lands on (and
+  //    so its reserves) shifts between those calls independently of
+  //    whether the footnotes' own content changed.
+  //  - `hasEverSettled` (below): schedule() alone isn't enough — the
+  //    initial mount's fused watcher chain (the document watcher, the
+  //    hidden-body-blocks watcher, document.fonts.ready, the viewport-range
+  //    watcher — see specs/047's "the open-phase ceiling" note) fires
+  //    several schedule() calls in a synchronous burst with no macrotask
+  //    yield between them, so `fromSchedule` alone doesn't exclude it.
+  let lastNoteReserves: number[] | undefined;
+  // Set once finish() first runs (see below) and never unset — a one-time
+  // latch, not a continuously-rechecked "is it settled right now" state.
+  // The latter was tried first via both `pending.length` and
+  // `state.value === "clean"`: a document with images/tables (deferred
+  // "keep the estimate until realized" blocks, never real-measured while
+  // virtualized — this fixture alone carries ~700 of them) never actually
+  // reaches zero unresolved work again after the first settle, so
+  // schedule() restarts the whole measure-loop machinery on every single
+  // keystroke and `state` spends most of a continuous typing burst back in
+  // "measuring" — reading either signal per-call reliably disabled seeding
+  // during typing too, the opposite of what AC-6 needs. Once true, later
+  // measuring cycles (typing's own re-triggers included) no longer need to
+  // prove themselves again.
+  let hasEverSettled = false;
 
   // The canvas measurer's DOM probe host: the pages wrapper (the content
   // root's parent), OUTSIDE the contenteditable root so probe text can
@@ -255,7 +296,10 @@ export function usePagination(
     return entry && Math.abs(entry.metrics.contentWidthPx - contentWidthPx) < 0.5 ? entry : null;
   }
 
-  function relayout(model: DocumentModel): { unresolved: number; resolved: number } {
+  function relayout(
+    model: DocumentModel,
+    fromSchedule = false,
+  ): { unresolved: number; resolved: number } {
     pending = [];
     const seen = new Set<Block>();
     const provider: MetricsProvider = {
@@ -308,7 +352,9 @@ export function usePagination(
       noteProvider,
       (block) => cache.get(block)?.lineOffsets ?? null,
       isHidden,
+      fromSchedule && hasEverSettled ? lastNoteReserves : undefined,
     );
+    lastNoteReserves = notesLayout.reserves;
     const layout = notesLayout.pages;
     if (
       !sameAreaLists(noteAreas.value.footnotes, notesLayout.footnoteAreas) ||
@@ -508,6 +554,7 @@ export function usePagination(
     }
     busy.value = false;
     state.value = "clean";
+    hasEverSettled = true;
   }
 
   // Measurement chains in budgeted macrotask slots: input events and
@@ -618,7 +665,7 @@ export function usePagination(
       finish();
       return;
     }
-    const { unresolved } = relayout(model);
+    const { unresolved } = relayout(model, true);
     cursor = 0;
     framesSinceLayout = 0;
     if (unresolved === 0) {
@@ -633,10 +680,48 @@ export function usePagination(
     startMeasuring();
   }
 
+  /** The caller just told an ACTIVE measure loop that new work exists (a
+   * fresh realization, a cleared cache) without going through schedule()'s
+   * synchronous relayout: force the loop's next slot to re-lay-out — which
+   * rebuilds `pending` so the new work enters it — and clear the stall
+   * counters, because a pass that was about to settle for lack of progress
+   * must not count that stall against work it hasn't seen yet. Without the
+   * reset, an invalidateAll landing in the settle's stalled endgame could
+   * let the loop finish() on an all-estimates layout with nothing left to
+   * restart it. */
+  function kickRunningLoop(): void {
+    framesSinceLayout = 60; // >= the safety valve: next slot re-lays-out
+    stalledFrames = 0;
+    stalledPasses = 0;
+    measuredThisPass = 0;
+  }
+
+  function scheduleMeasure(): void {
+    if (running) {
+      kickRunningLoop();
+      return;
+    }
+    schedule();
+  }
+
   function invalidateAll(): void {
     cache = new WeakMap();
     baseFont = null;
+    lastNoteReserves = undefined;
     measurer?.reset();
+    // With the measure loop already running, the cache reset plus a kick is
+    // enough: the loop's next slot re-lays-out against the now-empty cache,
+    // re-collecting every block, so the extra synchronous relayout here
+    // would recompute a layout that pass is about to replace — during open,
+    // document.fonts.ready resolves inside the mount task and this was one
+    // of the relayouts fused into it (SPEC-047 AC-16). The last-applied
+    // layout stays visible until that pass lands, which is also what the
+    // old immediate relayout's all-estimates layout was: an interim state,
+    // just a worse one.
+    if (running) {
+      kickRunningLoop();
+      return;
+    }
     schedule();
   }
 
@@ -694,6 +779,7 @@ export function usePagination(
     state,
     canMeasureOffscreen: measurer !== null,
     schedule,
+    scheduleMeasure,
     invalidateAll,
     isMeasured,
     lineOffsetsFor,

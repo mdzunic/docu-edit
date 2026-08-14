@@ -34,11 +34,17 @@ function makeRecord(
   return { id, format: "new", lastModified, model };
 }
 
-// Flush the fire-and-forget persist chain (putRecord().catch(...)).
+// Flush the fire-and-forget persist chain: persist()/persistMedia() now
+// yield a real macrotask (idleScheduler's MessageChannel-based
+// yieldToMainThread, SPEC-047 AC-15/AC-16) before their putRecord call, so
+// a microtask-only flush no longer catches up with it. Several real ticks
+// (not just one) so every hop in yield -> putRecord -> .catch has had a
+// turn regardless of exactly how MessageChannel tasks and timer callbacks
+// interleave in this environment.
 async function flushMicrotasks() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 beforeEach(() => {
@@ -120,6 +126,35 @@ describe("write-through persistence", () => {
     expect(store.getDocument("quota-id")).toBe(doc);
     store.renameDocument("quota-id", "Still works");
     expect(store.getDocument("quota-id")?.title).toBe("Still works");
+  });
+
+  it("migrates a pre-media-split record: the first persist writes the images out instead of dropping them (SPEC-047 AC-15)", async () => {
+    // A record written before the media split carries its media inline in
+    // the shell and has no MediaRecord in storage. The first persist strips
+    // the shell (by design) — so it MUST also write the MediaRecord, or the
+    // images exist nowhere in storage after it.
+    const legacy = makeRecord("legacy-id", "Has images", 1000);
+    legacy.model.media = [{ mediaId: "m1", contentType: "image/png", data: "aGk=" }];
+    const { store, idb } = await loadStore({
+      loadAllRecords: vi.fn().mockResolvedValue([legacy]),
+    });
+    await store.initLibrary();
+
+    store.touchDocument("legacy-id");
+    await flushMicrotasks();
+
+    const written = idb.putRecord.mock.calls.map((call) => call[0] as { id: string; media?: unknown[]; model?: { media: unknown[] } });
+    const mediaRecord = written.find((record) => record.id === "media:legacy-id") as
+      | { media: unknown[] }
+      | undefined;
+    expect(mediaRecord, "the media record must be written on the first post-migration persist").toBeDefined();
+    expect(mediaRecord!.media).toHaveLength(1);
+    const shell = written.find((record) => record.id === "legacy-id") as
+      | { model: { media: unknown[] } }
+      | undefined;
+    expect(shell!.model.media).toEqual([]);
+    // The in-memory model keeps its images throughout.
+    expect(store.getDocument("legacy-id")?.media).toHaveLength(1);
   });
 
   it("notifies status listeners only on the first failure, and honours unsubscribe", async () => {

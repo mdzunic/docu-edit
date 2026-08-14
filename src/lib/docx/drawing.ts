@@ -8,7 +8,7 @@
 // widens what gets dropped.
 import type { Image, ImageWrapMode, MediaPart } from "../documentModel";
 import { decodeImageDimensions } from "../imageDimensions";
-import { bytesToBase64 } from "../opaque";
+import { bytesToBase64Async } from "../opaque";
 import {
   firstChildElement,
   resolvePartPath,
@@ -152,10 +152,31 @@ export function parseDrawing(
     image.altText = altText;
   }
 
-  return {
-    image,
-    media: { mediaId: partPath, contentType, data: bytesToBase64(bytes) },
-  };
+  // `data` is filled in by parseDocx's single deferred pass (see
+  // fillPendingMediaData): encoding here, synchronously per drawing, put
+  // ~0.6s of the benchmark fixture's open inside the walk. The raw bytes
+  // ride in a WeakMap keyed by the part object so every intermediate
+  // collector (body walk, notes part, header/footer parts) forwards them
+  // without signature changes.
+  const media: ParsedDrawing["media"] = { mediaId: partPath, contentType, data: "" };
+  pendingMediaBytes.set(media, bytes);
+  return { image, media };
+}
+
+// See parseDrawing's return: raw media bytes awaiting their one deferred
+// base64 pass. WeakMap so a MediaPart dropped mid-parse costs nothing.
+const pendingMediaBytes = new WeakMap<MediaPart, Uint8Array>();
+
+/** Encodes a parsed-but-not-yet-encoded MediaPart's bytes into `data`
+ * (no-op for parts that already carry data — an already-encoded part from
+ * another path). parseDocx runs this over the final media list. */
+export async function fillPendingMediaData(part: MediaPart): Promise<void> {
+  const bytes = pendingMediaBytes.get(part);
+  if (bytes === undefined) {
+    return;
+  }
+  pendingMediaBytes.delete(part);
+  part.data = await bytesToBase64Async(bytes);
 }
 
 function escapeXmlAttr(value: string): string {

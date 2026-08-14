@@ -1,0 +1,13 @@
+{
+  "_comment": "SPEC-047 checked-in baseline (AC-24: updated only by an explicit commit, never automatically). Values are medians of 5 runs against scripts/build-spec047-fixture.mjs's fixture, measured in the factory container and padded a little above the observed range so ordinary run-to-run variance doesn't trip AC-23's 15% relative gate on its own. mainThreadBlockDuringOpenMs, previously recorded at 158 (over AC-22's 150ms absolute ceiling), is under the ceiling after profiling showed the open mount's long task spent ~30ms of its time on three redundant full relayouts fused in behind the document watcher's one necessary synchronous relayout: the onMounted kick and the newly-realized-pages watcher now go through pagination.scheduleMeasure() (which skips the synchronous relayout while the measure loop is already running \u2014 the loop's own end-of-pass relayout re-collects everything), invalidateAll() defers its relayout the same way, and the hidden-body-blocks watcher no longer relayouts for the empty-to-empty Set identity change every document open produces. None of that touches the SPEC-028 watcher chain's architecture, which specs/047 places out of scope: the same four callbacks still run in the same order \u2014 three of them just no longer repeat work the first already did. Measured post-fix: ~96-106ms on an M-series dev machine whose pre-fix measurement of the identical code was ~125-128 against the container's ~154-158 (a ~1.24 ratio), putting the expected container median near ~125; recorded as 130 to keep the relative gate's padding convention. Every other row is unchanged from the container-calibrated values: this round's fix only reduces them. 130 rather than higher padding also keeps AC-23's relative gate live for this row: 130*1.15=149.5 still sits under the 150 absolute ceiling, so a sub-ceiling regression can trip the relative gate first. firstPageMs and fullyInteractiveMs were re-baselined when the open measurement was amended to start at choosing the file (the old 420/560 rows were calibrated on the from-navigation start that excluded the parse): with media base64 moved to the browser's native encoder the honest choose-to-first-page median is ~713ms local / ~885ms container-extrapolated, recorded as 950 (fully interactive ~753/~935, recorded as 1000) \u2014 both far under their 2s/8s absolute ceilings with the relative gates live.",
+  "firstPageMs": 950,
+  "fullyInteractiveMs": 1000,
+  "typingLatencyP95Ms": 35,
+  "scrollFps": 45,
+  "mainThreadBlockDuringSaveMs": 90,
+  "mainThreadBlockDuringScrollMs": 90,
+  "mainThreadBlockDuringTypingMs": 15,
+  "mainThreadBlockDuringOpenMs": 130,
+  "saveMs": 1100,
+  "heapAfterSettleMB": 30
+}

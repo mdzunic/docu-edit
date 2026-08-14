@@ -20,6 +20,18 @@ async function loadStore(overrides: Record<string, unknown> = {}) {
   return { store, putRecord, getRecord, deleteRecord, loadAllRecords };
 }
 
+// documentStore's write-through paths now yield a real macrotask (via
+// idleScheduler's MessageChannel-based yieldToMainThread, SPEC-047 AC-15/
+// AC-16) before their putRecord call — a getOrCreateDocument()'s
+// fire-and-forget persist() is still in flight when the synchronous test
+// body continues, so a test that reconfigures the mocked putRecord right
+// after must flush that pending macrotask first, or its deferred call
+// picks up the reconfigured mock instead of the one active when it was
+// issued.
+function flushMacrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 beforeEach(() => {
   vi.resetModules();
 });
@@ -42,9 +54,62 @@ describe("saveDraft", () => {
     expect(typeof draft.savedAt).toBe("number");
   });
 
+  it("writes changed media under the DRAFT media key, never the committed one (SPEC-047 AC-15)", async () => {
+    const { store, putRecord } = await loadStore();
+    const doc = store.getOrCreateDocument("doc-m");
+    doc.media = [{ mediaId: "m1", contentType: "image/png", data: "aGk=" }];
+    // Commit so the committed media latch reflects m1's array.
+    await store.commitDocument("doc-m", null, 0);
+    putRecord.mockClear();
+
+    // An edit replaces the media array (removing the image), then autosaves.
+    doc.media = [];
+    await store.saveDraft("doc-m", null, 0);
+
+    const written = putRecord.mock.calls.map((call) => call[0] as PersistedRecord);
+    expect(written.some((record) => record.id === "draftmedia:doc-m")).toBe(true);
+    // The committed media record must be untouched: "Discard" depends on it.
+    expect(written.some((record) => record.id === "media:doc-m")).toBe(false);
+  });
+
+  it("skips the draft media write entirely while media matches the committed state", async () => {
+    const { store, putRecord } = await loadStore();
+    const doc = store.getOrCreateDocument("doc-s");
+    doc.media = [{ mediaId: "m1", contentType: "image/png", data: "aGk=" }];
+    await store.commitDocument("doc-s", null, 0);
+    putRecord.mockClear();
+
+    // No media change between commit and autosave: no media write at all.
+    await store.saveDraft("doc-s", null, 0);
+    const written = putRecord.mock.calls.map((call) => call[0] as PersistedRecord);
+    expect(written.every((record) => !record.id.includes("media"))).toBe(true);
+  });
+
+  it("retries the committed media write after a failed one instead of latching it as persisted", async () => {
+    const { store, putRecord } = await loadStore();
+    const doc = store.getOrCreateDocument("doc-r");
+    await flushMacrotask();
+    await flushMacrotask();
+    doc.media = [{ mediaId: "m1", contentType: "image/png", data: "aGk=" }];
+    putRecord.mockClear();
+    putRecord.mockRejectedValueOnce(new DOMException("quota", "QuotaExceededError"));
+
+    // First commit: the media write fails (the shell write may still land).
+    await expect(store.commitDocument("doc-r", null, 0)).rejects.toBeTruthy();
+    putRecord.mockResolvedValue(undefined);
+
+    // Second commit with the SAME media reference must retry the media
+    // write — a failure latched as "already persisted" would strand the
+    // images outside storage forever.
+    await store.commitDocument("doc-r", null, 0);
+    const written = putRecord.mock.calls.map((call) => call[0] as PersistedRecord);
+    expect(written.some((record) => record.id === "media:doc-r")).toBe(true);
+  });
+
   it("rejects on write failure WITHOUT latching the SPEC-003 banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-2");
+    await flushMacrotask();
     putRecord.mockRejectedValue(
       new DOMException("quota", "QuotaExceededError"),
     );
@@ -94,13 +159,18 @@ describe("commitDocument", () => {
     expect(record.lastModified).toBeGreaterThan(before);
     expect(record.caret).toEqual({ section: 0, block: 1, offset: 7 });
     expect(record.scroll).toBe(33);
-    expect(putRecord.mock.calls.at(-1)![0]).toBe(record);
+    // Not .toBe(record): commitDocument now writes a media-stripped shell
+    // (SPEC-047 AC-15 — putRecord()'s structured clone must not carry the
+    // in-memory model's `media` array), so the object identity changes even
+    // though every field but `model.media` matches the in-memory record.
+    expect(putRecord.mock.calls.at(-1)![0]).toEqual({ ...record, model: { ...record.model, media: [] } });
     expect(deleteRecord).toHaveBeenCalledWith("draft:doc-5");
   });
 
   it("rejects when the committed write fails, without latching the banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-6");
+    await flushMacrotask();
     putRecord.mockRejectedValue(new Error("full"));
     await expect(store.commitDocument("doc-6", null, 0)).rejects.toBeTruthy();
     expect(store.isStorageAvailable()).toBe(true);

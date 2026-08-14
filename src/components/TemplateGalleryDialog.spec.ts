@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -92,8 +92,10 @@ describe("TemplateGalleryDialog (SPEC-046 AC-1, AC-2, AC-6, AC-7, AC-8)", () => 
     Object.defineProperty(input, "files", { value: [file], configurable: true });
     await wrapper.get('[data-testid="template-gallery-import-input"]').trigger("change");
     await flushPromises();
-    await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // parseDocx chunks its body walk on a 4ms time budget (SPEC-047 AC-16),
+    // so how many macrotask hops the parse takes depends on machine load —
+    // wait for the emit itself, not a fixed number of hops.
+    await vi.waitUntil(() => wrapper.emitted("choose-file"), { timeout: 5000 });
 
     const emitted = wrapper.emitted("choose-file");
     expect(emitted).toHaveLength(1);

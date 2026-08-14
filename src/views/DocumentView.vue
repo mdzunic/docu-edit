@@ -221,6 +221,7 @@ import {
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
 import { acquireEditLock, noEditLock } from "../lib/editLock";
+import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../lib/supportedCeiling";
 import {
   BLOCK_SELECTOR,
   canvasModelText,
@@ -499,7 +500,45 @@ const lockState = ref("pending");
 // — the version history pane's own actions (restore, name, delete) stay
 // enabled while previewing; only the canvas itself goes read-only.
 const documentActionsEnabled = computed(() => lockState.value === "acquired" && !!doc.value);
-const editable = computed(() => documentActionsEnabled.value && !versionHistoryPreviewActive.value);
+
+// --- supported ceiling (SPEC-047: a document past the ceiling opens
+// read-only rather than the editor pretending it can hold arbitrarily large
+// content) -------------------------------------------------------------
+// Counted once per document, at the door ("counted after parse and before
+// pagination" — the spec's own definition), NOT re-checked on every edit: a
+// live re-check would permanently lock a document the moment one paste
+// carried it over the limit, with undo — the way back under — disabled by
+// the very same flag. A document that grows past the ceiling mid-session
+// stays editable until it is next opened; the door check catches it then.
+// (Evaluating per-document rather than per-edit also keeps the O(blocks)
+// count walk off the keystroke path.)
+const ceilingResult = ref(withinCeiling());
+watch(
+  doc,
+  (model, prev) => {
+    if (!model) {
+      ceilingResult.value = withinCeiling();
+      return;
+    }
+    if (prev && prev.id === model.id) {
+      return; // the same document being edited — the door check already ran
+    }
+    ceilingResult.value = checkSupportedCeiling(model);
+  },
+  { immediate: true },
+);
+const pastSupportedCeiling = computed(() => ceilingResult.value.exceeded);
+const ceilingWarning = computed(() => ceilingWarningMessage(ceilingResult.value));
+
+// Find and print are read commands (SPEC-047 AC-27: "opening, scrolling,
+// find, print, PDF export and download still work" while a too-large
+// document is read-only) — this stays what `editable` used to mean, before
+// the ceiling factored in, for the one handler (handleGlobalShortcut) that
+// must keep reacting to Ctrl/Cmd+F/H/P over a too-large document.
+const findAndPrintEnabled = computed(
+  () => documentActionsEnabled.value && !versionHistoryPreviewActive.value,
+);
+const editable = computed(() => findAndPrintEnabled.value && !pastSupportedCeiling.value);
 
 // --- caret and scroll (SPEC-010: restored on reopen) -----------------------
 // Plain variables, not refs: nothing renders from them, they are only read
@@ -1006,6 +1045,7 @@ const {
   statisticsOpen,
   includeNotes: statisticsIncludeNotes,
   dialogStats: statisticsStats,
+  refreshDialogStats: refreshStatisticsStats,
   openStatistics,
   closeStatistics,
 } = useWordCount({ doc, onUnmount });
@@ -1237,6 +1277,14 @@ function applyEdit(
   skipTrackChanges = false,
 ) {
   if (!result || !beforeSelection) {
+    return;
+  }
+  // The read-only backstop for a too-large document (SPEC-047 AC-27):
+  // `editable` gates the canvas, the toolbar and the shortcut registry, but
+  // several composables reach applyEdit through their own UI (the status
+  // bar's language control, the accessibility pane's Fix buttons, …) — one
+  // gate here covers every such path, present and future.
+  if (pastSupportedCeiling.value) {
     return;
   }
   // Any edit other than the paste (or its chip re-application, which passes
@@ -3878,11 +3926,45 @@ const pagination = usePagination(
   () => hiddenBodyBlocks.value,
 );
 // A body-heading collapse/expand changes only the hidden set, not the model,
-// so re-lay-out explicitly when it changes (AC-16).
-watch(hiddenBodyBlocks, () => pagination.schedule());
+// so re-lay-out explicitly when it changes (AC-16). Empty-to-empty is not a
+// change: the computed mints a fresh Set object whenever `doc` is replaced
+// (opening a document), and relaying out for that fused a second full
+// relayout into the open mount task (SPEC-047 AC-16) for a hidden set that
+// is still "nothing hidden".
+watch(hiddenBodyBlocks, (now, prev) => {
+  if (now.size === 0 && prev !== undefined && prev.size === 0) {
+    return;
+  }
+  pagination.schedule();
+});
 const paginationPages = pagination.pages;
 const paginationBusy = pagination.busy;
 const paginationState = pagination.state;
+
+// --- open progress indicator (SPEC-047 AC-3..5): shown from this
+// document's mount until pagination first reports settled, distinct from
+// paginationBusy above (which reappears on every later edit-triggered
+// relayout too — this one only ever fires once per document open). ------
+const documentOpening = ref(true);
+watch(documentId, () => {
+  documentOpening.value = true;
+});
+watch(paginationState, (state) => {
+  if (state === "clean") {
+    documentOpening.value = false;
+  }
+});
+onMounted(() => {
+  // A document whose pagination never needs to measure (nothing realized
+  // yet misses the cache) never transitions through "measuring", so the
+  // watcher above never observes a change to react to — checked once,
+  // after the initial schedule() call above has had a chance to run.
+  void nextTick(() => {
+    if (paginationState.value === "clean") {
+      documentOpening.value = false;
+    }
+  });
+});
 
 // --- note numbering (SPEC-031 AC-7..9, AC-17..20) ---------------------------
 // Displayed note numbers, derived fresh from mark order and the numbering
@@ -3933,7 +4015,11 @@ watch(noteLabelsMap, (labels) => {
 });
 
 watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
-onMounted(() => pagination.schedule());
+// A measurement kick, not a model change: the immediate sync watcher above
+// already laid out during setup (before `contentRoot` existed), so the mount
+// kick only needs to start measuring against the now-present DOM — see
+// scheduleMeasure's own comment (SPEC-047 AC-16).
+onMounted(() => pagination.scheduleMeasure());
 onBeforeUnmount(() => pagination.stop());
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
@@ -4147,7 +4233,10 @@ watch([viewportPageRange, caretPage], () => {
   if (!virtualizing.value) {
     return;
   }
-  void nextTick().then(() => pagination.schedule());
+  // Realization changed, the model didn't: measure the freshly rendered
+  // blocks without forcing a synchronous relayout of an unchanged layout
+  // (SPEC-047 AC-16 — see scheduleMeasure's own comment).
+  void nextTick().then(() => pagination.scheduleMeasure());
 });
 
 function refreshCaretPage() {
@@ -4243,6 +4332,7 @@ const {
   contentRoot,
   pageRef,
   editable,
+  canSearch: findAndPrintEnabled,
   paginationPages,
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
   applyEdit,
@@ -4419,6 +4509,45 @@ const {
   touchDocument,
   commentAuthorName,
   trackChangesAuthorName,
+});
+
+// Write paths that bypass applyEdit still respect the too-large read-only
+// mode (SPEC-047 AC-27): restoring a version replaces the model wholesale,
+// and the Properties dialog mutates metadata directly — both are editing
+// commands, which "are unavailable" past the ceiling. (Reading properties,
+// like reading the document, stays allowed — only the writes are gated.)
+function restoreVersionRespectingCeiling(versionId = "") {
+  if (pastSupportedCeiling.value) {
+    return;
+  }
+  void restoreVersionHistoryVersion(versionId);
+}
+function updatePropertiesRespectingCeiling(next = {}) {
+  if (pastSupportedCeiling.value) {
+    return;
+  }
+  updateDocumentProperties(next);
+}
+function updateAuthorIdentityRespectingCeiling(name = "") {
+  if (pastSupportedCeiling.value) {
+    return;
+  }
+  updateAuthorIdentity(name);
+}
+// The Properties dialog's Statistics tab renders useWordCount's dialogStats
+// (SPEC-041 AC-4). Since the worker move (SPEC-047 AC-12) those stats are
+// computed on demand rather than by a doc-tracking computed, so this dialog
+// must request them like the Statistics dialog does — on open, and again if
+// the document is replaced under an open dialog (multi-tab refresh).
+watch(propertiesOpen, (open) => {
+  if (open) {
+    void refreshStatisticsStats();
+  }
+});
+watch(doc, () => {
+  if (propertiesOpen.value) {
+    void refreshStatisticsStats();
+  }
 });
 
 // Every markDirty() call site also feeds the version-history cadence timer
@@ -4772,7 +4901,7 @@ function deleteOpenDocument() {
  * other registry shortcut (SPEC-021 AC-12..14): none of them act while
  * focus is inside a dialog, the find bar, or another text input. */
 function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
-  if (!doc.value || !editable.value || event.altKey) {
+  if (!doc.value || !findAndPrintEnabled.value || event.altKey) {
     return;
   }
   // Escape disarms the format painter regardless of where focus is (AC-17)
@@ -5516,6 +5645,14 @@ async function menuPastePlain() {
       This document is open in another tab
     </div>
     <div
+      v-if="pastSupportedCeiling"
+      class="notice-bar"
+      role="status"
+      data-testid="too-large-bar"
+    >
+      {{ ceilingWarning }}
+    </div>
+    <div
       v-if="recovery"
       class="notice-bar"
       role="status"
@@ -5636,12 +5773,12 @@ async function menuPastePlain() {
           :paused-message="versionHistoryPausedMessage ?? ''"
           :named-only-filter="versionHistoryNamedOnlyFilter"
           :preview-version-id="versionHistoryPreviewVersionId ?? ''"
-          :editable="documentActionsEnabled"
+          :editable="documentActionsEnabled && !pastSupportedCeiling"
           @close="toggleVersionHistoryPane"
           @update:named-only-filter="versionHistoryNamedOnlyFilter = $event"
           @select="selectVersionHistoryVersion"
           @exit-preview="exitVersionHistoryPreview"
-          @restore="restoreVersionHistoryVersion"
+          @restore="restoreVersionRespectingCeiling"
           @name="nameVersionHistoryVersion"
           @remove-name="removeVersionHistoryName"
           @delete="deleteVersionHistoryVersion"
@@ -6020,6 +6157,11 @@ async function menuPastePlain() {
     <template #status-bar>
       <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
       <span
+        v-if="documentOpening"
+        role="status"
+        data-testid="document-opening"
+      >Opening…</span>
+      <span
         v-if="paginationBusy"
         data-testid="pagination-busy"
       >Paginating…</span>
@@ -6294,8 +6436,8 @@ async function menuPastePlain() {
       :pages="pageCount"
       :file-size="propertiesFileSize"
       :author-identity="commentAuthorName"
-      @update-properties="updateDocumentProperties"
-      @update-author-identity="updateAuthorIdentity"
+      @update-properties="updatePropertiesRespectingCeiling"
+      @update-author-identity="updateAuthorIdentityRespectingCeiling"
       @close="closeProperties"
     />
     <StyleEditorDialog

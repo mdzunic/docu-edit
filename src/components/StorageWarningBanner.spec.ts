@@ -60,7 +60,13 @@ describe("StorageWarningBanner", () => {
     );
 
     store.getOrCreateDocument("over-quota");
-    await flushPromises();
+    // persist() now yields a real macrotask (idleScheduler's
+    // MessageChannel-based yieldToMainThread, SPEC-047 AC-15/AC-16) before
+    // its putRecord call, so flushPromises()'s single tick isn't enough to
+    // observe the resulting storage-status flip — a few real ticks are.
+    for (let i = 0; i < 5; i++) {
+      await flushPromises();
+    }
 
     expect(wrapper.get('[data-testid="storage-warning"]').text()).toBe(
       "Changes will not be saved in this browser",
