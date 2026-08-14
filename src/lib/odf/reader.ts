@@ -10,6 +10,7 @@ import type {
   BorderSide,
   CellBorders,
   CellVerticalAlign,
+  Chart,
   CommentAnchor,
   CommentMessage,
   CommentThread,
@@ -69,6 +70,7 @@ import {
 } from "../lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { parseShapeElement } from "./shape";
+import { parseChartFrame } from "./chart";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "./meta";
 import {
@@ -1013,7 +1015,12 @@ function parseBodyTextBlockOrSplit(
       (child.localName === "custom-shape" || child.localName === "line") &&
       parseShapeElement(child, ctx.contentDoc, ctx.stylesDoc, shapeTextCtx) !== null,
   );
-  if (!hasImage && !hasShape) {
+  // A chart frame always becomes a (possibly placeholder) Chart block —
+  // unlike image/shape, parseChartFrame never returns null just because the
+  // embedded chart's type is outside "Chart catalogue" (see its own doc
+  // comment, mirroring Shape's unsupportedGeometryXml convention).
+  const hasChart = frameChildren.some((frame) => firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined);
+  if (!hasImage && !hasShape && !hasChart) {
     return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
   }
 
@@ -1090,6 +1097,35 @@ function parseBodyTextBlockOrSplit(
         if (parsedShape) {
           flush();
           blocks.push(parsedShape.shape);
+          continue;
+        }
+      }
+      if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "frame") {
+        const parsedChart = parseChartFrame(frameEl, ctx.parts);
+        if (parsedChart) {
+          flush();
+          const chart: Chart = {
+            type: "chart",
+            chartType: parsedChart.chartType,
+            categories: parsedChart.categories,
+            series: parsedChart.series,
+            options: parsedChart.options,
+            sourcePart: parsedChart.sourcePart,
+            widthCm: parsedChart.widthCm,
+            heightCm: parsedChart.heightCm,
+            wrap: parsedChart.wrap,
+          };
+          if (parsedChart.unsupportedChartXml !== undefined) {
+            chart.unsupportedChartXml = parsedChart.unsupportedChartXml;
+          }
+          if (parsedChart.altText) {
+            chart.altText = parsedChart.altText;
+          }
+          if (chart.wrap !== "inline") {
+            chart.relativeToH = "column";
+            chart.relativeToV = "paragraph";
+          }
+          blocks.push(chart);
           continue;
         }
       }

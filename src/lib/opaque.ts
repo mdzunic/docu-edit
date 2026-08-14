@@ -9,6 +9,7 @@
 import {
   createDefaultStyles,
   isBreak,
+  isChart,
   isImage,
   isShape,
   isTable,
@@ -100,6 +101,10 @@ export type DropKind =
   // SPEC-051: a shape geometry outside the catalogue that a cross-format
   // save cannot carry into the target format (AC-61).
   | "shapeGeometry"
+  // SPEC-052: a property of an *edited* chart the model has no field for —
+  // the one case a same-format save can report a non-empty `dropped` for
+  // (see "Rewriting a chart" — an untouched chart still reports nothing).
+  | "chartFeature"
   // SPEC-050: content-level kinds a Markdown save can lose — Markdown has no
   // package, so unlike the kinds above these are detected by walking the
   // model's content rather than its unmodelled parts/nodes.
@@ -153,6 +158,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   runShading: "Run shading",
   svgImage: "SVG image",
   shapeGeometry: "Shape geometry",
+  chartFeature: "Chart feature",
   trackedPropertyChange: "Tracked table property change",
   pageSetup: "Page setup",
   headerFooter: "Header/footer",
@@ -271,6 +277,10 @@ const REASONS: Record<DropKind, string> = {
     "the target format has a single text background, which the highlight colour occupies",
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
   shapeGeometry: "this shape's geometry is outside the catalogue and cannot be converted between formats",
+  // Overridden per call by collectEditedChartDropRecords with the specific
+  // lost property; this generic text is the fallback record() would use if
+  // anything ever routes a chartFeature drop through it instead.
+  chartFeature: "this property of the original chart is not carried by the editor's chart model",
   trackedPropertyChange:
     "OpenDocument Text has no slot for a table/row/cell property change's previous state — the change is kept applied but no longer tracked",
   pageSetup: "Markdown carries no page geometry or section breaks",
@@ -358,6 +368,20 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           // save re-emits it unchanged and reports nothing.
           if (blockAt.unsupportedGeometryXml && source !== target) {
             dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
+          }
+          continue;
+        }
+        if (isChart(blockAt)) {
+          // A chart whose type is outside the catalogue (SPEC-008
+          // preservation) is verbatim XML this module never translates
+          // between formats — a cross-format save of it drops the chart
+          // (SPEC-052 AC "unsupported type... never rewritten"); a
+          // catalogue chart type converts losslessly (its model IS the
+          // source of truth for both formats), so nothing is reported for
+          // it here. A same-format save reports nothing either way — see
+          // collectEditedChartDropRecords for the "edited" exception.
+          if (blockAt.unsupportedChartXml && source !== target) {
+            dropped.push(record("chart", `paragraph ${paragraphNumber}`, target));
           }
           continue;
         }
@@ -619,7 +643,7 @@ function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
         }
         return;
       }
-      if (isImage(block) || isShape(block) || isBreak(block)) {
+      if (isImage(block) || isShape(block) || isChart(block) || isBreak(block)) {
         return;
       }
       checkParagraph(block, paragraphNumber);
@@ -646,6 +670,80 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
   }
   if (target === "md") {
     dropped.push(...collectMarkdownDropRecords(model));
+  }
+  return dropped;
+}
+
+// --- SPEC-052: chartFeature drops for a same-format save of an edited chart -
+
+interface ChartFeatureMarker {
+  test: (xml: string) => boolean;
+  reason: string;
+}
+
+/** A curated set of XML markers this product's chart model has no field for
+ * — checked against an edited chart's *original* part text (before the
+ * regenerate-from-model rewrite) so "Rewriting a chart" can report exactly
+ * what that rewrite cost, per property, rather than one opaque "changed"
+ * notice. Not exhaustive — a real chart part can carry far more than this
+ * editor will ever model (themes, every per-point override, every number
+ * format) — this is the common, easy-to-name subset; anything outside it is
+ * a real loss the report stays silent about, the same honest limit every
+ * other "which sub-feature" heuristic in this file already accepts (see
+ * nodeKind's own comment). */
+const DOCX_CHART_FEATURE_MARKERS: ChartFeatureMarker[] = [
+  { test: (xml) => /<c:trendline[\s/>]/.test(xml), reason: "a trendline" },
+  { test: (xml) => /<c:errBars[\s/>]/.test(xml), reason: "error bars" },
+  { test: (xml) => /<c:dPt[\s>]/.test(xml), reason: "per-point formatting (individual bar/slice colours or markers)" },
+  { test: (xml) => /formatCode="(?!General")[^"]*"/.test(xml), reason: "a custom number format" },
+  { test: (xml) => (xml.match(/<c:valAx[\s>]/g) ?? []).length > 1, reason: "a secondary axis" },
+  { test: (xml) => /<a:gradFill[\s>]|<a:pattFill[\s>]|<a:blipFill[\s>]/.test(xml), reason: "a gradient, pattern or picture fill" },
+];
+
+const ODT_CHART_FEATURE_MARKERS: ChartFeatureMarker[] = [
+  { test: (xml) => /<chart:regression-curve[\s/>]/.test(xml), reason: "a trendline" },
+  { test: (xml) => /<chart:error-indicator[\s/>]/.test(xml), reason: "error bars" },
+  { test: (xml) => /<chart:data-point[\s>]/.test(xml), reason: "per-point formatting (individual bar/slice colours or markers)" },
+  { test: (xml) => (xml.match(/<chart:axis\b[^>]*dimension="y"/g) ?? []).length > 1, reason: "a secondary axis" },
+];
+
+/** Everything an *edited* chart's regenerated part loses relative to its
+ * preserved original — SPEC-052's one exception to "a same-format save
+ * reports nothing" (see "Rewriting a chart"). Both writers' chart-plan
+ * modules call this to build the `chartFeature` entries in their same-format
+ * save's `dropped`; every other chart (untouched, or with no `sourcePart` to
+ * compare against, e.g. one created here) contributes nothing. */
+export function collectEditedChartDropRecords(model: DocumentModel, target: "docx" | "odt"): DropRecord[] {
+  const dropped: DropRecord[] = [];
+  const opaqueByName = new Map((model.opaque ?? []).map((part) => [part.name, part.data]));
+  const markers = target === "docx" ? DOCX_CHART_FEATURE_MARKERS : ODT_CHART_FEATURE_MARKERS;
+  let chartNumber = 0;
+  let paragraphOffset = 0;
+  for (const section of model.sections) {
+    section.blocks.forEach((block, index) => {
+      if (!isChart(block)) {
+        return;
+      }
+      chartNumber += 1;
+      if (!block.edited || !block.sourcePart || block.unsupportedChartXml !== undefined) {
+        return;
+      }
+      const data = opaqueByName.get(block.sourcePart);
+      if (data === undefined) {
+        return;
+      }
+      const xml = new TextDecoder("utf-8").decode(base64ToBytes(data));
+      for (const marker of markers) {
+        if (marker.test(xml)) {
+          dropped.push({
+            kind: "chartFeature",
+            location: `Chart ${chartNumber} (paragraph ${paragraphOffset + index + 1})`,
+            reason: marker.reason,
+          });
+        }
+      }
+    });
+    paragraphOffset += section.blocks.length;
   }
   return dropped;
 }
@@ -829,7 +927,7 @@ export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): Do
             paragraphs.push(...cell.blocks);
           }
         }
-      } else if (!isImage(block) && !isShape(block) && !isBreak(block) && !isToc(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block)) {
         paragraphs.push(block);
       }
     }

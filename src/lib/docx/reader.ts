@@ -12,6 +12,7 @@ import type {
   CellBorders,
   CellPropertyChange,
   CellVerticalAlign,
+  Chart,
   CommentAnchor,
   CommentMessage,
   CommentThread,
@@ -82,6 +83,7 @@ import {
 } from "./xml";
 import { fillPendingMediaData, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
+import { parseChartDrawing } from "./chart";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
   EMPTY_NUMBERING_CATALOG,
@@ -725,6 +727,64 @@ function shapeRunDrawing(
   return parsed?.shape ?? null;
 }
 
+/** A `w:r` whose only content is one `w:drawing` holding a `c:chart`
+ * reference (SPEC-052) — the chart-flavoured sibling of imageRunDrawing/
+ * shapeRunDrawing. Null for every other run, which keeps falling through to
+ * the opaque-inline path. Unlike the other two, this never returns null just
+ * because the referenced chart is outside "Chart catalogue" — an
+ * out-of-catalogue chart still becomes a (placeholder) Chart block, per
+ * SPEC-051's own `unsupportedGeometryXml` convention for a shape, so it gets
+ * the anchored-drawing selection/paint/preserve treatment rather than
+ * falling back to an inert opaque-inline run. */
+function chartRunDrawing(rEl: Element, ctx: DrawingContext): Chart | null {
+  const contentChildren = Array.from(rEl.children).filter(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
+  );
+  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+    return null;
+  }
+  const parsed = parseChartDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
+  if (!parsed) {
+    return null;
+  }
+  const chart: Chart = {
+    type: "chart",
+    chartType: parsed.chartType,
+    categories: parsed.categories,
+    series: parsed.series,
+    options: parsed.options,
+    sourcePart: parsed.sourcePart,
+    widthCm: parsed.widthCm,
+    heightCm: parsed.heightCm,
+    wrap: parsed.wrap,
+  };
+  if (parsed.unsupportedChartXml !== undefined) {
+    chart.unsupportedChartXml = parsed.unsupportedChartXml;
+  }
+  if (parsed.altText) {
+    chart.altText = parsed.altText;
+  }
+  if (parsed.groupOrdinal !== undefined) {
+    chart.groupOrdinal = parsed.groupOrdinal;
+  }
+  if (parsed.offsetXCm !== undefined) {
+    chart.offsetXCm = parsed.offsetXCm;
+  }
+  if (parsed.offsetYCm !== undefined) {
+    chart.offsetYCm = parsed.offsetYCm;
+  }
+  if (parsed.relativeToH !== undefined) {
+    chart.relativeToH = parsed.relativeToH;
+  }
+  if (parsed.relativeToV !== undefined) {
+    chart.relativeToV = parsed.relativeToV;
+  }
+  if (parsed.zOrder !== undefined) {
+    chart.zOrder = parsed.zOrder;
+  }
+  return chart;
+}
+
 // --- table of contents (SPEC-033) -------------------------------------------
 
 /** The `w:fldChar` type of a run, or null for a run that carries none
@@ -939,6 +999,7 @@ function parseBodyParagraphBlocks(
   );
   const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
   const hasShapeRun = runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
+  const hasChartRun = runElements.some((r) => chartRunDrawing(r, ctx) !== null);
   // A typed w:br in an otherwise-modelled run splits the paragraph the same
   // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
   // of that run's verbatim XML — splitting an unmodelled run could not
@@ -946,7 +1007,7 @@ function parseBodyParagraphBlocks(
   const hasBreakRun = runElements.some(
     (r) => !runHasUnmodelledContent(r) && runHasTypedBreak(r),
   );
-  if (!hasImageRun && !hasShapeRun && !hasBreakRun) {
+  if (!hasImageRun && !hasShapeRun && !hasChartRun && !hasBreakRun) {
     return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog, links)], media: [] };
   }
 
@@ -985,6 +1046,12 @@ function parseBodyParagraphBlocks(
       if (shape) {
         flush();
         blocks.push(shape);
+        continue;
+      }
+      const chart = chartRunDrawing(child, ctx);
+      if (chart) {
+        flush();
+        blocks.push(chart);
         continue;
       }
       if (isCommentReferenceRun(child)) {

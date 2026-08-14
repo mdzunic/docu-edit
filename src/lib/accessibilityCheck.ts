@@ -12,10 +12,12 @@
 // for callers (tests, a fix's re-check) that don't need chunking.
 import {
   isBreak,
+  isChart,
   isImage,
   isShape,
   isTable,
   isToc,
+  type Chart,
   type DocumentModel,
   type Image,
   type Paragraph,
@@ -306,7 +308,7 @@ function makeIssue(partial: Omit<AccessibilityIssue, "severity">): Accessibility
 
 // --- per-target detections -----------------------------------------------
 
-function checkImageAltText(image: Image | Shape, address: BlockAddress, issues: AccessibilityIssue[]): void {
+function checkImageAltText(image: Image | Shape | Chart, address: BlockAddress, issues: AccessibilityIssue[]): void {
   if (image.altText !== undefined && image.altText.trim().length > 0) {
     return;
   }
@@ -507,7 +509,8 @@ export type AccessibilityScanTarget =
   | { kind: "paragraph"; address: ParagraphAddress; paragraph: Paragraph; topLevelNext?: Paragraph; cellShadingFill?: string }
   | { kind: "table"; address: BlockAddress; table: Table }
   | { kind: "image"; address: BlockAddress; image: Image }
-  | { kind: "shape"; address: BlockAddress; shape: Shape };
+  | { kind: "shape"; address: BlockAddress; shape: Shape }
+  | { kind: "chart"; address: BlockAddress; chart: Chart };
 
 export interface AccessibilityScanState {
   previousHeadingLevel: number | null;
@@ -549,6 +552,8 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
         targets.push({ kind: "image", address: { section: sectionIndex, block: blockIndex }, image: block });
       } else if (isShape(block)) {
         targets.push({ kind: "shape", address: { section: sectionIndex, block: blockIndex }, shape: block });
+      } else if (isChart(block)) {
+        targets.push({ kind: "chart", address: { section: sectionIndex, block: blockIndex }, chart: block });
       } else if (isBreak(block) || isToc(block)) {
         // Nothing to check.
       } else {
@@ -557,7 +562,7 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
           kind: "paragraph",
           address: { section: sectionIndex, block: blockIndex },
           paragraph: block,
-          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isBreak(next) && !isToc(next) ? next : undefined,
+          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isBreak(next) && !isToc(next) ? next : undefined,
         });
       }
     });
@@ -583,6 +588,13 @@ export function scanAccessibilityTarget(
     // Same "missing-alt-text" detection as an image (AC-48 — no change to
     // SPEC-043's check itself, Shape carries altText in the same field).
     checkImageAltText(target.shape, target.address, issues);
+    return;
+  }
+  if (target.kind === "chart") {
+    state.anyContent = true;
+    // Same "missing-alt-text" detection as an image/shape — Chart carries
+    // altText in the same DrawingPlacement field (SPEC-052).
+    checkImageAltText(target.chart, target.address, issues);
     return;
   }
   if (target.kind === "table") {

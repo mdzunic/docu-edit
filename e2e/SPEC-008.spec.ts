@@ -107,7 +107,10 @@ test("a cross-format save shows the conversion report naming each dropped item a
   const report = page.getByTestId("conversion-report");
   await expect(report).toBeVisible();
   const items = page.getByTestId("conversion-report-item");
-  await expect(items.filter({ hasText: "Chart" }).filter({ hasText: "paragraph 3" })).toHaveCount(
+  // SPEC-052: the chart is now its own Chart block (heading, intro,
+  // chart-text paragraph, chart — 0-based index 3), so its reported
+  // location is one paragraph later than before SPEC-052 split it out.
+  await expect(items.filter({ hasText: "Chart" }).filter({ hasText: "paragraph 4" })).toHaveCount(
     1,
   );
   await expect(items.filter({ hasText: "Content control" })).toHaveCount(1);

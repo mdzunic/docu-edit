@@ -7,9 +7,11 @@
 // (near-identical) command set because SPEC-024 shipped first and this spec
 // promises "no shipped call site changes" to it.
 import {
+  isChart,
   isImage,
   isShape,
   type Block,
+  type Chart,
   type DocumentModel,
   type DrawingPlacement,
   type Image,
@@ -537,19 +539,22 @@ export function deleteShape(
   };
 }
 
-/** Every drawing (Shape or Image) block's placement + location, used by
- * z-order and grouping commands that must see every drawing to compute a
- * fresh ordinal/z-order value or a group's members. */
+/** Every drawing (Shape, Image or Chart) block's placement + location, used
+ * by z-order and grouping commands that must see every drawing to compute a
+ * fresh ordinal/z-order value or a group's members — Chart participates here
+ * "for free" as a third DrawingPlacement (SPEC-052 AC-24), the same way
+ * Image joined Shape's own z-order/grouping machinery rather than growing a
+ * duplicate of it. */
 interface DrawingRef {
   location: ShapeLocation;
-  block: Shape | Image;
+  block: Shape | Image | Chart;
 }
 
 function allDrawings(model: DocumentModel): DrawingRef[] {
   const drawings: DrawingRef[] = [];
   model.sections.forEach((section, sectionIndex) => {
     section.blocks.forEach((block, blockIndex) => {
-      if (isShape(block) || isImage(block)) {
+      if (isShape(block) || isImage(block) || isChart(block)) {
         drawings.push({ location: { section: sectionIndex, block: blockIndex }, block });
       }
     });
@@ -630,8 +635,7 @@ export function reorderShapeZ(
   const [moved] = reordered.splice(index, 1);
   reordered.splice(targetIndex, 0, moved);
   reordered.forEach((d, i) => {
-    const block = model.sections[d.location.section].blocks[d.location.block];
-    const updated: Shape | Image = isShape(block) ? { ...(d.block as Shape) } : { ...(d.block as Image) };
+    const updated: Shape | Image | Chart = { ...d.block };
     updated.zOrder = i;
     next.sections[d.location.section].blocks.splice(d.location.block, 1, updated);
   });
@@ -665,10 +669,10 @@ export function groupShapes(
   const ordinal = freshGroupOrdinal(next);
   for (const location of locations) {
     const block = next.sections[location.section]?.blocks[location.block];
-    if (!isShape(block) && !isImage(block)) {
+    if (!isShape(block) && !isImage(block) && !isChart(block)) {
       continue;
     }
-    const updated: Shape | Image = isShape(block) ? { ...block } : { ...block };
+    const updated: Shape | Image | Chart = { ...block };
     updated.groupOrdinal = ordinal;
     if (updated.wrap === "inline") {
       updated.wrap = "square";
@@ -694,7 +698,7 @@ export function ungroupShapes(
     if (block.groupOrdinal !== groupOrdinal) {
       continue;
     }
-    const updated: Shape | Image = isShape(block) ? { ...block } : { ...block };
+    const updated: Shape | Image | Chart = { ...block };
     delete updated.groupOrdinal;
     next.sections[location.section].blocks.splice(location.block, 1, updated);
   }
@@ -766,7 +770,7 @@ export function resizeGroup(
 ): CommandResult {
   const next = cloneContainers(model);
   for (const { location, block } of groupMembers(next, groupOrdinal)) {
-    const updated: Shape | Image = isShape(block) ? { ...block } : { ...block };
+    const updated: Shape | Image | Chart = { ...block };
     updated.widthCm = Math.max(MIN_SHAPE_SIZE_CM, updated.widthCm * sx);
     updated.heightCm = Math.max(0, updated.heightCm * sy);
     updated.offsetXCm = (updated.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm) * sx;
@@ -788,7 +792,7 @@ export function rotateGroup(
 ): CommandResult {
   const next = cloneContainers(model);
   for (const { location, block } of groupMembers(next, groupOrdinal)) {
-    const updated: Shape | Image = isShape(block) ? { ...block } : { ...block };
+    const updated: Shape | Image | Chart = { ...block };
     const normalized = normalizeRotationDeg((block.rotationDeg ?? 0) + deltaDeg);
     if (normalized === 0) {
       delete updated.rotationDeg;

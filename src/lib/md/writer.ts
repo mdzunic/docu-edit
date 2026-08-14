@@ -9,6 +9,7 @@ import {
   DEFAULT_TITLE,
   HORIZONTAL_RULE_STYLE_ID,
   isBreak,
+  isChart,
   isImage,
   isShape,
   isTable,
@@ -192,6 +193,12 @@ function renderBlock(
   if (isShape(block)) {
     // Shapes have no Markdown representation (SPEC-051 is out of SPEC-050's
     // scope) — dropped the same way a manual break is.
+    listCounters.length = 0;
+    return null;
+  }
+  if (isChart(block)) {
+    // Charts have no Markdown representation (SPEC-052 is out of SPEC-050's
+    // scope) — dropped the same way a shape is.
     listCounters.length = 0;
     return null;
   }

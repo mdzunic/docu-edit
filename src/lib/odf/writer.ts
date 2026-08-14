@@ -29,6 +29,7 @@ import type {
   Block,
   BorderSide,
   BreakKind,
+  Chart,
   CommentThread,
   DocumentModel,
   DocumentProperties,
@@ -73,7 +74,7 @@ import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
 import { collectChanges } from "../trackChanges";
-import { collectDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import {
@@ -90,6 +91,13 @@ import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
+import { chartFrameXml, odfChartContentXml } from "./chart";
+import {
+  chartObjectDirsInManifest,
+  planOdfChartWrite,
+  EMPTY_ODF_CHART_PLAN,
+  type OdfChartWritePlan,
+} from "./chartWritePlan";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "./properties";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
@@ -574,7 +582,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
-      if (block.type === "image" || block.type === "break" || block.type === "toc") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "chart") {
         continue;
       }
       if (block.type === "shape") {
@@ -1614,6 +1622,31 @@ function shapeParagraphXml(
   return `<text:p${wrapperAttr}>${element}</text:p>`;
 }
 
+/** A Chart block (SPEC-052): the chart-flavoured sibling of
+ * imageParagraphXml/shapeParagraphXml — one `text:p` holding the
+ * `draw:frame`/`draw:object` (see chart.ts's chartFrameXml). Returns just
+ * the carrier paragraph (or "") when `chartPlan` has no entry for this
+ * location (defensive; every Chart block always gets one from
+ * planOdfChartWrite). */
+function chartParagraphXml(
+  chart: Chart,
+  styles: AutomaticStyles,
+  chartPlan: OdfChartWritePlan,
+  section: number,
+  block: number,
+  styleOptions?: ParagraphStyleOptions,
+): string {
+  const wrapperName = styleOptions
+    ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, styleOptions)
+    : undefined;
+  const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
+  const entry = chartPlan.planFor(section, block);
+  if (!entry) {
+    return styleOptions ? carrierParagraphXml(styles, styleOptions) : "";
+  }
+  return `<text:p${wrapperAttr}>${chartFrameXml(chart, `./${entry.objectDir}`)}</text:p>`;
+}
+
 /** A cell's block content (SPEC-022): paragraphs, with consecutive list
  * items grouped into text:list runs exactly like body content — a cell is
  * its own list context, so runs never join one outside the table.
@@ -1797,6 +1830,7 @@ export function buildContentXml(
   model: DocumentModel,
   mediaPlan: OdtMediaWritePlan = planOdtMediaWrite(model),
   masterNames?: (string | null)[],
+  chartPlan: OdfChartWritePlan = planOdfChartWrite(model, new Set()),
 ): string {
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
@@ -1896,6 +1930,11 @@ export function buildContentXml(
       }
       if (block.type === "shape") {
         blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
+        i++;
+        continue;
+      }
+      if (block.type === "chart") {
+        blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
         i++;
         continue;
       }
@@ -2961,6 +3000,30 @@ function withManifestEntries(manifestXml: string, entries: OdtManifestEntry[]): 
   return out;
 }
 
+/** The inverse of withManifestEntries: strips every file-entry whose
+ * `manifest:full-path` is `dir/` or `dir/content.xml` — a deleted chart's
+ * embedded-object entries (SPEC-052 AC "removes its part, its relationship"
+ * — the manifest entry is ODF's relationship). Textual, matching
+ * withManifestEntries' own approach. */
+function withoutManifestObjectDirs(manifestXml: string, dirs: Set<string>): string {
+  if (dirs.size === 0) {
+    return manifestXml;
+  }
+  return manifestXml.replace(/<manifest:file-entry\b[^>]*\/>/g, (entry) => {
+    const match = /manifest:full-path="([^"]+)"/.exec(entry);
+    const path = match?.[1];
+    if (!path) {
+      return entry;
+    }
+    for (const dir of dirs) {
+      if (path === `${dir}/` || path === `${dir}/content.xml`) {
+        return "";
+      }
+    }
+    return entry;
+  });
+}
+
 /** Serialises the model into `.odt` bytes plus the list of items that could
  * not be represented (SPEC-008).
  *
@@ -3001,7 +3064,21 @@ export async function writeOdt(
   // preserved the conventional SectionMasterN/pmN names are used, matching
   // buildStylesXml.
   const sectionNames = planOdtSectionNames(model, originalStyles);
-  const content = buildContentXml(model, mediaPlan, sectionNames.masters);
+  // Charts (SPEC-052): an untouched chart reuses its own preserved embedded
+  // object directory (so the verbatim pass-through below keeps re-emitting
+  // it byte-identical), an edited or freshly inserted one is regenerated
+  // from the model; a fresh/cross-format save (no preserved package)
+  // regenerates every catalogue-type chart and drops an unsupported one
+  // entirely. `preservedChartObjectDirs` — which "Object N" directories the
+  // preserved manifest already declares as charts — is what tells a deleted
+  // chart's object apart from an unrelated embedded OLE object sharing the
+  // same naming convention.
+  const preservedManifestBytes = preservedParts.get("META-INF/manifest.xml");
+  const preservedChartObjectDirs = preservedManifestBytes
+    ? chartObjectDirsInManifest(decoder.decode(preservedManifestBytes))
+    : new Set<string>();
+  const chartPlan = planOdfChartWrite(model, preservedChartObjectDirs, preservedParts.size === 0);
+  const content = buildContentXml(model, mediaPlan, sectionNames.masters, chartPlan);
 
   if (preservedParts.size === 0) {
     const bytes = await zip([
@@ -3012,8 +3089,12 @@ export async function writeOdt(
       { name: "styles.xml", data: encoder.encode(buildStylesXml(model)) },
       { name: "meta.xml", data: encoder.encode(buildMetaXml(metaInput, modified)) },
       { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
-      { name: "META-INF/manifest.xml", data: encoder.encode(buildManifestXml(mediaPlan.manifestEntries)) },
+      {
+        name: "META-INF/manifest.xml",
+        data: encoder.encode(buildManifestXml([...mediaPlan.manifestEntries, ...chartPlan.manifestEntries])),
+      },
       ...mediaPlan.zipEntries,
+      ...chartPlan.zipEntries,
     ]);
     return { bytes, dropped: collectDropRecords(model, "odt") };
   }
@@ -3029,6 +3110,7 @@ export async function writeOdt(
     { path: "meta.xml", mediaType: "text/xml" },
     ...(addSettings ? [{ path: "settings.xml", mediaType: "text/xml" }] : []),
     ...mediaPlan.manifestEntries,
+    ...chartPlan.manifestEntries,
   ];
   // Named-style changes (SPEC-019) first, then the per-section master pages
   // content.xml references (SPEC-028 AC-33), then header/footer content
@@ -3057,19 +3139,30 @@ export async function writeOdt(
     if (name === "mimetype" || name === "content.xml" || name === "meta.xml") {
       continue; // Already emitted or rebuilt below.
     }
+    if (chartPlan.orphanedPartNames.has(name)) {
+      continue; // A deleted chart's embedded object — SPEC-008 preservation must not resurrect it (AC).
+    }
     if (name === "META-INF/manifest.xml") {
-      entries.push({ name, data: encoder.encode(withManifestEntries(decoder.decode(data), addedPaths)) });
+      let manifestXml = withManifestEntries(decoder.decode(data), addedPaths);
+      manifestXml = withoutManifestObjectDirs(manifestXml, chartPlan.orphanedObjectDirs);
+      entries.push({ name, data: encoder.encode(manifestXml) });
     } else if (patchedStyles !== null && name === "styles.xml") {
       entries.push({ name, data: encoder.encode(patchedStyles) });
+    } else if (chartPlan.regeneratedPartXml.has(name)) {
+      entries.push({ name, data: encoder.encode(chartPlan.regeneratedPartXml.get(name)!) });
     } else {
       entries.push({ name, data });
     }
   }
   entries.push({ name: "meta.xml", data: encoder.encode(buildMetaXml(metaInput, modified)) });
   entries.push(...mediaPlan.zipEntries);
+  entries.push(...chartPlan.zipEntries);
   if (addSettings) {
     entries.push({ name: "settings.xml", data: encoder.encode(buildSettingsXml()) });
   }
 
-  return { bytes: await zip(entries), dropped: [] };
+  // SPEC-008's rule that a same-format save reports nothing still holds for
+  // every part except an edited chart's (SPEC-052 "Rewriting a chart" — the
+  // one narrow, documented exception).
+  return { bytes: await zip(entries), dropped: collectEditedChartDropRecords(model, "odt") };
 }

@@ -997,6 +997,141 @@ export function asImage(value: unknown): Image {
   return value as Image;
 }
 
+// --- charts (SPEC-052) -------------------------------------------------------
+
+/** The closed set of chart types the editor renders, inserts and can
+ * regenerate — see "Chart catalogue" in specs/052-charts.md. Everything else
+ * arriving from a file is preserved per SPEC-008, not approximated into one
+ * of these (mirrors ShapeGeometry's own closed-catalogue convention). */
+export type ChartType =
+  | "columnClustered"
+  | "columnStacked"
+  | "barClustered"
+  | "line"
+  | "lineMarkers"
+  | "area"
+  | "pie"
+  | "doughnut"
+  | "scatter";
+
+/** One data series in a chart's data sheet. `values` is index-aligned with
+ * `Chart.categories`; `null` is a gap (an empty cell), distinct from `0` —
+ * line charts break the line at a gap, bar/column/area charts draw nothing
+ * there. */
+export interface ChartSeries {
+  name: string;
+  values: (number | null)[];
+  /** "#rrggbb". */
+  color: string;
+}
+
+/** The chart options panel's settings (SPEC-052 AC-14..AC-20). */
+export interface ChartOptions {
+  title?: string;
+  categoryAxisTitle?: string;
+  valueAxisTitle?: string;
+  legend: "none" | "top" | "right" | "bottom" | "left";
+  dataLabels: boolean;
+  gridlines: boolean;
+  /** Absent = auto (computed from the data). */
+  valueAxisMin?: number;
+  valueAxisMax?: number;
+}
+
+/** A chart block (SPEC-052): a drawing placed on the page, painted on the
+ * canvas layer with an ARIA proxy element exactly like Shape (see
+ * "Rendering and test surface" in specs/051-drawing-shapes-and-text-boxes.md).
+ * Mirrors Shape's unsupported-content convention: a chart whose source type
+ * is outside the catalogue keeps `chartType` as a harmless bounding-box
+ * stand-in (`"columnClustered"`) and sets `unsupportedChartXml`, so it paints
+ * as a placeholder and is never rewritten (AC-29..AC-31), the same shape
+ * `unsupportedGeometryXml` plays for a geometry outside its own catalogue. */
+export interface Chart extends DrawingPlacement {
+  type: "chart";
+  chartType: ChartType;
+  categories: string[];
+  series: ChartSeries[];
+  options: ChartOptions;
+  /** Part name of the preserved original in `DocumentModel.opaque`
+   * (`src/lib/opaque.ts`'s `OpaquePart`) — absent for a chart created here.
+   * Deliberately not named `id` (see IGNORED_KEYS in lib/equality.ts and the
+   * same convention on NoteRef.noteId). Bytes never live on the block itself:
+   * that would give the same part two owners and break the model's
+   * plain-JSON invariant. */
+  sourcePart?: string;
+  /** True once the data sheet or the options panel changed this chart — the
+   * switch the writer reads to decide whether to regenerate the part from
+   * the model or re-emit `sourcePart`'s bytes unchanged. Moving, resizing,
+   * rotating, re-anchoring or re-ordering a chart never sets this: none of
+   * those touch the chart part. */
+  edited?: boolean;
+  /** Present when the source chart's type was outside "Chart catalogue"
+   * (SPEC-008 preservation): the verbatim chart XML, re-emitted unchanged on
+   * a same-format save. `chartType`/`categories`/`series` are then just
+   * placeholder stand-ins — never painted or editable; the chart instead
+   * paints as a dashed placeholder at its true bounds and cannot be edited
+   * (AC-29..AC-31). A cross-format save of a chart with this field set
+   * cannot carry it and reports a `"chart"` DropRecord. */
+  unsupportedChartXml?: string;
+  /** Pending tracked insertion/deletion of this chart block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+}
+
+/** Whether a block is a chart — the isTable-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isChart(block: Block | undefined): block is Chart {
+  return block?.type === "chart";
+}
+
+/** Typed pass-through for a Chart arriving as a runtime-declared Object prop
+ * (espree bars the type annotation — see tables.ts's asTable for the same
+ * pattern). */
+export function asChart(value: unknown): Chart {
+  return value as Chart;
+}
+
+/** Typed pass-through for a chart type coming from a `.vue` template's plain
+ * string (same espree constraint as asImageWrapMode). */
+export function asChartType(value: string): ChartType {
+  return value as ChartType;
+}
+
+/** The closed catalogue chart types, in "Chart catalogue" order — the Insert
+ * gallery and the docx/odf readers' type lookup both walk this list. */
+export const CHART_CATALOGUE: { chartType: ChartType; label: string }[] = [
+  { chartType: "columnClustered", label: "Clustered column" },
+  { chartType: "columnStacked", label: "Stacked column" },
+  { chartType: "barClustered", label: "Clustered bar" },
+  { chartType: "line", label: "Line" },
+  { chartType: "lineMarkers", label: "Line with markers" },
+  { chartType: "area", label: "Area" },
+  { chartType: "pie", label: "Pie" },
+  { chartType: "doughnut", label: "Doughnut" },
+  { chartType: "scatter", label: "Scatter (XY)" },
+];
+
+/** Chart types that render only their first series (pie/doughnut) — the data
+ * sheet says so rather than silently ignoring the rest (SPEC-052 "Chart
+ * catalogue"). */
+export const SINGLE_SERIES_CHART_TYPES: ReadonlySet<ChartType> = new Set(["pie", "doughnut"]);
+
+/** A default palette for newly created/inserted series — this spec's own,
+ * deliberately not inherited from the document theme (SPEC-052 "Out of
+ * scope"). */
+export const DEFAULT_CHART_COLORS: readonly string[] = [
+  "#4e79a7",
+  "#f28e2b",
+  "#e15759",
+  "#76b7b2",
+  "#59a14f",
+  "#edc948",
+  "#b07aa1",
+  "#ff9da7",
+  "#9c755f",
+  "#bab0ac",
+];
+
 /** A binary image payload stored once and referenced by `Image.mediaId` — so
  * an image used twice in the document (AC-32) shares one entry, and deleting
  * one use does not by itself remove it (see lib/images.ts's reference-counted
@@ -1446,7 +1581,7 @@ export function asToc(value: unknown): TableOfContents {
 /** Block-level children of a section: paragraphs, tables (SPEC-022),
  * images (SPEC-024), manual breaks (SPEC-028) and tables of contents
  * (SPEC-033). */
-export type Block = Paragraph | Table | Image | BreakBlock | TableOfContents | Shape;
+export type Block = Paragraph | Table | Image | BreakBlock | TableOfContents | Shape | Chart;
 
 /** A section groups block-level content; documents have one or more. A
  * section boundary IS the section break (SPEC-028): inserting a section
