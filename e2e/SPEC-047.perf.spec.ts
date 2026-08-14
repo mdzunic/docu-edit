@@ -305,6 +305,11 @@ async function measureTyping(
     w.__typingObserver?.disconnect();
     return w.__typingLatencies;
   });
+  // Guard against a vacuously green p95: if typing silently stopped working
+  // (a regression that leaves the document read-only, say), zero samples
+  // would sort to a p95 of 0 and "pass". Most of the 200 keystrokes must
+  // actually have been observed mutating the DOM.
+  expect(latencies.length, "typing latency samples actually collected").toBeGreaterThan(100);
   const sorted = [...latencies].sort((a, b) => a - b);
   const p95Index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1));
   const typingLatencyP95Ms = sorted.length > 0 ? sorted[p95Index] : 0;
