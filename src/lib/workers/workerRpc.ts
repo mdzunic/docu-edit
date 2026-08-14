@@ -36,6 +36,13 @@ export function createWorkerRpcClient<TRequest extends object, TResponse>(
   let nextId = 1;
   const pending = new Map<number, PendingCall<TResponse>>();
 
+  function rejectAll(reason: unknown): void {
+    for (const entry of pending.values()) {
+      entry.reject(reason);
+    }
+    pending.clear();
+  }
+
   function ensureWorker(): Worker {
     if (worker) {
       return worker;
@@ -52,10 +59,19 @@ export function createWorkerRpcClient<TRequest extends object, TResponse>(
       entry.resolve(rest as unknown as TResponse);
     });
     instance.addEventListener("error", (event: ErrorEvent) => {
-      for (const entry of pending.values()) {
-        entry.reject(event.error ?? new Error(event.message));
-      }
-      pending.clear();
+      // A worker that fired `error` (a top-level throw, a failed module
+      // load) can be dead: keeping it cached would make every LATER call
+      // register a pending entry no reply ever comes for — a permanent,
+      // silent hang of whatever feature this client backs. Drop it so the
+      // next call constructs a fresh worker.
+      rejectAll(event.error ?? new Error(event.message));
+      instance.terminate();
+      worker = null;
+    });
+    instance.addEventListener("messageerror", () => {
+      // A reply that failed to deserialize resolves nothing; without this
+      // its caller would wait forever. The worker itself is still healthy.
+      rejectAll(new Error("worker reply could not be deserialized"));
     });
     worker = instance;
     return instance;
@@ -78,7 +94,10 @@ export function createWorkerRpcClient<TRequest extends object, TResponse>(
     terminate() {
       worker?.terminate();
       worker = null;
-      pending.clear();
+      // Reject, not just clear — the doc comment promises callers their
+      // in-flight promises settle, and a dropped pending entry is an await
+      // that never resumes.
+      rejectAll(new Error("worker terminated"));
     },
   };
 }
