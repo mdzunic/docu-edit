@@ -134,6 +134,13 @@ export interface PaginationController {
    * (canvas metrics available) — the gate for page virtualization: without
    * it every page must realize so the DOM path can measure it. */
   canMeasureOffscreen: boolean;
+  /** Opens the layout gate (SPEC-047 AC-16): every schedule/measure/
+   * invalidate request before this is only recorded — pre-priming nothing
+   * rendered from `pages` exists, so there are no stale indices for the
+   * synchronous contract to protect, and running the collapsed layout here,
+   * in the view's own post-mount frame task, keeps the estimate pass out of
+   * the mount task. Idempotent. */
+  prime: () => void;
   /** Re-lays-out synchronously and schedules measurement of anything the
    * cache misses. Call on every model change (and when realization renders
    * previously virtual pages, so their blocks get exact DOM metrics). */
@@ -658,7 +665,21 @@ export function usePagination(
     }
   }
 
+  // Until prime() runs, every layout request is only recorded (SPEC-047
+  // AC-16): the immediate doc watcher, document.fonts.ready and anything
+  // else firing during the view's setup/mount would otherwise each run the
+  // full estimate relayout synchronously INSIDE the component's mount task
+  // — pre-priming there is nothing rendered from `pages` yet, so there are
+  // no stale block indices for schedule()'s synchronous contract to
+  // protect, and one deferred layout at prime() time is equivalent.
+  let primed = false;
+  let primeRequested = false;
+
   function schedule(): void {
+    if (!primed) {
+      primeRequested = true;
+      return;
+    }
     const model = docOf();
     if (!model) {
       pages.value = [];
@@ -680,6 +701,20 @@ export function usePagination(
     startMeasuring();
   }
 
+  /** Opens the layout gate (called from the view's mount kick, in its own
+   * frame task): runs the one layout every pre-prime request collapsed
+   * into. Idempotent. */
+  function prime(): void {
+    if (primed) {
+      return;
+    }
+    primed = true;
+    if (primeRequested) {
+      primeRequested = false;
+      schedule();
+    }
+  }
+
   /** The caller just told an ACTIVE measure loop that new work exists (a
    * fresh realization, a cleared cache) without going through schedule()'s
    * synchronous relayout: force the loop's next slot to re-lay-out — which
@@ -697,6 +732,10 @@ export function usePagination(
   }
 
   function scheduleMeasure(): void {
+    if (!primed) {
+      primeRequested = true;
+      return;
+    }
     if (running) {
       kickRunningLoop();
       return;
@@ -709,6 +748,14 @@ export function usePagination(
     baseFont = null;
     lastNoteReserves = undefined;
     measurer?.reset();
+    if (!primed) {
+      // Caches are dropped either way; the layout itself waits for prime()
+      // like every other pre-prime request (document.fonts.ready often
+      // resolves inside the open's mount task — the exact fusion prime()
+      // exists to prevent).
+      primeRequested = true;
+      return;
+    }
     // With the measure loop already running, the cache reset plus a kick is
     // enough: the loop's next slot re-lays-out against the now-empty cache,
     // re-collecting every block, so the extra synchronous relayout here
@@ -778,6 +825,7 @@ export function usePagination(
     busy,
     state,
     canMeasureOffscreen: measurer !== null,
+    prime,
     schedule,
     scheduleMeasure,
     invalidateAll,

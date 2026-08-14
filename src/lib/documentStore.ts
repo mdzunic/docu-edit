@@ -6,7 +6,7 @@
 // flips so the UI can show its warning banner.
 import { createDocument, type DocumentModel, type MediaPart } from "./documentModel";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
-import { yieldToMainThread } from "./idleScheduler";
+import { runWhenIdle, yieldToMainThread } from "./idleScheduler";
 import type { CaretPosition } from "./textEditing";
 
 /** Where a document's content last came from or went to. "new" means it was
@@ -590,5 +590,17 @@ export function storeDocument(doc: DocumentModel): void {
     model: doc,
   };
   records.set(doc.id, record);
-  persist(record);
+  // Deferred to browser idle (SPEC-047 AC-3/AC-16): storeDocument runs on
+  // the open path right before navigating into the document, and the
+  // IndexedDB put's synchronous structured clone of a large model was one
+  // of the main-thread blocks between choosing the file and first paint.
+  // The in-memory record above is what the view reads — only the
+  // write-through waits. The guard re-checks the record is still current at
+  // fire time so a document deleted (or re-stored) in the deferral window
+  // is not resurrected by a stale write.
+  runWhenIdle(() => {
+    if (records.get(record.id) === record) {
+      persist(record);
+    }
+  }, 1500);
 }

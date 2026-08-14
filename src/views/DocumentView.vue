@@ -1070,15 +1070,40 @@ const recoveryTime = computed(() =>
 
 async function focusAndRestore() {
   await nextTick();
+  // The first layout is deferred out of the mount task (see the pagination
+  // prime kick): until it lands there are no page heights to scroll within
+  // and no block DOM to place the caret in, so a session restore racing it
+  // would clamp the scroll to 0 and drop the caret. Wait for the first
+  // non-empty layout, then one more tick for its page DOM.
+  if (paginationPages.value.length === 0) {
+    await new Promise((resolve) => {
+      const stopWaiting = watch(paginationPages, (pages) => {
+        if (pages.length > 0) {
+          stopWaiting();
+          resolve(true);
+        }
+      });
+    });
+    await nextTick();
+  }
   attachScrollListener();
   const root = contentRoot.value;
   if (!root || !editable.value) {
     return;
   }
-  root.focus();
-  caret = caret ?? { section: 0, block: 0, offset: 0 };
-  setDomCaret(root, caret);
-  updateCaretStatus({ start: caret, end: caret });
+  // Waiting for the layout means this can now resume AFTER the user has
+  // already interacted — opened a dialog, clicked a menu, reached the find
+  // bar. Restoring must never steal focus from whatever they moved to:
+  // only take it while focus is still neutral (nowhere, or already in the
+  // canvas).
+  const active = document.activeElement;
+  const focusIsNeutral = !active || active === document.body || root.contains(active);
+  if (focusIsNeutral) {
+    root.focus();
+    caret = caret ?? { section: 0, block: 0, offset: 0 };
+    setDomCaret(root, caret);
+    updateCaretStatus({ start: caret, end: caret });
+  }
   // After focus/caret placement, which may themselves scroll.
   if (scrollContainer) {
     scrollContainer.scrollTop = scrollTop;
@@ -3954,17 +3979,10 @@ watch(paginationState, (state) => {
     documentOpening.value = false;
   }
 });
-onMounted(() => {
-  // A document whose pagination never needs to measure (nothing realized
-  // yet misses the cache) never transitions through "measuring", so the
-  // watcher above never observes a change to react to — checked once,
-  // after the initial schedule() call above has had a chance to run.
-  void nextTick(() => {
-    if (paginationState.value === "clean") {
-      documentOpening.value = false;
-    }
-  });
-});
+// The "never needs to measure" fallback lives in the initial-layout kick
+// below (see the doc watcher): a document whose pagination never
+// transitions through "measuring" gives the state watcher above no change
+// to observe, so the kick checks once, right after the first layout ran.
 
 // --- note numbering (SPEC-031 AC-7..9, AC-17..20) ---------------------------
 // Displayed note numbers, derived fresh from mark order and the numbering
@@ -4015,12 +4033,62 @@ watch(noteLabelsMap, (labels) => {
 });
 
 watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
-// A measurement kick, not a model change: the immediate sync watcher above
-// already laid out during setup (before `contentRoot` existed), so the mount
-// kick only needs to start measuring against the now-present DOM — see
-// scheduleMeasure's own comment (SPEC-047 AC-16).
-onMounted(() => pagination.scheduleMeasure());
-onBeforeUnmount(() => pagination.stop());
+// The controller starts un-primed: every layout request up to here (the
+// immediate watcher above, document.fonts.ready, anything else that fires
+// during setup/mount) is only RECORDED, so the whole estimate pass, first
+// page render and viewport refresh stop fusing into the component's own
+// mount task — the largest main-thread block of the open phase (SPEC-047
+// AC-16). prime() runs the recorded layout in its own frame task; the
+// rAF-less fallback keeps the old synchronous mount timing for
+// non-browser environments.
+let initialLayoutFrame = 0;
+let initialLayoutTimer = 0;
+let initialLayoutIdle = 0;
+onMounted(() => {
+  const kick = () => {
+    pagination.prime();
+    // A document whose pagination never needs to measure never transitions
+    // through "measuring", so the paginationState watcher above never
+    // observes a change — checked once here, right after the first layout.
+    if (paginationState.value === "clean") {
+      documentOpening.value = false;
+    }
+  };
+  // canMeasureOffscreen doubles as the "real rendering environment" probe
+  // (it is false exactly where canvas measurement — and painting — do not
+  // exist, i.e. jsdom): only a painting browser gains anything from
+  // deferring the first layout past the mount task, and the unit suites
+  // interact with the canvas synchronously after mount. requestIdleCallback
+  // (not rAF, not a bare timer) is the deferral that actually separates the
+  // tasks: a same-frame rAF callback runs in the mount task's own rendering
+  // update, and a timer can beat the frame — both fuse the layout right
+  // back into the block it was deferred out of. The timeout bounds how long
+  // a busy frame can hold the first layout back.
+  if (pagination.canMeasureOffscreen && typeof window.requestAnimationFrame === "function") {
+    if (typeof window.requestIdleCallback === "function") {
+      initialLayoutIdle = window.requestIdleCallback(kick, { timeout: 100 });
+    } else {
+      initialLayoutFrame = window.requestAnimationFrame(() => {
+        initialLayoutFrame = 0;
+        initialLayoutTimer = window.setTimeout(kick, 0);
+      });
+    }
+  } else {
+    kick();
+  }
+});
+onBeforeUnmount(() => {
+  if (initialLayoutFrame !== 0 && typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(initialLayoutFrame);
+  }
+  if (initialLayoutTimer !== 0) {
+    window.clearTimeout(initialLayoutTimer);
+  }
+  if (initialLayoutIdle !== 0 && typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(initialLayoutIdle);
+  }
+  pagination.stop();
+});
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
 const pageCount = computed(() => Math.max(1, paginationPages.value.length));

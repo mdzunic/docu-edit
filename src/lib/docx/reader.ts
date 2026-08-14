@@ -2409,6 +2409,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   // `media` on every save, same-format or not) — header/footer parts
   // (SPEC-029) are excluded the same way, for the same reason.
   const opaque: OpaquePart[] = [];
+  const opaqueEncodes: Array<() => Promise<void>> = [];
   for (const [name, data] of parts) {
     if (
       name !== mainPartPath &&
@@ -2417,20 +2418,37 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       !mediaById.has(name) &&
       !consumedHeaderFooterParts.has(name)
     ) {
-      // Native async encoder (SPEC-047 AC-3/AC-16) — each await is also a
-      // natural yield, so a package with many preserved parts never encodes
-      // them all in one task.
-      opaque.push({ name, data: await bytesToBase64Async(data) });
+      // Placeholder now, bytes encoded in the batched pass below — order in
+      // `opaque` stays the package's part order regardless of which encode
+      // resolves first.
+      const part: OpaquePart = { name, data: "" };
+      opaque.push(part);
+      opaqueEncodes.push(async () => {
+        part.data = await bytesToBase64Async(data);
+      });
     }
   }
 
-  // The one deferred base64 pass for every image any walk above collected —
-  // see parseDrawing/fillPendingMediaData: encoding per drawing put ~0.6s of
-  // the benchmark fixture's open inside the body walk; the native encoder
-  // here does the same bytes in a small fraction of that, one real yield per
-  // image.
+  // The one deferred base64 pass for every preserved part and image any walk
+  // above collected — see parseDrawing/fillPendingMediaData: encoding per
+  // drawing put ~0.6s of the benchmark fixture's open inside the body walk.
+  // Batched CONCURRENTLY, not one awaited encode at a time: each
+  // FileReader-backed encode is a full round trip to the browser's
+  // background encoder, and 500 sequential round trips spent ~0.3s of the
+  // fixture's open just waiting between them (SPEC-047 AC-3). One real
+  // yield between batches keeps the main-thread half of each batch (Blob
+  // copies, result strings) a short task instead of one fused block
+  // (AC-16).
+  const pendingEncodes: Array<() => Promise<void>> = [...opaqueEncodes];
   for (const part of mediaById.values()) {
-    await fillPendingMediaData(part);
+    pendingEncodes.push(() => fillPendingMediaData(part));
+  }
+  const ENCODE_BATCH = 48;
+  for (let start = 0; start < pendingEncodes.length; start += ENCODE_BATCH) {
+    await Promise.all(pendingEncodes.slice(start, start + ENCODE_BATCH).map((run) => run()));
+    if (start + ENCODE_BATCH < pendingEncodes.length) {
+      await yieldToMainThread();
+    }
   }
 
   // Document properties and metadata (SPEC-041): core.xml's fields plus

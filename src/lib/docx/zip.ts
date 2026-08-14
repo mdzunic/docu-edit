@@ -4,6 +4,8 @@
 // platform's DecompressionStream for DEFLATE rather than a bundled inflate
 // implementation, per this project's no-new-dependencies constraint.
 
+import { yieldToMainThread } from "../idleScheduler";
+
 export class ZipError extends Error {}
 
 const EOCD_SIGNATURE = 0x06054b50;
@@ -130,9 +132,18 @@ export async function unzip(data: ArrayBuffer | Uint8Array): Promise<Map<string,
   const entries = readCentralDirectory(view, bytes);
   const parts = new Map<string, Uint8Array>();
 
+  // `await inflateRaw(...)` resolves through microtasks only, so a package
+  // with hundreds of entries (SPEC-047's fixture has 500 images) inflates
+  // as ONE fused main-thread task without the periodic real yield below —
+  // the largest single block of the whole open phase (AC-16).
+  let sliceStart = performance.now();
   for (const entry of entries) {
     if (entry.fileName.endsWith("/")) {
       continue;
+    }
+    if (performance.now() - sliceStart > 8) {
+      await yieldToMainThread();
+      sliceStart = performance.now();
     }
     const compressed = readEntryData(view, bytes, entry);
     let content: Uint8Array;

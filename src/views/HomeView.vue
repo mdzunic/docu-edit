@@ -60,6 +60,16 @@ function closeMenu() {
 // Any click that bubbles to the document (i.e. outside the actions cell,
 // which stops propagation) closes the open row menu.
 onMounted(() => document.addEventListener("click", closeMenu));
+
+// Preload the editor route's chunk while the library sits idle (SPEC-047
+// AC-3): every action on this view ends in router.push("/doc/…"), and
+// without this the fetch + evaluation of the editor's whole module graph
+// lands inside the open path, between choosing a file and its first page.
+// Same specifier as router.ts's lazy route, so the router reuses the
+// already-loaded module.
+onMounted(() => {
+  void import("./DocumentView.vue");
+});
 onUnmounted(() => {
   document.removeEventListener("click", closeMenu);
   clearInterval(clockTimer);

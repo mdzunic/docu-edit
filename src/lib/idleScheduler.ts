@@ -112,3 +112,17 @@ export function yieldToMainThread(): Promise<void> {
     scheduleEagerWork(() => resolve(), 1);
   });
 }
+
+/** Runs `callback` once the browser is idle — after the pending frame has
+ * painted — forced after `timeoutMs` under sustained load. Unlike
+ * `scheduleIdleWork` this needs no time budget and survives environments
+ * without requestIdleCallback OR requestAnimationFrame (Safari, bare
+ * jsdom): the fallback is a plain macrotask, which keeps the deferral real
+ * without ever dropping the work. */
+export function runWhenIdle(callback: () => void, timeoutMs: number): void {
+  if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => callback(), { timeout: timeoutMs });
+    return;
+  }
+  setTimeout(callback, 0);
+}
