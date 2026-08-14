@@ -78,6 +78,7 @@ function paintLegend(
   series: ChartSeries[],
   widthPx: number,
   heightPx: number,
+  titleH: number,
 ): { reservedLeft: number; reservedRight: number; reservedTop: number; reservedBottom: number } {
   const reserved = { reservedLeft: 0, reservedRight: 0, reservedTop: 0, reservedBottom: 0 };
   const pos = chart.options.legend;
@@ -108,8 +109,12 @@ function paintLegend(
     }
   } else {
     reserved.reservedBottom = pos === "bottom" ? 18 : 0;
+    // The top legend paints below the title (if any) — computeLayout
+    // reserves titleH + 18px together, so the painted position must stack
+    // the same way or the two overlap (see the layout/paint split note on
+    // paintChart below).
     reserved.reservedTop = pos === "top" ? 18 : 0;
-    const y = pos === "top" ? 14 : heightPx - 8;
+    const y = pos === "top" ? titleH + 14 : heightPx - 8;
     let x = widthPx / 2 - (series.reduce((sum, s) => sum + ctx.measureText(s.name).width + swatch + gap * 3, 0)) / 2;
     for (const s of series) {
       ctx.fillStyle = s.color;
@@ -533,14 +538,17 @@ export function paintChart(ctx: CanvasRenderingContext2D, chart: Chart, widthPx:
   }
 
   const series = seriesToPlot(chart);
-  let top = 6;
+  // Painted top-to-bottom in the same order computeLayout reserves space
+  // for (title, then a top legend if any) so the two never overlap — see
+  // paintLegend's own "top" branch, which takes this same titleH.
+  let titleH = 0;
   if (chart.options.title) {
     ctx.fillStyle = TEXT_COLOR;
     ctx.font = TITLE_FONT;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.fillText(chart.options.title, widthPx / 2, 4);
-    top += 18;
+    titleH = 18;
   }
 
   const layout = computeLayout(ctx, chart, series, widthPx, heightPx);
@@ -559,7 +567,6 @@ export function paintChart(ctx: CanvasRenderingContext2D, chart: Chart, widthPx:
     paintPieLike(ctx, chart, series, layout);
   }
 
-  paintLegend(ctx, chart, series, widthPx, heightPx);
-  void top;
+  paintLegend(ctx, chart, series, widthPx, heightPx, titleH);
   ctx.restore();
 }

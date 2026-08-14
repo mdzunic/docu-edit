@@ -94,13 +94,27 @@ export function useCharts(deps: ChartsDeps) {
   }
 
   /** Double-clicking a chart, or "Edit data" on its toolbar (AC-4, AC-5):
-   * opens the data sheet. */
+   * opens the data sheet — never for a chart outside the catalogue (AC-30:
+   * editing is disabled for an unsupported chart type; the toolbar already
+   * hides its own Edit data/Chart options buttons behind the same check,
+   * this guards the dblclick path). */
   function handleChartEditData(section = 0, block = 0) {
     handleChartSelect(section, block);
+    const model = doc.value;
+    const chart = model ? chartAt(model, { section, block }) : null;
+    if (chart?.unsupportedChartXml !== undefined) {
+      return;
+    }
     editingChartData.value = true;
   }
 
   function openChartOptions() {
+    const model = doc.value;
+    const location = chartSelection.value;
+    const chart = model && location ? chartAt(model, location) : null;
+    if (chart?.unsupportedChartXml !== undefined) {
+      return;
+    }
     if (!chartSelection.value) {
       return;
     }

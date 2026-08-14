@@ -234,6 +234,44 @@ export function extractPageContent(
     });
   }
 
+  // Charts (SPEC-052 AC-34, AC-35) paint into a real <canvas> (DocChartBlock.vue)
+  // exactly like a shape's — reused here the same way, at the canvas's own
+  // painted pixel resolution (devicePixelRatio-scaled, not the CSS display
+  // size stretched up), never an upscaled bitmap.
+  for (const element of Array.from(pageEl.querySelectorAll("canvas.doc-chart-canvas"))) {
+    if (element.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const anchorEl = element.closest(".doc-chart-anchor");
+    if (anchorEl && anchorEl.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const canvas = element as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0.1 || rect.height <= 0.1) {
+      continue;
+    }
+    let src = "";
+    try {
+      src = canvas.toDataURL("image/png");
+    } catch {
+      continue;
+    }
+    if (!src || src === "data:,") {
+      continue;
+    }
+    const chartEl = canvas.closest(".doc-chart");
+    const zIndex = chartEl ? Number.parseInt(view.getComputedStyle(chartEl).zIndex, 10) : NaN;
+    images.push({
+      src,
+      xPt: (rect.left - pageRect.left) * scale,
+      yPt: (rect.top - pageRect.top) * scale,
+      widthPt: rect.width * scale,
+      heightPt: rect.height * scale,
+      onTop: Number.isFinite(zIndex) && zIndex > 0,
+    });
+  }
+
   for (const anchor of Array.from(pageEl.querySelectorAll("a[data-doc-link]"))) {
     if (anchor.closest(EXCLUDED_SELECTOR)) {
       continue;
