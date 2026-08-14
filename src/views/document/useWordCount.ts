@@ -186,6 +186,11 @@ export function useWordCount(deps: WordCountDeps) {
     statisticsOpen,
     includeNotes,
     dialogStats,
+    /** Exposed for dialogStats' other consumer (SPEC-041's Properties
+     * dialog Statistics tab): before the worker move dialogStats was a
+     * computed that tracked `doc` on its own, so merely rendering it was
+     * enough — now anything that shows it must ask for a refresh. */
+    refreshDialogStats,
     openStatistics,
     closeStatistics,
   };

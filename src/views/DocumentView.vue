@@ -1025,6 +1025,7 @@ const {
   statisticsOpen,
   includeNotes: statisticsIncludeNotes,
   dialogStats: statisticsStats,
+  refreshDialogStats: refreshStatisticsStats,
   openStatistics,
   closeStatistics,
 } = useWordCount({ doc, onUnmount });
@@ -4480,6 +4481,21 @@ const {
   touchDocument,
   commentAuthorName,
   trackChangesAuthorName,
+});
+// The Properties dialog's Statistics tab renders useWordCount's dialogStats
+// (SPEC-041 AC-4). Since the worker move (SPEC-047 AC-12) those stats are
+// computed on demand rather than by a doc-tracking computed, so this dialog
+// must request them like the Statistics dialog does — on open, and again if
+// the document is replaced under an open dialog (multi-tab refresh).
+watch(propertiesOpen, (open) => {
+  if (open) {
+    void refreshStatisticsStats();
+  }
+});
+watch(doc, () => {
+  if (propertiesOpen.value) {
+    void refreshStatisticsStats();
+  }
 });
 
 // Every markDirty() call site also feeds the version-history cadence timer
