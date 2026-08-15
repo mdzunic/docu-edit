@@ -97,6 +97,7 @@ import { useFileActions } from "./document/useFileActions";
 import { usePageSetupDialogs } from "./document/usePageSetupDialogs";
 import { useOutlinePane } from "./document/useOutlinePane";
 import { useMergeFields } from "./document/useMergeFields";
+import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { documentExists } from "../lib/documents";
 import {
   getOrCreateDocument,
@@ -351,7 +352,6 @@ import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runSty
 import { markSegments } from "../lib/core/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/core/idleScheduler";
 import { sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
-import { PX_PER_CM } from "../lib/core/units";
 import { noNoteArea, noNoteAreaItems } from "../lib/notesLayout";
 import {
   computePageNumbers,
@@ -1081,11 +1081,8 @@ function closeSession() {
   lockState.value = "pending";
   caret = noCaret();
   scrollTop = 0;
-  // The next document opens scrolled to the top: realize only its head
-  // until the viewport refresh sees the real scroll position.
-  viewportPageRange.value = { start: 0, end: 2 };
-  anchorPage.value = -1;
-  caretPage.value = 1;
+  // The virtualization trackers (viewportPageRange/anchorPage/caretPage)
+  // reset via useViewportVirtualization's own session-close hook below.
   dismissPasteChip();
   sessionCloseHooks.forEach((cb) => cb());
   clearCellSelection();
@@ -1822,7 +1819,11 @@ const {
   scheduleColumnArrowFallback,
 } = usePageNavigation({
   ...editorContext,
-  refreshViewportRange,
+  // Deferred behind a lambda: the const is destructured from
+  // useViewportVirtualization, wired after pagination below — the wrapper
+  // reads it at call time (a paging key handler, past setup), never during
+  // this deps object's evaluation.
+  refreshViewportRange: () => refreshViewportRange(),
 });
 
 // Tracks the primary button across a text-selection drag (SPEC-020): the
@@ -3363,123 +3364,31 @@ const {
   getSelectionAnchor: () => selectionAnchor,
 });
 
-const caretPage = ref(1);
 const caretSectionIndex = ref(0);
 const paragraphPagination = ref(emptyParagraphPaginationState());
 
 // --- page virtualization (SPEC-028 AC-49/50) --------------------------------
-// Mounting every block of a 200-page document is what used to blow the
-// settle budget: each mid-pass relayout shifted page boundaries, moving
-// most paragraphs to a different DocPage, and Vue unmounted + remounted
-// nearly the whole canvas several times per pass. Beyond a small page
-// count only pages that matter render their content — everything near the
-// viewport, the caret's / selection anchor's / current find match's page,
-// and pages already realized whose layout hasn't changed (sticky, so DOM
-// nodes on earlier pages survive edits elsewhere — AC-52/53) — while the
-// rest render as correctly-sized empty page boxes. Their blocks are
-// measured off-DOM by the pagination controller's canvas metrics, which is
-// why virtualization requires `canMeasureOffscreen`.
-
-/** Documents up to this many pages always realize fully — the exact
- * pre-virtualization behaviour for ordinary documents. */
-const VIRTUALIZE_MIN_PAGES = 12;
-/** DocPage's inter-page margin (AC-2's visible gap), part of page-top math. */
-const PAGE_GAP_PX = 12;
-/** Extra realization margin around the viewport, px. */
-const VIEWPORT_OVERSCAN_PX = 400;
-
-// Starts narrow: a large document's first render (opening lands before any
-// scroll/mount refresh) must realize only the top pages, not all of them —
-// refreshViewportRange corrects the range from the real viewport.
-const viewportPageRange = ref({ start: 0, end: 2 });
-/** Page-layout objects that have rendered their content once: they keep
- * rendering while reconciliation preserves them (an unchanged page never
- * loses its DOM), and drop out naturally when an edit replaces the page. */
-const realizedSticky = new WeakSet();
-/** The selection anchor's page (−1 for a collapsed caret): both ends of a
- * selection must stay rendered or the DOM selection would collapse. */
-const anchorPage = ref(-1);
-
-const virtualizing = computed(
-  () =>
-    // Print preview / printing / PDF export need every page's real content
-    // in the DOM (SPEC-034) — virtualization pauses while they run.
-    !printForceRealize.value &&
-    pagination.canMeasureOffscreen && paginationPages.value.length > VIRTUALIZE_MIN_PAGES,
-);
-
-function refreshViewportRange() {
-  const container = scrollContainer;
-  const pagesEl = pageRef.value;
-  const layout = paginationPages.value;
-  if (!container || !pagesEl || layout.length === 0) {
-    return;
-  }
-  const pagesTop =
-    pagesEl.getBoundingClientRect().top -
-    container.getBoundingClientRect().top +
-    container.scrollTop;
-  const viewTop = container.scrollTop - pagesTop - VIEWPORT_OVERSCAN_PX - container.clientHeight;
-  const viewBottom =
-    container.scrollTop - pagesTop + 2 * container.clientHeight + VIEWPORT_OVERSCAN_PX;
-  let top = 0;
-  let start = layout.length - 1;
-  let end = 0;
-  for (let index = 0; index < layout.length; index += 1) {
-    const bottom = top + layout[index].pageSize.heightCm * PX_PER_CM;
-    if (bottom >= viewTop && top <= viewBottom) {
-      if (index < start) {
-        start = index;
-      }
-      if (index > end) {
-        end = index;
-      }
-    }
-    top = bottom + PAGE_GAP_PX;
-  }
-  if (start > end) {
-    start = 0;
-    end = Math.min(2, layout.length - 1);
-  }
-  const current = viewportPageRange.value;
-  if (current.start !== start || current.end !== end) {
-    viewportPageRange.value = { start, end };
-  }
-}
-
-let viewportRefreshHandle = 0;
-function scheduleViewportRefresh() {
-  if (viewportRefreshHandle !== 0 || typeof window.requestAnimationFrame !== "function") {
-    return;
-  }
-  viewportRefreshHandle = window.requestAnimationFrame(() => {
-    viewportRefreshHandle = 0;
-    refreshViewportRange();
-  });
-}
-watch(paginationPages, scheduleViewportRefresh);
-
-// Newly realized pages render blocks that may only have estimated metrics
-// (tables, images — canvas metrics cover paragraphs only): re-schedule so
-// the controller measures them off their fresh DOM.
-watch([viewportPageRange, caretPage], () => {
-  if (!virtualizing.value) {
-    return;
-  }
-  // Realization changed, the model didn't: measure the freshly rendered
-  // blocks without forcing a synchronous relayout of an unchanged layout
-  // (SPEC-047 AC-16 — see scheduleMeasure's own comment).
-  void nextTick().then(() => pagination.scheduleMeasure());
+// Which pages render real content versus correctly-sized empty page boxes
+// lives in useViewportVirtualization (see its header comment). Wired after
+// usePrintPreview — whose forceRealizeAll (printForceRealize) pauses it —
+// and before usePaginationView, which consumes the trackers below through
+// its own extras.
+const {
+  viewportPageRange,
+  anchorPage,
+  caretPage,
+  realizedSticky,
+  virtualizing,
+  refreshViewportRange,
+  scheduleViewportRefresh,
+  refreshCaretPage,
+} = useViewportVirtualization({
+  ...editorContext,
+  pagination,
+  paginationPages,
+  printForceRealize,
+  getPageCount: () => pageCount.value,
 });
-
-function refreshCaretPage() {
-  if (caret) {
-    caretPage.value = pagination.pageOfCaret(caret) + 1;
-  } else if (caretPage.value > pageCount.value) {
-    caretPage.value = pageCount.value;
-  }
-}
-watch(paginationPages, refreshCaretPage);
 
 /** The "Show formatting marks" toggle (AC-12): a view preference like the
  * ruler's, persisted with the document — and a re-measure trigger, because

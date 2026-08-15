@@ -25,12 +25,13 @@
 //   2026-08-15  6655  Phase 1c — useContextMenus extracted
 //   2026-08-15  6545  Phase 1d — useFileActions extracted
 //   2026-08-15  6285  Phase 1e — page-setup/outline/merge trio extracted
+//   2026-08-15  6190  Phase 1f — useViewportVirtualization extracted
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 6285;
+const LINE_BUDGET = 6190;
 
 describe("DocumentView size budget", () => {
   it(`DocumentView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
