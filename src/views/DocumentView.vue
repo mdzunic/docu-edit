@@ -91,6 +91,7 @@ import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
 import { noSpellContextMenu, noSpellUnderlineRect, useSpellCheck } from "./document/useSpellCheck";
 import { useDocumentLanguage } from "./document/useDocumentLanguage";
+import { useStyleManager } from "./document/useStyleManager";
 import { documentExists } from "../lib/documents";
 import {
   activeHeadingAnchor,
@@ -145,7 +146,6 @@ import {
   noActiveHeaderFooter,
   noActiveNote,
   noBlocks,
-  noNamedStyles,
   noNoteContent,
   resolveColumnWidthsCm,
   sectionColumns,
@@ -303,26 +303,18 @@ import {
 import { importHtml } from "../lib/htmlPaste";
 import {
   adjustIndent,
-  applyCharacterStyle,
   applyFormat,
   applyListAutoformat,
   applyListDefinition,
   applyMultilevelPreset,
   applyPainterFormat,
   applyParagraphFormat,
-  applyParagraphStyle,
-  applyTableStyle,
   asPageSetupScope,
-  createStyle,
-  deleteStyle,
-  modifyStyle,
-  noStyleFormInput,
   toolbarCharacterStyleState,
   continueListNumbering,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
-  caretFormatting,
   caretSelection,
   changeListLevel,
   clearFormatting,
@@ -358,7 +350,6 @@ import {
   noSelection,
   paragraphPaginationState,
   removeListFormat,
-  resetParagraphStyle,
   restartListNumbering,
   selectAll,
   selectionListDefinitionLevels,
@@ -380,7 +371,6 @@ import {
   toolbarListState,
   toolbarStyleState,
   touchedBlocks,
-  updateStyleFromSelection,
   verticalAlignState,
   withHeaderFooterModel,
   withNoteModel,
@@ -429,29 +419,7 @@ import {
   previewImageSize,
   resizedImageSize,
 } from "../lib/imageResize";
-import {
-  allStyles,
-  headingStyleId,
-  isStyleInUse,
-  NORMAL_STYLE_ID,
-  noStyleEntries,
-  noStylesPaneEntries,
-  resolveNamedStyle,
-  styleById,
-  stylePickerEntries,
-  stylesPaneEntries,
-  styleTypeOf,
-} from "../lib/styles";
-import {
-  importStyles,
-  noStyleImportPlan,
-  noStyleImportResolutionMap,
-  noStyleImportSummary,
-  planStyleImport,
-  readStylesFromFile,
-  styleImportConflictRows,
-  styleImportResolutionsFromMap,
-} from "../lib/customStyles";
+import { headingStyleId, NORMAL_STYLE_ID } from "../lib/styles";
 import StylesPane from "../components/StylesPane.vue";
 import StyleEditorDialog from "../components/StyleEditorDialog.vue";
 import StyleDeleteDialog from "../components/StyleDeleteDialog.vue";
@@ -699,31 +667,14 @@ const paragraphFormatting = ref(emptyParagraphFormatting());
 const listState = ref(emptyToolbarListState());
 // --- paragraph styles (SPEC-019) --------------------------------------------
 // The style picker's current entry (the first touched paragraph's named
-// style, AC-1) and its menu entries — the document's own styles, or the
-// built-in set for a blank document (AC-2, AC-8). doc.value is replaced on
-// every edit, so the list follows catalogue changes (AC-13).
+// style, AC-1); the picker's menu entries and its actions live in
+// useStyleManager.
 const styleState = ref(emptyToolbarStyleState());
-const styleEntries = computed(() => (doc.value ? stylePickerEntries(doc.value) : noStyleEntries()));
 // --- custom styles manager (SPEC-042) ---------------------------------------
 // The caret's active character style (AC-10's second readout, alongside
-// styleState above) and the Styles pane/dialogs' own state.
+// styleState above); the Styles pane/dialogs' own state lives in
+// useStyleManager.
 const characterStyleState = ref(emptyToolbarStyleState());
-const stylesPaneOpen = ref(false);
-const stylesPaneEntriesList = computed(() => (doc.value ? stylesPaneEntries(doc.value) : noStylesPaneEntries()));
-const styleEditorOpen = ref(false);
-const styleEditorMode = ref("new");
-const styleEditorType = ref("paragraph");
-const styleEditorTargetId = ref("");
-const styleDeleteTargetId = ref("");
-const styleDeleteTargetInUse = ref(false);
-const importDialogOpen = ref(false);
-const importPhase = ref("pick");
-const importFileName = ref("");
-const importError = ref("");
-const importSourceStyles = ref(noNamedStyles());
-const importPlanState = ref(noStyleImportPlan());
-const importResolutions = ref(noStyleImportResolutionMap());
-const importSummaryState = ref(noStyleImportSummary());
 // The custom-spacing dialog (AC-12..14): open flag plus the prefill taken
 // from the first touched paragraph at the moment it opens.
 const customSpacingOpen = ref(false);
@@ -2766,265 +2717,60 @@ function handleIndent(direction = 1) {
   );
 }
 
-// --- paragraph styles (SPEC-019) --------------------------------------------
-
-/** Applies a style to every paragraph in the selection (AC-3) — the picker's
- * click and the Ctrl/Cmd+Alt+0..6 shortcuts (AC-5, AC-6) both land here. An
- * empty caret paragraph has no run to carry the style's run formatting, so
- * it becomes the pending format the next typed text takes. */
-function handleApplyStyle(styleId = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (styleId === "" || !root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(applyParagraphStyle(model, selection, styleId), selection, "paragraph style");
-  const after = doc.value;
-  const block = after ? paragraphAtCaret(after, selection.focus) : undefined;
-  if (after && block && block.runs.length === 0) {
-    pendingFormat = { ...resolveNamedStyle(after, styleId).runFormatting };
-    updateCaretStatus({ start: selection.anchor, end: selection.focus });
-  }
-  root.focus();
-}
-
-/** "Update <style> to match" from a picker entry's context menu (AC-12). */
-function handleUpdateStyle(styleId = "") {
-  if (styleId === "") {
-    return;
-  }
-  applyParagraphCommand(
-    (model, selection) => updateStyleFromSelection(model, selection, styleId),
-    "update style",
-  );
-}
-
-/** "Reset style": removes direct formatting from the selection (AC-14). */
-function handleResetStyle() {
-  applyParagraphCommand(
-    (model, selection) => resetParagraphStyle(model, selection),
-    "reset style",
-  );
-}
-
-// --- custom styles manager (SPEC-042) ---------------------------------------
-
-function toggleStylesPane() {
-  stylesPaneOpen.value = !stylesPaneOpen.value;
-}
-
-function closeStylesPane() {
-  stylesPaneOpen.value = false;
-}
-
-/** "New style" (AC-3): seeded from the caret's current formatting, and — for
- * a paragraph/list style — its current paragraph style as the "based on"
- * starting point. */
-function openNewStyle(type = "paragraph") {
-  styleEditorMode.value = "new";
-  styleEditorType.value = type;
-  styleEditorTargetId.value = "";
-  styleEditorOpen.value = true;
-}
-
-/** "Modify style" (AC-4). */
-function openModifyStyle(styleId = "") {
-  const model = doc.value;
-  const target = model ? styleById(model, styleId) : undefined;
-  styleEditorMode.value = "modify";
-  styleEditorType.value = target ? styleTypeOf(target) : "paragraph";
-  styleEditorTargetId.value = styleId;
-  styleEditorOpen.value = true;
-}
-
-function closeStyleEditor() {
-  styleEditorOpen.value = false;
-}
-
-/** The style being modified, or an empty style for "new" (fields default to
- * the caret's own formatting via styleEditorInitialProps below). */
-const styleEditorInitialProps = computed(() => {
-  const model = doc.value;
-  if (styleEditorMode.value === "modify") {
-    const target = model ? styleById(model, styleEditorTargetId.value) : undefined;
-    const border = target?.cellBorders?.top;
-    return {
-      initialName: target?.name ?? "",
-      initialType: target ? styleTypeOf(target) : "paragraph",
-      initialBasedOn: target?.basedOn ?? "",
-      initialNext: target?.next ?? "",
-      initialFontFamily: target?.runFormatting?.fontFamily ?? "",
-      initialFontSizePt: target?.runFormatting?.fontSizePt,
-      initialBold: target?.runFormatting?.bold === true,
-      initialItalic: target?.runFormatting?.italic === true,
-      initialUnderline: target?.runFormatting?.underline === true,
-      initialColor: target?.runFormatting?.color ?? "",
-      initialAlignment: target?.paragraphFormatting?.alignment ?? "",
-      initialListPresetKey: "decimal",
-      initialCellShadingFill: target?.cellShadingFill ?? "",
-      initialCellBorderStyle: border?.style ?? "",
-      initialCellBorderWidthPt: border?.widthPt ?? 1,
-      initialCellBorderColor: border?.color ?? "#000000",
-    };
-  }
-  const caretNow = caretPosition.value;
-  const caretRun = model && caretNow ? caretFormatting(model, caretNow) : {};
-  const caretParagraph = model && caretNow ? paragraphAtCaret(model, caretNow) : undefined;
-  return {
-    initialName: "",
-    initialType: styleEditorType.value,
-    initialBasedOn: caretParagraph?.styleId ?? "",
-    initialNext: "",
-    initialFontFamily: caretRun.fontFamily ?? "",
-    initialFontSizePt: caretRun.fontSizePt,
-    initialBold: caretRun.bold === true,
-    initialItalic: caretRun.italic === true,
-    initialUnderline: caretRun.underline === true,
-    initialColor: caretRun.color ?? "",
-    initialAlignment: caretParagraph?.formatting?.alignment ?? "",
-    initialListPresetKey: "decimal",
-    initialCellShadingFill: "",
-    initialCellBorderStyle: "",
-    initialCellBorderWidthPt: 1,
-    initialCellBorderColor: "#000000",
-  };
+// --- paragraph styles and the custom styles manager (SPEC-019, SPEC-042) ---
+// The style picker's actions, the Styles pane, the style editor/delete
+// dialogs and the import-styles flow live in useStyleManager; handleKeyDown's
+// Ctrl/Cmd+Alt+0..6 shortcuts dispatch into handleApplyStyle. caretPosition
+// is declared later (with the outline navigator), so it comes in as a lazy
+// getter — read only when styleEditorInitialProps evaluates, after setup.
+const {
+  styleEntries,
+  stylesPaneOpen,
+  stylesPaneEntriesList,
+  styleEditorOpen,
+  styleEditorMode,
+  styleDeleteTargetId,
+  styleDeleteTargetInUse,
+  importDialogOpen,
+  importPhase,
+  importFileName,
+  importError,
+  importResolutions,
+  importSummaryState,
+  styleEditorInitialProps,
+  styleEditorBasedOnOptions,
+  styleEditorExistingNames,
+  styleDeleteTargetName,
+  importConflictRows,
+  importNonConflictingCount,
+  handleApplyStyle,
+  handleUpdateStyle,
+  handleResetStyle,
+  toggleStylesPane,
+  closeStylesPane,
+  openNewStyle,
+  openModifyStyle,
+  closeStyleEditor,
+  saveStyleEditor,
+  openDeleteStyle,
+  cancelDeleteStyle,
+  confirmDeleteStyle,
+  applyStyleFromPane,
+  openImportDialog,
+  closeImportDialog,
+  handleImportChooseFile,
+  setImportResolution,
+  confirmImportStyles,
+} = useStyleManager({
+  ...editorContext,
+  paragraphSelection,
+  applyParagraphCommand,
+  setPendingFormat: (next) => {
+    pendingFormat = next;
+  },
+  updateCaretStatus,
+  getCaretPosition: () => caretPosition.value,
 });
-
-const styleEditorBasedOnOptions = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return [];
-  }
-  return allStyles(model)
-    .filter((entry) => entry.name !== undefined && entry.id !== styleEditorTargetId.value)
-    .map((entry) => ({ id: entry.id, name: entry.name ?? entry.id }));
-});
-
-const styleEditorExistingNames = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return [];
-  }
-  return allStyles(model)
-    .filter((entry) => entry.name !== undefined && entry.id !== styleEditorTargetId.value)
-    .map((entry) => (entry.name ?? entry.id).trim().toLowerCase());
-});
-
-function saveStyleEditor(payload = noStyleFormInput()) {
-  if (styleEditorMode.value === "new") {
-    applyParagraphCommand((model, selection) => createStyle(model, selection, payload), "new style");
-  } else {
-    applyParagraphCommand(
-      (model, selection) => modifyStyle(model, selection, styleEditorTargetId.value, payload),
-      "modify style",
-    );
-  }
-  styleEditorOpen.value = false;
-}
-
-/** "Delete style" (AC-7): the pane's own Delete button opens the confirm
- * dialog directly — the in-use warning (AC-8) is computed from the live
- * document here, not left to the dialog to guess. */
-function openDeleteStyle(styleId = "") {
-  const model = doc.value;
-  styleDeleteTargetId.value = styleId;
-  styleDeleteTargetInUse.value = model ? isStyleInUse(model, styleId) : false;
-}
-
-function cancelDeleteStyle() {
-  styleDeleteTargetId.value = "";
-}
-
-function confirmDeleteStyle() {
-  applyParagraphCommand(
-    (model, selection) => deleteStyle(model, selection, styleDeleteTargetId.value),
-    "delete style",
-  );
-  styleDeleteTargetId.value = "";
-}
-
-const styleDeleteTargetName = computed(() => {
-  const model = doc.value;
-  const target = model ? styleById(model, styleDeleteTargetId.value) : undefined;
-  return target?.name ?? styleDeleteTargetId.value;
-});
-
-/** Applying a style from the pane (AC-9): character/table styles use their
- * own commands; paragraph/list styles reuse the picker's own apply path
- * (which also links a list style's numbering, SPEC-032's styleLinkFor). */
-function applyStyleFromPane(payload = { id: "", type: "paragraph" }) {
-  if (payload.type === "character") {
-    applyParagraphCommand(
-      (model, selection) => applyCharacterStyle(model, selection, payload.id),
-      "character style",
-    );
-  } else if (payload.type === "table") {
-    applyParagraphCommand((model, selection) => applyTableStyle(model, selection, payload.id), "table style");
-  } else {
-    handleApplyStyle(payload.id);
-  }
-}
-
-// --- import styles from another document (SPEC-042 AC-19..24) --------------
-
-function openImportDialog() {
-  importDialogOpen.value = true;
-  importPhase.value = "pick";
-  importFileName.value = "";
-  importError.value = "";
-  importSourceStyles.value = noNamedStyles();
-  importPlanState.value = noStyleImportPlan();
-  importResolutions.value = noStyleImportResolutionMap();
-  importSummaryState.value = noStyleImportSummary();
-}
-
-function closeImportDialog() {
-  importDialogOpen.value = false;
-}
-
-const importConflictRows = computed(() =>
-  importPlanState.value ? styleImportConflictRows(importPlanState.value.conflicts) : [],
-);
-const importNonConflictingCount = computed(() => importPlanState.value?.nonConflicting.length ?? 0);
-
-/** Reads the chosen file's styles and plans the merge (AC-19, AC-20, AC-21). */
-async function handleImportChooseFile(file = new File([], "")) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  importError.value = "";
-  try {
-    const styles = await readStylesFromFile(file);
-    importFileName.value = file.name;
-    importSourceStyles.value = styles;
-    importPlanState.value = planStyleImport(model, styles);
-    importResolutions.value = noStyleImportResolutionMap();
-    importPhase.value = "plan";
-  } catch (error) {
-    importError.value = error instanceof Error ? error.message : "Could not read styles from that file";
-  }
-}
-
-function setImportResolution(payload = { sourceId: "", resolution: "keep" }) {
-  importResolutions.value = { ...importResolutions.value, [payload.sourceId]: payload.resolution };
-}
-
-/** Applies the plan (AC-22, AC-23) and shows the summary (AC-24). */
-function confirmImportStyles() {
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  const resolutions = styleImportResolutionsFromMap(importResolutions.value);
-  const result = importStyles(model, importSourceStyles.value, resolutions);
-  applyEdit({ model: result.model, selection }, selection, "import styles");
-  importSummaryState.value = result.summary;
-  importPhase.value = "summary";
-}
 
 // --- mail-merge: convert literal {{...}} text (SPEC-046) --------------------
 
