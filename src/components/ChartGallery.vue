@@ -70,9 +70,12 @@ function iconMarks(chartType = "columnClustered") {
 
 .chart-gallery-items {
   display: grid;
-  /* Same six tracks as the shape gallery, so the two galleries' cells sit
-     on one another's columns down the menu. */
-  grid-template-columns: repeat(6, 1fr);
+  /* One column per catalogue entry, however many that is: the whole gallery
+     is a single row, so it costs the Insert menu — the longest in the bar,
+     and one that has to fit a 720px viewport whole (SPEC-028 AC-8/AC-9) —
+     one row of height rather than two. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 0.25rem;
 }
 
@@ -80,7 +83,7 @@ function iconMarks(chartType = "columnClustered") {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 1.625rem;
+  height: 1.5rem;
   padding: 0.125rem;
   border: 1px solid #dadce0;
   border-radius: 4px;

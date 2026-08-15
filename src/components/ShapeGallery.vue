@@ -93,16 +93,30 @@ function iconClass(geometry = "rect") {
   padding: 0.125rem 1rem 0.25rem;
 }
 
+/* Each group is a label beside its own row rather than above it: the Insert
+   menu is by far the longest in the bar and has to fit a 720px viewport
+   whole (SPEC-028 AC-8/AC-9 asserts the break commands below this gallery
+   are inside it), and the menu has horizontal room to spare where it has
+   none vertically. */
+.shape-gallery-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .shape-gallery-group-label {
+  flex: none;
+  width: 4rem;
   font-size: 0.625rem;
   font-weight: 600;
+  line-height: 1.15;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #80868b;
-  margin-bottom: 0.0625rem;
 }
 
 .shape-gallery-items {
+  flex: 1;
   display: grid;
   /* Fixed track count with equal shares: every cell holds the same
      fixed-size icon, so the columns line up across all four groups. */
@@ -117,7 +131,7 @@ function iconClass(geometry = "rect") {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 1.625rem;
+  height: 1.5rem;
   padding: 0.125rem;
   border: 1px solid #dadce0;
   border-radius: 4px;

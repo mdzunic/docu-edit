@@ -1252,6 +1252,9 @@ export interface HeaderFooterWritePlan {
   parts: HeaderFooterPartPlan[];
   /** `<Relationship>` elements for word/_rels/document.xml.rels. */
   relationshipsXml: string;
+  /** The relationship ids minted above, so a later plan can mint past them
+   * without having to parse `relationshipsXml` back. */
+  relIds: Set<string>;
   /** `<Override>` elements for `[Content_Types].xml`. */
   contentTypesXml: string;
   /** True when any section wants different odd/even pages — OOXML only
@@ -1291,6 +1294,7 @@ function planHeaderFooterWrite(
   const parts: HeaderFooterPartPlan[] = [];
   const relParts: string[] = [];
   const overrideParts: string[] = [];
+  const relIds = new Set<string>();
   const taken = new Set(takenRelIds);
   let headerCount = 0;
   let footerCount = 0;
@@ -1315,6 +1319,7 @@ function planHeaderFooterWrite(
     }
     const relId = nextFreeRelId(taken);
     taken.add(relId);
+    relIds.add(relId);
     const mediaPlan = planMediaWriteForBlocks(blocks, model.media, existingMediaPartNames, 1);
     const hyperlinkPlan = planHyperlinkWriteFor(blocks, new Set());
     parts.push({ partName, blocks, mediaPlan, hyperlinkPlan });
@@ -1346,6 +1351,7 @@ function planHeaderFooterWrite(
     bySection,
     parts,
     relationshipsXml: relParts.join(""),
+    relIds,
     contentTypesXml: overrideParts.join(""),
     evenAndOddHeaders,
   };
@@ -2670,9 +2676,7 @@ export async function writeDocx(
         ...mediaPlan.relIds,
         ...notesPlan.relIds,
         ...commentsPlan.relIds,
-        ...takenRelIdsOf(
-          parseRelationships(`<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${headerFooterPlan.relationshipsXml}</Relationships>`).values(),
-        ),
+        ...headerFooterPlan.relIds,
       ]),
       new Set(),
       true,
@@ -2915,9 +2919,7 @@ export async function writeDocx(
       ...mediaPlan.relIds,
       ...notesPlan.relIds,
       ...commentsPlan.relIds,
-      ...takenRelIdsOf(
-        parseRelationships(`<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${headerFooterPlan.relationshipsXml}</Relationships>`).values(),
-      ),
+      ...headerFooterPlan.relIds,
     ]),
     existingPartNames,
     false,

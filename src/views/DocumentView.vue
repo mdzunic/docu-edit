@@ -6830,7 +6830,14 @@ async function menuPastePlain() {
   display: none;
 }
 
+/* The hovered size reads out beside the grid rather than under it: the grid
+   is far taller than it is wide, and the Insert menu needs every row of
+   height it can give back to keep fitting a 720px viewport whole (SPEC-028
+   AC-8/AC-9 asserts the break commands further down are inside it). */
 .menu-table-grid-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
   padding: 0.25rem 1rem 0.5rem;
 }
 
@@ -6846,8 +6853,8 @@ async function menuPastePlain() {
 }
 
 .menu-table-grid-cell {
-  width: 0.8125rem;
-  height: 0.8125rem;
+  width: 0.75rem;
+  height: 0.75rem;
   padding: 0;
   border: 1px solid #bdbdbd;
   border-radius: 2px;
@@ -6866,9 +6873,9 @@ async function menuPastePlain() {
 }
 
 .menu-table-grid-label {
-  margin-top: 0.1875rem;
   font-size: 0.78rem;
   color: #5f6368;
+  white-space: nowrap;
 }
 
 /* The format painter button's armed state (SPEC-020 AC-11, AC-14). */

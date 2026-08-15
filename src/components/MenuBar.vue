@@ -432,8 +432,9 @@ onBeforeUnmount(() => {
 }
 
 .menu-popup :deep(.menu-section-label) {
-  padding: 0.25rem 1rem 0.1rem;
+  padding: 0.125rem 1rem 0.0625rem;
   font-size: 0.7rem;
+  line-height: 1.2;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;

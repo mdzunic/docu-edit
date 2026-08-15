@@ -38,8 +38,9 @@ interface ModelShape {
 }
 
 /** The newest persisted model (draft beats committed when newer) — same
- * IndexedDB read as e2e/SPEC-012.spec.ts. */
-async function readLatestModel(page: Page, id: string): Promise<ModelShape> {
+ * IndexedDB read as e2e/SPEC-012.spec.ts, or null while the document has
+ * yet to reach the store. */
+async function readPersistedModel(page: Page, id: string): Promise<ModelShape | null> {
   return page.evaluate(async (docId) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("docu-edit"); // no explicit version: the app has already opened the DB at its current schema version by this point
@@ -64,7 +65,21 @@ async function readLatestModel(page: Page, id: string): Promise<ModelShape> {
       return draft.model;
     }
     return committed?.model ?? null;
-  }, id) as Promise<ModelShape>;
+  }, id) as Promise<ModelShape | null>;
+}
+
+/** The same read, waited on: opening a document routes as soon as the
+ * import parses, and the model reaches IndexedDB a beat later — a single
+ * read that raced that write came back null under load. The save-state
+ * indicator is no help here, since an import never flips it away from
+ * "All changes saved" in the first place. */
+async function readLatestModel(page: Page, id: string): Promise<ModelShape> {
+  await expect.poll(async () => (await readPersistedModel(page, id)) !== null).toBe(true);
+  const model = await readPersistedModel(page, id);
+  if (!model) {
+    throw new Error(`no persisted model for ${id}`);
+  }
+  return model;
 }
 
 function blockFormatting(model: ModelShape, index: number): Record<string, unknown> {
