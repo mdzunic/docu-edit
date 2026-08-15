@@ -94,18 +94,10 @@ import { useDocumentLanguage } from "./document/useDocumentLanguage";
 import { useStyleManager } from "./document/useStyleManager";
 import { useContextMenus } from "./document/useContextMenus";
 import { useFileActions } from "./document/useFileActions";
+import { usePageSetupDialogs } from "./document/usePageSetupDialogs";
+import { useOutlinePane } from "./document/useOutlinePane";
+import { useMergeFields } from "./document/useMergeFields";
 import { documentExists } from "../lib/documents";
-import {
-  activeHeadingAnchor,
-  blockKey,
-  buildOutline,
-  emptyKeySet,
-  hiddenBlockAddresses,
-  moveHeading,
-} from "../lib/outline";
-import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../lib/outlinePane";
-import { convertLiteralChipsToRuns, hasConvertibleLiteralChips } from "../lib/mergeChips";
-import { namedArrayFieldList, namedFieldList, noParsedDataSource } from "../lib/merge";
 import {
   getOrCreateDocument,
   replaceDocumentModel,
@@ -142,11 +134,6 @@ import {
   noActiveNote,
   noBlocks,
   noNoteContent,
-  resolveColumnWidthsCm,
-  sectionColumns,
-  sectionContentWidthCm,
-  sectionMargins,
-  sectionPageSize,
 } from "../lib/documentModel";
 import { asChartType, CHART_CATALOGUE, SINGLE_SERIES_CHART_TYPES } from "../lib/core/charts";
 import { asListLevelDefinitions, asListMarkerStyle, asListType } from "../lib/core/lists";
@@ -157,7 +144,6 @@ import {
   asTableAlignment,
   asTableWidthMode,
 } from "../lib/core/tables";
-import { asMeasurementUnit } from "../lib/core/units";
 import {
   defaultTocOptions,
   insertTableOfContents,
@@ -221,11 +207,7 @@ import {
   MIN_ROW_HEIGHT_CM,
   noCellRange,
 } from "../lib/core/tables";
-import {
-  applyColumns,
-  asColumnsScope,
-  setColumnBoundary,
-} from "../lib/columns";
+import { setColumnBoundary } from "../lib/columns";
 import { documentFontFamilies } from "../lib/fonts";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/core/colors";
 import { acquireEditLock, noEditLock } from "../lib/core/editLock";
@@ -298,7 +280,6 @@ import {
   applyMultilevelPreset,
   applyPainterFormat,
   applyParagraphFormat,
-  asPageSetupScope,
   toolbarCharacterStyleState,
   blockCount,
   blockOrdinal,
@@ -324,7 +305,6 @@ import {
   INDENT_STEP_CM,
   insertBreak,
   insertLineBreak,
-  insertMergeChip,
   insertNote,
   insertPageNumberCommand,
   insertSectionBreak,
@@ -345,7 +325,6 @@ import {
   setListMarker,
   setNoteSettings,
   setPageMargins,
-  setPageSetup,
   setTabStops,
   splitBlock,
   toggleFormat,
@@ -669,23 +648,6 @@ const defineListInitial = ref(asListLevelDefinitions([]));
 // The Tabs dialog (AC-25): open flag plus the selection's current stops.
 const tabsDialogOpen = ref(false);
 const tabsDialogInitial = ref(asTabStops([]));
-// The Page setup dialog (SPEC-027 AC-1..7): open flag plus the prefill
-// taken from the document's own page geometry/unit at the moment it opens.
-const pageSetupOpen = ref(false);
-const pageSetupInitial = ref({
-  pageSize: { widthCm: 21, heightCm: 29.7 },
-  margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
-  measurementUnit: "cm",
-  applyTo: "wholeDocument",
-});
-// The Format → Columns dialog (SPEC-030): open flag plus the prefill taken
-// from the caret's section columns and content width at the moment it opens.
-const columnsDialogOpen = ref(false);
-const columnsDialogInitial = ref({
-  columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false },
-  contentWidthCm: 16,
-  applyTo: "thisSection",
-});
 // Recently applied text colours, shared across documents (SPEC-013 AC).
 const recentColors = ref(loadRecentColors());
 // The families used by the open document, for the dropdown's "Fonts in
@@ -706,6 +668,11 @@ let compositionRange = noSelection();
 // AC: "announces caret movement") — rendered into a visually hidden
 // aria-live region below the canvas.
 const caretStatus = ref("");
+
+// The caret's focus end, mirrored reactively (the live `caret` is a plain
+// variable) so the outline pane's active-heading highlight tracks caret and
+// scroll (SPEC-037 AC-3, AC-4). Updated in updateCaretStatus.
+const caretPosition = ref(noCaret());
 
 // Forces paragraph re-mounts by folding into the v-for keys: `key` names the
 // single block whose key carries `count` (bumped after an IME commit so the
@@ -2430,8 +2397,8 @@ function handleIndent(direction = 1) {
 // The style picker's actions, the Styles pane, the style editor/delete
 // dialogs and the import-styles flow live in useStyleManager; handleKeyDown's
 // Ctrl/Cmd+Alt+0..6 shortcuts dispatch into handleApplyStyle. caretPosition
-// is declared later (with the outline navigator), so it comes in as a lazy
-// getter — read only when styleEditorInitialProps evaluates, after setup.
+// comes in as a getter over the ref so styleEditorInitialProps re-evaluates
+// when the caret moves.
 const {
   styleEntries,
   stylesPaneOpen,
@@ -2480,31 +2447,6 @@ const {
   updateCaretStatus,
   getCaretPosition: () => caretPosition.value,
 });
-
-// --- mail-merge: convert literal {{...}} text (SPEC-046) --------------------
-
-/** Whether "Convert {{…}} text to merge fields" has anything to do — offered
- * when a document holds at least one well-formed `{{…}}` literal outside an
- * existing chip (AC-20, "Literal text is not a chip"). */
-const canConvertLiteralChips = computed(() => (doc.value ? hasConvertibleLiteralChips(doc.value) : false));
-
-/** Scans the whole document and converts every literal `{{…}}` match into a
- * chip in one undo step — explicit and undoable, never automatic on open
- * (SPEC-046 "Literal text is not a chip"). */
-function convertLiteralChips() {
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  const { model: next, converted } = convertLiteralChipsToRuns(model);
-  if (converted === 0) {
-    return;
-  }
-  applyEdit({ model: next, selection }, selection, "convert merge fields");
-  addToast(converted === 1 ? "Converted 1 merge field" : `Converted ${converted} merge fields`);
-}
 
 // --- clear formatting and format painter (SPEC-020) -------------------------
 
@@ -2733,119 +2675,31 @@ function handleRulerUpdate(
   }
 }
 
-// --- page setup and ruler visibility (SPEC-027) -----------------------
-
-/** Opens the Page setup dialog prefilled from the document's own page
- * geometry and measurement-unit preference (AC-8; absent unit reads as
- * "cm", createDefaultStyles's own convention). */
-function openPageSetup() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  // Prefilled from the caret's section (SPEC-028 AC-20): with per-section
-  // page setup, "what the dialog shows" is the geometry under the caret.
-  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
-  pageSetupInitial.value = {
-    pageSize: { ...sectionPageSize(model, sectionIndex) },
-    margins: { ...sectionMargins(model, sectionIndex) },
-    measurementUnit: model.measurementUnit ?? "cm",
-    applyTo: "wholeDocument",
-  };
-  pageSetupOpen.value = true;
-}
-
-/** The dialog's OK (AC-5): one combined edit — page size, margins and the
- * measurement-unit preference — applied as a single undo step, which
- * re-renders the page and re-flows text immediately (doc.value's
- * replacement is what drives pageStyle/marginStyle's recompute). */
-function handlePageSetupApply(
-  payload = {
-    pageSize: { widthCm: 21, heightCm: 29.7 },
-    margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
-    measurementUnit: "cm",
-    applyTo: "wholeDocument",
-  },
-) {
-  pageSetupOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    setPageSetup(
-      model,
-      selection,
-      {
-        pageSize: payload.pageSize,
-        margins: payload.margins,
-        measurementUnit: asMeasurementUnit(payload.measurementUnit),
-      },
-      asPageSetupScope(payload.applyTo ?? "wholeDocument"),
-    ),
-    selection,
-    "page setup",
-  );
-  root.focus();
-}
-
-/** Format → Columns (SPEC-030 AC-1..AC-5): prefilled from the caret's
- * section columns and its content width. */
-function openColumnsDialog() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
-  columnsDialogInitial.value = {
-    columns: { ...sectionColumns(model, sectionIndex) },
-    contentWidthCm: sectionContentWidthCm(model, sectionIndex),
-    applyTo: "thisSection",
-  };
-  columnsDialogOpen.value = true;
-}
-
-/** The Columns dialog's OK (AC-6/AC-7): applies the layout to the caret's
- * section or wraps the selection in a continuous section, as one undo step. */
-function handleColumnsApply(
-  payload = {
-    columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false, widthsCm: undefined },
-    applyTo: "thisSection",
-  },
-) {
-  columnsDialogOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    applyColumns(model, selection, payload.columns, asColumnsScope(payload.applyTo ?? "thisSection")),
-    selection,
-    "columns",
-  );
-  root.focus();
-}
-
-/** The "Show/hide ruler" toggle (AC-14): a view preference, not an
- * undo-able content edit — same direct-mutation + touchDocument pattern as
- * handleTitleUpdate, and triggerRef is required for the same reason (doc is
- * a shallowRef; mutating a field on its current value alone doesn't
- * re-render). */
-function toggleRuler() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  // Absent reads as shown (documentModel.ts's own convention), so the flip
-  // is "was it explicitly false" rather than a plain `!model.showRuler`.
-  model.showRuler = model.showRuler === false;
-  triggerRef(doc);
-  touchDocument(model.id);
-}
+// --- page setup, columns and ruler visibility (SPEC-027, SPEC-030) ----------
+// The Page setup and Format → Columns dialogs, the "Show/hide ruler" toggle
+// and the ruler's caret-section geometry live in usePageSetupDialogs.
+// caretSectionIndex is declared later (with the caret-page tracking), so it
+// comes in as a lazy getter — read only when a dialog opens or a ruler
+// computed evaluates, after setup.
+const {
+  pageSetupOpen,
+  pageSetupInitial,
+  columnsDialogOpen,
+  columnsDialogInitial,
+  openPageSetup,
+  handlePageSetupApply,
+  openColumnsDialog,
+  handleColumnsApply,
+  toggleRuler,
+  rulerPageWidthCm,
+  rulerMarginLeftCm,
+  rulerMarginRightCm,
+  rulerColumns,
+} = usePageSetupDialogs({
+  ...editorContext,
+  paragraphSelection,
+  getCaretSectionIndex: () => caretSectionIndex.value,
+});
 
 // Every key this handler acts on is looked up in the SPEC-021 registry
 // (AC-2) rather than compared against literal key/modifier checks — the
@@ -3236,28 +3090,29 @@ function handlePageMouseDown(event = new MouseEvent("mousedown")) {
 // ---------------------------------------------------------------------------
 
 // --- document outline navigator (SPEC-037) ---------------------------------
-// The caret's focus end, mirrored reactively (the live `caret` is a plain
-// variable) so the pane's active-heading highlight tracks caret and scroll
-// (AC-3, AC-4). Updated in updateCaretStatus.
-const caretPosition = ref(noCaret());
-// Per-user open/closed state, persisted to localStorage (AC-14) and open by
-// default for a new user (AC-15).
-const outlinePaneOpen = ref(loadOutlinePaneOpen());
-watch(outlinePaneOpen, (open) => saveOutlinePaneOpen(open));
-// Transient view state, never part of the model: which pane tree nodes are
-// collapsed (AC-7, AC-8), and which body headings are collapsed in the
-// document body (AC-16), keyed by "section:block". Body collapse hides blocks
-// from layout only — it is never written to the file (AC-17).
-const outlinePaneCollapsed = ref(emptyKeySet());
-const collapsedHeadings = ref(emptyKeySet());
-
-const outlineTree = computed(() => (doc.value ? buildOutline(doc.value) : []));
-const activeOutlineAnchor = computed(() =>
-  doc.value ? activeHeadingAnchor(doc.value, caretPosition.value) : null,
-);
-const hiddenBodyBlocks = computed(() =>
-  doc.value ? hiddenBlockAddresses(doc.value, collapsedHeadings.value) : emptyKeySet(),
-);
+// The pane's state, the outline tree and its handlers live in useOutlinePane.
+// Wired BEFORE usePagination below, whose layout closure reads the
+// destructured hiddenBodyBlocks. caretPosition is the backbone caret mirror
+// declared with the caret tracking above; jumpToAnchor is destructured from
+// useLinks, wired after pagination — the lambda defers the read to call time
+// (an event handler, past setup), never during this deps object's evaluation.
+const {
+  outlinePaneOpen,
+  outlinePaneCollapsed,
+  collapsedHeadings,
+  outlineTree,
+  activeOutlineAnchor,
+  hiddenBodyBlocks,
+  toggleOutlinePane,
+  handleOutlineNavigate,
+  handleOutlineToggleCollapse,
+  handleOutlineMove,
+  handleBodyHeadingToggle,
+} = useOutlinePane({
+  ...editorContext,
+  getCaretPosition: () => caretPosition.value,
+  jumpToAnchor: (anchor) => jumpToAnchor(anchor),
+});
 
 // --- pagination (SPEC-028) --------------------------------------------------
 // The controller owns measurement; every doc.value replacement re-lays-out
@@ -3640,45 +3495,6 @@ function toggleFormattingMarks() {
   pagination.invalidateAll();
 }
 
-// The ruler and the Page setup dialog follow the caret's section (AC-17..21)
-// so a per-section page setup is edited where the caret sits.
-const rulerSectionIndex = computed(() => {
-  const model = doc.value;
-  return model ? Math.min(caretSectionIndex.value, model.sections.length - 1) : 0;
-});
-const rulerPageWidthCm = computed(() =>
-  doc.value ? sectionPageSize(doc.value, rulerSectionIndex.value).widthCm : 21,
-);
-const rulerMarginLeftCm = computed(() =>
-  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).leftCm : 2.54,
-);
-const rulerMarginRightCm = computed(() =>
-  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).rightCm : 2.54,
-);
-// The caret section's column boundaries for the ruler (SPEC-030 AC-14): each
-// gutter's centre, measured from the content area's start; null when the
-// section has a single column (no boundary handles).
-const rulerColumns = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return undefined;
-  }
-  const columns = sectionColumns(model, rulerSectionIndex.value);
-  if (columns.count <= 1) {
-    return undefined;
-  }
-  const widthsCm = resolveColumnWidthsCm(columns, sectionContentWidthCm(model, rulerSectionIndex.value));
-  const boundaries = [];
-  let offset = 0;
-  for (let i = 0; i < widthsCm.length - 1; i += 1) {
-    offset += widthsCm[i];
-    boundaries.push({ index: i, centerCm: offset + columns.gapCm / 2 });
-    offset += columns.gapCm;
-  }
-  return { boundaries };
-});
-
-
 // --- find and replace (SPEC-017) -------------------------------------------
 // The DOM-facing find/replace logic is extracted into useFindReplace; it owns
 // the find bar's reactive state, the highlight overlay and the post-edit
@@ -4036,71 +3852,6 @@ const { pagedViews } = usePaginationView({
   trackChangesDisplayMode: effectiveTrackChangesDisplayMode,
 });
 
-// --- outline navigator handlers (SPEC-037) ---------------------------------
-/** View menu toggle / persistence of the pane's open state (AC-13, AC-14). */
-function toggleOutlinePane() {
-  outlinePaneOpen.value = !outlinePaneOpen.value;
-}
-
-/** Clicking or Enter on an outline entry (AC-5, AC-6, AC-19): jump to the
- * heading — place the caret at its start and scroll it into view. Reuses the
- * same anchor-jump the TOC and internal links use. */
-function handleOutlineNavigate(anchor = "") {
-  jumpToAnchor(anchor);
-}
-
-/** Collapse/expand a node in the pane (AC-7, AC-8) — pane-only view state. */
-function handleOutlineToggleCollapse(anchor = "") {
-  const next = new Set(outlinePaneCollapsed.value);
-  if (next.has(anchor)) {
-    next.delete(anchor);
-  } else {
-    next.add(anchor);
-  }
-  outlinePaneCollapsed.value = next;
-}
-
-/** Drop of a dragged outline entry (AC-9, AC-10, AC-11): move the heading and
- * all its content as ONE undo step. moveHeading returns null for a rejected
- * drop (different level, non-sibling, onto itself), so no edit is recorded. */
-function handleOutlineMove(payload = { source: "", target: "", position: "before" }) {
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  const before = currentSelection(contentRoot.value);
-  // Narrow the payload's position to the DropPosition literal union (espree
-  // bars a type annotation on the handler's own parameter).
-  const position = payload.position === "after" ? "after" : "before";
-  const result = moveHeading(model, payload.source, payload.target, position);
-  if (result) {
-    applyEdit(result, before, "move heading");
-  }
-}
-
-/** The body chevron next to a heading (AC-16): collapse/expand its content.
- * Keyed by "section:block"; purely transient (AC-17). When collapsing the
- * section the caret sits in, move the caret to the heading so it never hides
- * behind collapsed content. */
-function handleBodyHeadingToggle(section = 0, block = 0) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const key = blockKey(section, block);
-  const next = new Set(collapsedHeadings.value);
-  if (next.has(key)) {
-    next.delete(key);
-  } else {
-    next.add(key);
-  }
-  collapsedHeadings.value = next;
-  const hidden = hiddenBlockAddresses(model, next);
-  if (caret && hidden.has(blockKey(caret.section, caret.block))) {
-    applyCaretMove({ section, block, offset: 0 });
-  }
-}
-
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
 function handleInsertBreak(kind = "") {
   const root = contentRoot.value;
@@ -4149,32 +3900,20 @@ function handleTogglePagination(key = "") {
   }, "paragraph pagination");
 }
 
-// --- mail-merge chip insertion (SPEC-046 AC-12, AC-15, AC-30) ---------------
-// The attached data source (if any) is shared between "Insert -> Merge
-// field...", "Table -> Repeat row for each..." and the merge run dialog —
-// attaching it once populates every named field list, and running the merge
-// re-parses the same file rather than trusting stale state across a session.
-const mergeDataSource = shallowRef(noParsedDataSource());
-const mergeFieldPickerOpen = ref(false);
-const mergeRunDialogOpen = ref(false);
-
-function attachMergeDataSource(parsed = noParsedDataSource()) {
-  mergeDataSource.value = parsed;
-}
-const mergeFieldPickerFields = computed(() => (doc.value ? namedFieldList(mergeDataSource.value, doc.value) : []));
-const repeatRowFieldOptions = computed(() => (doc.value ? namedArrayFieldList(mergeDataSource.value, doc.value) : []));
-
-function insertMergeFieldFromPicker(name = "") {
-  mergeFieldPickerOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!name || !root || !model) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  const result = insertMergeChip(model, selection, { kind: "merge", name });
-  applyEdit(result, selection, "insert merge field");
-}
+// --- mail-merge fields (SPEC-046) -------------------------------------------
+// The attached data source, the field picker / merge-run dialogs' state and
+// the literal {{...}} conversion live in useMergeFields.
+const {
+  mergeDataSource,
+  mergeFieldPickerOpen,
+  mergeRunDialogOpen,
+  attachMergeDataSource,
+  mergeFieldPickerFields,
+  repeatRowFieldOptions,
+  insertMergeFieldFromPicker,
+  canConvertLiteralChips,
+  convertLiteralChips,
+} = useMergeFields({ ...editorContext, paragraphSelection });
 
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
