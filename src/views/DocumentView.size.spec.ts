@@ -20,12 +20,13 @@
 //
 // Ratchet ledger:
 //   2026-08-15  7350  Phase 0 — shared EditorContext, applyEdit options
+//   2026-08-15  7180  Phase 1a — useAutocorrect extracted
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 7350;
+const LINE_BUDGET = 7180;
 
 describe("DocumentView size budget", () => {
   it(`DocumentView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
