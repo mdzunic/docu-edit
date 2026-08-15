@@ -2,8 +2,8 @@
 // Kept out of DocumentView.vue for the same reason tableResize.ts is: typed
 // DOM element access needs real type annotations, which ESLint's espree
 // parser rejects in `.vue` scripts.
-import { MIN_IMAGE_SIZE_CM } from "./images";
-import { CM_PER_PX } from "./tableResize";
+import { MIN_IMAGE_SIZE_CM } from "./core/media";
+import { CM_PER_PX } from "./core/units";
 
 export { CM_PER_PX };
 

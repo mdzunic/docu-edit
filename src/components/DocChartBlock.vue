@@ -3,8 +3,8 @@ import { onMounted, onUpdated, useTemplateRef, watch } from "vue";
 import { asChart } from "../lib/documentModel";
 import { chartDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
-import { paintChart } from "../lib/chartCanvas";
-import { cmToPx } from "../lib/images";
+import { paintChart } from "../lib/core/chartCanvas";
+import { cmToPx } from "../lib/core/units";
 
 // One chart block on the page (SPEC-052). Runtime prop declarations, not
 // defineProps<{...}>() generics — see DocImageBlock.vue's comment on the

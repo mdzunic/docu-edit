@@ -11,7 +11,7 @@ import {
   type HeaderFooterPart,
   type PageNumberFormat,
 } from "./documentModel";
-import { formatOrdinal } from "./lists";
+import { formatOrdinal } from "./core/lists";
 import type { PageLayout } from "./pagination";
 
 /** The displayed page number of every laid-out page, in order (SPEC-029

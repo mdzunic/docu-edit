@@ -7,8 +7,9 @@ import { parseDocx } from "./reader";
 import { writeDocx } from "./writer";
 import { writeOdt } from "../odf/writer";
 import { parseOdt } from "../odf/reader";
-import { unzip } from "./zip";
-import { equalBytes, equalStructural } from "../equality";
+import { unzip } from "../core/zip";
+import { equalStructural } from "../equality";
+import { equalBytes } from "../core/equality";
 import { base64ToBytes, bytesToBase64 } from "../opaque";
 import { asChart, createDocument, isChart, type Chart, type DocumentModel } from "../documentModel";
 

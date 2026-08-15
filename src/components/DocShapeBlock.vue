@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
-import { asListDefinitions, asShape } from "../lib/documentModel";
+import { asShape } from "../lib/documentModel";
+import { asListDefinitions } from "../lib/core/lists";
 import { shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
-import { paintShapeIntoCanvas } from "../lib/shapeCanvas";
-import { shapeClipPath } from "../lib/shapeGeometry";
+import { paintShapeIntoCanvas } from "../lib/core/shapeCanvas";
+import { shapeClipPath } from "../lib/core/shapeGeometry";
 import { shapeHasVisibleText } from "../lib/shapes";
 import { shapeTextRenderEntries } from "../lib/pageRender";
-import { cmToPx } from "../lib/images";
+import { cmToPx } from "../lib/core/units";
 import DocBlockEntries from "./DocBlockEntries.vue";
 
 // One shape/text-box block on the page (SPEC-051). Runtime prop

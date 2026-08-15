@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { parseOdt } from "./reader";
 import { buildContentXml, writeOdt } from "./writer";
-import { zip } from "../docx/zipWriter";
+import { zip } from "../core/zipWriter";
 import { firstStructuralDifference } from "../equality";
 import { blockText } from "../textEditing";
 import {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, useTemplateRef } from "vue";
-import { HIGHLIGHT_PICKER_ITEMS } from "../lib/colors";
-import { HIGHLIGHT_HEX } from "../lib/odf/properties";
+import { HIGHLIGHT_PICKER_ITEMS } from "../lib/core/colors";
+import { HIGHLIGHT_HEX } from "../lib/core/colors";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits

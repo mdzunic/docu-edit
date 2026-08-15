@@ -11,8 +11,8 @@ import {
   docxFileName,
   writeDocx,
 } from "./writer";
-import { unzip } from "./zip";
-import { parseXml } from "./xml";
+import { unzip } from "../core/zip";
+import { parseXml } from "../core/xml";
 import { createDocument, DEFAULT_TITLE, type Block, type DocumentModel, type Paragraph } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
 import { asParagraph } from "../documentModel";
@@ -431,7 +431,7 @@ describe("writeDocx — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
       "<w:p><w:pPr><w:bidi/><w:ind w:start=\"1134\" w:end=\"567\"/></w:pPr>" +
       "<w:r><w:t>rtl</w:t></w:r></w:p>" +
       "</w:body></w:document>";
-    const { zip } = await import("./zipWriter");
+    const { zip } = await import("../core/zipWriter");
     const bytes = await zip([
       { name: "word/document.xml", data: new TextEncoder().encode(documentXml) },
     ]);
@@ -449,7 +449,7 @@ describe("writeDocx — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
       '<w:p><w:pPr><w:bidi w:val="0"/></w:pPr><w:r><w:t>ltr</w:t></w:r></w:p>' +
       "</w:body></w:document>";
-    const { zip } = await import("./zipWriter");
+    const { zip } = await import("../core/zipWriter");
     const bytes = await zip([
       { name: "word/document.xml", data: new TextEncoder().encode(documentXml) },
     ]);

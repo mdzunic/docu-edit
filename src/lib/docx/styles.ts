@@ -4,13 +4,8 @@
 // their defined size and weight even when a paragraph carries no direct
 // formatting of its own.
 import type { NamedStyle, ParagraphFormatting, RunFormatting, StyleType } from "../documentModel";
-import {
-  childElements,
-  firstChildElement,
-  serializeElement,
-  wordAttr as attr,
-  WORD_NAMESPACE,
-} from "./xml";
+import { wordAttr as attr, WORD_NAMESPACE } from "./xml";
+import { childElements, firstChildElement, serializeElement } from "../core/xml";
 import {
   mergeParagraphFormatting,
   mergeRunFormatting,

@@ -21,7 +21,7 @@ import {
   type RunFormatting,
   type Table,
 } from "./documentModel";
-import { parseXml, XmlParseError } from "./docx/xml";
+import { parseXml, XmlParseError } from "./core/xml";
 import { mergeRunFormatting } from "./docx/properties";
 import {
   diffParagraphFormatting,

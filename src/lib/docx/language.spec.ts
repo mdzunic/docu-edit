@@ -6,7 +6,8 @@ import { parseRunProperties } from "./properties";
 import { parseDocx } from "./reader";
 import { buildDocumentXml, buildStylesXml, writeDocx } from "./writer";
 import { validateDocx } from "./validate";
-import { parseXml, WORD_NAMESPACE } from "./xml";
+import { WORD_NAMESPACE } from "./xml";
+import { parseXml } from "../core/xml";
 
 function rPr(inner: string): Element {
   return parseXml(`<w:rPr xmlns:w="${WORD_NAMESPACE}">${inner}</w:rPr>`).documentElement;

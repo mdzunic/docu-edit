@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import SpecialCharacterDialog from "./SpecialCharacterDialog.vue";
-import { RECENT_CHARACTERS_STORAGE_KEY } from "../lib/specialCharacters";
+import { RECENT_CHARACTERS_STORAGE_KEY } from "../lib/core/specialCharacters";
 
 describe("SpecialCharacterDialog", () => {
   beforeEach(() => localStorage.clear());

@@ -3,10 +3,11 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type ListDefinition, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
-import type { MarkSegment } from "./marks";
+import type { MarkSegment } from "./core/marks";
 import type { PageColumns } from "./pagination";
 
 /** One run's precomputed rendering: link fields resolved, style object

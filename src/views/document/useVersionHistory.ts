@@ -17,9 +17,9 @@ import {
   type VersionListEntry,
   type VersionsIndexRecord,
 } from "../../lib/versionHistory";
-import { createVersionCadenceTimer, type VersionCadenceTimer } from "../../lib/versionCadenceScheduler";
+import { createVersionCadenceTimer, type VersionCadenceTimer } from "../../lib/core/versionCadenceScheduler";
 import { loadVersionHistoryPaneOpen, saveVersionHistoryPaneOpen } from "../../lib/versionHistoryPane";
-import { loadCommentAuthor } from "../../lib/commentIdentity";
+import { loadCommentAuthor } from "../../lib/core/commentIdentity";
 import { applyTrackChanges } from "../../lib/trackChangesDiff";
 import { caretSelection, type CommandResult, type ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";

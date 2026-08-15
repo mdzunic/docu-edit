@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
-import { asMeasurementUnit } from "../lib/documentModel";
+import { asMeasurementUnit } from "../lib/core/units";
 import {
   asOrientation,
   asPaperSizeName,
-  fromCm,
   MARGINS_TOO_LARGE_MESSAGE,
   matchPaperSize,
   orientationOf,
   PAPER_SIZE_NAMES,
   pageSizeFor,
-  roundForDisplay,
   textAreaTooNarrow,
-  toCm,
-} from "../lib/pageSetup";
+} from "../lib/core/pageSetup";
+import { fromCm, roundForDisplay, toCm } from "../lib/core/units";
 
 // The "Page setup" dialog (SPEC-027 AC-1..9): paper size (a standard size or
 // Custom width/height), orientation and the four margins, all edited in the

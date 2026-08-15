@@ -11,8 +11,9 @@ import {
   headingStyleId,
   resolveNamedStyle,
 } from "../styles";
-import { decodeImageDimensions } from "../imageDimensions";
-import { fitImageSizeCm, textAreaWidthCm } from "../images";
+import { decodeImageDimensions } from "../core/imageDimensions";
+import { textAreaWidthCm } from "../images";
+import { fitImageSizeCm } from "../core/media";
 import { bytesToBase64 } from "../opaque";
 import { equalColumnWidthsCm } from "../tables";
 import { tocEntriesFromHeadings } from "../toc";
@@ -24,21 +25,19 @@ import type {
   HeaderFooterContent,
   Image,
   ImageWrapMode,
-  ListFormatting,
-  ListType,
   Paragraph,
   ParagraphAlignment,
   ParagraphFormatting,
   Run,
   RunFormatting,
   Table,
-  TableAlignment,
   TableCell,
   TableOfContents,
   TableRow,
-  TableWidthMode,
   TocOptions,
 } from "../documentModel";
+import type { ListFormatting, ListType } from "../core/lists";
+import type { TableAlignment, TableWidthMode } from "../core/tables";
 import { DocumentGenerationError } from "./errors";
 import { emuToCm, lengthToEmu, type LengthInput } from "./length";
 import { buildRunsFromContent, contentFromTextOrRuns } from "./runs";

@@ -16,7 +16,7 @@ import {
   isMergeChipField,
   type MergeFieldSpec,
 } from "./documentModel";
-import { zip, type ZipEntryInput } from "./docx/zipWriter";
+import { zip, type ZipEntryInput } from "./core/zipWriter";
 import { docxFileName, writeDocx } from "./docx/writer";
 import { odtFileName, writeOdt } from "./odf/writer";
 

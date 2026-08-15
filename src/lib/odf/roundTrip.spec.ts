@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
 import { writeDocx } from "../docx/writer";
-import { unzip } from "../docx/zip";
-import { equalBytes, equalStructural, firstStructuralDifference } from "../equality";
+import { unzip } from "../core/zip";
+import { equalStructural, firstStructuralDifference } from "../equality";
+import { equalBytes } from "../core/equality";
 import { base64ToBytes } from "../opaque";
 import type { DocumentModel } from "../documentModel";
 import { asParagraph, createDocument } from "../documentModel";
@@ -295,7 +296,7 @@ describe("writeOdt — sections through a same-format save (SPEC-028 AC-33)", ()
     // this writer does not model. A same-format save must keep that
     // definition byte-for-byte and give the factory's own section a
     // non-colliding layout name instead.
-    const { zip } = await import("../docx/zipWriter");
+    const { zip } = await import("../core/zipWriter");
     const makeContent = () => `<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">
  <office:automatic-styles><style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/></office:automatic-styles>

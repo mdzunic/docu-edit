@@ -37,10 +37,10 @@ import {
   estimateMetrics,
   reconcilePages,
   sectionColumnFlowWidthPx,
-  type BlockMetrics,
   type MetricsProvider,
   type PageLayout,
 } from "../lib/pagination";
+import { type BlockMetrics } from "../lib/core/pageMetrics";
 import { layoutWithNotes, type NoteArea, type NoteMetricsProvider } from "../lib/notesLayout";
 import { paragraphWithNoteLabels, renderedOffsetToModel } from "../lib/notes";
 import { renderedOffsetsToModel } from "../lib/domCaret";
@@ -48,7 +48,7 @@ import {
   combineSliceMetrics,
   lineStartOffsets,
   measureBlockElement,
-} from "../lib/pageMetrics";
+} from "../lib/core/pageMetrics";
 import {
   createCanvasTextMeasurer,
   measureParagraphText,
@@ -56,7 +56,7 @@ import {
   type CanvasTextMeasurer,
 } from "../lib/textMetrics";
 import { sliceStartOf } from "../lib/domCaret";
-import { scheduleEagerWork, type IdleHandle } from "../lib/idleScheduler";
+import { scheduleEagerWork, type IdleHandle } from "../lib/core/idleScheduler";
 import type { CaretPosition } from "../lib/textEditing";
 
 interface CacheEntry {

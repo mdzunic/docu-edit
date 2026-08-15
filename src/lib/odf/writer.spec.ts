@@ -12,8 +12,8 @@ import {
   UNTITLED_ODT_TITLE,
   writeOdt,
 } from "./writer";
-import { unzip } from "../docx/zip";
-import { parseXml } from "../docx/xml";
+import { unzip } from "../core/zip";
+import { parseXml } from "../core/xml";
 import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
 import { asParagraph, createDocument, type Block, type DocumentModel, type Paragraph } from "../documentModel";
 import { firstStructuralDifference } from "../equality";

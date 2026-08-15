@@ -7,11 +7,11 @@ import {
   paginate,
   pageOfBlock,
   reconcilePages,
-  PX_PER_CM,
-  type BlockMetrics,
   type MetricsProvider,
   type PageLayout,
 } from "./pagination";
+import { type BlockMetrics } from "./core/pageMetrics";
+import { PX_PER_CM } from "./core/units";
 import {
   createDocument,
   type Block,

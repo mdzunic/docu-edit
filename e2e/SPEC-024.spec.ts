@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { writeFileSync, readFileSync } from "node:fs";
-import { unzip } from "../src/lib/docx/zip";
+import { unzip } from "../src/lib/core/zip";
 import { createDocument as createDocumentModel } from "../src/lib/documentModel";
 import { writeDocx } from "../src/lib/docx/writer";
 import { LINE_START, MOD } from "./keys";

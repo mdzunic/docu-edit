@@ -7,21 +7,13 @@
 // Z-order and grouping are NOT duplicated here: Chart already participates
 // in shapes.ts's generic allDrawings-based z-order/grouping machinery
 // (SPEC-052 AC-24 "for free") — see that module's own comment.
-import {
-  isChart,
-  type Chart,
-  type ChartOptions,
-  type ChartSeries,
-  type ChartType,
-  type DocumentModel,
-  type ImageWrapMode,
-} from "./documentModel";
+import { isChart, type Chart, type DocumentModel, type ImageWrapMode } from "./documentModel";
+import { type ChartOptions, type ChartSeries, type ChartType } from "./core/charts";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { DEFAULT_DRAWING_POSITION } from "./shapes";
 import type { Block, Paragraph } from "./documentModel";
 import {
-  chartDataFromTableCells,
   defaultChartOptions,
   MIN_CHART_SIZE_CM,
   NEW_CHART_HEIGHT_CM,
@@ -99,20 +91,6 @@ export function chartAt(model: DocumentModel, location: ChartLocation): Chart | 
 function replaceChart(model: DocumentModel, location: ChartLocation, next: Chart): void {
   model.sections[location.section].blocks.splice(location.block, 1, next);
 }
-
-// The insertion defaults, sample data and table-cells mapping moved to
-// core/charts.ts (product-neutral); imported for this module's own commands
-// and re-exported so existing import paths keep working.
-export {
-  chartDataFromTableCells,
-  defaultChartOptions,
-  MIN_CHART_SIZE_CM,
-  NEW_CHART_HEIGHT_CM,
-  NEW_CHART_WIDTH_CM,
-  sampleChartCategories,
-  sampleChartSeries,
-} from "./core/charts";
-export type { ChartFromTableResult } from "./core/charts";
 
 /** Inserts a chart at the caret (AC-2, AC-3), splitting the caret's
  * paragraph around the insertion point exactly like shapes.ts's

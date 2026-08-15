@@ -3,15 +3,10 @@
 import { describe, it, expect } from "vitest";
 import {
   chartAt,
-  chartDataFromTableCells,
   deleteChart,
   insertChart,
   insertChartFromTable,
   moveChart,
-  NEW_CHART_HEIGHT_CM,
-  NEW_CHART_WIDTH_CM,
-  sampleChartCategories,
-  sampleChartSeries,
   setChartAltText,
   setChartData,
   setChartOptions,
@@ -20,6 +15,13 @@ import {
   setChartWrap,
   type ChartLocation,
 } from "./charts";
+import {
+  chartDataFromTableCells,
+  NEW_CHART_HEIGHT_CM,
+  NEW_CHART_WIDTH_CM,
+  sampleChartCategories,
+  sampleChartSeries,
+} from "./core/charts";
 import { caretSelection } from "./commands";
 import { createDocument, isChart, type Chart, type DocumentModel, type Paragraph, type Table } from "./documentModel";
 import type { CaretPosition } from "./textEditing";

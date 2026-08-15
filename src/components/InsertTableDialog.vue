@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
-import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "../lib/tables";
+import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "../lib/core/tables";
 
 // The "Insert table…" dialog (SPEC-022 AC-2): row/column counts beyond the
 // grid picker's 10×10. OK emits the size for the parent to insert at the

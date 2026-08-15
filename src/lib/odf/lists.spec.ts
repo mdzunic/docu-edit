@@ -4,8 +4,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildContentXml, writeOdt } from "./writer";
 import { parseOdt } from "./reader";
-import { unzip } from "../docx/zip";
-import { createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "../documentModel";
+import { unzip } from "../core/zip";
+import { createDocument, type DocumentModel, type Paragraph } from "../documentModel";
+import { type ListFormatting } from "../core/lists";
 import { asParagraph } from "../documentModel";
 
 function paragraph(text: string, list?: ListFormatting): Paragraph {

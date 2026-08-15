@@ -1,21 +1,7 @@
 // WordprocessingML-specific XML helpers. The format-neutral machinery —
 // parsing, serialisation, namespace-aware child lookup and OPC
-// relationships — moved to src/lib/core/xml.ts (shared with any OPC/ODF
-// package, e.g. a future .pptx reader); it is re-exported here so existing
-// import paths keep working.
-export {
-  childElements,
-  firstChildElement,
-  parseRelationships,
-  parseXml,
-  RELATIONSHIPS_NAMESPACE,
-  relsPathFor,
-  resolvePartPath,
-  serializeElement,
-  XML_NAMESPACE,
-  XmlParseError,
-} from "../core/xml";
-export type { Relationship } from "../core/xml";
+// relationships — lives in src/lib/core/xml.ts (shared with any OPC/ODF
+// package, e.g. a future .pptx reader).
 
 export const WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 

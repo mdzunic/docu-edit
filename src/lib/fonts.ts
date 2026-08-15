@@ -1,10 +1,7 @@
 // The font-family catalogue and font-size rules behind SPEC-013's toolbar
 // controls. Framework-free (no Vue imports) per the src/lib convention.
-// The standard catalogue moved to core/fonts.ts (product-neutral);
-// re-exported so existing import paths keep working.
+// The standard catalogue lives in core/fonts.ts (product-neutral).
 import { isBreak, isChart, isImage, isShape, isToc, type DocumentModel } from "./documentModel";
-
-export { STANDARD_FONT_FAMILIES } from "./core/fonts";
 
 /** The families the open document actually uses, for the "Fonts in this
  * document" group (SPEC-013 AC): the document default plus every family a

@@ -9,7 +9,7 @@
 import { isChart, type DocumentModel } from "../documentModel";
 import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "./chart";
 import type { OdtManifestEntry } from "./media";
-import type { ZipEntryInput } from "../docx/zipWriter";
+import type { ZipEntryInput } from "../core/zipWriter";
 
 export interface OdfChartPlanEntry {
   /** The embedded object's directory, e.g. "Object 1" (no trailing slash);

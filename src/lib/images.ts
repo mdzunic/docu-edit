@@ -16,21 +16,6 @@ import {
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 
-// The acceptance rules, size limits, media data-URI helper and natural-size
-// fitting math moved to core/media.ts (product-neutral); imported for this
-// module's own commands and re-exported so existing import paths keep
-// working.
-export {
-  ACCEPTED_IMAGE_ACCEPT_ATTR,
-  ACCEPTED_IMAGE_MIME_TYPES,
-  fitImageSizeCm,
-  IMAGE_TOO_LARGE_MESSAGE,
-  isAcceptedImageType,
-  isImageTooLarge,
-  MAX_IMAGE_SIZE_BYTES,
-  mediaDataUri,
-  MIN_IMAGE_SIZE_CM,
-} from "./core/media";
 
 // commands.ts's container clone, restated for the reason clipboard.ts and
 // tables.ts each restate it: the undo-registry guard test bars commands.ts
@@ -80,13 +65,8 @@ function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Par
   return [before, after];
 }
 
-// The 96 DPI px/cm conversions moved to core/units.ts (one source for the
-// fixed ratio SPEC-024 defines "Reset size" by, AC-21); imported for this
-// module's own math and re-exported so existing import paths keep working.
 import { pxToCm } from "./core/units";
 import { fitImageSizeCm, MIN_IMAGE_SIZE_CM } from "./core/media";
-
-export { cmToPx, pxToCm } from "./core/units";
 
 /** The page's text area width in cm (page width minus its left/right
  * margins) — what an inserted image scales down to fit (AC-5, AC-6). Mirrors

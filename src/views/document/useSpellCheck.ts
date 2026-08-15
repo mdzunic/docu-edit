@@ -14,7 +14,7 @@
 import { shallowRef, watch } from "vue";
 import type { Ref } from "vue";
 import type { DocumentModel, Paragraph } from "../../lib/documentModel";
-import { effectiveLanguage, isDictionaryAvailable, normalizeLanguageTag } from "../../lib/language";
+import { effectiveLanguage, isDictionaryAvailable, normalizeLanguageTag } from "../../lib/core/language";
 import { loadDictionary } from "../../lib/spellcheck/dictionaries";
 import type { Dictionary } from "../../lib/spellcheck/dictionary";
 import { isCodeStyledFont } from "../../lib/spellcheck/skip";
@@ -28,7 +28,7 @@ import {
   subscribeCustomDictionary,
   type CustomDictionaryEntry,
 } from "../../lib/customDictionary";
-import { noIdleHandle, scheduleIdleWork } from "../../lib/idleScheduler";
+import { noIdleHandle, scheduleIdleWork } from "../../lib/core/idleScheduler";
 import { BLOCK_SELECTOR, domPointForCaret } from "../../lib/domCaret";
 
 /** A flagged word, addressed the same way a bookmark/find-match is: a

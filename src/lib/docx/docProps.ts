@@ -9,7 +9,7 @@
 // unmodelled package part (see reader.ts's opaque-part loop) rather than
 // being parsed and rebuilt for no field this editor actually changes.
 import type { CustomProperty, CustomPropertyType, DocumentProperties, ExtraMetadataField, UnsupportedCustomProperty } from "../documentModel";
-import { childElements, parseXml, serializeElement, XmlParseError } from "./xml";
+import { childElements, parseXml, serializeElement, XmlParseError } from "../core/xml";
 
 export const CORE_PROPERTIES_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";

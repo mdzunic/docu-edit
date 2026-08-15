@@ -15,9 +15,10 @@
 // not the schema-strict placement a hand-authored ODF file would use. This
 // mirrors shape.ts's own `de:rotation`/`de:group` simplification for
 // concepts ODF has no direct per-element slot for.
-import type { Chart, ChartOptions, ChartSeries, ChartType } from "../documentModel";
-import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../documentModel";
-import { parseXml, serializeElement, XmlParseError } from "../docx/xml";
+import type { Chart } from "../documentModel";
+import type { ChartOptions, ChartSeries, ChartType } from "../core/charts";
+import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
+import { parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, svgAttr, textAttr, xlinkAttr } from "./xml";
 

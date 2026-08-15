@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
 import { writeDocx } from "./writer";
-import { unzip } from "./zip";
+import { unzip } from "../core/zip";
 import { createDocument, type DocumentModel, type Paragraph, type Table } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
 

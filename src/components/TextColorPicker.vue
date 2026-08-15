@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
-import { parseColorInput, TEXT_COLOR_PALETTE } from "../lib/colors";
+import { parseColorInput, TEXT_COLOR_PALETTE } from "../lib/core/colors";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits

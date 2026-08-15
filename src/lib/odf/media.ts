@@ -9,7 +9,7 @@
 import type { DocumentModel } from "../documentModel";
 import { extensionForContentType } from "../docx/drawing";
 import { base64ToBytes } from "../opaque";
-import type { ZipEntryInput } from "../docx/zipWriter";
+import type { ZipEntryInput } from "../core/zipWriter";
 
 function referencedMediaIds(model: DocumentModel): string[] {
   const ids: string[] = [];

@@ -3,9 +3,10 @@
 // conventions.
 import { describe, it, expect } from "vitest";
 import { chartFrameXml, odfChartContentXml, parseChartFrame, parseOdfChartXml } from "./chart";
-import { parseXml } from "../docx/xml";
+import { parseXml } from "../core/xml";
 import { equalStructural } from "../equality";
-import { CHART_CATALOGUE, DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES, type Chart } from "../documentModel";
+import { type Chart } from "../documentModel";
+import { CHART_CATALOGUE, DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
 import { DRAW_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
 
 // A real draw:frame lives inside content.xml, whose root already declares

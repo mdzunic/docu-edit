@@ -52,14 +52,14 @@ import {
   trackChangeRunHidden,
   trackChangeRunStyle,
 } from "../../lib/renderFormatting";
-import { effectiveLanguage } from "../../lib/language";
-import { markSegments } from "../../lib/marks";
+import { effectiveLanguage } from "../../lib/core/language";
+import { markSegments } from "../../lib/core/marks";
 import { splitRuns } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
 import { blockKey, headingContentLength } from "../../lib/outline";
-import { mediaDataUri } from "../../lib/images";
+import { mediaDataUri } from "../../lib/core/media";
 import type { PaginationController } from "../../composables/usePagination";
-import type { CellRange } from "../../lib/tables";
+import type { CellRange } from "../../lib/core/tables";
 import type { ImageLocation } from "../../lib/images";
 import type { ShapeLocation } from "../../lib/shapes";
 import type { ChartLocation } from "../../lib/charts";

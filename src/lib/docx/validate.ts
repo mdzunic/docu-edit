@@ -12,8 +12,9 @@
 // checks are deliberately strict allowlists over what the writer emits: an
 // element the writer should never produce is reported rather than ignored,
 // so a writer regression cannot slip through as "unknown but tolerated".
-import { unzip, ZipError } from "./zip";
-import { parseXml, wordAttr, XmlParseError, WORD_NAMESPACE } from "./xml";
+import { unzip, ZipError } from "../core/zip";
+import { wordAttr, WORD_NAMESPACE } from "./xml";
+import { parseXml, XmlParseError } from "../core/xml";
 
 const CONTENT_TYPES_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/content-types";
 const RELATIONSHIPS_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/relationships";

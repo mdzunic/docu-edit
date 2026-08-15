@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
+import { unzip } from "../core/zip";
 import { createDocument, type DocumentModel, type Paragraph } from "../documentModel";
 import { addReply, insertComment, resolveThread, visibleCommentThreads } from "../comments";
 import { caretSelection, type ModelSelection } from "../commands";

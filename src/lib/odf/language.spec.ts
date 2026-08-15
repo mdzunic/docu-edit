@@ -9,9 +9,9 @@ import { asParagraph, createDocument, type DocumentModel, type RunFormatting } f
 import { parseTextProperties } from "./properties";
 import { parseOdt } from "./reader";
 import { buildContentXml, buildStylesXml, writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
-import { equalBytes } from "../equality";
-import { parseXml } from "../docx/xml";
+import { unzip } from "../core/zip";
+import { equalBytes } from "../core/equality";
+import { parseXml } from "../core/xml";
 import { FO_NAMESPACE, STYLE_NAMESPACE } from "./xml";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");

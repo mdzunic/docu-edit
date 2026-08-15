@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseDocx } from "./reader";
 import { buildDocumentXml, writeDocx } from "./writer";
 import { validateDocx } from "./validate";
-import { zip } from "./zipWriter";
+import { zip } from "../core/zipWriter";
 import { WORD_NAMESPACE } from "./xml";
 import { createDocument, type DocumentModel, type Section } from "../documentModel";
 

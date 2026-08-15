@@ -10,7 +10,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseOdt } from "./reader";
 import { writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
+import { unzip } from "../core/zip";
 import type { DocumentModel, Image } from "../documentModel";
 import { asParagraph } from "../documentModel";
 

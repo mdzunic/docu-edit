@@ -27,7 +27,6 @@
 //    consecutive, after a tab or line break) are emitted as text:s.
 import type {
   Block,
-  BorderSide,
   BreakKind,
   Chart,
   CommentThread,
@@ -36,15 +35,12 @@ import type {
   FieldSpec,
   Image,
   ImageWrapMode,
-  ListDefinition,
-  Margins,
   NamedStyle,
   NoteContent,
   NoteKind,
   NoteNumberFormat,
   NoteSettings,
   PageNumberFormat,
-  PageSize,
   Paragraph,
   ParagraphFormatting,
   Run,
@@ -60,6 +56,9 @@ import type {
   TocOptions,
   TrackedChangeInfo,
 } from "../documentModel";
+import type { ListDefinition } from "../core/lists";
+import type { Margins, PageSize } from "../core/pageSetup";
+import type { BorderSide } from "../core/tables";
 import {
   FIELD_PLACEHOLDER_TEXT,
   isMergeChipField,
@@ -71,7 +70,7 @@ import {
 } from "../documentModel";
 import { chipLabel } from "../mergeChips";
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
-import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../language";
+import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../core/language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
 import { collectChanges } from "../trackChanges";
 import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
@@ -84,17 +83,17 @@ import {
   LIST_MARKER_WIDTH_CM,
   planListLevels,
   type PlannedListLevel,
-} from "../lists";
-import { definedNumberIndentCm, definedTextIndentCm } from "../listDefinitions";
-import { zip, type ZipEntryInput } from "../docx/zipWriter";
-import { firstChildElement, parseXml, serializeElement } from "../docx/xml";
+} from "../core/lists";
+import { definedNumberIndentCm, definedTextIndentCm } from "../core/listDefinitions";
+import { zip, type ZipEntryInput } from "../core/zipWriter";
+import { firstChildElement, parseXml, serializeElement } from "../core/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
 import { chartFrameXml } from "./chart";
 import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
-import { HIGHLIGHT_HEX } from "./properties";
+import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import {
   FO_NAMESPACE,

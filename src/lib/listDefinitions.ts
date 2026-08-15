@@ -3,23 +3,8 @@
 // composition and the instance-counter scan — moved to
 // core/listDefinitions.ts (product-neutral) and is re-exported here so
 // existing import paths keep working.
-import type { DocumentModel, ListDefinition } from "./documentModel";
-
-export {
-  createDefinedListCounters,
-  defaultDefinitionLevels,
-  definedLevelType,
-  definedMarkerText,
-  definedNumberIndentCm,
-  definedTextIndentCm,
-  GALLERY_PRESETS,
-  headingLinkedLevels,
-  headingStyleLinks,
-  instanceKey,
-  markerForDefinedItem,
-  presetLevels,
-} from "./core/listDefinitions";
-export type { DefinedListCounters, ListGalleryPreset } from "./core/listDefinitions";
+import type { DocumentModel } from "./documentModel";
+import type { ListDefinition } from "./core/lists";
 
 /** The definition a defId resolves to, or undefined. */
 export function definitionById(

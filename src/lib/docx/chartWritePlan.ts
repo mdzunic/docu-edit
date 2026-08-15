@@ -11,7 +11,7 @@
 import { isChart, type DocumentModel } from "../documentModel";
 import { chartPartXml, CHART_CONTENT_TYPE, CHART_RELATIONSHIP } from "./chart";
 import { nextFreeRelId } from "./media";
-import type { ZipEntryInput } from "./zipWriter";
+import type { ZipEntryInput } from "../core/zipWriter";
 
 export interface ChartPlanEntry {
   relId: string;

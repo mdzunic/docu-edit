@@ -115,12 +115,6 @@ export function asParagraphAlignment(value: string): ParagraphAlignment {
   return value as ParagraphAlignment;
 }
 
-export {
-  asBorderLineStyle,
-  asCellVerticalAlign,
-  asTableAlignment,
-  asTableWidthMode,
-} from "./core/tables";
 
 /** The page-number field kinds Insert → Page number offers (SPEC-029
  * AC-14, AC-19): "page" is the current page's number, "numpages" the
@@ -303,19 +297,6 @@ export interface ParagraphFormatting {
 // this module's own type definitions and re-exported so existing import
 // paths keep working.
 
-export {
-  asListDefinitions,
-  asListLevelDefinitions,
-  noListDefinitions,
-} from "./core/lists";
-export type {
-  ListDefinition,
-  ListFormatting,
-  ListLevelAlignment,
-  ListLevelDefinition,
-  ListMarkerStyle,
-  ListType,
-} from "./core/lists";
 
 // --- tab stops (SPEC-032) ---------------------------------------------------
 
@@ -353,7 +334,6 @@ export function asTabStopAlignment(value: string): TabStopAlignment {
   return value as TabStopAlignment;
 }
 
-export { asListMarkerStyle, asListType } from "./core/lists";
 
 // --- paragraph styles (SPEC-019) --------------------------------------------
 
@@ -764,8 +744,6 @@ export interface Image extends DrawingPlacement {
 // LINE_GEOMETRIES — moved to core/shapes.ts; imported for this module's own
 // type definitions and re-exported so existing import paths keep working.
 
-export { asShapeGeometry, LINE_GEOMETRIES, SHAPE_CATALOGUE } from "./core/shapes";
-export type { ShapeGeometry, ShapeOutline } from "./core/shapes";
 
 /** Rich text held inside a shape (SPEC-051 AC-17..24): `blocks` rather than a
  * flat run list so a shape can hold lists and tables, not only paragraphs —
@@ -845,13 +823,6 @@ export function asImage(value: unknown): Image {
 // module's own type definitions and re-exported so existing import paths
 // keep working.
 
-export {
-  asChartType,
-  CHART_CATALOGUE,
-  DEFAULT_CHART_COLORS,
-  SINGLE_SERIES_CHART_TYPES,
-} from "./core/charts";
-export type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
 
 /** A chart block (SPEC-052): a drawing placed on the page, painted on the
  * canvas layer with an ARIA proxy element exactly like Shape (see
@@ -909,21 +880,12 @@ export function asChart(value: unknown): Chart {
 // MediaPart moved to core/media.ts (product-neutral media storage);
 // imported for this module's own type definitions and re-exported so
 // existing import paths keep working.
-export type { MediaPart } from "./core/media";
 
 // --- tables (SPEC-022, cell/border formatting SPEC-023) ---------------------
 // The border/alignment/width-mode types moved to core/tables.ts
 // (product-neutral); imported for this module's own type definitions and
 // re-exported so existing import paths keep working.
 
-export type {
-  BorderLineStyle,
-  BorderSide,
-  CellBorders,
-  CellVerticalAlign,
-  TableAlignment,
-  TableWidthMode,
-} from "./core/tables";
 
 /** One table cell: a nested block container holding paragraphs only (nested
  * tables are out of scope — SPEC-022). A real (non-covered) cell always has
@@ -1375,9 +1337,6 @@ export interface Section {
 // SPEC-027 AC-4/AC-6 display-unit preference) to core/units.ts — all three
 // are product-neutral surface geometry; imported for this module's own type
 // definitions and re-exported so existing import paths keep working.
-export { asMeasurementUnit } from "./core/units";
-export type { MeasurementUnit } from "./core/units";
-export type { Margins, PageSize } from "./core/pageSetup";
 
 /** Document-wide defaults new content is created with. */
 export interface DefaultStyles {

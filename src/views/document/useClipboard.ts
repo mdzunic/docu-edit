@@ -27,7 +27,7 @@ import {
 import { importHtml } from "../../lib/htmlPaste";
 import { caretClientRect } from "../../lib/caretGeometry";
 import { deleteRange, isCollapsed, noPendingFormat } from "../../lib/commands";
-import { isAcceptedImageType } from "../../lib/images";
+import { isAcceptedImageType } from "../../lib/core/media";
 import { undo as undoDocument } from "../../lib/undoHistory";
 import type { ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";

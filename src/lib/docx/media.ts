@@ -9,12 +9,13 @@
 // may differ from the source file's own (Word does not care, and nothing
 // else in the package references a media path except the relationship this
 // module writes).
-import type { Block, DocumentModel, MediaPart } from "../documentModel";
+import type { Block, DocumentModel } from "../documentModel";
+import type { MediaPart } from "../core/media";
 import { base64ToBytes } from "../opaque";
-import { yieldToMainThread } from "../idleScheduler";
+import { yieldToMainThread } from "../core/idleScheduler";
 import { extensionForContentType } from "./drawing";
-import type { Relationship } from "./xml";
-import type { ZipEntryInput } from "./zipWriter";
+import type { Relationship } from "../core/xml";
+import type { ZipEntryInput } from "../core/zipWriter";
 
 export const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 

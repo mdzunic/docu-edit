@@ -5,7 +5,7 @@ import {
   graphicStyleXml,
   parseDrawFrame,
 } from "./drawing";
-import { parseXml } from "../docx/xml";
+import { parseXml } from "../core/xml";
 import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
 import type { Image, ImageWrapMode } from "../documentModel";
 

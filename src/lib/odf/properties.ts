@@ -11,9 +11,9 @@ import type {
   TabStop,
   TabStopAlignment,
 } from "../documentModel";
-import { firstChildElement } from "../docx/xml";
+import { firstChildElement } from "../core/xml";
 import { HIGHLIGHT_NAMES } from "../core/colors";
-import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../language";
+import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../core/language";
 import { foAttr, styleAttr, STYLE_NAMESPACE } from "./xml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 
@@ -61,11 +61,8 @@ function parseLineStyleToggle(value: string | null): boolean | undefined {
   return value !== "none";
 }
 
-// The OOXML/ODF highlight palette moved to src/lib/core/colors.ts (it is
-// product-neutral colour data, not ODF parsing); re-exported here so
-// existing import paths keep working.
-export { HIGHLIGHT_HEX, HIGHLIGHT_NAMES } from "../core/colors";
-
+// The OOXML/ODF highlight palette lives in src/lib/core/colors.ts (it is
+// product-neutral colour data, not ODF parsing).
 /** Strips quoting from a font-family value ("'Liberation Serif'") and takes
  * the first entry of a comma-separated fallback list. */
 export function cleanFontFamily(value: string): string | undefined {

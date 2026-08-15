@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { applyParagraphStyle, caretSelection, updateStyleFromSelection } from "../commands";
 import { asParagraph, createDocument, type DocumentModel } from "../documentModel";
-import { equalBytes } from "../equality";
-import { parseXml } from "../docx/xml";
-import { unzip } from "../docx/zip";
+import { equalBytes } from "../core/equality";
+import { parseXml } from "../core/xml";
+import { unzip } from "../core/zip";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import { buildStylesXml, patchOdtStylesXml, writeOdt } from "./writer";

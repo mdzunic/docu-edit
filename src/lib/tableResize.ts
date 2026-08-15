@@ -5,19 +5,10 @@
 // calls these with whatever loosely-typed values its own template/event
 // handlers carry.
 
-/** CSS's own fixed cm-to-px ratio (96 CSS px per inch): both resize axes
- * convert a drag's pixel delta straight to centimetres without depending on
- * the table's own measured geometry, which a live width change can
- * invalidate mid-drag (e.g. by reflowing the page). Moved to core/units.ts;
- * re-exported so existing import paths keep working. */
-export { CM_PER_PX } from "./core/units";
-
-// The preview painters and row lookup moved to core/tables.ts (model-free
-// DOM helpers); re-exported so existing import paths keep working. The drag
-// state types and findTableElement stay here — they encode the document
-// renderer's section/block addressing scheme.
-export { previewColumnWidths, previewRowHeight, tableRowElement } from "./core/tables";
-
+// The cm/px ratio lives in core/units.ts and the preview painters in
+// core/tables.ts (model-free DOM helpers). The drag state types and
+// findTableElement stay here — they encode the document renderer's
+// section/block addressing scheme.
 export interface ColumnResizeDrag {
   section: number;
   block: number;

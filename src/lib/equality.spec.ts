@@ -1,12 +1,7 @@
 import { describe, it, expect } from "vitest";
-import {
-  canonicalizeXml,
-  equalBytes,
-  equalSemantic,
-  equalStructural,
-  firstStructuralDifference,
-  resolve,
-} from "./equality";
+import { equalSemantic, equalStructural, firstStructuralDifference, resolve } from "./equality";
+import { equalBytes } from "./core/equality";
+import { canonicalizeXml } from "./core/xml";
 import { createDocument } from "./documentModel";
 
 describe("equalBytes", () => {

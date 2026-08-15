@@ -14,18 +14,18 @@ import {
   resizedImageSize,
   type ImageResizeDrag,
 } from "../../lib/imageResize";
-import { CM_PER_PX } from "../../lib/tableResize";
+import { CM_PER_PX } from "../../lib/core/units";
 import {
   deleteImage,
   imageAt,
   insertImage,
-  pxToCm,
   setImageAltText,
   setImageSize,
   setImageWrap,
   noImageCommand,
   type ImageLocation,
 } from "../../lib/images";
+import { pxToCm } from "../../lib/core/units";
 import { asImageWrapMode, type DocumentFormat } from "../../lib/documentModel";
 import { prepareImageInsert, ImageInsertError } from "../../lib/imageInsert";
 import { withHeaderFooterModel } from "../../lib/commands";

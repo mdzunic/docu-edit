@@ -8,13 +8,14 @@ import {
   parseNumberingCatalog,
   planNumbering,
 } from "./numbering";
-import { parseXml } from "./xml";
+import { parseXml } from "../core/xml";
 import { parseDocx } from "./reader";
 import { writeDocx } from "./writer";
 import { validateDocx } from "./validate";
-import { unzip } from "./zip";
+import { unzip } from "../core/zip";
 import { firstStructuralDifference } from "../equality";
-import { createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "../documentModel";
+import { createDocument, type DocumentModel, type Paragraph } from "../documentModel";
+import { type ListFormatting } from "../core/lists";
 import { asParagraph } from "../documentModel";
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';

@@ -3,11 +3,7 @@
 // Product-neutral — a Slides product sizes its slides (16:9, 4:3, custom)
 // with the same types and matching/validation logic, just a different
 // catalogue of named sizes. The document model always stores geometry in
-// centimetres; display-unit conversion lives in core/units.ts and is
-// re-exported here for the dialogs that historically imported it from
-// lib/pageSetup.ts.
-export { fromCm, roundForDisplay, toCm } from "./units";
-export type { MeasurementUnit } from "./units";
+// centimetres; display-unit conversion lives in core/units.ts.
 
 /** Page dimensions in centimetres. */
 export interface PageSize {

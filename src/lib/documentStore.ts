@@ -4,9 +4,10 @@
 // best-effort mirror. When IndexedDB is unavailable or a write fails (e.g.
 // quota exceeded), the app keeps working in-memory and the storage status
 // flips so the UI can show its warning banner.
-import { createDocument, type DocumentModel, type MediaPart } from "./documentModel";
+import { createDocument, type DocumentModel } from "./documentModel";
+import { type MediaPart } from "./core/media";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
-import { runWhenIdle, yieldToMainThread } from "./idleScheduler";
+import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
 import type { CaretPosition } from "./textEditing";
 
 /** Where a document's content last came from or went to. "new" means it was

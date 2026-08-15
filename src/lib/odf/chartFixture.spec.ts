@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseOdt } from "./reader";
-import { asChart, isChart, type ChartType } from "../documentModel";
+import { asChart, isChart } from "../documentModel";
+import { type ChartType } from "../core/charts";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 

@@ -18,18 +18,20 @@ import {
   isTable,
   isToc,
   sectionColumnWidthCm,
-  type BorderSide,
-  type CellBorders,
-  type CellVerticalAlign,
   type DocumentModel,
   type Paragraph,
   type Table,
-  type TableAlignment,
   type TableCell,
   type TableRow,
-  type TableWidthMode,
 } from "./documentModel";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import {
+  type BorderSide,
+  type CellBorders,
+  type CellVerticalAlign,
+  type TableAlignment,
+  type TableWidthMode,
+} from "./core/tables";
+import { cmToTwips, twipsToCm } from "./core/units";
 import {
   blockLength,
   clampCaret,
@@ -47,24 +49,8 @@ import {
   type CellRange,
 } from "./core/tables";
 
-// The grid limits, cell-range arithmetic and border-preset type moved to
-// core/tables.ts (product-neutral); imported for this module's own commands
-// and re-exported so existing import paths keep working.
-export {
-  asBorderPreset,
-  asCellRange,
-  cellRangeBounds,
-  isCellInRange,
-  MAX_TABLE_COLS,
-  MAX_TABLE_ROWS,
-  MIN_COLUMN_WIDTH_CM,
-  MIN_ROW_HEIGHT_CM,
-  noCellRange,
-  PICKER_MAX_COLS,
-  PICKER_MAX_ROWS,
-} from "./core/tables";
-export type { BorderPreset, CellRange } from "./core/tables";
-
+// The grid limits, cell-range arithmetic and border-preset type live in
+// core/tables.ts (product-neutral).
 // commands.ts's container clone, restated for the same reason clipboard.ts
 // restates it: the undo-registry guard test bars commands.ts from exporting
 // helpers.

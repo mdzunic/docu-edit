@@ -1,7 +1,9 @@
-// The equality relations SPEC-008's round-trip guarantees are stated in
-// (see specs/008-round-trip-preservation.md "Equality"):
+// The model-shaped equality relations SPEC-008's round-trip guarantees are
+// stated in (see specs/008-round-trip-preservation.md "Equality").
+// `equalBytes` lives in core/equality.ts and the XML canonicalization in
+// core/xml.ts — both product-neutral; this module holds the relations typed
+// against the document model:
 //
-//  - `equalBytes`      — byte identity; used only for preserved opaque parts.
 //  - `equalStructural` — deep equality of two document models after
 //    canonicalization, reporting the path of the first difference so a
 //    failing round-trip test says *where* it broke. Opaque XML is compared
@@ -19,11 +21,6 @@ import type { Block, DocumentModel, HeaderFooterContent, Paragraph } from "./doc
 import { resolveNamedStyle } from "./styles";
 import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 
-// equalBytes moved to core/equality.ts and XML canonicalization to
-// core/xml.ts — both are product-neutral; re-exported here so existing
-// import paths keep working.
-export { equalBytes } from "./core/equality";
-export { canonicalizeXml } from "./core/xml";
 
 function xmlEquivalent(a: string, b: string): boolean {
   try {

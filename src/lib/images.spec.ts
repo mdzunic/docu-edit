@@ -1,17 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  ACCEPTED_IMAGE_MIME_TYPES,
-  IMAGE_TOO_LARGE_MESSAGE,
-  MAX_IMAGE_SIZE_BYTES,
-  MIN_IMAGE_SIZE_CM,
-  cmToPx,
   deleteImage,
-  fitImageSizeCm,
   imageAt,
   insertImage,
-  isAcceptedImageType,
-  isImageTooLarge,
-  pxToCm,
   resetImageSize,
   setImageAltText,
   setImageSize,
@@ -20,6 +11,16 @@ import {
   type ImageLocation,
   type NewImageMedia,
 } from "./images";
+import {
+  ACCEPTED_IMAGE_MIME_TYPES,
+  IMAGE_TOO_LARGE_MESSAGE,
+  MAX_IMAGE_SIZE_BYTES,
+  MIN_IMAGE_SIZE_CM,
+  fitImageSizeCm,
+  isAcceptedImageType,
+  isImageTooLarge,
+} from "./core/media";
+import { cmToPx, pxToCm } from "./core/units";
 import { caretSelection, type ModelSelection } from "./commands";
 import { equalStructural } from "./equality";
 import { blockText, type CaretPosition } from "./textEditing";

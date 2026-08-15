@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { asListDefinitions, asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
+import { asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
+import { asListDefinitions } from "../lib/core/lists";
 import { chipLabel } from "../lib/mergeChips";
 import {
   displayRunFormatting,
@@ -16,7 +17,8 @@ import {
   trackChangeRunHidden,
   trackChangeRunStyle,
 } from "../lib/renderFormatting";
-import { asCellRange, asTable, isCellInRange, visibleRowCells } from "../lib/tables";
+import { asTable, visibleRowCells } from "../lib/tables";
+import { asCellRange, isCellInRange } from "../lib/core/tables";
 
 // One table block on the canvas (SPEC-022; formatting and merged cells
 // SPEC-023). Cell paragraphs render exactly like top-level ones (same

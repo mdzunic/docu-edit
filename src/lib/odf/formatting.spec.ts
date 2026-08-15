@@ -7,7 +7,7 @@ import { asParagraph, createDocument, type DocumentModel, type RunFormatting } f
 import { parseTextProperties } from "./properties";
 import { parseOdt } from "./reader";
 import { buildContentXml, writeOdt } from "./writer";
-import { parseXml } from "../docx/xml";
+import { parseXml } from "../core/xml";
 import { FO_NAMESPACE, STYLE_NAMESPACE } from "./xml";
 
 function textProperties(attrs: string): Element {

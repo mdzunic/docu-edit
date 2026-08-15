@@ -6,15 +6,11 @@
 // delegates to so its own script stays a thin caller, same role
 // openDocument.ts plays for the file-open path (its readFileAsArrayBuffer is
 // the same FileReader pattern reused below).
-import { decodeImageDimensions } from "./imageDimensions";
-import {
-  IMAGE_TOO_LARGE_MESSAGE,
-  isAcceptedImageType,
-  isImageTooLarge,
-  type NewImageMedia,
-} from "./images";
+import { decodeImageDimensions } from "./core/imageDimensions";
+import { type NewImageMedia } from "./images";
+import { IMAGE_TOO_LARGE_MESSAGE, isAcceptedImageType, isImageTooLarge } from "./core/media";
 import { bytesToBase64 } from "./opaque";
-import { convertSvgToPng, SvgConversionError } from "./svgToPng";
+import { convertSvgToPng, SvgConversionError } from "./core/svgToPng";
 import type { DocumentFormat } from "./documentModel";
 
 export class ImageInsertError extends Error {}

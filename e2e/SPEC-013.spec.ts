@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { MOD, LINE_START } from "./keys";
 import { readFileSync } from "node:fs";
-import { unzip } from "../src/lib/docx/zip";
+import { unzip } from "../src/lib/core/zip";
 
 // SPEC-013 — font family, size, text colour, highlight, sub/superscript.
 // Selection setup and model reads follow e2e/SPEC-012.spec.ts.

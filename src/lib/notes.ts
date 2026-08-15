@@ -21,7 +21,7 @@ import {
   type NoteSettings,
   type Paragraph,
 } from "./documentModel";
-import { formatOrdinal } from "./lists";
+import { formatOrdinal } from "./core/lists";
 import { blockText, type CellPath } from "./textEditing";
 
 /** One reference mark's location in the body flow. `offset` is the mark's

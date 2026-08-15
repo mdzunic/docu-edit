@@ -6,15 +6,12 @@
 // existing SPEC-008 opaque-inline fallback, exactly as it did before this
 // spec. This module only ever narrows what is already preserved, never
 // widens what gets dropped.
-import type { Image, ImageWrapMode, MediaPart } from "../documentModel";
-import { decodeImageDimensions } from "../imageDimensions";
+import type { Image, ImageWrapMode } from "../documentModel";
+import type { MediaPart } from "../core/media";
+import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64Async } from "../opaque";
-import {
-  firstChildElement,
-  resolvePartPath,
-  type Relationship,
-} from "./xml";
-import { cmToEmu, emuToCm } from "./units";
+import { firstChildElement, resolvePartPath, type Relationship } from "../core/xml";
+import { cmToEmu, emuToCm } from "../core/units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";

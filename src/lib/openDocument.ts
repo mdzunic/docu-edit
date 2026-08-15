@@ -11,17 +11,17 @@ import {
   type DocumentFormat,
   type DocumentModel,
   type DocumentProperties,
-  type ListDefinition,
-  type MediaPart,
   type NamedStyle,
   type NoteContent,
   type NoteSettings,
   type OpaquePart,
   type SourceXml,
 } from "./documentModel";
+import { type ListDefinition } from "./core/lists";
+import { type MediaPart } from "./core/media";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
-import { unzip, ZipError } from "./docx/zip";
+import { unzip, ZipError } from "./core/zip";
 import { parseMd, type ParseMdOptions } from "./md/reader";
 import { inferListStyleTypes } from "./styles";
 

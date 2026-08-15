@@ -2,7 +2,9 @@
 // by fake metrics like pagination.spec: 1 character = 1 line = 10px, page
 // content exactly 10 lines tall.
 import { describe, expect, it } from "vitest";
-import { paginate, PX_PER_CM, type BlockMetrics, type MetricsProvider } from "./pagination";
+import { paginate, type MetricsProvider } from "./pagination";
+import { type BlockMetrics } from "./core/pageMetrics";
+import { PX_PER_CM } from "./core/units";
 import {
   layoutWithNotes,
   NOTE_GAP_PX,

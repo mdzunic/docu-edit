@@ -7,7 +7,7 @@ import {
   extensionForContentType,
   parseDrawing,
 } from "./drawing";
-import { parseXml } from "./xml";
+import { parseXml } from "../core/xml";
 import type { Image } from "../documentModel";
 
 const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";

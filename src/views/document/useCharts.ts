@@ -11,10 +11,9 @@ import { nextTick, ref } from "vue";
 import type { Ref } from "vue";
 import { caretSelection, documentStart, type CommandResult, type ModelSelection } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
-import { CM_PER_PX } from "../../lib/tableResize";
+import { CM_PER_PX } from "../../lib/core/units";
 import {
   chartAt,
-  chartDataFromTableCells,
   deleteChart,
   insertChart,
   insertChartFromTable,
@@ -24,10 +23,11 @@ import {
   setChartOptions,
   setChartSeriesColor,
   setChartWrap,
-  type ChartFromTableResult,
   type ChartLocation,
 } from "../../lib/charts";
-import { isChart, type ChartOptions, type ChartSeries, type ChartType, type DocumentModel, type ImageWrapMode } from "../../lib/documentModel";
+import { chartDataFromTableCells, type ChartFromTableResult } from "../../lib/core/charts";
+import { isChart, type DocumentModel, type ImageWrapMode } from "../../lib/documentModel";
+import { type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
 import type { CaretPosition } from "../../lib/textEditing";
 
 function sameChartLocation(a: ChartLocation, b: ChartLocation): boolean {

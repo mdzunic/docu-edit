@@ -5,10 +5,8 @@
 // annotations (see AppShell.vue's comment on the same constraint).
 import {
   HORIZONTAL_RULE_STYLE_ID,
-  type BorderSide,
   type Chart,
   type Image,
-  type ListDefinition,
   type Paragraph,
   type ParagraphFormatting,
   type Run,
@@ -19,13 +17,15 @@ import {
   type TableRow,
   type TrackChangesDisplayMode,
 } from "./documentModel";
-import { listIndentCm } from "./lists";
-import { definedTextIndentCm } from "./listDefinitions";
+import { type ListDefinition } from "./core/lists";
+import { type BorderSide } from "./core/tables";
+import { listIndentCm } from "./core/lists";
+import { definedTextIndentCm } from "./core/listDefinitions";
 import { authorColor } from "./trackChangesIdentity";
 // The one highlight palette (OOXML name -> hex), shared with both file
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
 // name as-is.
-import { HIGHLIGHT_HEX } from "./odf/properties";
+import { HIGHLIGHT_HEX } from "./core/colors";
 
 /** The HTML tag a paragraph should render as: h1-h6 for a resolved heading
  * level (clamped to h6), otherwise a plain paragraph. */

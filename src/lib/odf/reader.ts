@@ -6,10 +6,6 @@
 import type {
   Block,
   BookmarkAnchor,
-  BorderLineStyle,
-  BorderSide,
-  CellBorders,
-  CellVerticalAlign,
   Chart,
   CommentAnchor,
   CommentMessage,
@@ -19,10 +15,6 @@ import type {
   FieldKind,
   FieldSpec,
   ImageWrapMode,
-  ListDefinition,
-  ListFormatting,
-  ListLevelDefinition,
-  MediaPart,
   NamedStyle,
   NoteContent,
   NoteKind,
@@ -40,23 +32,31 @@ import type {
   Section,
   SourceXml,
   Table,
-  TableAlignment,
   TableCell,
   TableRow,
-  TableWidthMode,
   TableOfContents,
   TocEntry,
   TrackedChangeInfo,
 } from "../documentModel";
+import type { ListDefinition, ListFormatting, ListLevelDefinition } from "../core/lists";
+import type { MediaPart } from "../core/media";
+import type {
+  BorderLineStyle,
+  BorderSide,
+  CellBorders,
+  CellVerticalAlign,
+  TableAlignment,
+  TableWidthMode,
+} from "../core/tables";
 import {
   createDefaultStyles,
   FIELD_PLACEHOLDER_TEXT,
   NOTE_PLACEHOLDER_TEXT,
 } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
-import { ZipError, unzip } from "../docx/zip";
-import { cmToTwips } from "../docx/units";
-import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../docx/xml";
+import { ZipError, unzip } from "../core/zip";
+import { cmToTwips } from "../core/units";
+import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { sanitizeHref } from "../links";
 import { parseChipText } from "../mergeChips";
 import { createMessageId, parseReplyParagraphText } from "../comments";
@@ -67,7 +67,7 @@ import {
   isBulletStyle,
   LIST_INDENT_STEP_CM,
   LIST_MARKER_WIDTH_CM,
-} from "../lists";
+} from "../core/lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { parseShapeElement } from "./shape";
 import { parseChartFrame } from "./chart";

@@ -24,19 +24,16 @@ import {
 } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { asImageHandle, previewImageSize, resizedImageSize } from "../../lib/imageResize";
-import { cmToPx } from "../../lib/images";
-import { paintShapeIntoCanvas } from "../../lib/shapeCanvas";
-import { CM_PER_PX } from "../../lib/tableResize";
+import { cmToPx } from "../../lib/core/units";
+import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
+import { CM_PER_PX } from "../../lib/core/units";
 import { modelRangeFromSelection, setDomCaret, setDomSelection } from "../../lib/domCaret";
 import { blockLength, noCaret } from "../../lib/textEditing";
 import { recordEdit as recordHistoryEdit } from "../../lib/undoHistory";
 import { replaceDocumentModel } from "../../lib/documentStore";
 import {
   DEFAULT_DRAWING_POSITION,
-  DEFAULT_NEW_SHAPE_FILL,
-  DEFAULT_NEW_SHAPE_OUTLINE,
   deleteShape,
-  drawGestureBox,
   duplicateShape,
   ensureShapeTextFrame,
   freshGroupOrdinal,
@@ -48,7 +45,6 @@ import {
   moveGroup,
   moveShape,
   nudgeShape,
-  normalizeRotationDeg,
   reanchorShape,
   reorderShapeZ,
   resizeGroup,
@@ -63,11 +59,17 @@ import {
   shapeHasVisibleText,
   shapesInPaintOrder,
   ungroupShapes,
-  type NudgeDirection,
   type ParagraphSpan,
   type ShapeLocation,
   type ZOrderCommand,
 } from "../../lib/shapes";
+import {
+  DEFAULT_NEW_SHAPE_FILL,
+  DEFAULT_NEW_SHAPE_OUTLINE,
+  drawGestureBox,
+  normalizeRotationDeg,
+  type NudgeDirection,
+} from "../../lib/core/shapes";
 import {
   HIT_TOLERANCE_CM,
   pointHitsShape,
@@ -75,16 +77,9 @@ import {
   rotatedResizeCursor,
   rotatedBounds,
   unrotateDelta,
-} from "../../lib/shapeGeometry";
-import {
-  asImageWrapMode,
-  isShape,
-  LINE_GEOMETRIES,
-  type DocumentModel,
-  type Shape,
-  type ShapeGeometry,
-  type ShapeOutline,
-} from "../../lib/documentModel";
+} from "../../lib/core/shapeGeometry";
+import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
+import { LINE_GEOMETRIES, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
 

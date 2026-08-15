@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { applyParagraphStyle, caretSelection, updateStyleFromSelection } from "../commands";
 import { asParagraph, createDocument, type DocumentModel } from "../documentModel";
-import { equalBytes } from "../equality";
+import { equalBytes } from "../core/equality";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
 import { buildStylesXml, patchStylesXml, writeDocx } from "./writer";
-import { unzip } from "./zip";
+import { unzip } from "../core/zip";
 import { WORD_NAMESPACE } from "./xml";
 
 // SPEC-019 — style definitions in the .docx writer: from-scratch saves

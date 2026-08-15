@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { nextFreeRelId, planMediaWrite, takenRelIdsOf, IMAGE_RELATIONSHIP } from "./media";
 import { base64ToBytes } from "../opaque";
 import { createDocument, type DocumentModel, type Image, type Paragraph } from "../documentModel";
-import type { Relationship } from "./xml";
+import type { Relationship } from "../core/xml";
 
 function paragraph(text = ""): Paragraph {
   return { type: "paragraph", runs: text.length > 0 ? [{ text, formatting: {} }] : [] };

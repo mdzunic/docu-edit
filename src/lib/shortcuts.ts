@@ -13,7 +13,7 @@
 // processors don't list "Escape closes this dialog" in their shortcut
 // reference either. The registry is for commands a user would look up by
 // name.
-import { isMacPlatform } from "./platform";
+import { isMacPlatform } from "./core/platform";
 
 /** One key combination that triggers a command. `key` is compared against
  * `KeyboardEvent.key` — case-insensitively for single characters, exactly

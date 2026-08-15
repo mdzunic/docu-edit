@@ -18,37 +18,15 @@ import {
   isToc,
   type Block,
   type DocumentModel,
-  type ListDefinition,
-  type ListFormatting,
   type Paragraph,
 } from "./documentModel";
+import { type ListDefinition, type ListFormatting } from "./core/lists";
 import {
   createDefinedListCounters,
   markerForDefinedItem,
   type DefinedListCounters,
-} from "./listDefinitions";
+} from "./core/listDefinitions";
 import { clampListLevel, markerStyleOf, markerText } from "./core/lists";
-
-export {
-  BULLET_CHARS,
-  BULLET_MARKER_STYLES,
-  bulletStyleForChar,
-  clampListLevel,
-  defaultMarkerStyle,
-  detectListAutoformat,
-  formatOrdinal,
-  isBulletStyle,
-  LIST_INDENT_STEP_CM,
-  LIST_MARKER_WIDTH_CM,
-  listIndentCm,
-  markerStyleOf,
-  markerText,
-  markerType,
-  MAX_LIST_LEVEL,
-  NUMBER_MARKER_STYLES,
-  planListLevels,
-} from "./core/lists";
-export type { PlannedListLevel } from "./core/lists";
 
 function listOf(block: Block | undefined): ListFormatting | undefined {
   return block === undefined || isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block)

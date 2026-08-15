@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { STANDARD_FONT_FAMILIES } from "../lib/fonts";
+import { STANDARD_FONT_FAMILIES } from "../lib/core/fonts";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.

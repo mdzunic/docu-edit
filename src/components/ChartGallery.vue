@@ -11,8 +11,8 @@
 // stay as each button's tooltip and accessible name.
 //
 // Runtime prop/emit declarations per the espree constraint (see AppShell.vue).
-import { asChartType, CHART_CATALOGUE } from "../lib/documentModel";
-import { CHART_ICON_SIZE, chartIconMarks } from "../lib/chartIcons";
+import { asChartType, CHART_CATALOGUE } from "../lib/core/charts";
+import { CHART_ICON_SIZE, chartIconMarks } from "../lib/core/chartIcons";
 
 defineEmits(["pick"]);
 

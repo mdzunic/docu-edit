@@ -1,7 +1,8 @@
 // SPEC-032 — multilevel list definitions: presets, marker composition and
 // the instance-counter scan.
 import { describe, expect, it } from "vitest";
-import type { Block, DocumentModel, ListDefinition, Paragraph } from "./documentModel";
+import type { Block, DocumentModel, Paragraph } from "./documentModel";
+import type { ListDefinition } from "./core/lists";
 import { createDocument } from "./documentModel";
 import { listMarkers, markersForBlocks } from "./lists";
 import {
@@ -10,7 +11,7 @@ import {
   GALLERY_PRESETS,
   markerForDefinedItem,
   presetLevels,
-} from "./listDefinitions";
+} from "./core/listDefinitions";
 
 function item(defId: string, listId: string, level: number, startAt?: number): Paragraph {
   const paragraph: Paragraph = { type: "paragraph", runs: [{ text: "x", formatting: {} }] };

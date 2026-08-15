@@ -6,7 +6,7 @@
 // editor owns the clipboard and table work. Dismissed by a click anywhere
 // outside or Escape.
 import { onBeforeUnmount, onMounted } from "vue";
-import { modifierKeyLabel } from "../lib/platform";
+import { modifierKeyLabel } from "../lib/core/platform";
 
 const props = defineProps({
   /** Viewport coordinates of the right-click that opened the menu. */

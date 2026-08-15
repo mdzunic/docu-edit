@@ -5,10 +5,10 @@ import {
   parseCoreProperties,
   parseCustomProperties,
 } from "./docProps";
-import { parseXml } from "./xml";
+import { parseXml } from "../core/xml";
 import { parseDocx } from "./reader";
 import { writeDocx } from "./writer";
-import { unzip } from "./zip";
+import { unzip } from "../core/zip";
 import { createDocument, type DocumentModel } from "../documentModel";
 import { caretSelection, insertText as insertTextCommand } from "../commands";
 import { insertComment } from "../comments";

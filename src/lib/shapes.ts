@@ -18,12 +18,11 @@ import {
   type ImageWrapMode,
   type Paragraph,
   type Shape,
-  type ShapeGeometry,
-  type ShapeOutline,
 } from "./documentModel";
+import { type ShapeGeometry, type ShapeOutline } from "./core/shapes";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
-import { LINE_GEOMETRIES } from "./documentModel";
+import { LINE_GEOMETRIES } from "./core/shapes";
 import {
   MIN_SHAPE_SIZE_CM,
   normalizeRotationDeg,
@@ -269,29 +268,6 @@ export function ensureShapeTextFrame(
   replaceShape(next, location, { ...shape, text: { blocks: [emptyParagraph()], vAlign: "top" } });
   return { model: next, selection };
 }
-
-// The draw defaults and gesture arithmetic (defaultClickSizeCm,
-// constrainedDragSizeCm, drawGestureBox, the new-shape fill/outline, the
-// size/nudge constants and normalizeRotationDeg) moved to core/shapes.ts —
-// they are pure geometry with no model dependency; imported for this
-// module's own commands and re-exported so existing import paths keep
-// working.
-export {
-  asNudgeDirection,
-  constrainedDragSizeCm,
-  DEFAULT_AREA_SIZE_CM,
-  DEFAULT_LINE_SIZE_CM,
-  DEFAULT_NEW_SHAPE_FILL,
-  DEFAULT_NEW_SHAPE_OUTLINE,
-  defaultClickSizeCm,
-  DRAW_DRAG_THRESHOLD_CM,
-  drawGestureBox,
-  MIN_SHAPE_SIZE_CM,
-  normalizeRotationDeg,
-  NUDGE_FINE_PT_CM,
-  NUDGE_PT_CM,
-} from "./core/shapes";
-export type { NudgeDirection } from "./core/shapes";
 
 /** Sets a shape's display size in cm (resize-handle drag on release, and the
  * shape toolbar's size fields). Clamped like images.ts's MIN_IMAGE_SIZE_CM

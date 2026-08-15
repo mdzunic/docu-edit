@@ -21,24 +21,18 @@ import {
   sectionPageSize,
   type Block,
   type DocumentModel,
-  type Margins,
-  type PageSize,
   type Paragraph,
 } from "./documentModel";
+import { type Margins, type PageSize } from "./core/pageSetup";
 
 // PX_PER_CM moved to core/units.ts (one source for the fixed 96 dpi ratio);
 // imported for the engine's own math and re-exported so existing import
 // paths keep working.
 import { PX_PER_CM } from "./core/units";
 
-export { PX_PER_CM } from "./core/units";
-
-// LineBox and BlockMetrics moved to core/pageMetrics.ts alongside the DOM
-// measurement that produces them; imported for the engine's own signatures
-// and re-exported so existing import paths keep working.
+// LineBox and BlockMetrics live in core/pageMetrics.ts alongside the DOM
+// measurement that produces them; PX_PER_CM in core/units.ts.
 import type { BlockMetrics, LineBox } from "./core/pageMetrics";
-
-export type { BlockMetrics, LineBox } from "./core/pageMetrics";
 
 /** Supplies per-block metrics. The engine never caches — caching (and
  * invalidation by block object identity) is the provider's job. */

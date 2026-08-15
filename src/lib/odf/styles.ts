@@ -4,20 +4,17 @@
 // and resolves a style name's `style:parent-style-name` chain into effective
 // paragraph/run formatting, the ODF counterpart of docx/styles.ts.
 import type {
-  ListDefinition,
-  ListMarkerStyle,
-  ListType,
-  Margins,
   NamedStyle,
-  PageSize,
   ParagraphFormatting,
   RunFormatting,
   SectionColumns,
 } from "../documentModel";
+import type { ListDefinition, ListMarkerStyle, ListType } from "../core/lists";
+import type { Margins, PageSize } from "../core/pageSetup";
 import { DEFAULT_COLUMN_GAP_CM, MAX_COLUMN_COUNT } from "../documentModel";
-import { childElements, firstChildElement, serializeElement } from "../docx/xml";
+import { childElements, firstChildElement, serializeElement } from "../core/xml";
 import { mergeParagraphFormatting, mergeRunFormatting } from "../docx/properties";
-import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../lists";
+import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../core/lists";
 import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "./xml";
 import {
   cleanFontFamily,
