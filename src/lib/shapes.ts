@@ -315,6 +315,42 @@ export function constrainedDragSizeCm(
   return { widthCm: side, heightCm: side };
 }
 
+/** How far the pointer must travel before a draw gesture counts as a drag
+ * rather than a click (AC-4, AC-5) — 3px at 96dpi. */
+export const DRAW_DRAG_THRESHOLD_CM = 3 * (2.54 / 96);
+
+/** The box a draw gesture currently describes (AC-4..AC-8), all in
+ * page-relative cm: the rectangle dragged from `start` to `pointer`, or —
+ * while the pointer has barely moved, and always for a text box — the
+ * default click size placed at the pointer.
+ *
+ * The live preview and the shape that actually lands both come from here.
+ * They have to: a preview drawn from its own copy of this arithmetic is
+ * free to promise a box the insertion then does not deliver. */
+export function drawGestureBox(
+  geometry: ShapeGeometry,
+  start: { xCm: number; yCm: number },
+  pointer: { xCm: number; yCm: number },
+  opts: { shiftKey?: boolean; forceDefaultSize?: boolean } = {},
+): { leftCm: number; topCm: number; widthCm: number; heightCm: number } {
+  const dxCm = pointer.xCm - start.xCm;
+  const dyCm = pointer.yCm - start.yCm;
+  const dragged =
+    Math.abs(dxCm) > DRAW_DRAG_THRESHOLD_CM || Math.abs(dyCm) > DRAW_DRAG_THRESHOLD_CM;
+  if (!dragged || opts.forceDefaultSize) {
+    return { leftCm: pointer.xCm, topCm: pointer.yCm, ...defaultClickSizeCm(geometry) };
+  }
+  const size = opts.shiftKey
+    ? constrainedDragSizeCm(geometry, dxCm, dyCm)
+    : { widthCm: Math.abs(dxCm), heightCm: Math.abs(dyCm) };
+  return {
+    // Dragging up or left puts the box's own corner at the pointer.
+    leftCm: dxCm < 0 ? pointer.xCm : start.xCm,
+    topCm: dyCm < 0 ? pointer.yCm : start.yCm,
+    ...size,
+  };
+}
+
 /** Sets a shape's display size in cm (resize-handle drag on release, and the
  * shape toolbar's size fields). Clamped like images.ts's MIN_IMAGE_SIZE_CM
  * so a drag can never collapse a shape to nothing (a zero-height Line stays

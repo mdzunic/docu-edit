@@ -25,6 +25,7 @@ import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.v
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
+import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
 import ShapeGallery from "../components/ShapeGallery.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartGallery from "../components/ChartGallery.vue";
@@ -926,6 +927,8 @@ const {
   shapeHandles,
   shapeAnchorMarker,
   drawGeometry,
+  drawPreview,
+  movingShape,
   editingShapeText,
   shapeTextRemountEpoch,
   clearShapeSelection,
@@ -6312,6 +6315,15 @@ async function menuPastePlain() {
             data-testid="shape-anchor-marker"
             :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
           />
+          <ShapeDrawPreview
+            v-if="drawPreview"
+            class="print-exclude"
+            :shape="drawPreview.shape"
+            :left="drawPreview.left"
+            :top="drawPreview.top"
+            :width="drawPreview.width"
+            :height="drawPreview.height"
+          />
           <div
             ref="contentRoot"
             class="document-content"
@@ -6559,7 +6571,7 @@ async function menuPastePlain() {
       @delete="handleImageDelete"
     />
     <ShapeToolbar
-      v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection)"
+      v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection) && !movingShape"
       class="print-exclude"
       :left="shapeToolbarStyle().left"
       :top="shapeToolbarStyle().top"

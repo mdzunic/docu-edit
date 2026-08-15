@@ -10,6 +10,7 @@ import {
   pointHitsShape,
   pointInEllipse,
   pointInPolygon,
+  rotatedBounds,
   roundedCalloutOutline,
   roundedCalloutRadius,
   roundRectRadius,
@@ -121,6 +122,67 @@ describe("shapePolygon", () => {
     expect(shift).toBeGreaterThan(0);
     expect(round[4].x - wedge[4].x).toBeCloseTo(shift, 8);
     expect(round[3].x - wedge[3].x).toBeCloseTo(shift, 8);
+  });
+});
+
+// --- rotatedBounds -----------------------------------------------------------
+
+describe("rotatedBounds", () => {
+  it("pads nothing at all when the shape is not rotated", () => {
+    expect(rotatedBounds(120, 80, 0)).toEqual({ width: 120, height: 80, padX: 0, padY: 0 });
+  });
+
+  it("swaps the sides at a quarter turn", () => {
+    const bounds = rotatedBounds(120, 80, 90);
+    expect(bounds.width).toBeCloseTo(80, 6);
+    expect(bounds.height).toBeCloseTo(120, 6);
+    expect(bounds.padX).toBeCloseTo(-20, 6);
+    expect(bounds.padY).toBeCloseTo(20, 6);
+  });
+
+  it("grows to the diagonal at 45 degrees, the widest a box ever gets", () => {
+    const side = 100;
+    const bounds = rotatedBounds(side, side, 45);
+    expect(bounds.width).toBeCloseTo(side * Math.SQRT2, 6);
+    expect(bounds.height).toBeCloseTo(side * Math.SQRT2, 6);
+  });
+
+  it("keeps the padding symmetric, so the shape's own box stays put", () => {
+    const bounds = rotatedBounds(120, 80, 35);
+    expect(bounds.padX * 2).toBeCloseTo(bounds.width - 120, 6);
+    expect(bounds.padY * 2).toBeCloseTo(bounds.height - 80, 6);
+  });
+
+  it("contains every rotated corner — the crop this exists to prevent", () => {
+    const width = 120;
+    const height = 80;
+    for (const deg of [10, 35, 90, 135, 200, 359]) {
+      const bounds = rotatedBounds(width, height, deg);
+      const rad = (deg * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const corners = [
+        { x: 0, y: 0 },
+        { x: width, y: 0 },
+        { x: width, y: height },
+        { x: 0, y: height },
+      ];
+      for (const corner of corners) {
+        // Rotate about the box centre, then shift into the padded surface.
+        const dx = corner.x - width / 2;
+        const dy = corner.y - height / 2;
+        const x = bounds.padX + width / 2 + dx * cos - dy * sin;
+        const y = bounds.padY + height / 2 + dx * sin + dy * cos;
+        expect(x, `${deg}deg x`).toBeGreaterThanOrEqual(-1e-6);
+        expect(x, `${deg}deg x`).toBeLessThanOrEqual(bounds.width + 1e-6);
+        expect(y, `${deg}deg y`).toBeGreaterThanOrEqual(-1e-6);
+        expect(y, `${deg}deg y`).toBeLessThanOrEqual(bounds.height + 1e-6);
+      }
+    }
+  });
+
+  it("is symmetric in the direction of rotation", () => {
+    expect(rotatedBounds(120, 80, 35)).toEqual(rotatedBounds(120, 80, -35));
   });
 });
 

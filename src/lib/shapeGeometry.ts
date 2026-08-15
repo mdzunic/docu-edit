@@ -230,6 +230,36 @@ export function scalePolygon(polygon: Point[], width: number, height: number): P
   return polygon.map((p) => ({ x: p.x * width, y: p.y * height }));
 }
 
+/** The axis-aligned box a `width` x `height` shape needs once rotated about
+ * its own centre, plus the padding that box adds either side.
+ *
+ * A rotated shape is painted into a canvas the size of its UNROTATED box
+ * unless something asks this: the corners then swing outside that box and
+ * are sliced off, turning a rotated rectangle into an octagon. The shape
+ * keeps its own form and dimensions — only the surface it is painted on
+ * has to grow, and shift back by the padding to leave the shape where it
+ * was. Zero rotation pads nothing, so an unrotated shape is untouched. */
+export function rotatedBounds(
+  width: number,
+  height: number,
+  rotationDeg: number,
+): { width: number; height: number; padX: number; padY: number } {
+  if (!rotationDeg) {
+    return { width, height, padX: 0, padY: 0 };
+  }
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  const rotatedWidth = width * cos + height * sin;
+  const rotatedHeight = width * sin + height * cos;
+  return {
+    width: rotatedWidth,
+    height: rotatedHeight,
+    padX: (rotatedWidth - width) / 2,
+    padY: (rotatedHeight - height) / 2,
+  };
+}
+
 /** Rotates `point` by `-rotationDeg` around the box centre `(width/2,
  * height/2)` — the inverse of painting's rotation, so a hit test can work
  * entirely in the shape's own unrotated local space. */

@@ -7,6 +7,8 @@ import {
   DEFAULT_DRAWING_POSITION,
   DEFAULT_LINE_SIZE_CM,
   defaultClickSizeCm,
+  DRAW_DRAG_THRESHOLD_CM,
+  drawGestureBox,
   deleteShape,
   duplicateShape,
   ensureShapeTextFrame,
@@ -271,6 +273,60 @@ describe("constrainedDragSizeCm (AC-7, AC-8)", () => {
   it("snaps a ~60-degree line drag to the nearest 45-degree increment (diagonal)", () => {
     // atan2(8, 5) ~ 58deg, closer to 45 than to 90.
     expect(constrainedDragSizeCm("line", 5, 8)).toEqual({ widthCm: 8, heightCm: 8 });
+  });
+});
+
+// --- drawGestureBox ----------------------------------------------------------
+
+describe("drawGestureBox (AC-3..AC-8)", () => {
+  const start = { xCm: 4, yCm: 3 };
+
+  it("places the default click size at the pointer while it has barely moved", () => {
+    const nudged = { xCm: 4 + DRAW_DRAG_THRESHOLD_CM, yCm: 3 };
+    expect(drawGestureBox("rect", start, nudged)).toEqual({
+      leftCm: nudged.xCm,
+      topCm: 3,
+      ...DEFAULT_AREA_SIZE_CM,
+    });
+    expect(drawGestureBox("line", start, start)).toMatchObject(DEFAULT_LINE_SIZE_CM);
+  });
+
+  it("draws the dragged rectangle once past the threshold", () => {
+    expect(drawGestureBox("rect", start, { xCm: 9, yCm: 7 })).toEqual({
+      leftCm: 4,
+      topCm: 3,
+      widthCm: 5,
+      heightCm: 4,
+    });
+  });
+
+  it("puts the box's own corner at the pointer when dragging up and left", () => {
+    expect(drawGestureBox("rect", start, { xCm: 1, yCm: 1 })).toEqual({
+      leftCm: 1,
+      topCm: 1,
+      widthCm: 3,
+      heightCm: 2,
+    });
+  });
+
+  it("hands Shift-constrained drags to constrainedDragSizeCm", () => {
+    const dragged = { xCm: 12, yCm: 6 };
+    const box = drawGestureBox("rect", start, dragged, { shiftKey: true });
+    expect(box).toMatchObject(constrainedDragSizeCm("rect", dragged.xCm - start.xCm, dragged.yCm - start.yCm));
+  });
+
+  it("keeps a text box at its default size however far the pointer is dragged", () => {
+    const box = drawGestureBox("rect", start, { xCm: 20, yCm: 20 }, { forceDefaultSize: true });
+    expect(box).toMatchObject(DEFAULT_AREA_SIZE_CM);
+  });
+
+  it("is the same box the live preview and the insertion each read", () => {
+    // Not a behaviour of its own — the point of the function. A drag that
+    // ends where the pointer currently is must describe the same box the
+    // preview is showing for that pointer, or the shape lands somewhere
+    // other than where it was dragged out.
+    const pointer = { xCm: 11, yCm: 9 };
+    expect(drawGestureBox("ellipse", start, pointer)).toEqual(drawGestureBox("ellipse", start, pointer));
   });
 });
 

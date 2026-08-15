@@ -11,6 +11,7 @@ import {
 } from "./documentModel";
 import {
   lineSegment,
+  rotatedBounds,
   roundedCalloutOutline,
   roundRectRadius,
   scalePolygon,
@@ -79,6 +80,43 @@ function paintArrowhead(ctx: CanvasRenderingContext2D, from: Point, to: Point, s
 
 /** 1pt in px at 96dpi — outline widths are stored in points. */
 const PX_PER_PT = 96 / 72;
+
+/** Sizes `canvas` for `shape` at `widthPx` x `heightPx` and paints it.
+ *
+ * The one place a shape's canvas is sized, so the page's own render and the
+ * live resize/draw previews cannot size it differently — and so a rotated
+ * shape gets the bigger surface its corners need (rotatedBounds) in every
+ * one of them. The canvas is offset back by that padding, leaving the
+ * shape's own box exactly where the caller placed it; a caller only has to
+ * not clip its overflow.
+ *
+ * Takes the element rather than a context because the sizing IS the point;
+ * paintShape below stays the framework- and DOM-free core it wraps. */
+export function paintShapeIntoCanvas(
+  canvas: HTMLCanvasElement,
+  shape: Shape,
+  widthPx: number,
+  heightPx: number,
+): void {
+  const bounds = rotatedBounds(widthPx, heightPx, shape.rotationDeg ?? 0);
+  const surfaceW = Math.max(1, Math.ceil(bounds.width));
+  const surfaceH = Math.max(1, Math.ceil(bounds.height));
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  canvas.width = surfaceW * dpr;
+  canvas.height = surfaceH * dpr;
+  canvas.style.width = `${surfaceW}px`;
+  canvas.style.height = `${surfaceH}px`;
+  canvas.style.left = `${-bounds.padX}px`;
+  canvas.style.top = `${-bounds.padY}px`;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, surfaceW, surfaceH);
+  ctx.translate(bounds.padX, bounds.padY);
+  paintShape(ctx, shape, widthPx, heightPx);
+}
 
 /** Paints a Shape's geometry/fill/outline into a `widthPx` x `heightPx`
  * canvas context — the context is expected to already be translated/scaled

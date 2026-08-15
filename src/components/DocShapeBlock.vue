@@ -3,7 +3,7 @@ import { nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue"
 import { asListDefinitions, asShape } from "../lib/documentModel";
 import { shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
-import { paintShape } from "../lib/shapeCanvas";
+import { paintShapeIntoCanvas } from "../lib/shapeCanvas";
 import { shapeClipPath } from "../lib/shapeGeometry";
 import { shapeHasVisibleText } from "../lib/shapes";
 import { shapeTextRenderEntries } from "../lib/pageRender";
@@ -55,18 +55,7 @@ function repaint() {
   }
   const widthPx = Math.max(1, Math.round(cmToPx(shape.widthCm)));
   const heightPx = Math.max(1, Math.round(cmToPx(Math.max(shape.heightCm, 0.05))));
-  const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-  canvas.width = widthPx * dpr;
-  canvas.height = heightPx * dpr;
-  canvas.style.width = `${widthPx}px`;
-  canvas.style.height = `${heightPx}px`;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return;
-  }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, widthPx, heightPx);
-  paintShape(ctx, shape, widthPx, heightPx);
+  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx);
 }
 
 onMounted(repaint);

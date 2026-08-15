@@ -24,18 +24,19 @@ import {
 } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { asImageHandle, previewImageSize, resizedImageSize } from "../../lib/imageResize";
+import { cmToPx } from "../../lib/images";
+import { paintShapeIntoCanvas } from "../../lib/shapeCanvas";
 import { CM_PER_PX } from "../../lib/tableResize";
 import { modelRangeFromSelection, setDomCaret, setDomSelection } from "../../lib/domCaret";
 import { blockLength, noCaret } from "../../lib/textEditing";
 import { recordEdit as recordHistoryEdit } from "../../lib/undoHistory";
 import { replaceDocumentModel } from "../../lib/documentStore";
 import {
-  constrainedDragSizeCm,
-  defaultClickSizeCm,
   DEFAULT_DRAWING_POSITION,
   DEFAULT_NEW_SHAPE_FILL,
   DEFAULT_NEW_SHAPE_OUTLINE,
   deleteShape,
+  drawGestureBox,
   duplicateShape,
   ensureShapeTextFrame,
   freshGroupOrdinal,
@@ -73,6 +74,7 @@ import {
   isShape,
   LINE_GEOMETRIES,
   type DocumentModel,
+  type Shape,
   type ShapeGeometry,
   type ShapeOutline,
 } from "../../lib/documentModel";
@@ -361,6 +363,16 @@ export function useShapes(deps: ShapesDeps) {
   /** Armed by picking a gallery entry (AC-3): the geometry the next
    * drag/click on the canvas draws, or "textbox" — cleared once drawn. */
   const drawGeometry = ref<ShapeGeometry | "textbox" | null>(null);
+  /** The rubber band an in-flight draw gesture is describing (AC-3): the
+   * shape about to be inserted, plus its box in page-relative px for the
+   * overlay to sit at. Null whenever no draw gesture is in flight. */
+  const drawPreview = ref<{
+    shape: Shape;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
   let resizeDrag: {
     location: ShapeLocation;
     handle: string;
@@ -798,6 +810,25 @@ export function useShapes(deps: ShapesDeps) {
     window.addEventListener("mouseup", finishShapeResize);
   }
 
+  /** Repaints a shape's own canvas at a size the model does not carry yet.
+   * previewImageSize only stretches the wrapper element; on its own that
+   * leaves a resize drag showing a box growing around a shape that stays
+   * the size it started, so the drag gives no feel for what is being made.
+   * Same painter and same sizing as the page's own render, so the stretched
+   * preview is the shape, not a scaled bitmap of it. */
+  function previewShapeCanvas(el: HTMLElement, shape: Shape, widthCm: number, heightCm: number) {
+    const canvas = el.querySelector("canvas.doc-shape-canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return;
+    }
+    paintShapeIntoCanvas(
+      canvas,
+      { ...shape, widthCm, heightCm },
+      Math.max(1, Math.round(cmToPx(widthCm))),
+      Math.max(1, Math.round(cmToPx(Math.max(heightCm, 0.05)))),
+    );
+  }
+
   function handleShapeResizeMove(event: MouseEvent) {
     const drag = resizeDrag;
     if (!drag) {
@@ -815,6 +846,13 @@ export function useShapes(deps: ShapesDeps) {
     // element here would show the rest of the group left behind).
     if (drag.groupOrdinal === undefined) {
       previewImageSize(drag.el, size.widthCm, size.heightCm);
+      const shape = doc.value ? shapeAt(doc.value, drag.location) : null;
+      if (shape) {
+        previewShapeCanvas(drag.el, shape, size.widthCm, size.heightCm);
+      }
+      // The handles are what the pointer is dragging — they have to track
+      // the box they are sizing, not sit at the size it started.
+      remeasureShapeHandles();
     }
   }
 
@@ -875,8 +913,12 @@ export function useShapes(deps: ShapesDeps) {
     el: HTMLElement;
     dxCm: number;
     dyCm: number;
+    startHandles: ReturnType<typeof noImageHandleGeometry>;
   } | null = null;
   let moveDragMoved = false;
+  /** True while a shape is actually being dragged (past the click
+   * threshold) — the floating toolbar hides for the duration. */
+  const movingShape = ref(false);
 
   /** Arms a possible move drag on mousedown over a shape's own body
    * (DocumentView's handleCanvasMouseDown, both for a native DOM hit and for
@@ -917,6 +959,7 @@ export function useShapes(deps: ShapesDeps) {
       el,
       dxCm: 0,
       dyCm: 0,
+      startHandles: shapeHandles.value ? { ...shapeHandles.value } : null,
     };
     window.addEventListener("mousemove", handleShapeMoveMove);
     window.addEventListener("mouseup", finishShapeMove);
@@ -943,6 +986,20 @@ export function useShapes(deps: ShapesDeps) {
     if (drag.groupOrdinal === undefined) {
       drag.el.style.left = `${drag.startOffsetXCm + drag.dxCm}cm`;
       drag.el.style.top = `${drag.startOffsetYCm + drag.dyCm}cm`;
+      // The handles belong to the shape, so they travel with it — the
+      // element moves by exactly this delta, so the measured box does too.
+      if (drag.startHandles) {
+        shapeHandles.value = {
+          ...drag.startHandles,
+          left: drag.startHandles.left + dxPx,
+          top: drag.startHandles.top + dyPx,
+        };
+      }
+      // The toolbar stays put wherever it was opened, which during a drag
+      // means it sits across the page in the way of the shape being
+      // dragged; it comes back on release, repositioned (finishShapeMove's
+      // remeasureShapeHandles).
+      movingShape.value = true;
     }
   }
 
@@ -951,6 +1008,7 @@ export function useShapes(deps: ShapesDeps) {
     window.removeEventListener("mouseup", finishShapeMove);
     const drag = moveDrag;
     moveDrag = null;
+    movingShape.value = false;
     if (!drag || !moveDragMoved) {
       return;
     }
@@ -1078,6 +1136,28 @@ export function useShapes(deps: ShapesDeps) {
 
   function disarmShapeDraw() {
     drawGeometry.value = null;
+    drawPreview.value = null;
+  }
+
+  /** The Shape a draw gesture will land. The preview paints this exact
+   * object and the insertion takes its fill/outline from it, so what is
+   * dragged out and what appears cannot disagree. A text box gets neither
+   * fill nor outline (AC-9). */
+  function newDrawnShape(
+    geometry: ShapeGeometry,
+    isTextBox: boolean,
+    widthCm: number,
+    heightCm: number,
+  ): Shape {
+    const shape: Shape = { type: "shape", geometry, widthCm, heightCm, wrap: "square" };
+    if (isTextBox) {
+      return shape;
+    }
+    shape.outline = DEFAULT_NEW_SHAPE_OUTLINE;
+    if (!LINE_GEOMETRIES.has(geometry)) {
+      shape.fill = DEFAULT_NEW_SHAPE_FILL;
+    }
+    return shape;
   }
 
   /** Finds the anchor CaretPosition + its page-relative top-left, in cm
@@ -1099,6 +1179,56 @@ export function useShapes(deps: ShapesDeps) {
     return { anchor, left: (rect.left - pageRect.left) * CM_PER_PX, top: (rect.top - pageRect.top) * CM_PER_PX };
   }
 
+  /** The page-relative cm box the pointer currently describes, and the
+   * geometry it will be drawn as — the single answer both the live preview
+   * and the committed insertion read. */
+  function drawBoxNow(
+    drag: NonNullable<typeof drawDrag>,
+    event: MouseEvent,
+    geometry: ShapeGeometry | "textbox",
+  ): { geometry: ShapeGeometry; isTextBox: boolean; box: ReturnType<typeof drawGestureBox> } | null {
+    const pageEl = pageRef.value;
+    if (!pageEl) {
+      return null;
+    }
+    const pageRect = pageEl.getBoundingClientRect();
+    const isTextBox = geometry === "textbox";
+    const realGeometry: ShapeGeometry = isTextBox ? "rect" : (geometry as ShapeGeometry);
+    return {
+      geometry: realGeometry,
+      isTextBox,
+      box: drawGestureBox(
+        realGeometry,
+        {
+          xCm: (drag.startClientX - pageRect.left) * CM_PER_PX,
+          yCm: (drag.startClientY - pageRect.top) * CM_PER_PX,
+        },
+        { xCm: (event.clientX - pageRect.left) * CM_PER_PX, yCm: (event.clientY - pageRect.top) * CM_PER_PX },
+        { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
+      ),
+    };
+  }
+
+  /** Repaints the rubber band from wherever the pointer is now (AC-3). */
+  function handleShapeDrawMove(event: MouseEvent) {
+    const drag = drawDrag;
+    const geometry = drawGeometry.value;
+    if (!drag || !geometry) {
+      return;
+    }
+    const now = drawBoxNow(drag, event, geometry);
+    if (!now) {
+      return;
+    }
+    drawPreview.value = {
+      shape: newDrawnShape(now.geometry, now.isTextBox, now.box.widthCm, now.box.heightCm),
+      left: cmToPx(now.box.leftCm),
+      top: cmToPx(now.box.topCm),
+      width: cmToPx(now.box.widthCm),
+      height: cmToPx(now.box.heightCm),
+    };
+  }
+
   function startShapeDraw(event: MouseEvent) {
     if (!drawGeometry.value || !editable.value) {
       return;
@@ -1116,47 +1246,30 @@ export function useShapes(deps: ShapesDeps) {
       anchorLeft: anchorInfo.left,
       anchorTop: anchorInfo.top,
     };
+    // Preview from the press, not from the first move: before the pointer
+    // passes the drag threshold the box shown is the default click size,
+    // which is exactly what releasing here would insert.
+    handleShapeDrawMove(event);
+    window.addEventListener("mousemove", handleShapeDrawMove);
     window.addEventListener("mouseup", finishShapeDraw);
   }
 
   function finishShapeDraw(event: MouseEvent) {
+    window.removeEventListener("mousemove", handleShapeDrawMove);
     window.removeEventListener("mouseup", finishShapeDraw);
     const drag = drawDrag;
     const geometry = drawGeometry.value;
     drawDrag = null;
+    drawPreview.value = null;
     if (!drag || !geometry) {
       return;
     }
-    const pageEl = pageRef.value;
-    if (!pageEl) {
+    const now = drawBoxNow(drag, event, geometry);
+    if (!now) {
       return;
     }
-    const pageRect = pageEl.getBoundingClientRect();
-    const dxPx = event.clientX - drag.startClientX;
-    const dyPx = event.clientY - drag.startClientY;
-    const dxCm = dxPx * CM_PER_PX;
-    const dyCm = dyPx * CM_PER_PX;
-    const dragged = Math.abs(dxPx) > 3 || Math.abs(dyPx) > 3;
-
-    const isTextBox = geometry === "textbox";
-    const realGeometry: ShapeGeometry = isTextBox ? "rect" : (geometry as ShapeGeometry);
-    let widthCm: number;
-    let heightCm: number;
-    let leftCm: number;
-    let topCm: number;
-    if (dragged && !isTextBox) {
-      const size = event.shiftKey ? constrainedDragSizeCm(realGeometry, dxCm, dyCm) : { widthCm: Math.abs(dxCm), heightCm: Math.abs(dyCm) };
-      widthCm = size.widthCm;
-      heightCm = size.heightCm;
-      leftCm = (dxPx < 0 ? event.clientX - pageRect.left : drag.startClientX - pageRect.left) * CM_PER_PX;
-      topCm = (dyPx < 0 ? event.clientY - pageRect.top : drag.startClientY - pageRect.top) * CM_PER_PX;
-    } else {
-      const size = defaultClickSizeCm(realGeometry);
-      widthCm = size.widthCm;
-      heightCm = size.heightCm;
-      leftCm = (event.clientX - pageRect.left) * CM_PER_PX;
-      topCm = (event.clientY - pageRect.top) * CM_PER_PX;
-    }
+    const { isTextBox, geometry: realGeometry } = now;
+    const { leftCm, topCm, widthCm, heightCm } = now.box;
 
     const model = doc.value;
     const root = contentRoot.value as HTMLElement | null;
@@ -1166,16 +1279,18 @@ export function useShapes(deps: ShapesDeps) {
     const selection = caretSelection(drag.anchor);
     const offsetXCm = leftCm - drag.anchorLeft;
     const offsetYCm = topCm - drag.anchorTop;
+    // The very shape the preview has been painting all along.
+    const drawn = newDrawnShape(realGeometry, isTextBox, widthCm, heightCm);
     const result = isTextBox
       ? insertTextBox(model, selection)
       : insertShape(model, selection, {
-          geometry: realGeometry,
-          widthCm,
-          heightCm,
+          geometry: drawn.geometry,
+          widthCm: drawn.widthCm,
+          heightCm: drawn.heightCm,
           offsetXCm,
           offsetYCm,
-          outline: DEFAULT_NEW_SHAPE_OUTLINE,
-          ...(LINE_GEOMETRIES.has(realGeometry) ? {} : { fill: DEFAULT_NEW_SHAPE_FILL }),
+          ...(drawn.outline ? { outline: drawn.outline } : {}),
+          ...(drawn.fill ? { fill: drawn.fill } : {}),
         });
     applyEdit(result, selection, isTextBox ? "insert text box" : "insert shape");
     disarmShapeDraw();
@@ -1236,6 +1351,8 @@ export function useShapes(deps: ShapesDeps) {
     shapeHandles,
     shapeAnchorMarker,
     drawGeometry,
+    drawPreview,
+    movingShape,
     editingShapeText,
     shapeTextRemountEpoch,
     clearShapeSelection,
