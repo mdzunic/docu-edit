@@ -14,80 +14,16 @@
 //
 // Framework-free on purpose: this must run under Vitest (jsdom) and in the
 // browser with nothing but DOMParser.
-import { parseXml, XmlParseError } from "./docx/xml";
+import { canonicalizeXml, XmlParseError } from "./core/xml";
 import type { Block, DocumentModel, HeaderFooterContent, Paragraph } from "./documentModel";
 import { resolveNamedStyle } from "./styles";
 import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 
-/** Byte identity between two buffers — the relation preserved opaque parts
- * are compared with before and after a save. */
-export function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// --- XML canonicalization --------------------------------------------------
-
-const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
-
-function escapeXmlText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeXmlAttribute(value: string): string {
-  return escapeXmlText(value).replace(/"/g, "&quot;");
-}
-
-function canonicalizeElement(el: Element, out: string[]): void {
-  const name = `{${el.namespaceURI ?? ""}}${el.localName}`;
-  out.push(`<${name}`);
-
-  // Namespace declarations are context, not content — the expanded {ns}local
-  // names above already carry what they declare — so they are dropped and
-  // the remaining attributes sorted by expanded name.
-  const attributes = Array.from(el.attributes)
-    .filter((attr) => attr.namespaceURI !== XMLNS_NAMESPACE)
-    .map((attr) => ({
-      name: `{${attr.namespaceURI ?? ""}}${attr.localName}`,
-      value: attr.value,
-    }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const attr of attributes) {
-    out.push(` ${attr.name}="${escapeXmlAttribute(attr.value)}"`);
-  }
-  out.push(">");
-
-  for (const child of Array.from(el.childNodes)) {
-    if (child.nodeType === Node.ELEMENT_NODE) {
-      canonicalizeElement(child as Element, out);
-    } else if (child.nodeType === Node.TEXT_NODE || child.nodeType === Node.CDATA_SECTION_NODE) {
-      // Text is significant inside document content — kept verbatim.
-      out.push(escapeXmlText((child as CharacterData).data));
-    }
-    // Comments and processing instructions carry no document content.
-  }
-
-  out.push(`</${name}>`);
-}
-
-/** A deterministic canonical form of an XML fragment: expanded `{ns}local`
- * names (so the prefix a producer chose is irrelevant), attributes sorted by
- * expanded name, namespace declarations dropped, comments dropped, text
- * verbatim. Two fragments are equivalent iff their canonical forms are
- * string-equal. Throws `XmlParseError` for malformed input. */
-export function canonicalizeXml(xml: string): string {
-  const doc = parseXml(xml);
-  const out: string[] = [];
-  canonicalizeElement(doc.documentElement, out);
-  return out.join("");
-}
+// equalBytes moved to core/equality.ts and XML canonicalization to
+// core/xml.ts — both are product-neutral; re-exported here so existing
+// import paths keep working.
+export { equalBytes } from "./core/equality";
+export { canonicalizeXml } from "./core/xml";
 
 function xmlEquivalent(a: string, b: string): boolean {
   try {

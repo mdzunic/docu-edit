@@ -1,28 +1,10 @@
 // The font-family catalogue and font-size rules behind SPEC-013's toolbar
 // controls. Framework-free (no Vue imports) per the src/lib convention.
+// The standard catalogue moved to core/fonts.ts (product-neutral);
+// re-exported so existing import paths keep working.
 import { isBreak, isChart, isImage, isShape, isToc, type DocumentModel } from "./documentModel";
 
-/** The families the font dropdown always offers (SPEC-013 AC): the classic
- * web-safe set plus the common document fonts — Word's modern defaults
- * (Calibri/Cambria) and their metric-compatible Liberation/Carlito
- * equivalents. Alphabetical, so the list is stable and scannable. */
-export const STANDARD_FONT_FAMILIES: string[] = [
-  "Arial",
-  "Calibri",
-  "Cambria",
-  "Carlito",
-  "Courier New",
-  "Garamond",
-  "Georgia",
-  "Helvetica",
-  "Liberation Mono",
-  "Liberation Sans",
-  "Liberation Serif",
-  "Tahoma",
-  "Times New Roman",
-  "Trebuchet MS",
-  "Verdana",
-];
+export { STANDARD_FONT_FAMILIES } from "./core/fonts";
 
 /** The families the open document actually uses, for the "Fonts in this
  * document" group (SPEC-013 AC): the document default plus every family a

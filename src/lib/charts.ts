@@ -16,11 +16,20 @@ import {
   type DocumentModel,
   type ImageWrapMode,
 } from "./documentModel";
-import { DEFAULT_CHART_COLORS } from "./documentModel";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { DEFAULT_DRAWING_POSITION } from "./shapes";
 import type { Block, Paragraph } from "./documentModel";
+import {
+  chartDataFromTableCells,
+  defaultChartOptions,
+  MIN_CHART_SIZE_CM,
+  NEW_CHART_HEIGHT_CM,
+  NEW_CHART_WIDTH_CM,
+  sampleChartCategories,
+  sampleChartSeries,
+  type ChartFromTableResult,
+} from "./core/charts";
 
 export interface ChartLocation {
   section: number;
@@ -91,27 +100,19 @@ function replaceChart(model: DocumentModel, location: ChartLocation, next: Chart
   model.sections[location.section].blocks.splice(location.block, 1, next);
 }
 
-/** "Insert → Chart" size (SPEC-052 AC-3): 12cm x 7.5cm. */
-export const NEW_CHART_WIDTH_CM = 12;
-export const NEW_CHART_HEIGHT_CM = 7.5;
-
-/** The sample data a freshly inserted chart carries (AC-3): three
- * categories, two series — enough to show every catalogue type's shape
- * (grouped bars/lines/slices) without the data sheet opening to an
- * intimidating wall of numbers. */
-export function sampleChartCategories(): string[] {
-  return ["Category 1", "Category 2", "Category 3"];
-}
-export function sampleChartSeries(): ChartSeries[] {
-  return [
-    { name: "Series 1", values: [4.3, 2.5, 3.5], color: DEFAULT_CHART_COLORS[0] },
-    { name: "Series 2", values: [2.4, 4.4, 1.8], color: DEFAULT_CHART_COLORS[1] },
-  ];
-}
-
-export function defaultChartOptions(): ChartOptions {
-  return { legend: "right", dataLabels: false, gridlines: true };
-}
+// The insertion defaults, sample data and table-cells mapping moved to
+// core/charts.ts (product-neutral); imported for this module's own commands
+// and re-exported so existing import paths keep working.
+export {
+  chartDataFromTableCells,
+  defaultChartOptions,
+  MIN_CHART_SIZE_CM,
+  NEW_CHART_HEIGHT_CM,
+  NEW_CHART_WIDTH_CM,
+  sampleChartCategories,
+  sampleChartSeries,
+} from "./core/charts";
+export type { ChartFromTableResult } from "./core/charts";
 
 /** Inserts a chart at the caret (AC-2, AC-3), splitting the caret's
  * paragraph around the insertion point exactly like shapes.ts's
@@ -167,55 +168,6 @@ export function insertChart(model: DocumentModel, selection: ModelSelection, cha
   const chartIndex = at.block + chartBlockOffset;
   const landing: CaretPosition = { section: at.section, block: chartIndex + 1, offset: 0 };
   return { model: next, selection: caretSelection(landing) };
-}
-
-/** "Chart from table" (AC-21, AC-22): builds a chart from a table's cells.
- * `unparsable` collects the text of every cell (beyond the header row/
- * category column) that could not be read as a number — reported by the
- * caller rather than silently dropped or coerced to 0. */
-export interface ChartFromTableResult {
-  categories: string[];
-  series: ChartSeries[];
-  unparsable: string[];
-}
-
-/** Reads a table's cells (SPEC-022's `Table.rows[].cells[].blocks: Paragraph[]`)
- * into chart data: the first row (from its second cell on) gives series
- * names, the first column (from its second row on) gives categories, every
- * other cell is a value. A one-time copy — this module keeps no reference to
- * the table afterwards (SPEC-052 "Out of scope": no live link). */
-export function chartDataFromTableCells(cellText: string[][]): ChartFromTableResult {
-  const unparsable: string[] = [];
-  if (cellText.length < 2 || (cellText[0]?.length ?? 0) < 2) {
-    return { categories: [], series: [], unparsable };
-  }
-  const header = cellText[0];
-  const seriesCount = header.length - 1;
-  const series: ChartSeries[] = Array.from({ length: seriesCount }, (_, i) => ({
-    name: header[i + 1]?.trim() || `Series ${i + 1}`,
-    values: [],
-    color: DEFAULT_CHART_COLORS[i % DEFAULT_CHART_COLORS.length],
-  }));
-  const categories: string[] = [];
-  for (let r = 1; r < cellText.length; r++) {
-    const row = cellText[r];
-    categories.push(row[0]?.trim() ?? "");
-    for (let s = 0; s < seriesCount; s++) {
-      const raw = (row[s + 1] ?? "").trim();
-      if (raw === "") {
-        series[s].values.push(null);
-        continue;
-      }
-      const n = Number(raw);
-      if (Number.isFinite(n)) {
-        series[s].values.push(n);
-      } else {
-        series[s].values.push(null);
-        unparsable.push(raw);
-      }
-    }
-  }
-  return { categories, series, unparsable };
 }
 
 /** "Insert → Chart from table" (AC-21): places a new chart immediately after
@@ -308,10 +260,9 @@ export function setChartSeriesColor(
 }
 
 /** Sets a chart's display size in cm (a resize-handle drag on release) —
- * mirrors shapes.ts's setShapeSize/MIN_SHAPE_SIZE_CM. Never sets `edited`:
- * resizing does not touch the chart part. */
-export const MIN_CHART_SIZE_CM = 1;
-
+ * mirrors shapes.ts's setShapeSize/MIN_SHAPE_SIZE_CM (the minimum itself is
+ * core/charts.ts's MIN_CHART_SIZE_CM). Never sets `edited`: resizing does
+ * not touch the chart part. */
 export function setChartSize(
   model: DocumentModel,
   selection: ModelSelection,

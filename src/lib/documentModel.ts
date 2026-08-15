@@ -2,7 +2,19 @@
 // and writes. Plain data only (no classes, no functions on the objects) so
 // `JSON.stringify`/`JSON.parse` round-trips it without loss — that property
 // is what SPEC-006/007 (save) and SPEC-004/005 (open) will rely on.
-import { DEFAULT_LANGUAGE } from "./language";
+import { DEFAULT_LANGUAGE } from "./core/language";
+import type { ShapeGeometry, ShapeOutline } from "./core/shapes";
+import type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
+import type { MeasurementUnit } from "./core/units";
+import type { Margins, PageSize } from "./core/pageSetup";
+import type { ListDefinition, ListFormatting } from "./core/lists";
+import type {
+  CellBorders,
+  CellVerticalAlign,
+  TableAlignment,
+  TableWidthMode,
+} from "./core/tables";
+import type { MediaPart } from "./core/media";
 
 /** Sub/superscript (`w:vertAlign` / `style:text-position`). Mutually
  * exclusive by construction: one field holds either value (SPEC-013). */
@@ -103,29 +115,12 @@ export function asParagraphAlignment(value: string): ParagraphAlignment {
   return value as ParagraphAlignment;
 }
 
-/** Typed pass-through for a border line style coming from a `.vue`
- * template's plain string (same espree constraint as asCharacterFormatKey). */
-export function asBorderLineStyle(value: string): BorderLineStyle {
-  return value as BorderLineStyle;
-}
-
-/** Typed pass-through for a cell vertical alignment coming from a `.vue`
- * template's plain string (same espree constraint as asCharacterFormatKey). */
-export function asCellVerticalAlign(value: string): CellVerticalAlign {
-  return value as CellVerticalAlign;
-}
-
-/** Typed pass-through for a table alignment coming from a `.vue` template's
- * plain string (same espree constraint as asCharacterFormatKey). */
-export function asTableAlignment(value: string): TableAlignment {
-  return value as TableAlignment;
-}
-
-/** Typed pass-through for a table width mode coming from a `.vue`
- * template's plain string (same espree constraint as asCharacterFormatKey). */
-export function asTableWidthMode(value: string): TableWidthMode {
-  return value as TableWidthMode;
-}
+export {
+  asBorderLineStyle,
+  asCellVerticalAlign,
+  asTableAlignment,
+  asTableWidthMode,
+} from "./core/tables";
 
 /** The page-number field kinds Insert → Page number offers (SPEC-029
  * AC-14, AC-19): "page" is the current page's number, "numpages" the
@@ -304,116 +299,23 @@ export interface ParagraphFormatting {
 }
 
 // --- lists (SPEC-018; multilevel definitions SPEC-032) ----------------------
+// The list types moved to core/lists.ts (product-neutral); imported for
+// this module's own type definitions and re-exported so existing import
+// paths keep working.
 
-export type ListType = "bullet" | "number";
-
-/** The marker styles the editor offers (SPEC-018 AC-12): three bullet
- * characters and five number formats. */
-export type ListMarkerStyle =
-  | "disc"
-  | "circle"
-  | "square"
-  | "decimal"
-  | "lowerAlpha"
-  | "upperAlpha"
-  | "lowerRoman"
-  | "upperRoman";
-
-/** A paragraph's membership in a bulleted or numbered list (SPEC-018).
- * List *identity* is adjacency: consecutive list paragraphs form one list,
- * and a non-list paragraph between two list items splits them into two
- * lists whose numbering restarts (AC-10, AC-11) — so no list id is stored.
- * Displayed numbers are always derived by scanning the block sequence
- * (lib/lists.ts), never persisted. */
-export interface ListFormatting {
-  type: ListType;
-  /** 1-based nesting depth, 1..9 (AC-3, AC-4). */
-  level: number;
-  /** Explicit marker style for this item's level (AC-12, AC-13); absent
-   * means the level's default cycle (AC-5, see lists.ts). */
-  marker?: ListMarkerStyle;
-  /** The number the item's list counts from at this level; absent means 1.
-   * Carried on every item of an imported list so a restart after an
-   * interruption returns to the list's own start value (AC-11, AC-22). */
-  startAt?: number;
-  /** The level's text indent in cm as defined by an imported numbering
-   * definition (AC-20, AC-21); absent means the editor default
-   * (level × 1.27 cm, see lists.ts). */
-  indentCm?: number;
-  /** References a `DocumentModel.listDefinitions` entry (SPEC-032).
-   * Presence makes this a *defined* list item: its marker text, per-level
-   * styles and indents all come from the definition, and its numbering is
-   * counted per (defId, listId) instance rather than by adjacency.
-   * Deliberately not named `id` (see BookmarkAnchor for the equality.ts
-   * IGNORED_KEYS rule). */
-  defId?: string;
-  /** The numbering instance this item counts in (SPEC-032): items sharing
-   * (defId, listId) form one sequence that continues across interruptions;
-   * a fresh listId is what "Restart numbering" mints. Meaningless without
-   * `defId`. */
-  listId?: string;
-}
-
-/** How a defined level's number is aligned within its marker box (SPEC-032
- * AC "alignment"; `w:lvlJc` / `fo:text-align` on the level). */
-export type ListLevelAlignment = "left" | "center" | "right";
-
-/** One level (1..9) of a multilevel list definition (SPEC-032). Every field
- * except `style` is optional with a documented default, so a definition
- * only stores what differs — which keeps save/re-open fixed points exact. */
-export interface ListLevelDefinition {
-  /** The level's marker style: a number format or a bullet glyph. */
-  style: ListMarkerStyle;
-  /** Literal text before the number (e.g. "("); absent means "". */
-  prefix?: string;
-  /** Literal text after the number (e.g. ")" or "."); absent means "". */
-  suffix?: string;
-  /** How many level components the number shows, ending at this level
-   * (AC-8's "1.1" vs "1"): 3 at level 3 renders "1.1.1"; absent means 1. */
-  includeLevels?: number;
-  /** The level's start value; absent means 1. */
-  startAt?: number;
-  /** Number alignment; absent means "left". */
-  alignment?: ListLevelAlignment;
-  /** The marker's position (indent) in cm; absent means the editor default
-   * (text position − 0.635 cm, see lib/listDefinitions.ts). */
-  numberIndentCm?: number;
-  /** The item text's position in cm; absent means level × 1.27 cm. */
-  textIndentCm?: number;
-}
-
-/** A multilevel list definition (SPEC-032): nine levels of numbering
- * format, referenced by `ListFormatting.defId`. Each list owns its own
- * definition (gallery presets are copied on apply), which is what makes
- * editing a level's format update that list only (AC-17, AC-18). */
-export interface ListDefinition {
-  /** Identity referenced by `ListFormatting.defId` — not named `id` for
-   * the same equality.ts reason as `BookmarkAnchor.name`. */
-  defId: string;
-  /** Exactly MAX_LIST_LEVEL entries, level 1 first. */
-  levels: ListLevelDefinition[];
-  /** Paragraph styles linked to this definition's levels (AC-13):
-   * `styleId -> level`. Applying a linked style makes the paragraph a
-   * defined item of this definition at that level automatically. */
-  styleLinks?: Record<string, number>;
-}
-
-/** Typed pass-through for a `ListLevelDefinition[]` arriving from a `.vue`
- * component's untyped Array prop (same espree constraint as
- * asCharacterFormatKey). */
-export function asListLevelDefinitions(value: unknown): ListLevelDefinition[] {
-  return value as ListLevelDefinition[];
-}
-
-/** Typed pass-through for a `ListDefinition[]` prop (espree constraint). */
-export function asListDefinitions(value: unknown): ListDefinition[] {
-  return value as ListDefinition[];
-}
-
-/** Typed empty seed for list-definition arrays in `.vue` scripts. */
-export function noListDefinitions(): ListDefinition[] {
-  return [];
-}
+export {
+  asListDefinitions,
+  asListLevelDefinitions,
+  noListDefinitions,
+} from "./core/lists";
+export type {
+  ListDefinition,
+  ListFormatting,
+  ListLevelAlignment,
+  ListLevelDefinition,
+  ListMarkerStyle,
+  ListType,
+} from "./core/lists";
 
 // --- tab stops (SPEC-032) ---------------------------------------------------
 
@@ -451,17 +353,7 @@ export function asTabStopAlignment(value: string): TabStopAlignment {
   return value as TabStopAlignment;
 }
 
-/** Typed pass-through for a list type coming from a `.vue` template's plain
- * string (same espree constraint as asCharacterFormatKey). */
-export function asListType(value: string): ListType {
-  return value as ListType;
-}
-
-/** Typed pass-through for a marker style coming from a `.vue` template's
- * plain string (same espree constraint as asCharacterFormatKey). */
-export function asListMarkerStyle(value: string): ListMarkerStyle {
-  return value as ListMarkerStyle;
-}
+export { asListMarkerStyle, asListType } from "./core/lists";
 
 // --- paragraph styles (SPEC-019) --------------------------------------------
 
@@ -868,33 +760,12 @@ export interface Image extends DrawingPlacement {
 }
 
 // --- shapes and text boxes (SPEC-051) ---------------------------------------
+// The product-neutral half — ShapeGeometry, ShapeOutline, the catalogue and
+// LINE_GEOMETRIES — moved to core/shapes.ts; imported for this module's own
+// type definitions and re-exported so existing import paths keep working.
 
-/** The closed set of geometries the editor draws, resizes and round-trips
- * natively — see "Shape catalogue" in specs/051-drawing-shapes-and-text-boxes.md.
- * Anything else arriving from a file is preserved per SPEC-008, not
- * approximated into one of these. */
-export type ShapeGeometry =
-  | "line"
-  | "arrow"
-  | "rect"
-  | "roundRect"
-  | "ellipse"
-  | "triangle"
-  | "diamond"
-  | "star5"
-  | "rightArrow"
-  | "leftArrow"
-  | "upArrow"
-  | "downArrow"
-  | "wedgeRectCallout"
-  | "wedgeRoundRectCallout";
-
-/** A shape's outline (border) — colour, width in points and dash style. */
-export interface ShapeOutline {
-  color: string;
-  widthPt: number;
-  dash: "solid" | "dash" | "dot";
-}
+export { asShapeGeometry, LINE_GEOMETRIES, SHAPE_CATALOGUE } from "./core/shapes";
+export type { ShapeGeometry, ShapeOutline } from "./core/shapes";
 
 /** Rich text held inside a shape (SPEC-051 AC-17..24): `blocks` rather than a
  * flat run list so a shape can hold lists and tables, not only paragraphs —
@@ -948,35 +819,6 @@ export function asShape(value: unknown): Shape {
   return value as Shape;
 }
 
-/** Typed pass-through for a shape geometry coming from a `.vue` template's
- * plain string (same espree constraint as asImageWrapMode). */
-export function asShapeGeometry(value: string): ShapeGeometry {
-  return value as ShapeGeometry;
-}
-
-/** The closed catalogue geometries, in "Shape catalogue" order — the gallery
- * (AC-1) and the docx/odf readers' geometry lookup both walk this list. */
-export const SHAPE_CATALOGUE: { geometry: ShapeGeometry; group: "Lines" | "Basic shapes" | "Arrows" | "Callouts"; label: string }[] = [
-  { geometry: "line", group: "Lines", label: "Line" },
-  { geometry: "arrow", group: "Lines", label: "Arrow" },
-  { geometry: "rect", group: "Basic shapes", label: "Rectangle" },
-  { geometry: "roundRect", group: "Basic shapes", label: "Rounded rectangle" },
-  { geometry: "ellipse", group: "Basic shapes", label: "Ellipse" },
-  { geometry: "triangle", group: "Basic shapes", label: "Triangle" },
-  { geometry: "diamond", group: "Basic shapes", label: "Diamond" },
-  { geometry: "star5", group: "Basic shapes", label: "Star (5-point)" },
-  { geometry: "rightArrow", group: "Arrows", label: "Right arrow" },
-  { geometry: "leftArrow", group: "Arrows", label: "Left arrow" },
-  { geometry: "upArrow", group: "Arrows", label: "Up arrow" },
-  { geometry: "downArrow", group: "Arrows", label: "Down arrow" },
-  { geometry: "wedgeRectCallout", group: "Callouts", label: "Rectangular callout" },
-  { geometry: "wedgeRoundRectCallout", group: "Callouts", label: "Rounded callout" },
-];
-
-/** Geometries with zero area, drawn as a segment rather than a filled/outlined
- * region (SPEC-051 AC-6, AC-8, "Selection and hit testing"). */
-export const LINE_GEOMETRIES: ReadonlySet<ShapeGeometry> = new Set(["line", "arrow"]);
-
 /** Typed pass-through for a wrap mode coming from a `.vue` template's plain
  * string (same espree constraint as asCharacterFormatKey). */
 export function asImageWrapMode(value: string): ImageWrapMode {
@@ -998,45 +840,18 @@ export function asImage(value: unknown): Image {
 }
 
 // --- charts (SPEC-052) -------------------------------------------------------
+// The product-neutral half — ChartType, ChartSeries, ChartOptions, the
+// catalogue and palette — moved to core/charts.ts; imported for this
+// module's own type definitions and re-exported so existing import paths
+// keep working.
 
-/** The closed set of chart types the editor renders, inserts and can
- * regenerate — see "Chart catalogue" in specs/052-charts.md. Everything else
- * arriving from a file is preserved per SPEC-008, not approximated into one
- * of these (mirrors ShapeGeometry's own closed-catalogue convention). */
-export type ChartType =
-  | "columnClustered"
-  | "columnStacked"
-  | "barClustered"
-  | "line"
-  | "lineMarkers"
-  | "area"
-  | "pie"
-  | "doughnut"
-  | "scatter";
-
-/** One data series in a chart's data sheet. `values` is index-aligned with
- * `Chart.categories`; `null` is a gap (an empty cell), distinct from `0` —
- * line charts break the line at a gap, bar/column/area charts draw nothing
- * there. */
-export interface ChartSeries {
-  name: string;
-  values: (number | null)[];
-  /** "#rrggbb". */
-  color: string;
-}
-
-/** The chart options panel's settings (SPEC-052 AC-14..AC-20). */
-export interface ChartOptions {
-  title?: string;
-  categoryAxisTitle?: string;
-  valueAxisTitle?: string;
-  legend: "none" | "top" | "right" | "bottom" | "left";
-  dataLabels: boolean;
-  gridlines: boolean;
-  /** Absent = auto (computed from the data). */
-  valueAxisMin?: number;
-  valueAxisMax?: number;
-}
+export {
+  asChartType,
+  CHART_CATALOGUE,
+  DEFAULT_CHART_COLORS,
+  SINGLE_SERIES_CHART_TYPES,
+} from "./core/charts";
+export type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
 
 /** A chart block (SPEC-052): a drawing placed on the page, painted on the
  * canvas layer with an ARIA proxy element exactly like Shape (see
@@ -1091,95 +906,24 @@ export function asChart(value: unknown): Chart {
   return value as Chart;
 }
 
-/** Typed pass-through for a chart type coming from a `.vue` template's plain
- * string (same espree constraint as asImageWrapMode). */
-export function asChartType(value: string): ChartType {
-  return value as ChartType;
-}
-
-/** The closed catalogue chart types, in "Chart catalogue" order — the Insert
- * gallery and the docx/odf readers' type lookup both walk this list. */
-export const CHART_CATALOGUE: { chartType: ChartType; label: string }[] = [
-  { chartType: "columnClustered", label: "Clustered column" },
-  { chartType: "columnStacked", label: "Stacked column" },
-  { chartType: "barClustered", label: "Clustered bar" },
-  { chartType: "line", label: "Line" },
-  { chartType: "lineMarkers", label: "Line with markers" },
-  { chartType: "area", label: "Area" },
-  { chartType: "pie", label: "Pie" },
-  { chartType: "doughnut", label: "Doughnut" },
-  { chartType: "scatter", label: "Scatter (XY)" },
-];
-
-/** Chart types that render only their first series (pie/doughnut) — the data
- * sheet says so rather than silently ignoring the rest (SPEC-052 "Chart
- * catalogue"). */
-export const SINGLE_SERIES_CHART_TYPES: ReadonlySet<ChartType> = new Set(["pie", "doughnut"]);
-
-/** A default palette for newly created/inserted series — this spec's own,
- * deliberately not inherited from the document theme (SPEC-052 "Out of
- * scope"). */
-export const DEFAULT_CHART_COLORS: readonly string[] = [
-  "#4e79a7",
-  "#f28e2b",
-  "#e15759",
-  "#76b7b2",
-  "#59a14f",
-  "#edc948",
-  "#b07aa1",
-  "#ff9da7",
-  "#9c755f",
-  "#bab0ac",
-];
-
-/** A binary image payload stored once and referenced by `Image.mediaId` — so
- * an image used twice in the document (AC-32) shares one entry, and deleting
- * one use does not by itself remove it (see lib/images.ts's reference-counted
- * pruning, AC-31). `mediaId` is deliberately not named `id`: lib/equality.ts's
- * IGNORED_KEYS drops any bare "id" key from structural comparison, which
- * would let a wrong mediaId reference pass a round-trip test unnoticed. */
-export interface MediaPart {
-  mediaId: string;
-  /** MIME type — "image/png", "image/jpeg", "image/gif", or "image/svg+xml"
-   * for a `.odt` (never `.docx`: SVG is converted to PNG on insert, AC-2). */
-  contentType: string;
-  /** The image bytes, base64-encoded so the model stays JSON-serialisable
-   * (see opaque.ts's OpaquePart, the same convention). */
-  data: string;
-}
+// MediaPart moved to core/media.ts (product-neutral media storage);
+// imported for this module's own type definitions and re-exported so
+// existing import paths keep working.
+export type { MediaPart } from "./core/media";
 
 // --- tables (SPEC-022, cell/border formatting SPEC-023) ---------------------
+// The border/alignment/width-mode types moved to core/tables.ts
+// (product-neutral); imported for this module's own type definitions and
+// re-exported so existing import paths keep working.
 
-/** A border line's rendering (SPEC-023): the standard presets plus width and
- * colour. `"none"` paints nothing, distinct from an absent `BorderSide`
- * (unset — falls back to whatever the renderer/writer defaults to). */
-export type BorderLineStyle = "none" | "single" | "double" | "dashed" | "dotted";
-
-/** One edge of a cell's border (SPEC-023 AC-10..12): style, width in points
- * and a CSS-ready colour ("#rrggbb", or "auto" for the source's automatic
- * colour). */
-export interface BorderSide {
-  style: BorderLineStyle;
-  widthPt: number;
-  color: string;
-}
-
-/** A cell's four borders, each independently set or left unset (SPEC-023).
- * Table-wide and per-selected-cell border operations (AC-13, AC-14) both
- * write into this same per-cell shape — "apply to the whole table" is just
- * "apply to every cell" (see lib/tables.ts's border-preset commands), which
- * is also why the round trip is always per-cell (`w:tcBorders` /
- * .odt cell styles — AC-25, AC-29), never a table-level default. */
-export interface CellBorders {
-  top?: BorderSide;
-  bottom?: BorderSide;
-  left?: BorderSide;
-  right?: BorderSide;
-}
-
-/** A cell's content vertical alignment within its (possibly taller, due to
- * sibling cells) row (SPEC-023 AC-17). */
-export type CellVerticalAlign = "top" | "center" | "bottom";
+export type {
+  BorderLineStyle,
+  BorderSide,
+  CellBorders,
+  CellVerticalAlign,
+  TableAlignment,
+  TableWidthMode,
+} from "./core/tables";
 
 /** One table cell: a nested block container holding paragraphs only (nested
  * tables are out of scope — SPEC-022). A real (non-covered) cell always has
@@ -1246,17 +990,6 @@ export interface TableRow {
    * changes). */
   changes?: RowTrackedChanges;
 }
-
-/** Table alignment on the page (SPEC-023 AC-22). */
-export type TableAlignment = "left" | "center" | "right";
-
-/** How a table's overall width is determined (SPEC-023 AC-23): `"fixed"`
- * (absent also means fixed, for models saved before SPEC-023) uses the
- * `columnWidthsCm` sum as-is; `"percent"` scales `widthPercent`% of the
- * text area, redistributing `columnWidthsCm` proportionally; `"auto"` sizes
- * the table to its content, ignoring `columnWidthsCm` for layout (the field
- * is kept as the last explicit widths, reused if the mode changes back). */
-export type TableWidthMode = "auto" | "fixed" | "percent";
 
 /** A table block (SPEC-022, formatting SPEC-023): a rectangular grid of
  * cells. Every row has exactly `columnWidthsCm.length` cells — a merged
@@ -1638,32 +1371,13 @@ export interface Section {
   pageNumberStart?: number;
 }
 
-/** Page dimensions in centimetres. */
-export interface PageSize {
-  widthCm: number;
-  heightCm: number;
-}
-
-/** Page margins in centimetres. */
-export interface Margins {
-  topCm: number;
-  rightCm: number;
-  bottomCm: number;
-  leftCm: number;
-}
-
-/** The unit the Page setup dialog displays sizes/margins in (SPEC-027
- * AC-4, AC-6). The model itself always stores cm — this only controls
- * display/entry — so no reader/writer maps it to anything in a `.docx` or
- * `.odt` file; it is a document-level app preference persisted the same way
- * as `suppressConversionReport`. */
-export type MeasurementUnit = "cm" | "mm" | "in" | "pt";
-
-/** Typed pass-through for a measurement unit coming from a `.vue`
- * template's plain string (same espree constraint as asCharacterFormatKey). */
-export function asMeasurementUnit(value: string): MeasurementUnit {
-  return value as MeasurementUnit;
-}
+// PageSize and Margins moved to core/pageSetup.ts and MeasurementUnit (the
+// SPEC-027 AC-4/AC-6 display-unit preference) to core/units.ts — all three
+// are product-neutral surface geometry; imported for this module's own type
+// definitions and re-exported so existing import paths keep working.
+export { asMeasurementUnit } from "./core/units";
+export type { MeasurementUnit } from "./core/units";
+export type { Margins, PageSize } from "./core/pageSetup";
 
 /** Document-wide defaults new content is created with. */
 export interface DefaultStyles {

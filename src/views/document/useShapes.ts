@@ -866,7 +866,7 @@ export function useShapes(deps: ShapesDeps) {
     }
     paintShapeIntoCanvas(
       canvas,
-      { ...shape, widthCm, heightCm },
+      shape,
       Math.max(1, Math.round(cmToPx(widthCm))),
       Math.max(1, Math.round(cmToPx(Math.max(heightCm, 0.05)))),
     );
