@@ -2,9 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import MenuBar from "../components/MenuBar.vue";
-import MenuItem from "../components/MenuItem.vue";
-import MenuCheckItem from "../components/MenuCheckItem.vue";
+import DocumentMenuBar from "../components/DocumentMenuBar.vue";
 import BookmarkDialog from "../components/BookmarkDialog.vue";
 import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
@@ -26,9 +24,7 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
-import ShapeGallery from "../components/ShapeGallery.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
-import ChartGallery from "../components/ChartGallery.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
@@ -152,7 +148,6 @@ import {
 } from "../lib/toc";
 import { listMarkers } from "../lib/lists";
 import { detectListAutoformat } from "../lib/core/lists";
-import { GALLERY_PRESETS } from "../lib/core/listDefinitions";
 import {
   anchorCaret,
   applyLink,
@@ -196,10 +191,7 @@ import {
   tableAt,
 } from "../lib/tables";
 import {
-  asBorderPreset,
   cellRangeBounds,
-  PICKER_MAX_ROWS,
-  PICKER_MAX_COLS,
   MIN_COLUMN_WIDTH_CM,
   MIN_ROW_HEIGHT_CM,
   noCellRange,
@@ -343,7 +335,7 @@ import {
   setImageSize,
   setImageWrap,
 } from "../lib/images";
-import { ACCEPTED_IMAGE_ACCEPT_ATTR, isAcceptedImageType, mediaDataUri } from "../lib/core/media";
+import { isAcceptedImageType } from "../lib/core/media";
 import { pxToCm } from "../lib/core/units";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
 import { noShapeLocation, shapeAt } from "../lib/shapes";
@@ -3354,18 +3346,13 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 }
 
 // --- Menu bar wiring (SPEC-049) --------------------------------------------
-// The menu bar (File/Edit/View/Insert/Format/Tools, in that order) hosts the
-// non-continuous-use commands relocated off the toolbar strip. It is a stable
-// map of the product: a command that does not apply is disabled, never hidden
-// (AC-7); the toolbar keeps only the continuous-use controls (AC-3).
-const MENUS = [
-  { id: "file", label: "File" },
-  { id: "edit", label: "Edit" },
-  { id: "view", label: "View" },
-  { id: "insert", label: "Insert" },
-  { id: "format", label: "Format" },
-  { id: "tools", label: "Tools" },
-];
+// The menu bar itself (File/Edit/View/Insert/Format/Tools and every item)
+// lives in DocumentMenuBar.vue, which renders menu state from props and
+// reports picks as events. Nullary commands arrive here as string ids
+// through @command and dispatch through the menuCommands table below; picks
+// that carry a payload (table size, break kind, note kind, gallery picks,
+// the image file, the painter's click pair) have dedicated events bound in
+// the template.
 
 // Text colour and highlight stay in the toolbar (continuous-use) but are also
 // listed in the Format menu, so the menus remain a complete map — the spec's
@@ -3383,45 +3370,6 @@ function openHighlightMenu() {
   highlightPickerRef.value?.openMenu();
 }
 
-// The Insert menu's "Image…" command drives the same hidden file picker the
-// old toolbar button did (SPEC-024).
-const menuImageInput = useTemplateRef("menuImageInput");
-
-function triggerImageInsert() {
-  if (editable.value) {
-    menuImageInput.value?.click();
-  }
-}
-
-function handleMenuImageChange(event = new Event("change")) {
-  const target = event.target;
-  const file = target instanceof HTMLInputElement ? target.files?.[0] : undefined;
-  if (file) {
-    handleInsertImageFile(file);
-  }
-  if (target instanceof HTMLInputElement) {
-    // Clear so picking the same file twice still fires a change event.
-    target.value = "";
-  }
-}
-
-// The Insert menu's table-size grid (SPEC-022): the same quick-pick the old
-// toolbar dropdown offered, now a section of the Insert menu.
-const TABLE_GRID_ROWS = Array.from({ length: PICKER_MAX_ROWS }, (_, index) => index + 1);
-const TABLE_GRID_COLS = Array.from({ length: PICKER_MAX_COLS }, (_, index) => index + 1);
-const tableGridHover = ref({ rows: 0, cols: 0 });
-
-function hoverTableGrid(rows = 0, cols = 0) {
-  tableGridHover.value = { rows, cols };
-}
-
-function chooseTableGrid(rows = 0, cols = 0) {
-  handleInsertTable({ rows, cols });
-  // The pick closes the menu, so clear the highlight the pointer left behind:
-  // reopening Insert should show an unlit grid, not the last size chosen.
-  hoverTableGrid(0, 0);
-}
-
 /** "Insert -> Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
  * next drag/click on the canvas draws the chosen geometry. */
 function handleShapePick(geometry = "rect") {
@@ -3437,7 +3385,7 @@ function handleChartPick(chartType = "columnClustered") {
 
 /** Whether a table is selected for "Insert -> Chart from table" (AC-21) —
  * a table block is the target of the active cell-range selection. */
-function tableSelectedForChart() {
+const tableSelectedForChart = computed(() => {
   const model = doc.value;
   const range = cellSelection.value;
   if (!model || !range) {
@@ -3445,7 +3393,7 @@ function tableSelectedForChart() {
   }
   const block = model.sections[range.section]?.blocks[range.block];
   return !!block && block.type === "table";
-}
+});
 
 /** "Insert -> Chart from table" (AC-21, AC-22): reads the selected table's
  * cells (every row/column, not just the range selection — a whole-table
@@ -3468,8 +3416,74 @@ function handleChartFromTable(chartType = "columnClustered") {
   }
 }
 
-// The multilevel-list presets (SPEC-032), absorbed into the Format menu.
-const MULTILEVEL_PRESETS = GALLERY_PRESETS;
+// Every nullary menu command, keyed by the id DocumentMenuBar emits, in the
+// bar's own menu-by-menu order. A Map rather than an object literal: a
+// string-keyed lookup into an inferred object-literal type needs an index
+// signature, which is TS-only syntax espree cannot parse here — Map's get()
+// is typed without one.
+const menuCommands = new Map([
+  // File
+  ["file.print", openPrintPreview],
+  ["file.page-setup", openPageSetup],
+  ["file.properties", openProperties],
+  ["file.version-history", toggleVersionHistoryPane],
+  ["file.save-as-template", () => { savingAsTemplate.value = true; }],
+  ["file.mail-merge", () => { mergeRunDialogOpen.value = true; }],
+  ["file.delete", () => { confirmingDelete.value = true; }],
+  // Edit
+  ["edit.undo", performUndo],
+  ["edit.redo", performRedo],
+  ["edit.cut", contextMenuCut],
+  ["edit.copy", contextMenuCopy],
+  ["edit.paste", contextMenuPaste],
+  ["edit.pastePlain", menuPastePlain],
+  ["edit.selectAll", menuSelectAll],
+  ["find.openReplace", () => { openFind(true); }],
+  ["edit.autocorrect-smart-quotes", toggleAutocorrectSmartQuotes],
+  ["edit.autocorrect-dashes", toggleAutocorrectDashes],
+  // View
+  ["view.ruler", toggleRuler],
+  ["view.outline-pane", toggleOutlinePane],
+  ["view.styles-pane", toggleStylesPane],
+  ["view.comments-pane", toggleCommentsPane],
+  ["view.comments-only", toggleCommentsOnlyView],
+  ["edit.toggleTrackChanges", toggleTrackChangesRecording],
+  ["view.track-changes-pane", toggleTrackChangesPane],
+  // Insert
+  ["insert.table-dialog", () => { insertTableDialogOpen.value = true; }],
+  ["insert.textbox", insertTextBoxAction],
+  ["insert.chart-from-table", () => { handleChartFromTable(); }],
+  ["insert.header", () => { openInsertHeaderFooter("header"); }],
+  ["insert.footer", () => { openInsertHeaderFooter("footer"); }],
+  ["insert.page-number", openPageNumberDialog],
+  ["insert.header-footer-options", openHeaderFooterOptions],
+  ["insert.merge-field", () => { mergeFieldPickerOpen.value = true; }],
+  ["insert.note-settings", openNoteSettings],
+  ["insert.toc", openTocDialog],
+  ["insert.special-character", openSpecialCharacters],
+  ["insert.link", openLinkDialog],
+  ["insert.bookmark", openBookmarkDialog],
+  ["insert.bookmark-list", () => { bookmarkManagerOpen.value = true; }],
+  ["insert.comment", openCommentComposer],
+  // Format
+  ["format.styles-pane", toggleStylesPane],
+  ["format.import-styles", openImportDialog],
+  ["format.clearFormatting", handleClearFormatting],
+  ["format.columns", openColumnsDialog],
+  ["format.multilevel-link-headings", handleLinkHeadingNumbering],
+  ["format.multilevel-define-list", openDefineList],
+  ["format.text-color", openTextColorMenu],
+  ["format.highlight", openHighlightMenu],
+  // Tools
+  ["tools.word-count", openStatistics],
+  ["tools.dictionary", openCustomDictionaryDialog],
+  ["tools.accessibility", openAccessibilityPane],
+  ["tools.convert-merge-fields", convertLiteralChips],
+]);
+
+function handleMenuCommand(id = "") {
+  menuCommands.get(id)?.();
+}
 
 </script>
 
@@ -3499,493 +3513,33 @@ const MULTILEVEL_PRESETS = GALLERY_PRESETS;
       </div>
     </template>
     <template #menubar>
-      <MenuBar
-        :menus="MENUS"
-        aria-label="Document menu"
-      >
-        <template #file>
-          <MenuItem
-            label="Print"
-            testid="file-menu-print"
-            :shortcut="shortcutLabel('file.print')"
-            @select="openPrintPreview"
-          />
-          <MenuItem
-            label="Page setup"
-            testid="page-setup-button"
-            :disabled="!editable"
-            @select="openPageSetup"
-          />
-          <MenuItem
-            label="Properties…"
-            testid="file-menu-properties"
-            @select="openProperties"
-          />
-          <MenuItem
-            label="Version history"
-            testid="file-menu-version-history"
-            @select="toggleVersionHistoryPane"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Save as template"
-            testid="file-menu-save-as-template"
-            @select="savingAsTemplate = true"
-          />
-          <MenuItem
-            label="Mail merge…"
-            testid="file-menu-mail-merge"
-            @select="mergeRunDialogOpen = true"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Delete document"
-            testid="delete-document"
-            :disabled="!editable"
-            @select="confirmingDelete = true"
-          />
-        </template>
-
-        <template #edit>
-          <MenuItem
-            label="Undo"
-            testid="edit-menu-undo"
-            :shortcut="shortcutLabel('edit.undo')"
-            :disabled="!editable || !undoRedoState.canUndo"
-            @select="performUndo"
-          />
-          <MenuItem
-            label="Redo"
-            testid="edit-menu-redo"
-            :shortcut="shortcutLabel('edit.redo')"
-            :disabled="!editable || !undoRedoState.canRedo"
-            @select="performRedo"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Cut"
-            testid="edit-menu-cut"
-            :disabled="!editable"
-            @select="contextMenuCut"
-          />
-          <MenuItem
-            label="Copy"
-            testid="edit-menu-copy"
-            @select="contextMenuCopy"
-          />
-          <MenuItem
-            label="Paste"
-            testid="edit-menu-paste"
-            :disabled="!editable"
-            @select="contextMenuPaste"
-          />
-          <MenuItem
-            label="Paste without formatting"
-            testid="edit-menu-paste-plain"
-            :shortcut="shortcutLabel('edit.pastePlain')"
-            :disabled="!editable"
-            @select="menuPastePlain"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Select all"
-            testid="edit-menu-select-all"
-            :shortcut="shortcutLabel('edit.selectAll')"
-            @select="menuSelectAll"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Find and replace"
-            testid="edit-menu-find-replace"
-            :shortcut="shortcutLabel('find.openReplace')"
-            @select="openFind(true)"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Autocorrect
-          </div>
-          <MenuCheckItem
-            label="Smart quotes"
-            testid="autocorrect-smart-quotes"
-            :checked="autocorrectSettings.smartQuotes"
-            :disabled="!editable"
-            @select="toggleAutocorrectSmartQuotes"
-          />
-          <MenuCheckItem
-            label="Em and en dashes"
-            testid="autocorrect-dashes"
-            :checked="autocorrectSettings.dashes"
-            :disabled="!editable"
-            @select="toggleAutocorrectDashes"
-          />
-        </template>
-
-        <template #view>
-          <MenuCheckItem
-            label="Ruler"
-            testid="toggle-ruler-button"
-            :checked="doc.showRuler !== false"
-            @select="toggleRuler"
-          />
-          <MenuCheckItem
-            label="Outline pane"
-            testid="view-menu-outline"
-            :checked="outlinePaneOpen"
-            @select="toggleOutlinePane"
-          />
-          <MenuCheckItem
-            label="Styles pane"
-            testid="view-menu-styles-pane"
-            :checked="stylesPaneOpen"
-            @select="toggleStylesPane"
-          />
-          <MenuCheckItem
-            label="Comments pane"
-            testid="view-menu-comments-pane"
-            :checked="commentsPaneOpen"
-            @select="toggleCommentsPane"
-          />
-          <MenuCheckItem
-            label="Comments-only view"
-            testid="view-menu-comments-only"
-            :checked="commentsOnlyView"
-            @select="toggleCommentsOnlyView"
-          />
-          <hr class="menu-separator">
-          <MenuCheckItem
-            label="Track changes"
-            testid="view-menu-track-changes"
-            :shortcut="shortcutLabel('edit.toggleTrackChanges')"
-            :checked="trackChangesRecording"
-            :disabled="!editable"
-            @select="toggleTrackChangesRecording"
-          />
-          <MenuCheckItem
-            label="Track changes pane"
-            testid="view-menu-track-changes-pane"
-            :checked="trackChangesPaneOpen"
-            @select="toggleTrackChangesPane"
-          />
-        </template>
-
-        <template #insert>
-          <div class="menu-section-label">
-            Table
-          </div>
-          <div class="menu-table-grid-wrap">
-            <div
-              class="menu-table-grid"
-              data-testid="insert-table-grid"
-              @mouseleave="hoverTableGrid(0, 0)"
-            >
-              <div
-                v-for="rows in TABLE_GRID_ROWS"
-                :key="rows"
-                class="menu-table-grid-row"
-              >
-                <button
-                  v-for="cols in TABLE_GRID_COLS"
-                  :key="cols"
-                  type="button"
-                  class="menu-table-grid-cell"
-                  :class="{ active: rows <= tableGridHover.rows && cols <= tableGridHover.cols }"
-                  :data-testid="`table-grid-cell-${rows}-${cols}`"
-                  :aria-label="`Insert ${rows} by ${cols} table`"
-                  :disabled="!editable"
-                  tabindex="-1"
-                  @mouseenter="hoverTableGrid(rows, cols)"
-                  @mousedown.prevent
-                  @click="chooseTableGrid(rows, cols)"
-                />
-              </div>
-            </div>
-            <div
-              class="menu-table-grid-label"
-              data-testid="insert-table-grid-label"
-            >
-              {{ tableGridHover.rows > 0 ? `${tableGridHover.rows} × ${tableGridHover.cols}` : "Insert table" }}
-            </div>
-          </div>
-          <MenuItem
-            label="Insert table…"
-            testid="insert-table-dialog-item"
-            :disabled="!editable"
-            @select="insertTableDialogOpen = true"
-          />
-          <MenuItem
-            label="Image…"
-            testid="insert-image-button"
-            :disabled="!editable"
-            @select="triggerImageInsert"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Shape
-          </div>
-          <ShapeGallery @pick="handleShapePick" />
-          <MenuItem
-            label="Text box"
-            testid="insert-textbox-button"
-            :disabled="!editable"
-            @select="insertTextBoxAction"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Chart
-          </div>
-          <ChartGallery @pick="handleChartPick" />
-          <MenuItem
-            label="Chart from table"
-            testid="insert-chart-from-table-button"
-            :disabled="!editable || !tableSelectedForChart()"
-            @select="handleChartFromTable()"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Page break"
-            testid="break-page"
-            :shortcut="shortcutLabel('insert.pageBreak')"
-            :disabled="!editable"
-            @select="handleInsertBreak('page')"
-          />
-          <MenuItem
-            label="Column break"
-            testid="break-column"
-            :disabled="!editable"
-            @select="handleInsertBreak('column')"
-          />
-          <MenuItem
-            label="Section break (next page)"
-            testid="break-section-next"
-            :disabled="!editable"
-            @select="handleInsertSectionBreak('nextPage')"
-          />
-          <MenuItem
-            label="Section break (continuous)"
-            testid="break-section-continuous"
-            :disabled="!editable"
-            @select="handleInsertSectionBreak('continuous')"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Header"
-            testid="hf-menu-header"
-            :disabled="!editable"
-            @select="openInsertHeaderFooter('header')"
-          />
-          <MenuItem
-            label="Footer"
-            testid="hf-menu-footer"
-            :disabled="!editable"
-            @select="openInsertHeaderFooter('footer')"
-          />
-          <MenuItem
-            label="Page number"
-            testid="hf-menu-page-number"
-            :disabled="!editable"
-            @select="openPageNumberDialog"
-          />
-          <MenuItem
-            label="Header and footer options"
-            testid="hf-menu-options"
-            :disabled="!editable"
-            @select="openHeaderFooterOptions"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Merge field…"
-            testid="insert-menu-merge-field"
-            :disabled="!editable"
-            @select="mergeFieldPickerOpen = true"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Footnote"
-            testid="notes-menu-footnote"
-            :shortcut="shortcutLabel('insert.footnote')"
-            :disabled="!editable"
-            @select="handleInsertNote('footnote')"
-          />
-          <MenuItem
-            label="Endnote"
-            testid="notes-menu-endnote"
-            :shortcut="shortcutLabel('insert.endnote')"
-            :disabled="!editable"
-            @select="handleInsertNote('endnote')"
-          />
-          <MenuItem
-            label="Footnote and endnote settings"
-            testid="notes-menu-settings"
-            :disabled="!editable"
-            @select="openNoteSettings"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Table of contents"
-            testid="insert-toc-button"
-            :disabled="!editable"
-            @select="openTocDialog"
-          />
-          <MenuItem
-            label="Special character"
-            testid="insert-special-character-button"
-            :disabled="!editable"
-            @select="openSpecialCharacters"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Link"
-            testid="toolbar-insert-link"
-            :shortcut="shortcutLabel('insert.link')"
-            :disabled="!editable"
-            @select="openLinkDialog"
-          />
-          <MenuItem
-            label="Bookmark"
-            testid="toolbar-insert-bookmark"
-            :disabled="!editable"
-            @select="openBookmarkDialog"
-          />
-          <MenuItem
-            label="Bookmark list"
-            testid="toolbar-bookmarks"
-            @select="bookmarkManagerOpen = true"
-          />
-          <MenuItem
-            label="Comment"
-            testid="toolbar-insert-comment"
-            :shortcut="shortcutLabel('insert.comment')"
-            :disabled="!editable"
-            @select="openCommentComposer"
-          />
-        </template>
-
-        <template #format>
-          <MenuItem
-            label="Styles pane"
-            testid="format-menu-styles-pane"
-            @select="toggleStylesPane"
-          />
-          <MenuItem
-            label="Import styles from another document…"
-            testid="format-menu-import-styles"
-            :disabled="!editable"
-            @select="openImportDialog"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Clear formatting"
-            testid="clear-formatting-button"
-            :shortcut="shortcutLabel('format.clearFormatting')"
-            :disabled="!editable"
-            @select="handleClearFormatting"
-          />
-          <!-- Format painter keeps its double-click-to-lock gesture
-               (SPEC-020 AC-14): data-menu-keep-open holds the menu open
-               across the click/click/dblclick sequence, and its armed state
-               shows as a live check (SPEC-049 AC-11). -->
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            class="menu-item"
-            data-testid="format-painter-button"
-            data-menu-keep-open
-            title="Format painter (double-click to keep it on)"
-            :aria-checked="painterMode !== '' ? 'true' : 'false'"
-            :disabled="!editable"
-            tabindex="-1"
-            @mousedown.prevent
-            @click="handlePainterClick"
-            @dblclick="handlePainterDblClick"
-          >
-            <span
-              class="menu-check"
-              aria-hidden="true"
-            >{{ painterMode !== '' ? '✓' : '' }}</span>
-            <span class="menu-item-label">Format painter</span>
-          </button>
-          <hr class="menu-separator">
-          <MenuItem
-            label="Columns"
-            testid="columns-button"
-            :disabled="!editable"
-            @select="openColumnsDialog"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Multilevel list
-          </div>
-          <MenuItem
-            v-for="preset in MULTILEVEL_PRESETS"
-            :key="preset.key"
-            :label="preset.label"
-            :testid="`multilevel-preset-${preset.key}`"
-            :disabled="!editable"
-            @select="handleMultilevelPreset(preset.key)"
-          />
-          <MenuItem
-            label="Number headings 1–3"
-            testid="multilevel-link-headings"
-            :disabled="!editable"
-            @select="handleLinkHeadingNumbering"
-          />
-          <MenuItem
-            label="Define new list…"
-            testid="multilevel-define-list"
-            :disabled="!editable"
-            @select="openDefineList"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Text colour"
-            testid="format-menu-text-color"
-            :disabled="!editable"
-            @select="openTextColorMenu"
-          />
-          <MenuItem
-            label="Highlight colour"
-            testid="format-menu-highlight"
-            :disabled="!editable"
-            @select="openHighlightMenu"
-          />
-        </template>
-
-        <template #tools>
-          <MenuItem
-            label="Word count"
-            testid="tools-menu-word-count"
-            @select="openStatistics"
-          />
-          <MenuItem
-            label="Custom dictionary"
-            testid="tools-menu-dictionary"
-            @select="openCustomDictionaryDialog"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Check accessibility"
-            testid="tools-menu-accessibility"
-            @select="openAccessibilityPane"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Convert {{…}} text to merge fields"
-            testid="tools-menu-convert-merge-fields"
-            :disabled="!editable || !canConvertLiteralChips"
-            @select="convertLiteralChips"
-          />
-        </template>
-      </MenuBar>
-      <!-- The Insert menu's "Image…" command drives this hidden picker
-           (SPEC-024). -->
-      <input
-        ref="menuImageInput"
-        type="file"
-        class="menu-image-input"
-        data-testid="insert-image-file-input"
-        :accept="ACCEPTED_IMAGE_ACCEPT_ATTR"
-        @change="handleMenuImageChange"
-      >
+      <DocumentMenuBar
+        :editable="editable"
+        :undo-redo="undoRedoState"
+        :autocorrect-smart-quotes="autocorrectSettings.smartQuotes"
+        :autocorrect-dashes="autocorrectSettings.dashes"
+        :show-ruler="doc.showRuler !== false"
+        :outline-pane-open="outlinePaneOpen"
+        :styles-pane-open="stylesPaneOpen"
+        :comments-pane-open="commentsPaneOpen"
+        :comments-only-view="commentsOnlyView"
+        :track-changes-recording="trackChangesRecording"
+        :track-changes-pane-open="trackChangesPaneOpen"
+        :can-convert-literal-chips="canConvertLiteralChips"
+        :table-selected-for-chart="tableSelectedForChart"
+        :painter-mode="painterMode"
+        @command="handleMenuCommand"
+        @insert-table-size="(rows, cols) => handleInsertTable({ rows, cols })"
+        @insert-break="handleInsertBreak"
+        @insert-section-break="handleInsertSectionBreak"
+        @insert-note="handleInsertNote"
+        @shape-pick="handleShapePick"
+        @chart-pick="handleChartPick"
+        @multilevel-preset="handleMultilevelPreset"
+        @insert-image-file="handleInsertImageFile"
+        @painter-click="handlePainterClick"
+        @painter-dblclick="handlePainterDblClick"
+      />
     </template>
     <template #toolbar>
       <UndoRedoControls
@@ -5004,61 +4558,6 @@ const MULTILEVEL_PRESETS = GALLERY_PRESETS;
   border-radius: 4px;
   background: #fff;
   cursor: pointer;
-}
-
-/* The Insert menu's table-size quick-pick (SPEC-049), slotted into the menu
-   popup. These rules reach it because slotted content keeps this view's
-   scope id. */
-.menu-image-input {
-  display: none;
-}
-
-/* The hovered size reads out beside the grid rather than under it: the grid
-   is far taller than it is wide, and the Insert menu needs every row of
-   height it can give back to keep fitting a 720px viewport whole (SPEC-028
-   AC-8/AC-9 asserts the break commands further down are inside it). */
-.menu-table-grid-wrap {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.75rem;
-  padding: 0.25rem 1rem 0.5rem;
-}
-
-.menu-table-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.menu-table-grid-row {
-  display: flex;
-  gap: 1px;
-}
-
-.menu-table-grid-cell {
-  width: 0.75rem;
-  height: 0.75rem;
-  padding: 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 2px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.menu-table-grid-cell.active {
-  background: #bbdefb;
-  border-color: #1a73e8;
-}
-
-.menu-table-grid-cell:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
-.menu-table-grid-label {
-  font-size: 0.78rem;
-  color: #5f6368;
-  white-space: nowrap;
 }
 
 /* The format painter button's armed state (SPEC-020 AC-11, AC-14). */
