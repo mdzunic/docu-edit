@@ -68,7 +68,14 @@ import {
   type ShapeLocation,
   type ZOrderCommand,
 } from "../../lib/shapes";
-import { HIT_TOLERANCE_CM, pointHitsShape } from "../../lib/shapeGeometry";
+import {
+  HIT_TOLERANCE_CM,
+  pointHitsShape,
+  rotatePoint,
+  rotatedResizeCursor,
+  rotatedBounds,
+  unrotateDelta,
+} from "../../lib/shapeGeometry";
 import {
   asImageWrapMode,
   isShape,
@@ -381,6 +388,7 @@ export function useShapes(deps: ShapesDeps) {
     start: { widthCm: number; heightCm: number };
     el: HTMLElement;
     groupOrdinal: number | undefined;
+    rotationDeg: number;
     currentWidthCm: number;
     currentHeightCm: number;
   } | null = null;
@@ -577,6 +585,20 @@ export function useShapes(deps: ShapesDeps) {
     return shapeMultiSelection.value.length >= 2;
   }
 
+  /** The rotation the selected shape is painted at. The handles are drawn
+   * against the shape's UNROTATED box (the DOM proxy the geometry is
+   * measured from never rotates — only the canvas the shape is painted on
+   * does), so every handle position has to apply this rotation itself. */
+  function selectedShapeRotationDeg(): number {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    return shape?.rotationDeg ?? 0;
+  }
+
+  /** A resize handle sits on the shape's own corner or edge midpoint, riding
+   * round with it as it rotates (AC-10, AC-13) rather than staying on the
+   * upright box the shape would occupy at 0°. */
   function shapeHandleStyle(handle = "se"): Record<string, string> {
     const geometry = shapeHandles.value;
     if (!geometry) {
@@ -584,22 +606,37 @@ export function useShapes(deps: ShapesDeps) {
     }
     const xFrac = handle.includes("w") ? 0 : handle.includes("e") ? 1 : 0.5;
     const yFrac = handle.includes("n") ? 0 : handle.includes("s") ? 1 : 0.5;
+    const rotationDeg = selectedShapeRotationDeg();
+    const point = rotatePoint(
+      { x: geometry.width * xFrac, y: geometry.height * yFrac },
+      geometry.width,
+      geometry.height,
+      rotationDeg,
+    );
     return {
-      left: `${geometry.left + geometry.width * xFrac - HANDLE_SIZE / 2}px`,
-      top: `${geometry.top + geometry.height * yFrac - HANDLE_SIZE / 2}px`,
-      cursor: `${handle}-resize`,
+      left: `${geometry.left + point.x - HANDLE_SIZE / 2}px`,
+      top: `${geometry.top + point.y - HANDLE_SIZE / 2}px`,
+      cursor: rotatedResizeCursor(handle, rotationDeg),
     };
   }
 
-  /** The rotation handle sits centred above the shape's top edge (AC-10). */
+  /** The rotation handle sits off the middle of the shape's own top edge
+   * (AC-10), so it too swings round with the shape — at 180° it hangs below
+   * the shape, which is where that edge now is. */
   function rotationHandleStyle(): Record<string, string> {
     const geometry = shapeHandles.value;
     if (!geometry) {
       return {};
     }
+    const point = rotatePoint(
+      { x: geometry.width / 2, y: -ROTATION_HANDLE_OFFSET_PX },
+      geometry.width,
+      geometry.height,
+      selectedShapeRotationDeg(),
+    );
     return {
-      left: `${geometry.left + geometry.width / 2 - HANDLE_SIZE / 2}px`,
-      top: `${geometry.top - ROTATION_HANDLE_OFFSET_PX - HANDLE_SIZE / 2}px`,
+      left: `${geometry.left + point.x - HANDLE_SIZE / 2}px`,
+      top: `${geometry.top + point.y - HANDLE_SIZE / 2}px`,
     };
   }
 
@@ -610,21 +647,26 @@ export function useShapes(deps: ShapesDeps) {
    * toolbar off the shape: it wraps to two or three rows depending on width
    * and on which of Group/Ungroup apply, so no fixed height offset (this
    * used to subtract a flat 44px) can clear a shape whose toolbar is
-   * taller than that. */
+   * taller than that.
+   *
+   * A rotated shape reaches past its own box on every side — and so do its
+   * handles, which now ride round with it (AC-13) — so the clearance is
+   * measured from the rotated extent, not from the upright box's edges. */
   function shapeToolbarStyle(): { left: number; top: number; placement: string } {
     const geometry = shapeHandles.value;
     const pageEl = pageRef.value;
     if (!geometry || !pageEl) {
       return { left: 0, top: 0, placement: "below" };
     }
+    const bounds = rotatedBounds(geometry.width, geometry.height, selectedShapeRotationDeg());
     const pageRect = pageEl.getBoundingClientRect();
-    const shapeTop = pageRect.top + geometry.top;
+    const shapeTop = pageRect.top + geometry.top - bounds.padY;
     const bottomEdge = shapeTop - SHAPE_TOOLBAR_CLEARANCE_PX;
-    const left = pageRect.left + geometry.left;
+    const left = pageRect.left + geometry.left - bounds.padX;
     if (bottomEdge - SHAPE_TOOLBAR_MAX_HEIGHT_PX >= 0) {
       return { left, top: bottomEdge, placement: "above" };
     }
-    return { left, top: pageRect.top + geometry.top + geometry.height + 8, placement: "below" };
+    return { left, top: pageRect.top + geometry.top + geometry.height + bounds.padY + 8, placement: "below" };
   }
 
   function applyShapeEdit(mutate: ShapeMutate | null, label = "") {
@@ -803,6 +845,7 @@ export function useShapes(deps: ShapesDeps) {
       start: { widthCm: shape.widthCm, heightCm: shape.heightCm },
       el,
       groupOrdinal: shape.groupOrdinal,
+      rotationDeg: shape.rotationDeg ?? 0,
       currentWidthCm: shape.widthCm,
       currentHeightCm: shape.heightCm,
     };
@@ -835,9 +878,17 @@ export function useShapes(deps: ShapesDeps) {
       return;
     }
     resizeDragMoved = true;
-    const deltaXCm = (event.clientX - drag.startClientX) * CM_PER_PX;
-    const deltaYCm = (event.clientY - drag.startClientY) * CM_PER_PX;
-    const size = resizedImageSize(drag.start, asImageHandle(drag.handle), deltaXCm, deltaYCm, event.shiftKey);
+    // widthCm/heightCm run along the shape's OWN axes, so a rotated shape's
+    // handles are being dragged in a frame turned by the same angle: the
+    // pointer delta has to come back out of it before it can size the box
+    // (drag the "e" handle of a 90° shape and the pointer travels down the
+    // screen, but what grows is still the width).
+    const local = unrotateDelta(
+      (event.clientX - drag.startClientX) * CM_PER_PX,
+      (event.clientY - drag.startClientY) * CM_PER_PX,
+      drag.rotationDeg,
+    );
+    const size = resizedImageSize(drag.start, asImageHandle(drag.handle), local.dx, local.dy, event.shiftKey);
     drag.currentWidthCm = size.widthCm;
     drag.currentHeightCm = size.heightCm;
     // A grouped member previews only on release, same as a grouped move

@@ -101,7 +101,13 @@ const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 function proxyStyle() {
   const shape = asShape(props.block);
   const clip = shapeClipPath(shape.geometry, !!shape.fill);
-  return clip ? { clipPath: clip } : {};
+  // The selection frame reads its angle from here (see the stylesheet): the
+  // proxy itself must stay unrotated, since it is the element every
+  // measurement and hit test goes through. Untyped object literal per the
+  // espree constraint this file's header notes — a type annotation here is
+  // a parse error for the .vue linter.
+  const style = { "--shape-rotation": `${shape.rotationDeg ?? 0}deg` };
+  return clip ? { ...style, clipPath: clip } : style;
 }
 
 /** Whether the proxy has nothing in its interior to click at all — an
@@ -220,9 +226,22 @@ function shapeTextEntries() {
   outline: none;
 }
 
-.doc-shape-selected .doc-shape-proxy {
-  outline: 2px solid #1a73e8;
-  outline-offset: 1px;
+/* The selection frame turns with the shape, exactly as its resize and
+   rotation handles do (useShapes.ts's shapeHandleStyle) — an upright box
+   drawn round a shape lying at 30° traces an edge that is not there. It
+   rides on a pseudo-element rather than on the proxy's own outline because
+   the proxy is the measured, hit-tested and e2e-asserted surface: a
+   transform on it would turn every getBoundingClientRect into the bounding
+   box of a rotated rectangle. A descendant's transform leaves its parent's
+   own border box alone. The -3px inset and 2px border reproduce the
+   `outline: 2px` at `outline-offset: 1px` this replaced. */
+.doc-shape-selected .doc-shape-proxy::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid #1a73e8;
+  transform: rotate(var(--shape-rotation, 0deg));
+  pointer-events: none;
 }
 
 /* An unfilled, textless shape's proxy passes every click through to

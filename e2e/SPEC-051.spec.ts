@@ -582,6 +582,123 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     }
   });
 
+  test("the resize and rotation handles ride round with a rotated shape (AC-10, AC-13, AC-16)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    const proxy = drawingAt(page, 0);
+    const box = (await proxy.boundingBox())!;
+    const deg = 35;
+    await page.getByTestId("shape-rotation").fill(String(deg));
+    await page.getByTestId("shape-rotation").press("Enter");
+
+    // The proxy never rotates — it stays the shape's upright box, which is
+    // what every measurement and hit test is built on — so handles left at
+    // that box's own corners end up nowhere near the shape a user sees.
+    const after = (await proxy.boundingBox())!;
+    expect(after.width).toBeCloseTo(box.width, 0);
+    expect(after.height).toBeCloseTo(box.height, 0);
+    const cx = after.x + after.width / 2;
+    const cy = after.y + after.height / 2;
+    const rad = (deg * Math.PI) / 180;
+    const rotated = (dx: number, dy: number) => ({
+      x: cx + dx * Math.cos(rad) - dy * Math.sin(rad),
+      y: cy + dx * Math.sin(rad) + dy * Math.cos(rad),
+    });
+    const centreOf = async (testid: string) => {
+      const handle = (await page.getByTestId(testid).boundingBox())!;
+      return { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+    };
+
+    for (const [testid, sx, sy] of [
+      ["shape-resize-nw", -1, -1],
+      ["shape-resize-ne", 1, -1],
+      ["shape-resize-se", 1, 1],
+      ["shape-resize-sw", -1, 1],
+    ] as const) {
+      const expected = rotated((sx * after.width) / 2, (sy * after.height) / 2);
+      const actual = await centreOf(testid);
+      expect(Math.hypot(actual.x - expected.x, actual.y - expected.y), testid).toBeLessThanOrEqual(2);
+    }
+
+    // The rotation handle hangs off the middle of the shape's OWN top edge,
+    // so it swings round with it too — at 35° that is up and to the right.
+    const rotationHandle = await centreOf("shape-rotation-handle");
+    const topEdge = rotated(0, -after.height / 2);
+    expect(rotationHandle.x).toBeGreaterThan(topEdge.x);
+    expect(rotationHandle.y).toBeLessThan(topEdge.y);
+    // ...and it stays on the line the shape's own "up" runs along: the
+    // handle, the top edge's midpoint and the centre are collinear.
+    const cross =
+      (topEdge.x - cx) * (rotationHandle.y - cy) - (topEdge.y - cy) * (rotationHandle.x - cx);
+    expect(Math.abs(cross)).toBeLessThanOrEqual(80);
+
+    // Each corner handle is on the painted shape's own corner — the fill is
+    // right there under it — while the upright box's corners, where the
+    // handles used to sit, are over the empty padding the rotated shape
+    // leans out of.
+    const surface = await proxy.evaluate((el) => {
+      const canvas = el.previousElementSibling as HTMLCanvasElement;
+      const rect = canvas.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    const pixelAtPoint = (point: { x: number; y: number }) =>
+      canvasPixelAt(proxy, (point.x - surface.x) / surface.width, (point.y - surface.y) / surface.height);
+    for (const [testid, sx, sy] of [
+      ["shape-resize-nw", -1, -1],
+      ["shape-resize-ne", 1, -1],
+      ["shape-resize-se", 1, 1],
+      ["shape-resize-sw", -1, 1],
+    ] as const) {
+      const handle = await centreOf(testid);
+      const length = Math.hypot(cx - handle.x, cy - handle.y);
+      const inside = {
+        x: handle.x + ((cx - handle.x) / length) * 6,
+        y: handle.y + ((cy - handle.y) / length) * 6,
+      };
+      expect((await pixelAtPoint(inside)).a, `${testid} sits on painted shape`).toBeGreaterThan(200);
+      const uprightCorner = {
+        x: cx + (sx * (after.width / 2 - 4)),
+        y: cy + (sy * (after.height / 2 - 4)),
+      };
+      expect((await pixelAtPoint(uprightCorner)).a, `${testid}'s old upright corner`).toBeLessThan(50);
+    }
+
+    // The cursor turns with the handle, so it still points along the edge
+    // the drag will move: a quarter turn takes "n" two compass points on.
+    await page.getByTestId("shape-rotation").fill("90");
+    await page.getByTestId("shape-rotation").press("Enter");
+    await expect
+      .poll(() => page.getByTestId("shape-resize-n").evaluate((el) => getComputedStyle(el).cursor))
+      .toBe("e-resize");
+  });
+
+  test("dragging a rotated shape's handle sizes it along its own edges, not the screen's (AC-4, AC-13)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 250, 250);
+    const proxy = drawingAt(page, 0);
+    const before = (await proxy.boundingBox())!;
+    await page.getByTestId("shape-rotation").fill("90");
+    await page.getByTestId("shape-rotation").press("Enter");
+
+    // At a quarter turn the shape's own width runs DOWN the screen, so a
+    // drag straight down the "e" handle is a drag along its width — it must
+    // widen the shape and leave the height alone. Taken raw, that same drag
+    // reads as pure vertical travel and grows the height instead.
+    const handle = (await page.getByTestId("shape-resize-e").boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2 + 40, { steps: 8 });
+    await page.mouse.up();
+
+    const after = (await proxy.boundingBox())!;
+    expect(after.width - before.width).toBeGreaterThan(30);
+    expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(2);
+  });
+
   test("the floating toolbar sits fully clear above the shape, rotation handle included (AC-12, AC-16)", async ({
     page,
   }) => {

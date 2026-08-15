@@ -260,21 +260,59 @@ export function rotatedBounds(
   };
 }
 
-/** Rotates `point` by `-rotationDeg` around the box centre `(width/2,
- * height/2)` — the inverse of painting's rotation, so a hit test can work
- * entirely in the shape's own unrotated local space. */
-export function unrotatePoint(point: Point, width: number, height: number, rotationDeg: number): Point {
+/** Rotates `point` by `rotationDeg` around the box centre `(width/2,
+ * height/2)` — the same rotation painting applies, so a corner of the
+ * unrotated box maps to where that corner is actually painted. What the
+ * selection handles are placed with (AC-10, AC-16): a handle belongs on the
+ * shape's own corner, not on the corner of the box the shape would occupy
+ * if it were upright. */
+export function rotatePoint(point: Point, width: number, height: number, rotationDeg: number): Point {
   if (!rotationDeg) {
     return point;
   }
   const cx = width / 2;
   const cy = height / 2;
-  const rad = (-rotationDeg * Math.PI) / 180;
+  const rad = (rotationDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
   const dx = point.x - cx;
   const dy = point.y - cy;
   return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
+/** Rotates `point` by `-rotationDeg` around the box centre `(width/2,
+ * height/2)` — the inverse of painting's rotation, so a hit test can work
+ * entirely in the shape's own unrotated local space. */
+export function unrotatePoint(point: Point, width: number, height: number, rotationDeg: number): Point {
+  return rotatePoint(point, width, height, -rotationDeg);
+}
+
+/** The eight resize-handle directions, clockwise from screen-north — the
+ * order is the map from "how far round the compass" to a CSS cursor name. */
+const RESIZE_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+
+/** The `*-resize` cursor a handle shows once its shape is rotated: the "nw"
+ * handle of a shape turned 90° sits on the shape's north-EAST on screen, and
+ * a cursor pointing the other way tells the user the drag will do the
+ * opposite of what it does. The eight directions are 45° apart, so the
+ * handle's own screen angle rounds to the nearest of them. */
+export function rotatedResizeCursor(handle: string, rotationDeg: number): string {
+  const base = RESIZE_DIRECTIONS.indexOf(handle);
+  if (base < 0) {
+    return `${handle}-resize`;
+  }
+  const octant = Math.round(base + rotationDeg / 45);
+  return `${RESIZE_DIRECTIONS[((octant % 8) + 8) % 8]}-resize`;
+}
+
+/** Rotates a screen-space drag delta into the shape's own unrotated axes,
+ * so dragging a handle that now sits on a rotated edge sizes the shape
+ * along that edge rather than along the screen's x/y (AC-4 under AC-13's
+ * rotation). A pure delta has no origin to rotate about, hence the
+ * zero-sized box. */
+export function unrotateDelta(dx: number, dy: number, rotationDeg: number): { dx: number; dy: number } {
+  const rotated = unrotatePoint({ x: dx, y: dy }, 0, 0, rotationDeg);
+  return { dx: rotated.x, dy: rotated.y };
 }
 
 /** Standard even-odd point-in-polygon test (ray casting). */

@@ -10,12 +10,15 @@ import {
   pointHitsShape,
   pointInEllipse,
   pointInPolygon,
+  rotatePoint,
   rotatedBounds,
+  rotatedResizeCursor,
   roundedCalloutOutline,
   roundedCalloutRadius,
   roundRectRadius,
   scalePolygon,
   shapePolygon,
+  unrotateDelta,
   unrotatePoint,
   type Point,
 } from "./shapeGeometry";
@@ -301,6 +304,106 @@ describe("scalePolygon", () => {
 });
 
 // --- unrotatePoint -------------------------------------------------------------
+
+describe("rotatePoint", () => {
+  it("is the identity when rotationDeg is 0 (fast path, no rotation math)", () => {
+    const point = { x: 3, y: 7 };
+    expect(rotatePoint(point, 10, 6, 0)).toBe(point);
+  });
+
+  it("carries the box's own corner to where that corner is painted", () => {
+    // width=10, height=6 turned a quarter turn clockwise: the top-left
+    // corner swings round to where the bottom-left corner of the upright
+    // box was, offset by the difference between the sides.
+    const result = rotatePoint({ x: 0, y: 0 }, 10, 6, 90);
+    expect(result.x).toBeCloseTo(8, 6);
+    expect(result.y).toBeCloseTo(-2, 6);
+  });
+
+  it("undoes unrotatePoint for the same angle — they are each other's inverse", () => {
+    for (const deg of [17, 90, 135, 240, 359]) {
+      const there = rotatePoint({ x: 2, y: 4 }, 10, 6, deg);
+      const back = unrotatePoint(there, 10, 6, deg);
+      expect(back.x).toBeCloseTo(2, 8);
+      expect(back.y).toBeCloseTo(4, 8);
+    }
+  });
+
+  it("keeps every corner within the rotated bounds it is painted into", () => {
+    const [width, height] = [120, 80];
+    for (const deg of [25, 70, 200]) {
+      const bounds = rotatedBounds(width, height, deg);
+      for (const corner of [
+        { x: 0, y: 0 },
+        { x: width, y: 0 },
+        { x: width, y: height },
+        { x: 0, y: height },
+      ]) {
+        const painted = rotatePoint(corner, width, height, deg);
+        expect(painted.x).toBeGreaterThanOrEqual(-bounds.padX - 1e-6);
+        expect(painted.x).toBeLessThanOrEqual(width + bounds.padX + 1e-6);
+        expect(painted.y).toBeGreaterThanOrEqual(-bounds.padY - 1e-6);
+        expect(painted.y).toBeLessThanOrEqual(height + bounds.padY + 1e-6);
+      }
+    }
+  });
+});
+
+// --- unrotateDelta -----------------------------------------------------------
+
+describe("unrotateDelta", () => {
+  it("leaves a delta alone when the shape is not rotated", () => {
+    expect(unrotateDelta(12, -5, 0)).toEqual({ dx: 12, dy: -5 });
+  });
+
+  it("turns a drag down the screen into pure width on a quarter-turned shape", () => {
+    // A shape at 90deg has its own +x axis pointing down the screen, so the
+    // pointer travelling down is the pointer travelling along its width.
+    const local = unrotateDelta(0, 10, 90);
+    expect(local.dx).toBeCloseTo(10, 6);
+    expect(local.dy).toBeCloseTo(0, 6);
+  });
+
+  it("keeps the drag's length, only its direction changes", () => {
+    for (const deg of [30, 145, 300]) {
+      const local = unrotateDelta(6, 8, deg);
+      expect(Math.hypot(local.dx, local.dy)).toBeCloseTo(10, 6);
+    }
+  });
+});
+
+// --- rotatedResizeCursor -----------------------------------------------------
+
+describe("rotatedResizeCursor", () => {
+  it("leaves each handle its own cursor on an unrotated shape", () => {
+    for (const handle of ["n", "ne", "e", "se", "s", "sw", "w", "nw"]) {
+      expect(rotatedResizeCursor(handle, 0)).toBe(`${handle}-resize`);
+    }
+  });
+
+  it("advances the cursor by the rotation — a quarter turn moves it two compass points", () => {
+    expect(rotatedResizeCursor("n", 90)).toBe("e-resize");
+    expect(rotatedResizeCursor("nw", 90)).toBe("ne-resize");
+    expect(rotatedResizeCursor("se", 90)).toBe("sw-resize");
+  });
+
+  it("rounds to the nearest of the eight directions", () => {
+    expect(rotatedResizeCursor("n", 20)).toBe("n-resize");
+    expect(rotatedResizeCursor("n", 30)).toBe("ne-resize");
+  });
+
+  it("wraps in both directions rather than running off the compass", () => {
+    expect(rotatedResizeCursor("nw", 45)).toBe("n-resize");
+    expect(rotatedResizeCursor("n", -45)).toBe("nw-resize");
+    expect(rotatedResizeCursor("n", 360)).toBe("n-resize");
+  });
+
+  it("hands back an unknown handle's own cursor untouched", () => {
+    expect(rotatedResizeCursor("middle", 90)).toBe("middle-resize");
+  });
+});
+
+// --- unrotatePoint -----------------------------------------------------------
 
 describe("unrotatePoint", () => {
   it("is the identity when rotationDeg is 0 (fast path, no rotation math)", () => {
