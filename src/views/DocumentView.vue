@@ -89,9 +89,10 @@ import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
-import { noSpellContextMenu, noSpellUnderlineRect, useSpellCheck } from "./document/useSpellCheck";
+import { useSpellCheck } from "./document/useSpellCheck";
 import { useDocumentLanguage } from "./document/useDocumentLanguage";
 import { useStyleManager } from "./document/useStyleManager";
+import { useContextMenus } from "./document/useContextMenus";
 import { documentExists } from "../lib/documents";
 import {
   activeHeadingAnchor,
@@ -248,23 +249,18 @@ import {
   noParagraphTarget,
   noTableCellTarget,
   paragraphElementForCaret,
-  paragraphFromEventTarget,
   setDomCaret,
   setDomSelection,
   tableCellFromEventTarget,
 } from "../lib/domCaret";
 import {
-  compileQuery,
   findMatches,
   indexAtOrAfter,
   isQueryError,
   matchSelection,
   noHighlightRects,
   noMatches,
-  replaceMatch,
-  replaceMatches,
 } from "../lib/findReplace";
-import { applyCasePattern, detectCasePattern } from "../lib/spellcheck/suggestions";
 import {
   caretAtClientPoint,
   caretClientRect,
@@ -298,7 +294,6 @@ import {
   noClipboardSnapshot,
   noPastePayload,
   parseFragmentPayload,
-  serializeFragment,
 } from "../lib/clipboard";
 import { importHtml } from "../lib/htmlPaste";
 import {
@@ -311,7 +306,6 @@ import {
   applyParagraphFormat,
   asPageSetupScope,
   toolbarCharacterStyleState,
-  continueListNumbering,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
@@ -350,14 +344,11 @@ import {
   noSelection,
   paragraphPaginationState,
   removeListFormat,
-  restartListNumbering,
-  selectAll,
   selectionListDefinitionLevels,
   selectionTabStops,
   setAlignment,
   setHeaderFooterOptions,
   setListMarker,
-  setListNumberingValue,
   setNoteSettings,
   setPageMargins,
   setPageSetup,
@@ -566,9 +557,6 @@ function onScroll(cb = () => {}) {
 function registerFindRefresh(fn = () => {}) {
   findRefreshScheduler = fn;
 }
-
-const contextMenu = ref({ visible: false, left: 0, top: 0 });
-const spellContextMenu = ref(noSpellContextMenu());
 
 // --- tables (SPEC-022) ------------------------------------------------------
 // The rectangular cell-range selection (AC-15, AC-16): activated by
@@ -1139,7 +1127,6 @@ function closeSession() {
   anchorPage.value = -1;
   caretPage.value = 1;
   dismissPasteChip();
-  closeContextMenu();
   sessionCloseHooks.forEach((cb) => cb());
   clearCellSelection();
   cellDragOrigin = null;
@@ -1755,280 +1742,6 @@ function handleContentClick(event = new MouseEvent("click")) {
   }
 }
 
-// --- the editor's context menu (SPEC-016 AC-4..6) --------------------------
-
-/** Right-click on the canvas: the app's own menu replaces the native one so
- * its entries can drive the clipboard pipeline (and tests can reach them). */
-function handleContextMenu(event = new MouseEvent("contextmenu")) {
-  if (!doc.value || !editable.value) {
-    return;
-  }
-  // A right-click on a misspelled word opens the suggestions menu instead of
-  // this one (SPEC-035 AC-2). The underline layer is inert, so the click
-  // arrives here rather than on the overlay — see spellRectAtPoint.
-  const spellRect = spellRectAtPoint(event.clientX, event.clientY);
-  if (spellRect) {
-    handleSpellContextMenu(event, spellRect);
-    return;
-  }
-  event.preventDefault();
-  // A right-click inside a table cell adds the row/column section to the
-  // menu, targeted at that cell (SPEC-022 AC-17..19).
-  contextMenuTableCell = tableCellAtTarget(event.target);
-  // A right-click on a list paragraph adds the numbering-control section,
-  // targeted at that paragraph (SPEC-032 AC-14..16).
-  contextMenuListTarget = listParagraphAtTarget(event.target);
-  contextMenu.value = { visible: true, left: event.clientX, top: event.clientY };
-}
-
-/** The list paragraph under a right-click, or null when the click landed
- * outside a list item (SPEC-032). */
-function listParagraphAtTarget(eventTarget = noEventTarget()) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return null;
-  }
-  const target = paragraphFromEventTarget(root, eventTarget);
-  if (!target) {
-    return null;
-  }
-  return paragraphAt(model, target)?.list ? target : null;
-}
-
-function closeContextMenu() {
-  if (contextMenu.value.visible) {
-    contextMenu.value = { visible: false, left: 0, top: 0 };
-  }
-  contextMenuTableCell = null;
-  contextMenuListTarget = null;
-}
-
-// --- the spell-check context menu (SPEC-035 AC-2, AC-3) ---------------------
-
-/** The underline rect under a point, in client coordinates, or null when the
- * point is not over a flagged word. The underline layer cannot do this hit
- * test itself: its rects cover whole glyph boxes and paint above the text, so
- * making them pointer-interactive would swallow ordinary clicks, double-clicks
- * and drags (see the .spell-underline rule). The rects are stored relative to
- * the .pages box — the same space useSpellCheck measured them in. */
-function spellRectAtPoint(clientX = 0, clientY = 0) {
-  const pageEl = pageRef.value;
-  if (!pageEl) {
-    return null;
-  }
-  const pageRect = pageEl.getBoundingClientRect();
-  const x = clientX - pageRect.left;
-  const y = clientY - pageRect.top;
-  for (const rect of spellUnderlineRects.value) {
-    if (x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height) {
-      return rect;
-    }
-  }
-  return null;
-}
-
-/** Right-click on a spell-check underline: opens the suggestions menu
- * instead of the regular editing menu. Reached from handleContextMenu, which
- * hit-tests the click, because the underline layer itself is inert. */
-function handleSpellContextMenu(event = new MouseEvent("contextmenu"), rect = noSpellUnderlineRect()) {
-  if (!editable.value) {
-    return;
-  }
-  event.preventDefault();
-  spellContextMenu.value = {
-    visible: true,
-    left: event.clientX,
-    top: event.clientY,
-    section: rect.section,
-    block: rect.block,
-    start: rect.start,
-    end: rect.end,
-    word: rect.word,
-    lang: rect.lang,
-    suggestions: suggestionsFor(rect.word, rect.lang),
-  };
-}
-
-function closeSpellContextMenu() {
-  spellContextMenu.value = noSpellContextMenu();
-}
-
-/** Choosing a suggestion (SPEC-035 AC-4, AC-4.1): replaceMatch preserves
- * the word's character formatting; applyCasePattern reshapes the
- * suggestion to the misspelling's own capitalisation pattern first. */
-function applySpellSuggestion(suggestion = "") {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  const match = { section: state.section, block: state.block, start: state.start, end: state.end };
-  const shaped = applyCasePattern(suggestion, detectCasePattern(state.word));
-  const before = caretSelection({ ...match, offset: match.start });
-  applyEdit(replaceMatch(model, match, shaped), before, "spelling suggestion");
-}
-
-/** "Ignore" (SPEC-035 AC-5): this occurrence only, for the session. */
-function spellIgnore() {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  ignoreOccurrence({
-    section: state.section,
-    block: state.block,
-    start: state.start,
-    end: state.end,
-    word: state.word,
-    lang: state.lang,
-  });
-}
-
-/** "Ignore all" (SPEC-035 AC-6): every occurrence of the word, for the
- * session. */
-function spellIgnoreAll() {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  ignoreAllOccurrences(state.word);
-}
-
-/** "Add to dictionary" (SPEC-035 AC-7): persists across sessions. */
-function spellAddToDictionary() {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  addWordToDictionary(state.word, state.lang);
-}
-
-/** A numbering-control entry picked from the context menu (SPEC-032
- * AC-14..16), applied at the right-clicked paragraph. "Set numbering
- * value…" prompts for the ordinal; cancelling the prompt changes nothing. */
-function handleContextMenuListAction(action = "") {
-  const target = contextMenuListTarget;
-  closeContextMenu();
-  const model = doc.value;
-  if (!target || !model || !editable.value) {
-    return;
-  }
-  const selection = caretSelection({ ...target, offset: 0 });
-  if (action === "restart-numbering") {
-    applyEdit(restartListNumbering(model, selection), selection, "restart numbering");
-  } else if (action === "continue-numbering") {
-    applyEdit(continueListNumbering(model, selection), selection, "continue numbering");
-  } else if (action === "set-numbering-value") {
-    const raw = window.prompt("Set numbering value", "1");
-    if (raw === null) {
-      return;
-    }
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < 0) {
-      return;
-    }
-    applyEdit(setListNumberingValue(model, selection, value), selection, "set numbering value");
-  }
-}
-
-/** Menu Cut/Copy synthesise a real cut/copy via execCommand — the only
- * synchronous route from a button click to clipboardData (and the private
- * MIME type). The events land in handleCut/handleCopy above. */
-function contextMenuCut() {
-  closeContextMenu();
-  const root = contentRoot.value;
-  if (!root) {
-    return;
-  }
-  root.focus();
-  if (typeof document.execCommand === "function") {
-    document.execCommand("cut");
-  }
-}
-
-function contextMenuCopy() {
-  closeContextMenu();
-  const root = contentRoot.value;
-  if (!root) {
-    return;
-  }
-  root.focus();
-  if (typeof document.execCommand === "function") {
-    document.execCommand("copy");
-  }
-}
-
-/** Reads text/html, text/plain and image presence via the async clipboard
- * API — all a button click can reach. Null when the API is missing or the
- * read was denied. */
-async function readAsyncClipboard() {
-  const clipboard = navigator.clipboard;
-  if (!clipboard) {
-    return null;
-  }
-  try {
-    if (typeof clipboard.read === "function") {
-      const items = await clipboard.read();
-      let html = "";
-      let text = "";
-      let hasImage = false;
-      for (const item of items) {
-        for (const type of item.types) {
-          if (type === "text/html") {
-            html = await (await item.getType(type)).text();
-          } else if (type === "text/plain") {
-            text = await (await item.getType(type)).text();
-          } else if (type.startsWith("image/")) {
-            hasImage = true;
-          }
-        }
-      }
-      return { html, text, hasImage };
-    }
-    if (typeof clipboard.readText === "function") {
-      return { html: "", text: await clipboard.readText(), hasImage: false };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-/** The menu's Paste (AC-6). The async API cannot carry the private MIME
- * type, so a clipboard whose text/html matches our last copy is recognised
- * as our own and pasted from the local fragment snapshot with exact
- * fidelity; anything else takes the same import paths as a keyboard
- * paste. */
-async function contextMenuPaste() {
-  closeContextMenu();
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  root.focus();
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  const flavours = await readAsyncClipboard();
-  if (!flavours) {
-    addToast("Clipboard unavailable — paste with the keyboard instead");
-    return;
-  }
-  const ownIfLastCopy = getLastCopy();
-  const own =
-    ownIfLastCopy && flavours.html && flavours.html === ownIfLastCopy.html
-      ? ownIfLastCopy.fragment
-      : null;
-  performPaste(
-    {
-      internal: own ? serializeFragment(own) : "",
-      html: flavours.html,
-      text: flavours.text,
-      hasImage: flavours.hasImage,
-    },
-    selection,
-    false,
-  );
-}
-
 // --- caret movement and selection (SPEC-011) -------------------------------
 // Character/word/line movement, plain Home/End and mouse selection are the
 // browser's native caret behaviour over the rendered canvas — the DOM
@@ -2405,7 +2118,10 @@ const {
   currentHfSelection,
   applyHeaderFooterEdit,
   hfRootEl,
-  closeContextMenu,
+  // Deferred behind a lambda: the const is destructured from useContextMenus,
+  // wired after useSpellCheck below — the wrapper reads it at call time (an
+  // event handler, past setup), never during this deps object's evaluation.
+  closeContextMenu: () => closeContextMenu(),
   tableHover,
   cellSelection,
   insertTableDialogOpen,
@@ -4018,6 +3734,55 @@ const {
   suggestionsFor,
 } = useSpellCheck({ ...editorContext });
 
+// --- context menus (SPEC-016, SPEC-022, SPEC-032, SPEC-035) ------------------
+// The editor's right-click menu, the spell-check suggestions menu and the
+// Edit-menu Select all / Paste without formatting live in useContextMenus.
+// The menu-target variables (contextMenuTableCell / contextMenuListTarget)
+// stay plain lets above — the template reads them fresh on each menu render
+// and useTables' wiring closes over the cell — so the composable reaches
+// them through the get/set lambdas here.
+const {
+  contextMenu,
+  spellContextMenu,
+  handleContextMenu,
+  closeContextMenu,
+  closeSpellContextMenu,
+  applySpellSuggestion,
+  spellIgnore,
+  spellIgnoreAll,
+  spellAddToDictionary,
+  handleContextMenuListAction,
+  contextMenuCut,
+  contextMenuCopy,
+  contextMenuPaste,
+  menuSelectAll,
+  menuPastePlain,
+} = useContextMenus({
+  ...editorContext,
+  tableCellAtTarget,
+  setContextMenuTableCell: (cell) => {
+    contextMenuTableCell = cell;
+  },
+  getContextMenuListTarget: () => contextMenuListTarget,
+  setContextMenuListTarget: (target) => {
+    contextMenuListTarget = target;
+  },
+  spellUnderlineRects,
+  suggestionsFor,
+  ignoreOccurrence,
+  ignoreAllOccurrences,
+  addWordToDictionary,
+  getLastCopy,
+  performPaste,
+  setCaret: (next) => {
+    caret = next;
+  },
+  updateCaretStatus,
+  setPendingFormat: (next) => {
+    pendingFormat = next;
+  },
+});
+
 // --- comments (SPEC-038) -----------------------------------------------------
 const {
   commentsPaneOpen,
@@ -4674,44 +4439,6 @@ function handleChartFromTable(chartType = "columnClustered") {
 
 // The multilevel-list presets (SPEC-032), absorbed into the Format menu.
 const MULTILEVEL_PRESETS = GALLERY_PRESETS;
-
-// Edit-menu Select all / Paste without formatting: menu-invocable forms of
-// the Ctrl+A / Ctrl+Shift+V commands (their keyboard paths call these too).
-function menuSelectAll() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return;
-  }
-  pendingFormat = noPendingFormat();
-  const all = selectAll(model);
-  caret = all.focus;
-  updateCaretStatus({ start: all.anchor, end: all.focus });
-  if (paragraphElementForCaret(root, all.anchor) && paragraphElementForCaret(root, all.focus)) {
-    setDomSelection(root, all.anchor, all.focus);
-  } else {
-    void nextTick().then(() => setDomSelection(root, all.anchor, all.focus));
-  }
-}
-
-async function menuPastePlain() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  root.focus();
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  const flavours = await readAsyncClipboard();
-  if (!flavours) {
-    addToast("Clipboard unavailable — paste with the keyboard instead");
-    return;
-  }
-  performPaste({ internal: "", html: "", text: flavours.text, hasImage: false }, selection, true);
-}
 
 </script>
 
