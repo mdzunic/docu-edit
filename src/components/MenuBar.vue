@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
-import { asMenuBarMenus } from "../lib/menuBar";
+import { asMenuBarMenus } from "../lib/core/menuBar";
 
 // The application menu bar (SPEC-049). This component is deliberately
 // *structural only*: it renders the menu titles and their popups, and owns

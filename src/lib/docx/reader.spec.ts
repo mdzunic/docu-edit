@@ -198,7 +198,7 @@ describe("parseDocx — special characters", () => {
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
       "<w:p><w:r><w:t>a</w:t><w:noBreakHyphen/><w:t>b</w:t><w:softHyphen/><w:t>c</w:t></w:r></w:p>" +
       "</w:body></w:document>";
-    const { zip } = await import("./zipWriter");
+    const { zip } = await import("../core/zipWriter");
     const bytes = await zip([
       { name: "word/document.xml", data: new TextEncoder().encode(documentXml) },
     ]);

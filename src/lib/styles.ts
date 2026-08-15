@@ -11,8 +11,6 @@
 // also the whole picker list for a blank document.
 import {
   HORIZONTAL_RULE_STYLE_ID,
-  type BorderLineStyle,
-  type CellBorders,
   type DocumentModel,
   type NamedStyle,
   type Paragraph,
@@ -21,6 +19,7 @@ import {
   type RunFormatting,
   type StyleType,
 } from "./documentModel";
+import { type BorderLineStyle, type CellBorders } from "./core/tables";
 import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 import { runStyle } from "./renderFormatting";
 

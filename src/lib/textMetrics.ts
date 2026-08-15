@@ -16,8 +16,9 @@
 // null where the environment cannot measure text (jsdom), in which case
 // callers keep their estimates and the DOM path.
 import type { Paragraph, RunFormatting } from "./documentModel";
-import { listIndentCm } from "./lists";
-import { PX_PER_CM, type BlockMetrics, type LineBox } from "./pagination";
+import { listIndentCm } from "./core/lists";
+import { type BlockMetrics, type LineBox } from "./core/pageMetrics";
+import { PX_PER_CM } from "./core/units";
 
 const PX_PER_PT = 96 / 72;
 

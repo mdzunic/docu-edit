@@ -6,9 +6,9 @@ import {
   MAX_FONT_SIZE_PT,
   MIN_FONT_SIZE_PT,
   parseFontSizeInput,
-  STANDARD_FONT_FAMILIES,
   stepFontSize,
 } from "./fonts";
+import { STANDARD_FONT_FAMILIES } from "./core/fonts";
 
 describe("STANDARD_FONT_FAMILIES", () => {
   it("includes the web-safe families and the common document fonts (AC)", () => {

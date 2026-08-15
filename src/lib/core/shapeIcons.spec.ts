@@ -4,7 +4,7 @@
 // tests pin it to the same vertex lists the page canvas paints with, so an
 // icon cannot quietly stop matching what picking it draws.
 import { describe, expect, it } from "vitest";
-import { LINE_GEOMETRIES, SHAPE_CATALOGUE } from "./documentModel";
+import { LINE_GEOMETRIES, SHAPE_CATALOGUE } from "./shapes";
 import { roundRectRadius, shapePolygon } from "./shapeGeometry";
 import { SHAPE_ICON_SIZE, shapeIconPath } from "./shapeIcons";
 

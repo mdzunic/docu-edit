@@ -9,8 +9,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectOdf, OTT_MIMETYPE } from "./odf/reader";
 import { hasTemplateFileExtension, openTemplateFile, titleFromFileName } from "./openDocument";
-import { unzip } from "./docx/zip";
-import { zip } from "./docx/zipWriter";
+import { unzip } from "./core/zip";
+import { zip } from "./core/zipWriter";
 
 const docxFixturesDir = join(dirname(fileURLToPath(import.meta.url)), "docx", "fixtures");
 const odfFixturesDir = join(dirname(fileURLToPath(import.meta.url)), "odf", "fixtures");

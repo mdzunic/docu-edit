@@ -22,7 +22,7 @@ import {
   unrotatePoint,
   type Point,
 } from "./shapeGeometry";
-import { LINE_GEOMETRIES, SHAPE_CATALOGUE, type ShapeGeometry } from "./documentModel";
+import { LINE_GEOMETRIES, SHAPE_CATALOGUE, type ShapeGeometry } from "./shapes";
 
 // Geometries with a real polygon representation: every catalogue geometry
 // except the two line geometries (a segment, not a region — see

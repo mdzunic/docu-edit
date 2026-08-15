@@ -4,7 +4,7 @@
 // implement image decoding). Supports the four formats "Insert image"
 // accepts (PNG, JPEG, GIF, SVG); returns null for anything else or malformed
 // data, which callers treat as "unknown", not a hard failure.
-import { parseXml, XmlParseError } from "./docx/xml";
+import { parseXml, XmlParseError } from "./xml";
 
 export interface ImageDimensions {
   widthPx: number;

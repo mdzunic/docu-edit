@@ -5,8 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
 import { buildDocumentXml, writeDocx } from "./writer";
-import { unzip } from "./zip";
-import { zip } from "./zipWriter";
+import { unzip } from "../core/zip";
+import { zip } from "../core/zipWriter";
 import { WORD_NAMESPACE } from "./xml";
 import {
   createDocument,

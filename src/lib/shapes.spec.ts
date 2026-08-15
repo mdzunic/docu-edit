@@ -2,13 +2,7 @@
 // fixture/testing conventions exactly — see that file's own header comment.
 import { describe, it, expect } from "vitest";
 import {
-  constrainedDragSizeCm,
-  DEFAULT_AREA_SIZE_CM,
   DEFAULT_DRAWING_POSITION,
-  DEFAULT_LINE_SIZE_CM,
-  defaultClickSizeCm,
-  DRAW_DRAG_THRESHOLD_CM,
-  drawGestureBox,
   deleteShape,
   duplicateShape,
   ensureShapeTextFrame,
@@ -20,11 +14,8 @@ import {
   insertTextBox,
   moveGroup,
   moveShape,
-  MIN_SHAPE_SIZE_CM,
   nearestParagraph,
   nudgeShape,
-  NUDGE_FINE_PT_CM,
-  NUDGE_PT_CM,
   DUPLICATE_OFFSET_CM,
   reanchorShape,
   reorderShapeZ,
@@ -38,13 +29,24 @@ import {
   setShapeWrap,
   shapeHasVisibleText,
   shapesInPaintOrder,
-  normalizeRotationDeg,
   shapeAt,
   ungroupShapes,
   type NewShape,
   type ParagraphSpan,
   type ShapeLocation,
 } from "./shapes";
+import {
+  constrainedDragSizeCm,
+  DEFAULT_AREA_SIZE_CM,
+  DEFAULT_LINE_SIZE_CM,
+  defaultClickSizeCm,
+  DRAW_DRAG_THRESHOLD_CM,
+  drawGestureBox,
+  MIN_SHAPE_SIZE_CM,
+  NUDGE_FINE_PT_CM,
+  NUDGE_PT_CM,
+  normalizeRotationDeg,
+} from "./core/shapes";
 import { caretSelection, commitShapeModel, insertText, withShapeModel, type ModelSelection } from "./commands";
 import { equalStructural } from "./equality";
 import { blockText, type CaretPosition } from "./textEditing";

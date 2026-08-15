@@ -284,7 +284,7 @@ describe("parseOdt — error handling", () => {
 });
 
 async function makeOdt(contentXml: string, stylesXml?: string): Promise<Uint8Array> {
-  const { zip } = await import("../docx/zipWriter");
+  const { zip } = await import("../core/zipWriter");
   const encoder = new TextEncoder();
   const entries = [
     { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.text"), store: true },

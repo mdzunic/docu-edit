@@ -4,8 +4,7 @@
 // explicit unit suffix ("2.54cm", "1in", "12pt") and expresses some
 // properties as percentages of an inherited value ("130%").
 
-const CM_PER_INCH = 2.54;
-const POINTS_PER_INCH = 72;
+import { CM_PER_INCH, POINTS_PER_INCH } from "../core/units";
 
 // Multipliers to centimetres for every unit ODF's positive/signed length
 // datatypes allow (px is not a legal ODF length and is deliberately absent).

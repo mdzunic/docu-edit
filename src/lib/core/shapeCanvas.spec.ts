@@ -4,7 +4,7 @@
 // is painted, not a hardcoded fallback.
 import { describe, it, expect } from "vitest";
 import { paintShape } from "./shapeCanvas";
-import type { Shape } from "./documentModel";
+import type { Shape } from "../documentModel";
 
 /** A minimal CanvasRenderingContext2D fake that records the calls paintShape
  * makes — real canvas painting isn't available in jsdom, and this project

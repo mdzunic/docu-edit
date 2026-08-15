@@ -4,7 +4,7 @@
 // constraint) unless marked `store`, sizes and CRC-32 are written into the
 // local headers (no data descriptors), and there is no ZIP64 or encryption —
 // document packages are always small, single-disk, unencrypted ZIPs.
-import { yieldToMainThread } from "../idleScheduler";
+import { yieldToMainThread } from "./idleScheduler";
 
 const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;

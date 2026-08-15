@@ -3,9 +3,10 @@
 // siblings of drawing.ts's `draw:frame`/`draw:image` for pictures. Mirrors
 // drawing.ts's own split (parse.../...Xml) so the two modules read side by
 // side; this one never touches Image, drawing.ts never touches Shape.
-import type { Block, ImageWrapMode, Paragraph, Shape, ShapeGeometry, ShapeOutline } from "../documentModel";
-import { LINE_GEOMETRIES } from "../documentModel";
-import { firstChildElement } from "../docx/xml";
+import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
+import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
+import { LINE_GEOMETRIES } from "../core/shapes";
+import { firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import {
   DRAW_NAMESPACE,

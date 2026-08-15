@@ -4,7 +4,7 @@
 // exercised as pure math, no DOM.
 import { describe, expect, it } from "vitest";
 import type { Paragraph, ParagraphFormatting, Run } from "./documentModel";
-import { PX_PER_CM } from "./pagination";
+import { PX_PER_CM } from "./core/units";
 import {
   measureParagraphText,
   type BaseFont,

@@ -3,7 +3,7 @@
 // it on the page (shapeGeometry.ts), so a gallery icon can never drift from
 // what picking it actually draws. Pure path-string maths — no DOM and no
 // canvas context — so it unit-tests like every other lib module.
-import type { ShapeGeometry } from "./documentModel";
+import type { ShapeGeometry } from "./shapes";
 import {
   lineSegment,
   roundedCalloutOutline,

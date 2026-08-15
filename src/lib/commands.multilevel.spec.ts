@@ -17,7 +17,7 @@ import {
   type ModelSelection,
 } from "./commands";
 import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
-import { cmToTwips } from "./docx/units";
+import { cmToTwips } from "./core/units";
 import { listMarkers } from "./lists";
 import type { CaretPosition } from "./textEditing";
 

@@ -30,7 +30,7 @@ import {
   touchedBlocks,
   type ModelSelection,
 } from "./commands";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import { cmToTwips, twipsToCm } from "./core/units";
 
 function paragraph(...runs: Array<[string, Record<string, unknown>?]>): Paragraph {
   return {

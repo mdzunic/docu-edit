@@ -16,8 +16,8 @@
 // menu's table-size grid — see MenuBar.vue's onPopupClick comment).
 //
 // Runtime prop/emit declarations per the espree constraint (see AppShell.vue).
-import { asShapeGeometry, LINE_GEOMETRIES, SHAPE_CATALOGUE } from "../lib/documentModel";
-import { SHAPE_ICON_SIZE, shapeIconPath } from "../lib/shapeIcons";
+import { asShapeGeometry, LINE_GEOMETRIES, SHAPE_CATALOGUE } from "../lib/core/shapes";
+import { SHAPE_ICON_SIZE, shapeIconPath } from "../lib/core/shapeIcons";
 
 defineEmits(["pick"]);
 

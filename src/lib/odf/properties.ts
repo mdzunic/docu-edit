@@ -11,8 +11,9 @@ import type {
   TabStop,
   TabStopAlignment,
 } from "../documentModel";
-import { firstChildElement } from "../docx/xml";
-import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../language";
+import { firstChildElement } from "../core/xml";
+import { HIGHLIGHT_NAMES } from "../core/colors";
+import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../core/language";
 import { foAttr, styleAttr, STYLE_NAMESPACE } from "./xml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 
@@ -60,40 +61,8 @@ function parseLineStyleToggle(value: string | null): boolean | undefined {
   return value !== "none";
 }
 
-// The OOXML highlight palette (the document model stores the OOXML name,
-// matching the .docx reader) keyed by the hex value ODF's
-// `fo:background-color` uses for the same colour. 16 entries: the 15
-// colours Word's highlight picker offers plus `white`, which
-// ST_HighlightColor admits even though the picker never shows it — mapping
-// it keeps an incoming `w:highlight w:val="white"` alive across a
-// `.docx` → `.odt` → `.docx` trip (SPEC-013). A highlight outside this
-// palette stays a raw CSS colour, which the renderer also accepts. This is
-// the single source for the palette: the `.docx` reader/writer, the `.odt`
-// writer and the canvas renderer all derive from it.
-export const HIGHLIGHT_NAMES: Record<string, string> = {
-  "#ffff00": "yellow",
-  "#00ff00": "green",
-  "#00ffff": "cyan",
-  "#ff00ff": "magenta",
-  "#0000ff": "blue",
-  "#ff0000": "red",
-  "#00008b": "darkBlue",
-  "#008b8b": "darkCyan",
-  "#006400": "darkGreen",
-  "#8b008b": "darkMagenta",
-  "#8b0000": "darkRed",
-  "#808000": "darkYellow",
-  "#a9a9a9": "darkGray",
-  "#d3d3d3": "lightGray",
-  "#000000": "black",
-  "#ffffff": "white",
-};
-
-/** The inverse palette: OOXML highlight name → hex colour. */
-export const HIGHLIGHT_HEX: Record<string, string> = Object.fromEntries(
-  Object.entries(HIGHLIGHT_NAMES).map(([hex, name]) => [name, hex]),
-);
-
+// The OOXML/ODF highlight palette lives in src/lib/core/colors.ts (it is
+// product-neutral colour data, not ODF parsing).
 /** Strips quoting from a font-family value ("'Liberation Serif'") and takes
  * the first entry of a comma-separated fallback list. */
 export function cleanFontFamily(value: string): string | undefined {

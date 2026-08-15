@@ -1,9 +1,23 @@
-// Paper sizes, orientation and unit conversions for the Page setup dialog
-// (SPEC-027). Framework-free so the matching/validation logic is testable
-// without mounting the dialog. The document model always stores page
-// geometry in centimetres (documentModel.ts's PageSize/Margins) — this
-// module only converts between that and what the dialog shows/accepts.
-import type { Margins, MeasurementUnit, PageSize } from "./documentModel";
+// Editing-surface geometry (SPEC-027): the page/surface size and margin
+// types, the standard paper catalogue, orientation and margin validation.
+// Product-neutral — a Slides product sizes its slides (16:9, 4:3, custom)
+// with the same types and matching/validation logic, just a different
+// catalogue of named sizes. The document model always stores geometry in
+// centimetres; display-unit conversion lives in core/units.ts.
+
+/** Page dimensions in centimetres. */
+export interface PageSize {
+  widthCm: number;
+  heightCm: number;
+}
+
+/** Page margins in centimetres. */
+export interface Margins {
+  topCm: number;
+  rightCm: number;
+  bottomCm: number;
+  leftCm: number;
+}
 
 export type PaperSizeName = "A4" | "Letter" | "Legal" | "A3" | "A5" | "Tabloid" | "Custom";
 
@@ -30,8 +44,7 @@ export const PAPER_SIZE_NAMES: PaperSizeName[] = [
 ];
 
 /** Typed pass-through for a paper size name coming from a `.vue` template's
- * plain string (same espree constraint as documentModel.ts's
- * asCharacterFormatKey). */
+ * plain string (espree bars the annotation in `.vue` scripts). */
 export function asPaperSizeName(value: string): PaperSizeName {
   return value as PaperSizeName;
 }
@@ -97,39 +110,6 @@ export function swapOrientation(pageSize: PageSize): PageSize {
 export function pageSizeFor(name: PaperSizeName, orientation: Orientation): PageSize {
   const portrait = PAPER_SIZES[name as Exclude<PaperSizeName, "Custom">] ?? PAPER_SIZES.A4;
   return orientation === "landscape" ? swapOrientation(portrait) : { ...portrait };
-}
-
-// --- units -------------------------------------------------------------
-
-const CM_PER_INCH = 2.54;
-const POINTS_PER_INCH = 72;
-
-/** Centimetres per unit of measurement the dialog's selector offers
- * (AC-4): cm, mm, in and pt. */
-const CM_PER_UNIT: Record<MeasurementUnit, number> = {
-  cm: 1,
-  mm: 0.1,
-  in: CM_PER_INCH,
-  pt: CM_PER_INCH / POINTS_PER_INCH,
-};
-
-/** A value in `unit` to centimetres — the model's own unit. */
-export function toCm(value: number, unit: MeasurementUnit): number {
-  return value * CM_PER_UNIT[unit];
-}
-
-/** Centimetres to a value in `unit`, for display in the dialog's fields. */
-export function fromCm(cm: number, unit: MeasurementUnit): number {
-  return cm / CM_PER_UNIT[unit];
-}
-
-/** Rounds a display value to a sensible number of decimals per unit: whole
- * points, hundredths of an inch/centimetre, tenths of a millimetre — fine
- * enough to look exact, coarse enough not to show float noise. */
-export function roundForDisplay(value: number, unit: MeasurementUnit): number {
-  const decimals = unit === "pt" ? 0 : unit === "mm" ? 1 : 2;
-  const factor = 10 ** decimals;
-  return Math.round(value * factor) / factor;
 }
 
 // --- validation ----------------------------------------------------------

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseXml } from "../docx/xml";
+import { parseXml } from "../core/xml";
 import {
   paragraphAutoStyleSignals,
   parseOdfStyleCatalog,

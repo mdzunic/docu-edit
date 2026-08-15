@@ -6,8 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   applyBorderPreset,
   fullTableRange,
-  MIN_COLUMN_WIDTH_CM,
-  MIN_ROW_HEIGHT_CM,
   mergeCells,
   setCellPadding,
   setCellShading,
@@ -19,9 +17,9 @@ import {
   setTableWidthMode,
   splitCell,
   tableAt,
-  type CellRange,
   type TableLocation,
 } from "./tables";
+import { MIN_COLUMN_WIDTH_CM, MIN_ROW_HEIGHT_CM, type CellRange } from "./core/tables";
 import { caretSelection } from "./commands";
 import { blockText } from "./textEditing";
 import { createDocument, isTable, type DocumentModel, type Paragraph, type Table } from "./documentModel";

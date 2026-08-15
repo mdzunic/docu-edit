@@ -8,7 +8,7 @@
 // no-op.
 import { computed, ref } from "vue";
 import { asCustomDictionaryEntries } from "../lib/customDictionary";
-import { asLanguageOptions } from "../lib/language";
+import { asLanguageOptions } from "../lib/core/language";
 
 const props = defineProps({
   /** Every custom-dictionary entry, in insertion order. */

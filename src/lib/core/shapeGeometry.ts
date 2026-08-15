@@ -3,7 +3,7 @@
 // this point land on the shape" for hit testing ("Selection and hit
 // testing"). Framework-free and canvas-API-free (jsdom's test environment
 // has no 2D context) so it is unit-testable like every other lib module.
-import { LINE_GEOMETRIES, type ShapeGeometry } from "./documentModel";
+import { LINE_GEOMETRIES, type ShapeGeometry } from "./shapes";
 
 export interface Point {
   x: number;

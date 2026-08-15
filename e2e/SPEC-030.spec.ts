@@ -422,7 +422,7 @@ test.describe("SPEC-030 multi-column layout", () => {
     ]);
     const path = await download.path();
     // Read the .docx (a ZIP) via the platform's DecompressionStream, the same
-    // approach lib/docx/zip.ts uses to parse packages — no new dependency.
+    // approach lib/core/zip.ts uses to parse packages — no new dependency.
     const fs = await import("node:fs");
     const bytes = new Uint8Array(fs.readFileSync(path!));
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

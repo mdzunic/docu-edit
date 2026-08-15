@@ -10,10 +10,20 @@
 // byte-identical guarantee) or freshly regenerated from the model (an edited
 // chart). This module only ever produces the "regenerate from model" half —
 // `chartPartXml`; the writer decides which one to emit for a given chart.
-import type { Chart, ChartOptions, ChartSeries, ChartType } from "../documentModel";
-import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../documentModel";
-import { childElements, firstChildElement, parseXml, resolvePartPath, serializeElement, type Relationship, XmlParseError } from "./xml";
-import { cmToEmu, cssColorToOoxml } from "./units";
+import type { Chart } from "../documentModel";
+import type { ChartOptions, ChartSeries, ChartType } from "../core/charts";
+import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
+import {
+  childElements,
+  firstChildElement,
+  parseXml,
+  resolvePartPath,
+  serializeElement,
+  type Relationship,
+  XmlParseError,
+} from "../core/xml";
+import { cssColorToOoxml } from "../core/colors";
+import { cmToEmu } from "../core/units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";

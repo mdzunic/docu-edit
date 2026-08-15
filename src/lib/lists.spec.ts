@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listMarkers, listRunAround } from "./lists";
 import {
   bulletStyleForChar,
   clampListLevel,
@@ -6,14 +7,13 @@ import {
   detectListAutoformat,
   formatOrdinal,
   listIndentCm,
-  listMarkers,
-  listRunAround,
   markerStyleOf,
   markerText,
   markerType,
   planListLevels,
-} from "./lists";
-import type { DocumentModel, ListFormatting, Paragraph } from "./documentModel";
+} from "./core/lists";
+import type { DocumentModel, Paragraph } from "./documentModel";
+import type { ListFormatting } from "./core/lists";
 import { createDocument } from "./documentModel";
 
 function paragraph(text: string, list?: ListFormatting): Paragraph {

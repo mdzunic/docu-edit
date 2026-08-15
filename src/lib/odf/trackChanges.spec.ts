@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
+import { unzip } from "../core/zip";
 import { createDocument, type DocumentModel, type Paragraph, type Table } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
 

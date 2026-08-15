@@ -18,18 +18,20 @@ import {
   isTable,
   isToc,
   sectionColumnWidthCm,
-  type BorderSide,
-  type CellBorders,
-  type CellVerticalAlign,
   type DocumentModel,
   type Paragraph,
   type Table,
-  type TableAlignment,
   type TableCell,
   type TableRow,
-  type TableWidthMode,
 } from "./documentModel";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import {
+  type BorderSide,
+  type CellBorders,
+  type CellVerticalAlign,
+  type TableAlignment,
+  type TableWidthMode,
+} from "./core/tables";
+import { cmToTwips, twipsToCm } from "./core/units";
 import {
   blockLength,
   clampCaret,
@@ -37,13 +39,18 @@ import {
   type CellPath,
 } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
+import {
+  cellRangeBounds,
+  MAX_TABLE_COLS,
+  MAX_TABLE_ROWS,
+  MIN_COLUMN_WIDTH_CM,
+  MIN_ROW_HEIGHT_CM,
+  type BorderPreset,
+  type CellRange,
+} from "./core/tables";
 
-/** The picker grid's bounds (AC-1) and the dialog's upper limits (AC-2). */
-export const PICKER_MAX_ROWS = 10;
-export const PICKER_MAX_COLS = 10;
-export const MAX_TABLE_ROWS = 200;
-export const MAX_TABLE_COLS = 63;
-
+// The grid limits, cell-range arithmetic and border-preset type live in
+// core/tables.ts (product-neutral).
 // commands.ts's container clone, restated for the same reason clipboard.ts
 // restates it: the undo-registry guard test bars commands.ts from exporting
 // helpers.
@@ -612,68 +619,7 @@ function blockBeforeTable(
   return null;
 }
 
-// --- cell-range selection (AC-15, AC-16) ------------------------------------
-
-/** A rectangular cell range within one table: `anchor` is where the drag
- * started, `focus` the cell under the pointer. Held by the view while a
- * drag is active; the model's own text selection stays collapsed. */
-export interface CellRange {
-  section: number;
-  block: number;
-  anchor: { row: number; col: number };
-  focus: { row: number; col: number };
-}
-
-/** Typed `null` seed for cell-range refs in `.vue` scripts (espree bars the
- * annotation, same constraint as commands.noSelection). */
-export function noCellRange(): CellRange | null {
-  return null;
-}
-
-/** Typed pass-through for a cell range arriving as a runtime-declared
- * Object prop (espree bars the prop generic — see asParagraphBlock). */
-export function asCellRange(value: unknown): CellRange | null {
-  return (value ?? null) as CellRange | null;
-}
-
-/** The range's normalised bounds (inclusive). */
-export function cellRangeBounds(range: CellRange): {
-  top: number;
-  left: number;
-  bottom: number;
-  right: number;
-} {
-  return {
-    top: Math.min(range.anchor.row, range.focus.row),
-    left: Math.min(range.anchor.col, range.focus.col),
-    bottom: Math.max(range.anchor.row, range.focus.row),
-    right: Math.max(range.anchor.col, range.focus.col),
-  };
-}
-
-/** Whether a cell lies inside the (normalised) range — the per-cell
- * highlight predicate (AC-16). */
-export function isCellInRange(
-  range: CellRange | null,
-  section: number,
-  block: number,
-  row: number,
-  col: number,
-): boolean {
-  if (!range || range.section !== section || range.block !== block) {
-    return false;
-  }
-  const bounds = cellRangeBounds(range);
-  return row >= bounds.top && row <= bounds.bottom && col >= bounds.left && col <= bounds.right;
-}
-
 // --- cell/border formatting and merge/split (SPEC-023) ----------------------
-
-/** The smallest width a dragged column boundary can leave a column (AC-2). */
-export const MIN_COLUMN_WIDTH_CM = 0.5;
-
-/** The smallest minimum height a dragged row boundary can set (AC-4). */
-export const MIN_ROW_HEIGHT_CM = 0.4;
 
 /** A grid slot's owning (real) cell: the cell at `originRow`/`originCol`
  * whose `rowSpan`×`colSpan` rectangle covers the slot — itself when the slot
@@ -1041,16 +987,6 @@ export function fullTableRange(model: DocumentModel, location: TableLocation): C
     anchor: { row: 0, col: 0 },
     focus: { row: table.rows.length - 1, col: table.columnWidthsCm.length - 1 },
   };
-}
-
-/** The standard border presets a table properties dialog offers (AC-18..21). */
-export type BorderPreset = "all" | "outer" | "inner" | "none";
-
-/** Typed pass-through for a border preset coming from a `.vue` template's
- * plain string (same espree constraint as documentModel.ts's
- * asCharacterFormatKey). */
-export function asBorderPreset(value: string): BorderPreset {
-  return value as BorderPreset;
 }
 
 const NO_BORDER: BorderSide = { style: "none", widthPt: 0, color: "#000000" };

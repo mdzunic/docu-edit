@@ -1,14 +1,16 @@
-// Canvas painting for a Shape block (SPEC-051 "Rendering and test surface"):
-// only geometry, fill and outline are painted here — text is real DOM inside
+// Canvas painting for a shape (SPEC-051 "Rendering and test surface"): only
+// geometry, fill and outline are painted here — text is real DOM inside
 // the ARIA proxy (see DocShapeBlock.vue), and the canvas never carries
-// interactive/accessible state. Framework-free except for the
-// CanvasRenderingContext2D parameter itself, which every caller (the editor
-// canvas, the PDF/print DOM extractor) supplies.
+// interactive/accessible state. Typed against the core ShapeVisual (the
+// visual subset of the document model's Shape block), so any host — the
+// page canvas, a slide canvas, the PDF/print DOM extractor — can paint one.
+// Framework-free except for the CanvasRenderingContext2D parameter itself,
+// which every caller supplies.
 import {
   LINE_GEOMETRIES,
-  type Shape,
   type ShapeOutline,
-} from "./documentModel";
+  type ShapeVisual,
+} from "./shapes";
 import {
   lineSegment,
   rotatedBounds,
@@ -94,7 +96,7 @@ const PX_PER_PT = 96 / 72;
  * paintShape below stays the framework- and DOM-free core it wraps. */
 export function paintShapeIntoCanvas(
   canvas: HTMLCanvasElement,
-  shape: Shape,
+  shape: ShapeVisual,
   widthPx: number,
   heightPx: number,
 ): void {
@@ -124,7 +126,7 @@ export function paintShapeIntoCanvas(
  * applied here, about the box centre. An unsupported geometry
  * (`unsupportedGeometryXml` set) paints as a dashed placeholder rectangle
  * at the shape's true bounds instead (AC-60). */
-export function paintShape(ctx: CanvasRenderingContext2D, shape: Shape, widthPx: number, heightPx: number): void {
+export function paintShape(ctx: CanvasRenderingContext2D, shape: ShapeVisual, widthPx: number, heightPx: number): void {
   ctx.save();
   const cx = widthPx / 2;
   const cy = heightPx / 2;

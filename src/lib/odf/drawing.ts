@@ -5,10 +5,11 @@
 // modelled; `parseDrawFrame` returns null for those, and the caller (the
 // reader's inline-content walk) keeps its existing SPEC-008 opaque-inline
 // fallback, exactly as it did before this spec.
-import type { Image, ImageWrapMode, MediaPart } from "../documentModel";
+import type { Image, ImageWrapMode } from "../documentModel";
+import type { MediaPart } from "../core/media";
 import { contentTypeForPartName } from "../docx/drawing";
-import { firstChildElement } from "../docx/xml";
-import { decodeImageDimensions } from "../imageDimensions";
+import { firstChildElement } from "../core/xml";
+import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import { DRAW_NAMESPACE, SVG_NAMESPACE, STYLE_NAMESPACE, XLINK_NAMESPACE, drawAttr, styleAttr, svgAttr, textAttr, xlinkAttr } from "./xml";

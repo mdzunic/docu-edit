@@ -6,8 +6,8 @@ import { parseDocx } from "./reader";
 import { parseOdt } from "../odf/reader";
 import { writeDocx } from "./writer";
 import { validateDocx } from "./validate";
-import { unzip } from "./zip";
-import { zip } from "./zipWriter";
+import { unzip } from "../core/zip";
+import { zip } from "../core/zipWriter";
 import { createDocument, type DocumentModel } from "../documentModel";
 
 const here = dirname(fileURLToPath(import.meta.url));

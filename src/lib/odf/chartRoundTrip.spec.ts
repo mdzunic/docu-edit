@@ -4,8 +4,9 @@
 import { describe, it, expect } from "vitest";
 import { parseOdt } from "./reader";
 import { writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
-import { equalBytes, equalStructural } from "../equality";
+import { unzip } from "../core/zip";
+import { equalStructural } from "../equality";
+import { equalBytes } from "../core/equality";
 import { base64ToBytes, bytesToBase64 } from "../opaque";
 import { asChart, createDocument, isChart, type Chart, type DocumentModel } from "../documentModel";
 

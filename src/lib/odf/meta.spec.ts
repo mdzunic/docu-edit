@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { buildMetaXml, parseOdfCustomProperties, parseOdfMeta } from "./meta";
-import { parseXml } from "../docx/xml";
+import { parseXml } from "../core/xml";
 import { parseOdt } from "./reader";
 import { writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
+import { unzip } from "../core/zip";
 import { createDocument, type DocumentModel } from "../documentModel";
 import { caretSelection, insertText as insertTextCommand } from "../commands";
 import { insertComment } from "../comments";

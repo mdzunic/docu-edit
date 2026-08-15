@@ -3,7 +3,6 @@ import {
   appendTableRowForTab,
   arrowEscapeCaret,
   caretTableLocation,
-  cellRangeBounds,
   deleteTable,
   deleteTableColumn,
   deleteTableRow,
@@ -11,12 +10,12 @@ import {
   insertTable,
   insertTableColumn,
   insertTableRow,
-  isCellInRange,
   isInTableCell,
   nextCellCaret,
   prevCellCaret,
   tableAt,
 } from "./tables";
+import { cellRangeBounds, isCellInRange } from "./core/tables";
 import { caretSelection } from "./commands";
 import { equalStructural } from "./equality";
 import { blockText, type CaretPosition } from "./textEditing";

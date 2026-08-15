@@ -1,11 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { cssColorToOoxml, ooxmlColorToCss } from "./colors";
 import {
   cmToEmu,
   cmToTwips,
-  cssColorToOoxml,
   emuToCm,
   halfPointsToPt,
-  ooxmlColorToCss,
   ptToHalfPoints,
   ptToTwentiethsOfPoint,
   twentiethsOfPointToPt,

@@ -20,7 +20,7 @@ import EditorContextMenu from "../components/EditorContextMenu.vue";
 import SpellContextMenu from "../components/SpellContextMenu.vue";
 import LanguageStatusControl from "../components/LanguageStatusControl.vue";
 import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
-import { SUPPORTED_LANGUAGES } from "../lib/language";
+import { SUPPORTED_LANGUAGES } from "../lib/core/language";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
@@ -113,22 +113,12 @@ import {
 } from "../lib/documentStore";
 import { saveAsTemplate } from "../lib/templateStore";
 import {
-  asBorderLineStyle,
-  asCellVerticalAlign,
   asCharacterFormatKey,
   asHeaderFooterPart,
   asImage,
   asImageWrapMode,
   asShape,
-  asShapeGeometry,
   asChart,
-  asChartType,
-  CHART_CATALOGUE,
-  SINGLE_SERIES_CHART_TYPES,
-  asListLevelDefinitions,
-  asListMarkerStyle,
-  asListType,
-  asMeasurementUnit,
   asNoteKind,
   asNoteNumberFormat,
   asNoteRestart,
@@ -140,8 +130,6 @@ import {
   asParagraphBlock,
   asBreakKind,
   asSectionStart,
-  asTableAlignment,
-  asTableWidthMode,
   createDocument,
   createEmptyHeaderFooterContent,
   DEFAULT_TITLE,
@@ -163,6 +151,16 @@ import {
   sectionMargins,
   sectionPageSize,
 } from "../lib/documentModel";
+import { asChartType, CHART_CATALOGUE, SINGLE_SERIES_CHART_TYPES } from "../lib/core/charts";
+import { asListLevelDefinitions, asListMarkerStyle, asListType } from "../lib/core/lists";
+import { asShapeGeometry } from "../lib/core/shapes";
+import {
+  asBorderLineStyle,
+  asCellVerticalAlign,
+  asTableAlignment,
+  asTableWidthMode,
+} from "../lib/core/tables";
+import { asMeasurementUnit } from "../lib/core/units";
 import {
   defaultTocOptions,
   insertTableOfContents,
@@ -172,8 +170,9 @@ import {
   updateTocEntirely,
   updateTocPageNumbersOnly,
 } from "../lib/toc";
-import { detectListAutoformat, listMarkers } from "../lib/lists";
-import { GALLERY_PRESETS } from "../lib/listDefinitions";
+import { listMarkers } from "../lib/lists";
+import { detectListAutoformat } from "../lib/core/lists";
+import { GALLERY_PRESETS } from "../lib/core/listDefinitions";
 import {
   anchorCaret,
   applyLink,
@@ -195,9 +194,7 @@ import {
   appendTableRowForTab,
   applyBorderPreset,
   arrowEscapeCaret,
-  asBorderPreset,
   caretTableLocation,
-  cellRangeBounds,
   deleteTable,
   deleteTableColumn,
   deleteTableRow,
@@ -205,13 +202,8 @@ import {
   insertTable,
   insertTableColumn,
   insertTableRow,
-  PICKER_MAX_ROWS,
-  PICKER_MAX_COLS,
   mergeCells,
-  MIN_COLUMN_WIDTH_CM,
-  MIN_ROW_HEIGHT_CM,
   nextCellCaret,
-  noCellRange,
   prevCellCaret,
   setCellPadding,
   setCellShading,
@@ -224,13 +216,22 @@ import {
   tableAt,
 } from "../lib/tables";
 import {
+  asBorderPreset,
+  cellRangeBounds,
+  PICKER_MAX_ROWS,
+  PICKER_MAX_COLS,
+  MIN_COLUMN_WIDTH_CM,
+  MIN_ROW_HEIGHT_CM,
+  noCellRange,
+} from "../lib/core/tables";
+import {
   applyColumns,
   asColumnsScope,
   setColumnBoundary,
 } from "../lib/columns";
 import { documentFontFamilies } from "../lib/fonts";
-import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/colors";
-import { acquireEditLock, noEditLock } from "../lib/editLock";
+import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/core/colors";
+import { acquireEditLock, noEditLock } from "../lib/core/editLock";
 import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../lib/supportedCeiling";
 import {
   BLOCK_SELECTOR,
@@ -272,15 +273,9 @@ import {
   noImageHandleGeometry,
   noTableHandleGeometry,
 } from "../lib/caretGeometry";
-import {
-  CM_PER_PX,
-  findTableElement,
-  noColumnResizeDrag,
-  noRowResizeDrag,
-  previewColumnWidths,
-  previewRowHeight,
-  tableRowElement,
-} from "../lib/tableResize";
+import { findTableElement, noColumnResizeDrag, noRowResizeDrag } from "../lib/tableResize";
+import { previewColumnWidths, previewRowHeight, tableRowElement } from "../lib/core/tables";
+import { CM_PER_PX } from "../lib/core/units";
 import {
   blockLength,
   blockText,
@@ -297,7 +292,7 @@ import {
   loadAutocorrectSettings,
   saveAutocorrectSettings,
   smartQuote,
-} from "../lib/autocorrect";
+} from "../lib/core/autocorrect";
 import {
   asPasteMode,
   clipboardFlavours,
@@ -405,9 +400,10 @@ import {
   noteText,
 } from "../lib/notes";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
-import { markSegments } from "../lib/marks";
-import { noIdleHandle, scheduleIdleWork } from "../lib/idleScheduler";
-import { PX_PER_CM, sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
+import { markSegments } from "../lib/core/marks";
+import { noIdleHandle, scheduleIdleWork } from "../lib/core/idleScheduler";
+import { sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
+import { PX_PER_CM } from "../lib/core/units";
 import { noNoteArea, noNoteAreaItems } from "../lib/notesLayout";
 import {
   computePageNumbers,
@@ -418,20 +414,19 @@ import {
 import { noRenderEntries } from "../lib/pageRender";
 import {
   deleteImage,
-  ACCEPTED_IMAGE_ACCEPT_ATTR,
   imageAt,
   insertImage,
-  isAcceptedImageType,
-  mediaDataUri,
   noImageCommand,
   noImageLocation,
-  pxToCm,
   setImageAltText,
   setImageSize,
   setImageWrap,
 } from "../lib/images";
+import { ACCEPTED_IMAGE_ACCEPT_ATTR, isAcceptedImageType, mediaDataUri } from "../lib/core/media";
+import { pxToCm } from "../lib/core/units";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
-import { asNudgeDirection, noShapeLocation, shapeAt } from "../lib/shapes";
+import { noShapeLocation, shapeAt } from "../lib/shapes";
+import { asNudgeDirection } from "../lib/core/shapes";
 import { chartAt } from "../lib/charts";
 import {
   asImageHandle,
@@ -481,7 +476,7 @@ import {
 } from "../lib/undoHistory";
 import { findShortcut, isOutsideDocumentInput, shortcutLabel } from "../lib/shortcuts";
 import { applyTrackChanges } from "../lib/trackChangesDiff";
-import { isMacPlatform } from "../lib/platform";
+import { isMacPlatform } from "../lib/core/platform";
 
 const route = useRoute();
 const router = useRouter();

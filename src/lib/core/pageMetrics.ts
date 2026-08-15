@@ -1,11 +1,36 @@
-// DOM measurement for the pagination engine (SPEC-028): line boxes, block
-// margins and line-start character offsets, read from the rendered canvas
-// with Range hit-testing. Framework-free: needs a DOM, but no Vue (see
+// DOM measurement for a paginated layout engine (SPEC-028): line boxes,
+// block margins and line-start character offsets, read from the rendered
+// canvas with Range hit-testing. Product-neutral: measures any rendered
+// block element — the pagination engine that consumes these metrics stays
+// in lib/pagination.ts. Framework-free: needs a DOM, but no Vue (see
 // domCaret.ts). Every reader degrades gracefully where the environment
 // cannot measure (jsdom): a block then reads as a single line of its
 // element height — which collapses pagination to one page, exactly what
 // the unit-test environment should see.
-import type { BlockMetrics, LineBox } from "./pagination";
+
+/** One rendered line of a paragraph, relative to the block's border-box
+ * top, in px. */
+export interface LineBox {
+  top: number;
+  height: number;
+}
+
+/** A block's measured (or estimated) geometry at a given content width. */
+export interface BlockMetrics {
+  /** The content width the block was measured at, px — stale when the
+   * section's content width changes. */
+  contentWidthPx: number;
+  /** Border-box height, px; margins excluded. */
+  heightPx: number;
+  marginTopPx: number;
+  marginBottomPx: number;
+  /** Line boxes for a paragraph, in document order; empty for atoms
+   * (tables, images, breaks) and for paragraphs that cannot be split. */
+  lines: LineBox[];
+  /** True when these metrics are an estimate rather than a DOM measurement
+   * — the caller re-measures such blocks and re-runs the layout. */
+  estimated?: boolean;
+}
 
 function lineBoxesOf(element: Element, elementRect: DOMRect): LineBox[] {
   const range = element.ownerDocument.createRange();

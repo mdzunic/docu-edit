@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
-import { unzip } from "../docx/zip";
+import { unzip } from "../core/zip";
 import { createDocument, createFieldRun, type DocumentModel, type Paragraph, type Section } from "../documentModel";
 
 const decoder = new TextDecoder();

@@ -7,7 +7,6 @@
 import type { Ref } from "vue";
 import {
   applyBorderPreset,
-  cellRangeBounds,
   deleteTable,
   deleteTableColumn,
   deleteTableRow,
@@ -16,8 +15,6 @@ import {
   insertTableColumn,
   insertTableRow,
   mergeCells,
-  MIN_COLUMN_WIDTH_CM,
-  MIN_ROW_HEIGHT_CM,
   setCellPadding,
   setCellShading,
   setCellVerticalAlign,
@@ -28,19 +25,22 @@ import {
   splitCell,
   tableAt,
   toggleRowRepeat,
-  type CellRange,
 } from "../../lib/tables";
 import {
-  CM_PER_PX,
+  cellRangeBounds,
+  MIN_COLUMN_WIDTH_CM,
+  MIN_ROW_HEIGHT_CM,
+  type CellRange,
+} from "../../lib/core/tables";
+import {
   findTableElement,
   noColumnResizeDrag,
   noRowResizeDrag,
-  previewColumnWidths,
-  previewRowHeight,
-  tableRowElement,
   type ColumnResizeDrag,
   type RowResizeDrag,
 } from "../../lib/tableResize";
+import { previewColumnWidths, previewRowHeight, tableRowElement } from "../../lib/core/tables";
+import { CM_PER_PX } from "../../lib/core/units";
 import { caretSelection, noCommandResult } from "../../lib/commands";
 import { withHeaderFooterModel } from "../../lib/commands";
 import {
@@ -48,8 +48,8 @@ import {
   asCellVerticalAlign,
   asTableAlignment,
   asTableWidthMode,
-} from "../../lib/documentModel";
-import { asBorderPreset } from "../../lib/tables";
+} from "../../lib/core/tables";
+import { asBorderPreset } from "../../lib/core/tables";
 import type {
   TableHandleGeometry,
 } from "../../lib/caretGeometry";

@@ -10,7 +10,8 @@ import {
   toolbarListState,
   type ModelSelection,
 } from "./commands";
-import { asParagraph, createDocument, type DocumentModel, type ListFormatting, type Paragraph } from "./documentModel";
+import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
+import { type ListFormatting } from "./core/lists";
 import type { CaretPosition } from "./textEditing";
 
 function paragraph(text: string, list?: ListFormatting): Paragraph {

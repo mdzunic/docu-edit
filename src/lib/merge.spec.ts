@@ -17,7 +17,7 @@ import {
   zipEntryName,
   type ParsedDataSource,
 } from "./merge";
-import { unzip } from "./docx/zip";
+import { unzip } from "./core/zip";
 import { parseDocx } from "./docx/reader";
 import { parseOdt } from "./odf/reader";
 

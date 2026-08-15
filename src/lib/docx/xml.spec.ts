@@ -5,7 +5,7 @@ import {
   parseRelationships,
   resolvePartPath,
   relsPathFor,
-} from "./xml";
+} from "../core/xml";
 
 describe("parseXml", () => {
   it("parses well-formed XML", () => {

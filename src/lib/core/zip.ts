@@ -4,7 +4,7 @@
 // platform's DecompressionStream for DEFLATE rather than a bundled inflate
 // implementation, per this project's no-new-dependencies constraint.
 
-import { yieldToMainThread } from "../idleScheduler";
+import { yieldToMainThread } from "./idleScheduler";
 
 export class ZipError extends Error {}
 

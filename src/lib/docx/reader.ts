@@ -6,12 +6,8 @@
 import type {
   Block,
   BookmarkAnchor,
-  BorderLineStyle,
-  BorderSide,
   BreakKind,
-  CellBorders,
   CellPropertyChange,
-  CellVerticalAlign,
   Chart,
   CommentAnchor,
   CommentMessage,
@@ -21,8 +17,6 @@ import type {
   FieldKind,
   HeaderFooterKind,
   HeaderFooterPart,
-  ListDefinition,
-  MediaPart,
   NamedStyle,
   NoteContent,
   NoteKind,
@@ -43,16 +37,24 @@ import type {
   Shape,
   SourceXml,
   Table,
-  TableAlignment,
   TableCell,
   TablePropertyChange,
   TableRow,
-  TableWidthMode,
   TableOfContents,
   TocEntry,
   TocOptions,
   TrackedChangeInfo,
 } from "../documentModel";
+import type { ListDefinition } from "../core/lists";
+import type { MediaPart } from "../core/media";
+import type {
+  BorderLineStyle,
+  BorderSide,
+  CellBorders,
+  CellVerticalAlign,
+  TableAlignment,
+  TableWidthMode,
+} from "../core/tables";
 import {
   createChipRun,
   createDefaultStyles,
@@ -64,10 +66,11 @@ import {
 import { parseChipText } from "../mergeChips";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
-import { yieldToMainThread } from "../idleScheduler";
+import { yieldToMainThread } from "../core/idleScheduler";
 import { bytesToBase64Async } from "../opaque";
 import { blockText } from "../textEditing";
-import { ZipError, unzip } from "./zip";
+import { ZipError, unzip } from "../core/zip";
+import { wordAttr, WORD_NAMESPACE } from "./xml";
 import {
   childElements,
   firstChildElement,
@@ -76,11 +79,9 @@ import {
   relsPathFor,
   resolvePartPath,
   serializeElement,
-  wordAttr,
-  WORD_NAMESPACE,
   XmlParseError,
   type Relationship,
-} from "./xml";
+} from "../core/xml";
 import { fillPendingMediaData, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
 import { parseChartDrawing } from "./chart";
@@ -100,7 +101,8 @@ import {
   parseRunProperties,
   parseRunPropertiesChange,
 } from "./properties";
-import { eighthPointsToPt, ooxmlColorToCss, twipsToCm } from "./units";
+import { ooxmlColorToCss } from "../core/colors";
+import { eighthPointsToPt, twipsToCm } from "../core/units";
 import { parseCoreProperties, parseCustomProperties } from "./docProps";
 
 export class DocxOpenError extends Error {}

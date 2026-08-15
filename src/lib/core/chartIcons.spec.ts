@@ -5,7 +5,7 @@
 // two catalogue types draw the same picture (the trap the two callouts fell
 // into in SPEC-051's own gallery).
 import { describe, expect, it } from "vitest";
-import { CHART_CATALOGUE } from "./documentModel";
+import { CHART_CATALOGUE } from "./charts";
 import { BAR_CATEGORY_FILL, chartHasAxes, DOUGHNUT_HOLE_RATIO } from "./chartCanvas";
 import { CHART_ICON_SIZE, chartIconMarks } from "./chartIcons";
 

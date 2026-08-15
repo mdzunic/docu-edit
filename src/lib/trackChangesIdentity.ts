@@ -7,7 +7,7 @@ export {
   DEFAULT_COMMENT_AUTHOR as DEFAULT_TRACK_CHANGES_AUTHOR,
   loadCommentAuthor as loadTrackChangesAuthor,
   saveCommentAuthor as saveTrackChangesAuthor,
-} from "./commentIdentity";
+} from "./core/commentIdentity";
 
 // A fixed categorical palette (D3's schemeCategory10) — distinct, readable
 // hues for up to ten authors before any repeat. Author -> colour is a pure

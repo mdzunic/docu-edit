@@ -19,9 +19,10 @@ import type {
   RunFormatting,
 } from "./documentModel";
 import { normalizeRuns } from "./textEditing";
-import { cleanFontFamily, HIGHLIGHT_NAMES } from "./odf/properties";
-import { parseColorInput } from "./colors";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import { cleanFontFamily } from "./odf/properties";
+import { HIGHLIGHT_NAMES } from "./core/colors";
+import { parseColorInput } from "./core/colors";
+import { cmToTwips, twipsToCm } from "./core/units";
 
 export interface HtmlImportResult {
   blocks: Paragraph[];

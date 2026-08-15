@@ -36,11 +36,11 @@
 import {
   type Block,
   type DocumentModel,
-  type MediaPart,
   type OpaquePart,
   type Section,
   type SourceXml,
 } from "./documentModel";
+import { type MediaPart } from "./core/media";
 import { documentStats } from "./wordCount";
 import { deleteVersionsRecord, getVersionsRecord, putVersionsRecord } from "./idb";
 import { MAX_FILE_SIZE_BYTES } from "./openDocument";

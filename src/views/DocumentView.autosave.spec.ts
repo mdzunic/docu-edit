@@ -7,7 +7,7 @@ import { setDomCaret } from "../lib/domCaret";
 import {
   AUTOSAVE_DEBOUNCE_MS,
   AUTOSAVE_RETRY_MS,
-} from "../lib/autosaveScheduler";
+} from "../lib/core/autosaveScheduler";
 
 // SPEC-010 — the autosave loop through the component: typing drives the
 // save state, drafts land under the draft key, failures surface in the app

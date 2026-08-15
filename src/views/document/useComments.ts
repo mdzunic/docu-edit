@@ -7,7 +7,7 @@
 import { computed, nextTick, ref, shallowRef, watch, type Ref } from "vue";
 import { domPointForCaret } from "../../lib/domCaret";
 import { caretClientRect } from "../../lib/caretGeometry";
-import { noIdleHandle, scheduleIdleWork, type IdleHandle } from "../../lib/idleScheduler";
+import { noIdleHandle, scheduleIdleWork, type IdleHandle } from "../../lib/core/idleScheduler";
 import {
   addReply as addReplyCommand,
   canModifyMessage,
@@ -21,7 +21,7 @@ import {
   visibleCommentThreads,
   type VisibleCommentThread,
 } from "../../lib/comments";
-import { loadCommentAuthor, saveCommentAuthor } from "../../lib/commentIdentity";
+import { loadCommentAuthor, saveCommentAuthor } from "../../lib/core/commentIdentity";
 import { loadCommentsPaneOpen, saveCommentsPaneOpen } from "../../lib/commentsPane";
 import { isCollapsed, type CommandResult, type ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";

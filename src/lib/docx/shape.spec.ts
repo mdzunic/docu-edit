@@ -3,9 +3,10 @@
 // `xmlns:w` a real word/document.xml would already declare).
 import { describe, it, expect } from "vitest";
 import { parseShapeDrawing, shapeDrawingXml, type ShapeTextContext, type ShapeTextWriteContext } from "./shape";
-import { parseXml } from "./xml";
-import { canonicalizeXml } from "../equality";
-import { SHAPE_CATALOGUE, type Paragraph, type Shape } from "../documentModel";
+import { parseXml } from "../core/xml";
+import { canonicalizeXml } from "../core/xml";
+import { type Paragraph, type Shape } from "../documentModel";
+import { SHAPE_CATALOGUE } from "../core/shapes";
 
 const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";

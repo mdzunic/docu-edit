@@ -7,7 +7,7 @@
 // and the fact that line/lineMarkers/area are one series drawn three ways.
 // Pure path-string maths — no DOM, no canvas — so it unit-tests like every
 // other lib module.
-import type { ChartType } from "./documentModel";
+import type { ChartType } from "./charts";
 import { BAR_CATEGORY_FILL, chartHasAxes, DOUGHNUT_HOLE_RATIO } from "./chartCanvas";
 
 /** Side of the square viewBox every icon is authored in. */

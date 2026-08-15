@@ -7,7 +7,7 @@ import {
   RECENT_COLORS_LIMIT,
   TEXT_COLOR_PALETTE,
 } from "./colors";
-import { HIGHLIGHT_NAMES } from "./odf/properties";
+import { HIGHLIGHT_NAMES } from "./colors";
 
 describe("TEXT_COLOR_PALETTE", () => {
   it("is a standard palette of lowercase #rrggbb colours including black and primaries", () => {

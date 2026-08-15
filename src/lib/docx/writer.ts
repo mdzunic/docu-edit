@@ -21,10 +21,6 @@
 //    checks before offering to "repair" a file.
 import type {
   Block,
-  BorderLineStyle,
-  BorderSide,
-  CellBorders,
-  CellVerticalAlign,
   Chart,
   DocumentModel,
   DocumentProperties,
@@ -32,14 +28,12 @@ import type {
   HeaderFooterKind,
   HeaderFooterPart,
   Image,
-  Margins,
   NoteContent,
   NoteKind,
   NoteNumberFormat,
   NoteSettings,
   PageNumberFormat,
   NamedStyle,
-  PageSize,
   Paragraph,
   ParagraphAlignment,
   ParagraphFormatting,
@@ -57,6 +51,8 @@ import type {
   TocEntry,
   TocOptions,
 } from "../documentModel";
+import type { Margins, PageSize } from "../core/pageSetup";
+import type { BorderLineStyle, BorderSide, CellBorders, CellVerticalAlign } from "../core/tables";
 import {
   DEFAULT_TITLE,
   isMergeChipField,
@@ -72,6 +68,7 @@ import { inlineWriteLayout, linkTargetOf } from "../links";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import { referencedNotes } from "../notes";
 import { replyParagraphText, visibleCommentThreads, type VisibleCommentThread } from "../comments";
+import { wordAttr, WORD_NAMESPACE } from "./xml";
 import {
   childElements,
   parseRelationships,
@@ -79,17 +76,10 @@ import {
   relsPathFor,
   resolvePartPath,
   serializeElement,
-  wordAttr,
-  WORD_NAMESPACE,
-} from "./xml";
+} from "../core/xml";
 import { catalogToNamedStyles, parseStylesCatalog } from "./styles";
-import {
-  cmToTwips,
-  cssColorToOoxml,
-  ptToEighthPoints,
-  ptToHalfPoints,
-  ptToTwentiethsOfPoint,
-} from "./units";
+import { cssColorToOoxml } from "../core/colors";
+import { cmToTwips, ptToEighthPoints, ptToHalfPoints, ptToTwentiethsOfPoint } from "../core/units";
 import {
   buildNumberingXml,
   mergeNumberingXml,
@@ -114,8 +104,8 @@ import {
   takenRelIdsOf,
   type MediaWritePlan,
 } from "./media";
-import { zip, type ZipEntryInput } from "./zipWriter";
-import { yieldToMainThread } from "../idleScheduler";
+import { zip, type ZipEntryInput } from "../core/zipWriter";
+import { yieldToMainThread } from "../core/idleScheduler";
 import { buildCorePropertiesXml, buildCustomPropertiesXml, type CorePropertiesInput } from "./docProps";
 import { stripPersonalInfo } from "../personalInfo";
 

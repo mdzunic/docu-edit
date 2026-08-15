@@ -27,18 +27,10 @@ import {
   type Block,
   type BreakBlock,
   type BreakKind,
-  type CellBorders,
   type CharacterFormatKey,
   type DocumentModel,
   type HeaderFooterKind,
   type HeaderFooterPart,
-  type ListDefinition,
-  type ListFormatting,
-  type ListLevelDefinition,
-  type ListMarkerStyle,
-  type ListType,
-  type Margins,
-  type MeasurementUnit,
   type MergeFieldSpec,
   type NamedStyle,
   type NoteKind,
@@ -46,7 +38,6 @@ import {
   type NoteRestart,
   type NoteSettings,
   type PageNumberFormat,
-  type PageSize,
   type Paragraph,
   type ParagraphAlignment,
   type ParagraphDirection,
@@ -63,25 +54,35 @@ import {
   type TabStop,
   type VerticalAlignment,
 } from "./documentModel";
+import {
+  type ListDefinition,
+  type ListFormatting,
+  type ListLevelDefinition,
+  type ListMarkerStyle,
+  type ListType,
+} from "./core/lists";
+import { type Margins, type PageSize } from "./core/pageSetup";
+import { type CellBorders } from "./core/tables";
+import { type MeasurementUnit } from "./core/units";
 import { createNoteId } from "./notes";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import { cmToTwips, twipsToCm } from "./core/units";
 import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
+import { listRunAround } from "./lists";
 import {
   clampListLevel,
   isBulletStyle,
-  listRunAround,
   markerStyleOf,
   markerType,
   planListLevels,
   type PlannedListLevel,
-} from "./lists";
+} from "./core/lists";
 import {
   defaultDefinitionLevels,
   definedLevelType,
   headingLinkedLevels,
   headingStyleLinks,
   presetLevels,
-} from "./listDefinitions";
+} from "./core/listDefinitions";
 import {
   allStyles,
   builtInStyles,

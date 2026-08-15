@@ -14,14 +14,14 @@
 //    startAt -> w:start, indentCm -> w:ind/@w:left), and the reader stores
 //    a field only where it differs from the editor default, so an
 //    export -> import cycle reproduces the model bit-for-bit.
+import type { Block } from "../documentModel";
 import type {
-  Block,
   ListDefinition,
   ListFormatting,
   ListLevelDefinition,
   ListMarkerStyle,
   ListType,
-} from "../documentModel";
+} from "../core/lists";
 import {
   bulletStyleForChar,
   clampListLevel,
@@ -32,10 +32,11 @@ import {
   MAX_LIST_LEVEL,
   planListLevels,
   type PlannedListLevel,
-} from "../lists";
+} from "../core/lists";
 import type { DocumentModel } from "../documentModel";
-import { firstChildElement, parseXml, serializeElement, wordAttr, WORD_NAMESPACE } from "./xml";
-import { cmToTwips, twipsToCm } from "./units";
+import { wordAttr, WORD_NAMESPACE } from "./xml";
+import { firstChildElement, parseXml, serializeElement } from "../core/xml";
+import { cmToTwips, twipsToCm } from "../core/units";
 
 export const NUMBERING_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";

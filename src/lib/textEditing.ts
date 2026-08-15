@@ -27,7 +27,7 @@ import {
   type RunFormatting,
   type Table,
 } from "./documentModel";
-import { nextGraphemeBoundary, previousGraphemeBoundary } from "./grapheme";
+import { nextGraphemeBoundary, previousGraphemeBoundary } from "./core/grapheme";
 
 /** The path from a table block down to one of its cell's paragraphs
  * (SPEC-022): the cell's row/column plus the paragraph index within the

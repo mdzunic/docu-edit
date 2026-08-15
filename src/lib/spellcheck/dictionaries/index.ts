@@ -4,7 +4,7 @@
 // `import()` here is also a real code-split point: opening an
 // English-only document never downloads the German/French/Spanish/Czech
 // word lists.
-import { isDictionaryAvailable, normalizeLanguageTag } from "../../language";
+import { isDictionaryAvailable, normalizeLanguageTag } from "../../core/language";
 import { createDictionary, type Dictionary } from "../dictionary";
 
 type Loader = () => Promise<{ WORDS: readonly string[] }>;

@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import { createDocument, type DocumentModel, type Paragraph } from "./documentModel";
 import type { CaretPosition } from "./textEditing";
 import { caretSelection, setPageMargins, setPageSetup, type ModelSelection } from "./commands";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import { cmToTwips, twipsToCm } from "./core/units";
 
 // The same twip-grid snap setPageSetup applies internally (commands.ts's
 // snapCm) — 29.7cm (A4's nominal height) is itself not exactly representable

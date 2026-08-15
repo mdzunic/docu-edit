@@ -10,10 +10,11 @@ import {
   type OdfShapeTextContext,
   type OdfShapeTextWriteContext,
 } from "./shape";
-import { parseXml } from "../docx/xml";
-import { canonicalizeXml } from "../equality";
+import { parseXml } from "../core/xml";
+import { canonicalizeXml } from "../core/xml";
 import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
-import { SHAPE_CATALOGUE, type Paragraph, type Shape } from "../documentModel";
+import { type Paragraph, type Shape } from "../documentModel";
+import { SHAPE_CATALOGUE } from "../core/shapes";
 
 function wrap(xml: string): Element {
   const wrapped =

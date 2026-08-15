@@ -9,9 +9,15 @@ import {
   parseChartDrawing,
   parseChartXml,
 } from "./chart";
-import { parseXml } from "./xml";
+import { parseXml } from "../core/xml";
 import { equalStructural } from "../equality";
-import { CHART_CATALOGUE, DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES, type Chart, type ChartType } from "../documentModel";
+import { type Chart } from "../documentModel";
+import {
+  CHART_CATALOGUE,
+  DEFAULT_CHART_COLORS,
+  SINGLE_SERIES_CHART_TYPES,
+  type ChartType,
+} from "../core/charts";
 
 const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 

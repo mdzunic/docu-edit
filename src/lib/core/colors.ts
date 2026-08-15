@@ -1,6 +1,8 @@
-// Colour data and parsing behind SPEC-013's text-colour and highlight
-// pickers. Framework-free (no Vue imports) per the src/lib convention.
-import { HIGHLIGHT_HEX } from "./odf/properties";
+// Colour data, parsing and palettes shared by every editing surface —
+// SPEC-013's text-colour/highlight pickers today, a Slides product's own
+// pickers tomorrow. Consolidates what previously lived in lib/colors.ts,
+// odf/properties.ts (the highlight palette) and docx/units.ts (the OOXML
+// colour codec). Framework-free (no Vue imports) per the src/lib convention.
 
 /** The text colour picker's standard palette (SPEC-013 AC): a greyscale
  * ramp plus two value rows over ten hues — the layout users know from
@@ -79,6 +81,42 @@ export function pushRecentColor(hex: string, current: string[]): string[] {
   return next;
 }
 
+// --- the OOXML/ODF highlight palette ---------------------------------------
+
+// The OOXML highlight palette (the document model stores the OOXML name,
+// matching the .docx reader) keyed by the hex value ODF's
+// `fo:background-color` uses for the same colour. 16 entries: the 15
+// colours Word's highlight picker offers plus `white`, which
+// ST_HighlightColor admits even though the picker never shows it — mapping
+// it keeps an incoming `w:highlight w:val="white"` alive across a
+// `.docx` → `.odt` → `.docx` trip (SPEC-013). A highlight outside this
+// palette stays a raw CSS colour, which the renderer also accepts. This is
+// the single source for the palette: the `.docx` reader/writer, the `.odt`
+// writer and the canvas renderer all derive from it.
+export const HIGHLIGHT_NAMES: Record<string, string> = {
+  "#ffff00": "yellow",
+  "#00ff00": "green",
+  "#00ffff": "cyan",
+  "#ff00ff": "magenta",
+  "#0000ff": "blue",
+  "#ff0000": "red",
+  "#00008b": "darkBlue",
+  "#008b8b": "darkCyan",
+  "#006400": "darkGreen",
+  "#8b008b": "darkMagenta",
+  "#8b0000": "darkRed",
+  "#808000": "darkYellow",
+  "#a9a9a9": "darkGray",
+  "#d3d3d3": "lightGray",
+  "#000000": "black",
+  "#ffffff": "white",
+};
+
+/** The inverse palette: OOXML highlight name → hex colour. */
+export const HIGHLIGHT_HEX: Record<string, string> = Object.fromEntries(
+  Object.entries(HIGHLIGHT_NAMES).map(([hex, name]) => [name, hex]),
+);
+
 // --- highlight picker -------------------------------------------------------
 
 export interface HighlightPickerItem {
@@ -121,4 +159,26 @@ export const HIGHLIGHT_PICKER_ITEMS: HighlightPickerItem[] = HIGHLIGHT_LABELS.ma
  * emits an OOXML name or `false` for "No colour". */
 export function noHighlight(): string | false {
   return false;
+}
+
+// --- the OOXML colour codec -------------------------------------------------
+
+/** Normalises an OOXML colour value ("FF0000", "auto") to a CSS colour, or
+ * undefined for "auto"/empty (meaning "inherit the default"). */
+export function ooxmlColorToCss(value: string | null): string | undefined {
+  if (!value || value.toLowerCase() === "auto") {
+    return undefined;
+  }
+  return `#${value.toLowerCase()}`;
+}
+
+/** A CSS `#rrggbb` colour to OOXML's bare uppercase hex ("FF0000"), or
+ * undefined for anything else — the model only ever holds six-digit hex
+ * colours (that's all `ooxmlColorToCss` produces), so any other shape has
+ * no faithful OOXML encoding and is omitted rather than written broken. */
+export function cssColorToOoxml(value: string | undefined): string | undefined {
+  if (!value || !/^#[0-9a-f]{6}$/i.test(value)) {
+    return undefined;
+  }
+  return value.slice(1).toUpperCase();
 }

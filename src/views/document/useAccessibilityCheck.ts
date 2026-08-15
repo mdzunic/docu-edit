@@ -22,7 +22,7 @@ import {
 import { setRowIsHeader, type TableLocation } from "../../lib/tables";
 import { applyParagraphStyle, caretSelection, type CommandResult, type ModelSelection } from "../../lib/commands";
 import { headingStyleId } from "../../lib/styles";
-import { noIdleHandle, scheduleIdleWork, type IdleHandle } from "../../lib/idleScheduler";
+import { noIdleHandle, scheduleIdleWork, type IdleHandle } from "../../lib/core/idleScheduler";
 import { compareCaret, type CaretPosition } from "../../lib/textEditing";
 import type { ImageLocation } from "../../lib/images";
 import type { DocumentModel } from "../../lib/documentModel";

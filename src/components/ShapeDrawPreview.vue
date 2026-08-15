@@ -12,7 +12,7 @@
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { onMounted, onUpdated, useTemplateRef } from "vue";
 import { asShape } from "../lib/documentModel";
-import { paintShapeIntoCanvas } from "../lib/shapeCanvas";
+import { paintShapeIntoCanvas } from "../lib/core/shapeCanvas";
 
 const props = defineProps({
   /** The documentModel.Shape this gesture will insert. */

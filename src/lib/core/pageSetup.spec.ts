@@ -1,15 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
-  fromCm,
   matchPaperSize,
   MARGINS_TOO_LARGE_MESSAGE,
   orientationOf,
   pageSizeFor,
-  roundForDisplay,
   swapOrientation,
   textAreaTooNarrow,
-  toCm,
 } from "./pageSetup";
+import { fromCm, roundForDisplay, toCm } from "./units";
 
 describe("matchPaperSize (SPEC-027 AC-1, AC-8)", () => {
   it("matches A4 portrait", () => {

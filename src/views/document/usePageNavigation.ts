@@ -22,7 +22,7 @@ import { arrowEscapeCaret } from "../../lib/tables";
 import { isTable } from "../../lib/documentModel";
 import { blockLength, compareCaret, paragraphAtCaret } from "../../lib/textEditing";
 import { documentEnd, documentStart, isCollapsed } from "../../lib/commands";
-import { isMacPlatform } from "../../lib/platform";
+import { isMacPlatform } from "../../lib/core/platform";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";

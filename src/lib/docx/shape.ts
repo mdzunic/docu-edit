@@ -4,10 +4,12 @@
 // split (parse.../...Xml, ParsedDrawing-shaped result) so the two modules
 // read side by side; this one never touches Image and drawing.ts never
 // touches Shape, per SPEC-024's "no shipped call site changes".
-import type { Block, Paragraph, Shape, ShapeGeometry, ShapeOutline } from "../documentModel";
-import { LINE_GEOMETRIES } from "../documentModel";
-import { firstChildElement, serializeElement } from "./xml";
-import { cmToEmu, emuToCm, cssColorToOoxml, ooxmlColorToCss } from "./units";
+import type { Block, Paragraph, Shape } from "../documentModel";
+import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
+import { LINE_GEOMETRIES } from "../core/shapes";
+import { firstChildElement, serializeElement } from "../core/xml";
+import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
+import { cmToEmu, emuToCm } from "../core/units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";

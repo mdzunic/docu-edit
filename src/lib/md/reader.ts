@@ -16,8 +16,6 @@ import {
   type DocumentModel,
   type DocumentProperties,
   type Image,
-  type ListFormatting,
-  type MediaPart,
   type NamedStyle,
   type OpaqueBlock,
   type OpaquePart,
@@ -29,9 +27,12 @@ import {
   type Table,
   type TableRow,
 } from "../documentModel";
+import { type ListFormatting } from "../core/lists";
+import { type MediaPart } from "../core/media";
 import { equalColumnWidthsCm } from "../tables";
-import { fitImageSizeCm, textAreaWidthCm } from "../images";
-import { decodeImageDimensions } from "../imageDimensions";
+import { textAreaWidthCm } from "../images";
+import { fitImageSizeCm } from "../core/media";
+import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";
 import { CODE_CHAR_STYLE_ID, headingStyleId, mdBuiltInStyles, resolveNamedStyle, type ResolvedNamedStyle } from "../styles";
 

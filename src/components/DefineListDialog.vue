@@ -5,8 +5,8 @@
 // full nine-level array; the command normalises and applies it. Runtime
 // prop/emit declarations — this script is parsed by espree.
 import { computed, ref } from "vue";
-import { definedMarkerText } from "../lib/listDefinitions";
-import { asListLevelDefinitions } from "../lib/documentModel";
+import { definedMarkerText } from "../lib/core/listDefinitions";
+import { asListLevelDefinitions } from "../lib/core/lists";
 
 const props = defineProps({
   /** The nine ListLevelDefinition entries to prefill from (see

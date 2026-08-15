@@ -3,7 +3,8 @@
 // like, so it is worth testing independent of mounting a component.
 import { describe, expect, it } from "vitest";
 import { shapeTextRenderEntries } from "./pageRender";
-import type { ListDefinition, Paragraph, Shape, Table } from "./documentModel";
+import type { Paragraph, Shape, Table } from "./documentModel";
+import type { ListDefinition } from "./core/lists";
 
 function paragraph(text: string, overrides: Partial<Paragraph> = {}): Paragraph {
   return { type: "paragraph", runs: text.length > 0 ? [{ text, formatting: {} }] : [], ...overrides };

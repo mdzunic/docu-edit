@@ -8,10 +8,10 @@
 import {
   DEFAULT_CHART_COLORS,
   SINGLE_SERIES_CHART_TYPES,
-  type Chart,
   type ChartSeries,
   type ChartType,
-} from "./documentModel";
+  type ChartVisual,
+} from "./charts";
 
 const AXIS_COLOR = "#444444";
 const GRIDLINE_COLOR = "#dddddd";
@@ -44,11 +44,11 @@ interface Layout {
   plotH: number;
 }
 
-function seriesToPlot(chart: Chart): ChartSeries[] {
+function seriesToPlot(chart: ChartVisual): ChartSeries[] {
   return SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
 }
 
-function valueExtent(chart: Chart, series: ChartSeries[]): { min: number; max: number } {
+function valueExtent(chart: ChartVisual, series: ChartSeries[]): { min: number; max: number } {
   const isStacked = chart.chartType === "columnStacked";
   let min = 0;
   let max = 0;
@@ -92,7 +92,7 @@ function valueExtent(chart: Chart, series: ChartSeries[]): { min: number; max: n
 
 function paintLegend(
   ctx: CanvasRenderingContext2D,
-  chart: Chart,
+  chart: ChartVisual,
   series: ChartSeries[],
   widthPx: number,
   heightPx: number,
@@ -147,7 +147,7 @@ function paintLegend(
 
 function computeLayout(
   ctx: CanvasRenderingContext2D,
-  chart: Chart,
+  chart: ChartVisual,
   series: ChartSeries[],
   widthPx: number,
   heightPx: number,
@@ -188,7 +188,7 @@ function computeLayout(
 // needs the size before the plot area is known, paintChart paints it after.
 function paintLegendReserveOnly(
   ctx: CanvasRenderingContext2D,
-  chart: Chart,
+  chart: ChartVisual,
   series: ChartSeries[],
   widthPx: number,
 ): { reservedLeft: number; reservedRight: number; reservedTop: number; reservedBottom: number } {
@@ -213,7 +213,7 @@ function paintLegendReserveOnly(
 
 function paintAxes(
   ctx: CanvasRenderingContext2D,
-  chart: Chart,
+  chart: ChartVisual,
   layout: Layout,
   min: number,
   max: number,
@@ -298,7 +298,7 @@ function paintDataLabel(ctx: CanvasRenderingContext2D, text: string, x: number, 
   ctx.fillText(text, x, y - 2);
 }
 
-function paintBarLike(ctx: CanvasRenderingContext2D, chart: Chart, series: ChartSeries[], layout: Layout, min: number, max: number): void {
+function paintBarLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout, min: number, max: number): void {
   const { plotX, plotY, plotW, plotH } = layout;
   const n = chart.categories.length;
   if (n === 0) {
@@ -380,7 +380,7 @@ function paintBarLike(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
   }
 }
 
-function pointsFor(chart: Chart, s: ChartSeries, layout: Layout, min: number, max: number): (null | { x: number; y: number })[] {
+function pointsFor(chart: ChartVisual, s: ChartSeries, layout: Layout, min: number, max: number): (null | { x: number; y: number })[] {
   const { plotX, plotY, plotW, plotH } = layout;
   const n = chart.categories.length;
   return s.values.map((v, i) => {
@@ -393,7 +393,7 @@ function pointsFor(chart: Chart, s: ChartSeries, layout: Layout, min: number, ma
   });
 }
 
-function paintLineOrArea(ctx: CanvasRenderingContext2D, chart: Chart, series: ChartSeries[], layout: Layout, min: number, max: number): void {
+function paintLineOrArea(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout, min: number, max: number): void {
   const isArea = chart.chartType === "area";
   const showMarkers = chart.chartType === "lineMarkers";
   for (const s of series) {
@@ -461,7 +461,7 @@ function paintLineOrArea(ctx: CanvasRenderingContext2D, chart: Chart, series: Ch
   }
 }
 
-function paintScatter(ctx: CanvasRenderingContext2D, chart: Chart, series: ChartSeries[], layout: Layout, min: number, max: number): void {
+function paintScatter(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout, min: number, max: number): void {
   const { plotX, plotY, plotW, plotH } = layout;
   const xs = chart.categories.map((c) => Number(c)).map((n) => (Number.isFinite(n) ? n : NaN));
   const validXs = xs.filter((n) => Number.isFinite(n));
@@ -486,7 +486,7 @@ function paintScatter(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
   }
 }
 
-function paintPieLike(ctx: CanvasRenderingContext2D, chart: Chart, series: ChartSeries[], layout: Layout): void {
+function paintPieLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout): void {
   const s = series[0];
   if (!s) {
     return;
@@ -536,7 +536,7 @@ function paintPieLike(ctx: CanvasRenderingContext2D, chart: Chart, series: Chart
  * (`unsupportedChartXml` set) paints as a dashed placeholder rectangle at
  * the chart's true bounds instead, exactly like an unsupported shape
  * geometry. */
-export function paintChart(ctx: CanvasRenderingContext2D, chart: Chart, widthPx: number, heightPx: number): void {
+export function paintChart(ctx: CanvasRenderingContext2D, chart: ChartVisual, widthPx: number, heightPx: number): void {
   ctx.save();
   ctx.clearRect(0, 0, widthPx, heightPx);
 

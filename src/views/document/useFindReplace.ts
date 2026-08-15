@@ -26,7 +26,7 @@ import {
   replaceMatches,
 } from "../../lib/findReplace";
 import type { FindMatch, HighlightRect } from "../../lib/findReplace";
-import { noIdleHandle, scheduleIdleWork } from "../../lib/idleScheduler";
+import { noIdleHandle, scheduleIdleWork } from "../../lib/core/idleScheduler";
 import {
   BLOCK_SELECTOR,
   domPointForCaret,

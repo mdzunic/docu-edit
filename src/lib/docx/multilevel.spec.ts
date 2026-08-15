@@ -14,7 +14,7 @@ import {
 } from "../commands";
 import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "../documentModel";
 import { listMarkers } from "../lists";
-import { parseXml } from "./xml";
+import { parseXml } from "../core/xml";
 import {
   buildNumberingXml,
   parseNumberingCatalog,
@@ -70,7 +70,7 @@ function qaScenario(): DocumentModel {
 
 describe("levelTemplate <-> parseLevelTemplate", () => {
   it("composes and parses back prefix/components/suffix", () => {
-    const def: import("../documentModel").ListDefinition = {
+    const def: import("../core/lists").ListDefinition = {
       defId: "d",
       levels: [
         { style: "decimal" },

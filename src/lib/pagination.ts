@@ -21,38 +21,18 @@ import {
   sectionPageSize,
   type Block,
   type DocumentModel,
-  type Margins,
-  type PageSize,
   type Paragraph,
 } from "./documentModel";
+import { type Margins, type PageSize } from "./core/pageSetup";
 
-/** CSS reference pixels per centimetre — the same 96 dpi the canvas's
- * cm-sized page CSS resolves to, so engine px and rendered px agree. */
-export const PX_PER_CM = 96 / 2.54;
+// PX_PER_CM moved to core/units.ts (one source for the fixed 96 dpi ratio);
+// imported for the engine's own math and re-exported so existing import
+// paths keep working.
+import { PX_PER_CM } from "./core/units";
 
-/** One rendered line of a paragraph, relative to the block's border-box
- * top, in px. */
-export interface LineBox {
-  top: number;
-  height: number;
-}
-
-/** A block's measured (or estimated) geometry at a given content width. */
-export interface BlockMetrics {
-  /** The content width the block was measured at, px — stale when the
-   * section's content width changes. */
-  contentWidthPx: number;
-  /** Border-box height, px; margins excluded. */
-  heightPx: number;
-  marginTopPx: number;
-  marginBottomPx: number;
-  /** Line boxes for a paragraph, in document order; empty for atoms
-   * (tables, images, breaks) and for paragraphs that cannot be split. */
-  lines: LineBox[];
-  /** True when these metrics are an estimate rather than a DOM measurement
-   * — the caller re-measures such blocks and re-runs the layout. */
-  estimated?: boolean;
-}
+// LineBox and BlockMetrics live in core/pageMetrics.ts alongside the DOM
+// measurement that produces them; PX_PER_CM in core/units.ts.
+import type { BlockMetrics, LineBox } from "./core/pageMetrics";
 
 /** Supplies per-block metrics. The engine never caches — caching (and
  * invalidation by block object identity) is the provider's job. */

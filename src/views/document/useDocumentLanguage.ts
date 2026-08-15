@@ -11,7 +11,7 @@ import type { CommandResult, ModelSelection } from "../../lib/commands";
 import { formattingAtOffset, paragraphAt } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { DocumentModel } from "../../lib/documentModel";
-import { DEFAULT_LANGUAGE, effectiveLanguage, languageLabel } from "../../lib/language";
+import { DEFAULT_LANGUAGE, effectiveLanguage, languageLabel } from "../../lib/core/language";
 
 export interface DocumentLanguageDeps {
   doc: Ref<DocumentModel | null>;

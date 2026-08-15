@@ -5,8 +5,8 @@
 import { describe, expect, it } from "vitest";
 import { parseDocx } from "./reader";
 import { buildDocumentXml, planHyperlinkWrite, writeDocx } from "./writer";
-import { zip } from "./zipWriter";
-import { unzip } from "./zip";
+import { zip } from "../core/zipWriter";
+import { unzip } from "../core/zip";
 import { firstStructuralDifference } from "../equality";
 import {
   asParagraph,

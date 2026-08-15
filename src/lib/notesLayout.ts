@@ -21,10 +21,10 @@ import {
   linesFitting,
   paginate,
   sliceHeight,
-  type BlockMetrics,
   type MetricsProvider,
   type PageLayout,
 } from "./pagination";
+import { type BlockMetrics } from "./core/pageMetrics";
 import type { Block, DocumentModel, NoteContent, NoteKind } from "./documentModel";
 import { collectNoteRefs, noteById, type NoteRefLocation } from "./notes";
 

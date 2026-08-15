@@ -28,7 +28,7 @@ import {
 import { blockText, compareCaret, type CaretPosition, type ParagraphAddress } from "./textEditing";
 import { NORMAL_STYLE_ID, namedStyleIdFor, resolveNamedStyle, type ResolvedNamedStyle } from "./styles";
 import { LINK_COLOR } from "./renderFormatting";
-import { HIGHLIGHT_HEX } from "./odf/properties";
+import { HIGHLIGHT_HEX } from "./core/colors";
 
 // --- issue shape (AC-2, AC-3) ------------------------------------------
 

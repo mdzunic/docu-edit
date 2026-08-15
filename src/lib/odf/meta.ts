@@ -15,7 +15,7 @@ import type {
   ExtraMetadataField,
   UnsupportedCustomProperty,
 } from "../documentModel";
-import { childElements, parseXml, serializeElement, XmlParseError } from "../docx/xml";
+import { childElements, parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { DC_NAMESPACE, META_NAMESPACE, OFFICE_NAMESPACE } from "./xml";
 
 function escapeXml(text: string): string {

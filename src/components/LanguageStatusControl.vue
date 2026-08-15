@@ -5,7 +5,7 @@
 // anchored with the same useFloatingMenu escape-the-clipped-strip pattern.
 import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
-import { asLanguageOptions } from "../lib/language";
+import { asLanguageOptions } from "../lib/core/language";
 
 const props = defineProps({
   currentLanguageTag: { type: String, default: "" },

@@ -4,7 +4,7 @@
 // addition in one language but not another. Persisted in localStorage with
 // the same tolerant-parse-with-fallback convention as lib/autocorrect.ts
 // (AC-8: persists across sessions, editable from a settings dialog).
-import { normalizeLanguageTag } from "./language";
+import { normalizeLanguageTag } from "./core/language";
 
 export const CUSTOM_DICTIONARY_STORAGE_KEY = "docu-edit:custom-dictionary";
 

@@ -8,7 +8,7 @@ import {
   matchesQuery,
   pushRecentCharacter,
   findCharacter,
-} from "../lib/specialCharacters";
+} from "../lib/core/specialCharacters";
 
 // The "Insert → Special characters" picker (SPEC-026). A searchable grid of
 // the fixed catalogue grouped by category, a most-recent-first Recent row and

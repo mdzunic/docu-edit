@@ -12,9 +12,11 @@ import type {
   TabStop,
   TabStopAlignment,
 } from "../documentModel";
-import { HIGHLIGHT_NAMES } from "../odf/properties";
-import { firstChildElement, wordAttr as attr, WORD_NAMESPACE } from "./xml";
-import { halfPointsToPt, ooxmlColorToCss, twentiethsOfPointToPt, twipsToCm } from "./units";
+import { HIGHLIGHT_NAMES } from "../core/colors";
+import { wordAttr as attr, WORD_NAMESPACE } from "./xml";
+import { firstChildElement } from "../core/xml";
+import { ooxmlColorToCss } from "../core/colors";
+import { halfPointsToPt, twentiethsOfPointToPt, twipsToCm } from "../core/units";
 
 const FALSE_VALUES = new Set(["0", "false", "off"]);
 

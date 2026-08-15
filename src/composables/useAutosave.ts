@@ -6,7 +6,7 @@ import { computed, onBeforeUnmount, ref } from "vue";
 import {
   createAutosaveScheduler,
   type AutosaveScheduler,
-} from "../lib/autosaveScheduler";
+} from "../lib/core/autosaveScheduler";
 import {
   commitDocument,
   deleteDraft,

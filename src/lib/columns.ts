@@ -17,7 +17,7 @@ import {
   type SectionColumns,
   type Table,
 } from "./documentModel";
-import { cmToTwips, twipsToCm } from "./docx/units";
+import { cmToTwips, twipsToCm } from "./core/units";
 import { caretSelection, orderedRange, type CommandResult, type ModelSelection } from "./commands";
 
 /** Where a Columns dialog apply targets (AC-5): the caret's current section,
