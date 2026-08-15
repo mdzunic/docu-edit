@@ -341,8 +341,8 @@ export function useNotes(deps: NotesDeps) {
     noteSettingsOpen.value = false;
   }
 
-  // --- note-mirror formatting (used by useFormatting's triple-mirrored
-  // toolbar commands) ------------------------------------------------
+  // --- note-mirror formatting (the note surface's pending-format store in
+  // useFormattingSurfaces' surface table) ------------------------------
 
   function getNotePendingFormat(): ReturnType<typeof noPendingFormat> {
     return notePendingFormat;

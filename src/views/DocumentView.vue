@@ -84,6 +84,7 @@ import { useShapes } from "./document/useShapes";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
+import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
@@ -105,7 +106,6 @@ import {
   touchDocument,
 } from "../lib/documentStore";
 import {
-  asCharacterFormatKey,
   asHeaderFooterPart,
   asImage,
   asImageWrapMode,
@@ -114,11 +114,8 @@ import {
   asNoteKind,
   asNoteNumberFormat,
   asNoteRestart,
-  asTabStopAlignment,
-  asTabStops,
   asTrackChangesDisplayMode,
   asPageNumberFormat,
-  asParagraphAlignment,
   asParagraphBlock,
   asBreakKind,
   asSectionStart,
@@ -137,7 +134,6 @@ import {
   noNoteContent,
 } from "../lib/documentModel";
 import { asChartType, CHART_CATALOGUE, SINGLE_SERIES_CHART_TYPES } from "../lib/core/charts";
-import { asListLevelDefinitions, asListMarkerStyle, asListType } from "../lib/core/lists";
 import { asShapeGeometry } from "../lib/core/shapes";
 import {
   asBorderLineStyle,
@@ -208,9 +204,7 @@ import {
   MIN_ROW_HEIGHT_CM,
   noCellRange,
 } from "../lib/core/tables";
-import { setColumnBoundary } from "../lib/columns";
 import { documentFontFamilies } from "../lib/fonts";
-import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/core/colors";
 import { acquireEditLock, noEditLock } from "../lib/core/editLock";
 import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../lib/supportedCeiling";
 import {
@@ -275,21 +269,14 @@ import {
 import { importHtml } from "../lib/htmlPaste";
 import {
   adjustIndent,
-  applyFormat,
   applyListAutoformat,
-  applyListDefinition,
-  applyMultilevelPreset,
   applyPainterFormat,
-  applyParagraphFormat,
   toolbarCharacterStyleState,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
   caretSelection,
   changeListLevel,
-  clearFormatting,
-  commitHeaderFooterModel,
-  commitNoteModel,
   deleteBackward,
   deleteForward,
   deleteRange,
@@ -311,34 +298,20 @@ import {
   insertSectionBreak,
   insertText,
   isCollapsed,
-  linkHeadingNumbering,
   noCommandResult,
   noPainterFormat,
-  noParagraphCommand,
   noPendingFormat,
   noSelection,
   paragraphPaginationState,
   removeListFormat,
-  selectionListDefinitionLevels,
-  selectionTabStops,
-  setAlignment,
   setHeaderFooterOptions,
-  setListMarker,
   setNoteSettings,
-  setPageMargins,
-  setTabStops,
   splitBlock,
-  toggleFormat,
-  toggleList,
-  toggleSpaceBefore,
-  toggleVerticalAlign,
   toolbarFormatValues,
   toolbarListState,
   toolbarStyleState,
   touchedBlocks,
   verticalAlignState,
-  withHeaderFooterModel,
-  withNoteModel,
 } from "../lib/commands";
 import {
   collectNoteRefs,
@@ -635,21 +608,8 @@ const styleState = ref(emptyToolbarStyleState());
 // styleState above); the Styles pane/dialogs' own state lives in
 // useStyleManager.
 const characterStyleState = ref(emptyToolbarStyleState());
-// The custom-spacing dialog (AC-12..14): open flag plus the prefill taken
-// from the first touched paragraph at the moment it opens.
-const customSpacingOpen = ref(false);
-const customSpacingInitial = ref({ mode: "multiple", value: 1, beforePt: 0, afterPt: 0 });
-// --- multilevel lists and tab stops (SPEC-032) ------------------------------
-// The "Define new multilevel list…" dialog: open flag plus the nine level
-// definitions it prefills from (the selection's own definition, or the
-// decimal preset).
-const defineListOpen = ref(false);
-const defineListInitial = ref(asListLevelDefinitions([]));
-// The Tabs dialog (AC-25): open flag plus the selection's current stops.
-const tabsDialogOpen = ref(false);
-const tabsDialogInitial = ref(asTabStops([]));
-// Recently applied text colours, shared across documents (SPEC-013 AC).
-const recentColors = ref(loadRecentColors());
+// The formatting dialogs' state (custom spacing, define-list, tabs) and the
+// recent-colours list live in useFormattingSurfaces, wired below.
 // The families used by the open document, for the dropdown's "Fonts in
 // this document" group — doc.value is replaced on every edit, so this
 // recomputes as families come and go.
@@ -936,6 +896,72 @@ const {
   activeHeaderFooter,
   clearImageSelection,
   exitHeaderFooterEditing,
+});
+
+// --- character & paragraph formatting (SPEC-012, SPEC-013, SPEC-014) --------
+// One implementation of the toolbar/shortcut formatting commands, their
+// dialogs and the ruler handler, dispatched over the active editing surface —
+// body, header/footer band (SPEC-029 AC-4) or note (SPEC-031 AC-6) — in
+// useFormattingSurfaces, replacing the per-surface triads that lived here.
+// Wired directly after the header/footer and note bundles that complete its
+// surface table, and before useStyleManager, which passes
+// applyParagraphCommand eagerly. `pendingFormat` and the toolbar readouts
+// stay in this view (updateCaretStatus recomputes them); the surfaces reach
+// the body's pending-format store through the get/set lambdas.
+const {
+  toggleCharacterFormat,
+  handleFontFamilySelect,
+  handleFontSizeChange,
+  handleTextColorSelect,
+  handleHighlightSelect,
+  recentColors,
+  applyParagraphCommand,
+  handleAlign,
+  handleIndent,
+  handleClearFormatting,
+  handleSpacingPreset,
+  handleToggleSpaceBefore,
+  handleToggleList,
+  handleListMarker,
+  handleMultilevelPreset,
+  handleLinkHeadingNumbering,
+  defineListOpen,
+  defineListInitial,
+  openDefineList,
+  handleDefineListApply,
+  tabsDialogOpen,
+  tabsDialogInitial,
+  openTabsDialog,
+  handleTabsApply,
+  handleToggleDirection,
+  customSpacingOpen,
+  customSpacingInitial,
+  openCustomSpacing,
+  handleCustomSpacingApply,
+  handleRulerUpdate,
+  handleTogglePagination,
+} = useFormattingSurfaces({
+  ...editorContext,
+  paragraphSelection,
+  getPendingFormat: () => pendingFormat,
+  setPendingFormat: (next) => {
+    pendingFormat = next;
+  },
+  updateCaretStatus,
+  activeHeaderFooter,
+  currentHfSelection,
+  applyHeaderFooterEdit,
+  hfRootEl,
+  getHfPendingFormat,
+  setHfPendingFormat,
+  activeNote,
+  currentNoteSelection,
+  applyNoteEdit,
+  noteRootEl,
+  getNotePendingFormat,
+  setNotePendingFormat,
+  getParagraphState: () => paragraphState.value,
+  getParagraphFormatting: () => paragraphFormatting.value,
 });
 
 // Cut/copy/paste and the paste-options chip (SPEC-016) live in useClipboard;
@@ -2097,301 +2123,12 @@ const {
   getContextMenuTableCell: () => contextMenuTableCell,
 });
 
-// --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
-
-/** The character-formatting toolbar's header/footer counterpart (SPEC-029
- * AC-4): identical bold/italic/… and subscript/superscript logic to
- * toggleCharacterFormat, just against the active band's synthetic model
- * and its own pending-format/caret state. */
-function toggleHfCharacterFormat(key = "") {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  if (key === "subscript" || key === "superscript") {
-    if (isCollapsed(selection)) {
-      const on = verticalAlignState(synthetic, selection, key, getHfPendingFormat()) === "on";
-      setHfPendingFormat({ ...getHfPendingFormat(), vertAlign: on ? false : key });
-    } else {
-      const result = toggleVerticalAlign(synthetic, selection, key);
-      applyHeaderFooterEdit(result.model, result.selection, key);
-    }
-    hfRootEl()?.focus();
-    return;
-  }
-  const formatKey = asCharacterFormatKey(key);
-  if (isCollapsed(selection)) {
-    const next = formatState(synthetic, selection, formatKey, getHfPendingFormat()) !== "on";
-    setHfPendingFormat({ ...getHfPendingFormat(), [formatKey]: next });
-  } else {
-    const result = toggleFormat(synthetic, selection, formatKey);
-    applyHeaderFooterEdit(result.model, result.selection, formatKey);
-  }
-  hfRootEl()?.focus();
-}
-
-/** applyRunFormatPatch's header/footer counterpart (SPEC-029 AC-4). */
-function applyHfRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!patch || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  if (isCollapsed(selection)) {
-    setHfPendingFormat({ ...getHfPendingFormat(), ...patch });
-  } else {
-    const result = applyFormat(synthetic, selection, patch);
-    applyHeaderFooterEdit(result.model, result.selection, label);
-  }
-  hfRootEl()?.focus();
-}
-
-/** applyParagraphCommand's header/footer counterpart (SPEC-029 AC-4): the
- * same chokepoint alignment/indent/list/style toolbar actions run through
- * for body content, redirected at the active band's synthetic model. */
-function applyHfParagraphCommand(command = noParagraphCommand(), label = "formatting") {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!command || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  const result = command(synthetic, selection);
-  applyHeaderFooterEdit(result.model, result.selection, label);
-  hfRootEl()?.focus();
-}
-
-/** toggleHfCharacterFormat's note counterpart (SPEC-031 AC-6). */
-function toggleNoteCharacterFormat(key = "") {
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withNoteModel(model, active.noteId);
-  if (key === "subscript" || key === "superscript") {
-    if (isCollapsed(selection)) {
-      const on = verticalAlignState(synthetic, selection, key, getNotePendingFormat()) === "on";
-      setNotePendingFormat({ ...getNotePendingFormat(), vertAlign: on ? false : key });
-    } else {
-      const result = toggleVerticalAlign(synthetic, selection, key);
-      applyNoteEdit(result.model, result.selection, key);
-    }
-    noteRootEl()?.focus();
-    return;
-  }
-  const formatKey = asCharacterFormatKey(key);
-  if (isCollapsed(selection)) {
-    const next = formatState(synthetic, selection, formatKey, getNotePendingFormat()) !== "on";
-    setNotePendingFormat({ ...getNotePendingFormat(), [formatKey]: next });
-  } else {
-    const result = toggleFormat(synthetic, selection, formatKey);
-    applyNoteEdit(result.model, result.selection, formatKey);
-  }
-  noteRootEl()?.focus();
-}
-
-/** applyRunFormatPatch's note counterpart (SPEC-031 AC-6). */
-function applyNoteRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!patch || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withNoteModel(model, active.noteId);
-  if (isCollapsed(selection)) {
-    setNotePendingFormat({ ...getNotePendingFormat(), ...patch });
-  } else {
-    const result = applyFormat(synthetic, selection, patch);
-    applyNoteEdit(result.model, result.selection, label);
-  }
-  noteRootEl()?.focus();
-}
-
-/** applyParagraphCommand's note counterpart (SPEC-031 AC-6). */
-function applyNoteParagraphCommand(command = noParagraphCommand(), label = "formatting") {
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!command || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
-  const synthetic = withNoteModel(model, active.noteId);
-  const result = command(synthetic, selection);
-  applyNoteEdit(result.model, result.selection, label);
-  noteRootEl()?.focus();
-}
-
-/** Bold/italic/underline/strikethrough (SPEC-012 AC-3..6, AC-16, AC-17)
- * and subscript/superscript (SPEC-013): a real selection is formatted
- * through the command API (which keeps the selection live, see applyEdit);
- * a collapsed caret instead sets/flips the pending format the next typed
- * text will carry (AC-9, AC-10). */
-function toggleCharacterFormat(key = "") {
-  if (activeHeaderFooter.value) {
-    toggleHfCharacterFormat(key);
-    return;
-  }
-  if (activeNote.value) {
-    toggleNoteCharacterFormat(key);
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  if (key === "subscript" || key === "superscript") {
-    // One vertAlign field makes the pair mutually exclusive (SPEC-013).
-    if (isCollapsed(selection)) {
-      const on = verticalAlignState(model, selection, key, pendingFormat) === "on";
-      pendingFormat = { ...pendingFormat, vertAlign: on ? false : key };
-      updateCaretStatus({ start: selection.anchor, end: selection.focus });
-    } else {
-      applyEdit(toggleVerticalAlign(model, selection, key), selection, key);
-    }
-    root.focus();
-    return;
-  }
-  const formatKey = asCharacterFormatKey(key);
-  if (isCollapsed(selection)) {
-    const next = formatState(model, selection, formatKey, pendingFormat) !== "on";
-    pendingFormat = { ...pendingFormat, [formatKey]: next };
-    updateCaretStatus({ start: selection.anchor, end: selection.focus });
-  } else {
-    applyEdit(toggleFormat(model, selection, formatKey), selection, formatKey);
-  }
-  root.focus();
-}
-
-/** Applies a value-format patch (font family/size, colour, highlight —
- * SPEC-013): a real selection goes through the command API; a collapsed
- * caret merges the patch into the pending format the next typed text
- * carries, exactly like the boolean toggles. */
-function applyRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
-  if (activeHeaderFooter.value) {
-    applyHfRunFormatPatch(patch, label);
-    return;
-  }
-  if (activeNote.value) {
-    applyNoteRunFormatPatch(patch, label);
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!patch || !root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  if (isCollapsed(selection)) {
-    pendingFormat = { ...pendingFormat, ...patch };
-    updateCaretStatus({ start: selection.anchor, end: selection.focus });
-  } else {
-    applyEdit(applyFormat(model, selection, patch), selection, label);
-  }
-  root.focus();
-}
-
-function handleFontFamilySelect(family = "") {
-  if (family !== "") {
-    applyRunFormatPatch({ fontFamily: family }, "font family");
-  }
-}
-
-function handleFontSizeChange(sizePt = 0) {
-  if (sizePt > 0) {
-    applyRunFormatPatch({ fontSizePt: sizePt }, "font size");
-  }
-}
-
-function handleTextColorSelect(hex = "") {
-  if (hex !== "") {
-    applyRunFormatPatch({ color: hex }, "text color");
-    recentColors.value = pushRecentColor(hex, recentColors.value);
-  }
-}
-
-/** The highlight picker emits a palette name or false for "No colour" —
- * false is applied as an explicit off, not an absence (SPEC-013). */
-function handleHighlightSelect(value = noHighlight()) {
-  applyRunFormatPatch({ highlight: value }, "highlight");
-}
-
-// --- paragraph formatting toolbar/ruler/shortcuts (SPEC-014) ----------------
-
 /** The selection paragraph commands target: the live/tracked selection, or
  * — before the canvas has ever held a caret — the document start, so a
  * toolbar click or ruler drag on a fresh document still lands on the first
  * paragraph. */
 function paragraphSelection(root = noElement()) {
   return currentSelection(root) ?? caretSelection(documentStart());
-}
-
-/** Runs one paragraph command against the current selection and applies its
- * result; `label` names the edit for the undo history (SPEC-015 AC-7, AC-8,
- * AC-13 — every paragraph command is its own undo step); `refocus` returns
- * focus to the canvas (skipped for ruler drags, which would tear down the
- * pointer capture mid-drag). */
-function applyParagraphCommand(command = noParagraphCommand(), label = "formatting", refocus = true) {
-  if (activeHeaderFooter.value) {
-    applyHfParagraphCommand(command, label);
-    return;
-  }
-  if (activeNote.value) {
-    applyNoteParagraphCommand(command, label);
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!command || !root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(command(model, selection), selection, label);
-  if (refocus) {
-    root.focus();
-  }
-}
-
-function handleAlign(alignment = "") {
-  applyParagraphCommand(
-    (model, selection) => setAlignment(model, selection, asParagraphAlignment(alignment)),
-    "alignment",
-  );
-}
-
-function handleIndent(direction = 1) {
-  applyParagraphCommand(
-    (model, selection) => adjustIndent(model, selection, direction * INDENT_STEP_CM),
-    "indent",
-  );
 }
 
 // --- paragraph styles and the custom styles manager (SPEC-019, SPEC-042) ---
@@ -2448,233 +2185,6 @@ const {
   updateCaretStatus,
   getCaretPosition: () => caretPosition.value,
 });
-
-// --- clear formatting and format painter (SPEC-020) -------------------------
-
-/** The "Clear formatting" toolbar button and Ctrl/Cmd+\ (AC-1, AC-2, AC-3):
- * one command result, so — like every other paragraph command — it is one
- * undo step (AC-18). */
-function handleClearFormatting() {
-  applyParagraphCommand(clearFormatting, "clear formatting");
-}
-
-/** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
- * clears any absolute height so the preset actually takes effect (AC-11). */
-function handleSpacingPreset(multiple = 1) {
-  applyParagraphCommand(
-    (model, selection) =>
-      applyParagraphFormat(model, selection, {
-        lineSpacing: multiple,
-        lineSpacingPt: null,
-        lineSpacingRule: null,
-      }),
-    "line spacing",
-  );
-}
-
-function handleToggleSpaceBefore() {
-  applyParagraphCommand(toggleSpaceBefore, "space before");
-}
-
-/** The bulleted/numbered toolbar toggles (SPEC-018 AC-1, AC-2). */
-function handleToggleList(type = "") {
-  applyParagraphCommand(
-    (model, selection) => toggleList(model, selection, asListType(type)),
-    type === "bullet" ? "bulleted list" : "numbered list",
-  );
-}
-
-/** A marker style picked from a list button's dropdown (SPEC-018 AC-13). */
-function handleListMarker(style = "") {
-  applyParagraphCommand(
-    (model, selection) => setListMarker(model, selection, asListMarkerStyle(style)),
-    "list marker",
-  );
-}
-
-// --- multilevel lists and custom tab stops (SPEC-032) -----------------------
-
-/** A gallery preset picked from the Multilevel list menu (AC-1..4). */
-function handleMultilevelPreset(key = "") {
-  applyParagraphCommand(
-    (model, selection) => applyMultilevelPreset(model, selection, key),
-    "multilevel list",
-  );
-}
-
-/** "Number headings 1–3" (AC-13). */
-function handleLinkHeadingNumbering() {
-  applyParagraphCommand(
-    (model, selection) => linkHeadingNumbering(model, selection),
-    "number headings",
-  );
-}
-
-/** "Define new multilevel list…" (AC-5..12): prefilled from the selection's
- * own definition when it sits in a defined list. */
-function openDefineList() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return;
-  }
-  defineListInitial.value = selectionListDefinitionLevels(model, paragraphSelection(root));
-  defineListOpen.value = true;
-}
-
-function handleDefineListApply(levels = asListLevelDefinitions([])) {
-  defineListOpen.value = false;
-  applyParagraphCommand(
-    (model, selection) => applyListDefinition(model, selection, asListLevelDefinitions(levels)),
-    "list definition",
-  );
-}
-
-/** The Tabs dialog (AC-25), prefilled from the first touched paragraph. */
-function openTabsDialog() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return;
-  }
-  tabsDialogInitial.value = selectionTabStops(model, paragraphSelection(root));
-  tabsDialogOpen.value = true;
-}
-
-function handleTabsApply(stops = asTabStops([])) {
-  tabsDialogOpen.value = false;
-  applyParagraphCommand(
-    (model, selection) => setTabStops(model, selection, asTabStops(stops)),
-    "tab stops",
-  );
-}
-
-function handleToggleDirection() {
-  const rtl = paragraphState.value.direction !== "rtl";
-  applyParagraphCommand(
-    (model, selection) => applyParagraphFormat(model, selection, { direction: rtl ? "rtl" : "ltr" }),
-    "text direction",
-  );
-}
-
-function openCustomSpacing() {
-  const formatting = paragraphFormatting.value;
-  customSpacingInitial.value =
-    formatting.lineSpacingPt !== undefined
-      ? {
-          mode: formatting.lineSpacingRule === "exact" ? "exact" : "atLeast",
-          value: formatting.lineSpacingPt,
-          beforePt: formatting.spaceBeforePt ?? 0,
-          afterPt: formatting.spaceAfterPt ?? 0,
-        }
-      : {
-          mode: "multiple",
-          value: formatting.lineSpacing ?? 1,
-          beforePt: formatting.spaceBeforePt ?? 0,
-          afterPt: formatting.spaceAfterPt ?? 0,
-        };
-  customSpacingOpen.value = true;
-}
-
-/** OK in the custom-spacing dialog (AC-13): one patch, applied to every
- * touched paragraph. The unused line-spacing representation is cleared so
- * the chosen mode wins regardless of what was set before. */
-function handleCustomSpacingApply(payload = { mode: "multiple", value: 1, beforePt: 0, afterPt: 0 }) {
-  customSpacingOpen.value = false;
-  applyParagraphCommand(
-    (model, selection) =>
-      payload.mode === "multiple"
-        ? applyParagraphFormat(model, selection, {
-            lineSpacing: payload.value,
-            lineSpacingPt: null,
-            lineSpacingRule: null,
-            spaceBeforePt: payload.beforePt,
-            spaceAfterPt: payload.afterPt,
-          })
-        : applyParagraphFormat(model, selection, {
-            lineSpacing: null,
-            lineSpacingPt: payload.value,
-            lineSpacingRule: payload.mode === "exact" ? "exact" : null,
-            spaceBeforePt: payload.beforePt,
-            spaceAfterPt: payload.afterPt,
-          }),
-    "paragraph spacing",
-  );
-}
-
-/** A ruler marker drag (AC-23): indent updates go to every touched
- * paragraph as logical values; margin updates go to the page margins. No
- * refocus — grabbing focus mid-drag would break the pointer capture. */
-function handleRulerUpdate(
-  update = { kind: "", valueCm: 0, boundary: 0, deltaCm: 0, positionCm: 0, alignment: "left", index: 0 },
-) {
-  const valueCm = update.valueCm;
-  if (update.kind === "indentStartCm") {
-    applyParagraphCommand(
-      (model, selection) => applyParagraphFormat(model, selection, { indentStartCm: valueCm }),
-      "indent",
-      false,
-    );
-  } else if (update.kind === "indentEndCm") {
-    applyParagraphCommand(
-      (model, selection) => applyParagraphFormat(model, selection, { indentEndCm: valueCm }),
-      "indent",
-      false,
-    );
-  } else if (update.kind === "indentFirstLineCm") {
-    applyParagraphCommand(
-      (model, selection) => applyParagraphFormat(model, selection, { indentFirstLineCm: valueCm }),
-      "indent",
-      false,
-    );
-  } else if (update.kind === "marginLeftCm") {
-    applyParagraphCommand(
-      (model, selection) => setPageMargins(model, selection, { leftCm: valueCm }),
-      "margins",
-      false,
-    );
-  } else if (update.kind === "marginRightCm") {
-    applyParagraphCommand(
-      (model, selection) => setPageMargins(model, selection, { rightCm: valueCm }),
-      "margins",
-      false,
-    );
-  } else if (update.kind === "column-boundary") {
-    const boundary = update.boundary ?? 0;
-    const deltaCm = update.deltaCm ?? 0;
-    applyParagraphCommand(
-      (model, selection) => setColumnBoundary(model, selection, boundary, deltaCm),
-      "column width",
-      false,
-    );
-  } else if (update.kind === "add-tab") {
-    // A click in the ruler's tab lane lays a stop of the armed type
-    // (SPEC-032 AC-24).
-    const positionCm = update.positionCm ?? 0;
-    const alignment = asTabStopAlignment(update.alignment ?? "left");
-    applyParagraphCommand(
-      (model, selection) =>
-        setTabStops(model, selection, [
-          ...selectionTabStops(model, selection),
-          { positionCm, alignment },
-        ]),
-      "tab stops",
-      false,
-    );
-  } else if (update.kind === "remove-tab") {
-    // Clicking a laid handle removes its stop (SPEC-032 AC-24).
-    const index = update.index ?? 0;
-    applyParagraphCommand(
-      (model, selection) => {
-        const stops = selectionTabStops(model, selection);
-        stops.splice(index, 1);
-        return setTabStops(model, selection, stops);
-      },
-      "tab stops",
-      false,
-    );
-  }
-}
 
 // --- page setup, columns and ruler visibility (SPEC-027, SPEC-030) ----------
 // The Page setup and Format → Columns dialogs, the "Show/hide ruler" toggle
@@ -3788,25 +3298,6 @@ function handleInsertSectionBreak(start = "") {
   );
   root.focus();
   void scrollModelCaretIntoView(caret, true);
-}
-
-/** The paragraph pagination menu's toggles (AC-22..28): each key flips
- * against the first touched paragraph's current state, applied to every
- * touched paragraph. */
-function handleTogglePagination(key = "") {
-  applyParagraphCommand((model, selection) => {
-    const state = paragraphPaginationState(model, selection);
-    if (key === "keepNext") {
-      return applyParagraphFormat(model, selection, { keepNext: !state.keepNext });
-    }
-    if (key === "keepLines") {
-      return applyParagraphFormat(model, selection, { keepLines: !state.keepLines });
-    }
-    if (key === "pageBreakBefore") {
-      return applyParagraphFormat(model, selection, { pageBreakBefore: !state.pageBreakBefore });
-    }
-    return applyParagraphFormat(model, selection, { widowControl: !state.widowControl });
-  }, "paragraph pagination");
 }
 
 // --- mail-merge fields (SPEC-046) -------------------------------------------
