@@ -56,6 +56,7 @@ import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
+import TableHandlesOverlay from "../components/TableHandlesOverlay.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
@@ -3907,111 +3908,13 @@ function handleMenuCommand(id = "") {
               }"
             />
           </div>
-          <div
+          <TableHandlesOverlay
             v-if="tableHover"
-            class="table-handles print-exclude"
-            data-testid="table-handles"
-          >
-            <!-- Column handles above the table: an insert button at every
-               column boundary, a delete button over every column centre
-               (AC-20, AC-21). -->
-            <button
-              v-for="boundary in tableHover.cols.length + 1"
-              :key="`ci${boundary}`"
-              type="button"
-              class="table-handle insert"
-              :data-testid="`table-handle-insert-col-${boundary - 1}`"
-              :aria-label="`Insert column at position ${boundary}`"
-              :style="{
-                left: `${(boundary - 1 < tableHover.cols.length
-                  ? tableHover.cols[boundary - 1].left
-                  : tableHover.left + tableHover.width) - 8}px`,
-                top: `${tableHover.top - 20}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('insert-col', boundary - 1)"
-            >
-              +
-            </button>
-            <button
-              v-for="(col, colIndex) in tableHover.cols"
-              :key="`cd${colIndex}`"
-              type="button"
-              class="table-handle delete"
-              :data-testid="`table-handle-delete-col-${colIndex}`"
-              :aria-label="`Delete column ${colIndex + 1}`"
-              :style="{
-                left: `${col.left + col.width / 2 - 8}px`,
-                top: `${tableHover.top - 20}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('delete-col', colIndex)"
-            >
-              ×
-            </button>
-            <!-- Row handles left of the table: same pattern. -->
-            <button
-              v-for="boundary in tableHover.rows.length + 1"
-              :key="`ri${boundary}`"
-              type="button"
-              class="table-handle insert"
-              :data-testid="`table-handle-insert-row-${boundary - 1}`"
-              :aria-label="`Insert row at position ${boundary}`"
-              :style="{
-                left: `${tableHover.left - 20}px`,
-                top: `${(boundary - 1 < tableHover.rows.length
-                  ? tableHover.rows[boundary - 1].top
-                  : tableHover.top + tableHover.height) - 8}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('insert-row', boundary - 1)"
-            >
-              +
-            </button>
-            <button
-              v-for="(row, rowIndex) in tableHover.rows"
-              :key="`rd${rowIndex}`"
-              type="button"
-              class="table-handle delete"
-              :data-testid="`table-handle-delete-row-${rowIndex}`"
-              :aria-label="`Delete row ${rowIndex + 1}`"
-              :style="{
-                left: `${tableHover.left - 20}px`,
-                top: `${row.top + row.height / 2 - 8}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('delete-row', rowIndex)"
-            >
-              ×
-            </button>
-            <!-- Column/row resize strips (SPEC-023 AC-1..5): a thin draggable
-               strip along each column's right edge (spanning the table's
-               height) and each row's bottom edge (spanning its width). -->
-            <div
-              v-for="(col, colIndex) in tableHover.cols"
-              :key="`cr${colIndex}`"
-              class="table-resize-handle column"
-              :data-testid="`table-resize-col-${colIndex}`"
-              :style="{
-                left: `${col.left + col.width - 3}px`,
-                top: `${tableHover.top}px`,
-                height: `${tableHover.height}px`,
-              }"
-              @mousedown="startColumnResize($event, colIndex)"
-            />
-            <div
-              v-for="(row, rowIndex) in tableHover.rows"
-              :key="`rr${rowIndex}`"
-              class="table-resize-handle row"
-              :data-testid="`table-resize-row-${rowIndex}`"
-              :style="{
-                left: `${tableHover.left}px`,
-                top: `${row.top + row.height - 3}px`,
-                width: `${tableHover.width}px`,
-              }"
-              @mousedown="startRowResize($event, rowIndex)"
-            />
-          </div>
+            :geometry="tableHover"
+            @handle="handleTableHandle"
+            @column-resize="startColumnResize"
+            @row-resize="startRowResize"
+          />
           <div
             v-if="imageHandles"
             class="image-handles print-exclude"
@@ -4859,8 +4762,8 @@ function handleMenuCommand(id = "") {
   inset: 0;
   /* Unlike .find-highlight-layer (z-index: 0, never needs to catch clicks),
      these rects must win hit-testing against the text underneath — the
-     same z-index band .table-handles (15) uses for its own clickable
-     overlay controls. */
+     same z-index band the table handles (15, TableHandlesOverlay.vue) use
+     for their own clickable overlay controls. */
   z-index: 5;
   pointer-events: none;
 }
@@ -4898,71 +4801,9 @@ function handleMenuCommand(id = "") {
   cursor: copy;
 }
 
-/* The table hover handles (SPEC-022 AC-20, AC-21): a page-relative overlay
-   of small insert (+) and delete (×) buttons above the columns and beside
-   the rows of the hovered table. The layer itself ignores the pointer so
-   text editing underneath is unaffected; only the buttons are clickable. */
-.table-handles {
-  position: absolute;
-  inset: 0;
-  z-index: 15;
-  pointer-events: none;
-}
-
-.table-handle {
-  position: absolute;
-  pointer-events: auto;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 50%;
-  background: #fff;
-  color: #3c4043;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
-}
-
-.table-handle.insert:hover {
-  background: #d2e3fc;
-  border-color: #1a73e8;
-  color: #1a73e8;
-}
-
-.table-handle.delete:hover {
-  background: #fce8e6;
-  border-color: #c5221f;
-  color: #c5221f;
-}
-
-/* Column/row resize strips (SPEC-023 AC-1..5): thin transparent bands
-   along a column's right edge or a row's bottom edge, widened just enough
-   to be a comfortable drag target without covering neighbouring cells. */
-.table-resize-handle {
-  position: absolute;
-  pointer-events: auto;
-  background: transparent;
-}
-
-.table-resize-handle.column {
-  width: 6px;
-  cursor: col-resize;
-}
-
-.table-resize-handle.row {
-  height: 6px;
-  cursor: row-resize;
-}
-
-.table-resize-handle:hover {
-  background: rgb(26 115 232 / 0.35);
-}
-
 /* The selected image's eight resize handles (SPEC-024 AC-8, AC-10..12) —
-   same page-relative overlay layer as .table-handles, positioned per handle
-   by imageHandleStyle(). */
+   same page-relative overlay layer as the table handles
+   (TableHandlesOverlay.vue), positioned per handle by imageHandleStyle(). */
 .image-handles {
   position: absolute;
   inset: 0;
