@@ -23,12 +23,13 @@
 //   2026-08-15  7180  Phase 1a — useAutocorrect extracted
 //   2026-08-15  6925  Phase 1b — useStyleManager extracted
 //   2026-08-15  6655  Phase 1c — useContextMenus extracted
+//   2026-08-15  6545  Phase 1d — useFileActions extracted
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 6655;
+const LINE_BUDGET = 6545;
 
 describe("DocumentView size budget", () => {
   it(`DocumentView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

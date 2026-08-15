@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import MenuBar from "../components/MenuBar.vue";
 import MenuItem from "../components/MenuItem.vue";
@@ -93,6 +93,7 @@ import { useSpellCheck } from "./document/useSpellCheck";
 import { useDocumentLanguage } from "./document/useDocumentLanguage";
 import { useStyleManager } from "./document/useStyleManager";
 import { useContextMenus } from "./document/useContextMenus";
+import { useFileActions } from "./document/useFileActions";
 import { documentExists } from "../lib/documents";
 import {
   activeHeadingAnchor,
@@ -103,19 +104,13 @@ import {
   moveHeading,
 } from "../lib/outline";
 import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../lib/outlinePane";
-import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
-import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
-import { MD_MIME_TYPE, mdFileName, writeMd } from "../lib/md/writer";
-import { noConversionReport } from "../lib/opaque";
 import { convertLiteralChipsToRuns, hasConvertibleLiteralChips } from "../lib/mergeChips";
 import { namedArrayFieldList, namedFieldList, noParsedDataSource } from "../lib/merge";
 import {
-  deleteDocument,
   getOrCreateDocument,
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
-import { saveAsTemplate } from "../lib/templateStore";
 import {
   asCharacterFormatKey,
   asHeaderFooterPart,
@@ -136,7 +131,6 @@ import {
   asSectionStart,
   createDocument,
   createEmptyHeaderFooterContent,
-  DEFAULT_TITLE,
   isBreak,
   isImage,
   isShape,
@@ -432,7 +426,6 @@ import { applyTrackChanges } from "../lib/trackChangesDiff";
 import { isMacPlatform } from "../lib/core/platform";
 
 const route = useRoute();
-const router = useRouter();
 const { addToast } = useToasts();
 const documentId = computed(() => String(route.params.id ?? ""));
 
@@ -3854,6 +3847,29 @@ const {
   downloadVersion: downloadVersionHistoryVersion,
 } = useVersionHistory({ ...editorContext });
 
+// File-level document actions (title rename, download, save as template,
+// delete, conversion report) live in useFileActions; the download path needs
+// the PDF exporter, the autosave commit and the version-history commit point
+// wired in, so this sits after all three.
+const {
+  formatBadge,
+  downloadFormat,
+  conversionReport,
+  conversionReportSameFormat,
+  confirmingDelete,
+  savingAsTemplate,
+  handleTitleUpdate,
+  handleDownload,
+  closeConversionReport,
+  saveCurrentAsTemplate,
+  deleteOpenDocument,
+} = useFileActions({
+  ...editorContext,
+  exportPdf,
+  commitNow: () => autosave.commitNow(),
+  noteVersionHistoryCommitPoint,
+});
+
 // --- accessibility checker (SPEC-043) ---------------------------------------
 const {
   accessibilityPaneOpen,
@@ -4133,110 +4149,6 @@ function handleTogglePagination(key = "") {
   }, "paragraph pagination");
 }
 
-const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
-
-const downloadFormat = computed(() => {
-  if (!doc.value) {
-    return "docx";
-  }
-  if (doc.value.format === "odt") {
-    return "odt";
-  }
-  if (doc.value.format === "md") {
-    return "md";
-  }
-  return "docx";
-});
-
-function handleTitleUpdate(newTitle = "") {
-  if (!doc.value) {
-    return;
-  }
-  const trimmed = newTitle.trim();
-  doc.value.title = trimmed.length > 0 ? trimmed : DEFAULT_TITLE;
-  triggerRef(doc);
-  // The assignment above already mutated the stored model (doc.value IS the
-  // raw stored model); touching records the modification time and persists.
-  touchDocument(doc.value.id);
-}
-
-async function handleDownload(format = "") {
-  // PDF export (SPEC-034 AC-14): a rendered-output snapshot, not a save —
-  // it runs its own pipeline and never touches autosave or the model.
-  if (format === "pdf") {
-    void exportPdf();
-    return;
-  }
-  if (!doc.value || (format !== "docx" && format !== "odt" && format !== "md")) {
-    return;
-  }
-  // The dcterms:created/dc:date (SPEC-041 AC-2) stamp: `created` is set only
-  // the first time (kept stable on every later save, matching what General
-  // tab shows once it has a value), `modified` refreshes every save. Both
-  // .docx/.odt writers read `model.properties.created`/`modified` — see
-  // docProps.ts/meta.ts's buildCorePropertiesXml/buildMetaXml — so this
-  // must be resolved into the model *before* writing, then mirrored back so
-  // the in-memory model (and so the Properties dialog, without a reopen)
-  // agrees with what was just written. Markdown never reads `properties`
-  // (SPEC-050: front matter is carried verbatim, never interpreted), but the
-  // stamp is still recorded so a later save as .docx/.odt keeps it.
-  const modified = new Date();
-  const properties = {
-    ...doc.value.properties,
-    created: doc.value.properties?.created ?? modified.toISOString(),
-    modified: modified.toISOString(),
-  };
-  doc.value.properties = properties;
-  const { bytes, dropped } =
-    format === "odt"
-      ? await writeOdt(doc.value, { modified })
-      : format === "md"
-        ? await writeMd(doc.value)
-        : await writeDocx(doc.value, { modified });
-  triggerRef(doc);
-  touchDocument(doc.value.id);
-  const fileName =
-    format === "odt" ? odtFileName(doc.value.title) : format === "md" ? mdFileName(doc.value.title) : docxFileName(doc.value.title);
-  // A transient anchor pointed at an object URL is the download mechanism
-  // that needs no new browser permissions; revocation is deferred so the
-  // browser has started streaming the blob before the URL disappears.
-  const mimeType = format === "odt" ? ODT_MIMETYPE : format === "md" ? MD_MIME_TYPE : DOCX_MIME_TYPE;
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  // A download is SPEC-003's explicit save: promote the state to committed,
-  // and SPEC-040's other commit-point version-history trigger (AC-2).
-  void autosave.commitNow().then(() => noteVersionHistoryCommitPoint());
-  // SPEC-008: content that could not be preserved by a cross-format save is
-  // reported once, after the download has been triggered, unless the user
-  // opted out for this document. SPEC-052 widens this to a same-format save
-  // too, but only ever for an edited chart's lost properties (chartFeature)
-  // — "Conversion report" is the wrong heading there, since nothing
-  // converted; conversionReportSameFormat drives the dialog's own variant.
-  if (dropped.length > 0 && !doc.value.suppressConversionReport) {
-    conversionReportSameFormat.value = doc.value.format === format;
-    conversionReport.value = dropped;
-  }
-}
-
-const conversionReport = ref(noConversionReport());
-const conversionReportSameFormat = ref(false);
-
-function closeConversionReport(dontShowAgain = false) {
-  conversionReport.value = null;
-  if (dontShowAgain && doc.value) {
-    doc.value.suppressConversionReport = true;
-    touchDocument(doc.value.id);
-  }
-}
-
-const confirmingDelete = ref(false);
-
-const savingAsTemplate = ref(false);
-
 // --- mail-merge chip insertion (SPEC-046 AC-12, AC-15, AC-30) ---------------
 // The attached data source (if any) is shared between "Insert -> Merge
 // field...", "Table -> Repeat row for each..." and the merge run dialog —
@@ -4262,26 +4174,6 @@ function insertMergeFieldFromPicker(name = "") {
   const selection = paragraphSelection(root);
   const result = insertMergeChip(model, selection, { kind: "merge", name });
   applyEdit(result, selection, "insert merge field");
-}
-
-function saveCurrentAsTemplate(name = "") {
-  savingAsTemplate.value = false;
-  if (!doc.value) {
-    return;
-  }
-  const record = saveAsTemplate(doc.value, name);
-  addToast(`Saved template "${record.title}"`);
-}
-
-function deleteOpenDocument() {
-  if (!doc.value) {
-    return;
-  }
-  const { id, title } = doc.value;
-  confirmingDelete.value = false;
-  deleteDocument(id);
-  addToast(`Deleted ${title}`);
-  router.push("/");
 }
 
 /** The registry shortcuts that act regardless of where focus sits in the
