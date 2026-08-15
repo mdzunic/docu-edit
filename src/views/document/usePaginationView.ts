@@ -22,6 +22,8 @@ import {
   isShape,
   isTable,
   isToc,
+  type ActiveHeaderFooterTarget,
+  type ActiveNoteTarget,
   type Block,
   type DocumentModel,
   type NoteContent,
@@ -63,6 +65,7 @@ import type { CellRange } from "../../lib/core/tables";
 import type { ImageLocation } from "../../lib/images";
 import type { ShapeLocation } from "../../lib/shapes";
 import type { ChartLocation } from "../../lib/charts";
+import type { EditorContext } from "./context";
 
 /** One flattened block row — the section-flattened list a single v-for carries
  * (the v-memo keys that keep typing responsive on very large documents). */
@@ -124,8 +127,7 @@ export interface PageView {
   endnoteArea: NoteAreaView | null;
 }
 
-export interface PaginationViewDeps {
-  doc: Ref<DocumentModel | null>;
+export interface PaginationViewDeps extends EditorContext {
   pagination: PaginationController;
   noteLabelsMap: Ref<Map<string, string>>;
   noteTooltipsMap: Ref<Map<string, string>>;
@@ -136,9 +138,8 @@ export interface PaginationViewDeps {
   caretPage: Ref<number>;
   anchorPage: Ref<number>;
   findMatchPage: Ref<number>;
-  activeHeaderFooter: Ref<any>;
-  activeNote: Ref<any>;
-  editable: Ref<boolean>;
+  activeHeaderFooter: Ref<ActiveHeaderFooterTarget | null>;
+  activeNote: Ref<ActiveNoteTarget | null>;
   cellSelection: Ref<CellRange | null>;
   imageSelection: Ref<ImageLocation | null>;
   /** The selected shape (SPEC-051), if any — mirrors imageSelection. */

@@ -54,6 +54,7 @@ import type {
   TableHandleGeometry,
 } from "../../lib/caretGeometry";
 import type { TableCellTarget } from "../../lib/domCaret";
+import type { EditorContext, HeaderFooterBridge } from "./context";
 import type { ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
 
@@ -65,27 +66,29 @@ export interface TableLoc {
   col: number;
 }
 
-export interface TablesDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
+/** The table properties dialog's prefill (SPEC-023) — every field optional
+ * so the view can seed an empty ref before any table was targeted. */
+export interface TablePropertiesInitial {
+  borderStyle?: string;
+  borderWidthPt?: number;
+  borderColor?: string;
+  shadingFill?: string;
+  paddingCm?: number;
+  verticalAlign?: string;
+  alignment?: string;
+  widthMode?: string;
+  widthPercent?: number;
+  scope?: string;
+}
+
+/** Typed empty seed for the view's ref (espree bars annotations there). */
+export function noTablePropertiesInitial(): TablePropertiesInitial {
+  return {};
+}
+
+export interface TablesDeps extends EditorContext, HeaderFooterBridge {
   /** DocumentView's paragraphSelection always resolves to a selection. */
   paragraphSelection: (root?: HTMLElement | null) => ModelSelection;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
-  addToast: (message: string) => void;
-  // --- header/footer branch of table insertion (SPEC-029 AC-5) -----------
-  activeHeaderFooter: Ref<any>;
-  currentHfSelection: () => ModelSelection | null;
-  applyHeaderFooterEdit: (
-    resultModel: DocumentModel,
-    resultSelection: ModelSelection,
-    label: string,
-  ) => void;
   hfRootEl: () => HTMLElement | null;
   // --- shared selection / context-menu state (owned by the view) ---------
   closeContextMenu: () => void;
@@ -98,12 +101,10 @@ export interface TablesDeps {
    * when the right-clicked row does not already repeat; an already-repeating
    * row toggles off immediately with no dialog. */
   repeatRowDialogOpen: Ref<boolean>;
-  tablePropertiesInitial: Ref<any>;
+  tablePropertiesInitial: Ref<TablePropertiesInitial>;
   getTableFormattingLocation: () => TableLoc;
   setTableFormattingLocation: (location: TableLoc) => void;
   getContextMenuTableCell: () => TableCellTarget | null;
-  /** Registers teardown that must run on view unmount (clears resize drags). */
-  onUnmount: (cb: () => void) => void;
 }
 
 export function useTables(deps: TablesDeps) {

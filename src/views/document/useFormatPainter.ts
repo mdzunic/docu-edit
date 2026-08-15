@@ -4,7 +4,6 @@
 // (the canvas cursor and button's pressed state render from `painterMode`) and
 // guards against re-applying to the selection it last acted on.
 import { ref } from "vue";
-import type { Ref } from "vue";
 import {
   applyPainterFormat,
   capturePainterFormat,
@@ -15,20 +14,9 @@ import {
 } from "../../lib/commands";
 import { compareCaret } from "../../lib/textEditing";
 import type { ModelSelection } from "../../lib/commands";
-import type { DocumentModel } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 
-export interface FormatPainterDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-    groupable?: boolean,
-  ) => void;
-}
+export type FormatPainterDeps = EditorContext;
 
 export function useFormatPainter(deps: FormatPainterDeps) {
   const { doc, contentRoot, editable, currentSelection, applyEdit } = deps;
@@ -102,7 +90,7 @@ export function useFormatPainter(deps: FormatPainterDeps) {
     if (isCollapsed(selection)) {
       return;
     }
-    applyEdit(applyPainterFormat(model, selection, painterFormat), selection, "format painter", false);
+    applyEdit(applyPainterFormat(model, selection, painterFormat), selection, "format painter");
     if (painterMode.value === "once") {
       disarmPainter();
     }

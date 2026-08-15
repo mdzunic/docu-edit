@@ -9,7 +9,6 @@
 // (or successful) export never mutates the document (AC-26). Failures
 // surface as one toast, "Couldn't create the PDF — <reason>" (AC-24/25).
 import { ref } from "vue";
-import type { Ref } from "vue";
 import { DEFAULT_TITLE, type DocumentModel } from "../../lib/documentModel";
 import { anchorCaret } from "../../lib/links";
 import {
@@ -25,18 +24,15 @@ import { faceFileName, type FaceKey } from "../../lib/pdf/fontMap";
 import { parseSfnt, type SfntFont } from "../../lib/pdf/sfnt";
 import { isDocumentContentEmpty } from "../../lib/printRange";
 import type { PaginationController } from "../../composables/usePagination";
+import type { EditorContext } from "./context";
 
-export interface PdfExportDeps {
-  doc: Ref<DocumentModel | null>;
+export interface PdfExportDeps extends EditorContext {
   pagination: PaginationController;
-  /** The `.pages` wrapper (Element — the view's template-ref type). */
-  pagesRoot: Readonly<Ref<Element | null>>;
   /** usePrintPreview's realizer: every page rendered and measured. */
   realizeAllPages: () => Promise<boolean>;
   /** Restores virtualization after the export (a no-op while the print
    * preview holds pages realized). */
   endRealizeAll: () => void;
-  addToast: (message: string) => void;
 }
 
 export const PDF_EXPORT_ERROR_PREFIX = "Couldn't create the PDF";
@@ -101,7 +97,7 @@ export function usePdfExport(deps: PdfExportDeps) {
     if (!realized) {
       throw new Error("the document took too long to prepare");
     }
-    const root = deps.pagesRoot.value;
+    const root = deps.pageRef.value;
     if (!root) {
       throw new Error("the document is not on screen");
     }

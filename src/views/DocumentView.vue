@@ -67,6 +67,7 @@ import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
+import { noApplyEditOptions } from "./document/context";
 import { useClipboard } from "./document/useClipboard";
 import { asCommentFilter, useComments } from "./document/useComments";
 import { asChangeEntries, useTrackChanges } from "./document/useTrackChanges";
@@ -82,7 +83,7 @@ import { useShapes } from "./document/useShapes";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
-import { useTables } from "./document/useTables";
+import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
@@ -651,14 +652,11 @@ let autocorrectSuppressedAt = -1;
 // long closed by the time the dialog's OK button fires.
 const splitCellDialogOpen = ref(false);
 const tablePropertiesOpen = ref(false);
-const tablePropertiesInitial = ref({});
+const tablePropertiesInitial = ref(noTablePropertiesInitial());
 const repeatRowDialogOpen = ref(false);
 let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
-
-
-
 
 /** Whether the active cell-range selection spans more than one cell — the
  * context menu's "Merge cells" gate (SPEC-023 AC-6). */
@@ -808,6 +806,34 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
+// The one object satisfying EditorContext (document/context.ts): the
+// universal dependencies every feature composable may rely on. Each use*()
+// call below spreads this and adds only its feature-specific extras, so
+// wiring a new feature never re-plumbs the core. The function fields are
+// hoisted declarations (defined further down this file), so referencing
+// them here — before the composables that call them — is safe; the getters
+// wrap plain variables that must be read live, never snapshotted.
+const editorContext = {
+  doc,
+  documentId,
+  contentRoot,
+  pageRef,
+  editable,
+  currentSelection,
+  applyEdit,
+  applyCaretMove,
+  scrollModelCaretIntoView,
+  getCaret: () => caret,
+  getScrollContainer: () => scrollContainer,
+  clearCellSelection,
+  addToast,
+  markDirty: () => noteEdit(),
+  refreshUndoRedoState,
+  onSessionClose,
+  onUnmount,
+  onScroll,
+};
+
 // The format painter (SPEC-020) lives in useFormatPainter; handleSelectionChange
 // and the canvas mouseup dispatch into its maybeApplyPainter.
 const {
@@ -816,13 +842,7 @@ const {
   handlePainterClick,
   handlePainterDblClick,
   maybeApplyPainter,
-} = useFormatPainter({
-  doc,
-  contentRoot,
-  editable,
-  currentSelection,
-  applyEdit,
-});
+} = useFormatPainter({ ...editorContext });
 
 // --- headers, footers and page numbers (SPEC-029) ----------------------------
 // Lives in useHeadersFooters (the one live-editable band + page-number dialogs).
@@ -857,22 +877,13 @@ const {
   handlePageNumberInsert,
   handlePageNumberCancel,
 } = useHeadersFooters({
-  doc,
-  contentRoot,
-  editable,
-  documentId,
-  currentSelection,
-  applyEdit,
+  ...editorContext,
   getPaginationPages: () => paginationPages.value,
   getPageNumbers: () => pageNumbers.value,
   getCaretSectionIndex: () => caretSectionIndex.value,
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
-  clearCellSelection,
   getClearImageSelection: () => clearImageSelection,
   getExitNoteEditing: () => exitNoteEditing,
-  getCaret: () => caret,
-  markDirty: () => noteEdit(),
-  refreshUndoRedoState,
 });
 
 // --- images (SPEC-024) -------------------------------------------------------
@@ -898,18 +909,10 @@ const {
   handleImageResizeMove,
   finishImageResize,
 } = useImages({
-  doc,
-  contentRoot,
-  pageRef,
-  editable,
-  currentSelection,
-  applyEdit,
-  clearCellSelection,
-  addToast,
+  ...editorContext,
   activeHeaderFooter,
   currentHfSelection,
   applyHeaderFooterEdit,
-  getCaret: () => caret,
 });
 
 // --- shapes and text boxes (SPEC-051) ---------------------------------------
@@ -959,19 +962,7 @@ const {
   disarmShapeDraw,
   startShapeDraw,
   insertTextBoxAction,
-} = useShapes({
-  doc,
-  contentRoot,
-  pageRef,
-  editable,
-  documentId,
-  currentSelection,
-  applyEdit,
-  clearCellSelection,
-  getCaret: () => caret,
-  markDirty: () => noteEdit(),
-  refreshUndoRedoState,
-});
+} = useShapes({ ...editorContext });
 
 // --- charts (SPEC-052) -------------------------------------------------------
 // Chart selection/handles/toolbar, insertion at the caret and the data
@@ -997,16 +988,7 @@ const {
   handleChartDuplicate,
   chartToolbarStyle,
   chartAtClientPoint,
-} = useCharts({
-  doc,
-  contentRoot,
-  pageRef,
-  editable,
-  currentSelection,
-  applyEdit,
-  clearCellSelection,
-  getCaret: () => caret,
-});
+} = useCharts({ ...editorContext });
 
 /** The data sheet dialog's prefill (AC-4..AC-13): the selected chart's
  * current categories/series, and whether its type renders only the first
@@ -1072,21 +1054,10 @@ const {
   handleNoteSettingsApply,
   handleNoteSettingsCancel,
 } = useNotes({
-  doc,
-  contentRoot,
-  editable,
-  documentId,
+  ...editorContext,
   activeHeaderFooter,
-  currentSelection,
-  applyEdit,
-  applyCaretMove,
-  scrollModelCaretIntoView,
-  clearCellSelection,
   clearImageSelection,
   exitHeaderFooterEditing,
-  getCaret: () => caret,
-  markDirty: () => noteEdit(),
-  refreshUndoRedoState,
 });
 
 // Cut/copy/paste and the paste-options chip (SPEC-016) live in useClipboard;
@@ -1104,17 +1075,9 @@ const {
   performPaste,
   getLastCopy,
 } = useClipboard({
-  doc,
-  contentRoot,
-  editable,
-  documentId,
-  currentSelection,
-  applyEdit,
-  addToast,
-  getCaret: () => caret,
+  ...editorContext,
   getPendingFormat: () => pendingFormat,
   insertImageFromFile,
-  onSessionClose,
 });
 
 // Live word count and the statistics dialog (SPEC-036) live in useWordCount;
@@ -1130,7 +1093,7 @@ const {
   refreshDialogStats: refreshStatisticsStats,
   openStatistics,
   closeStatistics,
-} = useWordCount({ doc, onUnmount });
+} = useWordCount({ ...editorContext });
 
 const autosave = useAutosave({
   getCaret: () => caret,
@@ -1372,16 +1335,16 @@ function currentSelection(root = noElement()) {
  *
  * `beforeSelection` is the selection the command was given — exactly the
  * state undo must restore the caret/selection to (SPEC-015 AC-14) — and
- * `label`/`groupable` describe the edit for the undo history (AC-7..13):
- * every call site names its own action, so recording is never skipped by
- * accident the way a defaulted label could be. */
+ * `label` names the edit for the undo history (AC-7..13): every call site
+ * names its own action, so recording is never skipped by accident the way
+ * a defaulted label could be. The optional behaviours (undo grouping, the
+ * paste chip's survival, the track-changes bypass) ride in `options` as
+ * named flags — see ApplyEditOptions in document/context.ts. */
 function applyEdit(
   result = noCommandResult(),
   beforeSelection = noSelection(),
   label = "",
-  groupable = false,
-  keepPasteChip = false,
-  skipTrackChanges = false,
+  options = noApplyEditOptions(),
 ) {
   if (!result || !beforeSelection) {
     return;
@@ -1396,7 +1359,7 @@ function applyEdit(
   }
   // Any edit other than the paste (or its chip re-application, which passes
   // keepPasteChip) supersedes the paste options chip (SPEC-016).
-  if (!keepPasteChip) {
+  if (!options.keepPasteChip) {
     dismissPasteChip();
   }
   // An edit invalidates the cell-range highlight and the hover handles'
@@ -1417,7 +1380,7 @@ function applyEdit(
   // trackChangesDiff.ts's header comment). `skipTrackChanges` is for the
   // accept/reject commands themselves, whose result IS the final state a
   // reviewer chose, not a new edit to re-diff.
-  if (before && !skipTrackChanges && isRecording()) {
+  if (before && !options.skipTrackChanges && isRecording()) {
     result = {
       model: applyTrackChanges(before, result.model, trackChangesAuthorName.value, new Date().toISOString()),
       selection: result.selection,
@@ -1428,7 +1391,7 @@ function applyEdit(
       before: { model: before, selection: beforeSelection },
       after: { model: result.model, selection: result.selection },
       label,
-      groupable,
+      groupable: options.groupable === true,
     });
   }
   doc.value = replaceDocumentModel(documentId.value, result.model);
@@ -1516,7 +1479,6 @@ function insertSpecialCharacter(text = "") {
     insertText(model, selection, text, pendingFormat),
     selection,
     "insert character",
-    false,
   );
   // A deliberate insert is not a substitution follow-up context.
   producedEnDashAt = -1;
@@ -1610,7 +1572,7 @@ function applyAutocorrect(
         { model: flipped.model, selection: caretSelection(caretAfter) },
         selection,
         "typing",
-        true,
+        { groupable: true },
       );
       producedOpenSingleAt = -1;
       producedEnDashAt = -1;
@@ -1623,14 +1585,14 @@ function applyAutocorrect(
   if (settings.smartQuotes && (typed === "'" || typed === '"')) {
     const quote = smartQuote(typed, codePointBefore(text, off - 1));
     if (quote) {
-      applyEdit(plainResult, selection, "typing", true);
+      applyEdit(plainResult, selection, "typing", { groupable: true });
       breakTypingGroup(documentId.value);
       const subResult = replaceInParagraph(plainResult.model, caretAfter, {
         start: off - 1,
         end: off,
         text: quote,
       });
-      applyEdit(subResult, caretSelection(caretAfter), "smart quote", false);
+      applyEdit(subResult, caretSelection(caretAfter), "smart quote");
       producedOpenSingleAt =
         quote === "‘" ? subResult.selection.focus.offset : -1;
       producedEnDashAt = -1;
@@ -1646,7 +1608,7 @@ function applyAutocorrect(
       producedEnDashAt >= 0 ? producedEnDashAt : null,
     );
     if (sub) {
-      applyEdit(plainResult, selection, "typing", true);
+      applyEdit(plainResult, selection, "typing", { groupable: true });
       breakTypingGroup(documentId.value);
       const subResult = replaceInParagraph(
         plainResult.model,
@@ -1657,7 +1619,6 @@ function applyAutocorrect(
         subResult,
         caretSelection(caretAfter),
         sub.producesEnDash ? "en dash" : "em dash",
-        false,
       );
       producedEnDashAt = sub.producesEnDash
         ? subResult.selection.focus.offset
@@ -1755,13 +1716,12 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
             ? detectListAutoformat(prefix)
             : null;
         if (autoformatType) {
-          applyEdit(result, selection, label, groupable);
+          applyEdit(result, selection, label, { groupable });
           const autoformatSelection = caretSelection(caretAfter);
           applyEdit(
             applyListAutoformat(result.model, autoformatSelection, autoformatType),
             autoformatSelection,
             autoformatType === "bullet" ? "bulleted list" : "numbered list",
-            false,
           );
           return;
         }
@@ -1819,7 +1779,7 @@ function handleBeforeInput(event = new InputEvent("beforeinput")) {
     label = "delete";
   }
   if (result) {
-    applyEdit(result, selection, label, groupable);
+    applyEdit(result, selection, label, { groupable });
     // Autolink (SPEC-025 AC-5, AC-6): a completed space or Enter may have
     // finished a bare URL just before the split/insertion point.
     if (type === "insertText" && event.data === " " && label === "typing") {
@@ -1885,7 +1845,7 @@ function handleCompositionEnd(event = new CompositionEvent("compositionend")) {
   // mounts it fresh from the model, discarding whatever nodes the browser's
   // composition left in the DOM (Vue cannot patch nodes it did not create).
   bumpBlockKey(range.anchor.section, range.anchor.block);
-  applyEdit(insertText(model, range, data, pendingFormat), range, "typing", true);
+  applyEdit(insertText(model, range, data, pendingFormat), range, "typing", { groupable: true });
   void verifyCanvasAfterRender();
 }
 
@@ -1940,19 +1900,6 @@ async function verifyCanvasAfterRender() {
 
 // --- hyperlinks and bookmarks (SPEC-025) -----------------------------------
 
-/** The dialog's heading targets (AC-19, AC-21), re-read from the current
- * model each time the dialog template evaluates them. */
-
-
-
-
-
-
-
-
-
-
-
 /** Brings a model position into view and settles it a third of the way down
  * the canvas — a deliberate move to somewhere else in the document (a
  * bookmark jump, the page a break just started), where landing on the
@@ -2000,10 +1947,6 @@ async function keepCaretVisible() {
   }
 }
 
-
-
-
-
 /** Clicks on rendered hyperlinks (AC-12). Browsers do not navigate a plain
  * click on an <a> inside a contenteditable region — the anchors are real
  * links (href/target/rel) purely for fidelity and Ctrl/Cmd+click — but
@@ -2037,13 +1980,6 @@ function handleContentClick(event = new MouseEvent("click")) {
     openLinkTarget({ href });
   }
 }
-
-
-
-
-
-
-
 
 // --- the editor's context menu (SPEC-016 AC-4..6) --------------------------
 
@@ -2438,13 +2374,7 @@ const {
   handleColumnArrowKey,
   scheduleColumnArrowFallback,
 } = usePageNavigation({
-  doc,
-  contentRoot,
-  editable,
-  currentSelection,
-  applyCaretMove,
-  getCaret: () => caret,
-  getScrollContainer: () => scrollContainer,
+  ...editorContext,
   refreshViewportRange,
 });
 
@@ -2695,13 +2625,8 @@ const {
   handleInsertTable,
   confirmRepeatRow,
 } = useTables({
-  doc,
-  contentRoot,
-  editable,
-  currentSelection,
+  ...editorContext,
   paragraphSelection,
-  applyEdit,
-  addToast,
   activeHeaderFooter,
   currentHfSelection,
   applyHeaderFooterEdit,
@@ -2719,7 +2644,6 @@ const {
     tableFormattingLocation = location;
   },
   getContextMenuTableCell: () => contextMenuTableCell,
-  onUnmount,
 });
 
 // --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
@@ -2897,7 +2821,7 @@ function toggleCharacterFormat(key = "") {
       pendingFormat = { ...pendingFormat, vertAlign: on ? false : key };
       updateCaretStatus({ start: selection.anchor, end: selection.focus });
     } else {
-      applyEdit(toggleVerticalAlign(model, selection, key), selection, key, false);
+      applyEdit(toggleVerticalAlign(model, selection, key), selection, key);
     }
     root.focus();
     return;
@@ -2908,7 +2832,7 @@ function toggleCharacterFormat(key = "") {
     pendingFormat = { ...pendingFormat, [formatKey]: next };
     updateCaretStatus({ start: selection.anchor, end: selection.focus });
   } else {
-    applyEdit(toggleFormat(model, selection, formatKey), selection, formatKey, false);
+    applyEdit(toggleFormat(model, selection, formatKey), selection, formatKey);
   }
   root.focus();
 }
@@ -2939,7 +2863,7 @@ function applyRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
     pendingFormat = { ...pendingFormat, ...patch };
     updateCaretStatus({ start: selection.anchor, end: selection.focus });
   } else {
-    applyEdit(applyFormat(model, selection, patch), selection, label, false);
+    applyEdit(applyFormat(model, selection, patch), selection, label);
   }
   root.focus();
 }
@@ -2999,7 +2923,7 @@ function applyParagraphCommand(command = noParagraphCommand(), label = "formatti
     return;
   }
   const selection = paragraphSelection(root);
-  applyEdit(command(model, selection), selection, label, false);
+  applyEdit(command(model, selection), selection, label);
   if (refocus) {
     root.focus();
   }
@@ -3032,7 +2956,7 @@ function handleApplyStyle(styleId = "") {
     return;
   }
   const selection = paragraphSelection(root);
-  applyEdit(applyParagraphStyle(model, selection, styleId), selection, "paragraph style", false);
+  applyEdit(applyParagraphStyle(model, selection, styleId), selection, "paragraph style");
   const after = doc.value;
   const block = after ? paragraphAtCaret(after, selection.focus) : undefined;
   if (after && block && block.runs.length === 0) {
@@ -3274,7 +3198,7 @@ function confirmImportStyles() {
   const selection = paragraphSelection(root);
   const resolutions = styleImportResolutionsFromMap(importResolutions.value);
   const result = importStyles(model, importSourceStyles.value, resolutions);
-  applyEdit({ model: result.model, selection }, selection, "import styles", false);
+  applyEdit({ model: result.model, selection }, selection, "import styles");
   importSummaryState.value = result.summary;
   importPhase.value = "summary";
 }
@@ -3300,7 +3224,7 @@ function convertLiteralChips() {
   if (converted === 0) {
     return;
   }
-  applyEdit({ model: next, selection }, selection, "convert merge fields", false);
+  applyEdit({ model: next, selection }, selection, "convert merge fields");
   addToast(converted === 1 ? "Converted 1 merge field" : `Converted ${converted} merge fields`);
 }
 
@@ -3312,9 +3236,6 @@ function convertLiteralChips() {
 function handleClearFormatting() {
   applyParagraphCommand(clearFormatting, "clear formatting");
 }
-
-/** Disarms the format painter (AC-15, AC-16, AC-17): dropping the copied
- * format and the armed cursor/button state. Idempotent, so Escape can call
 
 /** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
  * clears any absolute height so the preset actually takes effect (AC-11). */
@@ -3971,7 +3892,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
         // Any other position — mid-paragraph or a non-collapsed selection —
         // inserts a literal tab character (AC-10), grouped with typing like
         // any other inserted character (SPEC-015 AC-9).
-        applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", true);
+        applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", { groupable: true });
       }
       break;
     }
@@ -4237,20 +4158,18 @@ const {
   closePrintPreview,
   confirmPrint,
   realizeAllPages,
-} = usePrintPreview({ doc, pagination, pagesRoot: pageRef });
+} = usePrintPreview({ ...editorContext, pagination });
 
 // PDF export (SPEC-034): reads the realized canvas into a client-built PDF.
 const { pdfExporting, pdfProgress, exportPdf } = usePdfExport({
-  doc,
+  ...editorContext,
   pagination,
-  pagesRoot: pageRef,
   realizeAllPages,
   endRealizeAll: () => {
     if (!printPreviewOpen.value) {
       printForceRealize.value = false;
     }
   },
-  addToast,
 });
 
 // Formatting marks are a screen affordance: the class that paints them
@@ -4301,21 +4220,13 @@ const {
   handleTocUpdateEntire,
   clearTocSelection,
 } = useLinks({
-  doc,
-  contentRoot,
-  editable,
-  currentSelection,
+  ...editorContext,
   paragraphSelection,
-  applyEdit,
-  applyCaretMove,
-  scrollModelCaretIntoView,
   restoreCaretAfterRender,
   activeHeaderFooter,
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
   pageNumbers,
-  clearCellSelection,
   clearImageSelection,
-  getCaret: () => caret,
   getSelectionAnchor: () => selectionAnchor,
 });
 
@@ -4517,25 +4428,15 @@ const {
   replaceCurrent,
   replaceAll,
 } = useFindReplace({
-  doc,
-  contentRoot,
-  pageRef,
-  editable,
+  ...editorContext,
   canSearch: findAndPrintEnabled,
   paginationPages,
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
-  applyEdit,
   updateCaretStatus,
-  addToast,
-  getCaret: () => caret,
   setCaret: (next) => {
     caret = next;
   },
-  getScrollContainer: () => scrollContainer,
   registerRefresh: registerFindRefresh,
-  onSessionClose,
-  onUnmount,
-  onScroll: (cb) => scrollHooks.add(cb),
 });
 
 const {
@@ -4546,15 +4447,7 @@ const {
   addWordToDictionary,
   removeWordFromDictionary,
   suggestionsFor,
-} = useSpellCheck({
-  doc,
-  contentRoot,
-  pageRef,
-  getScrollContainer: () => scrollContainer,
-  onSessionClose,
-  onUnmount,
-  onScroll: (cb) => scrollHooks.add(cb),
-});
+} = useSpellCheck({ ...editorContext });
 
 // --- comments (SPEC-038) -----------------------------------------------------
 const {
@@ -4585,21 +4478,7 @@ const {
   commentHighlightRects,
   commentThreadTops,
   scheduleCommentsMeasure,
-} = useComments({
-  doc,
-  contentRoot,
-  pagesRoot: pageRef,
-  editable,
-  currentSelection,
-  applyEdit,
-  applyCaretMove,
-  scrollModelCaretIntoView,
-  getCaret: () => caret,
-  addToast,
-  onSessionClose,
-  onUnmount,
-  onScroll: (cb) => scrollHooks.add(cb),
-});
+} = useComments({ ...editorContext });
 
 // --- track changes (SPEC-039) ------------------------------------------
 const {
@@ -4619,14 +4498,7 @@ const {
   goToNextChange,
   goToPreviousChange,
   goToChangeById,
-} = useTrackChanges({
-  doc,
-  applyEdit,
-  getCaret: () => caret,
-  applyCaretMove,
-  scrollModelCaretIntoView,
-  onSessionClose,
-});
+} = useTrackChanges({ ...editorContext });
 
 const {
   versionHistoryPaneOpen,
@@ -4646,13 +4518,7 @@ const {
   removeVersionName: removeVersionHistoryName,
   deleteVersion: deleteVersionHistoryVersion,
   downloadVersion: downloadVersionHistoryVersion,
-} = useVersionHistory({
-  doc,
-  documentId,
-  applyEdit,
-  getCaret: () => caret,
-  onSessionClose,
-});
+} = useVersionHistory({ ...editorContext });
 
 // --- accessibility checker (SPEC-043) ---------------------------------------
 const {
@@ -4665,13 +4531,9 @@ const {
   applyAccessibilityFix,
   rescanAccessibility,
 } = useAccessibilityCheck({
-  doc,
-  applyEdit,
-  applyCaretMove,
-  scrollModelCaretIntoView,
+  ...editorContext,
   imageSelection,
   openImageOptions,
-  onSessionClose,
 });
 
 /** The Image options dialog's Apply (SPEC-024) also commits the accessibility
@@ -4694,7 +4556,7 @@ const {
   updateDocumentProperties,
   updateAuthorIdentity,
 } = useDocumentProperties({
-  doc,
+  ...editorContext,
   touchDocument,
   commentAuthorName,
   trackChangesAuthorName,
@@ -4762,7 +4624,7 @@ const {
   setSelection: setLanguageSelection,
   setLanguage,
   setNoProof,
-} = useDocumentLanguage({ doc, applyEdit });
+} = useDocumentLanguage({ ...editorContext });
 
 const customDictionaryDialogOpen = ref(false);
 
@@ -4796,7 +4658,7 @@ function noDocument() {
 // composable because it is the framework-free counterpart to the editing core —
 // nothing here edits the model, it only says what the canvas shows.
 const { pagedViews } = usePaginationView({
-  doc,
+  ...editorContext,
   pagination,
   noteLabelsMap,
   noteTooltipsMap,
@@ -4809,7 +4671,6 @@ const { pagedViews } = usePaginationView({
   findMatchPage,
   activeHeaderFooter,
   activeNote,
-  editable,
   cellSelection,
   imageSelection,
   shapeSelection,

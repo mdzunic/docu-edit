@@ -5,7 +5,7 @@
 // changes in it (AC "leaves the toggle OFF"), and resets to OFF on every
 // session close (a document switch), so switching documents never leaks one
 // document's recording state into another's.
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   acceptAllChanges,
   acceptChange as acceptChangeCommand,
@@ -17,9 +17,9 @@ import {
   type ChangeEntry,
 } from "../../lib/trackChanges";
 import { loadTrackChangesAuthor, saveTrackChangesAuthor } from "../../lib/trackChangesIdentity";
-import type { CommandResult, ModelSelection } from "../../lib/commands";
-import type { CaretPosition } from "../../lib/textEditing";
-import { asTrackChangesDisplayMode, type DocumentModel } from "../../lib/documentModel";
+import type { ModelSelection } from "../../lib/commands";
+import { asTrackChangesDisplayMode } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 
 /** Typed pass-through for a `ChangeEntry[]` arriving at TrackChangesPane.vue
  * as a runtime-declared Array prop (espree bars the annotation there). */
@@ -27,21 +27,7 @@ export function asChangeEntries(value: unknown): ChangeEntry[] {
   return value as ChangeEntry[];
 }
 
-export interface TrackChangesDeps {
-  doc: Ref<DocumentModel | null>;
-  applyEdit: (
-    result: CommandResult | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-    groupable?: boolean,
-    keepPasteChip?: boolean,
-    skipTrackChanges?: boolean,
-  ) => void;
-  getCaret: () => CaretPosition | null;
-  applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
-  scrollModelCaretIntoView: (position?: CaretPosition, always?: boolean) => Promise<void>;
-  onSessionClose: (cb: () => void) => void;
-}
+export type TrackChangesDeps = EditorContext;
 
 export function useTrackChanges(deps: TrackChangesDeps) {
   const { doc, applyEdit, getCaret, applyCaretMove, scrollModelCaretIntoView, onSessionClose } = deps;
@@ -104,7 +90,9 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: acceptChangeCommand(model, changeId), selection }, selection, "accept change", false, false, true);
+    applyEdit({ model: acceptChangeCommand(model, changeId), selection }, selection, "accept change", {
+      skipTrackChanges: true,
+    });
   }
 
   function rejectChange(changeId: string): void {
@@ -113,7 +101,9 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: rejectChangeCommand(model, changeId), selection }, selection, "reject change", false, false, true);
+    applyEdit({ model: rejectChangeCommand(model, changeId), selection }, selection, "reject change", {
+      skipTrackChanges: true,
+    });
   }
 
   /** "Accept all" (AC-7). */
@@ -123,7 +113,9 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: acceptAllChanges(model), selection }, selection, "accept all changes", false, false, true);
+    applyEdit({ model: acceptAllChanges(model), selection }, selection, "accept all changes", {
+      skipTrackChanges: true,
+    });
   }
 
   /** "Reject all" (AC-7). */
@@ -133,7 +125,9 @@ export function useTrackChanges(deps: TrackChangesDeps) {
       return;
     }
     const selection = currentModelSelection();
-    applyEdit({ model: rejectAllChanges(model), selection }, selection, "reject all changes", false, false, true);
+    applyEdit({ model: rejectAllChanges(model), selection }, selection, "reject all changes", {
+      skipTrackChanges: true,
+    });
   }
 
   // --- navigation (AC-8) --------------------------------------------------

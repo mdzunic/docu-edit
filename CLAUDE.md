@@ -46,6 +46,13 @@ no Vue imports — it must be unit-testable without mounting a component, and
 ## Conventions
 
 - One component per file, `PascalCase.vue`; composables `useThing.ts`
+- `src/views/DocumentView.vue` is the editor's wiring hub, not a home for
+  feature code: a feature's logic goes in a `src/views/document/` composable
+  (its `*Deps` interface extends `EditorContext` from
+  `src/views/document/context.ts`) and its UI in components; DocumentView
+  gains only a `use*({ ...editorContext, ...extras })` wiring call and the
+  template hookup. `DocumentView.size.spec.ts` enforces a line budget that
+  only ratchets down — when it fails, extract; never raise the budget.
 - Props and emits fully typed; no `any`
 - Scoped styles by default; global styles only in `App.vue`
 - Prefer semantic HTML and ARIA roles — e2e tests select by role and test-id,

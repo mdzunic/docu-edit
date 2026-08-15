@@ -8,7 +8,6 @@
 // at a time), so headers receives `getExitNoteEditing` — a late-binding getter
 // that resolves once useNotes is set up — to break the two-way dependency.
 import { nextTick, ref } from "vue";
-import type { Ref } from "vue";
 import { noCaret } from "../../lib/textEditing";
 import { modelRangeFromSelection, setDomCaret, setDomSelection } from "../../lib/domCaret";
 import {
@@ -35,41 +34,27 @@ import {
   asPageNumberFormat,
   asParagraphAlignment,
   noActiveHeaderFooter,
-  type HeaderFooterKind,
-  type HeaderFooterPart,
+  type ActiveHeaderFooterTarget,
 } from "../../lib/documentModel";
 import { resolveHeaderFooterKind } from "../../lib/pageNumbering";
+import type { EditorContext } from "./context";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
 import type { PageLayout } from "../../lib/pagination";
 
-export interface HeadersFootersDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  documentId: Readonly<Ref<string>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
+export interface HeadersFootersDeps extends EditorContext {
   /** These are declared later in the view than this composable runs, so they
    * are passed as lazy getters evaluated only at call time. */
   getPaginationPages: () => PageLayout[];
   getPageNumbers: () => number[];
   getCaretSectionIndex: () => number;
   pageOfCaret: (caret: CaretPosition) => number;
-  clearCellSelection: () => void;
   /** Late-binding: images is set up later than this composable, so its
    * clearImageSelection is resolved through a getter. */
   getClearImageSelection: () => () => void;
   /** Late-binding: the note composable's exitNoteEditing (set up later). */
   getExitNoteEditing: () => () => void;
-  getCaret: () => CaretPosition | null;
-  markDirty: () => void;
-  refreshUndoRedoState: () => void;
 }
 
 export function useHeadersFooters(deps: HeadersFootersDeps) {
@@ -92,12 +77,7 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
     refreshUndoRedoState,
   } = deps;
 
-  const activeHeaderFooter = ref<{
-    sectionIndex: number;
-    part: HeaderFooterPart;
-    kind: HeaderFooterKind;
-    pageIndex: number;
-  } | null>(noActiveHeaderFooter());
+  const activeHeaderFooter = ref<ActiveHeaderFooterTarget | null>(noActiveHeaderFooter());
   let hfCaret: CaretPosition | null = noCaret();
   let hfSelectionAnchor: CaretPosition | null = noCaret();
   let hfPendingFormat: ReturnType<typeof noPendingFormat> = null;

@@ -5,18 +5,14 @@
 // caret/selection change without this composable owning any DOM listeners
 // of its own.
 import { computed, ref } from "vue";
-import type { Ref } from "vue";
 import { applyFormat, caretSelection, isCollapsed, setDocumentLanguage } from "../../lib/commands";
-import type { CommandResult, ModelSelection } from "../../lib/commands";
+import type { ModelSelection } from "../../lib/commands";
 import { formattingAtOffset, paragraphAt } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { DocumentModel } from "../../lib/documentModel";
 import { DEFAULT_LANGUAGE, effectiveLanguage, languageLabel } from "../../lib/core/language";
+import type { EditorContext } from "./context";
 
-export interface DocumentLanguageDeps {
-  doc: Ref<DocumentModel | null>;
-  applyEdit: (result: CommandResult | null, beforeSelection: ModelSelection | null, label: string) => void;
-}
+export type DocumentLanguageDeps = EditorContext;
 
 export function useDocumentLanguage(deps: DocumentLanguageDeps) {
   const { doc, applyEdit } = deps;

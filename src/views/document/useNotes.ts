@@ -31,33 +31,21 @@ import {
   asNoteKind,
   asNoteNumberFormat,
   asNoteRestart,
+  noActiveNote,
+  type ActiveHeaderFooterTarget,
+  type ActiveNoteTarget,
 } from "../../lib/documentModel";
 import { collectNoteRefs, createNoteId, effectiveNoteSettings, noteById } from "../../lib/notes";
+import type { EditorContext } from "./context";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
 
-export interface NotesDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  documentId: Readonly<Ref<string>>;
-  activeHeaderFooter: Ref<any>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
-  applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
-  scrollModelCaretIntoView: (position?: CaretPosition, always?: boolean) => Promise<void>;
-  clearCellSelection: () => void;
+export interface NotesDeps extends EditorContext {
+  activeHeaderFooter: Ref<ActiveHeaderFooterTarget | null>;
   clearImageSelection: () => void;
   /** Leaves header/footer editing before entering a note (one live surface). */
   exitHeaderFooterEditing: () => void;
-  getCaret: () => CaretPosition | null;
-  markDirty: () => void;
-  refreshUndoRedoState: () => void;
 }
 
 export function useNotes(deps: NotesDeps) {
@@ -79,7 +67,7 @@ export function useNotes(deps: NotesDeps) {
     refreshUndoRedoState,
   } = deps;
 
-  const activeNote = ref<{ noteId: string; kind: string } | null>(null);
+  const activeNote = ref<ActiveNoteTarget | null>(noActiveNote());
   let noteCaret: CaretPosition | null = noCaret();
   let noteSelectionAnchor: CaretPosition | null = noCaret();
   let notePendingFormat: ReturnType<typeof noPendingFormat> = null;

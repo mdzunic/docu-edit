@@ -3,7 +3,7 @@
 // diff highlighting, restore, name/unname, delete, download). The storage
 // and diff/patch logic lives in lib/versionHistory.ts; this composable is
 // the Vue-facing session state, following useTrackChanges.ts's shape.
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   deleteVersion as deleteVersionRecord,
   loadIndex,
@@ -21,11 +21,11 @@ import { createVersionCadenceTimer, type VersionCadenceTimer } from "../../lib/c
 import { loadVersionHistoryPaneOpen, saveVersionHistoryPaneOpen } from "../../lib/versionHistoryPane";
 import { loadCommentAuthor } from "../../lib/core/commentIdentity";
 import { applyTrackChanges } from "../../lib/trackChangesDiff";
-import { caretSelection, type CommandResult, type ModelSelection } from "../../lib/commands";
+import { caretSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
-import type { CaretPosition } from "../../lib/textEditing";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../../lib/odf/writer";
+import type { EditorContext } from "./context";
 
 /** Typed pass-through for a `VersionListEntry[]` arriving at
  * VersionHistoryPane.vue as a runtime-declared Array prop (espree bars the
@@ -34,18 +34,7 @@ export function asVersionListEntries(value: unknown): VersionListEntry[] {
   return value as VersionListEntry[];
 }
 
-export interface UseVersionHistoryDeps {
-  doc: Ref<DocumentModel | null>;
-  documentId: Readonly<Ref<string>>;
-  applyEdit: (
-    result: CommandResult | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-    groupable?: boolean,
-  ) => void;
-  getCaret: () => CaretPosition | null;
-  onSessionClose: (cb: () => void) => void;
-}
+export type UseVersionHistoryDeps = EditorContext;
 
 export function useVersionHistory(deps: UseVersionHistoryDeps) {
   const { doc, documentId, applyEdit, getCaret, onSessionClose } = deps;
@@ -188,7 +177,7 @@ export function useVersionHistory(deps: UseVersionHistoryDeps) {
     const restored: DocumentModel = { ...target, id: current.id };
     const at = getCaret() ?? { section: 0, block: 0, offset: 0 };
     const selection = caretSelection(at);
-    applyEdit({ model: restored, selection }, selection, "restore version", false);
+    applyEdit({ model: restored, selection }, selection, "restore version");
     await attemptSnapshot("post-restore");
   }
 

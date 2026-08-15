@@ -4,7 +4,7 @@
 // text (no synthetic rich-text model like useNotes/useHeadersFooters needs)
 // — every mutation goes through the ordinary applyEdit, exactly like any
 // other command.
-import { computed, nextTick, ref, shallowRef, watch, type Ref } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { domPointForCaret } from "../../lib/domCaret";
 import { caretClientRect } from "../../lib/caretGeometry";
 import { noIdleHandle, scheduleIdleWork, type IdleHandle } from "../../lib/core/idleScheduler";
@@ -23,9 +23,10 @@ import {
 } from "../../lib/comments";
 import { loadCommentAuthor, saveCommentAuthor } from "../../lib/core/commentIdentity";
 import { loadCommentsPaneOpen, saveCommentsPaneOpen } from "../../lib/commentsPane";
-import { isCollapsed, type CommandResult, type ModelSelection } from "../../lib/commands";
+import { isCollapsed, type ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { CommentMessage, DocumentModel } from "../../lib/documentModel";
+import type { CommentMessage } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 
 /** One highlighted rectangle of an anchored (open, non-resolved) comment
  * range, page-relative like find's HighlightRect — plus which thread it
@@ -93,33 +94,13 @@ export function noReplyDrafts(): Record<string, string> {
   return {};
 }
 
-export interface CommentsDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  /** The `.pages` container — highlight rects are positioned relative to it
-   * (the same convention useFindReplace's HighlightRect uses). */
-  pagesRoot: Ref<HTMLElement | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: CommandResult | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
-  applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
-  scrollModelCaretIntoView: (position?: CaretPosition, always?: boolean) => Promise<void>;
-  getCaret: () => CaretPosition | null;
-  addToast: (message: string) => void;
-  onSessionClose: (cb: () => void) => void;
-  onUnmount: (cb: () => void) => void;
-  onScroll: (cb: () => void) => void;
-}
+export type CommentsDeps = EditorContext;
 
 export function useComments(deps: CommentsDeps) {
   const {
     doc,
     contentRoot,
-    pagesRoot,
+    pageRef,
     editable,
     currentSelection,
     applyEdit,
@@ -392,7 +373,7 @@ export function useComments(deps: CommentsDeps) {
    * useFindReplace's measureFindHighlights. */
   function measureComments(dockEl?: Element | null): void {
     const root = contentRoot.value as HTMLElement | null;
-    const pagesEl = pagesRoot.value;
+    const pagesEl = pageRef.value;
     if (!root || !pagesEl) {
       commentHighlightRects.value = noCommentHighlightRects();
       return;

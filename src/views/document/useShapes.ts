@@ -5,7 +5,6 @@
 // Mirrors useImages.ts's shape closely — see its own header comment for the
 // pattern this follows.
 import { nextTick, ref } from "vue";
-import type { Ref } from "vue";
 import {
   caretSelection,
   commitShapeModel,
@@ -82,6 +81,7 @@ import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../
 import { LINE_GEOMETRIES, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
+import type { EditorContext } from "./context";
 
 function sameShapeLocation(a: ShapeLocation, b: ShapeLocation): boolean {
   return a.section === b.section && a.block === b.block;
@@ -105,28 +105,12 @@ const SHAPE_TOOLBAR_MAX_HEIGHT_PX = 96;
 
 type ShapeMutate = (model: DocumentModel, selection: ModelSelection, location: ShapeLocation) => CommandResult;
 
-export interface ShapesDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  pageRef: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  documentId: Readonly<Ref<string>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
-  clearCellSelection: () => void;
-  getCaret: () => CaretPosition | null;
-  /** The shape text-editing pipeline's own commit path (applyShapeTextEdit)
-   * bypasses the generic `applyEdit` above — like useNotes.ts's
-   * applyNoteEdit, it must fold a synthetic withShapeModel result back into
-   * the real document (commitShapeModel) before it can go through the
-   * normal history/store pipeline, so it needs these directly. */
-  markDirty: () => void;
-  refreshUndoRedoState: () => void;
-}
+/** The shape text-editing pipeline's own commit path (applyShapeTextEdit)
+ * bypasses the generic `applyEdit` — like useNotes.ts's applyNoteEdit, it
+ * must fold a synthetic withShapeModel result back into the real document
+ * (commitShapeModel) before it can go through the normal history/store
+ * pipeline, so it needs `markDirty`/`refreshUndoRedoState` directly. */
+export type ShapesDeps = EditorContext;
 
 export function useShapes(deps: ShapesDeps) {
   const {

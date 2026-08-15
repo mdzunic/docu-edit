@@ -8,7 +8,6 @@
 // grouping machinery at the model level, SPEC-052 AC-24, just not through a
 // dedicated Chart-side gesture here).
 import { nextTick, ref } from "vue";
-import type { Ref } from "vue";
 import { caretSelection, documentStart, type CommandResult, type ModelSelection } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { CM_PER_PX } from "../../lib/core/units";
@@ -29,25 +28,13 @@ import { chartDataFromTableCells, type ChartFromTableResult } from "../../lib/co
 import { isChart, type DocumentModel, type ImageWrapMode } from "../../lib/documentModel";
 import { type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
 import type { CaretPosition } from "../../lib/textEditing";
+import type { EditorContext } from "./context";
 
 function sameChartLocation(a: ChartLocation, b: ChartLocation): boolean {
   return a.section === b.section && a.block === b.block;
 }
 
-export interface ChartsDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  pageRef: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
-  clearCellSelection: () => void;
-  getCaret: () => CaretPosition | null;
-}
+export type ChartsDeps = EditorContext;
 
 export function useCharts(deps: ChartsDeps) {
   const { doc, contentRoot, pageRef, editable, currentSelection, applyEdit, clearCellSelection, getCaret } = deps;

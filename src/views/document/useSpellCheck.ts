@@ -12,8 +12,8 @@
 // for this pass, a deliberate limitation noted in the implementation
 // summary rather than a partial/half-built attempt at covering them).
 import { shallowRef, watch } from "vue";
-import type { Ref } from "vue";
 import type { DocumentModel, Paragraph } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 import { effectiveLanguage, isDictionaryAvailable, normalizeLanguageTag } from "../../lib/core/language";
 import { loadDictionary } from "../../lib/spellcheck/dictionaries";
 import type { Dictionary } from "../../lib/spellcheck/dictionary";
@@ -110,15 +110,7 @@ function occurrenceKey(section: number, block: number, start: number, word: stri
   return `${section}:${block}:${start}:${word.toLowerCase()}`;
 }
 
-export interface SpellCheckDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  pageRef: Ref<Element | null>;
-  getScrollContainer: () => Element | null;
-  onScroll: (cb: () => void) => void;
-  onSessionClose: (cb: () => void) => void;
-  onUnmount: (cb: () => void) => void;
-}
+export type SpellCheckDeps = EditorContext;
 
 export function useSpellCheck(deps: SpellCheckDeps) {
   const { doc, contentRoot, pageRef, getScrollContainer, onScroll, onSessionClose, onUnmount } = deps;

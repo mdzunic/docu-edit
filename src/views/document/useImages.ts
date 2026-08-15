@@ -4,7 +4,6 @@
 // toggling, and the eight-handle resize drag. The `contenteditable` canvas
 // routes mousedown/image-select here via the view.
 import { nextTick, ref } from "vue";
-import type { Ref } from "vue";
 import { caretSelection, documentStart, type ModelSelection } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import {
@@ -29,7 +28,7 @@ import { pxToCm } from "../../lib/core/units";
 import { asImageWrapMode, type DocumentFormat } from "../../lib/documentModel";
 import { prepareImageInsert, ImageInsertError } from "../../lib/imageInsert";
 import { withHeaderFooterModel } from "../../lib/commands";
-import type { CaretPosition } from "../../lib/textEditing";
+import type { EditorContext, HeaderFooterBridge } from "./context";
 import type { DocumentModel } from "../../lib/documentModel";
 import type { CommandResult } from "../../lib/commands";
 
@@ -41,30 +40,9 @@ type ImageMutate = (
   location: ImageLocation,
 ) => CommandResult;
 
-export interface ImagesDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  pageRef: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
-  /** Clears the cell-range selection (a sibling overlay) before selecting. */
-  clearCellSelection: () => void;
-  addToast: (message: string) => void;
-  // --- header/footer branch of image insertion (SPEC-029 AC-6) ----------
-  activeHeaderFooter: Ref<any>;
-  currentHfSelection: () => ModelSelection | null;
-  applyHeaderFooterEdit: (
-    resultModel: DocumentModel,
-    resultSelection: ModelSelection,
-    label: string,
-  ) => void;
-  getCaret: () => CaretPosition | null;
-}
+// The bridge carries the header/footer branch of image insertion (SPEC-029
+// AC-6); everything else images needs is the universal context.
+export type ImagesDeps = EditorContext & HeaderFooterBridge;
 
 export function useImages(deps: ImagesDeps) {
   const {

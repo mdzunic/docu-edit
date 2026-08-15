@@ -34,9 +34,10 @@ import {
 import { paragraphAt, blockLength } from "../../lib/textEditing";
 import { defaultTocOptions, insertTableOfContents, updateTocPageNumbersOnly, updateTocEntirely } from "../../lib/toc";
 import { caretClientRect } from "../../lib/caretGeometry";
+import type { EditorContext } from "./context";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { ModelSelection } from "../../lib/commands";
-import type { DocumentModel } from "../../lib/documentModel";
+import type { ActiveHeaderFooterTarget, DocumentModel } from "../../lib/documentModel";
 
 /** A model selection spanning a link extent — what Edit/Remove act on. */
 function extentSelection(extent = noLinkExtent()): ModelSelection | null {
@@ -53,29 +54,15 @@ function extentSelection(extent = noLinkExtent()): ModelSelection | null {
   return { anchor, focus };
 }
 
-export interface LinksDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
+export interface LinksDeps extends EditorContext {
   paragraphSelection: (root?: HTMLElement | null) => ModelSelection;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-    groupable?: boolean,
-  ) => void;
-  applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
-  /** Core caret-scroll helpers that remain in DocumentView. */
-  scrollModelCaretIntoView: (position?: CaretPosition, always?: boolean) => Promise<void>;
+  /** A core caret-scroll helper that remains in DocumentView. */
   restoreCaretAfterRender: () => Promise<void>;
   /** A TOC is body content — unavailable while a header/footer band is active. */
-  activeHeaderFooter: Ref<any>;
+  activeHeaderFooter: Ref<ActiveHeaderFooterTarget | null>;
   pageOfCaret: (caret: CaretPosition) => number;
   pageNumbers: Ref<number[]>;
-  clearCellSelection: () => void;
   clearImageSelection: () => void;
-  getCaret: () => CaretPosition | null;
   getSelectionAnchor: () => CaretPosition | null;
 }
 
@@ -194,7 +181,7 @@ export function useLinks(deps: LinksDeps) {
       !isCollapsed(selection) && text === selectionText
         ? applyLink(model, selection, target)
         : insertLinkText(model, selection, text, target);
-    applyEdit(result, selection, "insert link", false);
+    applyEdit(result, selection, "insert link");
     (contentRoot.value as HTMLElement | null)?.focus();
   }
 
@@ -304,7 +291,7 @@ export function useLinks(deps: LinksDeps) {
       return;
     }
     const selection = caretSelection(caret);
-    applyEdit(removeLink(model, selection), selection, "remove link", false);
+    applyEdit(removeLink(model, selection), selection, "remove link");
     (contentRoot.value as HTMLElement | null)?.focus();
   }
 
@@ -344,7 +331,7 @@ export function useLinks(deps: LinksDeps) {
       return;
     }
     const keep = caretSelection(focus);
-    applyEdit({ model: linked, selection: keep }, keep, "autolink", false);
+    applyEdit({ model: linked, selection: keep }, keep, "autolink");
   }
 
   // --- bookmarks (SPEC-025) -----------------------------------------------
@@ -369,7 +356,7 @@ export function useLinks(deps: LinksDeps) {
     if (validateBookmarkName(name, documentBookmarkNames()) !== "") {
       return;
     }
-    applyEdit(insertBookmark(model, selection, name), selection, "insert bookmark", false);
+    applyEdit(insertBookmark(model, selection, name), selection, "insert bookmark");
     (contentRoot.value as HTMLElement | null)?.focus();
   }
 
@@ -392,7 +379,7 @@ export function useLinks(deps: LinksDeps) {
       return;
     }
     const selection = currentSelection(contentRoot.value as HTMLElement | null) ?? caretSelection(documentStart());
-    applyEdit(deleteBookmark(model, selection, String(name)), selection, "delete bookmark", false);
+    applyEdit(deleteBookmark(model, selection, String(name)), selection, "delete bookmark");
   }
 
   function closeBookmarkManager() {

@@ -10,7 +10,6 @@
 // lives with the context menu in DocumentView; `serializeFragment` is passed
 // in where the menu needs to recognise its own copy.
 import { nextTick, ref } from "vue";
-import type { Ref } from "vue";
 import {
   asPasteMode,
   clipboardFlavours,
@@ -30,8 +29,8 @@ import { deleteRange, isCollapsed, noPendingFormat } from "../../lib/commands";
 import { isAcceptedImageType } from "../../lib/core/media";
 import { undo as undoDocument } from "../../lib/undoHistory";
 import type { ModelSelection } from "../../lib/commands";
-import type { CaretPosition } from "../../lib/textEditing";
 import type { DocumentModel, PendingFormat } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 
 /** The clipboard flavours a paste event carries into `performPaste`. */
 export interface PasteFlavours {
@@ -41,27 +40,11 @@ export interface PasteFlavours {
   hasImage: boolean;
 }
 
-export interface ClipboardDeps {
-  doc: Ref<DocumentModel | null>;
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  documentId: Readonly<Ref<string>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-    groupable?: boolean,
-    keepPasteChip?: boolean,
-  ) => void;
-  addToast: (message: string) => void;
-  getCaret: () => CaretPosition | null;
+export interface ClipboardDeps extends EditorContext {
   getPendingFormat: () => PendingFormat | null;
   /** The image-insert path (SPEC-024) a paste with a raw image File routes
    * into — passed in because image insertion lives with the images feature. */
   insertImageFromFile: (file: File, selection: ModelSelection | null) => void;
-  /** Registers teardown that must run when the document session closes. */
-  onSessionClose: (cb: () => void) => void;
 }
 
 function clipboardHasImage(data: DataTransfer): boolean {
@@ -277,7 +260,7 @@ export function useClipboard(deps: ClipboardDeps) {
     const result = executePaste(model, selection, payload, mode, pendingFormat);
     pastePayload = payload;
     pastePendingFormat = pendingFormat ? { ...pendingFormat } : noPendingFormat();
-    applyEdit(result, selection, "paste", false, true);
+    applyEdit(result, selection, "paste", { keepPasteChip: true });
     void openPasteChip(mode);
   }
 
@@ -330,7 +313,7 @@ export function useClipboard(deps: ClipboardDeps) {
       chosen,
       pastePendingFormat,
     );
-    applyEdit(result, snapshot.selection, "paste", false, true);
+    applyEdit(result, snapshot.selection, "paste", { keepPasteChip: true });
     void openPasteChip(chosen);
     root.focus();
   }

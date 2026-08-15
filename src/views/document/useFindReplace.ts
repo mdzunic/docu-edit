@@ -36,17 +36,10 @@ import { caretSelection, documentStart, noSelection } from "../../lib/commands";
 import type { ModelSelection } from "../../lib/commands";
 import { noCaret } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { DocumentModel } from "../../lib/documentModel";
 import type { PageLayout } from "../../lib/pagination";
+import type { EditorContext } from "./context";
 
-export interface FindReplaceDeps {
-  doc: Ref<DocumentModel | null>;
-  /** `Element` (not `HTMLElement`): the view's template refs default to that
-   * type, and the `.vue` script must stay espree-parseable (no `as`/generics),
-   * so the composable casts `contentRoot.value` to `HTMLElement` where needed. */
-  contentRoot: Ref<Element | null>;
-  pageRef: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
+export interface FindReplaceDeps extends EditorContext {
   /** Whether Find itself may open/search (SPEC-047 AC-27: find still works
    * over a too-large read-only document). `editable` stays the gate for the
    * mutating actions below it (Replace/Replace all) — this is strictly
@@ -54,26 +47,10 @@ export interface FindReplaceDeps {
   canSearch: Readonly<Ref<boolean>>;
   paginationPages: Ref<PageLayout[]>;
   pageOfCaret: (caret: CaretPosition) => number;
-  applyEdit: (
-    result: { model: DocumentModel; selection: ModelSelection } | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-  ) => void;
   updateCaretStatus: (range?: { start: CaretPosition; end: CaretPosition }) => void;
-  addToast: (message: string) => void;
-  /** Live access to the view's raw caret — never destructure it, it must
-   * stay live so this composable can read and restore it. */
-  getCaret: () => CaretPosition | null;
   setCaret: (caret: CaretPosition | null) => void;
-  getScrollContainer: () => Element | null;
   /** Called when the engine wants the search re-run after an edit. */
   registerRefresh: (fn: () => void) => void;
-  /** Registers teardown that must run when the document session closes. */
-  onSessionClose: (cb: () => void) => void;
-  /** Registers teardown that must run on view unmount. */
-  onUnmount: (cb: () => void) => void;
-  /** Registers a scroll listener (re-measures the highlight overlay). */
-  onScroll: (cb: () => void) => void;
 }
 
 export function useFindReplace(deps: FindReplaceDeps) {

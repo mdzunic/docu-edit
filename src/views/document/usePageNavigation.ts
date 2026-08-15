@@ -6,7 +6,6 @@
 // column-boundary arrow escapes that guarantee the caret can never be trapped
 // in a table cell or a column box.
 import { nextTick } from "vue";
-import type { Ref } from "vue";
 import {
   caretFromDomPoint,
   modelTextLengthOf,
@@ -24,22 +23,9 @@ import { blockLength, compareCaret, paragraphAtCaret } from "../../lib/textEditi
 import { documentEnd, documentStart, isCollapsed } from "../../lib/commands";
 import { isMacPlatform } from "../../lib/core/platform";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { ModelSelection } from "../../lib/commands";
-import type { DocumentModel } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 
-export interface PageNavigationDeps {
-  doc: Ref<DocumentModel | null>;
-  /** `Element` (not `HTMLElement`): the view's template ref defaults to that
-   * type and the `.vue` script must stay espree-parseable, so the composable
-   * casts `.value` to `HTMLElement` where it needs it. */
-  contentRoot: Ref<Element | null>;
-  editable: Readonly<Ref<boolean>>;
-  currentSelection: (root?: HTMLElement | null) => ModelSelection | null;
-  applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
-  /** The tracked body caret (the moving end's fallback). */
-  getCaret: () => CaretPosition | null;
-  /** The view's scroll container (an `Element` — see contentRoot note). */
-  getScrollContainer: () => Element | null;
+export interface PageNavigationDeps extends EditorContext {
   refreshViewportRange: () => void;
 }
 

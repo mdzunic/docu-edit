@@ -12,12 +12,11 @@
 // it stays on the main thread rather than paying a worker round trip for
 // something already cheap.
 import { computed, ref, watch } from "vue";
-import type { Ref } from "vue";
 import { isCollapsed, type ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { DocumentModel } from "../../lib/documentModel";
 import { emptyCountStats, selectionWordCount, type CountStats } from "../../lib/wordCount";
 import { computeDocumentStats } from "../../lib/workers/wordCountClient";
+import type { EditorContext } from "./context";
 
 /** Coalesces bursts of recomputation into at most one run per window, with
  * both a leading run (the first change after a quiet period lands right
@@ -51,10 +50,7 @@ function createThrottle(run: () => void, windowMs: number) {
 
 const THROTTLE_MS = 300;
 
-export interface WordCountDeps {
-  doc: Ref<DocumentModel | null>;
-  onUnmount: (cb: () => void) => void;
-}
+export type WordCountDeps = EditorContext;
 
 export function useWordCount(deps: WordCountDeps) {
   const { doc, onUnmount } = deps;

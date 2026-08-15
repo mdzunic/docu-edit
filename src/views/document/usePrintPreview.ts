@@ -15,18 +15,12 @@
 // with no virtual page boxes left, bounded by a deadline well under the
 // export budget. Dismissing the preview mid-realize aborts the wait.
 import { computed, nextTick, onScopeDispose, ref, watchEffect } from "vue";
-import type { Ref } from "vue";
-import type { DocumentModel } from "../../lib/documentModel";
 import { isDocumentContentEmpty, parsePageRange, printPageRuleCss } from "../../lib/printRange";
 import type { PaginationController } from "../../composables/usePagination";
+import type { EditorContext } from "./context";
 
-export interface PrintPreviewDeps {
-  doc: Ref<DocumentModel | null>;
+export interface PrintPreviewDeps extends EditorContext {
   pagination: PaginationController;
-  /** The `.pages` wrapper (the view's pageRef) — realization is confirmed
-   * by the absence of `.page[data-virtual]` boxes under it. `Element`, not
-   * `HTMLElement`: the view's template ref defaults to that type. */
-  pagesRoot: Readonly<Ref<Element | null>>;
 }
 
 /** How long realizeAllPages may wait for every page to render and measure
@@ -122,7 +116,7 @@ export function usePrintPreview(deps: PrintPreviewDeps) {
       if (!forceRealizeAll.value) {
         return false; // dismissed while realizing — stop waiting
       }
-      const root = deps.pagesRoot.value;
+      const root = deps.pageRef.value;
       if (
         root &&
         deps.pagination.state.value === "clean" &&

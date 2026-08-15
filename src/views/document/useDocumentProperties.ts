@@ -7,14 +7,14 @@
 // uses, so the change is persisted (via `touchDocument`) exactly like every
 // other direct edit.
 import { ref, shallowRef, triggerRef } from "vue";
-import type { Ref, ShallowRef } from "vue";
-import type { DocumentModel, DocumentProperties } from "../../lib/documentModel";
+import type { Ref } from "vue";
+import type { DocumentProperties } from "../../lib/documentModel";
 import { writeDocx } from "../../lib/docx/writer";
 import { writeOdt } from "../../lib/odf/writer";
 import { writeMd } from "../../lib/md/writer";
+import type { EditorContext } from "./context";
 
-export interface DocumentPropertiesDeps {
-  doc: ShallowRef<DocumentModel | null>;
+export interface DocumentPropertiesDeps extends EditorContext {
   touchDocument: (id: string) => void;
   /** The settable identity (lib/commentIdentity.ts), as DocumentView's own
    * refs for the Comments/Track Changes panes — updating the identity here

@@ -20,12 +20,12 @@ import {
   type AccessibilityScanTarget,
 } from "../../lib/accessibilityCheck";
 import { setRowIsHeader, type TableLocation } from "../../lib/tables";
-import { applyParagraphStyle, caretSelection, type CommandResult, type ModelSelection } from "../../lib/commands";
+import { applyParagraphStyle, caretSelection } from "../../lib/commands";
 import { headingStyleId } from "../../lib/styles";
 import { noIdleHandle, scheduleIdleWork, type IdleHandle } from "../../lib/core/idleScheduler";
-import { compareCaret, type CaretPosition } from "../../lib/textEditing";
+import { compareCaret } from "../../lib/textEditing";
 import type { ImageLocation } from "../../lib/images";
-import type { DocumentModel } from "../../lib/documentModel";
+import type { EditorContext } from "./context";
 
 /** Typed pass-through for an `AccessibilityIssue[]` arriving at
  * AccessibilityPane.vue as a runtime-declared Array prop (espree bars the
@@ -72,24 +72,12 @@ export function accessibilityFixLabel(fix: AccessibilityFixKind): string {
 // per-slot budget so a large pass never eats a whole frame.
 const IDLE_OPTIONS = { timeoutMs: 150, fallbackBudgetMs: 8, maxBudgetMs: 16 };
 
-export interface AccessibilityCheckDeps {
-  doc: Ref<DocumentModel | null>;
-  applyEdit: (
-    result: CommandResult | null,
-    beforeSelection: ModelSelection | null,
-    label: string,
-    groupable?: boolean,
-    keepPasteChip?: boolean,
-    skipTrackChanges?: boolean,
-  ) => void;
-  applyCaretMove: (target?: CaretPosition, extend?: boolean) => void;
-  scrollModelCaretIntoView: (position?: CaretPosition, always?: boolean) => Promise<void>;
+export interface AccessibilityCheckDeps extends EditorContext {
   /** The image toolbar's own selection/dialog (SPEC-024), reused so
    * "Add alt text" opens the exact same options dialog the image toolbar
    * does rather than inventing a second alt-text editing surface. */
   imageSelection: Ref<ImageLocation | null>;
   openImageOptions: () => void;
-  onSessionClose: (cb: () => void) => void;
 }
 
 export function useAccessibilityCheck(deps: AccessibilityCheckDeps) {
