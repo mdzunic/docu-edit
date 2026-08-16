@@ -8,9 +8,9 @@
 // Scope (AC "search covers body text"): every paragraph of every section is
 // searched. Headers, footers and footnotes are not part of the model yet, so
 // they are excluded for free — the find bar states this to the user.
-import { cloneContainers, isBreak, isChart, isImage, isShape, isTable, isToc, type DocumentModel, type RunFormatting } from "./documentModel";
+import { cloneContainers, isBreak, isChart, isImage, isShape, isTable, isToc, type Block, type DocumentModel, type FieldSpec, type RunFormatting } from "./documentModel";
+import { cachedFieldText } from "./fields";
 import {
-  blockText,
   clampCaret,
   compareCaret,
   formattingAtOffset,
@@ -36,6 +36,11 @@ export interface FindMatch {
   block: number;
   start: number;
   end: number;
+  /** SPEC-053 AC-45/46: true when the matched text falls partly or wholly
+   * inside a field's displayed value. Replace skips these — a field's value
+   * is computed, not literal text a replace may edit — and the view reports
+   * them instead of corrupting the field. */
+  insideField?: boolean;
 }
 
 /** A successfully compiled query — a global RegExp findMatches iterates. */
@@ -127,7 +132,12 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
       if (isTable(block) || isImage(block) || isShape(block) || isChart(block) || isToc(block)) {
         return;
       }
-      const text = blockText(block);
+      // SPEC-053 AC-44: Find matches the text a field DISPLAYS, not the
+      // one-character placeholder in the model text. The display mapping lets
+      // a match's display offsets convert back to model offsets (for a
+      // replace's splitRuns) and flags matches that touch a field.
+      const display = blockDisplayInfo(block);
+      const text = display.text;
       regExp.lastIndex = 0;
       let match = regExp.exec(text);
       while (match !== null) {
@@ -136,16 +146,24 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
           // A zero-width match makes no progress; step past it so exec()
           // cannot loop forever, and don't record an empty highlight.
           regExp.lastIndex += 1;
-        } else if (block.type !== "paragraph" || !overlapsDeletion(block, match.index, match.index + length)) {
-          // A match inside a tracked deletion is invisible text (SPEC-039
-          // AC-17) — matching stays against the full (deletions-included)
-          // text so offsets keep lining up for a replace's splitRuns, but
-          // the match itself is dropped.
+          match = regExp.exec(text);
+          continue;
+        }
+        const displayStart = match.index;
+        const displayEnd = match.index + length;
+        const modelStart = display.toModel(displayStart);
+        const modelEnd = display.toModel(displayEnd);
+        const insideField = display.touchesField(displayStart, displayEnd);
+        // A match inside a tracked deletion is invisible text (SPEC-039
+        // AC-17) — matching stays against the full text so offsets keep
+        // lining up, but the match itself is dropped.
+        if (block.type !== "paragraph" || !overlapsDeletion(block, modelStart, modelEnd)) {
           matches.push({
             section: sectionIndex,
             block: blockIndex,
-            start: match.index,
-            end: match.index + length,
+            start: modelStart,
+            end: modelEnd,
+            ...(insideField ? { insideField: true } : {}),
           });
         }
         match = regExp.exec(text);
@@ -153,6 +171,49 @@ export function findMatches(model: DocumentModel, compiled: CompiledQuery): Find
     });
   });
   return matches;
+}
+
+/** How many of `matches` were skipped for landing inside a field's value
+ * (SPEC-053 AC-46) — the view reports this after a replace. */
+export function fieldSkippedCount(matches: FindMatch[]): number {
+  return matches.filter((match) => match.insideField).length;
+}
+
+/** A block's displayed text (SPEC-053): each field run contributes its shown
+ * value rather than the one-character placeholder, with a map back to model
+ * offsets and a test for whether a display range touches a field. Plain runs
+ * advance display and model offsets together; a field run spans its value's
+ * length in display but exactly one character in the model. */
+function blockDisplayInfo(block: Block): {
+  text: string;
+  toModel: (displayOffset: number) => number;
+  touchesField: (start: number, end: number) => boolean;
+} {
+  const runs = "runs" in block ? block.runs : [];
+  let text = "";
+  // Per run: its display start/length and its model start, so an offset maps
+  // back precisely; a field run records its own span for the touches test.
+  const segments: Array<{ dStart: number; dLen: number; mStart: number; mLen: number; field: boolean }> = [];
+  let mOffset = 0;
+  for (const run of runs) {
+    const shown = run.field ? cachedFieldText(run.field as FieldSpec) : run.text;
+    segments.push({ dStart: text.length, dLen: shown.length, mStart: mOffset, mLen: run.text.length, field: !!run.field });
+    text += shown;
+    mOffset += run.text.length;
+  }
+  const toModel = (d: number): number => {
+    for (const seg of segments) {
+      if (d < seg.dStart + seg.dLen) {
+        // Inside a field, snap to its model start; inside a plain run, advance
+        // in step with the offset.
+        return seg.field ? seg.mStart : seg.mStart + (d - seg.dStart);
+      }
+    }
+    return mOffset;
+  };
+  const touchesField = (start: number, end: number): boolean =>
+    segments.some((seg) => seg.field && seg.dLen > 0 && start < seg.dStart + seg.dLen && end > seg.dStart);
+  return { text, toModel, touchesField };
 }
 
 /** A match as a model selection (its two ends as carets) — how the view
@@ -184,9 +245,14 @@ export function replaceMatches(
   replacement: string,
 ): CommandResult {
   const next = cloneContainers(model);
-  if (matches.length === 0) {
+  // SPEC-053 AC-45: a match inside a field's value is never rewritten — its
+  // value is computed, not literal text. The view reports the skipped count
+  // (fieldSkippedCount); here they are simply filtered out.
+  const editable = matches.filter((match) => !match.insideField);
+  if (editable.length === 0) {
     return { model: next, selection: caretSelection(clampCaret(next, documentStartCaret())) };
   }
+  matches = editable;
   // Group by block so a block is rewritten once even with several matches.
   const byBlock = new Map<string, FindMatch[]>();
   for (const match of matches) {
