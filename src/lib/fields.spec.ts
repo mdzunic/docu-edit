@@ -7,6 +7,7 @@ import {
   REF_SOURCE_NOT_FOUND,
   canonicalDateTimeFormatFromDocx,
   evaluateField,
+  fieldDisplayText,
   formatFromOdtDateStyleName,
   isReadOnlyField,
   isSupportedDateTimeFormat,
@@ -136,6 +137,35 @@ describe("evaluateField (SPEC-053)", () => {
     const field: FieldSpec = { kind: "unsupported", code: 'SEQ Figure \\* ARABIC', cached: "7" };
     expect(evaluateField(field, ctx(docWith([para("")])))).toBe("7");
     expect(isReadOnlyField(field)).toBe(true);
+  });
+});
+
+describe("fieldDisplayText — cached on open, never a live recompute (SPEC-053 AC-19, AC-20)", () => {
+  it("shows the saved cached value, not today's date/time, for date and time fields", () => {
+    const model = docWith([para("")]);
+    // ctx.now is 4 March 2026 14:30 — a live recompute would return that; the
+    // saved values are from a different day, and must survive an open untouched.
+    expect(fieldDisplayText({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" }, ctx(model))).toBe(
+      "1 January 2020",
+    );
+    expect(fieldDisplayText({ kind: "time", format: "HH:mm", cached: "09:15" }, ctx(model))).toBe("09:15");
+  });
+
+  it("shows the saved cached value for metadata and word-count fields, ignoring the live document", () => {
+    const model = docWith([para("one two three four")], {
+      properties: { author: "Ada", customProperties: [] },
+    });
+    // The live author is "Ada" and the live word count is 4; on open a field
+    // shows whatever it was saved with instead.
+    expect(fieldDisplayText({ kind: "author", cached: "Grace" }, ctx(model))).toBe("Grace");
+    expect(fieldDisplayText({ kind: "wordCount", cached: "99" }, ctx(model))).toBe("99");
+  });
+
+  it("evaluates pagination-dependent fields live from the page context (rule 1)", () => {
+    const model = docWith([para("")]);
+    const withPage = ctx(model, { pageNumber: 3, totalPages: 9 });
+    expect(fieldDisplayText({ kind: "page", format: "decimal" }, withPage)).toBe("3");
+    expect(fieldDisplayText({ kind: "numpages", format: "decimal" }, withPage)).toBe("9");
   });
 });
 

@@ -19,7 +19,6 @@ import {
   isChart,
   isImage,
   isMergeChipField,
-  isPaginationDependentField,
   isShape,
   isTable,
   isToc,
@@ -43,7 +42,7 @@ import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/not
 import { noRenderEntries, type RenderEntry, type RenderRun } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { headerFooterForPage } from "../../lib/pageNumbering";
-import { cachedFieldText, evaluateField, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
+import { fieldDisplayText, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
 import { now } from "../../lib/clock";
 import {
   displayRunFormatting,
@@ -197,12 +196,9 @@ function fieldRenderRun(
   shadingOn: boolean,
 ): RenderRun {
   const field = run.field!;
-  // A field is never recomputed on open (SPEC-053 Recalculation rule 3): it
-  // shows its saved `cached` value until a person asks for an update. The one
-  // exception is a pagination-dependent field (page/numpages/pageRef/ref
-  // show:page, rule 1), which has no stable cached value in a live editor and
-  // is recomputed from the page context every paint.
-  const value = isPaginationDependentField(field) ? evaluateField(field, ctx) : cachedFieldText(field);
+  // Show the saved cached value on open, never a live recompute (AC-19/20);
+  // only pagination-dependent fields evaluate live. See fieldDisplayText.
+  const value = fieldDisplayText(field, ctx);
   const shaded = shadingOn || caretOnField;
   const readOnly = isReadOnlyField(field);
   const locked = "locked" in field && field.locked === true;

@@ -14,7 +14,7 @@ import { formatOrdinal } from "./core/lists";
 import { documentBodyStats } from "./wordCount";
 import { effectiveLanguage } from "./core/language";
 import { bookmarkCaretIncludingHidden } from "./links";
-import { isEvaluatedField, isMergeChipField } from "./documentModel";
+import { isEvaluatedField, isMergeChipField, isPaginationDependentField } from "./documentModel";
 import { chipLabel } from "./mergeChips";
 import type { DocumentModel, FieldSpec, PageNumberFormat, RefFormat } from "./documentModel";
 
@@ -377,6 +377,19 @@ export function cachedFieldText(field: FieldSpec): string {
     return chipLabel(field);
   }
   return isEvaluatedField(field) ? field.cached : "";
+}
+
+/** The value a field displays on screen (SPEC-053 AC-19, AC-20): its saved
+ * `cached` result — a field is NEVER recomputed on open (Recalculation rule 3),
+ * so what the file was saved with is exactly what shows. The one exception is a
+ * pagination-dependent field (`page`, `numpages`, `pageRef`, `ref` show:page —
+ * rule 1), which has no stable cached value in a live editor and is evaluated
+ * live from the page context in `ctx`. Merge chips resolve to their label
+ * through `cachedFieldText`. This is the seam every on-screen render path uses;
+ * evaluating unconditionally (the AC-19/20 defect) shows today's date/word
+ * count for a document saved months ago. */
+export function fieldDisplayText(field: FieldSpec, ctx: FieldContext): string {
+  return isPaginationDependentField(field) ? evaluateField(field, ctx) : cachedFieldText(field);
 }
 
 /** The read-only explanation for a field, or "" when the field is editable —
