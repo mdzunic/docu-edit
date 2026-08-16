@@ -58,7 +58,8 @@ import {
   trackChangeRunStyle,
 } from "../../lib/renderFormatting";
 import { effectiveLanguage } from "../../lib/core/language";
-import { markSegments } from "../../lib/core/marks";
+import { markSegments, tabOnlySegments, type MarkSegment } from "../../lib/core/marks";
+import type { ParagraphTabLayout } from "../../lib/tabLayout";
 import { splitRuns } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
@@ -233,6 +234,29 @@ function mediaSrc(model: DocumentModel | null, block: Block): string {
   return mediaDataUri(model.media?.find((part) => part.mediaId === asImage(block).mediaId));
 }
 
+/** Annotates a run's tab segments with their resolved box widths and leaders
+ * (SPEC-054): the advance map is keyed by full-paragraph character index, so
+ * the run's own start offset in the paragraph is added to each segment's
+ * local offset. Mutates and returns the segments. */
+function annotateTabSegments(
+  segments: MarkSegment[],
+  runGlobalStart: number,
+  layout: ParagraphTabLayout,
+): MarkSegment[] {
+  let offset = 0;
+  for (const segment of segments) {
+    if (segment.kind === "tab") {
+      const advance = layout.advances.get(runGlobalStart + offset);
+      if (advance) {
+        segment.widthPx = advance.widthPx;
+        segment.leader = advance.leader;
+      }
+    }
+    offset += segment.text.length;
+  }
+  return segments;
+}
+
 /** One page item's precomputed render entry for DocPage — or null for the
  * continuation slice of a block whose real metrics have not arrived yet. */
 function renderEntryFor(
@@ -375,6 +399,17 @@ function renderEntryFor(
       acc += r.text.length;
     }
   }
+  // SPEC-054 tab layout: resolve the paragraph's tab advances and bar-rule
+  // positions once, keyed by full-paragraph character index. Only paragraphs
+  // that actually carry a tab or their own stops pay for the resolution; a
+  // slice's run offsets are shifted by its start below.
+  const ownStops = paragraph.formatting?.tabStops;
+  const paragraphHasTab = paragraph.runs.some((run) => run.text.includes("\t"));
+  const tabLayout =
+    paragraphHasTab || (ownStops !== undefined && ownStops.length > 0)
+      ? deps.pagination.tabLayoutFor(model, paragraph)
+      : null;
+  const sliceBase = sliceStart ?? 0;
   const fieldCtx: FieldContext = {
     model,
     now: now(),
@@ -445,7 +480,19 @@ function renderEntryFor(
     const displayFormatting = displayRunFormatting(run, deps.trackChangesDisplayMode.value);
     const href = hidden ? undefined : runLinkHref(displayFormatting);
     const external = href ? isExternalLink(displayFormatting) : false;
-    const segments = !hidden && marks ? markSegments(run.text) : null;
+    // SPEC-054: a run holding a tab is split at its tabs so each renders in a
+    // sized `.doc-tab` box (marks or no marks); with marks on but no tab, the
+    // familiar space/pilcrow marking still applies.
+    let segments: MarkSegment[] | null = null;
+    if (!hidden && tabLayout && run.text.includes("\t")) {
+      segments = annotateTabSegments(
+        marks ? markSegments(run.text) : tabOnlySegments(run.text),
+        sliceBase + runStarts[runIndex],
+        tabLayout,
+      );
+    } else if (!hidden && marks) {
+      segments = markSegments(run.text);
+    }
     const marked = segments && segments.some((segment) => segment.kind !== "text");
     return {
       key: runKey(run, runIndex),
@@ -467,6 +514,19 @@ function renderEntryFor(
   const fieldShadeSig = runs.some((run) => run.field && !isMergeChipField(run.field))
     ? `${deps.fieldShadingOn.value ? 1 : 0}:${caretOffsetHere ?? ""}`
     : "";
+  // SPEC-054: a signature of the resolved tab geometry so v-memo repaints when
+  // an advance width or bar position changes without the block object itself
+  // changing (a default-interval or font-load reflow). Empty for the tab-free
+  // majority, keeping their memo cheap.
+  const tabSig = tabLayout
+    ? `${tabLayout.bars.map((bar) => Math.round(bar)).join(",")}|${[...tabLayout.advances.entries()]
+        .map(([index, advance]) => `${index}:${Math.round(advance.widthPx)}`)
+        .join(",")}`
+    : "";
+  if (tabLayout && tabLayout.bars.length > 0) {
+    // The bar rules are absolutely positioned inside the paragraph box.
+    styleObj.position = "relative";
+  }
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
     memo: [
@@ -482,6 +542,7 @@ function renderEntryFor(
       outlineCollapsed,
       deps.trackChangesDisplayMode.value,
       fieldShadeSig,
+      tabSig,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
@@ -494,6 +555,7 @@ function renderEntryFor(
     listMarker: continuation ? undefined : flatEntry.marker || undefined,
     listLevel: paragraph.list ? paragraph.list.level : undefined,
     runs: renderRuns,
+    barRules: tabLayout && tabLayout.bars.length > 0 ? tabLayout.bars : undefined,
     needsBr: runs.length === 0,
     outlineToggle: outlineToggle || undefined,
     outlineCollapsed: outlineCollapsed || undefined,

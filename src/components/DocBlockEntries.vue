@@ -156,7 +156,12 @@ function componentFor(entry = noRenderEntries()[0]) {
           v-for="(segment, segmentIndex) in run.segments"
           :key="segmentIndex"
         ><span
-          v-if="segment.kind !== 'text'"
+          v-if="segment.kind === 'tab' && segment.widthPx != null"
+          class="doc-tab"
+          :class="segment.leader ? `doc-tab-leader-${segment.leader}` : undefined"
+          :style="{ width: `${segment.widthPx}px` }"
+        >{{ segment.text }}</span><span
+          v-else-if="segment.kind !== 'text'"
           :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
         >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></a>
         <span
@@ -167,7 +172,12 @@ function componentFor(entry = noRenderEntries()[0]) {
           v-for="(segment, segmentIndex) in run.segments"
           :key="segmentIndex"
         ><span
-          v-if="segment.kind !== 'text'"
+          v-if="segment.kind === 'tab' && segment.widthPx != null"
+          class="doc-tab"
+          :class="segment.leader ? `doc-tab-leader-${segment.leader}` : undefined"
+          :style="{ width: `${segment.widthPx}px` }"
+        >{{ segment.text }}</span><span
+          v-else-if="segment.kind !== 'text'"
           :class="segment.kind === 'tab' ? 'mark-tab' : 'mark-space'"
         >{{ segment.text }}</span><template v-else>{{ segment.text }}</template></template></span>
         <span
@@ -176,6 +186,17 @@ function componentFor(entry = noRenderEntries()[0]) {
           :lang="run.lang"
         >{{ run.text }}</span>
       </template>
+      <!-- SPEC-054 bar tab stops (AC-22): a vertical rule through the
+           paragraph's line height at each bar position, out of flow so it
+           consumes no advance (AC-23) and is never counted by the caret. -->
+      <span
+        v-for="(bar, barIndex) in entry.barRules"
+        :key="`bar-${barIndex}`"
+        class="tab-bar-rule"
+        contenteditable="false"
+        aria-hidden="true"
+        :style="{ insetInlineStart: `${bar}px` }"
+      />
     </template>
     <br v-else-if="entry.needsBr">
   </component>
@@ -308,6 +329,60 @@ function componentFor(entry = noRenderEntries()[0]) {
   left: 0;
   color: #80868b;
   pointer-events: none;
+}
+
+/* SPEC-054: a tab renders as a sized inline box (AC-1, AC-2) so its advance
+   reaches the resolved stop; the real "\t" stays inside it, so selection,
+   caret math and copy all still see one model character (AC-30). */
+.doc-tab {
+  display: inline-block;
+  width: 0;
+  white-space: pre;
+  overflow: hidden;
+  vertical-align: baseline;
+  position: relative;
+}
+
+/* Leaders (AC-24) fill the tab's box with dots/hyphens/an underscore in the
+   run's own colour (currentColor, AC-25). Drawn on the box's baseline edge. */
+.doc-tab-leader-dot,
+.doc-tab-leader-hyphen,
+.doc-tab-leader-underscore {
+  border-bottom: 1px solid currentColor;
+}
+
+.doc-tab-leader-dot {
+  border-bottom-style: dotted;
+}
+
+.doc-tab-leader-hyphen {
+  border-bottom-style: dashed;
+}
+
+.doc-tab-leader-underscore {
+  border-bottom-style: solid;
+}
+
+/* The tab formatting mark (AC-33): a → across the tab's own box, shown only
+   when formatting marks are on. */
+.marks-on .doc-tab::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: #80868b;
+  pointer-events: none;
+}
+
+/* SPEC-054 bar tab stop (AC-22): a vertical rule spanning the paragraph's
+   height at the stop position, out of flow (AC-23) and never selectable. */
+.tab-bar-rule {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid currentColor;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* The pilcrow (AC-13) — suppressed on a slice that continues onto the next
