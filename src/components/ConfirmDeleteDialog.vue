@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import BaseDialog from "./BaseDialog.vue";
+
 // Confirmation modal for deleting a document; names the document (AC-14) so
 // the user knows exactly what is being removed. Emits confirm/cancel only —
-// the caller owns the actual deletion.
+// the caller owns the actual deletion. BaseDialog owns the shell; through it
+// this dialog also gains Escape-to-cancel, which it never had.
 const props = defineProps({
   /** Title of the document (or template — see `kind`) about to be deleted;
    * shown in the message. */
@@ -15,87 +18,43 @@ const emit = defineEmits(["confirm", "cancel"]);
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="delete-dialog"
-    @click.self="emit('cancel')"
+  <BaseDialog
+    :title="`Delete ${props.kind}`"
+    testid="delete-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="`Delete ${props.kind}`"
+    <p
+      class="dialog-message"
+      data-testid="delete-message"
     >
-      <h2 class="dialog-title">
-        Delete {{ props.kind }}
-      </h2>
-      <p
-        class="dialog-message"
-        data-testid="delete-message"
+      Delete "{{ documentTitle }}"? This cannot be undone.
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="delete-cancel"
+        @click="emit('cancel')"
       >
-        Delete "{{ documentTitle }}"? This cannot be undone.
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="delete-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="danger"
-          data-testid="delete-confirm"
-          @click="emit('confirm')"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  </div>
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="danger"
+        data-testid="delete-confirm"
+        @click="emit('confirm')"
+      >
+        Delete
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 20rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .dialog-message {
   margin: 0;
   color: #3c4043;
   font-size: 0.9375rem;
   overflow-wrap: anywhere;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

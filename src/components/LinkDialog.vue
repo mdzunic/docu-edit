@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { computed, ref } from "vue";
 import { asLinkTargetEntries, isDangerousUrl, sanitizeHref } from "../lib/links";
+import BaseDialog from "./BaseDialog.vue";
 
 // The link dialog (SPEC-025 AC-1..3, AC-14..16, AC-19..21): display text, a
 // web address, and — as the alternative target — the document's headings and
 // bookmarks, listed together. Owns URL-scheme validation (dangerous schemes
 // rejected inline); the parent owns applying the link to the model.
-// Runtime prop declarations, not defineProps<{...}>() generics — see
+// BaseDialog owns the shell, Escape and initial focus (the [autofocus] URL
+// input). Runtime prop declarations, not defineProps<{...}>() generics — see
 // AppShell.vue's comment on the same espree constraint.
 const props = defineProps({
   /** Prefills the text field (the selected text; "" without a selection). */
@@ -26,12 +28,6 @@ const emit = defineEmits(["save", "cancel"]);
 const draftText = ref(props.initialText);
 const draftUrl = ref(props.initialUrl);
 const selectedAnchor = ref(props.initialAnchor);
-const urlInput = useTemplateRef("urlInput");
-
-onMounted(async () => {
-  await nextTick();
-  urlInput.value?.focus();
-});
 
 const trimmedUrl = computed(() => draftUrl.value.trim());
 
@@ -105,151 +101,114 @@ function save() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="link-dialog"
-    @click.self="emit('cancel')"
+  <BaseDialog
+    title="Link"
+    testid="link-dialog"
+    width="24rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Insert link"
-      @keydown.escape.stop="emit('cancel')"
+    <label
+      class="dialog-label"
+      for="link-text-input"
+    >Text</label>
+    <input
+      id="link-text-input"
+      v-model="draftText"
+      class="dialog-input"
+      data-testid="link-text-input"
+      @keydown.enter="save"
     >
-      <h2 class="dialog-title">
-        Link
-      </h2>
-      <label
-        class="dialog-label"
-        for="link-text-input"
-      >Text</label>
-      <input
-        id="link-text-input"
-        v-model="draftText"
-        class="dialog-input"
-        data-testid="link-text-input"
-        @keydown.enter="save"
-      >
-      <label
-        class="dialog-label"
-        for="link-url-input"
-      >Web address</label>
-      <input
-        id="link-url-input"
-        ref="urlInput"
-        v-model="draftUrl"
-        class="dialog-input"
-        data-testid="link-url-input"
-        placeholder="https://"
-        @input="handleUrlInput"
-        @keydown.enter="save"
-      >
-      <p
-        v-if="error"
-        class="dialog-error"
-        data-testid="link-error"
-      >
-        {{ error }}
+    <label
+      class="dialog-label"
+      for="link-url-input"
+    >Web address</label>
+    <input
+      id="link-url-input"
+      v-model="draftUrl"
+      class="dialog-input"
+      data-testid="link-url-input"
+      placeholder="https://"
+      autofocus
+      @input="handleUrlInput"
+      @keydown.enter="save"
+    >
+    <p
+      v-if="error"
+      class="dialog-error"
+      data-testid="link-error"
+    >
+      {{ error }}
+    </p>
+    <div
+      class="target-section"
+      data-testid="link-target-list"
+    >
+      <p class="dialog-label">
+        Or link to this document
       </p>
-      <div
-        class="target-section"
-        data-testid="link-target-list"
+      <p
+        v-if="anchorTargets.headings.length === 0 && anchorTargets.bookmarks.length === 0"
+        class="target-empty"
       >
-        <p class="dialog-label">
-          Or link to this document
+        No headings or bookmarks yet
+      </p>
+      <template v-if="anchorTargets.headings.length > 0">
+        <p class="target-group">
+          Headings
         </p>
-        <p
-          v-if="anchorTargets.headings.length === 0 && anchorTargets.bookmarks.length === 0"
-          class="target-empty"
+        <button
+          v-for="target in anchorTargets.headings"
+          :key="target.anchor"
+          type="button"
+          class="target-option"
+          :class="{ selected: target.anchor === selectedAnchor }"
+          :data-testid="`link-target-${target.anchor}`"
+          :aria-pressed="target.anchor === selectedAnchor ? 'true' : 'false'"
+          @click="chooseAnchor(target.anchor)"
         >
-          No headings or bookmarks yet
+          {{ target.label }}
+        </button>
+      </template>
+      <template v-if="anchorTargets.bookmarks.length > 0">
+        <p class="target-group">
+          Bookmarks
         </p>
-        <template v-if="anchorTargets.headings.length > 0">
-          <p class="target-group">
-            Headings
-          </p>
-          <button
-            v-for="target in anchorTargets.headings"
-            :key="target.anchor"
-            type="button"
-            class="target-option"
-            :class="{ selected: target.anchor === selectedAnchor }"
-            :data-testid="`link-target-${target.anchor}`"
-            :aria-pressed="target.anchor === selectedAnchor ? 'true' : 'false'"
-            @click="chooseAnchor(target.anchor)"
-          >
-            {{ target.label }}
-          </button>
-        </template>
-        <template v-if="anchorTargets.bookmarks.length > 0">
-          <p class="target-group">
-            Bookmarks
-          </p>
-          <button
-            v-for="target in anchorTargets.bookmarks"
-            :key="target.anchor"
-            type="button"
-            class="target-option"
-            :class="{ selected: target.anchor === selectedAnchor }"
-            :data-testid="`link-target-${target.anchor}`"
-            :aria-pressed="target.anchor === selectedAnchor ? 'true' : 'false'"
-            @click="chooseAnchor(target.anchor)"
-          >
-            {{ target.label }}
-          </button>
-        </template>
-      </div>
-      <div class="dialog-actions">
         <button
+          v-for="target in anchorTargets.bookmarks"
+          :key="target.anchor"
           type="button"
-          data-testid="link-cancel"
-          @click="emit('cancel')"
+          class="target-option"
+          :class="{ selected: target.anchor === selectedAnchor }"
+          :data-testid="`link-target-${target.anchor}`"
+          :aria-pressed="target.anchor === selectedAnchor ? 'true' : 'false'"
+          @click="chooseAnchor(target.anchor)"
         >
-          Cancel
+          {{ target.label }}
         </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="link-save"
-          :disabled="!canSave"
-          @click="save"
-        >
-          Apply
-        </button>
-      </div>
+      </template>
     </div>
-  </div>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="link-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="link-save"
+        :disabled="!canSave"
+        @click="save"
+      >
+        Apply
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 24rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .dialog-label {
   display: block;
   margin: 0.5rem 0 0.25rem;
@@ -322,13 +281,6 @@ function save() {
   background: #e8f0fe;
   border-color: #aecbfa;
   color: #174ea6;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

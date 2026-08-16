@@ -2,8 +2,13 @@
 // The print preview panel (SPEC-034 AC-1..5, AC-27/28/31): a docked side
 // panel over the paginated canvas — the canvas itself IS the preview (the
 // body's is-print-preview class hides screen-only affordances and pages
-// outside the selected range). Runtime prop/emit declarations, not the
-// generic form — this script is parsed by espree (see AppShell.vue).
+// outside the selected range). Deliberately NOT built on BaseDialog: that
+// shell is a centred modal with a dimming backdrop and aria-modal="true",
+// all three of which would be wrong here — the panel docks top-right, must
+// leave the pages behind it visible and interactive-looking, and is not
+// modal (so the missing aria-modal is correct, not an oversight). Runtime
+// prop/emit declarations, not the generic form — this script is parsed by
+// espree (see AppShell.vue).
 import { nextTick, onMounted, useTemplateRef } from "vue";
 
 defineProps({

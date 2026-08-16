@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { computed, ref } from "vue";
 import { asMeasurementUnit } from "../lib/core/units";
 import {
   asOrientation,
@@ -12,10 +12,13 @@ import {
   textAreaTooNarrow,
 } from "../lib/core/pageSetup";
 import { fromCm, roundForDisplay, toCm } from "../lib/core/units";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Page setup" dialog (SPEC-027 AC-1..9): paper size (a standard size or
 // Custom width/height), orientation and the four margins, all edited in the
-// document's measurement-unit preference (AC-6). Every field commits
+// document's measurement-unit preference (AC-6). BaseDialog owns the shell,
+// Escape and initial focus (the [autofocus] paper-size select); this file
+// keeps only the tall body and its scroll behaviour. Every field commits
 // together on OK as one combined patch the parent applies through
 // commands.ts's setPageSetup (SPEC-027, mirroring how TablePropertiesDialog
 // batches its fields into one undo step); Cancel discards everything.
@@ -50,13 +53,6 @@ const marginTopInput = ref(displayValue(props.initial.margins.topCm));
 const marginRightInput = ref(displayValue(props.initial.margins.rightCm));
 const marginBottomInput = ref(displayValue(props.initial.margins.bottomCm));
 const marginLeftInput = ref(displayValue(props.initial.margins.leftCm));
-
-const paperSizeSelect = useTemplateRef("paperSizeSelect");
-
-onMounted(async () => {
-  await nextTick();
-  paperSizeSelect.value?.focus();
-});
 
 const PAPER_OPTIONS = PAPER_SIZE_NAMES;
 const UNIT_OPTIONS = ["cm", "mm", "in", "pt"];
@@ -163,243 +159,210 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="page-setup-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Page setup"
+    testid="page-setup-dialog"
+    width="28rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Page setup"
-    >
-      <h2 class="dialog-title">
-        Page setup
-      </h2>
-
-      <section class="section">
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Paper size</span>
-            <select
-              ref="paperSizeSelect"
-              v-model="paperSize"
-              class="field-input"
-              data-testid="page-setup-paper-size"
-              @change="handlePaperSizeChange"
+    <section class="section">
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Paper size</span>
+          <select
+            v-model="paperSize"
+            class="field-input"
+            data-testid="page-setup-paper-size"
+            autofocus
+            @change="handlePaperSizeChange"
+          >
+            <option
+              v-for="name in PAPER_OPTIONS"
+              :key="name"
+              :value="name"
             >
-              <option
-                v-for="name in PAPER_OPTIONS"
-                :key="name"
-                :value="name"
-              >
-                {{ name }}
-              </option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">Orientation</span>
-            <select
-              v-model="orientation"
-              class="field-input"
-              data-testid="page-setup-orientation"
-              @change="handleOrientationChange"
+              {{ name }}
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Orientation</span>
+          <select
+            v-model="orientation"
+            class="field-input"
+            data-testid="page-setup-orientation"
+            @change="handleOrientationChange"
+          >
+            <option value="portrait">
+              Portrait
+            </option>
+            <option value="landscape">
+              Landscape
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Unit</span>
+          <select
+            v-model="unit"
+            class="field-input"
+            data-testid="page-setup-unit"
+            @change="handleUnitChange"
+          >
+            <option
+              v-for="u in UNIT_OPTIONS"
+              :key="u"
+              :value="u"
             >
-              <option value="portrait">
-                Portrait
-              </option>
-              <option value="landscape">
-                Landscape
-              </option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">Unit</span>
-            <select
-              v-model="unit"
-              class="field-input"
-              data-testid="page-setup-unit"
-              @change="handleUnitChange"
-            >
-              <option
-                v-for="u in UNIT_OPTIONS"
-                :key="u"
-                :value="u"
-              >
-                {{ u }}
-              </option>
-            </select>
-          </label>
-        </div>
-        <div
-          v-if="paperSize === 'Custom'"
-          class="field-row"
-        >
-          <label class="field">
-            <span class="field-label">Width ({{ unit }})</span>
-            <input
-              v-model="widthInput"
-              class="field-input"
-              data-testid="page-setup-width"
-              type="number"
-              step="0.01"
-              :aria-label="`Width in ${unit}`"
-            >
-          </label>
-          <label class="field">
-            <span class="field-label">Height ({{ unit }})</span>
-            <input
-              v-model="heightInput"
-              class="field-input"
-              data-testid="page-setup-height"
-              type="number"
-              step="0.01"
-              :aria-label="`Height in ${unit}`"
-            >
-          </label>
-        </div>
-        <p
-          v-if="sizeError"
-          class="dialog-error"
-          data-testid="page-setup-size-error"
-        >
-          {{ sizeError }}
-        </p>
-      </section>
-
-      <section class="section">
-        <h3 class="section-title">
-          Margins
-        </h3>
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Top ({{ unit }})</span>
-            <input
-              v-model="marginTopInput"
-              class="field-input"
-              data-testid="page-setup-margin-top"
-              type="number"
-              step="0.01"
-              :aria-label="`Top margin in ${unit}`"
-            >
-          </label>
-          <label class="field">
-            <span class="field-label">Bottom ({{ unit }})</span>
-            <input
-              v-model="marginBottomInput"
-              class="field-input"
-              data-testid="page-setup-margin-bottom"
-              type="number"
-              step="0.01"
-              :aria-label="`Bottom margin in ${unit}`"
-            >
-          </label>
-        </div>
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Left ({{ unit }})</span>
-            <input
-              v-model="marginLeftInput"
-              class="field-input"
-              data-testid="page-setup-margin-left"
-              type="number"
-              step="0.01"
-              :aria-label="`Left margin in ${unit}`"
-            >
-          </label>
-          <label class="field">
-            <span class="field-label">Right ({{ unit }})</span>
-            <input
-              v-model="marginRightInput"
-              class="field-input"
-              data-testid="page-setup-margin-right"
-              type="number"
-              step="0.01"
-              :aria-label="`Right margin in ${unit}`"
-            >
-          </label>
-        </div>
-        <p
-          v-if="marginsError"
-          class="dialog-error"
-          data-testid="page-setup-margins-error"
-        >
-          {{ marginsError }}
-        </p>
-      </section>
-
-      <section class="section">
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Apply to</span>
-            <select
-              v-model="applyTo"
-              class="field-input"
-              data-testid="page-setup-apply-to"
-            >
-              <option value="thisSection">
-                this section
-              </option>
-              <option value="wholeDocument">
-                whole document
-              </option>
-            </select>
-          </label>
-        </div>
-      </section>
-
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="page-setup-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="page-setup-apply"
-          :disabled="!!error"
-          @click="apply"
-        >
-          OK
-        </button>
+              {{ u }}
+            </option>
+          </select>
+        </label>
       </div>
-    </div>
-  </div>
+      <div
+        v-if="paperSize === 'Custom'"
+        class="field-row"
+      >
+        <label class="field">
+          <span class="field-label">Width ({{ unit }})</span>
+          <input
+            v-model="widthInput"
+            class="field-input"
+            data-testid="page-setup-width"
+            type="number"
+            step="0.01"
+            :aria-label="`Width in ${unit}`"
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Height ({{ unit }})</span>
+          <input
+            v-model="heightInput"
+            class="field-input"
+            data-testid="page-setup-height"
+            type="number"
+            step="0.01"
+            :aria-label="`Height in ${unit}`"
+          >
+        </label>
+      </div>
+      <p
+        v-if="sizeError"
+        class="dialog-error"
+        data-testid="page-setup-size-error"
+      >
+        {{ sizeError }}
+      </p>
+    </section>
+
+    <section class="section">
+      <h3 class="section-title">
+        Margins
+      </h3>
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Top ({{ unit }})</span>
+          <input
+            v-model="marginTopInput"
+            class="field-input"
+            data-testid="page-setup-margin-top"
+            type="number"
+            step="0.01"
+            :aria-label="`Top margin in ${unit}`"
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Bottom ({{ unit }})</span>
+          <input
+            v-model="marginBottomInput"
+            class="field-input"
+            data-testid="page-setup-margin-bottom"
+            type="number"
+            step="0.01"
+            :aria-label="`Bottom margin in ${unit}`"
+          >
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Left ({{ unit }})</span>
+          <input
+            v-model="marginLeftInput"
+            class="field-input"
+            data-testid="page-setup-margin-left"
+            type="number"
+            step="0.01"
+            :aria-label="`Left margin in ${unit}`"
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Right ({{ unit }})</span>
+          <input
+            v-model="marginRightInput"
+            class="field-input"
+            data-testid="page-setup-margin-right"
+            type="number"
+            step="0.01"
+            :aria-label="`Right margin in ${unit}`"
+          >
+        </label>
+      </div>
+      <p
+        v-if="marginsError"
+        class="dialog-error"
+        data-testid="page-setup-margins-error"
+      >
+        {{ marginsError }}
+      </p>
+    </section>
+
+    <section class="section">
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Apply to</span>
+          <select
+            v-model="applyTo"
+            class="field-input"
+            data-testid="page-setup-apply-to"
+          >
+            <option value="thisSection">
+              this section
+            </option>
+            <option value="wholeDocument">
+              whole document
+            </option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <template #actions>
+      <button
+        type="button"
+        data-testid="page-setup-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="page-setup-apply"
+        :disabled="!!error"
+        @click="apply"
+      >
+        OK
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 28rem;
-  max-width: 90vw;
+/* This dialog's body is tall, so the panel keeps its own scroll cap (the
+   base's .dialog is the short-dialog variant without one). */
+:deep(.dialog) {
   max-height: 85vh;
   overflow-y: auto;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .section {
@@ -452,13 +415,6 @@ function apply() {
   margin: 0.5rem 0 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
 }
 
 .dialog-actions button {

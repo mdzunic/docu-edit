@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { MAX_TITLE_LENGTH } from "../lib/documentStore";
+import BaseDialog from "./BaseDialog.vue";
 
 // Modal for renaming a library document. Owns the input-level validation
 // (non-empty, max length — the maxlength attribute already blocks typing
 // past the limit); deduplication against other titles happens in the store
-// when the parent applies the rename.
+// when the parent applies the rename. BaseDialog owns the shell and Escape —
+// which also fixes the old bug where Escape was bound to the input only and
+// did nothing while a button had focus.
 const props = defineProps({
   /** The document's current title; prefills the input. */
   currentTitle: { type: String, required: true },
-  /** Dialog heading and aria-label (SPEC-046 reuses this dialog for naming
-   * a new template — "Save as template" — where "Rename document" would be
-   * misleading). Defaults to the original behaviour. */
+  /** Dialog heading and accessible name (SPEC-046 reuses this dialog for
+   * naming a new template — "Save as template" — where "Rename document"
+   * would be misleading). Defaults to the original behaviour. */
   heading: { type: String, default: "Rename document" },
   /** The submit button's label. */
   confirmLabel: { type: String, default: "Rename" },
@@ -22,9 +25,10 @@ const emit = defineEmits(["save", "cancel"]);
 const draft = ref(props.currentTitle);
 const input = useTemplateRef("input");
 
+// BaseDialog focuses the [autofocus] input; selecting the prefilled title on
+// top of that (type-to-replace) is this dialog's own one-shot behaviour.
 onMounted(async () => {
   await nextTick();
-  input.value?.focus();
   input.value?.select();
 });
 
@@ -48,87 +52,50 @@ function save() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="rename-dialog"
-    @click.self="emit('cancel')"
+  <BaseDialog
+    :title="props.heading"
+    testid="rename-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="props.heading"
+    <input
+      ref="input"
+      v-model="draft"
+      class="dialog-input"
+      data-testid="rename-input"
+      aria-label="Document title"
+      autofocus
+      :maxlength="MAX_TITLE_LENGTH"
+      @keydown.enter="save"
     >
-      <h2 class="dialog-title">
-        {{ props.heading }}
-      </h2>
-      <input
-        ref="input"
-        v-model="draft"
-        class="dialog-input"
-        data-testid="rename-input"
-        aria-label="Document title"
-        :maxlength="MAX_TITLE_LENGTH"
-        @keydown.enter="save"
-        @keydown.escape="emit('cancel')"
+    <p
+      v-if="error"
+      class="dialog-error"
+      data-testid="rename-error"
+    >
+      {{ error }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="rename-cancel"
+        @click="emit('cancel')"
       >
-      <p
-        v-if="error"
-        class="dialog-error"
-        data-testid="rename-error"
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="rename-save"
+        :disabled="!!error"
+        @click="save"
       >
-        {{ error }}
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="rename-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="rename-save"
-          :disabled="!!error"
-          @click="save"
-        >
-          {{ props.confirmLabel }}
-        </button>
-      </div>
-    </div>
-  </div>
+        {{ props.confirmLabel }}
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 20rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .dialog-input {
   font: inherit;
   width: 100%;
@@ -142,13 +109,6 @@ function save() {
   margin: 0.5rem 0 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {
