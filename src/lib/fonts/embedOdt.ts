@@ -5,9 +5,18 @@
 // content.xml's office:font-face-decls and a manifest entry. Framework-free.
 import { unzip } from "../core/zip";
 import { zip } from "../core/zipWriter";
+import { SVG_NAMESPACE, XLINK_NAMESPACE } from "../odf/xml";
 import type { EmbedFace } from "./embedPlan";
 
 const FONT_MEDIA_TYPE = "application/x-font-ttf";
+
+// writeOdt declares only office/style/text/fo on the content.xml root, so the
+// svg: and xlink: prefixes these font-face declarations use are undeclared
+// there. Bind them locally on each <style:font-face> (the TABLE_XMLNS/LINK_XMLNS
+// pattern from the writer) so the child svg:/xlink: nodes inherit them and the
+// package is namespace-well-formed — a strict browser DOMParser (the reader's)
+// rejects the file otherwise.
+const FACE_XMLNS = ` xmlns:svg="${SVG_NAMESPACE}" xmlns:xlink="${XLINK_NAMESPACE}"`;
 
 function xmlEscape(value: string): string {
   return value
@@ -29,7 +38,7 @@ function fontFaceXml(planned: PlannedOdtFace[]): string {
     const weight = p.face.bold ? ' svg:font-weight="bold"' : "";
     const style = p.face.italic ? ' svg:font-style="italic"' : "";
     out +=
-      `<style:font-face style:name="${xmlEscape(p.styleName)}" svg:font-family="${xmlEscape(p.face.family)}">` +
+      `<style:font-face${FACE_XMLNS} style:name="${xmlEscape(p.styleName)}" svg:font-family="${xmlEscape(p.face.family)}">` +
       `<svg:font-face-src><svg:font-face-uri xlink:href="${p.path}"${weight}${style}>` +
       `<svg:font-face-format svg:string="truetype"/></svg:font-face-uri></svg:font-face-src>` +
       `</style:font-face>`;

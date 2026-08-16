@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { unzip } from "../core/zip";
 import type { DocumentModel } from "../documentModel";
 import { createDefaultStyles } from "../documentModel";
+import { parseOdt } from "../odf/reader";
+import { writeOdt } from "../odf/writer";
+import { SVG_NAMESPACE, XLINK_NAMESPACE } from "../odf/xml";
 import { extractDocxEmbeddedFonts, extractOdtEmbeddedFonts } from "./embeddedFonts";
 import { embedFontsIntoDocx } from "./embedDocx";
 import { embedFontsIntoOdt } from "./embedOdt";
@@ -119,5 +122,47 @@ describe("embedFontsIntoOdt", () => {
     expect(extracted.length).toBeGreaterThanOrEqual(2);
     const boldFace = extracted.find((f) => f.bold);
     expect(boldFace?.family).toBe("MyFont");
+  });
+
+  it("stays namespace-well-formed when embedding into writeOdt output (AC-15)", async () => {
+    // The real save path: a document with no preserved font-face-decls,
+    // re-serialised by writeOdt — whose content.xml root declares only
+    // office/style/text/fo, NOT svg/xlink — then embedded. This is where an
+    // undeclared svg:/xlink: prefix on the injected <style:font-face> corrupts
+    // the package (a raw LibreOffice fixture can't catch it: its own root
+    // already declares svg/xlink, so the injected prefixes inherit).
+    const opened = await parseOdt(fixture("../odf/fixtures/libreoffice-writer.odt"));
+    const model: DocumentModel = {
+      id: "d",
+      title: "t",
+      sections: opened.sections,
+      defaultStyles: opened.defaultStyles,
+      format: "odt",
+      opaque: opened.opaque,
+      sourceXml: { ...opened.sourceXml, odtFontFaceDecls: undefined },
+    };
+    const { bytes } = await writeOdt(model);
+    const embedded = await embedFontsIntoOdt(bytes, faces);
+
+    // The app must be able to reopen its own output: the reader parses
+    // content.xml with a strict, namespace-aware DOMParser and throws
+    // OdtOpenError on ill-formed markup (QA's exact symptom), and the embedded
+    // faces must round-trip back out.
+    const reopened = await parseOdt(embedded);
+    const reExtracted = extractOdtEmbeddedFonts(
+      reopened.sourceXml.odtFontFaceDecls ?? "",
+      await unzip(embedded),
+    );
+    expect(reExtracted.map((f) => f.family)).toContain("MyFont");
+
+    // The injected face must bind svg:/xlink: in its own scope regardless of the
+    // root — assert on the parsed element so this holds in any DOMParser, not
+    // only the strict browser one that surfaced the corruption for QA.
+    const content = new TextDecoder().decode((await unzip(embedded)).get("content.xml")!);
+    const face = new DOMParser()
+      .parseFromString(content, "application/xml")
+      .getElementsByTagNameNS("urn:oasis:names:tc:opendocument:xmlns:style:1.0", "font-face")[0];
+    expect(face.lookupNamespaceURI("svg")).toBe(SVG_NAMESPACE);
+    expect(face.lookupNamespaceURI("xlink")).toBe(XLINK_NAMESPACE);
   });
 });
