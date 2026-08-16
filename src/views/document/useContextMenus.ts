@@ -78,8 +78,9 @@ async function readAsyncClipboard() {
 }
 
 export interface ContextMenusDeps extends EditorContext {
-  /** DocumentView's tableCellAtTarget helper — it stays with the view
-   * because the canvas mousedown/mousemove cell-drag handlers use it too. */
+  /** useCanvasGestures' tableCellAtTarget helper — it lives with the canvas
+   * gesture hub because the mousedown/mousemove cell-drag handlers there use
+   * it too; the view passes the destructured const through. */
   tableCellAtTarget: (eventTarget?: EventTarget | null) => TableCellTarget | null;
   /** Setter for the view's plain `contextMenuTableCell` variable (see the
    * file header): set before the menu's visible ref flips, nulled on close.

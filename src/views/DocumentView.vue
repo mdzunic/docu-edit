@@ -96,6 +96,7 @@ import { usePageSetupDialogs } from "./document/usePageSetupDialogs";
 import { useOutlinePane } from "./document/useOutlinePane";
 import { useMergeFields } from "./document/useMergeFields";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
+import { useCanvasGestures } from "./document/useCanvasGestures";
 import { documentExists } from "../lib/documents";
 import {
   getOrCreateDocument,
@@ -192,7 +193,6 @@ import {
   tableAt,
 } from "../lib/tables";
 import {
-  cellRangeBounds,
   MIN_COLUMN_WIDTH_CM,
   MIN_ROW_HEIGHT_CM,
   noCellRange,
@@ -209,13 +209,11 @@ import {
   modelRangeFromSelection,
   modelTextLengthOf,
   noElement,
-  noEventTarget,
   noParagraphTarget,
   noTableCellTarget,
   paragraphElementForCaret,
   setDomCaret,
   setDomSelection,
-  tableCellFromEventTarget,
 } from "../lib/domCaret";
 import {
   findMatches,
@@ -226,13 +224,7 @@ import {
   noMatches,
 } from "../lib/findReplace";
 import {
-  caretAtClientPoint,
   caretClientRect,
-  caretNearClientPoint,
-  caretOnBoundaryLine,
-  measureImageGeometry,
-  measureTableHandles,
-  noImageHandleGeometry,
   noTableHandleGeometry,
 } from "../lib/caretGeometry";
 import { findTableElement, noColumnResizeDrag, noRowResizeDrag } from "../lib/tableResize";
@@ -308,9 +300,7 @@ import {
 } from "../lib/commands";
 import {
   collectNoteRefs,
-  createNoteId,
   effectiveNoteSettings,
-  noteById,
   noteLabels,
   noteText,
 } from "../lib/notes";
@@ -336,10 +326,9 @@ import {
   setImageSize,
   setImageWrap,
 } from "../lib/images";
-import { isAcceptedImageType } from "../lib/core/media";
 import { pxToCm } from "../lib/core/units";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
-import { noShapeLocation, shapeAt } from "../lib/shapes";
+import { shapeAt } from "../lib/shapes";
 import { asNudgeDirection } from "../lib/core/shapes";
 import { chartAt } from "../lib/charts";
 import {
@@ -497,12 +486,10 @@ function registerFindRefresh(fn = () => {}) {
 }
 
 // --- tables (SPEC-022) ------------------------------------------------------
-// The rectangular cell-range selection (AC-15, AC-16): activated by
-// dragging from one cell into another of the same table; the DOM text
-// selection is suppressed while it is active. `cellDragOrigin` remembers
-// the cell the primary button went down in until the button is released.
+// The rectangular cell-range selection (AC-15, AC-16). The ref stays here —
+// useTables' wiring and the template consume it — while the drag gesture
+// that populates it (and its drag-origin tracking) lives in useCanvasGestures.
 const cellSelection = ref(noCellRange());
-let cellDragOrigin = noTableCellTarget();
 // The cell a right-click opened the context menu in — the target of the
 // menu's table actions (AC-17..19).
 let contextMenuTableCell = noTableCellTarget();
@@ -530,29 +517,8 @@ const repeatRowDialogOpen = ref(false);
 let tableFormattingLocation = { section: 0, block: 0, row: 0, col: 0 };
 // The column/row resize drag state now lives inside useTables (it owns the
 // live-resize handlers and their listener lifecycle).
-
-/** Whether the active cell-range selection spans more than one cell — the
- * context menu's "Merge cells" gate (SPEC-023 AC-6). */
-const canMergeCells = computed(() => {
-  const range = cellSelection.value;
-  if (!range) {
-    return false;
-  }
-  const bounds = cellRangeBounds(range);
-  return bounds.top !== bounds.bottom || bounds.left !== bounds.right;
-});
-
-function clearCellSelection() {
-  if (cellSelection.value) {
-    cellSelection.value = noCellRange();
-  }
-}
-
-/** The table cell an event target sits in — see lib/domCaret. */
-function tableCellAtTarget(eventTarget = noEventTarget()) {
-  const root = contentRoot.value;
-  return root ? tableCellFromEventTarget(root, eventTarget) : null;
-}
+// canMergeCells / clearCellSelection / tableCellAtTarget live in
+// useCanvasGestures, wired below with the rest of the canvas gesture hub.
 
 // --- character formatting (SPEC-012) ----------------------------------------
 // `selectionAnchor` is set only when the tracked selection is a real (non-
@@ -656,7 +622,10 @@ const editorContext = {
   scrollModelCaretIntoView,
   getCaret: () => caret,
   getScrollContainer: () => scrollContainer,
-  clearCellSelection,
+  // Deferred behind a lambda: the const is destructured from
+  // useCanvasGestures, wired after useLinks below — every consumer calls it
+  // at event/edit time (past setup), never during its deps evaluation.
+  clearCellSelection: () => clearCellSelection(),
   addToast,
   markDirty: () => noteEdit(),
   refreshUndoRedoState,
@@ -1104,9 +1073,8 @@ function closeSession() {
   // reset via useViewportVirtualization's own session-close hook below.
   dismissPasteChip();
   sessionCloseHooks.forEach((cb) => cb());
-  clearCellSelection();
-  cellDragOrigin = null;
-  tableHover.value = null;
+  // The gesture state (cell-range selection, drag origin, hover handles)
+  // resets via useCanvasGestures' own session-close hook below.
   insertTableDialogOpen.value = false;
   // The clipboard's own state (plain-paste flag, chip, payload) is reset by the
   // clipboard composable's session-close hook, not here.
@@ -1183,8 +1151,9 @@ function handleSelectionChange() {
     // The format painter's target (SPEC-020 AC-12): skipped while a text
     // drag is in progress (handleCanvasMouseUp applies on release instead,
     // once the range has settled) — see maybeApplyPainter's own guard
-    // against re-triggering off its own caret-restore echo.
-    if (!mouseButtonDown) {
+    // against re-triggering off its own caret-restore echo. The drag flag
+    // lives in useCanvasGestures; the getter reads it live, post-setup.
+    if (!isMouseButtonDown()) {
       maybeApplyPainter();
     }
   }
@@ -1684,39 +1653,8 @@ async function keepCaretVisible() {
   }
 }
 
-/** Clicks on rendered hyperlinks (AC-12). Browsers do not navigate a plain
- * click on an <a> inside a contenteditable region — the anchors are real
- * links (href/target/rel) purely for fidelity and Ctrl/Cmd+click — but
- * preventDefault keeps that guaranteed; with Ctrl/Cmd held the target opens
- * through the same sanitized path as the chip. */
-function handleContentClick(event = new MouseEvent("click")) {
-  const eventTarget = event.target;
-  // Clicking a note reference mark jumps to its note (SPEC-031 AC-15).
-  const mark = eventTarget instanceof Element ? eventTarget.closest(".doc-note-ref[data-note-id]") : null;
-  if (mark) {
-    event.preventDefault();
-    const noteId = mark.getAttribute("data-note-id") ?? "";
-    const note = doc.value ? noteById(doc.value, noteId) : undefined;
-    if (note) {
-      enterNoteEditing(note.noteId, note.kind, true);
-    }
-    return;
-  }
-  const anchor = eventTarget instanceof Element ? eventTarget.closest("a[data-doc-link]") : null;
-  if (!anchor) {
-    return;
-  }
-  event.preventDefault();
-  if (!event.ctrlKey && !event.metaKey) {
-    return;
-  }
-  const href = anchor.getAttribute("href") ?? "";
-  if (href.startsWith("#")) {
-    jumpToAnchor(href.slice(1));
-  } else if (href !== "") {
-    openLinkTarget({ href });
-  }
-}
+// Clicks on rendered hyperlinks and note reference marks are handled by
+// useCanvasGestures' handleContentClick, wired below.
 
 // --- caret movement and selection (SPEC-011) -------------------------------
 // Character/word/line movement, plain Home/End and mouse selection are the
@@ -1845,235 +1783,10 @@ const {
   refreshViewportRange: () => refreshViewportRange(),
 });
 
-// Tracks the primary button across a text-selection drag (SPEC-020): the
-// format painter must not paint a partial selection mid-drag, only the
-// range the user settles on at mouseup — see maybeApplyPainter.
-let mouseButtonDown = false;
-
-/** Mousedown on the canvas: remembers the cell under the pointer as a
- * potential drag origin (AC-15) and dismisses any existing cell-range
- * highlight — a plain click always returns to a normal text caret. */
-function handleCanvasMouseDown(event = new MouseEvent("mousedown")) {
-  if (event.button !== 0) {
-    return;
-  }
-  // Draw mode (SPEC-051 AC-3, AC-4): a gallery pick armed drawGeometry, so
-  // this mousedown draws the shape instead of doing anything else the
-  // canvas would normally do with a click.
-  if (drawGeometry.value) {
-    startShapeDraw(event);
-    return;
-  }
-  // Clicking the body while a note is being edited leaves note editing
-  // (SPEC-031) — clicks inside the note area stop propagation before here.
-  exitNoteEditing();
-  mouseButtonDown = true;
-  clearCellSelection();
-  cellDragOrigin = editable.value ? tableCellAtTarget(event.target) : null;
-  // A click outside a selected image deselects it (SPEC-024) — a click on
-  // one is handled by DocImageBlock's own @select, which fires afterward.
-  const imageTarget = event.target instanceof Element ? event.target.closest(".doc-image-anchor") : null;
-  if (!imageTarget) {
-    clearImageSelection();
-  }
-  // Same for a selected shape (SPEC-051) — a click on one is handled by
-  // DocShapeBlock's own @select, which fires afterward. An unfilled,
-  // textless shape's proxy is pointer-events: none over its whole box (AC-11
-  // — its own interior is not part of its painted region), so `event.target`
-  // never lands inside it; shapeAtClientPoint recovers that case by testing
-  // every shape's actual painted region (outline included) at this point.
-  const shapeTarget = event.target instanceof Element ? event.target.closest(".doc-shape-anchor") : null;
-  let shapeMouseDownLocation = noShapeLocation();
-  if (shapeTarget instanceof HTMLElement) {
-    const section = Number(shapeTarget.dataset.section);
-    const block = Number(shapeTarget.dataset.block);
-    if (Number.isInteger(section) && Number.isInteger(block)) {
-      shapeMouseDownLocation = { section, block };
-    }
-  } else {
-    const recovered = shapeAtClientPoint(event.clientX, event.clientY);
-    if (recovered) {
-      handleShapeSelect(recovered.section, recovered.block, event.shiftKey);
-      shapeMouseDownLocation = recovered;
-    } else {
-      clearShapeSelection();
-    }
-  }
-  // A drag on the shape's own body moves (and, crossing a paragraph
-  // boundary, re-anchors) it (AC-28) — armed here rather than from
-  // DocShapeBlock's own click handler so it also covers a shape that was not
-  // already selected (mousedown's native hit-test target is the same
-  // element a plain click would land on) and the AC-11 recovery case above.
-  // Shift is reserved for the multi-select toggle (AC-34), not a drag.
-  if (shapeMouseDownLocation && !event.shiftKey) {
-    startShapeMove(event, shapeMouseDownLocation);
-  }
-  // Same for a selected chart (SPEC-052) — a click on one is handled by
-  // DocChartBlock's own @select, which fires afterward. A chart's proxy is
-  // always opaque over its full box (never pointer-events: none, unlike an
-  // unfilled/textless shape), so chartAtClientPoint recovery is mostly
-  // defensive here, kept for consistency with the shape path.
-  const chartTarget = event.target instanceof Element ? event.target.closest(".doc-chart-anchor") : null;
-  if (!chartTarget) {
-    const recoveredChart = chartAtClientPoint(event.clientX, event.clientY);
-    if (recoveredChart) {
-      handleChartSelect(recoveredChart.section, recoveredChart.block);
-    } else {
-      clearChartSelection();
-    }
-  }
-  // Same for a selected TOC (SPEC-033) — a click on one is handled by
-  // DocTocBlock's own @action "select", which fires afterward.
-  const tocTarget = event.target instanceof Element ? event.target.closest(".doc-toc") : null;
-  if (!tocTarget) {
-    clearTocSelection();
-  }
-}
-
-/** Dblclick recovery for a shape DocShapeBlock's own proxy couldn't catch
- * natively (AC-11's pointer-events: none case, same reasoning as
- * handleCanvasMouseDown's shapeAtClientPoint call) — otherwise AC-17's
- * "double-clicking a shape puts the caret inside it, populating Shape.text
- * if absent" would be unreachable by mouse for an unfilled, textless shape
- * whose only clickable region is its outline. */
-function handleCanvasDblClick(event = new MouseEvent("dblclick")) {
-  const shapeTarget = event.target instanceof Element ? event.target.closest(".doc-shape-anchor") : null;
-  if (shapeTarget) {
-    return;
-  }
-  const recovered = shapeAtClientPoint(event.clientX, event.clientY);
-  if (recovered) {
-    handleShapeEditText(recovered.section, recovered.block);
-    return;
-  }
-  const chartTarget = event.target instanceof Element ? event.target.closest(".doc-chart-anchor") : null;
-  if (chartTarget) {
-    return;
-  }
-  const recoveredChart = chartAtClientPoint(event.clientX, event.clientY);
-  if (recoveredChart) {
-    handleChartEditData(recoveredChart.section, recoveredChart.block);
-  }
-}
-
-/** Mousemove with the primary button down: entering a different cell of the
- * drag origin's table activates (or extends) the rectangular cell range
- * (AC-15). The DOM text selection is collapsed away — the highlighted cells
- * are the selection's presentation (AC-16). */
-function handleCanvasMouseMove(event = new MouseEvent("mousemove")) {
-  const origin = cellDragOrigin;
-  if (!origin || (event.buttons & 1) === 0) {
-    return;
-  }
-  const cell = tableCellAtTarget(event.target);
-  if (!cell || cell.section !== origin.section || cell.block !== origin.block) {
-    return;
-  }
-  const active = cellSelection.value;
-  if (!active && cell.row === origin.row && cell.col === origin.col) {
-    return;
-  }
-  event.preventDefault();
-  const next = {
-    section: origin.section,
-    block: origin.block,
-    anchor: { row: origin.row, col: origin.col },
-    focus: { row: cell.row, col: cell.col },
-  };
-  const unchanged =
-    active && active.focus.row === next.focus.row && active.focus.col === next.focus.col;
-  if (!unchanged) {
-    cellSelection.value = next;
-    const domSelection = document.getSelection();
-    if (domSelection && domSelection.rangeCount > 0) {
-      domSelection.removeAllRanges();
-    }
-  }
-}
-
-function handleCanvasMouseUp() {
-  cellDragOrigin = null;
-  if (mouseButtonDown) {
-    mouseButtonDown = false;
-    maybeApplyPainter();
-  }
-}
-
-/** Whether a drag carries a file of an accepted image type — checked from
- * `dataTransfer.items` (available during dragenter/dragover, unlike the
- * actual file, which only `drop` exposes). Used to steal the drag away from
- * AppShell's window-level "drop to open a document" handling (SPEC-009) only
- * when it is actually an image (AC-1); anything else — including a .docx/
- * .odt file dragged over the canvas — falls through to that existing
- * behaviour untouched. */
-function isImageDrag(event = new DragEvent("dragover")) {
-  const items = event.dataTransfer?.items;
-  if (!items) {
-    return false;
-  }
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].kind === "file" && isAcceptedImageType(items[i].type)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function handleCanvasDragEnter(event = new DragEvent("dragenter")) {
-  if (editable.value && isImageDrag(event)) {
-    event.stopPropagation();
-  }
-}
-
-function handleCanvasDragOver(event = new DragEvent("dragover")) {
-  if (editable.value && isImageDrag(event)) {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-}
-
-/** Drag-and-drop onto the canvas (AC-1): inserts at the caret nearest the
- * drop point. */
-function handleCanvasDrop(event = new DragEvent("drop")) {
-  if (!editable.value) {
-    return;
-  }
-  const file = event.dataTransfer?.files?.[0];
-  if (!file || !isAcceptedImageType(file.type)) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  const root = contentRoot.value;
-  const dropCaret = root ? caretAtClientPoint(root, event.clientX, event.clientY) : null;
-  void insertImageFromFile(file, dropCaret ? caretSelection(dropCaret) : null);
-}
-
-/** Mouseover anywhere on the page: hovering a table measures its geometry
- * for the insert/delete handles (AC-20, AC-21); hovering the handles keeps
- * them; anything else hides them. */
-function handlePageMouseOver(event = new MouseEvent("mouseover")) {
-  if (!editable.value || !(event.target instanceof Element)) {
-    return;
-  }
-  if (event.target.closest(".table-handles")) {
-    return;
-  }
-  const table = event.target.closest("table.doc-table");
-  const pageEl = pageRef.value;
-  if (!table || !pageEl) {
-    if (tableHover.value) {
-      tableHover.value = null;
-    }
-    return;
-  }
-  tableHover.value = measureTableHandles(pageEl, table);
-}
-
 // --- tables (SPEC-022, SPEC-023) ---------------------------------------------
 // Row/column insert-delete, merge/split, the properties dialog, and live column
 // /row resize live in useTables; the hover handles' geometry and the cell-range
-// drag selection stay with the canvas event hub above.
+// drag selection live in useCanvasGestures' canvas event hub, wired below.
 const {
   applyTableAction,
   handleTableHandle,
@@ -2348,47 +2061,11 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (!shortcut) {
     return;
   }
+  // Only the event-dependent commands remain switch cases here — they read
+  // shiftKey or must control preventDefault themselves, so they cannot be
+  // nullary entries in the editorCommands table the default arm dispatches
+  // through.
   switch (shortcut.id) {
-    case "insert.pageBreak": {
-      // Ctrl/Cmd+Enter (AC-4): a manual page break at the caret.
-      event.preventDefault();
-      const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-      applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
-      // The caret moved to the top of a page that is very likely below the
-      // fold: follow it, or the user types onto a page they cannot see.
-      void scrollModelCaretIntoView(caret, true);
-      break;
-    }
-    case "insert.footnote": {
-      // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
-      event.preventDefault();
-      handleInsertNote("footnote");
-      break;
-    }
-    case "insert.endnote": {
-      // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
-      event.preventDefault();
-      handleInsertNote("endnote");
-      break;
-    }
-    case "insert.comment": {
-      // Ctrl/Cmd+Alt+M (SPEC-038 AC-1).
-      event.preventDefault();
-      openCommentComposer();
-      break;
-    }
-    case "view.formattingMarks": {
-      // Ctrl/Cmd+Shift+P (AC-12).
-      event.preventDefault();
-      toggleFormattingMarks();
-      break;
-    }
-    case "edit.toggleTrackChanges": {
-      // Ctrl/Cmd+Shift+E (SPEC-039 AC-1).
-      event.preventDefault();
-      toggleTrackChangesRecording();
-      break;
-    }
     case "nav.documentStart":
     case "nav.documentEnd": {
       // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
@@ -2400,77 +2077,12 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       }
       break;
     }
-    case "edit.undo":
-      // Ctrl/Cmd+Z (SPEC-015 AC-1).
-      event.preventDefault();
-      performUndo();
-      break;
-    case "edit.redo":
-      // Ctrl/Cmd+Shift+Z, or Ctrl+Y — the Windows convention (SPEC-015 AC-2, AC-3).
-      event.preventDefault();
-      performRedo();
-      break;
     case "edit.pastePlain":
       // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
       // the browser fire the paste event it produces for this combo — that
       // event hands us every clipboard flavour at once.
       armPlainPaste();
       break;
-    case "insert.nonBreakingSpace":
-      // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
-      // insert, not typed input, so autocorrect never sees it.
-      event.preventDefault();
-      insertSpecialCharacter("\u00A0");
-      break;
-    case "edit.selectAll": {
-      // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
-      // Shared with the Edit-menu "Select all" command (SPEC-049).
-      event.preventDefault();
-      menuSelectAll();
-      break;
-    }
-    case "format.bold":
-    case "format.italic":
-    case "format.underline":
-      // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
-      event.preventDefault();
-      toggleCharacterFormat(
-        shortcut.id === "format.bold" ? "bold" : shortcut.id === "format.italic" ? "italic" : "underline",
-      );
-      break;
-    case "format.strikethrough":
-      // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
-      event.preventDefault();
-      toggleCharacterFormat("strikethrough");
-      break;
-    case "format.subscript":
-    case "format.superscript":
-      // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
-      event.preventDefault();
-      toggleCharacterFormat(shortcut.id === "format.subscript" ? "subscript" : "superscript");
-      break;
-    case "format.clearFormatting":
-      // Ctrl/Cmd+\ (SPEC-020 AC-3).
-      event.preventDefault();
-      handleClearFormatting();
-      break;
-    case "paragraph.alignLeft":
-    case "paragraph.alignCenter":
-    case "paragraph.alignRight":
-    case "paragraph.alignJustify": {
-      // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
-      event.preventDefault();
-      const alignment =
-        shortcut.id === "paragraph.alignLeft"
-          ? "left"
-          : shortcut.id === "paragraph.alignCenter"
-            ? "center"
-            : shortcut.id === "paragraph.alignRight"
-              ? "right"
-              : "justify";
-      handleAlign(alignment);
-      break;
-    }
     case "paragraph.indent":
     case "paragraph.outdent": {
       // SPEC-014 AC-8..10. A caret collapsed at offset 0 — an empty paragraph
@@ -2532,64 +2144,35 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       }
       break;
     }
-    case "insert.link":
-      // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
-      event.preventDefault();
-      openLinkDialog();
-      break;
     case "nav.pageUp":
     case "nav.pageDown":
       event.preventDefault();
       void moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
       break;
-    case "style.normal":
-    case "style.heading1":
-    case "style.heading2":
-    case "style.heading3":
-    case "style.heading4":
-    case "style.heading5":
-    case "style.heading6": {
-      // Ctrl/Cmd+Alt+1..6 apply Heading 1-6, Ctrl/Cmd+Alt+0 Normal
-      // (SPEC-019 AC-5, AC-6).
-      event.preventDefault();
-      const styleId =
-        shortcut.id === "style.normal"
-          ? NORMAL_STYLE_ID
-          : headingStyleId(Number(shortcut.id.slice(-1)));
-      handleApplyStyle(styleId);
-      break;
+    default: {
+      // Every other registry id is a nullary command in editorCommands —
+      // the same table the menu bar dispatches through — except the
+      // document-level ids handleGlobalShortcut owns (find/print keep
+      // working over a read-only too-large document), which must not
+      // double-dispatch from this canvas path on top of that handler.
+      if (shortcut.id === "find.openReplace" || shortcut.id === "file.print") {
+        break;
+      }
+      // Every moved keyboard command called event.preventDefault() before
+      // its body, so a table hit always suppresses the browser default
+      // here; edit.pastePlain stays a case above precisely because it must
+      // NOT preventDefault — the browser's own paste event does the work.
+      const command = editorCommands.get(shortcut.id);
+      if (command) {
+        event.preventDefault();
+        command();
+      }
     }
   }
 }
 
-/** Clicking anywhere on the page canvas outside the text (margins, empty
- * space) places the caret at the nearest text position. Clicks inside the
- * editable content keep the browser's native precise placement — except a
- * read-only header/footer band (SPEC-029): it is a `contenteditable="false"`
- * island inside the editable root, so the browser treats it as an atomic
- * non-editable unit rather than falling through to nearby text the way an
- * ordinary margin click does, and needs the same explicit fallback a click
- * outside the root entirely gets. */
-function handlePageMouseDown(event = new MouseEvent("mousedown")) {
-  const root = contentRoot.value;
-  if (!root || !editable.value) {
-    return;
-  }
-  const targetEl = event.target instanceof Element ? event.target : null;
-  const inReadOnlyBand = !!targetEl?.closest(
-    ".page-header-band:not([data-hf-editable]), .page-footer-band:not([data-hf-editable])",
-  );
-  if (!inReadOnlyBand && event.target instanceof Node && root.contains(event.target)) {
-    return;
-  }
-  const target = caretNearClientPoint(root, event.clientX, event.clientY);
-  if (!target) {
-    return;
-  }
-  event.preventDefault();
-  root.focus();
-  applyCaretMove(target, event.shiftKey);
-}
+// Margin/empty-space clicks (handlePageMouseDown) are handled by
+// useCanvasGestures, wired below.
 
 // ---------------------------------------------------------------------------
 
@@ -2865,6 +2448,54 @@ const {
   pageNumbers,
   clearImageSelection,
   getSelectionAnchor: () => selectionAnchor,
+});
+
+// --- canvas gesture hub (SPEC-011, SPEC-020, SPEC-022, SPEC-024, SPEC-025,
+// SPEC-031, SPEC-033, SPEC-051, SPEC-052) ------------------------------------
+// The page/canvas mouse handlers — the cell-range drag selection, shape
+// draw/move and dblclick recovery, chart recovery, image drag-and-drop,
+// note-reference and link clicks, the table hover handles and margin caret
+// placement — live in useCanvasGestures. Wired after useLinks, the last
+// provider of its extras (every dep here is passed eagerly), and before
+// useContextMenus, whose wiring passes tableCellAtTarget eagerly.
+const {
+  canMergeCells,
+  clearCellSelection,
+  tableCellAtTarget,
+  isMouseButtonDown,
+  handleContentClick,
+  handleCanvasMouseDown,
+  handleCanvasDblClick,
+  handleCanvasMouseMove,
+  handleCanvasMouseUp,
+  handleCanvasDragEnter,
+  handleCanvasDragOver,
+  handleCanvasDrop,
+  handlePageMouseOver,
+  handlePageMouseDown,
+} = useCanvasGestures({
+  ...editorContext,
+  cellSelection,
+  tableHover,
+  drawGeometry,
+  startShapeDraw,
+  handleShapeSelect,
+  handleShapeEditText,
+  shapeAtClientPoint,
+  clearShapeSelection,
+  startShapeMove,
+  handleChartSelect,
+  handleChartEditData,
+  chartAtClientPoint,
+  clearChartSelection,
+  exitNoteEditing,
+  enterNoteEditing,
+  clearImageSelection,
+  insertImageFromFile,
+  clearTocSelection,
+  jumpToAnchor,
+  openLinkTarget,
+  maybeApplyPainter,
 });
 
 const caretSectionIndex = ref(0);
@@ -3350,7 +2981,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 // The menu bar itself (File/Edit/View/Insert/Format/Tools and every item)
 // lives in DocumentMenuBar.vue, which renders menu state from props and
 // reports picks as events. Nullary commands arrive here as string ids
-// through @command and dispatch through the menuCommands table below; picks
+// through @command and dispatch through the editorCommands table below; picks
 // that carry a payload (table size, break kind, note kind, gallery picks,
 // the image file, the painter's click pair) have dedicated events bound in
 // the template.
@@ -3417,12 +3048,16 @@ function handleChartFromTable(chartType = "columnClustered") {
   }
 }
 
-// Every nullary menu command, keyed by the id DocumentMenuBar emits, in the
-// bar's own menu-by-menu order. A Map rather than an object literal: a
-// string-keyed lookup into an inferred object-literal type needs an index
-// signature, which is TS-only syntax espree cannot parse here — Map's get()
-// is typed without one.
-const menuCommands = new Map([
+// Every nullary editor command, keyed by id — the ONE registry both the
+// menubar (handleMenuCommand) and the keyboard shortcut path (handleKeyDown's
+// default arm) dispatch through, so a new command is wired in exactly one
+// place. Ids reuse the lib/shortcuts.ts names wherever a shortcut exists for
+// the command; menu-only commands follow the same dotted style. Listed in
+// the bar's menu-by-menu order, then the shortcut-only commands. A Map
+// rather than an object literal: a string-keyed lookup into an inferred
+// object-literal type needs an index signature, which is TS-only syntax
+// espree cannot parse here — Map's get() is typed without one.
+const editorCommands = new Map([
   // File
   ["file.print", openPrintPreview],
   ["file.page-setup", openPageSetup],
@@ -3432,12 +3067,16 @@ const menuCommands = new Map([
   ["file.mail-merge", () => { mergeRunDialogOpen.value = true; }],
   ["file.delete", () => { confirmingDelete.value = true; }],
   // Edit
+  // Ctrl/Cmd+Z (SPEC-015 AC-1).
   ["edit.undo", performUndo],
+  // Ctrl/Cmd+Shift+Z, or Ctrl+Y — the Windows convention (SPEC-015 AC-2, AC-3).
   ["edit.redo", performRedo],
   ["edit.cut", contextMenuCut],
   ["edit.copy", contextMenuCopy],
   ["edit.paste", contextMenuPaste],
   ["edit.pastePlain", menuPastePlain],
+  // Ctrl/Cmd+A: select the whole document, exactly to the model's extent —
+  // shared by the Edit-menu item and the shortcut (SPEC-049).
   ["edit.selectAll", menuSelectAll],
   ["find.openReplace", () => { openFind(true); }],
   ["edit.autocorrect-smart-quotes", toggleAutocorrectSmartQuotes],
@@ -3448,6 +3087,7 @@ const menuCommands = new Map([
   ["view.styles-pane", toggleStylesPane],
   ["view.comments-pane", toggleCommentsPane],
   ["view.comments-only", toggleCommentsOnlyView],
+  // Ctrl/Cmd+Shift+E (SPEC-039 AC-1).
   ["edit.toggleTrackChanges", toggleTrackChangesRecording],
   ["view.track-changes-pane", toggleTrackChangesPane],
   // Insert
@@ -3462,13 +3102,16 @@ const menuCommands = new Map([
   ["insert.note-settings", openNoteSettings],
   ["insert.toc", openTocDialog],
   ["insert.special-character", openSpecialCharacters],
+  // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
   ["insert.link", openLinkDialog],
   ["insert.bookmark", openBookmarkDialog],
   ["insert.bookmark-list", () => { bookmarkManagerOpen.value = true; }],
+  // Ctrl/Cmd+Alt+M (SPEC-038 AC-1).
   ["insert.comment", openCommentComposer],
   // Format
   ["format.styles-pane", toggleStylesPane],
   ["format.import-styles", openImportDialog],
+  // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
   ["format.columns", openColumnsDialog],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
@@ -3480,10 +3123,59 @@ const menuCommands = new Map([
   ["tools.dictionary", openCustomDictionaryDialog],
   ["tools.accessibility", openAccessibilityPane],
   ["tools.convert-merge-fields", convertLiteralChips],
+  // Shortcut-only commands: no menubar item emits these ids (the menu
+  // reaches page break and foot/endnotes through the insert-break /
+  // insert-note payload events instead), so they arrive only from
+  // handleKeyDown's registry lookup.
+  ["insert.pageBreak", () => {
+    // Ctrl/Cmd+Enter (AC-4): a manual page break at the caret.
+    const root = contentRoot.value;
+    const model = doc.value;
+    if (!root || !model) {
+      return;
+    }
+    const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+    applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
+    // The caret moved to the top of a page that is very likely below the
+    // fold: follow it, or the user types onto a page they cannot see.
+    void scrollModelCaretIntoView(caret, true);
+  }],
+  // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
+  ["insert.footnote", () => { handleInsertNote("footnote"); }],
+  // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
+  ["insert.endnote", () => { handleInsertNote("endnote"); }],
+  // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
+  // insert, not typed input, so autocorrect never sees it.
+  ["insert.nonBreakingSpace", () => { insertSpecialCharacter("\u00A0"); }],
+  // Ctrl/Cmd+Shift+P (AC-12).
+  ["view.formattingMarks", toggleFormattingMarks],
+  // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
+  ["format.bold", () => { toggleCharacterFormat("bold"); }],
+  ["format.italic", () => { toggleCharacterFormat("italic"); }],
+  ["format.underline", () => { toggleCharacterFormat("underline"); }],
+  // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
+  ["format.strikethrough", () => { toggleCharacterFormat("strikethrough"); }],
+  // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
+  ["format.subscript", () => { toggleCharacterFormat("subscript"); }],
+  ["format.superscript", () => { toggleCharacterFormat("superscript"); }],
+  // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
+  ["paragraph.alignLeft", () => { handleAlign("left"); }],
+  ["paragraph.alignCenter", () => { handleAlign("center"); }],
+  ["paragraph.alignRight", () => { handleAlign("right"); }],
+  ["paragraph.alignJustify", () => { handleAlign("justify"); }],
+  // Ctrl/Cmd+Alt+1..6 apply Heading 1-6, Ctrl/Cmd+Alt+0 Normal
+  // (SPEC-019 AC-5, AC-6).
+  ["style.normal", () => { handleApplyStyle(NORMAL_STYLE_ID); }],
+  ["style.heading1", () => { handleApplyStyle(headingStyleId(1)); }],
+  ["style.heading2", () => { handleApplyStyle(headingStyleId(2)); }],
+  ["style.heading3", () => { handleApplyStyle(headingStyleId(3)); }],
+  ["style.heading4", () => { handleApplyStyle(headingStyleId(4)); }],
+  ["style.heading5", () => { handleApplyStyle(headingStyleId(5)); }],
+  ["style.heading6", () => { handleApplyStyle(headingStyleId(6)); }],
 ]);
 
 function handleMenuCommand(id = "") {
-  menuCommands.get(id)?.();
+  editorCommands.get(id)?.();
 }
 
 </script>
