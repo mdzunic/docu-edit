@@ -193,7 +193,8 @@ function fieldRenderRun(
   const value = evaluateField(field, ctx);
   const shaded = shadingOn || caretOnField;
   const readOnly = isReadOnlyField(field);
-  const baseClass = readOnly ? "doc-field doc-field-readonly" : "doc-field";
+  const locked = "locked" in field && field.locked === true;
+  const baseClass = `doc-field${readOnly ? " doc-field-readonly" : ""}${locked ? " doc-field-locked" : ""}`;
   const refTarget = field.kind === "ref" || field.kind === "pageRef" ? field.target : undefined;
   return {
     key: runKey(run, runIndex),

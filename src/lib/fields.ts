@@ -432,3 +432,9 @@ export function asStringList(value: unknown): string[] {
 export function asFieldSpec(value: unknown): FieldSpec {
   return value as FieldSpec;
 }
+
+/** Typed `null` seed for a `FieldSpec | null` ref in a `.vue` script (espree
+ * bars the annotation there) — the selected-field state's initial value. */
+export function noFieldSpec(): FieldSpec | null {
+  return null;
+}

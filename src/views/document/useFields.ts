@@ -32,6 +32,10 @@ export interface FieldsDeps extends EditorContext {
   /** The heading/bookmark → page-number resolver the view already owns
      (shared with the TOC update path). */
   tocPageNumberFor: (model: DocumentModel, anchor: string) => number | null;
+  /** The shared context-menu opener/closer (from useContextMenus), so the
+     field section can piggy-back on the same menu (SPEC-053 AC-13). */
+  handleContextMenu: (event: MouseEvent) => void;
+  closeContextMenu: () => void;
 }
 
 export function useFields(deps: FieldsDeps) {
@@ -239,6 +243,38 @@ export function useFields(deps: FieldsDeps) {
     showFieldCodes.value = !showFieldCodes.value;
   }
 
+  // The right-click field target (AC-13): whether the context menu opened on a
+  // field, and whether that field is locked (Lock vs. Unlock).
+  const contextMenuOnField = ref(false);
+  const contextMenuFieldLocked = ref(false);
+
+  /** Right-click handler: flags a field target, then delegates to the shared
+     context-menu opener (which also places the caret on the atom). */
+  function onContextMenu(event: MouseEvent) {
+    const el = event.target instanceof Element ? event.target.closest(".doc-field") : null;
+    contextMenuOnField.value = !!el;
+    contextMenuFieldLocked.value = el?.classList.contains("doc-field-locked") ?? false;
+    deps.handleContextMenu(event);
+  }
+
+  /** Dispatches a field context-menu / toolbar-chip action (AC-13, AC-14). */
+  function handleFieldAction(action: string) {
+    if (action === "update") {
+      handleUpdateField();
+    } else if (action === "edit") {
+      openFieldDialog();
+    } else if (action === "toggle-codes") {
+      toggleFieldCodes();
+    } else if (action === "unlink") {
+      handleUnlinkField();
+    } else if (action === "lock") {
+      handleLockField(true);
+    } else if (action === "unlock") {
+      handleLockField(false);
+    }
+    deps.closeContextMenu();
+  }
+
   /** Click-to-follow a cross-reference (AC-26): scroll to its target. */
   function followCrossReference(target: string) {
     const m = model();
@@ -274,5 +310,9 @@ export function useFields(deps: FieldsDeps) {
     handleLockField,
     toggleFieldCodes,
     followCrossReference,
+    contextMenuOnField,
+    contextMenuFieldLocked,
+    onContextMenu,
+    handleFieldAction,
   };
 }

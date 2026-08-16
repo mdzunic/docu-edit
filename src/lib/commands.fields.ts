@@ -264,6 +264,13 @@ export function updateAllFields(
   return { model: next, selection, brokenRefs };
 }
 
+/** The field spec at the caret (SPEC-053), or null when the caret is not on a
+ * field — drives the field toolbar chip's visibility (AC-14). Merge chips are
+ * excluded (SPEC-046 owns those). */
+export function fieldAtCaret(model: DocumentModel, caret: CaretPosition): FieldSpec | null {
+  return fieldRunAtCaret(model, caret)?.run.field ?? null;
+}
+
 /** Finds the field run at the caret, with its paragraph and run index. */
 function fieldRunAtCaret(
   model: DocumentModel,

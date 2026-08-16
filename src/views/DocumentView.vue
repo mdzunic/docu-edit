@@ -47,6 +47,7 @@ import OutlinePane from "../components/OutlinePane.vue";
 import FieldDialog from "../components/FieldDialog.vue";
 import DateTimeDialog from "../components/DateTimeDialog.vue";
 import CrossReferenceDialog from "../components/CrossReferenceDialog.vue";
+import FieldToolbar from "../components/FieldToolbar.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -107,9 +108,12 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
+import { fieldAtCaret } from "../lib/commands.fields";
+import { isReadOnlyField, noFieldSpec } from "../lib/fields";
 import {
   asHeaderFooterPart,
   asImage,
+  isFieldLocked,
   asImageWrapMode,
   asShape,
   asChart,
@@ -549,6 +553,9 @@ const formatStates = ref(EMPTY_FORMAT_STATES);
 // The four value controls' display state (family, size, colour, highlight
 // with per-control mixed flags), recomputed alongside formatStates.
 const formatValues = ref(emptyToolbarFormatValues());
+// The field under a collapsed caret (SPEC-053 AC-14) — drives the field
+// toolbar chip. Null when the selection is a range or not on a field.
+const selectedField = shallowRef(noFieldSpec());
 
 // --- paragraph formatting (SPEC-014) ----------------------------------------
 // What the paragraph toolbar and ruler reflect, all read from the FIRST
@@ -1678,6 +1685,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   // (SPEC-037 AC-3, AC-4) — a reactive mirror of the plain `caret` variable.
   caretPosition.value = range.end;
   if (!model || !range.start || !range.end) {
+    selectedField.value = null;
     formatStates.value = EMPTY_FORMAT_STATES;
     formatValues.value = emptyToolbarFormatValues();
     paragraphState.value = EMPTY_PARAGRAPH_STATE;
@@ -1700,6 +1708,9 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
       `${blockOrdinal(model, range.end)}, character ${range.end.offset + 1}`;
   }
   const selection = { anchor: range.start, focus: range.end };
+  // SPEC-053 AC-14: the field toolbar chip shows only for a collapsed caret
+  // sitting on a field.
+  selectedField.value = compareCaret(range.start, range.end) === 0 ? fieldAtCaret(model, range.end) : null;
   formatStates.value = {
     bold: formatState(model, selection, "bold", pendingFormat),
     italic: formatState(model, selection, "italic", pendingFormat),
@@ -2971,10 +2982,12 @@ const {
   handleCrossReferenceInsert,
   handleUpdateField,
   handleUpdateAllFields,
-  handleUnlinkField,
-  handleLockField,
   followCrossReference,
-} = useFields({ ...editorContext, tocPageNumberFor });
+  contextMenuOnField,
+  contextMenuFieldLocked,
+  onContextMenu,
+  handleFieldAction,
+} = useFields({ ...editorContext, tocPageNumberFor, handleContextMenu, closeContextMenu });
 
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
@@ -3167,11 +3180,10 @@ const editorCommands = new Map([
   // SPEC-053 field update paths and View toggle.
   ["tools.update-all-fields", handleUpdateAllFields],
   ["view.field-shading", () => { fieldShadingOn.value = !fieldShadingOn.value; }],
-  // F9 (AC-15): update the field at the caret.
+  // F9 (AC-15): update the field at the caret. Unlink/lock/unlock reach the
+  // model through the field context menu / toolbar chip (handleFieldAction),
+  // not through their own command ids.
   ["field.update", handleUpdateField],
-  ["field.unlink", handleUnlinkField],
-  ["field.lock", () => { handleLockField(true); }],
-  ["field.unlock", () => { handleLockField(false); }],
   // Shortcut-only commands: no menubar item emits these ids (the menu
   // reaches page break and foot/endnotes through the insert-break /
   // insert-note payload events instead), so they arrive only from
@@ -3320,6 +3332,12 @@ function handleMenuCommand(id = "") {
         v-if="editable"
         :states="formatStates"
         @toggle="toggleCharacterFormat"
+      />
+      <FieldToolbar
+        v-if="editable && selectedField"
+        :locked="isFieldLocked(selectedField)"
+        :read-only="isReadOnlyField(selectedField)"
+        @field-action="handleFieldAction"
       />
       <ParagraphToolbar
         v-if="editable"
@@ -3724,7 +3742,7 @@ function handleMenuCommand(id = "") {
             @copy="handleCopy"
             @cut="handleCut"
             @paste="handlePaste"
-            @contextmenu="handleContextMenu"
+            @contextmenu="onContextMenu"
             @mousedown="handleCanvasMouseDown"
             @mousemove="handleCanvasMouseMove"
             @mouseup="handleCanvasMouseUp"
@@ -3997,11 +4015,14 @@ function handleMenuCommand(id = "") {
       :table-actions="!!contextMenuTableCell"
       :can-merge-cells="canMergeCells"
       :list-actions="!!contextMenuListTarget"
+      :field-actions="contextMenuOnField"
+      :field-locked="contextMenuFieldLocked"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
       @table-action="handleContextMenuTableAction"
       @list-action="handleContextMenuListAction"
+      @field-action="handleFieldAction"
       @dismiss="closeContextMenu"
     />
     <SpellContextMenu

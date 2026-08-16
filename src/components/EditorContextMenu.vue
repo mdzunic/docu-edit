@@ -21,9 +21,24 @@ const props = defineProps({
   /** True when the right-click landed on a list paragraph — shows the
    * numbering-control section (SPEC-032 AC-14..16). */
   listActions: { type: Boolean, default: false },
+  /** True when the right-click landed on a SPEC-053 field — shows the field
+   * section (AC-13). */
+  fieldActions: { type: Boolean, default: false },
+  /** Whether the field under the cursor is locked, so the section offers
+   * "Unlock field" instead of "Lock field". */
+  fieldLocked: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "dismiss"]);
+const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "field-action", "dismiss"]);
+
+// The field section's entries (SPEC-053 AC-13). The key doubles as the
+// emitted action id and testid suffix.
+const FIELD_ACTIONS = [
+  { key: "update", label: "Update field" },
+  { key: "edit", label: "Edit field…" },
+  { key: "toggle-codes", label: "Toggle field codes" },
+  { key: "unlink", label: "Unlink field" },
+];
 
 // The numbering-control section's entries (SPEC-032 AC-14..16). The key
 // doubles as the emitted action id and the testid suffix, like
@@ -125,6 +140,32 @@ onBeforeUnmount(() => {
       <span>Paste</span>
       <span class="context-menu-shortcut">{{ mod }}+V</span>
     </button>
+    <template v-if="fieldActions">
+      <div
+        class="context-menu-separator"
+        role="separator"
+      />
+      <button
+        v-for="action in FIELD_ACTIONS"
+        :key="action.key"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :data-testid="`context-menu-field-${action.key}`"
+        @click="emit('field-action', action.key)"
+      >
+        <span>{{ action.label }}</span>
+      </button>
+      <button
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        data-testid="context-menu-field-lock"
+        @click="emit('field-action', fieldLocked ? 'unlock' : 'lock')"
+      >
+        <span>{{ fieldLocked ? "Unlock field" : "Lock field" }}</span>
+      </button>
+    </template>
     <template v-if="listActions">
       <div
         class="context-menu-separator"
