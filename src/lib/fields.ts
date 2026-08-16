@@ -384,3 +384,51 @@ export function cachedFieldText(field: FieldSpec): string {
 export function isReadOnlyFieldTitle(field: FieldSpec): string {
   return isReadOnlyField(field) ? UNSUPPORTED_FIELD_MESSAGE : "";
 }
+
+// Typed pass-throughs for the SPEC-053 dialogs' runtime Object/Array props —
+// the espree constraint bars `PropType<…>`/`as` in `.vue` scripts (see
+// CommentsPane.vue / MergeRunDialog.vue for the same pattern), so these give
+// the templates typed access to their list props.
+
+/** One row of the Date and time dialog's format list. */
+export interface DateTimePreview {
+  format: string;
+  label: string;
+  isTime: boolean;
+}
+
+export function asDateTimePreviews(value: unknown): DateTimePreview[] {
+  return value as DateTimePreview[];
+}
+
+/** One heading target row of the Cross-reference dialog. */
+export interface CrossRefHeading {
+  index: number;
+  text: string;
+  level: number;
+}
+
+export function asCrossRefHeadings(value: unknown): CrossRefHeading[] {
+  return value as CrossRefHeading[];
+}
+
+/** One bookmark target row of the Cross-reference dialog. */
+export interface CrossRefBookmark {
+  name: string;
+}
+
+export function asCrossRefBookmarks(value: unknown): CrossRefBookmark[] {
+  return value as CrossRefBookmark[];
+}
+
+/** Typed pass-through for a plain string list prop (the Field dialog's
+ * custom-property names). */
+export function asStringList(value: unknown): string[] {
+  return value as string[];
+}
+
+/** Typed pass-through for a `FieldSpec` built in a `.vue` script from plain
+ * option state (the Field dialog's draft field). */
+export function asFieldSpec(value: unknown): FieldSpec {
+  return value as FieldSpec;
+}

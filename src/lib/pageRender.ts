@@ -33,6 +33,9 @@ export interface RenderRun {
   atomClass?: string;
   /** The mark's note id (SPEC-031) — click-to-jump's target (AC-15). */
   noteId?: string;
+  /** A cross-reference field's target bookmark (SPEC-053 AC-26) — clicking
+   * the reference scrolls to it. */
+  refTarget?: string;
   /** The mark's hover tooltip: the note's text (SPEC-031 AC-14). */
   title?: string;
   /** This run's effective language (SPEC-035 AC-14) — the run's own

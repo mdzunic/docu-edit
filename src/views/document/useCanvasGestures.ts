@@ -68,6 +68,8 @@ export interface CanvasGesturesDeps extends EditorContext {
   // --- from useLinks (SPEC-025, SPEC-033) -----------------------------------
   clearTocSelection: () => void;
   jumpToAnchor: (anchor?: string) => void;
+  // --- from useFields (SPEC-053) --------------------------------------------
+  followCrossReference: (target: string) => void;
   openLinkTarget: (target?: LinkTarget | null) => void;
   // --- from useFormatPainter (SPEC-020) -------------------------------------
   maybeApplyPainter: () => void;
@@ -100,6 +102,7 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     insertImageFromFile,
     clearTocSelection,
     jumpToAnchor,
+    followCrossReference,
     openLinkTarget,
     maybeApplyPainter,
   } = deps;
@@ -141,6 +144,13 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
    * through the same sanitized path as the chip. */
   function handleContentClick(event = new MouseEvent("click")) {
     const eventTarget = event.target;
+    // Clicking a cross-reference scrolls to its target (SPEC-053 AC-26).
+    const ref = eventTarget instanceof Element ? eventTarget.closest(".doc-field[data-ref-target]") : null;
+    if (ref) {
+      event.preventDefault();
+      followCrossReference(ref.getAttribute("data-ref-target") ?? "");
+      return;
+    }
     // Clicking a note reference mark jumps to its note (SPEC-031 AC-15).
     const mark = eventTarget instanceof Element ? eventTarget.closest(".doc-note-ref[data-note-id]") : null;
     if (mark) {

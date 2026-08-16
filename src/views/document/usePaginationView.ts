@@ -194,6 +194,7 @@ function fieldRenderRun(
   const shaded = shadingOn || caretOnField;
   const readOnly = isReadOnlyField(field);
   const baseClass = readOnly ? "doc-field doc-field-readonly" : "doc-field";
+  const refTarget = field.kind === "ref" || field.kind === "pageRef" ? field.target : undefined;
   return {
     key: runKey(run, runIndex),
     href: "",
@@ -204,6 +205,7 @@ function fieldRenderRun(
     atomText: run.text,
     atomClass: shaded ? `${baseClass} doc-field-shaded` : baseClass,
     title: readOnly ? UNSUPPORTED_FIELD_MESSAGE : undefined,
+    refTarget,
     lang,
   };
 }

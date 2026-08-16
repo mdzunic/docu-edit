@@ -513,6 +513,34 @@ export function insertBookmark(
   return { model: next, selection };
 }
 
+/** Ensures a heading paragraph carries a bookmark a SPEC-053 cross-reference
+ * can target, returning the (possibly new) model and the bookmark's name. If
+ * the heading already has a bookmark at its start, that name is reused; else a
+ * hidden bookmark named after the heading's derived anchor is inserted (Word's
+ * behaviour, and what lets `.odt`'s `text:bookmark-ref` carry the reference).
+ * Hidden bookmarks are not shown by the bookmark manager (see listBookmarks). */
+export function ensureHeadingBookmark(
+  model: DocumentModel,
+  address: ParagraphAddress,
+  fallbackName: string,
+): { model: DocumentModel; name: string } {
+  const paragraph = paragraphAt(model, address);
+  if (!paragraph) {
+    return { model, name: fallbackName };
+  }
+  const existing = (paragraph.bookmarks ?? []).find((bookmark) => bookmark.offset === 0);
+  if (existing) {
+    return { model, name: existing.name };
+  }
+  const next = cloneContainers(model);
+  const target = paragraphAt(next, address)!;
+  const bookmarks = [...(target.bookmarks ?? []), { name: fallbackName, offset: 0, hidden: true as const }].sort(
+    (a, b) => a.offset - b.offset,
+  );
+  replaceParagraphAt(next, address, { ...target, bookmarks });
+  return { model: next, name: fallbackName };
+}
+
 /** Deletes the named bookmark (AC-25); the document text is untouched. */
 export function deleteBookmark(
   model: DocumentModel,

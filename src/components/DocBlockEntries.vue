@@ -118,6 +118,7 @@ function componentFor(entry = noRenderEntries()[0]) {
           contenteditable="false"
           :data-caret-atom="run.atomText"
           :data-note-id="run.noteId"
+          :data-ref-target="run.refTarget"
           :data-testid="run.atomClass === 'doc-merge-chip' ? 'merge-chip' : run.atomClass && run.atomClass.indexOf('doc-field') === 0 ? 'field' : undefined"
           :title="run.title"
           :style="run.styleObj"

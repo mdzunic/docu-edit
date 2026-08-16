@@ -45,6 +45,8 @@ const props = defineProps({
   trackChangesRecording: { type: Boolean, default: false },
   trackChangesPaneOpen: { type: Boolean, default: false },
   canConvertLiteralChips: { type: Boolean, default: false },
+  /** "View → Field shading" checked state (SPEC-053 AC-11). */
+  fieldShading: { type: Boolean, default: false },
   /** Whether "Insert -> Chart from table" applies (a table holds the active
    * cell-range selection) — computed by the view, which owns the model. */
   tableSelectedForChart: { type: Boolean, default: false },
@@ -268,6 +270,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :checked="commentsOnlyView"
         @select="emit('command', 'view.comments-only')"
       />
+      <MenuCheckItem
+        label="Field shading"
+        testid="view-menu-field-shading"
+        :checked="fieldShading"
+        @select="emit('command', 'view.field-shading')"
+      />
       <hr class="menu-separator">
       <MenuCheckItem
         label="Track changes"
@@ -438,6 +446,24 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <hr class="menu-separator">
       <MenuItem
+        label="Field…"
+        testid="insert-field-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.field')"
+      />
+      <MenuItem
+        label="Date and time"
+        testid="insert-date-time-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.date-time')"
+      />
+      <MenuItem
+        label="Cross-reference"
+        testid="insert-cross-reference-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.cross-reference')"
+      />
+      <MenuItem
         label="Table of contents"
         testid="insert-toc-button"
         :disabled="!editable"
@@ -577,6 +603,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         label="Custom dictionary"
         testid="tools-menu-dictionary"
         @select="emit('command', 'tools.dictionary')"
+      />
+      <MenuItem
+        label="Update all fields"
+        testid="tools-menu-update-all-fields"
+        :disabled="!editable"
+        @select="emit('command', 'tools.update-all-fields')"
       />
       <hr class="menu-separator">
       <MenuItem

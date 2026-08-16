@@ -44,6 +44,9 @@ import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
+import FieldDialog from "../components/FieldDialog.vue";
+import DateTimeDialog from "../components/DateTimeDialog.vue";
+import CrossReferenceDialog from "../components/CrossReferenceDialog.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -84,6 +87,7 @@ import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
+import { useFields } from "./document/useFields";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
@@ -2499,6 +2503,9 @@ const {
   insertImageFromFile,
   clearTocSelection,
   jumpToAnchor,
+  // Deferred: useFields is initialised below, so wrap the read in an arrow so
+  // it resolves at click time, not during this call's argument evaluation.
+  followCrossReference: (target) => followCrossReference(target),
   openLinkTarget,
   maybeApplyPainter,
 });
@@ -2945,6 +2952,30 @@ const {
   convertLiteralChips,
 } = useMergeFields({ ...editorContext, paragraphSelection });
 
+// SPEC-053 fields: the Insert dialogs, F9/Update-all update paths, and the
+// field context-menu/chip actions.
+const {
+  fieldDialogOpen,
+  dateTimeDialogOpen,
+  crossReferenceDialogOpen,
+  nowMs: fieldNowMs,
+  fieldPreviews,
+  propertyNames: fieldPropertyNames,
+  crossReferenceHeadings,
+  crossReferenceBookmarks,
+  openFieldDialog,
+  handleFieldInsert,
+  openDateTimeDialog,
+  handleDateTimeInsert,
+  openCrossReferenceDialog,
+  handleCrossReferenceInsert,
+  handleUpdateField,
+  handleUpdateAllFields,
+  handleUnlinkField,
+  handleLockField,
+  followCrossReference,
+} = useFields({ ...editorContext, tocPageNumberFor });
+
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
  * the bar is already open) and Ctrl/Cmd+P (print) — so this is bound on
@@ -3106,6 +3137,10 @@ const editorCommands = new Map([
   ["insert.header-footer-options", openHeaderFooterOptions],
   ["insert.merge-field", () => { mergeFieldPickerOpen.value = true; }],
   ["insert.note-settings", openNoteSettings],
+  // SPEC-053 fields.
+  ["insert.field", openFieldDialog],
+  ["insert.date-time", openDateTimeDialog],
+  ["insert.cross-reference", openCrossReferenceDialog],
   ["insert.toc", openTocDialog],
   ["insert.special-character", openSpecialCharacters],
   // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
@@ -3129,6 +3164,14 @@ const editorCommands = new Map([
   ["tools.dictionary", openCustomDictionaryDialog],
   ["tools.accessibility", openAccessibilityPane],
   ["tools.convert-merge-fields", convertLiteralChips],
+  // SPEC-053 field update paths and View toggle.
+  ["tools.update-all-fields", handleUpdateAllFields],
+  ["view.field-shading", () => { fieldShadingOn.value = !fieldShadingOn.value; }],
+  // F9 (AC-15): update the field at the caret.
+  ["field.update", handleUpdateField],
+  ["field.unlink", handleUnlinkField],
+  ["field.lock", () => { handleLockField(true); }],
+  ["field.unlock", () => { handleLockField(false); }],
   // Shortcut-only commands: no menubar item emits these ids (the menu
   // reaches page break and foot/endnotes through the insert-break /
   // insert-note payload events instead), so they arrive only from
@@ -3227,6 +3270,7 @@ function handleMenuCommand(id = "") {
         :can-convert-literal-chips="canConvertLiteralChips"
         :table-selected-for-chart="tableSelectedForChart"
         :painter-mode="painterMode"
+        :field-shading="fieldShadingOn"
         @command="handleMenuCommand"
         @insert-table-size="(rows, cols) => handleInsertTable({ rows, cols })"
         @insert-break="handleInsertBreak"
@@ -4015,6 +4059,28 @@ function handleMenuCommand(id = "") {
       :initial="{ part: activeHeaderFooter?.part ?? 'header' }"
       @apply="handlePageNumberInsert"
       @cancel="handlePageNumberCancel"
+    />
+    <FieldDialog
+      v-if="fieldDialogOpen && doc"
+      :model="doc"
+      :now-ms="fieldNowMs"
+      :file-name="doc.title"
+      :property-names="fieldPropertyNames"
+      @insert="handleFieldInsert"
+      @cancel="() => { fieldDialogOpen = false; }"
+    />
+    <DateTimeDialog
+      v-if="dateTimeDialogOpen"
+      :previews="fieldPreviews"
+      @insert="handleDateTimeInsert"
+      @cancel="() => { dateTimeDialogOpen = false; }"
+    />
+    <CrossReferenceDialog
+      v-if="crossReferenceDialogOpen"
+      :headings="crossReferenceHeadings"
+      :bookmarks="crossReferenceBookmarks"
+      @insert="handleCrossReferenceInsert"
+      @cancel="() => { crossReferenceDialogOpen = false; }"
     />
     <TocOptionsDialog
       v-if="tocOptionsDialogOpen"
