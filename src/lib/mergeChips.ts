@@ -9,7 +9,6 @@ import {
   type Block,
   type DocumentModel,
   type HeaderFooterKind,
-  type MergeChipKind,
   type MergeFieldSpec,
   type Paragraph,
   type Run,
@@ -95,8 +94,6 @@ export function createEndifChipRun(formatting: RunFormatting = {}): Run {
 export function createEachChipRun(name: string, formatting: RunFormatting = {}): Run {
   return createChipRun({ kind: "each", name }, formatting);
 }
-
-export const MERGE_CHIP_KINDS: readonly MergeChipKind[] = ["merge", "if", "endif", "each"];
 
 // --- "Convert {{…}} text to merge fields" -----------------------------------
 //

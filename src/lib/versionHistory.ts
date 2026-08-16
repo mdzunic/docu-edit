@@ -63,9 +63,6 @@ export const WHOLESALE_REWRITE_RATIO = 0.5;
 /** Pruning never removes the newest this-many versions. */
 export const RETAINED_RECENT_COUNT = 10;
 
-/** AC-1's fixed cadence: a snapshot every 5 minutes of editing activity. */
-export const SNAPSHOT_CADENCE_MS = 5 * 60 * 1000;
-
 /** The exact notice text AC-38 requires. */
 export const HISTORY_PAUSED_MESSAGE =
   "Version history paused — 50 MB used. Delete a version, or remove a name, to resume";

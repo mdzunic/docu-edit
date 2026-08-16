@@ -533,12 +533,6 @@ export function isStyleInUse(model: DocumentModel, styleId: string): boolean {
   return false;
 }
 
-/** Every style of one family, in catalogue order — the Styles pane's
- * per-group listing (AC-1). */
-export function stylesOfType(model: DocumentModel, type: StyleType): NamedStyle[] {
-  return allStyles(model).filter((style) => styleTypeOf(style) === type);
-}
-
 /** One row the Styles pane renders (AC-1, AC-2, AC-15): a style's identity,
  * family (for grouping), in-use state and whether the editor can offer
  * Modify for it. */
@@ -735,14 +729,4 @@ export function inferListStyleTypes(model: DocumentModel): DocumentModel {
     return { ...style, type: "list" as const, listDefinitionId: defId };
   });
   return changed ? { ...model, styles: nextStyles } : model;
-}
-
-/** The style id applied to a new paragraph typed after one in `styleId`
- * (AC-3/AC-4's "style for following paragraph"); undefined keeps the same
- * style, the common case for body-text styles. */
-export function nextStyleIdFor(model: DocumentModel, styleId: string | undefined): string | undefined {
-  if (styleId === undefined) {
-    return undefined;
-  }
-  return styleById(model, styleId)?.next;
 }

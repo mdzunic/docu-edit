@@ -327,11 +327,6 @@ export function asTabStops(value: unknown): TabStop[] {
   return value as TabStop[];
 }
 
-/** Typed empty seed for tab-stop arrays in `.vue` scripts. */
-export function noTabStops(): TabStop[] {
-  return [];
-}
-
 /** Typed pass-through for a tab alignment coming from a `.vue` template's
  * plain string (same espree constraint as asCharacterFormatKey). */
 export function asTabStopAlignment(value: string): TabStopAlignment {
@@ -1076,12 +1071,6 @@ export function isBreak(block: Block | undefined): block is BreakBlock {
  * `w:headerReference`/`w:footerReference` `w:type` values; ODF represents
  * the same split as separate master-page header/footer elements. */
 export type HeaderFooterKind = "default" | "first" | "even";
-
-/** Typed pass-through for a header/footer kind coming from a `.vue`
- * template's plain string (same espree constraint as asCharacterFormatKey). */
-export function asHeaderFooterKind(value: string): HeaderFooterKind {
-  return value as HeaderFooterKind;
-}
 
 /** Which band a header/footer command addresses (SPEC-029). */
 export type HeaderFooterPart = "header" | "footer";

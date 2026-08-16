@@ -249,13 +249,3 @@ export async function readOdtBytes(
 ): Promise<DocumentModel> {
   return assembleDocumentModel(title, "odt", await parseOdt(bytes));
 }
-
-/** The `.md` counterpart of `readDocxBytes` (SPEC-050, matching SPEC-045
- * AC-17's Node-friendly convention). */
-export async function readMdBytes(
-  bytes: Uint8Array | ArrayBuffer,
-  title: string = DEFAULT_TITLE,
-  options: ParseMdOptions = {},
-): Promise<DocumentModel> {
-  return assembleDocumentModel(title, "md", await parseMd(bytes, options));
-}

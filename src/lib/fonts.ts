@@ -41,7 +41,6 @@ export function documentFontFamilies(model: DocumentModel): string[] {
 // Word's font-size limits: 1pt to 409pt in half-point steps (SPEC-013 AC).
 export const MIN_FONT_SIZE_PT = 1;
 export const MAX_FONT_SIZE_PT = 409;
-export const FONT_SIZE_STEP_PT = 0.5;
 
 /** Shown when out-of-range input is clamped (SPEC-013 AC). */
 export const FONT_SIZE_RANGE_MESSAGE =

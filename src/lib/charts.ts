@@ -28,17 +28,6 @@ export interface ChartLocation {
   block: number;
 }
 
-/** Typed `null` seed for a chart-location ref in `.vue` scripts (espree bars
- * the annotation — see shapes.ts's noShapeLocation). */
-export function noChartLocation(): ChartLocation | null {
-  return null;
-}
-
-export type ChartCommand = (model: DocumentModel, selection: ModelSelection, location: ChartLocation) => CommandResult;
-
-export function noChartCommand(): ChartCommand | null {
-  return null;
-}
 
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
