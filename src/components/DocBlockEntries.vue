@@ -159,6 +159,8 @@ function componentFor(entry = noRenderEntries()[0]) {
           v-if="segment.kind === 'tab' && segment.widthPx != null"
           class="doc-tab"
           :class="segment.leader ? `doc-tab-leader-${segment.leader}` : undefined"
+          contenteditable="false"
+          :data-caret-atom="segment.text"
           :style="{ width: `${segment.widthPx}px` }"
         >{{ segment.text }}</span><span
           v-else-if="segment.kind !== 'text'"
@@ -175,6 +177,8 @@ function componentFor(entry = noRenderEntries()[0]) {
           v-if="segment.kind === 'tab' && segment.widthPx != null"
           class="doc-tab"
           :class="segment.leader ? `doc-tab-leader-${segment.leader}` : undefined"
+          contenteditable="false"
+          :data-caret-atom="segment.text"
           :style="{ width: `${segment.widthPx}px` }"
         >{{ segment.text }}</span><span
           v-else-if="segment.kind !== 'text'"
@@ -331,9 +335,12 @@ function componentFor(entry = noRenderEntries()[0]) {
   pointer-events: none;
 }
 
-/* SPEC-054: a tab renders as a sized inline box (AC-1, AC-2) so its advance
-   reaches the resolved stop; the real "\t" stays inside it, so selection,
-   caret math and copy all still see one model character (AC-30). */
+/* SPEC-054: a tab renders as a sized, empty inline box (AC-1, AC-2) whose
+   advance reaches the resolved stop. It is a caret atom (data-caret-atom="\t",
+   contenteditable=false) carrying its one model character in the attribute —
+   the same mechanism note references use — so selection, caret arithmetic and
+   copy all count it as exactly one tab and native Shift+Arrow steps over it as
+   a unit (AC-30). */
 .doc-tab {
   display: inline-block;
   width: 0;
