@@ -6,16 +6,15 @@
 // this composable owns only the view wiring, per the DocumentView convention.
 import { computed, ref, shallowRef } from "vue";
 import type { EditorContext } from "./context";
+import { caretSelection, insertText } from "../../lib/commands";
 import {
-  caretSelection,
   insertFieldCommand,
-  insertText,
   setFieldLockedAtCaret,
   unlinkFieldAtCaret,
   updateAllFields,
   updateFieldAtCaret,
   type FieldUpdateContext,
-} from "../../lib/commands";
+} from "../../lib/commands.fields";
 import type { DocumentModel, FieldSpec } from "../../lib/documentModel";
 import type { ModelSelection } from "../../lib/commands";
 import { DATE_TIME_CATALOGUE, evaluateField, renderDateTime } from "../../lib/fields";
