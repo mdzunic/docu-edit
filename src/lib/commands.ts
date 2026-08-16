@@ -65,6 +65,7 @@ export * from "./commands.pageSetup";
 export * from "./commands.headers";
 export * from "./commands.notes";
 export * from "./commands.merge";
+export * from "./commands.fields";
 export * from "./commands.shapes";
 export * from "./commands.lists";
 export {

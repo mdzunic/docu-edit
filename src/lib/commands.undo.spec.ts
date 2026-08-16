@@ -128,6 +128,18 @@ const REGISTRY: Record<string, Scenario> = {
   insertNote: (model) => commands.insertNote(model, caretSelection(caret(0, 3)), "footnote"),
   // SPEC-046: mail-merge chips.
   insertMergeChip: (model) => commands.insertMergeChip(model, caretSelection(caret(0, 3)), { kind: "merge", name: "client_name" }),
+  // SPEC-053: fields and their update paths. The update/lock/unlink commands
+  // are no-ops on the fixture (it holds no field at the caret), which still
+  // exercises the apply/undo round trip; insertFieldCommand genuinely inserts.
+  insertFieldCommand: (model) =>
+    commands.insertFieldCommand(model, caretSelection(caret(0, 3)), { kind: "author", cached: "" }),
+  updateFieldAtCaret: (model) =>
+    commands.updateFieldAtCaret(model, caretSelection(caret(0, 0)), { now: new Date(2026, 2, 4, 14, 30, 0), fileName: "x" }),
+  updateAllFields: (model) =>
+    commands.updateAllFields(model, caretSelection(caret(0, 0)), { now: new Date(2026, 2, 4, 14, 30, 0), fileName: "x" }, () => null),
+  setFieldLockedAtCaret: (model) => commands.setFieldLockedAtCaret(model, caretSelection(caret(0, 0)), true),
+  unlinkFieldAtCaret: (model) =>
+    commands.unlinkFieldAtCaret(model, caretSelection(caret(0, 0)), { now: new Date(2026, 2, 4, 14, 30, 0), fileName: "x" }),
   setNoteSettings: (model) =>
     commands.setNoteSettings(model, caretSelection(caret(0, 0)), "footnote", {
       numberFormat: "lowerRoman",
