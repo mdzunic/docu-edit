@@ -590,8 +590,26 @@ export function useFormattingSurfaces(deps: FormattingSurfacesDeps) {
         "tab stops",
         false,
       );
+    } else if (update.kind === "move-tab") {
+      // Releasing a dragged handle on the ruler moves its stop live
+      // (SPEC-054 AC-4). The dragged stop is identified by its index in the
+      // first touched paragraph's list.
+      const index = update.index ?? 0;
+      const positionCm = update.positionCm ?? 0;
+      applyParagraphCommand(
+        (model, selection) => {
+          const stops = selectionTabStops(model, selection);
+          if (stops[index]) {
+            stops[index] = { ...stops[index], positionCm };
+          }
+          return setTabStops(model, selection, stops);
+        },
+        "tab stops",
+        false,
+      );
     } else if (update.kind === "remove-tab") {
-      // Clicking a laid handle removes its stop (SPEC-032 AC-24).
+      // Clicking a laid handle, or dragging it off the ruler, removes its stop
+      // (SPEC-032 AC-24, SPEC-054 AC-5).
       const index = update.index ?? 0;
       applyParagraphCommand(
         (model, selection) => {
