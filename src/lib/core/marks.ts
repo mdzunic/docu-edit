@@ -5,8 +5,6 @@
 // pseudo-elements, never text — the canvas's model/DOM equality check and
 // the caret's offset arithmetic both depend on that).
 
-import type { TabLeader } from "../documentModel";
-
 export interface MarkSegment {
   text: string;
   /** "text" renders bare; "space"/"tab" get a marked span. */
@@ -15,8 +13,10 @@ export interface MarkSegment {
    * to reach its stop) — set only on "tab" segments the renderer sizes. */
   widthPx?: number;
   /** SPEC-054: the leader the tab's box is filled with (dots/hyphens/an
-   * underscore), if its target stop carried one. */
-  leader?: TabLeader;
+   * underscore), if its target stop carried one. Kept as a bare union rather
+   * than documentModel's `TabLeader` so this core module imports nothing from
+   * outside src/lib/core (see core/boundary.spec.ts). */
+  leader?: "dot" | "hyphen" | "underscore";
 }
 
 /** Splits text into mark segments. Consecutive spaces split one segment per

@@ -2104,19 +2104,15 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       break;
     case "paragraph.indent":
     case "paragraph.outdent": {
-      // SPEC-014 AC-8..10. A caret collapsed at offset 0 — an empty paragraph
-      // or the start of its first line — dispatches the toolbar's own indent
-      // command; a wrapped continuation line's visual start sits at a non-zero
-      // offset, so it falls through to the literal tab. Always prevented:
-      // the browser's default would move focus out of the editor.
+      // Always prevented: the browser's default Tab would move focus out of
+      // the editor. The precedence table is resolved below (SPEC-054).
       event.preventDefault();
       const selection = currentSelection(root);
       if (!selection) {
         break;
       }
-      // SPEC-022 AC-10..12: inside a table cell, Tab moves to the next cell
-      // and Shift+Tab to the previous — taking priority over every indent
-      // and list behaviour; Tab in the last cell appends a row.
+      // SPEC-022 AC-10..12 (precedence rule 1): in a table cell, Tab moves to
+      // the next cell (Shift+Tab the previous), the last cell appending a row.
       if (isCollapsed(selection) && selection.focus.cell) {
         if (event.shiftKey) {
           const prev = prevCellCaret(model, selection.focus);
@@ -2140,16 +2136,10 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
         }
         break;
       }
-      // SPEC-054's Tab precedence table ("What the Tab key does"), rules 2–4,
-      // most specific first. A caret collapsed at offset 0 is the gate for
-      // both the list and indent behaviours; every other position — mid-
-      // paragraph, a non-collapsed selection, the start of a wrapped
-      // continuation line — falls through to a literal tab, so Tab resolves
-      // to exactly one behaviour per context (AC-29, AC-30).
+      // SPEC-054 Tab precedence (rules 2-4): a caret collapsed at offset 0
+      // gates the list demote (rule 2, narrowed from SPEC-018's "any offset")
+      // and indent (rule 3); elsewhere a literal tab (rule 4) — AC-29, AC-30.
       const collapsedAtStart = isCollapsed(selection) && selection.focus.offset === 0;
-      // Rule 2 (SPEC-018 AC-3/AC-4): only at offset 0 of a list item does Tab
-      // demote and Shift+Tab promote — narrowed from SPEC-018's original
-      // "at any offset" so it no longer overlaps rule 4 (AC-30).
       const listAtStart =
         collapsedAtStart &&
         touchedBlocks(model, selection).some((address) => !!paragraphAt(model, address)?.list);
@@ -2159,17 +2149,11 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
           "list level",
         );
       } else if (collapsedAtStart) {
-        // Rule 3 (SPEC-014 AC-8/AC-9): offset 0 of any other paragraph
-        // increases/decreases indent.
         applyParagraphCommand(
           (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
           "indent",
         );
       } else if (!event.shiftKey) {
-        // Rule 4 (SPEC-014 AC-10): any other position — mid-paragraph, a
-        // non-collapsed selection, the start of a wrapped line — inserts a
-        // literal tab character, grouped with typing like any other inserted
-        // character (SPEC-015 AC-9).
         applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", { groupable: true });
       }
       break;
@@ -3226,11 +3210,8 @@ const editorCommands = new Map([
   // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
   // insert, not typed input, so autocorrect never sees it.
   ["insert.nonBreakingSpace", () => { insertSpecialCharacter("\u00A0"); }],
-  // SPEC-054: "Insert \u2192 Tab character" inserts a literal U+0009 regardless of
-  // context (AC-31) \u2014 the only way to type a tab inside a table cell, where
-  // the Tab key navigates cells instead (AC-32).
+  // SPEC-054: a literal tab anywhere (AC-31/32); and the Tabs dialog.
   ["insert.tab-character", () => { insertSpecialCharacter("\t"); }],
-  // SPEC-054: "Format \u2192 Tabs\u2026" opens the tab-stops dialog.
   ["format.tabs", openTabsDialog],
   // Ctrl/Cmd+Shift+P (AC-12).
   ["view.formattingMarks", toggleFormattingMarks],
