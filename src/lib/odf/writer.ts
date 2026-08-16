@@ -45,6 +45,7 @@ import type {
   ParagraphFormatting,
   Run,
   RunFormatting,
+  RefFormat,
   Section,
   SectionColumns,
   Shape,
@@ -61,6 +62,7 @@ import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderSide } from "../core/tables";
 import {
   FIELD_PLACEHOLDER_TEXT,
+  isEvaluatedField,
   isMergeChipField,
   isTable,
   NOTE_PLACEHOLDER_TEXT,
@@ -69,6 +71,7 @@ import {
   sectionPageSize,
 } from "../documentModel";
 import { chipLabel } from "../mergeChips";
+import { dateTimeFormatEntry, odtDateStyleName, type DateTimeFormatEntry } from "../fields";
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../core/language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
@@ -97,6 +100,7 @@ import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import {
   FO_NAMESPACE,
+  NUMBER_NAMESPACE,
   OFFICE_NAMESPACE,
   STYLE_NAMESPACE,
   TABLE_NAMESPACE,
@@ -104,6 +108,11 @@ import {
   XLINK_NAMESPACE,
   styleAttr,
 } from "./xml";
+
+// Declared locally on each number:date-style/time-style element (the
+// TABLE_XMLNS pattern), so content.xml is unchanged for documents with no
+// date/time field (SPEC-053).
+const NUMBER_XMLNS = ` xmlns:number="${NUMBER_NAMESPACE}"`;
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 import { buildMetaXml, type OdfMetaInput } from "./meta";
@@ -524,10 +533,26 @@ interface AutomaticStyles {
    * shared across shapes (fill/outline/wrap all vary per shape), so this
    * always mints a fresh name. */
   shapeStyleNameFor(shape: Shape): string;
+  /** The `number:date-style`/`number:time-style` name for a supported
+   * SPEC-053 date/time format, minting and registering it on first use so a
+   * `text:date`/`text:time` field can reference it (`style:data-style-name`).
+   * Deduped by format. */
+  dateStyleNameFor(entry: DateTimeFormatEntry): string;
+  /** Records that a `text:user-field-get` (a SPEC-053 `docProperty` field)
+   * references the named user field, so buildContentXml can emit a
+   * `text:user-field-decls` block declaring it. */
+  registerUserField(name: string): void;
+  /** The user-field names collected via `registerUserField`, in first-use
+   * order. */
+  userFieldNames(): string[];
 }
 
 function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
   const takenNames = new Set<string>();
+  // SPEC-053: date/time number styles (deduped by format) and the user-field
+  // names a `docProperty` field references.
+  const dateStyleNames = new Map<string, string>();
+  const userFields = new Set<string>();
   const takeTableNames = (table: Table) => {
     if (table.odtName) {
       takenNames.add(table.odtName);
@@ -656,6 +681,26 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
           : `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${masterAttr}>${propertiesXml}</style:style>`,
       );
       return name;
+    },
+
+    dateStyleNameFor(entry: DateTimeFormatEntry): string {
+      const existing = dateStyleNames.get(entry.format);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = odtDateStyleName(entry);
+      dateStyleNames.set(entry.format, name);
+      const tag = entry.odtStyleTag === "time" ? "number:time-style" : "number:date-style";
+      defs.push(`<${tag}${NUMBER_XMLNS} style:name="${escapeXml(name)}">${entry.odtStyleBody}</${tag}>`);
+      return name;
+    },
+
+    registerUserField(name: string): void {
+      userFields.add(name);
+    },
+
+    userFieldNames(): string[] {
+      return [...userFields];
     },
 
     textNameFor(formatting: RunFormatting, styleId?: string): string {
@@ -1061,15 +1106,87 @@ const FIELD_NUM_FORMAT: Record<PageNumberFormat, string> = {
  * text is the field's cached display value, exactly the shape a real ODF
  * producer's own field elements carry (their content is the last-rendered
  * result, recomputed live by the consuming application). */
-function fieldContentXml(field: FieldSpec): string {
+// The ODF `text:reference-format` value for a cross-reference's show mode
+// (SPEC-053): plain text, the target's page, or its above/below position.
+const REF_FORMAT_ATTR: Record<RefFormat, string> = {
+  text: "text",
+  page: "page",
+  position: "direction",
+};
+
+/** The `text:user-field-decls` block declaring every `docProperty` field's
+ * user field (SPEC-053), each value read from the matching SPEC-041 custom
+ * property (or "" when the property is gone). */
+function userFieldDeclsXml(model: DocumentModel, names: string[]): string {
+  if (names.length === 0) {
+    return "";
+  }
+  const decls = names
+    .map((name) => {
+      const value = model.properties?.customProperties?.find((property) => property.name === name)?.value ?? "";
+      return `<text:user-field-decl office:value-type="string" office:string-value="${escapeXml(value)}" text:name="${escapeXml(name)}"/>`;
+    })
+    .join("");
+  return `<text:user-field-decls>${decls}</text:user-field-decls>`;
+}
+
+function fieldContentXml(field: FieldSpec, styles: AutomaticStyles): string {
   if (isMergeChipField(field)) {
     // A placeholder carries its own text, needs no declarations, and
     // LibreOffice renders it as a grey placeholder — visually a chip
     // (SPEC-046 "Chip serialisation").
     return `<text:placeholder text:placeholder-type="text">${escapeXml(chipLabel(field))}</text:placeholder>`;
   }
-  const tag = field.kind === "page" ? "page-number" : "page-count";
-  return `<text:${tag}${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:${tag}>`;
+  const cached = isEvaluatedField(field) ? escapeXml(field.cached) : FIELD_PLACEHOLDER_TEXT;
+  switch (field.kind) {
+    case "page":
+      return `<text:page-number${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:page-number>`;
+    case "numpages":
+      return `<text:page-count${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:page-count>`;
+    case "date": {
+      const entry = dateTimeFormatEntry(field.format);
+      const styleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
+      // A locked field is "fixed" in ODF (SPEC-053 rule 4): it is not updated.
+      const fixedAttr = field.locked ? ' text:fixed="true"' : "";
+      return `<text:date${styleAttr}${fixedAttr}>${cached}</text:date>`;
+    }
+    case "time": {
+      const entry = dateTimeFormatEntry(field.format);
+      const styleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
+      const fixedAttr = field.locked ? ' text:fixed="true"' : "";
+      return `<text:time${styleAttr}${fixedAttr}>${cached}</text:time>`;
+    }
+    case "author":
+      return `<text:author-name>${cached}</text:author-name>`;
+    case "docTitle":
+      return `<text:title>${cached}</text:title>`;
+    case "docSubject":
+      return `<text:subject>${cached}</text:subject>`;
+    case "docKeywords":
+      return `<text:keywords>${cached}</text:keywords>`;
+    case "wordCount":
+      return `<text:word-count>${cached}</text:word-count>`;
+    case "fileName":
+      return `<text:file-name text:display="${field.path ? "full" : "name-and-extension"}">${cached}</text:file-name>`;
+    case "docProperty":
+      styles.registerUserField(field.name);
+      return `<text:user-field-get text:name="${escapeXml(field.name)}">${cached}</text:user-field-get>`;
+    case "ref":
+      return `<text:bookmark-ref text:reference-format="${REF_FORMAT_ATTR[field.show]}" text:ref-name="${escapeXml(field.target)}">${cached}</text:bookmark-ref>`;
+    case "pageRef":
+      return `<text:bookmark-ref text:reference-format="page" text:ref-name="${escapeXml(field.target)}">${cached}</text:bookmark-ref>`;
+    case "unsupported":
+      // An unsupported field read from an `.odt` keeps its whole source
+      // element as `code`, re-emitted verbatim (SPEC-053 byte-for-byte). One
+      // read from a `.docx` (code is an instruction string) has no ODF
+      // element, so it degrades to a placeholder carrying its saved value;
+      // the cross-format save records a DropRecord for it.
+      return field.code.startsWith("<")
+        ? field.code
+        : `<text:placeholder text:placeholder-type="text">${cached}</text:placeholder>`;
+    default:
+      return cached;
+  }
 }
 
 // SPEC-031: the notes of the content part being built — set by
@@ -1338,7 +1455,7 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
   let span: string;
   if (run.field) {
     state.lastChar = FIELD_PLACEHOLDER_TEXT;
-    span = `<text:span text:style-name="${styleName}">${fieldContentXml(run.field)}</text:span>`;
+    span = `<text:span text:style-name="${styleName}">${fieldContentXml(run.field, styles)}</text:span>`;
   } else {
     span = `<text:span text:style-name="${styleName}">${runContentXml(run.text, state)}</text:span>`;
   }
@@ -1946,13 +2063,17 @@ export function buildContentXml(
   odtCommentsContext = null;
   odtChangedRegionsContext = null;
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
+  // SPEC-053: declare every user field a `docProperty` field references, its
+  // value taken from the matching custom property (SPEC-041). LibreOffice
+  // needs the declaration before `text:user-field-get` can resolve.
+  const userFieldDecls = userFieldDeclsXml(model, styles.userFieldNames());
   const fontFaceDecls = includeOpaque ? (model.sourceXml?.odtFontFaceDecls ?? "") : "";
   const preservedStyles = includeOpaque ? (model.sourceXml?.odtAutomaticStyles ?? []) : [];
   return (
     `${XML_DECLARATION}<office:document-content${DOCUMENT_XMLNS} office:version="1.2">` +
     fontFaceDecls +
     `<office:automatic-styles>${styles.defs.join("")}${preservedStyles.join("")}</office:automatic-styles>` +
-    `<office:body><office:text>${trackedChanges}${body}</office:text></office:body>` +
+    `<office:body><office:text>${userFieldDecls}${trackedChanges}${body}</office:text></office:body>` +
     "</office:document-content>"
   );
 }
@@ -2219,8 +2340,29 @@ function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
   const defs: string[] = [];
   const paragraphNames = new Map<string, string>();
   const textNames = new Map<string, string>();
+  // SPEC-053: a `date`/`time` field in a header/footer (AC-30, AC-31) needs a
+  // number style, registered into this same styles.xml automatic-styles block.
+  const dateStyleNames = new Map<string, string>();
+  const userFields = new Set<string>();
   return {
     defs,
+    dateStyleNameFor(entry: DateTimeFormatEntry): string {
+      const existing = dateStyleNames.get(entry.format);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const name = odtDateStyleName(entry);
+      dateStyleNames.set(entry.format, name);
+      const tag = entry.odtStyleTag === "time" ? "number:time-style" : "number:date-style";
+      defs.push(`<${tag}${NUMBER_XMLNS} style:name="${escapeXml(name)}">${entry.odtStyleBody}</${tag}>`);
+      return name;
+    },
+    registerUserField(name: string): void {
+      userFields.add(name);
+    },
+    userFieldNames(): string[] {
+      return [...userFields];
+    },
     paragraphNameFor(paragraph: Paragraph): string | undefined {
       const propertiesXml = paragraphPropertiesXml(paragraph.formatting ?? {});
       if (propertiesXml === "") {

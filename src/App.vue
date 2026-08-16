@@ -38,6 +38,12 @@ body.is-print-preview .page-margin {
   outline: none !important;
 }
 
+/* Field shading (SPEC-053 AC-12) is screen-only: the preview shows the page
+   as it prints, so the grey field background is removed here too. */
+body.is-print-preview .doc-field-shaded {
+  background: transparent !important;
+}
+
 @media print {
   .print-exclude,
   .page[data-print-hidden] {

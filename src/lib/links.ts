@@ -444,15 +444,38 @@ export interface BookmarkLocation {
 }
 
 /** Every bookmark in the document, in document order — the manager's list
- * (AC-23). */
+ * (AC-23). Hidden bookmarks (auto-created at headings for SPEC-053
+ * cross-references) are omitted: the manager never shows them. */
 export function listBookmarks(model: DocumentModel): BookmarkLocation[] {
-  const found: BookmarkLocation[] = [];
+  return listAllBookmarks(model).filter((bookmark) => !bookmark.hidden);
+}
+
+/** Every bookmark including hidden ones, in document order — the list
+ * cross-reference resolution needs (SPEC-053). `hidden` mirrors the anchor's
+ * flag so callers can tell the two apart. */
+export function listAllBookmarks(model: DocumentModel): Array<BookmarkLocation & { hidden?: true }> {
+  const found: Array<BookmarkLocation & { hidden?: true }> = [];
   forEachParagraph(model, (paragraph, address) => {
     for (const bookmark of paragraph.bookmarks ?? []) {
-      found.push({ name: bookmark.name, address, offset: bookmark.offset });
+      found.push({ name: bookmark.name, address, offset: bookmark.offset, ...(bookmark.hidden ? { hidden: true } : {}) });
     }
   });
   return found;
+}
+
+/** Like `bookmarkCaret` but resolves hidden bookmarks too (SPEC-053
+ * cross-reference targets). */
+export function bookmarkCaretIncludingHidden(model: DocumentModel, name: string): CaretPosition | null {
+  const location = listAllBookmarks(model).find((bookmark) => bookmark.name === name);
+  if (!location) {
+    return null;
+  }
+  return clampCaret(model, {
+    section: location.address.section,
+    block: location.address.block,
+    offset: location.offset,
+    cell: location.address.cell,
+  });
 }
 
 /** "" when the name is valid, else the inline error to show (AC-26..28).
@@ -488,6 +511,34 @@ export function insertBookmark(
   );
   replaceParagraphAt(next, caret, { ...paragraph, bookmarks });
   return { model: next, selection };
+}
+
+/** Ensures a heading paragraph carries a bookmark a SPEC-053 cross-reference
+ * can target, returning the (possibly new) model and the bookmark's name. If
+ * the heading already has a bookmark at its start, that name is reused; else a
+ * hidden bookmark named after the heading's derived anchor is inserted (Word's
+ * behaviour, and what lets `.odt`'s `text:bookmark-ref` carry the reference).
+ * Hidden bookmarks are not shown by the bookmark manager (see listBookmarks). */
+export function ensureHeadingBookmark(
+  model: DocumentModel,
+  address: ParagraphAddress,
+  fallbackName: string,
+): { model: DocumentModel; name: string } {
+  const paragraph = paragraphAt(model, address);
+  if (!paragraph) {
+    return { model, name: fallbackName };
+  }
+  const existing = (paragraph.bookmarks ?? []).find((bookmark) => bookmark.offset === 0);
+  if (existing) {
+    return { model, name: existing.name };
+  }
+  const next = cloneContainers(model);
+  const target = paragraphAt(next, address)!;
+  const bookmarks = [...(target.bookmarks ?? []), { name: fallbackName, offset: 0, hidden: true as const }].sort(
+    (a, b) => a.offset - b.offset,
+  );
+  replaceParagraphAt(next, address, { ...target, bookmarks });
+  return { model: next, name: fallbackName };
 }
 
 /** Deletes the named bookmark (AC-25); the document text is untouched. */

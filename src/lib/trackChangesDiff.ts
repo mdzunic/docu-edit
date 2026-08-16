@@ -46,9 +46,28 @@ function markInfo(author: string, date: string): TrackedChangeInfo {
  * `name`, so the two branches build the tag from whichever fields the kind
  * actually carries. */
 function fieldAtomTag(field: FieldSpec): string {
-  return isMergeChipField(field)
-    ? `${field.kind}:${field.kind === "endif" ? "" : field.name}`
-    : `${field.kind}:${field.format}`;
+  if (isMergeChipField(field)) {
+    return `${field.kind}:${field.kind === "endif" ? "" : field.name}`;
+  }
+  switch (field.kind) {
+    case "page":
+    case "numpages":
+    case "date":
+    case "time":
+      return `${field.kind}:${field.format}`;
+    case "docProperty":
+      return `${field.kind}:${field.name}`;
+    case "fileName":
+      return `${field.kind}:${field.path ? "path" : ""}`;
+    case "ref":
+      return `${field.kind}:${field.target}:${field.show}`;
+    case "pageRef":
+      return `${field.kind}:${field.target}`;
+    case "unsupported":
+      return `${field.kind}:${field.code}`;
+    default:
+      return field.kind;
+  }
 }
 
 /** Lazily-created marks shared by every atom a single `applyTrackChanges`

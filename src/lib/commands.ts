@@ -65,6 +65,12 @@ export * from "./commands.pageSetup";
 export * from "./commands.headers";
 export * from "./commands.notes";
 export * from "./commands.merge";
+// commands.fields.ts is deliberately NOT re-exported here: it imports
+// lib/fields.ts, which imports lib/links.ts, which imports this barrel — a
+// cycle that stalls module init. Like lib/links.ts's own commands, the field
+// commands are imported directly from "./commands.fields" at their call
+// sites, which also keeps commands.undo.spec.ts's completeness guard scoped
+// to the barrel (see the note in lib/links.ts).
 export * from "./commands.shapes";
 export * from "./commands.lists";
 export {

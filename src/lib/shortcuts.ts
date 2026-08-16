@@ -94,6 +94,9 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "edit.pastePlain", label: "Paste without formatting", category: "Editing", bindings: [{ key: "v", mod: true, shift: true }] },
   { id: "insert.link", label: "Insert link", category: "Editing", bindings: [{ key: "k", mod: true }] },
 
+  // SPEC-053: F9 updates the field at the caret.
+  { id: "field.update", label: "Update field", category: "Editing", bindings: [{ key: "F9" }] },
+
   // Find & replace
   { id: "find.open", label: "Find", category: "Find & replace", bindings: [{ key: "f", mod: true }], overridesBrowser: true },
   { id: "find.openReplace", label: "Find and replace", category: "Find & replace", bindings: [{ key: "h", mod: true }] },

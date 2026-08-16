@@ -16,6 +16,7 @@ import { computed, ref, shallowRef, watch } from "vue";
 import type { Ref } from "vue";
 import {
   compileQuery,
+  fieldSkippedCount,
   findMatches,
   indexAtOrAfter,
   isQueryError,
@@ -302,6 +303,12 @@ export function useFindReplace(deps: FindReplaceDeps) {
       return;
     }
     const match = matches[index];
+    if (match.insideField) {
+      // SPEC-053 AC-45/46: a match inside a field's value can't be replaced —
+      // report it and move on rather than corrupt the field.
+      addToast("Match is inside a field and was not replaced");
+      return;
+    }
     const before = matchSelection(match);
     const anchor: CaretPosition = {
       section: match.section,
@@ -324,12 +331,19 @@ export function useFindReplace(deps: FindReplaceDeps) {
       return;
     }
     const matches = findMatches(model, compiled);
-    const count = matches.length;
-    if (count > 0) {
+    // SPEC-053 AC-46: matches inside a field's computed value are never
+    // rewritten; report them as skipped rather than corrupting the field.
+    const skipped = fieldSkippedCount(matches);
+    const replaced = matches.length - skipped;
+    if (replaced > 0) {
       const before = currentFindSelection() ?? caretSelection(documentStart());
       applyEdit(replaceMatches(model, matches, findReplaceText.value), before, "replace all");
     }
-    addToast(`Replaced ${count} occurrences`);
+    addToast(
+      skipped > 0
+        ? `Replaced ${replaced} occurrences (${skipped} inside fields skipped)`
+        : `Replaced ${replaced} occurrences`,
+    );
     refreshFindAfterEdit(noCaret());
   }
 

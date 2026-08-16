@@ -243,3 +243,56 @@ describe("indexAtOrAfter", () => {
     expect(indexAtOrAfter(matches, { section: 0, block: 9, offset: 0 })).toBe(0);
   });
 });
+
+// --- SPEC-053: fields in Find and Replace (AC-44, AC-45, AC-46) --------------
+
+import { createFieldSpecRun } from "./documentModel";
+import { fieldSkippedCount } from "./findReplace";
+
+function fieldRun(field: Parameters<typeof createFieldSpecRun>[0]): Run {
+  return createFieldSpecRun(field);
+}
+
+describe("fields in Find and Replace (SPEC-053)", () => {
+  it("Find matches the value a field displays, not its placeholder (AC-44)", () => {
+    const para: Paragraph = {
+      type: "paragraph",
+      runs: [
+        { text: "Dated ", formatting: {} },
+        fieldRun({ kind: "date", format: "d MMMM yyyy", cached: "4 March 2026" }),
+        { text: " today", formatting: {} },
+      ],
+    };
+    const model = docOf(para);
+    expect(findMatches(model, compiled("March")).length).toBe(1);
+    // The placeholder "1" is no longer matchable as the field's text.
+    expect(findMatches(model, compiled("today")).length).toBe(1);
+  });
+
+  it("flags a match that lands inside a field (AC-45)", () => {
+    const model = docOf({
+      type: "paragraph",
+      runs: [fieldRun({ kind: "author", cached: "Ada Lovelace" })],
+    });
+    const matches = findMatches(model, compiled("Lovelace"));
+    expect(matches).toHaveLength(1);
+    expect(matches[0].insideField).toBe(true);
+  });
+
+  it("Replace does not edit inside a field and reports the skipped match (AC-45, AC-46)", () => {
+    const model = docOf({
+      type: "paragraph",
+      runs: [fieldRun({ kind: "author", cached: "Ada" }), { text: " Ada", formatting: {} }],
+    });
+    const matches = findMatches(model, compiled("Ada"));
+    // Two matches: one inside the field, one in the trailing plain text.
+    expect(matches).toHaveLength(2);
+    expect(fieldSkippedCount(matches)).toBe(1);
+    const out = replaceMatches(model, matches, "Bob");
+    const runs = (out.model.sections[0].blocks[0] as Paragraph).runs;
+    // The field is untouched, still a field run with its cached value.
+    expect(runs[0].field).toEqual({ kind: "author", cached: "Ada" });
+    // The plain-text occurrence was replaced.
+    expect(blockText(out.model.sections[0].blocks[0])).toContain("Bob");
+  });
+});

@@ -56,16 +56,17 @@ import type {
   TableWidthMode,
 } from "../core/tables";
 import {
-  createChipRun,
   createDefaultStyles,
-  createFieldRun,
+  createFieldSpecRun,
   createNoteRun,
   DEFAULT_COLUMN_GAP_CM,
   MAX_COLUMN_COUNT,
   mergeParagraphFormatting,
   mergeRunFormatting,
+  type FieldSpec,
 } from "../documentModel";
 import { parseChipText } from "../mergeChips";
+import { canonicalDateTimeFormatFromDocx } from "../fields";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
 import { yieldToMainThread } from "../core/idleScheduler";
@@ -459,11 +460,25 @@ function collectRuns(
   links?: LinkReadContext,
   commentAnchors: CommentAnchor[] = [],
 ): void {
-  for (const child of Array.from(container.children)) {
+  const children = Array.from(container.children);
+  for (let ci = 0; ci < children.length; ci++) {
+    const child = children[ci];
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "pPr") {
       continue; // Modelled separately by parseParagraph.
     }
     if (child.namespaceURI === WORD_NAMESPACE && child.localName === "r") {
+      // A run-split complex field (SPEC-053 AC-47): a `w:fldChar begin` opens
+      // an `instrText` / `separate` / result / `end` sequence that reads into
+      // one field run, its cached value the result runs' text. A TOC field is
+      // handled at block level, so it falls through here unchanged.
+      if (runFldCharType(child) === "begin") {
+        const consumed = consumeComplexField(children, ci);
+        if (consumed) {
+          runs.push(consumed.run);
+          ci = consumed.next - 1;
+          continue;
+        }
+      }
       // A footnote/endnote reference run (SPEC-031) becomes a note marker
       // run linked to the parsed footnotes.xml/endnotes.xml content.
       const noteRef = noteReferenceOf(child);
@@ -1770,24 +1785,174 @@ function mergeFieldInstrText(instr: string): string | null {
   return match ? match[1] : null;
 }
 
-/** A `w:fldSimple` as a mail-merge chip (SPEC-046) or page-number/page-count
- * field run (SPEC-029), or null when its instruction is something else —
- * the caller falls back to preserving it as an opaque inline the same way
- * it always has. A `MERGEFIELD` whose quoted text isn't valid chip syntax
- * also falls through: "a chip form the reader does not recognise stays
- * what it was" (SPEC-008). */
+/** Maps a `.docx` field instruction and its cached result text to a
+ * `FieldSpec` (SPEC-053). Page/count and merge chips keep their existing
+ * shapes; every catalogue type maps to its kind; anything outside the
+ * catalogue becomes an `unsupported` field carrying the instruction and its
+ * result byte-for-byte (SPEC-008 at run level). Returns null only for a
+ * `MERGEFIELD` whose quoted text isn't valid chip syntax — the caller then
+ * preserves the whole element as an opaque inline, unchanged. */
+function fieldSpecFromInstr(instr: string, cached: string): FieldSpec | null {
+  const trimmed = instr.trim();
+  const mergeText = mergeFieldInstrText(instr);
+  if (mergeText !== null) {
+    const chip = parseChipText(mergeText);
+    return chip ?? null;
+  }
+  const pageParts = fieldInstrParts(instr);
+  if (pageParts) {
+    return { kind: pageParts.kind, format: pageParts.format };
+  }
+  let m: RegExpExecArray | null;
+  if ((m = /^(DATE|TIME)\b(?:[\s\S]*?\\@\s*"([^"]*)")?/i.exec(trimmed))) {
+    const kind = m[1].toUpperCase() === "DATE" ? "date" : "time";
+    const picture = m[2] ?? (kind === "date" ? "d MMMM yyyy" : "HH:mm");
+    return { kind, format: canonicalDateTimeFormatFromDocx(picture), cached };
+  }
+  if (/^AUTHOR\b/i.test(trimmed)) {
+    return { kind: "author", cached };
+  }
+  if (/^TITLE\b/i.test(trimmed)) {
+    return { kind: "docTitle", cached };
+  }
+  if (/^SUBJECT\b/i.test(trimmed)) {
+    return { kind: "docSubject", cached };
+  }
+  if (/^KEYWORDS\b/i.test(trimmed)) {
+    return { kind: "docKeywords", cached };
+  }
+  if (/^NUMWORDS\b/i.test(trimmed)) {
+    return { kind: "wordCount", cached };
+  }
+  if (/^FILENAME\b/i.test(trimmed)) {
+    return /\\p\b/i.test(trimmed) ? { kind: "fileName", path: true, cached } : { kind: "fileName", cached };
+  }
+  if ((m = /^DOCPROPERTY\s+"([^"]*)"/i.exec(trimmed))) {
+    return { kind: "docProperty", name: m[1], cached };
+  }
+  if ((m = /^PAGEREF\s+(\S+)/i.exec(trimmed))) {
+    return { kind: "pageRef", target: m[1], show: "page", cached };
+  }
+  if ((m = /^REF\s+(\S+)([\s\S]*)$/i.exec(trimmed))) {
+    return { kind: "ref", target: m[1], show: /\\p\b/i.test(m[2]) ? "position" : "text", cached };
+  }
+  // Outside the catalogue: preserved verbatim (SPEC-053 unsupported case).
+  return { kind: "unsupported", code: instr, cached };
+}
+
+/** A `w:fldSimple` as a field run (SPEC-053, widening SPEC-029/046), or null
+ * only when its instruction is a `MERGEFIELD` whose text isn't valid chip
+ * syntax (the caller then preserves it as an opaque inline). The cached
+ * result is the element's own text content — the value the file was saved
+ * with, which unsupported fields display and every field round-trips. */
 function parseFieldSimple(el: Element): Run | null {
   const instr = wordAttr(el, "instr");
   if (!instr) {
     return null;
   }
-  const mergeText = mergeFieldInstrText(instr);
-  if (mergeText !== null) {
-    const chip = parseChipText(mergeText);
-    return chip ? createChipRun(chip) : null;
+  const spec = fieldSpecFromInstr(instr, fieldResultText(el));
+  if (!spec) {
+    return null;
   }
-  const parsed = fieldInstrParts(instr);
-  return parsed ? createFieldRun(parsed.kind, parsed.format) : null;
+  return createFieldSpecRun(applyFieldLock(spec, isFldLocked(wordAttr(el, "fldLock"))));
+}
+
+/** Whether a `w:fldLock` attribute value marks the field locked (SPEC-053). */
+function isFldLocked(value: string | null): boolean {
+  return value === "1" || value === "true" || value === "on";
+}
+
+/** Adds `locked: true` to an evaluated field when its source marked it locked. */
+function applyFieldLock(spec: FieldSpec, locked: boolean): FieldSpec {
+  if (!locked || !("cached" in spec) || spec.kind === "unsupported") {
+    return spec;
+  }
+  return { ...spec, locked: true };
+}
+
+/** The concatenated visible text of a field's result runs — every `w:t`
+ * descendant of a `w:fldSimple` (or, for a complex field, its result runs). */
+function fieldResultText(el: Element): string {
+  let text = "";
+  for (const t of Array.from(el.getElementsByTagNameNS(WORD_NAMESPACE, "t"))) {
+    text += t.textContent ?? "";
+  }
+  return text;
+}
+
+/** Consumes a run-split complex field starting at `children[start]` (a
+ * `w:fldChar begin` run), returning the field run it reads into and the index
+ * just past its `end` run (SPEC-053 AC-47). The instruction is the text of the
+ * `instrText` runs before `separate`; the cached result is the text of the
+ * result runs between `separate` and the matching `end`. Nested fields (a
+ * PAGEREF cached inside a REF result, say) only deepen the nesting count so
+ * the outer `end` is matched correctly; their text still contributes to the
+ * visible result. Returns null for a TOC field (handled at block level) so the
+ * caller falls back to its ordinary run handling. */
+function consumeComplexField(children: Element[], start: number): { run: Run; next: number } | null {
+  let depth = 0;
+  let sawSeparate = false;
+  let endFound = false;
+  let locked = false;
+  let instr = "";
+  let cached = "";
+  let i = start;
+  for (; i < children.length; i++) {
+    const el = children[i];
+    const isRun = el.namespaceURI === WORD_NAMESPACE && el.localName === "r";
+    if (!isRun) {
+      if (depth >= 1 && sawSeparate) {
+        cached += fieldResultText(el);
+      }
+      continue;
+    }
+    const type = runFldCharType(el);
+    if (type === "begin") {
+      if (depth === 0) {
+        locked = isFldLocked(runFldCharLock(el));
+      }
+      depth += 1;
+      continue;
+    }
+    if (type === "end") {
+      depth -= 1;
+      if (depth === 0) {
+        endFound = true;
+        i += 1;
+        break;
+      }
+      continue;
+    }
+    if (type === "separate") {
+      if (depth === 1) {
+        sawSeparate = true;
+      }
+      continue;
+    }
+    if (depth === 1 && !sawSeparate) {
+      instr += runInstrText(el) ?? "";
+    } else if (depth >= 1 && sawSeparate) {
+      cached += fieldResultText(el);
+    }
+  }
+  // A degenerate `begin` with no matching `end` (a malformed or unmodelled
+  // run) is not a field — leave it to the ordinary opaque-inline path. A TOC
+  // field is handled at block level, so fall through there too.
+  if (!endFound || /^\s*TOC\b/i.test(instr)) {
+    return null;
+  }
+  const spec = fieldSpecFromInstr(instr, cached);
+  return spec ? { run: createFieldSpecRun(applyFieldLock(spec, locked)), next: i } : null;
+}
+
+/** The `w:fldLock` attribute of a run's `w:fldChar`, or null. */
+function runFldCharLock(rEl: Element): string | null {
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "fldChar") {
+      return wordAttr(child, "fldLock");
+    }
+  }
+  return null;
 }
 
 interface HeaderFooterReference {

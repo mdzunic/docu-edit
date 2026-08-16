@@ -68,6 +68,11 @@ export interface CanvasGesturesDeps extends EditorContext {
   // --- from useLinks (SPEC-025, SPEC-033) -----------------------------------
   clearTocSelection: () => void;
   jumpToAnchor: (anchor?: string) => void;
+  // --- from useFields (SPEC-053) --------------------------------------------
+  followCrossReference: (target: string) => void;
+  /** Selects the whole one-character atom of a clicked field (AC-7); returns
+     true when the click landed on a (non-cross-reference) field. */
+  selectField: (target: EventTarget | null) => boolean;
   openLinkTarget: (target?: LinkTarget | null) => void;
   // --- from useFormatPainter (SPEC-020) -------------------------------------
   maybeApplyPainter: () => void;
@@ -100,6 +105,8 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     insertImageFromFile,
     clearTocSelection,
     jumpToAnchor,
+    followCrossReference,
+    selectField,
     openLinkTarget,
     maybeApplyPainter,
   } = deps;
@@ -141,6 +148,22 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
    * through the same sanitized path as the chip. */
   function handleContentClick(event = new MouseEvent("click")) {
     const eventTarget = event.target;
+    // Clicking a cross-reference scrolls to its target (SPEC-053 AC-26).
+    const ref = eventTarget instanceof Element ? eventTarget.closest(".doc-field[data-ref-target]") : null;
+    if (ref) {
+      event.preventDefault();
+      followCrossReference(ref.getAttribute("data-ref-target") ?? "");
+      return;
+    }
+    // Clicking any other field selects its whole atom (SPEC-053 AC-7), since a
+    // plain click cannot land the browser caret inside the field's
+    // contenteditable=false atom. Only intercept when the selection actually
+    // resolved (a body/cell/shape field), so a header/footer field — whose
+    // band has its own activation gesture — falls through untouched.
+    if (eventTarget instanceof Element && eventTarget.closest(".doc-field") && selectField(eventTarget)) {
+      event.preventDefault();
+      return;
+    }
     // Clicking a note reference mark jumps to its note (SPEC-031 AC-15).
     const mark = eventTarget instanceof Element ? eventTarget.closest(".doc-note-ref[data-note-id]") : null;
     if (mark) {

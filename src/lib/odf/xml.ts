@@ -19,6 +19,9 @@ export const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 export const DC_NAMESPACE = "http://purl.org/dc/elements/1.1/";
 /** Metadata (SPEC-041) — `meta.xml`'s `office:meta` children. */
 export const META_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:meta:1.0";
+/** Data styles (SPEC-053) — `number:date-style`/`number:time-style` bodies a
+ * date/time field's `style:data-style-name` points at. */
+export const NUMBER_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
 
 /** Reads an `office:*` attribute regardless of the bound prefix. */
 export function officeAttr(el: Element, localName: string): string | null {

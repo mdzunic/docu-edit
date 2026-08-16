@@ -128,6 +128,9 @@ const REGISTRY: Record<string, Scenario> = {
   insertNote: (model) => commands.insertNote(model, caretSelection(caret(0, 3)), "footnote"),
   // SPEC-046: mail-merge chips.
   insertMergeChip: (model) => commands.insertMergeChip(model, caretSelection(caret(0, 3)), { kind: "merge", name: "client_name" }),
+  // SPEC-053 field commands live in commands.fields.ts, imported directly at
+  // their call sites (not re-exported from the commands.ts barrel — see the
+  // note there), so this barrel-scoped guard never sees them.
   setNoteSettings: (model) =>
     commands.setNoteSettings(model, caretSelection(caret(0, 0)), "footnote", {
       numberFormat: "lowerRoman",

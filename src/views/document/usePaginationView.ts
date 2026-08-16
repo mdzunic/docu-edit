@@ -28,6 +28,7 @@ import {
   type DocumentModel,
   type NoteContent,
   type Paragraph,
+  type Run,
   type TrackChangesDisplayMode,
 } from "../../lib/documentModel";
 import { chipLabel } from "../../lib/mergeChips";
@@ -38,9 +39,11 @@ import {
 } from "../../lib/pagination";
 import { listMarkers } from "../../lib/lists";
 import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/notesLayout";
-import { noRenderEntries, type RenderEntry } from "../../lib/pageRender";
+import { noRenderEntries, type RenderEntry, type RenderRun } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
-import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
+import { headerFooterForPage } from "../../lib/pageNumbering";
+import { fieldDisplayText, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
+import { now } from "../../lib/clock";
 import {
   displayRunFormatting,
   isExternalLink,
@@ -57,6 +60,7 @@ import {
 import { effectiveLanguage } from "../../lib/core/language";
 import { markSegments } from "../../lib/core/marks";
 import { splitRuns } from "../../lib/textEditing";
+import type { CaretPosition } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
 import { blockKey, headingContentLength } from "../../lib/outline";
 import { mediaDataUri } from "../../lib/core/media";
@@ -166,6 +170,53 @@ export interface PaginationViewDeps extends EditorContext {
   /** The review pane's display-mode selector (SPEC-039 AC-9); drives
    * whether body runs show inline tracked-change markup. */
   trackChangesDisplayMode: Ref<TrackChangesDisplayMode>;
+  /** Whether "View → Field shading" is on (SPEC-053 AC-11): every field run
+   * paints its grey shading regardless of the caret. Shading never prints or
+   * exports (the class is dropped in print CSS). */
+  fieldShadingOn: Ref<boolean>;
+  /** The reactive caret mirror (SPEC-053 AC-10): a field run shades when the
+   * caret sits on it. Unlike `getCaret()` this is a ref, so a caret move
+   * re-renders the paragraph it lands in (which `getCaret()`, being
+   * non-reactive, would not). */
+  caretPosition: Ref<CaretPosition | null>;
+}
+
+/** The paint-time render of a SPEC-053 field run (everything but merge chips
+ * and note refs, handled by their own branches): its computed value as a
+ * caret atom, grey-shaded when field shading is on or the caret sits on it.
+ * `page`/`numpages` resolve through the same `evaluateField` path, given the
+ * page context. */
+function fieldRenderRun(
+  run: Run,
+  runIndex: number,
+  ctx: FieldContext,
+  styleObj: Record<string, string>,
+  lang: string,
+  caretOnField: boolean,
+  shadingOn: boolean,
+): RenderRun {
+  const field = run.field!;
+  // Show the saved cached value on open, never a live recompute (AC-19/20);
+  // only pagination-dependent fields evaluate live. See fieldDisplayText.
+  const value = fieldDisplayText(field, ctx);
+  const shaded = shadingOn || caretOnField;
+  const readOnly = isReadOnlyField(field);
+  const locked = "locked" in field && field.locked === true;
+  const baseClass = `doc-field${readOnly ? " doc-field-readonly" : ""}${locked ? " doc-field-locked" : ""}`;
+  const refTarget = field.kind === "ref" || field.kind === "pageRef" ? field.target : undefined;
+  return {
+    key: runKey(run, runIndex),
+    href: "",
+    styleObj,
+    // A zero-width space keeps an empty-valued field a clickable one-char atom.
+    text: value.length > 0 ? value : "​",
+    segments: null,
+    atomText: run.text,
+    atomClass: shaded ? `${baseClass} doc-field-shaded` : baseClass,
+    title: readOnly ? UNSUPPORTED_FIELD_MESSAGE : undefined,
+    refTarget,
+    lang,
+  };
 }
 
 const SECTION_MARKER_LABELS: Record<string, string> = {
@@ -306,6 +357,30 @@ function renderEntryFor(
     !continuation &&
     headingContentLength(model, flatEntry.section, flatEntry.blockIndex) > 0;
   const outlineCollapsed = outlineToggle && deps.collapsedHeadings.value.has(headingKey);
+  // SPEC-053 field shading: the caret's offset within this body paragraph, so
+  // the field run it lands on paints shaded (AC-10). Run start offsets let a
+  // field branch below know its own atom's offset.
+  // Read the reactive caret (not getCaret()) so a caret move actually
+  // re-renders this paragraph and repaints field shading (AC-10).
+  const caret = deps.caretPosition.value;
+  const caretOffsetHere =
+    caret && caret.section === flatEntry.section && caret.block === flatEntry.blockIndex && !caret.cell
+      ? caret.offset
+      : null;
+  const runStarts: number[] = [];
+  {
+    let acc = 0;
+    for (const r of runs) {
+      runStarts.push(acc);
+      acc += r.text.length;
+    }
+  }
+  const fieldCtx: FieldContext = {
+    model,
+    now: now(),
+    fileName: model.title ?? "",
+    pageOfBookmark: (name) => deps.tocPageNumberFor(model, name),
+  };
   let noteSig = "";
   const renderRuns = runs.map((run, runIndex) => {
     // A mail-merge chip (SPEC-046): renders its canonical `{{...}}` label
@@ -344,6 +419,23 @@ function renderEntryFor(
         lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
       };
     }
+    // A SPEC-053 computed field (date, author, cross-reference, page/count in
+    // the body, …): its value substituted at paint time, shaded when field
+    // shading is on or the caret sits on it (AC-6, AC-10, AC-11).
+    if (run.field) {
+      const start = runStarts[runIndex];
+      const caretOnField =
+        caretOffsetHere !== null && caretOffsetHere >= start && caretOffsetHere <= start + run.text.length;
+      return fieldRenderRun(
+        run,
+        runIndex,
+        { ...fieldCtx, here: { section: flatEntry.section, block: flatEntry.blockIndex, offset: start } },
+        { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
+        caretOnField,
+        deps.fieldShadingOn.value,
+      );
+    }
     // SPEC-039 AC-9: "No markup"/"Original" render as if every change were
     // already accepted/rejected — a hidden run (a pending deletion in "No
     // markup", a pending insertion in "Original") shows no text at all, but
@@ -367,6 +459,14 @@ function renderEntryFor(
       lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
     };
   });
+  // Field shading (AC-10, AC-11) is caret- and toggle-driven state, not part
+  // of the model — the memo below must carry it, or v-memo skips repainting a
+  // field's shading when only the caret moved or the View toggle flipped.
+  // Only paragraphs that actually hold a field vary this signal, so plain text
+  // keeps its cheap memo.
+  const fieldShadeSig = runs.some((run) => run.field && !isMergeChipField(run.field))
+    ? `${deps.fieldShadingOn.value ? 1 : 0}:${caretOffsetHere ?? ""}`
+    : "";
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
     memo: [
@@ -381,6 +481,7 @@ function renderEntryFor(
       outlineToggle,
       outlineCollapsed,
       deps.trackChangesDisplayMode.value,
+      fieldShadeSig,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
@@ -460,7 +561,22 @@ function headerFooterRenderEntries(
           lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
         };
       }
-      const text = run.field ? fieldValueText(run.field.kind, run.field.format, pageNumber, totalPages) : run.text;
+      if (run.field && model) {
+        // A SPEC-053 field in a header/footer — page/count show the live page
+        // (AC-35: correct on every page); other kinds show their evaluated
+        // value. Shaded only via the View toggle (the caret is never in a
+        // header/footer paint pass).
+        return fieldRenderRun(
+          run,
+          runIndex,
+          { model, now: now(), fileName: model.title ?? "", pageNumber, totalPages, pageOfBookmark: (name) => deps.tocPageNumberFor(model, name) },
+          runStyle(run.formatting),
+          effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
+          false,
+          deps.fieldShadingOn.value,
+        );
+      }
+      const text = run.text;
       const segments = marks ? markSegments(text) : null;
       const marked = segments && segments.some((segment) => segment.kind !== "text");
       return {
@@ -472,9 +588,14 @@ function headerFooterRenderEntries(
         lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
       };
     });
+    // A header/footer field shades only via the View toggle (AC-11); track it
+    // in the memo so flipping the toggle repaints, when the band holds a field.
+    const hfFieldShadeSig = paragraph.runs.some((run) => run.field && !isMergeChipField(run.field))
+      ? `${deps.fieldShadingOn.value ? 1 : 0}`
+      : "";
     entries.push({
       key: `hf:${blockIndex}`,
-      memo: [block, blockIndex, pageNumber, totalPages, marks, deps.hfRemountEpoch.value],
+      memo: [block, blockIndex, pageNumber, totalPages, marks, deps.hfRemountEpoch.value, hfFieldShadeSig],
       kind: "paragraph",
       tag: headingTag(paragraph.headingLevel),
       className: paragraphClassName(paragraph),

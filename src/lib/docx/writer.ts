@@ -55,6 +55,8 @@ import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderLineStyle, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
 import {
   DEFAULT_TITLE,
+  isEvaluatedField,
+  isFieldLocked,
   isMergeChipField,
   resolveColumnWidthsCm,
   sectionContentWidthCm,
@@ -62,6 +64,7 @@ import {
   sectionPageSize,
 } from "../documentModel";
 import { chipLabel } from "../mergeChips";
+import { dateTimeFormatEntry } from "../fields";
 import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
@@ -293,8 +296,40 @@ function fieldInstr(field: FieldSpec): string {
     // has-a-space branch and the reader has one pattern.
     return `MERGEFIELD "${chipLabel(field)}"`;
   }
-  const kind = field.kind === "page" ? "PAGE" : "NUMPAGES";
-  return `${kind}${FIELD_FORMAT_SWITCH[field.format]}`;
+  switch (field.kind) {
+    case "page":
+      return `PAGE${FIELD_FORMAT_SWITCH[field.format]}`;
+    case "numpages":
+      return `NUMPAGES${FIELD_FORMAT_SWITCH[field.format]}`;
+    case "date":
+      return `DATE \\@ "${dateTimeFormatEntry(field.format)?.docxPicture ?? field.format}"`;
+    case "time":
+      return `TIME \\@ "${dateTimeFormatEntry(field.format)?.docxPicture ?? field.format}"`;
+    case "author":
+      return "AUTHOR";
+    case "docTitle":
+      return "TITLE";
+    case "docSubject":
+      return "SUBJECT";
+    case "docKeywords":
+      return "KEYWORDS";
+    case "wordCount":
+      return "NUMWORDS";
+    case "fileName":
+      return field.path ? "FILENAME \\p" : "FILENAME";
+    case "docProperty":
+      return `DOCPROPERTY "${field.name}"`;
+    case "ref":
+      return `REF ${field.target}${field.show === "position" ? " \\p" : ""} \\h`;
+    case "pageRef":
+      return `PAGEREF ${field.target} \\h`;
+    case "unsupported":
+      // The instruction the file was saved with, byte-for-byte (SPEC-053
+      // AC "keeps its code byte-for-byte").
+      return field.code;
+    default:
+      return "";
+  }
 }
 
 /** A run, or — when it carries a field spec (SPEC-029) — a `w:fldSimple`
@@ -331,10 +366,17 @@ function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContex
     // not evaluate fields still shows `{{client_name}}`; the reader
     // rebuilds from the instruction and ignores this cached text, exactly
     // as it does for PAGE (SPEC-046 "Chip serialisation").
-    const cachedText = isMergeChipField(run.field) ? chipLabel(run.field) : run.text;
+    const cachedText = isMergeChipField(run.field)
+      ? chipLabel(run.field)
+      : isEvaluatedField(run.field)
+        ? run.field.cached
+        : run.text;
     const fieldContent = runContentXml(cachedText, deleted ? "delText" : "t");
     const fieldInner = `<w:r>${rPr}${fieldContent}</w:r>`;
-    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${fieldInner}</w:fldSimple>`;
+    // SPEC-053 rule 4: a locked field carries w:fldLock so update paths skip
+    // it after a round trip too.
+    const lockAttr = isFieldLocked(run.field) ? ' w:fldLock="1"' : "";
+    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}"${lockAttr}>${fieldInner}</w:fldSimple>`;
   }
   const content = runContentXml(run.text, deleted ? "delText" : "t");
   const inner = `<w:r>${rPr}${content}</w:r>`;

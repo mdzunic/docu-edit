@@ -44,6 +44,10 @@ import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
+import FieldDialog from "../components/FieldDialog.vue";
+import DateTimeDialog from "../components/DateTimeDialog.vue";
+import CrossReferenceDialog from "../components/CrossReferenceDialog.vue";
+import FieldToolbar from "../components/FieldToolbar.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
 import ParagraphToolbar from "../components/ParagraphToolbar.vue";
@@ -84,6 +88,7 @@ import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
+import { useFields } from "./document/useFields";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
@@ -103,9 +108,12 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
+import { fieldAtCaret, fieldSpanningSelection } from "../lib/commands.fields";
+import { isReadOnlyField, noFieldSpec } from "../lib/fields";
 import {
   asHeaderFooterPart,
   asImage,
+  isFieldLocked,
   asImageWrapMode,
   asShape,
   asChart,
@@ -545,6 +553,9 @@ const formatStates = ref(EMPTY_FORMAT_STATES);
 // The four value controls' display state (family, size, colour, highlight
 // with per-control mixed flags), recomputed alongside formatStates.
 const formatValues = ref(emptyToolbarFormatValues());
+// The field under a collapsed caret (SPEC-053 AC-14) — drives the field
+// toolbar chip. Null when the selection is a range or not on a field.
+const selectedField = shallowRef(noFieldSpec());
 
 // --- paragraph formatting (SPEC-014) ----------------------------------------
 // What the paragraph toolbar and ruler reflect, all read from the FIRST
@@ -1674,6 +1685,7 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
   // (SPEC-037 AC-3, AC-4) — a reactive mirror of the plain `caret` variable.
   caretPosition.value = range.end;
   if (!model || !range.start || !range.end) {
+    selectedField.value = null;
     formatStates.value = EMPTY_FORMAT_STATES;
     formatValues.value = emptyToolbarFormatValues();
     paragraphState.value = EMPTY_PARAGRAPH_STATE;
@@ -1696,6 +1708,12 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
       `${blockOrdinal(model, range.end)}, character ${range.end.offset + 1}`;
   }
   const selection = { anchor: range.start, focus: range.end };
+  // SPEC-053 AC-14: the field chip shows for a collapsed caret on a field, or a
+  // selection spanning exactly one field — what clicking a field produces (AC-7).
+  const collapsed = compareCaret(range.start, range.end) === 0;
+  selectedField.value = collapsed
+    ? fieldAtCaret(model, range.end)
+    : fieldSpanningSelection(model, range.start, range.end);
   formatStates.value = {
     bold: formatState(model, selection, "bold", pendingFormat),
     italic: formatState(model, selection, "italic", pendingFormat),
@@ -2353,6 +2371,11 @@ onBeforeUnmount(() => {
 });
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
+// "View → Field shading" (SPEC-053 AC-11): a session-local view toggle — like
+// the ruler/marks toggles it decorates the screen only and is never written to
+// the file. Off by default (Word's "When selected" is the closest match, but
+// the toggle explicitly lets a user shade every field at once).
+const fieldShadingOn = ref(false);
 const pageCount = computed(() => Math.max(1, paginationPages.value.length));
 // The displayed page number of every laid-out page (SPEC-029 AC-20..23),
 // recomputed whenever pagination or a section's numbering options change.
@@ -2494,6 +2517,10 @@ const {
   insertImageFromFile,
   clearTocSelection,
   jumpToAnchor,
+  // Deferred: useFields is initialised below, so wrap the read in an arrow so
+  // it resolves at click time, not during this call's argument evaluation.
+  followCrossReference: (target) => followCrossReference(target),
+  selectField: (target) => selectField(target),
   openLinkTarget,
   maybeApplyPainter,
 });
@@ -2893,6 +2920,8 @@ const { pagedViews } = usePaginationView({
   noteRemountEpoch,
   tocPageNumberFor,
   trackChangesDisplayMode: effectiveTrackChangesDisplayMode,
+  fieldShadingOn,
+  caretPosition,
 });
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
@@ -2938,6 +2967,33 @@ const {
   canConvertLiteralChips,
   convertLiteralChips,
 } = useMergeFields({ ...editorContext, paragraphSelection });
+
+// SPEC-053 fields: the Insert dialogs, F9/Update-all update paths, and the
+// field context-menu/chip actions.
+const {
+  fieldDialogOpen,
+  dateTimeDialogOpen,
+  crossReferenceDialogOpen,
+  nowMs: fieldNowMs,
+  fieldPreviews,
+  propertyNames: fieldPropertyNames,
+  crossReferenceHeadings,
+  crossReferenceBookmarks,
+  openFieldDialog,
+  handleFieldInsert,
+  openDateTimeDialog,
+  handleDateTimeInsert,
+  openCrossReferenceDialog,
+  handleCrossReferenceInsert,
+  handleUpdateField,
+  handleUpdateAllFields,
+  followCrossReference,
+  selectField,
+  contextMenuOnField,
+  contextMenuFieldLocked,
+  onContextMenu,
+  handleFieldAction,
+} = useFields({ ...editorContext, tocPageNumberFor, handleContextMenu, closeContextMenu });
 
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
@@ -3100,6 +3156,10 @@ const editorCommands = new Map([
   ["insert.header-footer-options", openHeaderFooterOptions],
   ["insert.merge-field", () => { mergeFieldPickerOpen.value = true; }],
   ["insert.note-settings", openNoteSettings],
+  // SPEC-053 fields.
+  ["insert.field", openFieldDialog],
+  ["insert.date-time", openDateTimeDialog],
+  ["insert.cross-reference", openCrossReferenceDialog],
   ["insert.toc", openTocDialog],
   ["insert.special-character", openSpecialCharacters],
   // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
@@ -3123,6 +3183,13 @@ const editorCommands = new Map([
   ["tools.dictionary", openCustomDictionaryDialog],
   ["tools.accessibility", openAccessibilityPane],
   ["tools.convert-merge-fields", convertLiteralChips],
+  // SPEC-053 field update paths and View toggle.
+  ["tools.update-all-fields", handleUpdateAllFields],
+  ["view.field-shading", () => { fieldShadingOn.value = !fieldShadingOn.value; }],
+  // F9 (AC-15): update the field at the caret. Unlink/lock/unlock reach the
+  // model through the field context menu / toolbar chip (handleFieldAction),
+  // not through their own command ids.
+  ["field.update", handleUpdateField],
   // Shortcut-only commands: no menubar item emits these ids (the menu
   // reaches page break and foot/endnotes through the insert-break /
   // insert-note payload events instead), so they arrive only from
@@ -3221,6 +3288,7 @@ function handleMenuCommand(id = "") {
         :can-convert-literal-chips="canConvertLiteralChips"
         :table-selected-for-chart="tableSelectedForChart"
         :painter-mode="painterMode"
+        :field-shading="fieldShadingOn"
         @command="handleMenuCommand"
         @insert-table-size="(rows, cols) => handleInsertTable({ rows, cols })"
         @insert-break="handleInsertBreak"
@@ -3270,6 +3338,12 @@ function handleMenuCommand(id = "") {
         v-if="editable"
         :states="formatStates"
         @toggle="toggleCharacterFormat"
+      />
+      <FieldToolbar
+        v-if="editable && selectedField"
+        :locked="isFieldLocked(selectedField)"
+        :read-only="isReadOnlyField(selectedField)"
+        @field-action="handleFieldAction"
       />
       <ParagraphToolbar
         v-if="editable"
@@ -3674,7 +3748,7 @@ function handleMenuCommand(id = "") {
             @copy="handleCopy"
             @cut="handleCut"
             @paste="handlePaste"
-            @contextmenu="handleContextMenu"
+            @contextmenu="onContextMenu"
             @mousedown="handleCanvasMouseDown"
             @mousemove="handleCanvasMouseMove"
             @mouseup="handleCanvasMouseUp"
@@ -3947,11 +4021,14 @@ function handleMenuCommand(id = "") {
       :table-actions="!!contextMenuTableCell"
       :can-merge-cells="canMergeCells"
       :list-actions="!!contextMenuListTarget"
+      :field-actions="contextMenuOnField"
+      :field-locked="contextMenuFieldLocked"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
       @table-action="handleContextMenuTableAction"
       @list-action="handleContextMenuListAction"
+      @field-action="handleFieldAction"
       @dismiss="closeContextMenu"
     />
     <SpellContextMenu
@@ -4009,6 +4086,28 @@ function handleMenuCommand(id = "") {
       :initial="{ part: activeHeaderFooter?.part ?? 'header' }"
       @apply="handlePageNumberInsert"
       @cancel="handlePageNumberCancel"
+    />
+    <FieldDialog
+      v-if="fieldDialogOpen && doc"
+      :model="doc"
+      :now-ms="fieldNowMs"
+      :file-name="doc.title"
+      :property-names="fieldPropertyNames"
+      @insert="handleFieldInsert"
+      @cancel="() => { fieldDialogOpen = false; }"
+    />
+    <DateTimeDialog
+      v-if="dateTimeDialogOpen"
+      :previews="fieldPreviews"
+      @insert="handleDateTimeInsert"
+      @cancel="() => { dateTimeDialogOpen = false; }"
+    />
+    <CrossReferenceDialog
+      v-if="crossReferenceDialogOpen"
+      :headings="crossReferenceHeadings"
+      :bookmarks="crossReferenceBookmarks"
+      @insert="handleCrossReferenceInsert"
+      @cancel="() => { crossReferenceDialogOpen = false; }"
     />
     <TocOptionsDialog
       v-if="tocOptionsDialogOpen"
