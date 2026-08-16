@@ -18,6 +18,7 @@ import {
 import type { DocumentModel, FieldSpec } from "../../lib/documentModel";
 import type { ModelSelection } from "../../lib/commands";
 import { DATE_TIME_CATALOGUE, evaluateField, renderDateTime } from "../../lib/fields";
+import { caretFromDomPoint } from "../../lib/domCaret";
 import { now } from "../../lib/clock";
 import { effectiveLanguage } from "../../lib/core/language";
 import {
@@ -285,6 +286,35 @@ export function useFields(deps: FieldsDeps) {
     deps.closeContextMenu();
   }
 
+  /** Clicking a field selects its whole one-character atom (AC-7). A field
+     renders as a `contenteditable=false` atom whose value can fill its line, so
+     a plain click never lands the browser caret on it — the selection stays
+     wherever it was (often the document start). We map the clicked element back
+     to its model range and select it, so the field shades (AC-10), the toolbar
+     chip appears (AC-14) and typing replaces the whole field (AC-8).
+     Cross-references are followed before this (AC-26). Returns true when it
+     selected a field. */
+  function selectField(target: EventTarget | null): boolean {
+    const root = deps.contentRoot.value as HTMLElement | null;
+    if (!root || !(target instanceof Element)) {
+      return false;
+    }
+    const atom = target.closest(".doc-field");
+    const parent = atom?.parentNode ?? null;
+    if (!atom || !parent) {
+      return false;
+    }
+    const index = Array.prototype.indexOf.call(parent.childNodes, atom);
+    const start = caretFromDomPoint(root, parent, index);
+    if (!start) {
+      return false;
+    }
+    // A field is exactly one model character, so its atom spans [start, start+1].
+    deps.applyCaretMove(start);
+    deps.applyCaretMove({ ...start, offset: start.offset + 1 }, true);
+    return true;
+  }
+
   /** Click-to-follow a cross-reference (AC-26): scroll to its target. */
   function followCrossReference(target: string) {
     const m = model();
@@ -319,6 +349,7 @@ export function useFields(deps: FieldsDeps) {
     handleUnlinkField,
     handleLockField,
     toggleFieldCodes,
+    selectField,
     followCrossReference,
     contextMenuOnField,
     contextMenuFieldLocked,
