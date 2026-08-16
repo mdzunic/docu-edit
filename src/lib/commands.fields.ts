@@ -271,6 +271,29 @@ export function fieldAtCaret(model: DocumentModel, caret: CaretPosition): FieldS
   return fieldRunAtCaret(model, caret)?.run.field ?? null;
 }
 
+/** The field a selection exactly spans (SPEC-053 AC-7): clicking a field
+ * selects its whole one-character atom, so the toolbar chip and context menu
+ * treat that range-selected field the same as a caret sitting on one. Returns
+ * null unless the selection covers exactly one field run edge-to-edge. Merge
+ * chips are excluded, like `fieldAtCaret`. */
+export function fieldSpanningSelection(
+  model: DocumentModel,
+  start: CaretPosition,
+  end: CaretPosition,
+): FieldSpec | null {
+  if (start.section !== end.section || start.block !== end.block) {
+    return null;
+  }
+  if (start.cell?.row !== end.cell?.row || start.cell?.col !== end.cell?.col || start.cell?.block !== end.cell?.block) {
+    return null;
+  }
+  if (end.offset - start.offset !== 1) {
+    return null;
+  }
+  const found = fieldRunAtCaret(model, start);
+  return found && found.start === start.offset ? found.run.field ?? null : null;
+}
+
 /** Finds the field run at the caret, with its paragraph and run index. */
 function fieldRunAtCaret(
   model: DocumentModel,

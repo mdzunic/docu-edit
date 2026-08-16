@@ -6,7 +6,7 @@
 // this composable owns only the view wiring, per the DocumentView convention.
 import { computed, ref, shallowRef } from "vue";
 import type { EditorContext } from "./context";
-import { caretSelection, insertText } from "../../lib/commands";
+import { caretSelection, documentStart, insertText } from "../../lib/commands";
 import {
   insertFieldCommand,
   setFieldLockedAtCaret,
@@ -48,6 +48,16 @@ export function useFields(deps: FieldsDeps) {
     return deps.doc.value;
   }
 
+  /** The live selection to act on. `deps.currentSelection` needs the canvas
+     root to read the DOM selection; called with none it always returns null
+     (its `root` default is a typed-null seed), which silently no-oped every
+     insert/update path. Passing the root and falling back to the tracked
+     caret matches every other composable (useLinks, useTables, …). */
+  function activeSelection(): ModelSelection {
+    const root = deps.contentRoot.value as HTMLElement | null;
+    return deps.currentSelection(root) ?? caretSelection(deps.getCaret() ?? documentStart());
+  }
+
   function fileName(): string {
     return model()?.title ?? "";
   }
@@ -82,9 +92,9 @@ export function useFields(deps: FieldsDeps) {
 
   function handleFieldInsert(field: FieldSpec) {
     const m = model();
-    const selection = deps.currentSelection();
+    const selection = activeSelection();
     fieldDialogOpen.value = false;
-    if (!m || !selection) {
+    if (!m) {
       return;
     }
     const withCached = fillCached(field, m, selection);
@@ -126,9 +136,9 @@ export function useFields(deps: FieldsDeps) {
 
   function handleDateTimeInsert(payload: { format: string; updateAutomatically: boolean }) {
     const m = model();
-    const selection = deps.currentSelection();
+    const selection = activeSelection();
     dateTimeDialogOpen.value = false;
-    if (!m || !selection) {
+    if (!m) {
       return;
     }
     const isTime = DATE_TIME_CATALOGUE.find((entry) => entry.format === payload.format)?.isTime ?? false;
@@ -166,9 +176,9 @@ export function useFields(deps: FieldsDeps) {
 
   function handleCrossReferenceInsert(payload: { targetType: string; targetId: string; show: string }) {
     let m = model();
-    const selection = deps.currentSelection();
+    const selection = activeSelection();
     crossReferenceDialogOpen.value = false;
-    if (!m || !selection) {
+    if (!m) {
       return;
     }
     let targetName = payload.targetId;
@@ -194,8 +204,8 @@ export function useFields(deps: FieldsDeps) {
   /** F9 (AC-15): update the field at the caret. */
   function handleUpdateField() {
     const m = model();
-    const selection = deps.currentSelection();
-    if (!m || !selection || !deps.editable.value) {
+    const selection = activeSelection();
+    if (!m || !deps.editable.value) {
       return;
     }
     deps.applyEdit(updateFieldAtCaret(m, selection, updateContext()), selection, "update field");
@@ -204,7 +214,7 @@ export function useFields(deps: FieldsDeps) {
   /** Tools → Update all fields (AC-16..18, AC-28). */
   function handleUpdateAllFields() {
     const m = model();
-    const selection = deps.currentSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
+    const selection = activeSelection();
     if (!m || !deps.editable.value) {
       return;
     }
@@ -223,8 +233,8 @@ export function useFields(deps: FieldsDeps) {
 
   function handleUnlinkField() {
     const m = model();
-    const selection = deps.currentSelection();
-    if (!m || !selection || !deps.editable.value) {
+    const selection = activeSelection();
+    if (!m || !deps.editable.value) {
       return;
     }
     deps.applyEdit(unlinkFieldAtCaret(m, selection, updateContext()), selection, "unlink field");
@@ -232,8 +242,8 @@ export function useFields(deps: FieldsDeps) {
 
   function handleLockField(locked: boolean) {
     const m = model();
-    const selection = deps.currentSelection();
-    if (!m || !selection || !deps.editable.value) {
+    const selection = activeSelection();
+    if (!m || !deps.editable.value) {
       return;
     }
     deps.applyEdit(setFieldLockedAtCaret(m, selection, locked), selection, locked ? "lock field" : "unlock field");

@@ -19,6 +19,7 @@ import {
   isChart,
   isImage,
   isMergeChipField,
+  isPaginationDependentField,
   isShape,
   isTable,
   isToc,
@@ -42,7 +43,7 @@ import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/not
 import { noRenderEntries, type RenderEntry, type RenderRun } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { headerFooterForPage } from "../../lib/pageNumbering";
-import { evaluateField, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
+import { cachedFieldText, evaluateField, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
 import { now } from "../../lib/clock";
 import {
   displayRunFormatting,
@@ -60,6 +61,7 @@ import {
 import { effectiveLanguage } from "../../lib/core/language";
 import { markSegments } from "../../lib/core/marks";
 import { splitRuns } from "../../lib/textEditing";
+import type { CaretPosition } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
 import { blockKey, headingContentLength } from "../../lib/outline";
 import { mediaDataUri } from "../../lib/core/media";
@@ -173,6 +175,11 @@ export interface PaginationViewDeps extends EditorContext {
    * paints its grey shading regardless of the caret. Shading never prints or
    * exports (the class is dropped in print CSS). */
   fieldShadingOn: Ref<boolean>;
+  /** The reactive caret mirror (SPEC-053 AC-10): a field run shades when the
+   * caret sits on it. Unlike `getCaret()` this is a ref, so a caret move
+   * re-renders the paragraph it lands in (which `getCaret()`, being
+   * non-reactive, would not). */
+  caretPosition: Ref<CaretPosition | null>;
 }
 
 /** The paint-time render of a SPEC-053 field run (everything but merge chips
@@ -190,7 +197,12 @@ function fieldRenderRun(
   shadingOn: boolean,
 ): RenderRun {
   const field = run.field!;
-  const value = evaluateField(field, ctx);
+  // A field is never recomputed on open (SPEC-053 Recalculation rule 3): it
+  // shows its saved `cached` value until a person asks for an update. The one
+  // exception is a pagination-dependent field (page/numpages/pageRef/ref
+  // show:page, rule 1), which has no stable cached value in a live editor and
+  // is recomputed from the page context every paint.
+  const value = isPaginationDependentField(field) ? evaluateField(field, ctx) : cachedFieldText(field);
   const shaded = shadingOn || caretOnField;
   const readOnly = isReadOnlyField(field);
   const locked = "locked" in field && field.locked === true;
@@ -352,7 +364,9 @@ function renderEntryFor(
   // SPEC-053 field shading: the caret's offset within this body paragraph, so
   // the field run it lands on paints shaded (AC-10). Run start offsets let a
   // field branch below know its own atom's offset.
-  const caret = deps.getCaret();
+  // Read the reactive caret (not getCaret()) so a caret move actually
+  // re-renders this paragraph and repaints field shading (AC-10).
+  const caret = deps.caretPosition.value;
   const caretOffsetHere =
     caret && caret.section === flatEntry.section && caret.block === flatEntry.blockIndex && !caret.cell
       ? caret.offset
@@ -449,6 +463,14 @@ function renderEntryFor(
       lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
     };
   });
+  // Field shading (AC-10, AC-11) is caret- and toggle-driven state, not part
+  // of the model — the memo below must carry it, or v-memo skips repainting a
+  // field's shading when only the caret moved or the View toggle flipped.
+  // Only paragraphs that actually hold a field vary this signal, so plain text
+  // keeps its cheap memo.
+  const fieldShadeSig = runs.some((run) => run.field && !isMergeChipField(run.field))
+    ? `${deps.fieldShadingOn.value ? 1 : 0}:${caretOffsetHere ?? ""}`
+    : "";
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
     memo: [
@@ -463,6 +485,7 @@ function renderEntryFor(
       outlineToggle,
       outlineCollapsed,
       deps.trackChangesDisplayMode.value,
+      fieldShadeSig,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
@@ -569,9 +592,14 @@ function headerFooterRenderEntries(
         lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
       };
     });
+    // A header/footer field shades only via the View toggle (AC-11); track it
+    // in the memo so flipping the toggle repaints, when the band holds a field.
+    const hfFieldShadeSig = paragraph.runs.some((run) => run.field && !isMergeChipField(run.field))
+      ? `${deps.fieldShadingOn.value ? 1 : 0}`
+      : "";
     entries.push({
       key: `hf:${blockIndex}`,
-      memo: [block, blockIndex, pageNumber, totalPages, marks, deps.hfRemountEpoch.value],
+      memo: [block, blockIndex, pageNumber, totalPages, marks, deps.hfRemountEpoch.value, hfFieldShadeSig],
       kind: "paragraph",
       tag: headingTag(paragraph.headingLevel),
       className: paragraphClassName(paragraph),

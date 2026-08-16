@@ -9,6 +9,7 @@ import {
 } from "./documentModel";
 import { caretSelection, type ModelSelection } from "./commands";
 import {
+  fieldSpanningSelection,
   insertFieldCommand,
   setFieldLockedAtCaret,
   unlinkFieldAtCaret,
@@ -46,6 +47,51 @@ describe("insertFieldCommand (SPEC-053)", () => {
     const fieldRun = runs.find((r) => r.field);
     expect(fieldRun?.text).toHaveLength(1);
     expect(fieldRun?.field).toEqual({ kind: "author", cached: "" });
+  });
+});
+
+describe("fieldSpanningSelection (SPEC-053 AC-7)", () => {
+  it("returns the field when the selection spans exactly its atom", () => {
+    const field: FieldSpec = { kind: "date", format: "d MMMM yyyy", cached: "4 March 2026" };
+    const model = fieldDoc(field);
+    const found = fieldSpanningSelection(
+      model,
+      { section: 0, block: 0, offset: 0 },
+      { section: 0, block: 0, offset: 1 },
+    );
+    expect(found).toEqual(field);
+  });
+
+  it("returns null for a collapsed selection", () => {
+    const model = fieldDoc({ kind: "author", cached: "Ada" });
+    expect(
+      fieldSpanningSelection(model, { section: 0, block: 0, offset: 0 }, { section: 0, block: 0, offset: 0 }),
+    ).toBeNull();
+  });
+
+  it("returns null when the selection does not start at the field's edge", () => {
+    const model = createDocument("span");
+    model.sections = [
+      {
+        blocks: [
+          {
+            type: "paragraph",
+            runs: [{ text: "ab", formatting: {} }, createFieldSpecRun({ kind: "author", cached: "Ada" })],
+          },
+        ],
+      },
+    ];
+    // Offsets 1..2 sit inside the plain text, not on the field atom at 2..3.
+    expect(
+      fieldSpanningSelection(model, { section: 0, block: 0, offset: 1 }, { section: 0, block: 0, offset: 2 }),
+    ).toBeNull();
+  });
+
+  it("ignores merge chips (SPEC-046 owns those)", () => {
+    const model = fieldDoc({ kind: "merge", name: "client_name" });
+    expect(
+      fieldSpanningSelection(model, { section: 0, block: 0, offset: 0 }, { section: 0, block: 0, offset: 1 }),
+    ).toBeNull();
   });
 });
 

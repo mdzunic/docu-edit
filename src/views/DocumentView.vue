@@ -108,7 +108,7 @@ import {
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
-import { fieldAtCaret } from "../lib/commands.fields";
+import { fieldAtCaret, fieldSpanningSelection } from "../lib/commands.fields";
 import { isReadOnlyField, noFieldSpec } from "../lib/fields";
 import {
   asHeaderFooterPart,
@@ -217,6 +217,7 @@ import {
   modelRangeFromSelection,
   modelTextLengthOf,
   noElement,
+  noEventTarget,
   noParagraphTarget,
   noTableCellTarget,
   paragraphElementForCaret,
@@ -1708,9 +1709,13 @@ function updateCaretStatus(range = { start: noCaret(), end: noCaret() }) {
       `${blockOrdinal(model, range.end)}, character ${range.end.offset + 1}`;
   }
   const selection = { anchor: range.start, focus: range.end };
-  // SPEC-053 AC-14: the field toolbar chip shows only for a collapsed caret
-  // sitting on a field.
-  selectedField.value = compareCaret(range.start, range.end) === 0 ? fieldAtCaret(model, range.end) : null;
+  // SPEC-053 AC-14: the field toolbar chip shows for a collapsed caret sitting
+  // on a field, or for a selection that spans exactly one field — which is what
+  // clicking a field produces (AC-7), since a field is one atomic run.
+  selectedField.value =
+    compareCaret(range.start, range.end) === 0
+      ? fieldAtCaret(model, range.end)
+      : fieldSpanningSelection(model, range.start, range.end);
   formatStates.value = {
     bold: formatState(model, selection, "bold", pendingFormat),
     italic: formatState(model, selection, "italic", pendingFormat),
@@ -1777,6 +1782,39 @@ function applyCaretMove(target = noCaret(), extend = false) {
   const anchor = extend && selectionAnchor ? selectionAnchor : target;
   updateCaretStatus({ start: anchor, end: target });
   void nextTick().then(place);
+}
+
+/** Clicking a field selects its whole one-character atom (SPEC-053 AC-7).
+ * A field renders as a contenteditable=false atom whose visible value can fill
+ * its line; a plain click on such an atom does not place the browser caret on
+ * it (the selection stays wherever it was, e.g. the document start), so clicks
+ * were silently lost. We map the clicked field element back to its model range
+ * and select it, so the field shades (AC-10), the toolbar chip appears (AC-14)
+ * and typing replaces the whole field (AC-8). Cross-references are handled
+ * before this — a click follows them (AC-26). Returns true when it selected a
+ * field. */
+function selectFieldFromClick(target = noEventTarget()) {
+  const root = contentRoot.value;
+  if (!root || !(target instanceof Element)) {
+    return false;
+  }
+  const atom = target.closest(".doc-field");
+  const parent = atom?.parentNode ?? null;
+  if (!atom || !parent) {
+    return false;
+  }
+  const index = Array.prototype.indexOf.call(parent.childNodes, atom);
+  const start = caretFromDomPoint(root, parent, index);
+  if (!start) {
+    return false;
+  }
+  const end = { ...start, offset: start.offset + 1 };
+  root.focus();
+  setDomSelection(root, start, end);
+  caret = end;
+  selectionAnchor = start;
+  updateCaretStatus({ start, end });
+  return true;
 }
 
 // Deterministic caret navigation (page up/down, line Home/End, cell-boundary
@@ -2517,6 +2555,7 @@ const {
   // Deferred: useFields is initialised below, so wrap the read in an arrow so
   // it resolves at click time, not during this call's argument evaluation.
   followCrossReference: (target) => followCrossReference(target),
+  selectField: (target) => selectFieldFromClick(target),
   openLinkTarget,
   maybeApplyPainter,
 });
@@ -2917,6 +2956,7 @@ const { pagedViews } = usePaginationView({
   tocPageNumberFor,
   trackChangesDisplayMode: effectiveTrackChangesDisplayMode,
   fieldShadingOn,
+  caretPosition,
 });
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
