@@ -210,11 +210,9 @@ describe("full .odt round trip (AC-27, AC-28)", () => {
   });
 
   it("drops each bar tab stop with a DropRecord and keeps the rest (SPEC-054 AC-38)", async () => {
-    // A bar stop only reaches an .odt save from a .docx-sourced document
-    // (ODF has no bar tab, so the .odt reader never produces one); the drop
-    // report fires on that cross-format save.
+    // A bar stop drops on ANY .odt save, including a brand-new document with
+    // no source format (ODF has no bar tab), not only a cross-format save.
     const model = docWith(paragraph("barred"));
-    model.format = "docx";
     asParagraph(model.sections[0].blocks[0]).formatting = {
       tabStops: [
         { positionCm: 3, alignment: "bar" },

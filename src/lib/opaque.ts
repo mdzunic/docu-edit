@@ -462,16 +462,6 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           ) {
             dropped.push(record("runShading", `paragraph ${paragraphNumber}`, target));
           }
-          // Bar tab stops (SPEC-054 AC-38): OpenDocument Text has no bar tab,
-          // so a save to .odt drops every one and reports it. One record per
-          // bar stop, located by paragraph.
-          if (target === "odt") {
-            for (const stop of paragraph.formatting?.tabStops ?? []) {
-              if (stop.alignment === "bar") {
-                dropped.push(record("tabStop", `paragraph ${paragraphNumber}`, target));
-              }
-            }
-          }
         }
       }
     }
@@ -705,8 +695,46 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
   if (source !== undefined && source !== target) {
     dropped.push(...collectPackageDropRecords(model, source, target));
   }
+  if (target === "odt") {
+    // Bar tab stops (SPEC-054 AC-38): OpenDocument Text has no bar tab, so
+    // ANY save to .odt drops every one — regardless of source, unlike the
+    // package-level opaque content above (a bar stop is a modelled feature
+    // ODF cannot express, not preserved-but-untranslated XML). A brand-new
+    // document has no source format, so this cannot ride on the cross-format
+    // gate above.
+    dropped.push(...collectBarTabDropRecords(model, target));
+  }
   if (target === "md") {
     dropped.push(...collectMarkdownDropRecords(model));
+  }
+  return dropped;
+}
+
+/** One `tabStop` DropRecord per bar tab stop in the model (SPEC-054 AC-38),
+ * located by paragraph — table cell paragraphs included, addressed by the
+ * table's own block position, mirroring collectPackageDropRecords. */
+function collectBarTabDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
+  const dropped: DropRecord[] = [];
+  let paragraphOffset = 0;
+  for (const section of model.sections) {
+    section.blocks.forEach((block, index) => {
+      const paragraphNumber = paragraphOffset + index + 1;
+      const paragraphs =
+        block.type === "table"
+          ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
+          : [block];
+      for (const paragraph of paragraphs) {
+        if (paragraph.type !== "paragraph") {
+          continue;
+        }
+        for (const stop of paragraph.formatting?.tabStops ?? []) {
+          if (stop.alignment === "bar") {
+            dropped.push(record("tabStop", `paragraph ${paragraphNumber}`, target));
+          }
+        }
+      }
+    });
+    paragraphOffset += section.blocks.length;
   }
   return dropped;
 }
