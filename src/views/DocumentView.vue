@@ -904,6 +904,7 @@ const {
   handleDefineListApply,
   tabsDialogOpen,
   tabsDialogInitial,
+  tabsDialogDefaultInterval,
   openTabsDialog,
   handleTabsApply,
   handleToggleDirection,
@@ -3971,6 +3972,7 @@ function handleMenuCommand(id = "") {
     <TabStopsDialog
       v-if="tabsDialogOpen"
       :initial="tabsDialogInitial"
+      :default-interval-cm="tabsDialogDefaultInterval"
       @apply="handleTabsApply"
       @cancel="tabsDialogOpen = false"
     />

@@ -32,6 +32,7 @@ import {
 import { cmToTwips } from "./core/units";
 import {
   cloneContainers,
+  DEFAULT_TAB_STOP_CM,
   type DocumentModel,
   type ParagraphFormatting,
   type TabStop,
@@ -645,4 +646,37 @@ export function setTabStops(
  * dialog opens with and the ruler paints. */
 export function selectionTabStops(model: DocumentModel, selection: ModelSelection): TabStop[] {
   return (firstTouchedFormatting(model, selection).tabStops ?? []).map((stop) => ({ ...stop }));
+}
+
+/** The Tabs dialog's OK (SPEC-054): sets the touched paragraphs' stops and,
+ * in the same undo step, the document's default tab interval. A value equal
+ * to the 1.27 cm default is stored as absent (deleting the field) so a
+ * document that never changed it round-trips without a defaultTabStop. */
+export function setTabStopsWithDefault(
+  model: DocumentModel,
+  selection: ModelSelection,
+  stops: TabStop[],
+  defaultTabStopCm: number,
+): CommandResult {
+  const result = setTabStops(model, selection, stops);
+  const nextModel: DocumentModel = {
+    ...result.model,
+    defaultStyles: { ...result.model.defaultStyles },
+  };
+  if (Number.isFinite(defaultTabStopCm) && Math.abs(defaultTabStopCm - DEFAULT_TAB_STOP_CM) > 1e-9) {
+    // Stored as the user's raw centimetre value (unlike per-stop positions,
+    // which snap to the twip grid): it round-trips through twips (.docx) /
+    // centimetre strings (.odt) within tolerance anyway, and the dialog
+    // should re-open showing exactly what was typed (AC-14).
+    nextModel.defaultStyles.defaultTabStopCm = defaultTabStopCm;
+  } else {
+    delete nextModel.defaultStyles.defaultTabStopCm;
+  }
+  return { model: nextModel, selection: result.selection };
+}
+
+/** The document's effective default tab interval in cm (SPEC-054): the stored
+ * value, or the 1.27 cm default when absent — what the Tabs dialog prefills. */
+export function documentDefaultTabStopCm(model: DocumentModel): number {
+  return model.defaultStyles.defaultTabStopCm ?? DEFAULT_TAB_STOP_CM;
 }

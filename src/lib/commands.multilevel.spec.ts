@@ -11,9 +11,11 @@ import {
   linkHeadingNumbering,
   restartListNumbering,
   selectionListDefinitionLevels,
+  documentDefaultTabStopCm,
   selectionTabStops,
   setListNumberingValue,
   setTabStops,
+  setTabStopsWithDefault,
   type ModelSelection,
 } from "./commands";
 import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "./documentModel";
@@ -251,5 +253,43 @@ describe("setTabStops (AC-19..25)", () => {
     const withStops = setTabStops(model, caret(0), [{ positionCm: 3, alignment: "center" }]).model;
     const cleared = setTabStops(withStops, caret(0), []).model;
     expect(asParagraph(cleared.sections[0].blocks[0]).formatting?.tabStops).toBeUndefined();
+  });
+
+  it("keeps a bar stop like any other alignment", () => {
+    const model = docWith(paragraph("a"));
+    const { model: next } = setTabStops(model, caret(0), [{ positionCm: 3, alignment: "bar" }]);
+    const stops = asParagraph(next.sections[0].blocks[0]).formatting?.tabStops;
+    expect(stops).toHaveLength(1);
+    expect(stops?.[0].alignment).toBe("bar");
+    expect(stops?.[0].positionCm).toBeCloseTo(3, 2);
+  });
+});
+
+describe("SPEC-054 — default tab interval (AC-10, AC-13, AC-14)", () => {
+  it("defaults to 1.27 cm when the document sets none", () => {
+    expect(documentDefaultTabStopCm(docWith(paragraph("a")))).toBe(1.27);
+  });
+
+  it("setTabStopsWithDefault stores a changed interval and the stops together", () => {
+    const model = docWith(paragraph("a"));
+    const { model: next } = setTabStopsWithDefault(
+      model,
+      caret(0),
+      [{ positionCm: 3, alignment: "left" }],
+      2,
+    );
+    expect(next.defaultStyles.defaultTabStopCm).toBe(2);
+    expect(documentDefaultTabStopCm(next)).toBe(2);
+    const stops = asParagraph(next.sections[0].blocks[0]).formatting?.tabStops;
+    expect(stops).toHaveLength(1);
+    expect(stops?.[0].alignment).toBe("left");
+    expect(stops?.[0].positionCm).toBeCloseTo(3, 2);
+  });
+
+  it("stores the 1.27 cm default as absent so it round-trips without a defaultTabStop", () => {
+    const model = docWith(paragraph("a"));
+    model.defaultStyles.defaultTabStopCm = 2;
+    const { model: next } = setTabStopsWithDefault(model, caret(0), [], 1.27);
+    expect(next.defaultStyles.defaultTabStopCm).toBeUndefined();
   });
 });

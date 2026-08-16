@@ -12,6 +12,9 @@ import BaseDialog from "./BaseDialog.vue";
 const props = defineProps({
   /** The selection's current stops (commands.selectionTabStops). */
   initial: { type: Array, default: () => [] },
+  /** The document's default tab interval in cm (SPEC-054 AC-10, AC-13/14) —
+   * commands.documentDefaultTabStopCm, 1.27 when the document sets none. */
+  defaultIntervalCm: { type: Number, default: 1.27 },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
@@ -27,6 +30,16 @@ const stops = ref(
 const position = ref("");
 const alignment = ref("left");
 const leader = ref("");
+// SPEC-054 AC-10: the per-document default tab interval, editable here.
+const defaultInterval = ref(String(props.defaultIntervalCm));
+
+const defaultIntervalError = computed(() => {
+  const parsed = Number(defaultInterval.value);
+  if (defaultInterval.value === "" || !Number.isFinite(parsed) || parsed <= 0) {
+    return "Default interval must be a positive centimetre value";
+  }
+  return "";
+});
 
 const positionError = computed(() => {
   if (position.value === "") {
@@ -73,14 +86,16 @@ function clearAll() {
 }
 
 function apply() {
-  emit(
-    "apply",
-    stops.value.map((stop) => ({
+  const parsedInterval = Number(defaultInterval.value);
+  emit("apply", {
+    stops: stops.value.map((stop) => ({
       positionCm: stop.positionCm,
       alignment: stop.alignment,
       ...(stop.leader !== "" ? { leader: stop.leader } : {}),
     })),
-  );
+    defaultIntervalCm:
+      defaultIntervalError.value === "" ? parsedInterval : props.defaultIntervalCm,
+  });
 }
 </script>
 
@@ -115,6 +130,7 @@ function apply() {
           <option value="center">Centre</option>
           <option value="right">Right</option>
           <option value="decimal">Decimal</option>
+          <option value="bar">Bar</option>
         </select>
       </label>
       <label class="field">
@@ -178,6 +194,24 @@ function apply() {
         No custom tab stops
       </li>
     </ul>
+    <label class="field default-interval-field">
+      <span class="field-label">Default tab interval (cm)</span>
+      <input
+        v-model="defaultInterval"
+        class="field-input"
+        data-testid="tab-default-interval-input"
+        type="number"
+        min="0"
+        step="0.25"
+      >
+    </label>
+    <p
+      v-if="defaultIntervalError"
+      class="dialog-error"
+      data-testid="tab-default-interval-error"
+    >
+      {{ defaultIntervalError }}
+    </p>
     <!-- Deliberately NOT the base's #actions slot: this row is Clear all on
          the left, a spacer, then Cancel/OK — align-items: center without
          justify-content: flex-end, a real layout the base's flex-end
@@ -229,6 +263,11 @@ function apply() {
 
 .add-field {
   flex: 0 0 auto;
+}
+
+.default-interval-field {
+  margin-top: 0.75rem;
+  max-width: 14rem;
 }
 
 .field-label {
