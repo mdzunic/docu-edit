@@ -22,6 +22,7 @@ import { type MediaPart } from "./core/media";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
 import { unzip, ZipError } from "./core/zip";
+import { readFileAsArrayBuffer } from "./core/fileReader";
 import { parseMd, type ParseMdOptions } from "./md/reader";
 import { inferListStyleTypes } from "./styles";
 
@@ -69,15 +70,6 @@ async function isZipPackage(bytes: Uint8Array): Promise<boolean> {
  * `.dotx`/`.ott` is a template, not a document to resume editing. */
 export function hasTemplateFileExtension(fileName: string): boolean {
   return /\.(dotx|ott)$/i.test(fileName);
-}
-
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => resolve(reader.result as ArrayBuffer));
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read file")));
-    reader.readAsArrayBuffer(file);
-  });
 }
 
 /** The app-bar title for an opened document: its file name with the

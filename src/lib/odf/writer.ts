@@ -58,7 +58,7 @@ import type {
 } from "../documentModel";
 import type { ListDefinition } from "../core/lists";
 import type { Margins, PageSize } from "../core/pageSetup";
-import type { BorderSide } from "../core/tables";
+import { computeOwnerGrid, type BorderSide } from "../core/tables";
 import {
   FIELD_PLACEHOLDER_TEXT,
   isMergeChipField,
@@ -86,7 +86,7 @@ import {
 } from "../core/lists";
 import { definedNumberIndentCm, definedTextIndentCm } from "../core/listDefinitions";
 import { zip, type ZipEntryInput } from "../core/zipWriter";
-import { firstChildElement, parseXml, serializeElement } from "../core/xml";
+import { escapeXml, firstChildElement, parseXml, serializeElement } from "../core/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
@@ -146,16 +146,6 @@ export const UNTITLED_ODT_TITLE = "Document 1";
 export function odtFileName(title: string): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : UNTITLED_ODT_TITLE}.odt`;
-}
-
-/** Escapes text for use in XML text content or attribute values. */
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 /** A run's highlight as an fo:background-color value: palette names map to
@@ -1671,43 +1661,6 @@ function cellContentXml(blocks: Paragraph[], styles: AutomaticStyles, includeOpa
     return xml;
   }
   return leadingMarkerXml ? `<text:p>${leadingMarkerXml}</text:p>` : "<text:p/>";
-}
-
-/** A grid slot's owning real cell — the writer's own mirror of the same
- * concept in lib/tables.ts and docx/writer.ts (SPEC-023): every slot a
- * merged cell covers becomes `<table:covered-table-cell/>`, ODF's explicit
- * per-slot placeholder (no gridSpan-style inference needed, unlike .docx). */
-interface CellOwner {
-  originRow: number;
-  originCol: number;
-  rowSpan: number;
-  colSpan: number;
-}
-
-function computeOwnerGrid(table: Table): CellOwner[][] {
-  const rowCount = table.rows.length;
-  const colCount = table.columnWidthsCm.length;
-  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
-  for (let r = 0; r < rowCount; r++) {
-    for (let c = 0; c < colCount; c++) {
-      if (grid[r][c]) {
-        continue;
-      }
-      const cell = table.rows[r].cells[c];
-      const owner: CellOwner = {
-        originRow: r,
-        originCol: c,
-        rowSpan: cell.rowSpan ?? 1,
-        colSpan: cell.colSpan ?? 1,
-      };
-      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
-        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
-          grid[r + dr][c + dc] = owner;
-        }
-      }
-    }
-  }
-  return grid;
 }
 
 /** A table row's own pending insert/delete tracked-change marker (SPEC-039

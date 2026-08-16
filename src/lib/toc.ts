@@ -2,10 +2,12 @@
 // document's Heading 1-6 paragraphs, detects staleness against the
 // document's current headings and pagination, and the block's own
 // insert/update commands. Framework-free like every lib module, and — like
-// lib/links.ts — a command module OUTSIDE commands.ts with its own
-// cloneContainers copy, so commands.undo.spec.ts's completeness guard
-// (scoped to commands.ts's own exports) never has to account for these.
+// lib/links.ts — a command module OUTSIDE commands.ts built on
+// documentModel.ts's shared cloneContainers, so commands.undo.spec.ts's
+// completeness guard (scoped to commands.ts's own exports) never has to
+// account for these.
 import {
+  cloneContainers,
   isToc,
   type Block,
   type DocumentModel,
@@ -125,18 +127,6 @@ export function tocHeadingsStale(model: DocumentModel, toc: TableOfContents): bo
  * since the TOC was last generated/updated. */
 export function tocPageNumbersStale(toc: TableOfContents, pageNumberFor: TocPageNumberLookup): boolean {
   return toc.entries.some((entry) => pageNumberFor(entry.anchor) !== entry.pageNumber);
-}
-
-// Same container-cloning as commands.ts (see that file's immutability
-// contract); a local copy for the same reason links.ts keeps one.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
 }
 
 function result(model: DocumentModel, caret: CaretPosition): CommandResult {

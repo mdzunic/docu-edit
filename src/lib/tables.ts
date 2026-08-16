@@ -10,6 +10,7 @@
 // by reference with the input model — so every command here is undoable by
 // the snapshot-based history for free (SPEC-015 AC-20).
 import {
+  cloneContainers,
   createChipRun,
   isBreak,
   isChart,
@@ -18,6 +19,7 @@ import {
   isTable,
   isToc,
   sectionColumnWidthCm,
+  splitParagraphAt,
   type DocumentModel,
   type Paragraph,
   type Table,
@@ -41,28 +43,18 @@ import {
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import {
   cellRangeBounds,
+  computeOwnerGrid,
   MAX_TABLE_COLS,
   MAX_TABLE_ROWS,
   MIN_COLUMN_WIDTH_CM,
   MIN_ROW_HEIGHT_CM,
   type BorderPreset,
+  type CellOwner,
   type CellRange,
 } from "./core/tables";
 
-// The grid limits, cell-range arithmetic and border-preset type live in
-// core/tables.ts (product-neutral).
-// commands.ts's container clone, restated for the same reason clipboard.ts
-// restates it: the undo-registry guard test bars commands.ts from exporting
-// helpers.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
+// The grid limits, cell-range arithmetic, border-preset type and the
+// merged-cell owner grid live in core/tables.ts (product-neutral).
 
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
@@ -197,37 +189,6 @@ export function insertTable(
     model: next,
     selection: caretSelection(cellCaret(at.section, tableIndex, { row: 0, col: 0, block: 0 })),
   };
-}
-
-// A paragraph split into two around a character offset, both halves keeping
-// the block-level formatting (the textEditing splitParagraph rule, restated
-// locally because that primitive writes into the model in place).
-function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
-  let consumed = 0;
-  const before: Paragraph = { ...paragraph, runs: [] };
-  const after: Paragraph = {
-    ...paragraph,
-    runs: [],
-    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
-  };
-  const beforeRuns = [];
-  const afterRuns = [];
-  for (const run of paragraph.runs) {
-    const end = consumed + run.text.length;
-    if (end <= offset) {
-      beforeRuns.push(run);
-    } else if (consumed >= offset) {
-      afterRuns.push(run);
-    } else {
-      const cut = offset - consumed;
-      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
-      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
-    }
-    consumed = end;
-  }
-  before.runs = beforeRuns;
-  after.runs = afterRuns;
-  return [before, after];
 }
 
 /** Where a structural command applies: a table block plus the row/column
@@ -620,48 +581,6 @@ function blockBeforeTable(
 }
 
 // --- cell/border formatting and merge/split (SPEC-023) ----------------------
-
-/** A grid slot's owning (real) cell: the cell at `originRow`/`originCol`
- * whose `rowSpan`×`colSpan` rectangle covers the slot — itself when the slot
- * is not covered by anything. Every merge/split/border/shading/padding
- * operation resolves through this so a click anywhere in a merged cell's
- * rectangle (or a range that only partly overlaps it) resolves to the same
- * whole cell. */
-interface CellOwner {
-  originRow: number;
-  originCol: number;
-  rowSpan: number;
-  colSpan: number;
-}
-
-/** Every grid slot's owner, computed in one forward pass: row-major order
- * always visits a cell's own (top-left) slot before any slot it covers, so
- * each covered slot's owner is already known by the time it is reached. */
-function computeOwnerGrid(table: Table): CellOwner[][] {
-  const rowCount = table.rows.length;
-  const colCount = table.columnWidthsCm.length;
-  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
-  for (let r = 0; r < rowCount; r++) {
-    for (let c = 0; c < colCount; c++) {
-      if (grid[r][c]) {
-        continue;
-      }
-      const cell = table.rows[r].cells[c];
-      const owner: CellOwner = {
-        originRow: r,
-        originCol: c,
-        rowSpan: cell.rowSpan ?? 1,
-        colSpan: cell.colSpan ?? 1,
-      };
-      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
-        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
-          grid[r + dr][c + dc] = owner;
-        }
-      }
-    }
-  }
-  return grid;
-}
 
 interface GridBounds {
   top: number;

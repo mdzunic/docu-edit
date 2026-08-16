@@ -9,7 +9,7 @@
 // unmodelled package part (see reader.ts's opaque-part loop) rather than
 // being parsed and rebuilt for no field this editor actually changes.
 import type { CustomProperty, CustomPropertyType, DocumentProperties, ExtraMetadataField, UnsupportedCustomProperty } from "../documentModel";
-import { childElements, parseXml, serializeElement, XmlParseError } from "../core/xml";
+import { childElements, escapeXml, parseXml, serializeElement, XmlParseError } from "../core/xml";
 
 export const CORE_PROPERTIES_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
@@ -22,15 +22,6 @@ export const VT_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/20
 
 /** Standard fmtid every `.docx` custom property carries (ECMA-376 §22.3). */
 const CUSTOM_PROPERTY_FMTID = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}";
-
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
 
 /** A timestamp in the W3CDTF profile core.xml requires (whole seconds, UTC),
  * e.g. "2026-08-03T12:00:00Z". */

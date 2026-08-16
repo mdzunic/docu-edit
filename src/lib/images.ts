@@ -6,7 +6,9 @@
 // reference-counted media cleanup (AC-31, AC-32) — the character-level
 // commands stay in commands.ts/textEditing.ts, exactly like tables.ts.
 import {
+  cloneContainers,
   isImage,
+  splitParagraphAt,
   type Block,
   type DocumentModel,
   type Image,
@@ -16,53 +18,8 @@ import {
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 
-
-// commands.ts's container clone, restated for the reason clipboard.ts and
-// tables.ts each restate it: the undo-registry guard test bars commands.ts
-// from exporting helpers.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
-
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
-}
-
-// A paragraph split into two around a character offset — restated from
-// tables.ts's splitParagraphAt (that primitive writes into the model in
-// place, this one doesn't touch the model yet).
-function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
-  let consumed = 0;
-  const before: Paragraph = { ...paragraph, runs: [] };
-  const after: Paragraph = {
-    ...paragraph,
-    runs: [],
-    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
-  };
-  const beforeRuns = [];
-  const afterRuns = [];
-  for (const run of paragraph.runs) {
-    const end = consumed + run.text.length;
-    if (end <= offset) {
-      beforeRuns.push(run);
-    } else if (consumed >= offset) {
-      afterRuns.push(run);
-    } else {
-      const cut = offset - consumed;
-      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
-      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
-    }
-    consumed = end;
-  }
-  before.runs = beforeRuns;
-  after.runs = afterRuns;
-  return [before, after];
 }
 
 import { pxToCm } from "./core/units";

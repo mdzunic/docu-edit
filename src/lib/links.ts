@@ -1,16 +1,13 @@
 // Hyperlinks and bookmarks (SPEC-025): URL safety, bare-URL autolink
 // detection, the link/bookmark commands, and internal link targets (heading
 // anchors and bookmark names). Framework-free like every lib module, and —
-// like lib/clipboard.ts — a command module OUTSIDE commands.ts, with its own
-// cloneContainers copy, so commands.undo.spec.ts's completeness guard stays
-// scoped to commands.ts (see that file's comment on the same split).
+// like lib/clipboard.ts — a command module OUTSIDE commands.ts, built on
+// documentModel.ts's shared cloneContainers, so commands.undo.spec.ts's
+// completeness guard stays scoped to commands.ts (see the comment there on
+// the same split).
 import {
-  isBreak,
-  isChart,
-  isImage,
-  isShape,
-  isTable,
-  isToc,
+  cloneContainers,
+  forEachParagraph,
   type DocumentModel,
   type Paragraph,
   type Run,
@@ -250,18 +247,6 @@ export function linkAtCaret(model: DocumentModel, caret: CaretPosition): LinkExt
 
 // --- link commands ----------------------------------------------------------
 
-// Same container-cloning as commands.ts (see that file's immutability
-// contract); a local copy for the same reason clipboard.ts keeps one.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
-
 function setLinkOnParagraphRange(
   model: DocumentModel,
   address: ParagraphAddress,
@@ -456,31 +441,6 @@ export interface BookmarkLocation {
   name: string;
   address: ParagraphAddress;
   offset: number;
-}
-
-function forEachParagraph(
-  model: DocumentModel,
-  visit: (paragraph: Paragraph, address: ParagraphAddress) => void,
-): void {
-  model.sections.forEach((section, sectionIndex) => {
-    section.blocks.forEach((block, blockIndex) => {
-      if (isTable(block)) {
-        block.rows.forEach((row, rowIndex) => {
-          row.cells.forEach((cell, colIndex) => {
-            cell.blocks.forEach((paragraph, cellBlockIndex) => {
-              visit(paragraph, {
-                section: sectionIndex,
-                block: blockIndex,
-                cell: { row: rowIndex, col: colIndex, block: cellBlockIndex },
-              });
-            });
-          });
-        });
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block)) {
-        visit(block, { section: sectionIndex, block: blockIndex });
-      }
-    });
-  });
 }
 
 /** Every bookmark in the document, in document order — the manager's list

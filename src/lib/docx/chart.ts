@@ -15,6 +15,8 @@ import type { ChartOptions, ChartSeries, ChartType } from "../core/charts";
 import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
 import {
   childElements,
+  escapeXmlAttribute,
+  escapeXmlText,
   firstChildElement,
   parseXml,
   resolvePartPath,
@@ -70,13 +72,6 @@ const OOXML_TO_LEGEND_POS: Record<string, ChartOptions["legend"]> = {
   r: "right",
   tr: "right",
 };
-
-function escapeXmlText(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function escapeXmlAttr(value: string): string {
-  return escapeXmlText(value).replace(/"/g, "&quot;");
-}
 
 // --- reading -----------------------------------------------------------------
 
@@ -475,10 +470,10 @@ export function chartDrawingXml(chart: Chart, relId: string, docPrId: number): s
   const cy = cmToEmu(Math.max(0, chart.heightCm));
   const id = docPrId;
   const name = `Chart ${id}`;
-  const descrAttr = chart.altText ? ` descr="${escapeXmlAttr(chart.altText)}"` : "";
+  const descrAttr = chart.altText ? ` descr="${escapeXmlAttribute(chart.altText)}"` : "";
   const groupAttr = chart.groupOrdinal !== undefined ? ` de:group="${chart.groupOrdinal}"` : "";
   const docPr =
-    `<wp:docPr id="${id}" name="${escapeXmlAttr(name)}"${descrAttr}` +
+    `<wp:docPr id="${id}" name="${escapeXmlAttribute(name)}"${descrAttr}` +
     (groupAttr ? ` xmlns:de="${DE_NAMESPACE}"${groupAttr}` : "") +
     "/>";
   const graphic =

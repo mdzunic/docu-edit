@@ -19,11 +19,13 @@ import type { ZipEntryInput } from "../core/zipWriter";
 
 export const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
-/** Every mediaId an Image block in the document still references — the
- * writer's own mirror of lib/images.ts's referencedMediaIds, computed here
- * too since a save must never trust stale bookkeeping over the model itself
- * (the same principle every other writer derivation in this file follows). */
-function referencedMediaIds(model: DocumentModel): string[] {
+/** Every mediaId an Image block in the document still references, in
+ * document order — the writers' own mirror of lib/images.ts's
+ * referencedMediaIds (which returns a Set), computed at save time since a
+ * save must never trust stale bookkeeping over the model itself (the same
+ * principle every other writer derivation in this file follows). Exported
+ * for odf/media.ts, whose plan derives from the identical walk. */
+export function referencedMediaIds(model: DocumentModel): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const section of model.sections) {

@@ -15,6 +15,10 @@ import type {
   TableWidthMode,
 } from "./core/tables";
 import type { MediaPart } from "./core/media";
+// Type-only, erased at compile time — no runtime cycle with textEditing.ts,
+// which imports this module's guards (forEachParagraph below reports each
+// paragraph's address in textEditing's shared address shape).
+import type { ParagraphAddress } from "./textEditing";
 
 /** Sub/superscript (`w:vertAlign` / `style:text-position`). Mutually
  * exclusive by construction: one field holds either value (SPEC-013). */
@@ -1779,4 +1783,90 @@ export function createDocument(id: string = crypto.randomUUID()): DocumentModel 
     sections: [{ blocks: [createEmptyParagraph()] }],
     defaultStyles: createDefaultStyles(),
   };
+}
+
+// --- shared structural helpers ----------------------------------------------
+// Used by commands.ts and by every command module outside it (clipboard.ts,
+// tables.ts, links.ts, comments.ts, …). They live here — not in commands.ts —
+// because commands.undo.spec.ts's completeness guard requires every export of
+// that file to be a registered command or query, and these are neither.
+
+/** Clones the containers the editing primitives mutate (the model object,
+ * its sections array, each section and its blocks array); blocks and
+ * everything below them are shared by reference with the input model. That
+ * sharing is what keeps every command O(edit), and what lets the renderer
+ * (`v-memo`) and the track-changes/version diff layers detect untouched
+ * blocks by object identity. */
+export function cloneContainers(model: DocumentModel): DocumentModel {
+  return {
+    ...model,
+    sections: model.sections.map((section) => ({
+      ...section,
+      blocks: [...section.blocks],
+    })),
+  };
+}
+
+/** A paragraph split into two around a character offset, both halves keeping
+ * the block-level formatting. Pure — unlike textEditing.ts's splitParagraph,
+ * the caret-driven primitive that writes into the model in place; the block
+ * insert commands (tables/images/shapes/charts) use this to make room for a
+ * block without touching the model yet. */
+export function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
+  let consumed = 0;
+  const before: Paragraph = { ...paragraph, runs: [] };
+  const after: Paragraph = {
+    ...paragraph,
+    runs: [],
+    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
+  };
+  const beforeRuns = [];
+  const afterRuns = [];
+  for (const run of paragraph.runs) {
+    const end = consumed + run.text.length;
+    if (end <= offset) {
+      beforeRuns.push(run);
+    } else if (consumed >= offset) {
+      afterRuns.push(run);
+    } else {
+      const cut = offset - consumed;
+      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
+      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
+    }
+    consumed = end;
+  }
+  before.runs = beforeRuns;
+  after.runs = afterRuns;
+  return [before, after];
+}
+
+/** Visits every paragraph in the main body flow (section blocks and table
+ * cells) with its address — the shared walk behind links.ts's bookmarks and
+ * comments.ts's anchors. Header/footer content is out of scope on purpose:
+ * it is edited through a throwaway synthetic single-section model
+ * (commands.ts's withHeaderFooterModel), so it is never reachable from
+ * `model.sections` walks like this one. */
+export function forEachParagraph(
+  model: DocumentModel,
+  visit: (paragraph: Paragraph, address: ParagraphAddress) => void,
+): void {
+  model.sections.forEach((section, sectionIndex) => {
+    section.blocks.forEach((block, blockIndex) => {
+      if (isTable(block)) {
+        block.rows.forEach((row, rowIndex) => {
+          row.cells.forEach((cell, colIndex) => {
+            cell.blocks.forEach((paragraph, cellBlockIndex) => {
+              visit(paragraph, {
+                section: sectionIndex,
+                block: blockIndex,
+                cell: { row: rowIndex, col: colIndex, block: cellBlockIndex },
+              });
+            });
+          });
+        });
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block)) {
+        visit(block, { section: sectionIndex, block: blockIndex });
+      }
+    });
+  });
 }

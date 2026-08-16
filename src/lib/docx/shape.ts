@@ -7,7 +7,7 @@
 import type { Block, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
-import { firstChildElement, serializeElement } from "../core/xml";
+import { escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
 
@@ -70,14 +70,6 @@ const GEOMETRY_TO_PRST: Record<ShapeGeometry, string> = {
   wedgeRectCallout: "wedgeRectCallout",
   wedgeRoundRectCallout: "wedgeRoundRectCallout",
 };
-
-function escapeXmlAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 /** Everything needed to parse a `wps:txbx`'s `w:txbxContent` into
  * `Shape.text.blocks` — injected by the caller (reader.ts) so this module
@@ -356,10 +348,10 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
   const cy = cmToEmu(Math.max(0, shape.heightCm));
   const id = docPrId;
   const name = `Shape ${id}`;
-  const descrAttr = shape.altText ? ` descr="${escapeXmlAttr(shape.altText)}"` : "";
+  const descrAttr = shape.altText ? ` descr="${escapeXmlAttribute(shape.altText)}"` : "";
   const groupAttr = shape.groupOrdinal !== undefined ? ` de:group="${shape.groupOrdinal}"` : "";
   const docPr =
-    `<wp:docPr id="${id}" name="${escapeXmlAttr(name)}"${descrAttr}` +
+    `<wp:docPr id="${id}" name="${escapeXmlAttribute(name)}"${descrAttr}` +
     (groupAttr ? ` xmlns:de="${DE_NAMESPACE}"${groupAttr}` : "") +
     "/>";
 

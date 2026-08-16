@@ -16,6 +16,7 @@
 // a block in place. It is also what the canvas's `v-memo` keys on to skip
 // re-rendering untouched paragraphs.
 import {
+  cloneContainers,
   createChipRun,
   createEmptyHeaderFooterContent,
   createEmptyNoteContent,
@@ -190,20 +191,12 @@ export function orderedRange(
   return compareCaret(a, b) <= 0 ? { start: a, end: b } : { start: b, end: a };
 }
 
-// Clones the containers the primitives mutate (see the header comment);
-// blocks and everything below them are shared with the input model. The
-// clipboard commands (SPEC-016, lib/clipboard.ts) keep their own copy —
-// exporting it here would trip commands.undo.spec.ts's completeness guard,
-// which requires every export to be a command or a query.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
+// The container clone every command starts from (see the header comment's
+// immutability contract) is documentModel.ts's cloneContainers, imported
+// above. It cannot be exported from here — commands.undo.spec.ts's
+// completeness guard requires every export of this file to be a command or
+// a query — which is why documentModel.ts is its home, shared with the
+// command modules outside this file (clipboard.ts, links.ts, tables.ts, …).
 
 function result(model: DocumentModel, caret: CaretPosition): CommandResult {
   return { model, selection: caretSelection(caret) };

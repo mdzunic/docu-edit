@@ -4,9 +4,10 @@
 // .docx-bound (AC-2), and decodes the natural pixel size. Not framework-free
 // like the rest of lib/ — it's the browser-only orchestration DocumentView.vue
 // delegates to so its own script stays a thin caller, same role
-// openDocument.ts plays for the file-open path (its readFileAsArrayBuffer is
-// the same FileReader pattern reused below).
+// openDocument.ts plays for the file-open path (both read their File through
+// core/fileReader.ts's readFileAsArrayBuffer).
 import { decodeImageDimensions } from "./core/imageDimensions";
+import { readFileAsArrayBuffer } from "./core/fileReader";
 import { type NewImageMedia } from "./images";
 import { IMAGE_TOO_LARGE_MESSAGE, isAcceptedImageType, isImageTooLarge } from "./core/media";
 import { bytesToBase64 } from "./opaque";
@@ -23,15 +24,6 @@ export interface PreparedImageInsert {
   media: NewImageMedia;
   naturalWidthPx: number;
   naturalHeightPx: number;
-}
-
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => resolve(reader.result as ArrayBuffer));
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read file")));
-    reader.readAsArrayBuffer(file);
-  });
 }
 
 /** Validates and prepares a File for insertImage. Throws ImageInsertError

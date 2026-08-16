@@ -18,7 +18,7 @@
 import type { Chart } from "../documentModel";
 import type { ChartOptions, ChartSeries, ChartType } from "../core/charts";
 import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
-import { parseXml, serializeElement, XmlParseError } from "../core/xml";
+import { escapeXmlAttribute, escapeXmlText, parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, svgAttr, textAttr, xlinkAttr } from "./xml";
 
@@ -39,13 +39,6 @@ function childrenNS(parent: Element, ns: string, localName: string): Element[] {
 }
 function chartAttr(el: Element, localName: string): string | null {
   return el.getAttributeNS(CHART_NAMESPACE, localName);
-}
-
-function escapeXmlText(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function escapeXmlAttr(value: string): string {
-  return escapeXmlText(value).replace(/"/g, "&quot;");
 }
 
 const LEGEND_POS_TO_ODF: Record<Exclude<ChartOptions["legend"], "none">, string> = {
@@ -310,11 +303,11 @@ const FRAME_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:xlink="${XLINK_NAMESP
  * shape.ts's shapeElementXml. */
 export function chartFrameXml(chart: Chart, objectHref: string): string {
   const anchorType = chart.wrap === "inline" ? "as-char" : "paragraph";
-  const descXml = chart.altText ? `<svg:desc>${escapeXmlAttr(chart.altText)}</svg:desc>` : "";
+  const descXml = chart.altText ? `<svg:desc>${escapeXmlAttribute(chart.altText)}</svg:desc>` : "";
   return (
     `<draw:frame${FRAME_XMLNS} text:anchor-type="${anchorType}"` +
     ` svg:width="${cmToOdfLength(chart.widthCm)}" svg:height="${cmToOdfLength(Math.max(0, chart.heightCm))}">` +
-    `<draw:object xlink:href="${escapeXmlAttr(objectHref)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    `<draw:object xlink:href="${escapeXmlAttribute(objectHref)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
     descXml +
     "</draw:frame>"
   );
@@ -369,7 +362,7 @@ function seriesXml(chart: Chart, series: ChartSeries, index: number): string {
     scatter: "chart:scatter",
   };
   return (
-    `<chart:series chart:class="${classFor[chart.chartType]}" chart:color="${escapeXmlAttr(series.color)}"` +
+    `<chart:series chart:class="${classFor[chart.chartType]}" chart:color="${escapeXmlAttribute(series.color)}"` +
     ` chart:values-cell-range-address="local-table.$${col}$2:.$${col}$${rows + 1}"` +
     ` chart:label-cell-address="local-table.$${col}$1"/>`
   );

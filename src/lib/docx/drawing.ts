@@ -10,7 +10,7 @@ import type { Image, ImageWrapMode } from "../documentModel";
 import type { MediaPart } from "../core/media";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64Async } from "../opaque";
-import { firstChildElement, resolvePartPath, type Relationship } from "../core/xml";
+import { escapeXmlAttribute, firstChildElement, resolvePartPath, type Relationship } from "../core/xml";
 import { cmToEmu, emuToCm } from "../core/units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -176,14 +176,6 @@ export async function fillPendingMediaData(part: MediaPart): Promise<void> {
   part.data = await bytesToBase64Async(bytes);
 }
 
-function escapeXmlAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 /** The `wp:wrap*` element for a wrap mode (the inverse of wrapModeOf), plus
  * `wp:anchor`'s own `behindDoc` attribute value — "square"/"behind"/
  * "infront" only; "inline" has no anchor at all (see drawingXml). */
@@ -212,13 +204,13 @@ export function drawingXml(image: Image, relId: string, docPrId: number): string
   const cy = cmToEmu(image.heightCm);
   const id = docPrId;
   const name = `Picture ${id}`;
-  const descrAttr = image.altText ? ` descr="${escapeXmlAttr(image.altText)}"` : "";
-  const docPr = `<wp:docPr id="${id}" name="${escapeXmlAttr(name)}"${descrAttr}/>`;
+  const descrAttr = image.altText ? ` descr="${escapeXmlAttribute(image.altText)}"` : "";
+  const docPr = `<wp:docPr id="${id}" name="${escapeXmlAttribute(name)}"${descrAttr}/>`;
   const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
     '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     `<pic:pic xmlns:pic="${PIC_NAMESPACE}">` +
-    `<pic:nvPicPr><pic:cNvPr id="${id}" name="${escapeXmlAttr(name)}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"/><pic:cNvPicPr/></pic:nvPicPr>` +
     "<pic:blipFill>" +
     `<a:blip xmlns:r="${R_NAMESPACE}" r:embed="${relId}"/>` +
     "<a:stretch><a:fillRect/></a:stretch>" +

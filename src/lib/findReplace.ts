@@ -8,7 +8,7 @@
 // Scope (AC "search covers body text"): every paragraph of every section is
 // searched. Headers, footers and footnotes are not part of the model yet, so
 // they are excluded for free — the find bar states this to the user.
-import { isBreak, isChart, isImage, isShape, isTable, isToc, type DocumentModel, type RunFormatting } from "./documentModel";
+import { cloneContainers, isBreak, isChart, isImage, isShape, isTable, isToc, type DocumentModel, type RunFormatting } from "./documentModel";
 import {
   blockText,
   clampCaret,
@@ -161,21 +161,6 @@ export function matchSelection(match: FindMatch): ModelSelection {
   return {
     anchor: { section: match.section, block: match.block, offset: match.start },
     focus: { section: match.section, block: match.block, offset: match.end },
-  };
-}
-
-// Clones the containers a replace rewrites (the model object, its sections
-// array, each section and its blocks array); untouched blocks are shared by
-// reference, exactly as commands.ts does, so a replace stays O(edit). Kept
-// local rather than exported from commands.ts, whose completeness guard
-// (commands.undo.spec.ts) requires every export there to be a command/query.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
   };
 }
 
