@@ -14,6 +14,8 @@ import { formatOrdinal } from "./core/lists";
 import { documentBodyStats } from "./wordCount";
 import { effectiveLanguage } from "./core/language";
 import { bookmarkCaretIncludingHidden } from "./links";
+import { isEvaluatedField, isMergeChipField } from "./documentModel";
+import { chipLabel } from "./mergeChips";
 import type { DocumentModel, FieldSpec, PageNumberFormat, RefFormat } from "./documentModel";
 
 /** The text a cross-reference shows when its target bookmark is gone
@@ -362,4 +364,23 @@ export function isReadOnlyField(field: FieldSpec): boolean {
  * the writer and any picture builder. */
 export function pageNumberFormatOrdinal(format: PageNumberFormat, value: number): string {
   return formatOrdinal(format, value);
+}
+
+/** A field's saved display value without any recomputation (SPEC-053): its
+ * `cached` result, a merge chip's label, or "" for `page`/`numpages` (which
+ * carry no cached value and need page context). Used where a renderer has the
+ * field but not the evaluation context — a table cell, say — since a field is
+ * never updated on open, its `cached` string is exactly what the document
+ * displays there. */
+export function cachedFieldText(field: FieldSpec): string {
+  if (isMergeChipField(field)) {
+    return chipLabel(field);
+  }
+  return isEvaluatedField(field) ? field.cached : "";
+}
+
+/** The read-only explanation for a field, or "" when the field is editable —
+ * bound as an atom's `title` (SPEC-053 AC-42). */
+export function isReadOnlyFieldTitle(field: FieldSpec): string {
+  return isReadOnlyField(field) ? UNSUPPORTED_FIELD_MESSAGE : "";
 }

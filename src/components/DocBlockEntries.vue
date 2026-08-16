@@ -118,7 +118,7 @@ function componentFor(entry = noRenderEntries()[0]) {
           contenteditable="false"
           :data-caret-atom="run.atomText"
           :data-note-id="run.noteId"
-          :data-testid="run.atomClass === 'doc-merge-chip' ? 'merge-chip' : undefined"
+          :data-testid="run.atomClass === 'doc-merge-chip' ? 'merge-chip' : run.atomClass && run.atomClass.indexOf('doc-field') === 0 ? 'field' : undefined"
           :title="run.title"
           :style="run.styleObj"
           :lang="run.lang"
@@ -337,5 +337,33 @@ function componentFor(entry = noRenderEntries()[0]) {
   border-radius: 3px;
   padding: 0 2px;
   color: #1a73e8;
+}
+
+/* A SPEC-053 field: a caret atom whose displayed value is computed. Reads as
+   ordinary text (no pill) until shaded. */
+.doc-field {
+  cursor: default;
+  user-select: none;
+}
+
+/* Field shading (SPEC-053 AC-10, AC-11): grey background when the caret sits
+   on the field or "View → Field shading" is on. Never prints or exports
+   (AC-12) — the print/preview rule below drops it. */
+.doc-field-shaded {
+  background: #d9d9d9;
+}
+
+/* An unsupported field type or unsupported date picture (SPEC-053 AC-42):
+   shown read-only, its `title` carries the explanatory message. */
+.doc-field-readonly {
+  cursor: help;
+}
+
+/* AC-12: field shading is a screen-only affordance. In print preview and on
+   the printed/exported page the grey background is removed. */
+@media print {
+  .doc-field-shaded {
+    background: transparent !important;
+  }
 }
 </style>

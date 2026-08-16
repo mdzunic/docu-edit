@@ -41,7 +41,7 @@ import { listMarkers } from "../../lib/lists";
 import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/notesLayout";
 import { noRenderEntries, type RenderEntry, type RenderRun } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
-import { fieldValueText, headerFooterForPage } from "../../lib/pageNumbering";
+import { headerFooterForPage } from "../../lib/pageNumbering";
 import { evaluateField, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
 import { now } from "../../lib/clock";
 import {

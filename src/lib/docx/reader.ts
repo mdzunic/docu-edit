@@ -56,9 +56,7 @@ import type {
   TableWidthMode,
 } from "../core/tables";
 import {
-  createChipRun,
   createDefaultStyles,
-  createFieldRun,
   createFieldSpecRun,
   createNoteRun,
   DEFAULT_COLUMN_GAP_CM,

@@ -7,6 +7,7 @@ import { isTable, type Block, type Shape, type TrackChangesDisplayMode } from ".
 import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
+import { cachedFieldText, isReadOnlyFieldTitle } from "./fields";
 import type { MarkSegment } from "./core/marks";
 import type { PageColumns } from "./pagination";
 
@@ -173,14 +174,32 @@ export function shapeTextRenderEntries(shape: Shape, listDefinitions: readonly L
     }
     const paragraph = block.type === "paragraph" ? block : { type: "paragraph" as const, runs: [] };
     const styleObj = { ...paragraphStyle(paragraph, listDefinitions) };
-    const renderRuns: RenderRun[] = paragraph.runs.map((run, runIndex) => ({
-      key: runKey(run, runIndex),
-      href: "",
-      styleObj: runStyle(run.formatting),
-      text: run.text,
-      segments: null,
-      lang: run.formatting.lang ?? "",
-    }));
+    const renderRuns: RenderRun[] = paragraph.runs.map((run, runIndex) => {
+      // A SPEC-053 field in a shape text box (AC-34): a caret atom showing its
+      // saved value, the same substitution the body/cell paths apply.
+      if (run.field) {
+        const readOnly = isReadOnlyFieldTitle(run.field);
+        return {
+          key: runKey(run, runIndex),
+          href: "",
+          styleObj: runStyle(run.formatting),
+          text: cachedFieldText(run.field),
+          segments: null,
+          atomText: run.text,
+          atomClass: readOnly ? "doc-field doc-field-readonly" : "doc-field",
+          title: readOnly || undefined,
+          lang: run.formatting.lang ?? "",
+        };
+      }
+      return {
+        key: runKey(run, runIndex),
+        href: "",
+        styleObj: runStyle(run.formatting),
+        text: run.text,
+        segments: null,
+        lang: run.formatting.lang ?? "",
+      };
+    });
     entries.push({
       key: `shape-text:${blockIndex}`,
       memo: [block, blockIndex, markers[blockIndex]],

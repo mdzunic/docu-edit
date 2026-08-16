@@ -3,6 +3,7 @@ import { markersForBlocks } from "../lib/lists";
 import { asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
 import { chipLabel } from "../lib/mergeChips";
+import { cachedFieldText, isReadOnlyFieldTitle } from "../lib/fields";
 import {
   displayRunFormatting,
   headingTag,
@@ -117,6 +118,18 @@ function spanAttr(span = 1) {
                   :data-caret-atom="run.text"
                   :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
                 >{{ chipLabel(run.field) }}</span>
+                <!-- A SPEC-053 field in a table cell (AC-33): a caret atom
+                     showing its saved value. A field is never recomputed on
+                     open, so `cached` is exactly what the cell displays. -->
+                <span
+                  v-else-if="run.field"
+                  :class="isReadOnlyFieldTitle(run.field) ? 'doc-field doc-field-readonly' : 'doc-field'"
+                  contenteditable="false"
+                  data-testid="field"
+                  :data-caret-atom="run.text"
+                  :title="isReadOnlyFieldTitle(run.field) || undefined"
+                  :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                >{{ cachedFieldText(run.field) }}</span>
                 <!-- SPEC-039 AC-9: a run hidden by the current display mode
                      (a pending deletion in "No markup", a pending insertion
                      in "Original") renders no text, staying a caret atom
@@ -192,5 +205,16 @@ function spanAttr(span = 1) {
   border-radius: 3px;
   padding: 0 2px;
   color: #1a73e8;
+}
+
+/* A SPEC-053 field in a cell (AC-33), restated from DocBlockEntries.vue for
+   the same scoped-style reason as the chip pill above. */
+.doc-field {
+  cursor: default;
+  user-select: none;
+}
+
+.doc-field-readonly {
+  cursor: help;
 }
 </style>
