@@ -363,8 +363,8 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
     pageNumberDialogOpen.value = false;
   }
 
-  // --- header-mirror formatting (used by useFormatting's triple-mirrored
-  // toolbar commands) ------------------------------------------------
+  // --- header-mirror formatting (the header/footer surface's pending-format
+  // store in useFormattingSurfaces' surface table) ---------------------
 
   function getHfPendingFormat(): ReturnType<typeof noPendingFormat> {
     return hfPendingFormat;

@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import MenuBar from "../components/MenuBar.vue";
-import MenuItem from "../components/MenuItem.vue";
-import MenuCheckItem from "../components/MenuCheckItem.vue";
+import DocumentMenuBar from "../components/DocumentMenuBar.vue";
 import BookmarkDialog from "../components/BookmarkDialog.vue";
 import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
@@ -26,9 +24,7 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
-import ShapeGallery from "../components/ShapeGallery.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
-import ChartGallery from "../components/ChartGallery.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
@@ -60,6 +56,7 @@ import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
 import StylePicker from "../components/StylePicker.vue";
+import TableHandlesOverlay from "../components/TableHandlesOverlay.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
@@ -68,6 +65,7 @@ import { useAutosave } from "../composables/useAutosave";
 import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { noApplyEditOptions } from "./document/context";
+import { useAutocorrect } from "./document/useAutocorrect";
 import { useClipboard } from "./document/useClipboard";
 import { asCommentFilter, useComments } from "./document/useComments";
 import { asChangeEntries, useTrackChanges } from "./document/useTrackChanges";
@@ -83,38 +81,28 @@ import { useShapes } from "./document/useShapes";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
+import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationView } from "./document/usePaginationView";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
-import { noSpellContextMenu, noSpellUnderlineRect, useSpellCheck } from "./document/useSpellCheck";
+import { useSpellCheck } from "./document/useSpellCheck";
 import { useDocumentLanguage } from "./document/useDocumentLanguage";
+import { useStyleManager } from "./document/useStyleManager";
+import { useContextMenus } from "./document/useContextMenus";
+import { useFileActions } from "./document/useFileActions";
+import { usePageSetupDialogs } from "./document/usePageSetupDialogs";
+import { useOutlinePane } from "./document/useOutlinePane";
+import { useMergeFields } from "./document/useMergeFields";
+import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { documentExists } from "../lib/documents";
 import {
-  activeHeadingAnchor,
-  blockKey,
-  buildOutline,
-  emptyKeySet,
-  hiddenBlockAddresses,
-  moveHeading,
-} from "../lib/outline";
-import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../lib/outlinePane";
-import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../lib/docx/writer";
-import { ODT_MIMETYPE, odtFileName, writeOdt } from "../lib/odf/writer";
-import { MD_MIME_TYPE, mdFileName, writeMd } from "../lib/md/writer";
-import { noConversionReport } from "../lib/opaque";
-import { convertLiteralChipsToRuns, hasConvertibleLiteralChips } from "../lib/mergeChips";
-import { namedArrayFieldList, namedFieldList, noParsedDataSource } from "../lib/merge";
-import {
-  deleteDocument,
   getOrCreateDocument,
   replaceDocumentModel,
   touchDocument,
 } from "../lib/documentStore";
-import { saveAsTemplate } from "../lib/templateStore";
 import {
-  asCharacterFormatKey,
   asHeaderFooterPart,
   asImage,
   asImageWrapMode,
@@ -123,17 +111,13 @@ import {
   asNoteKind,
   asNoteNumberFormat,
   asNoteRestart,
-  asTabStopAlignment,
-  asTabStops,
   asTrackChangesDisplayMode,
   asPageNumberFormat,
-  asParagraphAlignment,
   asParagraphBlock,
   asBreakKind,
   asSectionStart,
   createDocument,
   createEmptyHeaderFooterContent,
-  DEFAULT_TITLE,
   isBreak,
   isImage,
   isShape,
@@ -144,16 +128,9 @@ import {
   noActiveHeaderFooter,
   noActiveNote,
   noBlocks,
-  noNamedStyles,
   noNoteContent,
-  resolveColumnWidthsCm,
-  sectionColumns,
-  sectionContentWidthCm,
-  sectionMargins,
-  sectionPageSize,
 } from "../lib/documentModel";
 import { asChartType, CHART_CATALOGUE, SINGLE_SERIES_CHART_TYPES } from "../lib/core/charts";
-import { asListLevelDefinitions, asListMarkerStyle, asListType } from "../lib/core/lists";
 import { asShapeGeometry } from "../lib/core/shapes";
 import {
   asBorderLineStyle,
@@ -161,7 +138,6 @@ import {
   asTableAlignment,
   asTableWidthMode,
 } from "../lib/core/tables";
-import { asMeasurementUnit } from "../lib/core/units";
 import {
   defaultTocOptions,
   insertTableOfContents,
@@ -173,7 +149,6 @@ import {
 } from "../lib/toc";
 import { listMarkers } from "../lib/lists";
 import { detectListAutoformat } from "../lib/core/lists";
-import { GALLERY_PRESETS } from "../lib/core/listDefinitions";
 import {
   anchorCaret,
   applyLink,
@@ -217,21 +192,12 @@ import {
   tableAt,
 } from "../lib/tables";
 import {
-  asBorderPreset,
   cellRangeBounds,
-  PICKER_MAX_ROWS,
-  PICKER_MAX_COLS,
   MIN_COLUMN_WIDTH_CM,
   MIN_ROW_HEIGHT_CM,
   noCellRange,
 } from "../lib/core/tables";
-import {
-  applyColumns,
-  asColumnsScope,
-  setColumnBoundary,
-} from "../lib/columns";
 import { documentFontFamilies } from "../lib/fonts";
-import { loadRecentColors, noHighlight, pushRecentColor } from "../lib/core/colors";
 import { acquireEditLock, noEditLock } from "../lib/core/editLock";
 import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../lib/supportedCeiling";
 import {
@@ -247,23 +213,18 @@ import {
   noParagraphTarget,
   noTableCellTarget,
   paragraphElementForCaret,
-  paragraphFromEventTarget,
   setDomCaret,
   setDomSelection,
   tableCellFromEventTarget,
 } from "../lib/domCaret";
 import {
-  compileQuery,
   findMatches,
   indexAtOrAfter,
   isQueryError,
   matchSelection,
   noHighlightRects,
   noMatches,
-  replaceMatch,
-  replaceMatches,
 } from "../lib/findReplace";
-import { applyCasePattern, detectCasePattern } from "../lib/spellcheck/suggestions";
 import {
   caretAtClientPoint,
   caretClientRect,
@@ -287,14 +248,6 @@ import {
   splitRuns,
 } from "../lib/textEditing";
 import {
-  dashSubstitution,
-  decadeSubstitution,
-  isDigit,
-  loadAutocorrectSettings,
-  saveAutocorrectSettings,
-  smartQuote,
-} from "../lib/core/autocorrect";
-import {
   asPasteMode,
   clipboardFlavours,
   DOC_MODEL_MIME,
@@ -305,36 +258,18 @@ import {
   noClipboardSnapshot,
   noPastePayload,
   parseFragmentPayload,
-  serializeFragment,
 } from "../lib/clipboard";
 import { importHtml } from "../lib/htmlPaste";
 import {
   adjustIndent,
-  applyCharacterStyle,
-  applyFormat,
   applyListAutoformat,
-  applyListDefinition,
-  applyMultilevelPreset,
   applyPainterFormat,
-  applyParagraphFormat,
-  applyParagraphStyle,
-  applyTableStyle,
-  asPageSetupScope,
-  createStyle,
-  deleteStyle,
-  modifyStyle,
-  noStyleFormInput,
   toolbarCharacterStyleState,
-  continueListNumbering,
   blockCount,
   blockOrdinal,
   capturePainterFormat,
-  caretFormatting,
   caretSelection,
   changeListLevel,
-  clearFormatting,
-  commitHeaderFooterModel,
-  commitNoteModel,
   deleteBackward,
   deleteForward,
   deleteRange,
@@ -351,46 +286,25 @@ import {
   INDENT_STEP_CM,
   insertBreak,
   insertLineBreak,
-  insertMergeChip,
   insertNote,
   insertPageNumberCommand,
   insertSectionBreak,
   insertText,
   isCollapsed,
-  linkHeadingNumbering,
   noCommandResult,
   noPainterFormat,
-  noParagraphCommand,
   noPendingFormat,
   noSelection,
   paragraphPaginationState,
   removeListFormat,
-  resetParagraphStyle,
-  restartListNumbering,
-  selectAll,
-  selectionListDefinitionLevels,
-  selectionTabStops,
-  setAlignment,
   setHeaderFooterOptions,
-  setListMarker,
-  setListNumberingValue,
   setNoteSettings,
-  setPageMargins,
-  setPageSetup,
-  setTabStops,
   splitBlock,
-  toggleFormat,
-  toggleList,
-  toggleSpaceBefore,
-  toggleVerticalAlign,
   toolbarFormatValues,
   toolbarListState,
   toolbarStyleState,
   touchedBlocks,
-  updateStyleFromSelection,
   verticalAlignState,
-  withHeaderFooterModel,
-  withNoteModel,
 } from "../lib/commands";
 import {
   collectNoteRefs,
@@ -404,7 +318,6 @@ import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runSty
 import { markSegments } from "../lib/core/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/core/idleScheduler";
 import { sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
-import { PX_PER_CM } from "../lib/core/units";
 import { noNoteArea, noNoteAreaItems } from "../lib/notesLayout";
 import {
   computePageNumbers,
@@ -423,7 +336,7 @@ import {
   setImageSize,
   setImageWrap,
 } from "../lib/images";
-import { ACCEPTED_IMAGE_ACCEPT_ATTR, isAcceptedImageType, mediaDataUri } from "../lib/core/media";
+import { isAcceptedImageType } from "../lib/core/media";
 import { pxToCm } from "../lib/core/units";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
 import { noShapeLocation, shapeAt } from "../lib/shapes";
@@ -436,29 +349,7 @@ import {
   previewImageSize,
   resizedImageSize,
 } from "../lib/imageResize";
-import {
-  allStyles,
-  headingStyleId,
-  isStyleInUse,
-  NORMAL_STYLE_ID,
-  noStyleEntries,
-  noStylesPaneEntries,
-  resolveNamedStyle,
-  styleById,
-  stylePickerEntries,
-  stylesPaneEntries,
-  styleTypeOf,
-} from "../lib/styles";
-import {
-  importStyles,
-  noStyleImportPlan,
-  noStyleImportResolutionMap,
-  noStyleImportSummary,
-  planStyleImport,
-  readStylesFromFile,
-  styleImportConflictRows,
-  styleImportResolutionsFromMap,
-} from "../lib/customStyles";
+import { headingStyleId, NORMAL_STYLE_ID } from "../lib/styles";
 import StylesPane from "../components/StylesPane.vue";
 import StyleEditorDialog from "../components/StyleEditorDialog.vue";
 import StyleDeleteDialog from "../components/StyleDeleteDialog.vue";
@@ -480,7 +371,6 @@ import { applyTrackChanges } from "../lib/trackChangesDiff";
 import { isMacPlatform } from "../lib/core/platform";
 
 const route = useRoute();
-const router = useRouter();
 const { addToast } = useToasts();
 const documentId = computed(() => String(route.params.id ?? ""));
 
@@ -606,9 +496,6 @@ function registerFindRefresh(fn = () => {}) {
   findRefreshScheduler = fn;
 }
 
-const contextMenu = ref({ visible: false, left: 0, top: 0 });
-const spellContextMenu = ref(noSpellContextMenu());
-
 // --- tables (SPEC-022) ------------------------------------------------------
 // The rectangular cell-range selection (AC-15, AC-16): activated by
 // dragging from one cell into another of the same table; the DOM text
@@ -630,20 +517,6 @@ let contextMenuListTarget = noParagraphTarget();
 const tableHover = ref(noTableHandleGeometry());
 // The "Insert table…" dialog for sizes beyond the 10×10 picker (AC-2).
 const insertTableDialogOpen = ref(false);
-
-// --- special characters and autocorrect (SPEC-026) --------------------------
-// The "Insert → Special characters" picker dialog.
-const specialCharacterDialogOpen = ref(false);
-// Smart-quote/dash autocorrect settings, persisted in localStorage.
-const autocorrectSettings = ref(loadAutocorrectSettings());
-// Tracking state for the follow-up substitutions: the caret offset just after
-// an en dash / opening single quote THIS feature produced (or -1 for none),
-// and a caret offset at which a just-undone substitution must not re-fire
-// until the caret moves (SPEC-026 undo behaviour). These are plain lets, not
-// refs — they never drive rendering, only the next keystroke's decision.
-let producedEnDashAt = -1;
-let producedOpenSingleAt = -1;
-let autocorrectSuppressedAt = -1;
 
 // --- table formatting (SPEC-023) --------------------------------------------
 // "Split cell…" and the table properties dialog both act on the cell/table
@@ -720,63 +593,16 @@ const paragraphFormatting = ref(emptyParagraphFormatting());
 const listState = ref(emptyToolbarListState());
 // --- paragraph styles (SPEC-019) --------------------------------------------
 // The style picker's current entry (the first touched paragraph's named
-// style, AC-1) and its menu entries — the document's own styles, or the
-// built-in set for a blank document (AC-2, AC-8). doc.value is replaced on
-// every edit, so the list follows catalogue changes (AC-13).
+// style, AC-1); the picker's menu entries and its actions live in
+// useStyleManager.
 const styleState = ref(emptyToolbarStyleState());
-const styleEntries = computed(() => (doc.value ? stylePickerEntries(doc.value) : noStyleEntries()));
 // --- custom styles manager (SPEC-042) ---------------------------------------
 // The caret's active character style (AC-10's second readout, alongside
-// styleState above) and the Styles pane/dialogs' own state.
+// styleState above); the Styles pane/dialogs' own state lives in
+// useStyleManager.
 const characterStyleState = ref(emptyToolbarStyleState());
-const stylesPaneOpen = ref(false);
-const stylesPaneEntriesList = computed(() => (doc.value ? stylesPaneEntries(doc.value) : noStylesPaneEntries()));
-const styleEditorOpen = ref(false);
-const styleEditorMode = ref("new");
-const styleEditorType = ref("paragraph");
-const styleEditorTargetId = ref("");
-const styleDeleteTargetId = ref("");
-const styleDeleteTargetInUse = ref(false);
-const importDialogOpen = ref(false);
-const importPhase = ref("pick");
-const importFileName = ref("");
-const importError = ref("");
-const importSourceStyles = ref(noNamedStyles());
-const importPlanState = ref(noStyleImportPlan());
-const importResolutions = ref(noStyleImportResolutionMap());
-const importSummaryState = ref(noStyleImportSummary());
-// The custom-spacing dialog (AC-12..14): open flag plus the prefill taken
-// from the first touched paragraph at the moment it opens.
-const customSpacingOpen = ref(false);
-const customSpacingInitial = ref({ mode: "multiple", value: 1, beforePt: 0, afterPt: 0 });
-// --- multilevel lists and tab stops (SPEC-032) ------------------------------
-// The "Define new multilevel list…" dialog: open flag plus the nine level
-// definitions it prefills from (the selection's own definition, or the
-// decimal preset).
-const defineListOpen = ref(false);
-const defineListInitial = ref(asListLevelDefinitions([]));
-// The Tabs dialog (AC-25): open flag plus the selection's current stops.
-const tabsDialogOpen = ref(false);
-const tabsDialogInitial = ref(asTabStops([]));
-// The Page setup dialog (SPEC-027 AC-1..7): open flag plus the prefill
-// taken from the document's own page geometry/unit at the moment it opens.
-const pageSetupOpen = ref(false);
-const pageSetupInitial = ref({
-  pageSize: { widthCm: 21, heightCm: 29.7 },
-  margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
-  measurementUnit: "cm",
-  applyTo: "wholeDocument",
-});
-// The Format → Columns dialog (SPEC-030): open flag plus the prefill taken
-// from the caret's section columns and content width at the moment it opens.
-const columnsDialogOpen = ref(false);
-const columnsDialogInitial = ref({
-  columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false },
-  contentWidthCm: 16,
-  applyTo: "thisSection",
-});
-// Recently applied text colours, shared across documents (SPEC-013 AC).
-const recentColors = ref(loadRecentColors());
+// The formatting dialogs' state (custom spacing, define-list, tabs) and the
+// recent-colours list live in useFormattingSurfaces, wired below.
 // The families used by the open document, for the dropdown's "Fonts in
 // this document" group — doc.value is replaced on every edit, so this
 // recomputes as families come and go.
@@ -795,6 +621,11 @@ let compositionRange = noSelection();
 // AC: "announces caret movement") — rendered into a visually hidden
 // aria-live region below the canvas.
 const caretStatus = ref("");
+
+// The caret's focus end, mirrored reactively (the live `caret` is a plain
+// variable) so the outline pane's active-heading highlight tracks caret and
+// scroll (SPEC-037 AC-3, AC-4). Updated in updateCaretStatus.
+const caretPosition = ref(noCaret());
 
 // Forces paragraph re-mounts by folding into the v-for keys: `key` names the
 // single block whose key carries `count` (bumped after an IME commit so the
@@ -1060,6 +891,72 @@ const {
   exitHeaderFooterEditing,
 });
 
+// --- character & paragraph formatting (SPEC-012, SPEC-013, SPEC-014) --------
+// One implementation of the toolbar/shortcut formatting commands, their
+// dialogs and the ruler handler, dispatched over the active editing surface —
+// body, header/footer band (SPEC-029 AC-4) or note (SPEC-031 AC-6) — in
+// useFormattingSurfaces, replacing the per-surface triads that lived here.
+// Wired directly after the header/footer and note bundles that complete its
+// surface table, and before useStyleManager, which passes
+// applyParagraphCommand eagerly. `pendingFormat` and the toolbar readouts
+// stay in this view (updateCaretStatus recomputes them); the surfaces reach
+// the body's pending-format store through the get/set lambdas.
+const {
+  toggleCharacterFormat,
+  handleFontFamilySelect,
+  handleFontSizeChange,
+  handleTextColorSelect,
+  handleHighlightSelect,
+  recentColors,
+  applyParagraphCommand,
+  handleAlign,
+  handleIndent,
+  handleClearFormatting,
+  handleSpacingPreset,
+  handleToggleSpaceBefore,
+  handleToggleList,
+  handleListMarker,
+  handleMultilevelPreset,
+  handleLinkHeadingNumbering,
+  defineListOpen,
+  defineListInitial,
+  openDefineList,
+  handleDefineListApply,
+  tabsDialogOpen,
+  tabsDialogInitial,
+  openTabsDialog,
+  handleTabsApply,
+  handleToggleDirection,
+  customSpacingOpen,
+  customSpacingInitial,
+  openCustomSpacing,
+  handleCustomSpacingApply,
+  handleRulerUpdate,
+  handleTogglePagination,
+} = useFormattingSurfaces({
+  ...editorContext,
+  paragraphSelection,
+  getPendingFormat: () => pendingFormat,
+  setPendingFormat: (next) => {
+    pendingFormat = next;
+  },
+  updateCaretStatus,
+  activeHeaderFooter,
+  currentHfSelection,
+  applyHeaderFooterEdit,
+  hfRootEl,
+  getHfPendingFormat,
+  setHfPendingFormat,
+  activeNote,
+  currentNoteSelection,
+  applyNoteEdit,
+  noteRootEl,
+  getNotePendingFormat,
+  setNotePendingFormat,
+  getParagraphState: () => paragraphState.value,
+  getParagraphFormatting: () => paragraphFormatting.value,
+});
+
 // Cut/copy/paste and the paste-options chip (SPEC-016) live in useClipboard;
 // the plain-paste flag and chip state it owns are wired into handleKeyDown and
 // the session-close hook (resetClipboard) here.
@@ -1078,6 +975,25 @@ const {
   ...editorContext,
   getPendingFormat: () => pendingFormat,
   insertImageFromFile,
+});
+
+// Smart-quote/dash autocorrect and the special-character picker (SPEC-026)
+// live in useAutocorrect; handleBeforeInput's typed-input branch dispatches
+// into applyAutocorrect, and applyHistorySnapshot clears the substitution
+// follow-up context through resetSubstitutionContext.
+const {
+  autocorrectSettings,
+  toggleAutocorrectSmartQuotes,
+  toggleAutocorrectDashes,
+  applyAutocorrect,
+  resetSubstitutionContext,
+  insertSpecialCharacter,
+  specialCharacterDialogOpen,
+  openSpecialCharacters,
+  handleSpecialCharacterInsert,
+} = useAutocorrect({
+  ...editorContext,
+  getPendingFormat: () => pendingFormat,
 });
 
 // Live word count and the statistics dialog (SPEC-036) live in useWordCount;
@@ -1184,21 +1100,14 @@ function closeSession() {
   lockState.value = "pending";
   caret = noCaret();
   scrollTop = 0;
-  // The next document opens scrolled to the top: realize only its head
-  // until the viewport refresh sees the real scroll position.
-  viewportPageRange.value = { start: 0, end: 2 };
-  anchorPage.value = -1;
-  caretPage.value = 1;
+  // The virtualization trackers (viewportPageRange/anchorPage/caretPage)
+  // reset via useViewportVirtualization's own session-close hook below.
   dismissPasteChip();
-  closeContextMenu();
   sessionCloseHooks.forEach((cb) => cb());
   clearCellSelection();
   cellDragOrigin = null;
   tableHover.value = null;
   insertTableDialogOpen.value = false;
-  specialCharacterDialogOpen.value = false;
-  producedEnDashAt = -1;
-  producedOpenSingleAt = -1;
   // The clipboard's own state (plain-paste flag, chip, payload) is reset by the
   // clipboard composable's session-close hook, not here.
   // AC-19: the undo/redo history does not outlive the document being open.
@@ -1450,8 +1359,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // Undo/redo moves the caret and rewrites text, so a pending substitution
   // follow-up context (en dash / opening quote) can no longer apply — clearing
   // it stops a stale trigger firing after an undo (SPEC-026 AC-22).
-  producedEnDashAt = -1;
-  producedOpenSingleAt = -1;
+  resetSubstitutionContext();
   noteEdit();
   updateCaretStatus({ start: snapshot.selection.anchor, end: snapshot.selection.focus });
   refreshUndoRedoState();
@@ -1462,177 +1370,6 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // insertion it reverses does.
   void scrollModelCaretIntoView(caret);
   findRefreshScheduler?.();
-}
-
-/** Inserts a literal string at the current caret WITHOUT running autocorrect
- * — the character picker (AC-30) and the non-breaking-space shortcut (AC-11)
- * both go through here, never the typed-input path. */
-function insertSpecialCharacter(text = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value || !text) {
-    return;
-  }
-  const selection =
-    currentSelection(root) ?? caretSelection(caret ?? documentStart());
-  applyEdit(
-    insertText(model, selection, text, pendingFormat),
-    selection,
-    "insert character",
-  );
-  // A deliberate insert is not a substitution follow-up context.
-  producedEnDashAt = -1;
-  producedOpenSingleAt = -1;
-}
-
-function openSpecialCharacters() {
-  specialCharacterDialogOpen.value = true;
-}
-
-function handleSpecialCharacterInsert(text = "") {
-  insertSpecialCharacter(text);
-}
-
-function toggleAutocorrectSmartQuotes() {
-  const next = {
-    ...autocorrectSettings.value,
-    smartQuotes: !autocorrectSettings.value.smartQuotes,
-  };
-  autocorrectSettings.value = next;
-  saveAutocorrectSettings(next);
-}
-
-function toggleAutocorrectDashes() {
-  const next = {
-    ...autocorrectSettings.value,
-    dashes: !autocorrectSettings.value.dashes,
-  };
-  autocorrectSettings.value = next;
-  saveAutocorrectSettings(next);
-}
-
-/** The code point immediately before `index` in `text`, as a string (a full
- * surrogate pair when it is a non-BMP character), or null at the start. */
-function codePointBefore(text = "", index = 0) {
-  if (index <= 0) {
-    return null;
-  }
-  const code = text.charCodeAt(index - 1);
-  if (code >= 0xdc00 && code <= 0xdfff && index >= 2) {
-    return text.slice(index - 2, index);
-  }
-  return text[index - 1];
-}
-
-/** Replaces [replacement.start, replacement.end) within the caret's paragraph
- * with replacement.text, returning a CommandResult whose caret sits after the
- * inserted text. Used to record a substitution as its own edit. */
-function replaceInParagraph(
-  model = createDocument(""),
-  atCaret = documentStart(),
-  replacement = { start: 0, end: 0, text: "" },
-) {
-  const deleted = deleteRange(model, {
-    anchor: { ...atCaret, offset: replacement.start },
-    focus: { ...atCaret, offset: replacement.end },
-  });
-  return insertText(deleted.model, deleted.selection, replacement.text, null);
-}
-
-/** Runs the smart-quote/dash/decade substitutions after a single character was
- * plain-inserted (SPEC-026). `plainResult` is that plain insert. Returns true
- * when it recorded its own undo entries (the caller must then stop); false to
- * let the caller apply the plain insert normally. Only ever reached from the
- * typed-input branch below (AC-27..31). */
-function applyAutocorrect(
-  selection = noSelection(),
-  typed = "",
-  plainResult = noCommandResult(),
-) {
-  if (!selection || !plainResult) {
-    return false;
-  }
-  const settings = autocorrectSettings.value;
-  const caretAfter = plainResult.selection.focus;
-  const blockAfter = paragraphAtCaret(plainResult.model, caretAfter);
-  if (!blockAfter) {
-    return false;
-  }
-  const text = blockText(blockAfter);
-  const off = caretAfter.offset;
-
-  // Decade idiom (AC-50): a digit typed right after our opening single quote
-  // flips it to a closing quote as part of the digit's OWN edit, so one undo
-  // removes the digit and reverts the flip together.
-  if (isDigit(typed) && producedOpenSingleAt >= 0) {
-    const rep = decadeSubstitution(text, off, typed, producedOpenSingleAt);
-    if (rep) {
-      const flipped = replaceInParagraph(plainResult.model, caretAfter, rep);
-      applyEdit(
-        { model: flipped.model, selection: caretSelection(caretAfter) },
-        selection,
-        "typing",
-        { groupable: true },
-      );
-      producedOpenSingleAt = -1;
-      producedEnDashAt = -1;
-      return true;
-    }
-  }
-
-  // Smart quotes (AC-18, AC-19): plain insert first, then the curly quote as a
-  // separate undo entry so one Ctrl/Cmd+Z restores the straight quote (AC-21).
-  if (settings.smartQuotes && (typed === "'" || typed === '"')) {
-    const quote = smartQuote(typed, codePointBefore(text, off - 1));
-    if (quote) {
-      applyEdit(plainResult, selection, "typing", { groupable: true });
-      breakTypingGroup(documentId.value);
-      const subResult = replaceInParagraph(plainResult.model, caretAfter, {
-        start: off - 1,
-        end: off,
-        text: quote,
-      });
-      applyEdit(subResult, caretSelection(caretAfter), "smart quote");
-      producedOpenSingleAt =
-        quote === "‘" ? subResult.selection.focus.offset : -1;
-      producedEnDashAt = -1;
-      return true;
-    }
-  }
-
-  // Dash substitution (AC-16, AC-17): same two-step undo shape.
-  if (settings.dashes && typed === "-") {
-    const sub = dashSubstitution(
-      text,
-      off,
-      producedEnDashAt >= 0 ? producedEnDashAt : null,
-    );
-    if (sub) {
-      applyEdit(plainResult, selection, "typing", { groupable: true });
-      breakTypingGroup(documentId.value);
-      const subResult = replaceInParagraph(
-        plainResult.model,
-        caretAfter,
-        sub.replacement,
-      );
-      applyEdit(
-        subResult,
-        caretSelection(caretAfter),
-        sub.producesEnDash ? "en dash" : "em dash",
-      );
-      producedEnDashAt = sub.producesEnDash
-        ? subResult.selection.focus.offset
-        : -1;
-      producedOpenSingleAt = -1;
-      return true;
-    }
-  }
-
-  // An ordinary typed character with no substitution invalidates any pending
-  // follow-up context.
-  producedEnDashAt = -1;
-  producedOpenSingleAt = -1;
-  return false;
 }
 
 /** Whether a caret's own block address (ignoring any cell path) is a TOC
@@ -1981,280 +1718,6 @@ function handleContentClick(event = new MouseEvent("click")) {
   }
 }
 
-// --- the editor's context menu (SPEC-016 AC-4..6) --------------------------
-
-/** Right-click on the canvas: the app's own menu replaces the native one so
- * its entries can drive the clipboard pipeline (and tests can reach them). */
-function handleContextMenu(event = new MouseEvent("contextmenu")) {
-  if (!doc.value || !editable.value) {
-    return;
-  }
-  // A right-click on a misspelled word opens the suggestions menu instead of
-  // this one (SPEC-035 AC-2). The underline layer is inert, so the click
-  // arrives here rather than on the overlay — see spellRectAtPoint.
-  const spellRect = spellRectAtPoint(event.clientX, event.clientY);
-  if (spellRect) {
-    handleSpellContextMenu(event, spellRect);
-    return;
-  }
-  event.preventDefault();
-  // A right-click inside a table cell adds the row/column section to the
-  // menu, targeted at that cell (SPEC-022 AC-17..19).
-  contextMenuTableCell = tableCellAtTarget(event.target);
-  // A right-click on a list paragraph adds the numbering-control section,
-  // targeted at that paragraph (SPEC-032 AC-14..16).
-  contextMenuListTarget = listParagraphAtTarget(event.target);
-  contextMenu.value = { visible: true, left: event.clientX, top: event.clientY };
-}
-
-/** The list paragraph under a right-click, or null when the click landed
- * outside a list item (SPEC-032). */
-function listParagraphAtTarget(eventTarget = noEventTarget()) {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return null;
-  }
-  const target = paragraphFromEventTarget(root, eventTarget);
-  if (!target) {
-    return null;
-  }
-  return paragraphAt(model, target)?.list ? target : null;
-}
-
-function closeContextMenu() {
-  if (contextMenu.value.visible) {
-    contextMenu.value = { visible: false, left: 0, top: 0 };
-  }
-  contextMenuTableCell = null;
-  contextMenuListTarget = null;
-}
-
-// --- the spell-check context menu (SPEC-035 AC-2, AC-3) ---------------------
-
-/** The underline rect under a point, in client coordinates, or null when the
- * point is not over a flagged word. The underline layer cannot do this hit
- * test itself: its rects cover whole glyph boxes and paint above the text, so
- * making them pointer-interactive would swallow ordinary clicks, double-clicks
- * and drags (see the .spell-underline rule). The rects are stored relative to
- * the .pages box — the same space useSpellCheck measured them in. */
-function spellRectAtPoint(clientX = 0, clientY = 0) {
-  const pageEl = pageRef.value;
-  if (!pageEl) {
-    return null;
-  }
-  const pageRect = pageEl.getBoundingClientRect();
-  const x = clientX - pageRect.left;
-  const y = clientY - pageRect.top;
-  for (const rect of spellUnderlineRects.value) {
-    if (x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height) {
-      return rect;
-    }
-  }
-  return null;
-}
-
-/** Right-click on a spell-check underline: opens the suggestions menu
- * instead of the regular editing menu. Reached from handleContextMenu, which
- * hit-tests the click, because the underline layer itself is inert. */
-function handleSpellContextMenu(event = new MouseEvent("contextmenu"), rect = noSpellUnderlineRect()) {
-  if (!editable.value) {
-    return;
-  }
-  event.preventDefault();
-  spellContextMenu.value = {
-    visible: true,
-    left: event.clientX,
-    top: event.clientY,
-    section: rect.section,
-    block: rect.block,
-    start: rect.start,
-    end: rect.end,
-    word: rect.word,
-    lang: rect.lang,
-    suggestions: suggestionsFor(rect.word, rect.lang),
-  };
-}
-
-function closeSpellContextMenu() {
-  spellContextMenu.value = noSpellContextMenu();
-}
-
-/** Choosing a suggestion (SPEC-035 AC-4, AC-4.1): replaceMatch preserves
- * the word's character formatting; applyCasePattern reshapes the
- * suggestion to the misspelling's own capitalisation pattern first. */
-function applySpellSuggestion(suggestion = "") {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  const match = { section: state.section, block: state.block, start: state.start, end: state.end };
-  const shaped = applyCasePattern(suggestion, detectCasePattern(state.word));
-  const before = caretSelection({ ...match, offset: match.start });
-  applyEdit(replaceMatch(model, match, shaped), before, "spelling suggestion");
-}
-
-/** "Ignore" (SPEC-035 AC-5): this occurrence only, for the session. */
-function spellIgnore() {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  ignoreOccurrence({
-    section: state.section,
-    block: state.block,
-    start: state.start,
-    end: state.end,
-    word: state.word,
-    lang: state.lang,
-  });
-}
-
-/** "Ignore all" (SPEC-035 AC-6): every occurrence of the word, for the
- * session. */
-function spellIgnoreAll() {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  ignoreAllOccurrences(state.word);
-}
-
-/** "Add to dictionary" (SPEC-035 AC-7): persists across sessions. */
-function spellAddToDictionary() {
-  const state = spellContextMenu.value;
-  closeSpellContextMenu();
-  addWordToDictionary(state.word, state.lang);
-}
-
-/** A numbering-control entry picked from the context menu (SPEC-032
- * AC-14..16), applied at the right-clicked paragraph. "Set numbering
- * value…" prompts for the ordinal; cancelling the prompt changes nothing. */
-function handleContextMenuListAction(action = "") {
-  const target = contextMenuListTarget;
-  closeContextMenu();
-  const model = doc.value;
-  if (!target || !model || !editable.value) {
-    return;
-  }
-  const selection = caretSelection({ ...target, offset: 0 });
-  if (action === "restart-numbering") {
-    applyEdit(restartListNumbering(model, selection), selection, "restart numbering");
-  } else if (action === "continue-numbering") {
-    applyEdit(continueListNumbering(model, selection), selection, "continue numbering");
-  } else if (action === "set-numbering-value") {
-    const raw = window.prompt("Set numbering value", "1");
-    if (raw === null) {
-      return;
-    }
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < 0) {
-      return;
-    }
-    applyEdit(setListNumberingValue(model, selection, value), selection, "set numbering value");
-  }
-}
-
-/** Menu Cut/Copy synthesise a real cut/copy via execCommand — the only
- * synchronous route from a button click to clipboardData (and the private
- * MIME type). The events land in handleCut/handleCopy above. */
-function contextMenuCut() {
-  closeContextMenu();
-  const root = contentRoot.value;
-  if (!root) {
-    return;
-  }
-  root.focus();
-  if (typeof document.execCommand === "function") {
-    document.execCommand("cut");
-  }
-}
-
-function contextMenuCopy() {
-  closeContextMenu();
-  const root = contentRoot.value;
-  if (!root) {
-    return;
-  }
-  root.focus();
-  if (typeof document.execCommand === "function") {
-    document.execCommand("copy");
-  }
-}
-
-/** Reads text/html, text/plain and image presence via the async clipboard
- * API — all a button click can reach. Null when the API is missing or the
- * read was denied. */
-async function readAsyncClipboard() {
-  const clipboard = navigator.clipboard;
-  if (!clipboard) {
-    return null;
-  }
-  try {
-    if (typeof clipboard.read === "function") {
-      const items = await clipboard.read();
-      let html = "";
-      let text = "";
-      let hasImage = false;
-      for (const item of items) {
-        for (const type of item.types) {
-          if (type === "text/html") {
-            html = await (await item.getType(type)).text();
-          } else if (type === "text/plain") {
-            text = await (await item.getType(type)).text();
-          } else if (type.startsWith("image/")) {
-            hasImage = true;
-          }
-        }
-      }
-      return { html, text, hasImage };
-    }
-    if (typeof clipboard.readText === "function") {
-      return { html: "", text: await clipboard.readText(), hasImage: false };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-/** The menu's Paste (AC-6). The async API cannot carry the private MIME
- * type, so a clipboard whose text/html matches our last copy is recognised
- * as our own and pasted from the local fragment snapshot with exact
- * fidelity; anything else takes the same import paths as a keyboard
- * paste. */
-async function contextMenuPaste() {
-  closeContextMenu();
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  root.focus();
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  const flavours = await readAsyncClipboard();
-  if (!flavours) {
-    addToast("Clipboard unavailable — paste with the keyboard instead");
-    return;
-  }
-  const ownIfLastCopy = getLastCopy();
-  const own =
-    ownIfLastCopy && flavours.html && flavours.html === ownIfLastCopy.html
-      ? ownIfLastCopy.fragment
-      : null;
-  performPaste(
-    {
-      internal: own ? serializeFragment(own) : "",
-      html: flavours.html,
-      text: flavours.text,
-      hasImage: flavours.hasImage,
-    },
-    selection,
-    false,
-  );
-}
-
 // --- caret movement and selection (SPEC-011) -------------------------------
 // Character/word/line movement, plain Home/End and mouse selection are the
 // browser's native caret behaviour over the rendered canvas — the DOM
@@ -2375,7 +1838,11 @@ const {
   scheduleColumnArrowFallback,
 } = usePageNavigation({
   ...editorContext,
-  refreshViewportRange,
+  // Deferred behind a lambda: the const is destructured from
+  // useViewportVirtualization, wired after pagination below — the wrapper
+  // reads it at call time (a paging key handler, past setup), never during
+  // this deps object's evaluation.
+  refreshViewportRange: () => refreshViewportRange(),
 });
 
 // Tracks the primary button across a text-selection drag (SPEC-020): the
@@ -2631,7 +2098,10 @@ const {
   currentHfSelection,
   applyHeaderFooterEdit,
   hfRootEl,
-  closeContextMenu,
+  // Deferred behind a lambda: the const is destructured from useContextMenus,
+  // wired after useSpellCheck below — the wrapper reads it at call time (an
+  // event handler, past setup), never during this deps object's evaluation.
+  closeContextMenu: () => closeContextMenu(),
   tableHover,
   cellSelection,
   insertTableDialogOpen,
@@ -2646,255 +2116,6 @@ const {
   getContextMenuTableCell: () => contextMenuTableCell,
 });
 
-// --- character formatting toolbar/shortcuts (SPEC-012, SPEC-013) -----------
-
-/** The character-formatting toolbar's header/footer counterpart (SPEC-029
- * AC-4): identical bold/italic/… and subscript/superscript logic to
- * toggleCharacterFormat, just against the active band's synthetic model
- * and its own pending-format/caret state. */
-function toggleHfCharacterFormat(key = "") {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  if (key === "subscript" || key === "superscript") {
-    if (isCollapsed(selection)) {
-      const on = verticalAlignState(synthetic, selection, key, getHfPendingFormat()) === "on";
-      setHfPendingFormat({ ...getHfPendingFormat(), vertAlign: on ? false : key });
-    } else {
-      const result = toggleVerticalAlign(synthetic, selection, key);
-      applyHeaderFooterEdit(result.model, result.selection, key);
-    }
-    hfRootEl()?.focus();
-    return;
-  }
-  const formatKey = asCharacterFormatKey(key);
-  if (isCollapsed(selection)) {
-    const next = formatState(synthetic, selection, formatKey, getHfPendingFormat()) !== "on";
-    setHfPendingFormat({ ...getHfPendingFormat(), [formatKey]: next });
-  } else {
-    const result = toggleFormat(synthetic, selection, formatKey);
-    applyHeaderFooterEdit(result.model, result.selection, formatKey);
-  }
-  hfRootEl()?.focus();
-}
-
-/** applyRunFormatPatch's header/footer counterpart (SPEC-029 AC-4). */
-function applyHfRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!patch || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  if (isCollapsed(selection)) {
-    setHfPendingFormat({ ...getHfPendingFormat(), ...patch });
-  } else {
-    const result = applyFormat(synthetic, selection, patch);
-    applyHeaderFooterEdit(result.model, result.selection, label);
-  }
-  hfRootEl()?.focus();
-}
-
-/** applyParagraphCommand's header/footer counterpart (SPEC-029 AC-4): the
- * same chokepoint alignment/indent/list/style toolbar actions run through
- * for body content, redirected at the active band's synthetic model. */
-function applyHfParagraphCommand(command = noParagraphCommand(), label = "formatting") {
-  const active = activeHeaderFooter.value;
-  const model = doc.value;
-  if (!command || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentHfSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
-  const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-  const result = command(synthetic, selection);
-  applyHeaderFooterEdit(result.model, result.selection, label);
-  hfRootEl()?.focus();
-}
-
-/** toggleHfCharacterFormat's note counterpart (SPEC-031 AC-6). */
-function toggleNoteCharacterFormat(key = "") {
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withNoteModel(model, active.noteId);
-  if (key === "subscript" || key === "superscript") {
-    if (isCollapsed(selection)) {
-      const on = verticalAlignState(synthetic, selection, key, getNotePendingFormat()) === "on";
-      setNotePendingFormat({ ...getNotePendingFormat(), vertAlign: on ? false : key });
-    } else {
-      const result = toggleVerticalAlign(synthetic, selection, key);
-      applyNoteEdit(result.model, result.selection, key);
-    }
-    noteRootEl()?.focus();
-    return;
-  }
-  const formatKey = asCharacterFormatKey(key);
-  if (isCollapsed(selection)) {
-    const next = formatState(synthetic, selection, formatKey, getNotePendingFormat()) !== "on";
-    setNotePendingFormat({ ...getNotePendingFormat(), [formatKey]: next });
-  } else {
-    const result = toggleFormat(synthetic, selection, formatKey);
-    applyNoteEdit(result.model, result.selection, formatKey);
-  }
-  noteRootEl()?.focus();
-}
-
-/** applyRunFormatPatch's note counterpart (SPEC-031 AC-6). */
-function applyNoteRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!patch || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection();
-  if (!selection) {
-    return;
-  }
-  const synthetic = withNoteModel(model, active.noteId);
-  if (isCollapsed(selection)) {
-    setNotePendingFormat({ ...getNotePendingFormat(), ...patch });
-  } else {
-    const result = applyFormat(synthetic, selection, patch);
-    applyNoteEdit(result.model, result.selection, label);
-  }
-  noteRootEl()?.focus();
-}
-
-/** applyParagraphCommand's note counterpart (SPEC-031 AC-6). */
-function applyNoteParagraphCommand(command = noParagraphCommand(), label = "formatting") {
-  const active = activeNote.value;
-  const model = doc.value;
-  if (!command || !active || !model || !editable.value) {
-    return;
-  }
-  const selection = currentNoteSelection() ?? caretSelection({ section: 0, block: 0, offset: 0 });
-  const synthetic = withNoteModel(model, active.noteId);
-  const result = command(synthetic, selection);
-  applyNoteEdit(result.model, result.selection, label);
-  noteRootEl()?.focus();
-}
-
-/** Bold/italic/underline/strikethrough (SPEC-012 AC-3..6, AC-16, AC-17)
- * and subscript/superscript (SPEC-013): a real selection is formatted
- * through the command API (which keeps the selection live, see applyEdit);
- * a collapsed caret instead sets/flips the pending format the next typed
- * text will carry (AC-9, AC-10). */
-function toggleCharacterFormat(key = "") {
-  if (activeHeaderFooter.value) {
-    toggleHfCharacterFormat(key);
-    return;
-  }
-  if (activeNote.value) {
-    toggleNoteCharacterFormat(key);
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  if (key === "subscript" || key === "superscript") {
-    // One vertAlign field makes the pair mutually exclusive (SPEC-013).
-    if (isCollapsed(selection)) {
-      const on = verticalAlignState(model, selection, key, pendingFormat) === "on";
-      pendingFormat = { ...pendingFormat, vertAlign: on ? false : key };
-      updateCaretStatus({ start: selection.anchor, end: selection.focus });
-    } else {
-      applyEdit(toggleVerticalAlign(model, selection, key), selection, key);
-    }
-    root.focus();
-    return;
-  }
-  const formatKey = asCharacterFormatKey(key);
-  if (isCollapsed(selection)) {
-    const next = formatState(model, selection, formatKey, pendingFormat) !== "on";
-    pendingFormat = { ...pendingFormat, [formatKey]: next };
-    updateCaretStatus({ start: selection.anchor, end: selection.focus });
-  } else {
-    applyEdit(toggleFormat(model, selection, formatKey), selection, formatKey);
-  }
-  root.focus();
-}
-
-/** Applies a value-format patch (font family/size, colour, highlight —
- * SPEC-013): a real selection goes through the command API; a collapsed
- * caret merges the patch into the pending format the next typed text
- * carries, exactly like the boolean toggles. */
-function applyRunFormatPatch(patch = noPendingFormat(), label = "formatting") {
-  if (activeHeaderFooter.value) {
-    applyHfRunFormatPatch(patch, label);
-    return;
-  }
-  if (activeNote.value) {
-    applyNoteRunFormatPatch(patch, label);
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!patch || !root || !model || !editable.value) {
-    return;
-  }
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  if (isCollapsed(selection)) {
-    pendingFormat = { ...pendingFormat, ...patch };
-    updateCaretStatus({ start: selection.anchor, end: selection.focus });
-  } else {
-    applyEdit(applyFormat(model, selection, patch), selection, label);
-  }
-  root.focus();
-}
-
-function handleFontFamilySelect(family = "") {
-  if (family !== "") {
-    applyRunFormatPatch({ fontFamily: family }, "font family");
-  }
-}
-
-function handleFontSizeChange(sizePt = 0) {
-  if (sizePt > 0) {
-    applyRunFormatPatch({ fontSizePt: sizePt }, "font size");
-  }
-}
-
-function handleTextColorSelect(hex = "") {
-  if (hex !== "") {
-    applyRunFormatPatch({ color: hex }, "text color");
-    recentColors.value = pushRecentColor(hex, recentColors.value);
-  }
-}
-
-/** The highlight picker emits a palette name or false for "No colour" —
- * false is applied as an explicit off, not an absence (SPEC-013). */
-function handleHighlightSelect(value = noHighlight()) {
-  applyRunFormatPatch({ highlight: value }, "highlight");
-}
-
-// --- paragraph formatting toolbar/ruler/shortcuts (SPEC-014) ----------------
-
 /** The selection paragraph commands target: the live/tracked selection, or
  * — before the canvas has ever held a caret — the document start, so a
  * toolbar click or ruler drag on a fresh document still lands on the first
@@ -2903,671 +2124,86 @@ function paragraphSelection(root = noElement()) {
   return currentSelection(root) ?? caretSelection(documentStart());
 }
 
-/** Runs one paragraph command against the current selection and applies its
- * result; `label` names the edit for the undo history (SPEC-015 AC-7, AC-8,
- * AC-13 — every paragraph command is its own undo step); `refocus` returns
- * focus to the canvas (skipped for ruler drags, which would tear down the
- * pointer capture mid-drag). */
-function applyParagraphCommand(command = noParagraphCommand(), label = "formatting", refocus = true) {
-  if (activeHeaderFooter.value) {
-    applyHfParagraphCommand(command, label);
-    return;
-  }
-  if (activeNote.value) {
-    applyNoteParagraphCommand(command, label);
-    return;
-  }
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!command || !root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(command(model, selection), selection, label);
-  if (refocus) {
-    root.focus();
-  }
-}
-
-function handleAlign(alignment = "") {
-  applyParagraphCommand(
-    (model, selection) => setAlignment(model, selection, asParagraphAlignment(alignment)),
-    "alignment",
-  );
-}
-
-function handleIndent(direction = 1) {
-  applyParagraphCommand(
-    (model, selection) => adjustIndent(model, selection, direction * INDENT_STEP_CM),
-    "indent",
-  );
-}
-
-// --- paragraph styles (SPEC-019) --------------------------------------------
-
-/** Applies a style to every paragraph in the selection (AC-3) — the picker's
- * click and the Ctrl/Cmd+Alt+0..6 shortcuts (AC-5, AC-6) both land here. An
- * empty caret paragraph has no run to carry the style's run formatting, so
- * it becomes the pending format the next typed text takes. */
-function handleApplyStyle(styleId = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (styleId === "" || !root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(applyParagraphStyle(model, selection, styleId), selection, "paragraph style");
-  const after = doc.value;
-  const block = after ? paragraphAtCaret(after, selection.focus) : undefined;
-  if (after && block && block.runs.length === 0) {
-    pendingFormat = { ...resolveNamedStyle(after, styleId).runFormatting };
-    updateCaretStatus({ start: selection.anchor, end: selection.focus });
-  }
-  root.focus();
-}
-
-/** "Update <style> to match" from a picker entry's context menu (AC-12). */
-function handleUpdateStyle(styleId = "") {
-  if (styleId === "") {
-    return;
-  }
-  applyParagraphCommand(
-    (model, selection) => updateStyleFromSelection(model, selection, styleId),
-    "update style",
-  );
-}
-
-/** "Reset style": removes direct formatting from the selection (AC-14). */
-function handleResetStyle() {
-  applyParagraphCommand(
-    (model, selection) => resetParagraphStyle(model, selection),
-    "reset style",
-  );
-}
-
-// --- custom styles manager (SPEC-042) ---------------------------------------
-
-function toggleStylesPane() {
-  stylesPaneOpen.value = !stylesPaneOpen.value;
-}
-
-function closeStylesPane() {
-  stylesPaneOpen.value = false;
-}
-
-/** "New style" (AC-3): seeded from the caret's current formatting, and — for
- * a paragraph/list style — its current paragraph style as the "based on"
- * starting point. */
-function openNewStyle(type = "paragraph") {
-  styleEditorMode.value = "new";
-  styleEditorType.value = type;
-  styleEditorTargetId.value = "";
-  styleEditorOpen.value = true;
-}
-
-/** "Modify style" (AC-4). */
-function openModifyStyle(styleId = "") {
-  const model = doc.value;
-  const target = model ? styleById(model, styleId) : undefined;
-  styleEditorMode.value = "modify";
-  styleEditorType.value = target ? styleTypeOf(target) : "paragraph";
-  styleEditorTargetId.value = styleId;
-  styleEditorOpen.value = true;
-}
-
-function closeStyleEditor() {
-  styleEditorOpen.value = false;
-}
-
-/** The style being modified, or an empty style for "new" (fields default to
- * the caret's own formatting via styleEditorInitialProps below). */
-const styleEditorInitialProps = computed(() => {
-  const model = doc.value;
-  if (styleEditorMode.value === "modify") {
-    const target = model ? styleById(model, styleEditorTargetId.value) : undefined;
-    const border = target?.cellBorders?.top;
-    return {
-      initialName: target?.name ?? "",
-      initialType: target ? styleTypeOf(target) : "paragraph",
-      initialBasedOn: target?.basedOn ?? "",
-      initialNext: target?.next ?? "",
-      initialFontFamily: target?.runFormatting?.fontFamily ?? "",
-      initialFontSizePt: target?.runFormatting?.fontSizePt,
-      initialBold: target?.runFormatting?.bold === true,
-      initialItalic: target?.runFormatting?.italic === true,
-      initialUnderline: target?.runFormatting?.underline === true,
-      initialColor: target?.runFormatting?.color ?? "",
-      initialAlignment: target?.paragraphFormatting?.alignment ?? "",
-      initialListPresetKey: "decimal",
-      initialCellShadingFill: target?.cellShadingFill ?? "",
-      initialCellBorderStyle: border?.style ?? "",
-      initialCellBorderWidthPt: border?.widthPt ?? 1,
-      initialCellBorderColor: border?.color ?? "#000000",
-    };
-  }
-  const caretNow = caretPosition.value;
-  const caretRun = model && caretNow ? caretFormatting(model, caretNow) : {};
-  const caretParagraph = model && caretNow ? paragraphAtCaret(model, caretNow) : undefined;
-  return {
-    initialName: "",
-    initialType: styleEditorType.value,
-    initialBasedOn: caretParagraph?.styleId ?? "",
-    initialNext: "",
-    initialFontFamily: caretRun.fontFamily ?? "",
-    initialFontSizePt: caretRun.fontSizePt,
-    initialBold: caretRun.bold === true,
-    initialItalic: caretRun.italic === true,
-    initialUnderline: caretRun.underline === true,
-    initialColor: caretRun.color ?? "",
-    initialAlignment: caretParagraph?.formatting?.alignment ?? "",
-    initialListPresetKey: "decimal",
-    initialCellShadingFill: "",
-    initialCellBorderStyle: "",
-    initialCellBorderWidthPt: 1,
-    initialCellBorderColor: "#000000",
-  };
-});
-
-const styleEditorBasedOnOptions = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return [];
-  }
-  return allStyles(model)
-    .filter((entry) => entry.name !== undefined && entry.id !== styleEditorTargetId.value)
-    .map((entry) => ({ id: entry.id, name: entry.name ?? entry.id }));
-});
-
-const styleEditorExistingNames = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return [];
-  }
-  return allStyles(model)
-    .filter((entry) => entry.name !== undefined && entry.id !== styleEditorTargetId.value)
-    .map((entry) => (entry.name ?? entry.id).trim().toLowerCase());
-});
-
-function saveStyleEditor(payload = noStyleFormInput()) {
-  if (styleEditorMode.value === "new") {
-    applyParagraphCommand((model, selection) => createStyle(model, selection, payload), "new style");
-  } else {
-    applyParagraphCommand(
-      (model, selection) => modifyStyle(model, selection, styleEditorTargetId.value, payload),
-      "modify style",
-    );
-  }
-  styleEditorOpen.value = false;
-}
-
-/** "Delete style" (AC-7): the pane's own Delete button opens the confirm
- * dialog directly — the in-use warning (AC-8) is computed from the live
- * document here, not left to the dialog to guess. */
-function openDeleteStyle(styleId = "") {
-  const model = doc.value;
-  styleDeleteTargetId.value = styleId;
-  styleDeleteTargetInUse.value = model ? isStyleInUse(model, styleId) : false;
-}
-
-function cancelDeleteStyle() {
-  styleDeleteTargetId.value = "";
-}
-
-function confirmDeleteStyle() {
-  applyParagraphCommand(
-    (model, selection) => deleteStyle(model, selection, styleDeleteTargetId.value),
-    "delete style",
-  );
-  styleDeleteTargetId.value = "";
-}
-
-const styleDeleteTargetName = computed(() => {
-  const model = doc.value;
-  const target = model ? styleById(model, styleDeleteTargetId.value) : undefined;
-  return target?.name ?? styleDeleteTargetId.value;
-});
-
-/** Applying a style from the pane (AC-9): character/table styles use their
- * own commands; paragraph/list styles reuse the picker's own apply path
- * (which also links a list style's numbering, SPEC-032's styleLinkFor). */
-function applyStyleFromPane(payload = { id: "", type: "paragraph" }) {
-  if (payload.type === "character") {
-    applyParagraphCommand(
-      (model, selection) => applyCharacterStyle(model, selection, payload.id),
-      "character style",
-    );
-  } else if (payload.type === "table") {
-    applyParagraphCommand((model, selection) => applyTableStyle(model, selection, payload.id), "table style");
-  } else {
-    handleApplyStyle(payload.id);
-  }
-}
-
-// --- import styles from another document (SPEC-042 AC-19..24) --------------
-
-function openImportDialog() {
-  importDialogOpen.value = true;
-  importPhase.value = "pick";
-  importFileName.value = "";
-  importError.value = "";
-  importSourceStyles.value = noNamedStyles();
-  importPlanState.value = noStyleImportPlan();
-  importResolutions.value = noStyleImportResolutionMap();
-  importSummaryState.value = noStyleImportSummary();
-}
-
-function closeImportDialog() {
-  importDialogOpen.value = false;
-}
-
-const importConflictRows = computed(() =>
-  importPlanState.value ? styleImportConflictRows(importPlanState.value.conflicts) : [],
-);
-const importNonConflictingCount = computed(() => importPlanState.value?.nonConflicting.length ?? 0);
-
-/** Reads the chosen file's styles and plans the merge (AC-19, AC-20, AC-21). */
-async function handleImportChooseFile(file = new File([], "")) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  importError.value = "";
-  try {
-    const styles = await readStylesFromFile(file);
-    importFileName.value = file.name;
-    importSourceStyles.value = styles;
-    importPlanState.value = planStyleImport(model, styles);
-    importResolutions.value = noStyleImportResolutionMap();
-    importPhase.value = "plan";
-  } catch (error) {
-    importError.value = error instanceof Error ? error.message : "Could not read styles from that file";
-  }
-}
-
-function setImportResolution(payload = { sourceId: "", resolution: "keep" }) {
-  importResolutions.value = { ...importResolutions.value, [payload.sourceId]: payload.resolution };
-}
-
-/** Applies the plan (AC-22, AC-23) and shows the summary (AC-24). */
-function confirmImportStyles() {
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  const resolutions = styleImportResolutionsFromMap(importResolutions.value);
-  const result = importStyles(model, importSourceStyles.value, resolutions);
-  applyEdit({ model: result.model, selection }, selection, "import styles");
-  importSummaryState.value = result.summary;
-  importPhase.value = "summary";
-}
-
-// --- mail-merge: convert literal {{...}} text (SPEC-046) --------------------
-
-/** Whether "Convert {{…}} text to merge fields" has anything to do — offered
- * when a document holds at least one well-formed `{{…}}` literal outside an
- * existing chip (AC-20, "Literal text is not a chip"). */
-const canConvertLiteralChips = computed(() => (doc.value ? hasConvertibleLiteralChips(doc.value) : false));
-
-/** Scans the whole document and converts every literal `{{…}}` match into a
- * chip in one undo step — explicit and undoable, never automatic on open
- * (SPEC-046 "Literal text is not a chip"). */
-function convertLiteralChips() {
-  const model = doc.value;
-  const root = contentRoot.value;
-  if (!model || !root) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  const { model: next, converted } = convertLiteralChipsToRuns(model);
-  if (converted === 0) {
-    return;
-  }
-  applyEdit({ model: next, selection }, selection, "convert merge fields");
-  addToast(converted === 1 ? "Converted 1 merge field" : `Converted ${converted} merge fields`);
-}
-
-// --- clear formatting and format painter (SPEC-020) -------------------------
-
-/** The "Clear formatting" toolbar button and Ctrl/Cmd+\ (AC-1, AC-2, AC-3):
- * one command result, so — like every other paragraph command — it is one
- * undo step (AC-18). */
-function handleClearFormatting() {
-  applyParagraphCommand(clearFormatting, "clear formatting");
-}
-
-/** A line-spacing preset (Single/1.15/1.5/Double) sets the multiple and
- * clears any absolute height so the preset actually takes effect (AC-11). */
-function handleSpacingPreset(multiple = 1) {
-  applyParagraphCommand(
-    (model, selection) =>
-      applyParagraphFormat(model, selection, {
-        lineSpacing: multiple,
-        lineSpacingPt: null,
-        lineSpacingRule: null,
-      }),
-    "line spacing",
-  );
-}
-
-function handleToggleSpaceBefore() {
-  applyParagraphCommand(toggleSpaceBefore, "space before");
-}
-
-/** The bulleted/numbered toolbar toggles (SPEC-018 AC-1, AC-2). */
-function handleToggleList(type = "") {
-  applyParagraphCommand(
-    (model, selection) => toggleList(model, selection, asListType(type)),
-    type === "bullet" ? "bulleted list" : "numbered list",
-  );
-}
-
-/** A marker style picked from a list button's dropdown (SPEC-018 AC-13). */
-function handleListMarker(style = "") {
-  applyParagraphCommand(
-    (model, selection) => setListMarker(model, selection, asListMarkerStyle(style)),
-    "list marker",
-  );
-}
-
-// --- multilevel lists and custom tab stops (SPEC-032) -----------------------
-
-/** A gallery preset picked from the Multilevel list menu (AC-1..4). */
-function handleMultilevelPreset(key = "") {
-  applyParagraphCommand(
-    (model, selection) => applyMultilevelPreset(model, selection, key),
-    "multilevel list",
-  );
-}
-
-/** "Number headings 1–3" (AC-13). */
-function handleLinkHeadingNumbering() {
-  applyParagraphCommand(
-    (model, selection) => linkHeadingNumbering(model, selection),
-    "number headings",
-  );
-}
-
-/** "Define new multilevel list…" (AC-5..12): prefilled from the selection's
- * own definition when it sits in a defined list. */
-function openDefineList() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return;
-  }
-  defineListInitial.value = selectionListDefinitionLevels(model, paragraphSelection(root));
-  defineListOpen.value = true;
-}
-
-function handleDefineListApply(levels = asListLevelDefinitions([])) {
-  defineListOpen.value = false;
-  applyParagraphCommand(
-    (model, selection) => applyListDefinition(model, selection, asListLevelDefinitions(levels)),
-    "list definition",
-  );
-}
-
-/** The Tabs dialog (AC-25), prefilled from the first touched paragraph. */
-function openTabsDialog() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return;
-  }
-  tabsDialogInitial.value = selectionTabStops(model, paragraphSelection(root));
-  tabsDialogOpen.value = true;
-}
-
-function handleTabsApply(stops = asTabStops([])) {
-  tabsDialogOpen.value = false;
-  applyParagraphCommand(
-    (model, selection) => setTabStops(model, selection, asTabStops(stops)),
-    "tab stops",
-  );
-}
-
-function handleToggleDirection() {
-  const rtl = paragraphState.value.direction !== "rtl";
-  applyParagraphCommand(
-    (model, selection) => applyParagraphFormat(model, selection, { direction: rtl ? "rtl" : "ltr" }),
-    "text direction",
-  );
-}
-
-function openCustomSpacing() {
-  const formatting = paragraphFormatting.value;
-  customSpacingInitial.value =
-    formatting.lineSpacingPt !== undefined
-      ? {
-          mode: formatting.lineSpacingRule === "exact" ? "exact" : "atLeast",
-          value: formatting.lineSpacingPt,
-          beforePt: formatting.spaceBeforePt ?? 0,
-          afterPt: formatting.spaceAfterPt ?? 0,
-        }
-      : {
-          mode: "multiple",
-          value: formatting.lineSpacing ?? 1,
-          beforePt: formatting.spaceBeforePt ?? 0,
-          afterPt: formatting.spaceAfterPt ?? 0,
-        };
-  customSpacingOpen.value = true;
-}
-
-/** OK in the custom-spacing dialog (AC-13): one patch, applied to every
- * touched paragraph. The unused line-spacing representation is cleared so
- * the chosen mode wins regardless of what was set before. */
-function handleCustomSpacingApply(payload = { mode: "multiple", value: 1, beforePt: 0, afterPt: 0 }) {
-  customSpacingOpen.value = false;
-  applyParagraphCommand(
-    (model, selection) =>
-      payload.mode === "multiple"
-        ? applyParagraphFormat(model, selection, {
-            lineSpacing: payload.value,
-            lineSpacingPt: null,
-            lineSpacingRule: null,
-            spaceBeforePt: payload.beforePt,
-            spaceAfterPt: payload.afterPt,
-          })
-        : applyParagraphFormat(model, selection, {
-            lineSpacing: null,
-            lineSpacingPt: payload.value,
-            lineSpacingRule: payload.mode === "exact" ? "exact" : null,
-            spaceBeforePt: payload.beforePt,
-            spaceAfterPt: payload.afterPt,
-          }),
-    "paragraph spacing",
-  );
-}
-
-/** A ruler marker drag (AC-23): indent updates go to every touched
- * paragraph as logical values; margin updates go to the page margins. No
- * refocus — grabbing focus mid-drag would break the pointer capture. */
-function handleRulerUpdate(
-  update = { kind: "", valueCm: 0, boundary: 0, deltaCm: 0, positionCm: 0, alignment: "left", index: 0 },
-) {
-  const valueCm = update.valueCm;
-  if (update.kind === "indentStartCm") {
-    applyParagraphCommand(
-      (model, selection) => applyParagraphFormat(model, selection, { indentStartCm: valueCm }),
-      "indent",
-      false,
-    );
-  } else if (update.kind === "indentEndCm") {
-    applyParagraphCommand(
-      (model, selection) => applyParagraphFormat(model, selection, { indentEndCm: valueCm }),
-      "indent",
-      false,
-    );
-  } else if (update.kind === "indentFirstLineCm") {
-    applyParagraphCommand(
-      (model, selection) => applyParagraphFormat(model, selection, { indentFirstLineCm: valueCm }),
-      "indent",
-      false,
-    );
-  } else if (update.kind === "marginLeftCm") {
-    applyParagraphCommand(
-      (model, selection) => setPageMargins(model, selection, { leftCm: valueCm }),
-      "margins",
-      false,
-    );
-  } else if (update.kind === "marginRightCm") {
-    applyParagraphCommand(
-      (model, selection) => setPageMargins(model, selection, { rightCm: valueCm }),
-      "margins",
-      false,
-    );
-  } else if (update.kind === "column-boundary") {
-    const boundary = update.boundary ?? 0;
-    const deltaCm = update.deltaCm ?? 0;
-    applyParagraphCommand(
-      (model, selection) => setColumnBoundary(model, selection, boundary, deltaCm),
-      "column width",
-      false,
-    );
-  } else if (update.kind === "add-tab") {
-    // A click in the ruler's tab lane lays a stop of the armed type
-    // (SPEC-032 AC-24).
-    const positionCm = update.positionCm ?? 0;
-    const alignment = asTabStopAlignment(update.alignment ?? "left");
-    applyParagraphCommand(
-      (model, selection) =>
-        setTabStops(model, selection, [
-          ...selectionTabStops(model, selection),
-          { positionCm, alignment },
-        ]),
-      "tab stops",
-      false,
-    );
-  } else if (update.kind === "remove-tab") {
-    // Clicking a laid handle removes its stop (SPEC-032 AC-24).
-    const index = update.index ?? 0;
-    applyParagraphCommand(
-      (model, selection) => {
-        const stops = selectionTabStops(model, selection);
-        stops.splice(index, 1);
-        return setTabStops(model, selection, stops);
-      },
-      "tab stops",
-      false,
-    );
-  }
-}
-
-// --- page setup and ruler visibility (SPEC-027) -----------------------
-
-/** Opens the Page setup dialog prefilled from the document's own page
- * geometry and measurement-unit preference (AC-8; absent unit reads as
- * "cm", createDefaultStyles's own convention). */
-function openPageSetup() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  // Prefilled from the caret's section (SPEC-028 AC-20): with per-section
-  // page setup, "what the dialog shows" is the geometry under the caret.
-  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
-  pageSetupInitial.value = {
-    pageSize: { ...sectionPageSize(model, sectionIndex) },
-    margins: { ...sectionMargins(model, sectionIndex) },
-    measurementUnit: model.measurementUnit ?? "cm",
-    applyTo: "wholeDocument",
-  };
-  pageSetupOpen.value = true;
-}
-
-/** The dialog's OK (AC-5): one combined edit — page size, margins and the
- * measurement-unit preference — applied as a single undo step, which
- * re-renders the page and re-flows text immediately (doc.value's
- * replacement is what drives pageStyle/marginStyle's recompute). */
-function handlePageSetupApply(
-  payload = {
-    pageSize: { widthCm: 21, heightCm: 29.7 },
-    margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
-    measurementUnit: "cm",
-    applyTo: "wholeDocument",
+// --- paragraph styles and the custom styles manager (SPEC-019, SPEC-042) ---
+// The style picker's actions, the Styles pane, the style editor/delete
+// dialogs and the import-styles flow live in useStyleManager; handleKeyDown's
+// Ctrl/Cmd+Alt+0..6 shortcuts dispatch into handleApplyStyle. caretPosition
+// comes in as a getter over the ref so styleEditorInitialProps re-evaluates
+// when the caret moves.
+const {
+  styleEntries,
+  stylesPaneOpen,
+  stylesPaneEntriesList,
+  styleEditorOpen,
+  styleEditorMode,
+  styleDeleteTargetId,
+  styleDeleteTargetInUse,
+  importDialogOpen,
+  importPhase,
+  importFileName,
+  importError,
+  importResolutions,
+  importSummaryState,
+  styleEditorInitialProps,
+  styleEditorBasedOnOptions,
+  styleEditorExistingNames,
+  styleDeleteTargetName,
+  importConflictRows,
+  importNonConflictingCount,
+  handleApplyStyle,
+  handleUpdateStyle,
+  handleResetStyle,
+  toggleStylesPane,
+  closeStylesPane,
+  openNewStyle,
+  openModifyStyle,
+  closeStyleEditor,
+  saveStyleEditor,
+  openDeleteStyle,
+  cancelDeleteStyle,
+  confirmDeleteStyle,
+  applyStyleFromPane,
+  openImportDialog,
+  closeImportDialog,
+  handleImportChooseFile,
+  setImportResolution,
+  confirmImportStyles,
+} = useStyleManager({
+  ...editorContext,
+  paragraphSelection,
+  applyParagraphCommand,
+  setPendingFormat: (next) => {
+    pendingFormat = next;
   },
-) {
-  pageSetupOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    setPageSetup(
-      model,
-      selection,
-      {
-        pageSize: payload.pageSize,
-        margins: payload.margins,
-        measurementUnit: asMeasurementUnit(payload.measurementUnit),
-      },
-      asPageSetupScope(payload.applyTo ?? "wholeDocument"),
-    ),
-    selection,
-    "page setup",
-  );
-  root.focus();
-}
+  updateCaretStatus,
+  getCaretPosition: () => caretPosition.value,
+});
 
-/** Format → Columns (SPEC-030 AC-1..AC-5): prefilled from the caret's
- * section columns and its content width. */
-function openColumnsDialog() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const sectionIndex = Math.min(caretSectionIndex.value, model.sections.length - 1);
-  columnsDialogInitial.value = {
-    columns: { ...sectionColumns(model, sectionIndex) },
-    contentWidthCm: sectionContentWidthCm(model, sectionIndex),
-    applyTo: "thisSection",
-  };
-  columnsDialogOpen.value = true;
-}
-
-/** The Columns dialog's OK (AC-6/AC-7): applies the layout to the caret's
- * section or wraps the selection in a continuous section, as one undo step. */
-function handleColumnsApply(
-  payload = {
-    columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false, widthsCm: undefined },
-    applyTo: "thisSection",
-  },
-) {
-  columnsDialogOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    applyColumns(model, selection, payload.columns, asColumnsScope(payload.applyTo ?? "thisSection")),
-    selection,
-    "columns",
-  );
-  root.focus();
-}
-
-/** The "Show/hide ruler" toggle (AC-14): a view preference, not an
- * undo-able content edit — same direct-mutation + touchDocument pattern as
- * handleTitleUpdate, and triggerRef is required for the same reason (doc is
- * a shallowRef; mutating a field on its current value alone doesn't
- * re-render). */
-function toggleRuler() {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  // Absent reads as shown (documentModel.ts's own convention), so the flip
-  // is "was it explicitly false" rather than a plain `!model.showRuler`.
-  model.showRuler = model.showRuler === false;
-  triggerRef(doc);
-  touchDocument(model.id);
-}
+// --- page setup, columns and ruler visibility (SPEC-027, SPEC-030) ----------
+// The Page setup and Format → Columns dialogs, the "Show/hide ruler" toggle
+// and the ruler's caret-section geometry live in usePageSetupDialogs.
+// caretSectionIndex is declared later (with the caret-page tracking), so it
+// comes in as a lazy getter — read only when a dialog opens or a ruler
+// computed evaluates, after setup.
+const {
+  pageSetupOpen,
+  pageSetupInitial,
+  columnsDialogOpen,
+  columnsDialogInitial,
+  openPageSetup,
+  handlePageSetupApply,
+  openColumnsDialog,
+  handleColumnsApply,
+  toggleRuler,
+  rulerPageWidthCm,
+  rulerMarginLeftCm,
+  rulerMarginRightCm,
+  rulerColumns,
+} = usePageSetupDialogs({
+  ...editorContext,
+  paragraphSelection,
+  getCaretSectionIndex: () => caretSectionIndex.value,
+});
 
 // Every key this handler acts on is looked up in the SPEC-021 registry
 // (AC-2) rather than compared against literal key/modifier checks — the
@@ -3958,28 +2594,29 @@ function handlePageMouseDown(event = new MouseEvent("mousedown")) {
 // ---------------------------------------------------------------------------
 
 // --- document outline navigator (SPEC-037) ---------------------------------
-// The caret's focus end, mirrored reactively (the live `caret` is a plain
-// variable) so the pane's active-heading highlight tracks caret and scroll
-// (AC-3, AC-4). Updated in updateCaretStatus.
-const caretPosition = ref(noCaret());
-// Per-user open/closed state, persisted to localStorage (AC-14) and open by
-// default for a new user (AC-15).
-const outlinePaneOpen = ref(loadOutlinePaneOpen());
-watch(outlinePaneOpen, (open) => saveOutlinePaneOpen(open));
-// Transient view state, never part of the model: which pane tree nodes are
-// collapsed (AC-7, AC-8), and which body headings are collapsed in the
-// document body (AC-16), keyed by "section:block". Body collapse hides blocks
-// from layout only — it is never written to the file (AC-17).
-const outlinePaneCollapsed = ref(emptyKeySet());
-const collapsedHeadings = ref(emptyKeySet());
-
-const outlineTree = computed(() => (doc.value ? buildOutline(doc.value) : []));
-const activeOutlineAnchor = computed(() =>
-  doc.value ? activeHeadingAnchor(doc.value, caretPosition.value) : null,
-);
-const hiddenBodyBlocks = computed(() =>
-  doc.value ? hiddenBlockAddresses(doc.value, collapsedHeadings.value) : emptyKeySet(),
-);
+// The pane's state, the outline tree and its handlers live in useOutlinePane.
+// Wired BEFORE usePagination below, whose layout closure reads the
+// destructured hiddenBodyBlocks. caretPosition is the backbone caret mirror
+// declared with the caret tracking above; jumpToAnchor is destructured from
+// useLinks, wired after pagination — the lambda defers the read to call time
+// (an event handler, past setup), never during this deps object's evaluation.
+const {
+  outlinePaneOpen,
+  outlinePaneCollapsed,
+  collapsedHeadings,
+  outlineTree,
+  activeOutlineAnchor,
+  hiddenBodyBlocks,
+  toggleOutlinePane,
+  handleOutlineNavigate,
+  handleOutlineToggleCollapse,
+  handleOutlineMove,
+  handleBodyHeadingToggle,
+} = useOutlinePane({
+  ...editorContext,
+  getCaretPosition: () => caretPosition.value,
+  jumpToAnchor: (anchor) => jumpToAnchor(anchor),
+});
 
 // --- pagination (SPEC-028) --------------------------------------------------
 // The controller owns measurement; every doc.value replacement re-lays-out
@@ -4230,123 +2867,31 @@ const {
   getSelectionAnchor: () => selectionAnchor,
 });
 
-const caretPage = ref(1);
 const caretSectionIndex = ref(0);
 const paragraphPagination = ref(emptyParagraphPaginationState());
 
 // --- page virtualization (SPEC-028 AC-49/50) --------------------------------
-// Mounting every block of a 200-page document is what used to blow the
-// settle budget: each mid-pass relayout shifted page boundaries, moving
-// most paragraphs to a different DocPage, and Vue unmounted + remounted
-// nearly the whole canvas several times per pass. Beyond a small page
-// count only pages that matter render their content — everything near the
-// viewport, the caret's / selection anchor's / current find match's page,
-// and pages already realized whose layout hasn't changed (sticky, so DOM
-// nodes on earlier pages survive edits elsewhere — AC-52/53) — while the
-// rest render as correctly-sized empty page boxes. Their blocks are
-// measured off-DOM by the pagination controller's canvas metrics, which is
-// why virtualization requires `canMeasureOffscreen`.
-
-/** Documents up to this many pages always realize fully — the exact
- * pre-virtualization behaviour for ordinary documents. */
-const VIRTUALIZE_MIN_PAGES = 12;
-/** DocPage's inter-page margin (AC-2's visible gap), part of page-top math. */
-const PAGE_GAP_PX = 12;
-/** Extra realization margin around the viewport, px. */
-const VIEWPORT_OVERSCAN_PX = 400;
-
-// Starts narrow: a large document's first render (opening lands before any
-// scroll/mount refresh) must realize only the top pages, not all of them —
-// refreshViewportRange corrects the range from the real viewport.
-const viewportPageRange = ref({ start: 0, end: 2 });
-/** Page-layout objects that have rendered their content once: they keep
- * rendering while reconciliation preserves them (an unchanged page never
- * loses its DOM), and drop out naturally when an edit replaces the page. */
-const realizedSticky = new WeakSet();
-/** The selection anchor's page (−1 for a collapsed caret): both ends of a
- * selection must stay rendered or the DOM selection would collapse. */
-const anchorPage = ref(-1);
-
-const virtualizing = computed(
-  () =>
-    // Print preview / printing / PDF export need every page's real content
-    // in the DOM (SPEC-034) — virtualization pauses while they run.
-    !printForceRealize.value &&
-    pagination.canMeasureOffscreen && paginationPages.value.length > VIRTUALIZE_MIN_PAGES,
-);
-
-function refreshViewportRange() {
-  const container = scrollContainer;
-  const pagesEl = pageRef.value;
-  const layout = paginationPages.value;
-  if (!container || !pagesEl || layout.length === 0) {
-    return;
-  }
-  const pagesTop =
-    pagesEl.getBoundingClientRect().top -
-    container.getBoundingClientRect().top +
-    container.scrollTop;
-  const viewTop = container.scrollTop - pagesTop - VIEWPORT_OVERSCAN_PX - container.clientHeight;
-  const viewBottom =
-    container.scrollTop - pagesTop + 2 * container.clientHeight + VIEWPORT_OVERSCAN_PX;
-  let top = 0;
-  let start = layout.length - 1;
-  let end = 0;
-  for (let index = 0; index < layout.length; index += 1) {
-    const bottom = top + layout[index].pageSize.heightCm * PX_PER_CM;
-    if (bottom >= viewTop && top <= viewBottom) {
-      if (index < start) {
-        start = index;
-      }
-      if (index > end) {
-        end = index;
-      }
-    }
-    top = bottom + PAGE_GAP_PX;
-  }
-  if (start > end) {
-    start = 0;
-    end = Math.min(2, layout.length - 1);
-  }
-  const current = viewportPageRange.value;
-  if (current.start !== start || current.end !== end) {
-    viewportPageRange.value = { start, end };
-  }
-}
-
-let viewportRefreshHandle = 0;
-function scheduleViewportRefresh() {
-  if (viewportRefreshHandle !== 0 || typeof window.requestAnimationFrame !== "function") {
-    return;
-  }
-  viewportRefreshHandle = window.requestAnimationFrame(() => {
-    viewportRefreshHandle = 0;
-    refreshViewportRange();
-  });
-}
-watch(paginationPages, scheduleViewportRefresh);
-
-// Newly realized pages render blocks that may only have estimated metrics
-// (tables, images — canvas metrics cover paragraphs only): re-schedule so
-// the controller measures them off their fresh DOM.
-watch([viewportPageRange, caretPage], () => {
-  if (!virtualizing.value) {
-    return;
-  }
-  // Realization changed, the model didn't: measure the freshly rendered
-  // blocks without forcing a synchronous relayout of an unchanged layout
-  // (SPEC-047 AC-16 — see scheduleMeasure's own comment).
-  void nextTick().then(() => pagination.scheduleMeasure());
+// Which pages render real content versus correctly-sized empty page boxes
+// lives in useViewportVirtualization (see its header comment). Wired after
+// usePrintPreview — whose forceRealizeAll (printForceRealize) pauses it —
+// and before usePaginationView, which consumes the trackers below through
+// its own extras.
+const {
+  viewportPageRange,
+  anchorPage,
+  caretPage,
+  realizedSticky,
+  virtualizing,
+  refreshViewportRange,
+  scheduleViewportRefresh,
+  refreshCaretPage,
+} = useViewportVirtualization({
+  ...editorContext,
+  pagination,
+  paginationPages,
+  printForceRealize,
+  getPageCount: () => pageCount.value,
 });
-
-function refreshCaretPage() {
-  if (caret) {
-    caretPage.value = pagination.pageOfCaret(caret) + 1;
-  } else if (caretPage.value > pageCount.value) {
-    caretPage.value = pageCount.value;
-  }
-}
-watch(paginationPages, refreshCaretPage);
 
 /** The "Show formatting marks" toggle (AC-12): a view preference like the
  * ruler's, persisted with the document — and a re-measure trigger, because
@@ -4361,45 +2906,6 @@ function toggleFormattingMarks() {
   touchDocument(model.id);
   pagination.invalidateAll();
 }
-
-// The ruler and the Page setup dialog follow the caret's section (AC-17..21)
-// so a per-section page setup is edited where the caret sits.
-const rulerSectionIndex = computed(() => {
-  const model = doc.value;
-  return model ? Math.min(caretSectionIndex.value, model.sections.length - 1) : 0;
-});
-const rulerPageWidthCm = computed(() =>
-  doc.value ? sectionPageSize(doc.value, rulerSectionIndex.value).widthCm : 21,
-);
-const rulerMarginLeftCm = computed(() =>
-  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).leftCm : 2.54,
-);
-const rulerMarginRightCm = computed(() =>
-  doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).rightCm : 2.54,
-);
-// The caret section's column boundaries for the ruler (SPEC-030 AC-14): each
-// gutter's centre, measured from the content area's start; null when the
-// section has a single column (no boundary handles).
-const rulerColumns = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return undefined;
-  }
-  const columns = sectionColumns(model, rulerSectionIndex.value);
-  if (columns.count <= 1) {
-    return undefined;
-  }
-  const widthsCm = resolveColumnWidthsCm(columns, sectionContentWidthCm(model, rulerSectionIndex.value));
-  const boundaries = [];
-  let offset = 0;
-  for (let i = 0; i < widthsCm.length - 1; i += 1) {
-    offset += widthsCm[i];
-    boundaries.push({ index: i, centerCm: offset + columns.gapCm / 2 });
-    offset += columns.gapCm;
-  }
-  return { boundaries };
-});
-
 
 // --- find and replace (SPEC-017) -------------------------------------------
 // The DOM-facing find/replace logic is extracted into useFindReplace; it owns
@@ -4448,6 +2954,55 @@ const {
   removeWordFromDictionary,
   suggestionsFor,
 } = useSpellCheck({ ...editorContext });
+
+// --- context menus (SPEC-016, SPEC-022, SPEC-032, SPEC-035) ------------------
+// The editor's right-click menu, the spell-check suggestions menu and the
+// Edit-menu Select all / Paste without formatting live in useContextMenus.
+// The menu-target variables (contextMenuTableCell / contextMenuListTarget)
+// stay plain lets above — the template reads them fresh on each menu render
+// and useTables' wiring closes over the cell — so the composable reaches
+// them through the get/set lambdas here.
+const {
+  contextMenu,
+  spellContextMenu,
+  handleContextMenu,
+  closeContextMenu,
+  closeSpellContextMenu,
+  applySpellSuggestion,
+  spellIgnore,
+  spellIgnoreAll,
+  spellAddToDictionary,
+  handleContextMenuListAction,
+  contextMenuCut,
+  contextMenuCopy,
+  contextMenuPaste,
+  menuSelectAll,
+  menuPastePlain,
+} = useContextMenus({
+  ...editorContext,
+  tableCellAtTarget,
+  setContextMenuTableCell: (cell) => {
+    contextMenuTableCell = cell;
+  },
+  getContextMenuListTarget: () => contextMenuListTarget,
+  setContextMenuListTarget: (target) => {
+    contextMenuListTarget = target;
+  },
+  spellUnderlineRects,
+  suggestionsFor,
+  ignoreOccurrence,
+  ignoreAllOccurrences,
+  addWordToDictionary,
+  getLastCopy,
+  performPaste,
+  setCaret: (next) => {
+    caret = next;
+  },
+  updateCaretStatus,
+  setPendingFormat: (next) => {
+    pendingFormat = next;
+  },
+});
 
 // --- comments (SPEC-038) -----------------------------------------------------
 const {
@@ -4519,6 +3074,29 @@ const {
   deleteVersion: deleteVersionHistoryVersion,
   downloadVersion: downloadVersionHistoryVersion,
 } = useVersionHistory({ ...editorContext });
+
+// File-level document actions (title rename, download, save as template,
+// delete, conversion report) live in useFileActions; the download path needs
+// the PDF exporter, the autosave commit and the version-history commit point
+// wired in, so this sits after all three.
+const {
+  formatBadge,
+  downloadFormat,
+  conversionReport,
+  conversionReportSameFormat,
+  confirmingDelete,
+  savingAsTemplate,
+  handleTitleUpdate,
+  handleDownload,
+  closeConversionReport,
+  saveCurrentAsTemplate,
+  deleteOpenDocument,
+} = useFileActions({
+  ...editorContext,
+  exportPdf,
+  commitNow: () => autosave.commitNow(),
+  noteVersionHistoryCommitPoint,
+});
 
 // --- accessibility checker (SPEC-043) ---------------------------------------
 const {
@@ -4686,71 +3264,6 @@ const { pagedViews } = usePaginationView({
   trackChangesDisplayMode: effectiveTrackChangesDisplayMode,
 });
 
-// --- outline navigator handlers (SPEC-037) ---------------------------------
-/** View menu toggle / persistence of the pane's open state (AC-13, AC-14). */
-function toggleOutlinePane() {
-  outlinePaneOpen.value = !outlinePaneOpen.value;
-}
-
-/** Clicking or Enter on an outline entry (AC-5, AC-6, AC-19): jump to the
- * heading — place the caret at its start and scroll it into view. Reuses the
- * same anchor-jump the TOC and internal links use. */
-function handleOutlineNavigate(anchor = "") {
-  jumpToAnchor(anchor);
-}
-
-/** Collapse/expand a node in the pane (AC-7, AC-8) — pane-only view state. */
-function handleOutlineToggleCollapse(anchor = "") {
-  const next = new Set(outlinePaneCollapsed.value);
-  if (next.has(anchor)) {
-    next.delete(anchor);
-  } else {
-    next.add(anchor);
-  }
-  outlinePaneCollapsed.value = next;
-}
-
-/** Drop of a dragged outline entry (AC-9, AC-10, AC-11): move the heading and
- * all its content as ONE undo step. moveHeading returns null for a rejected
- * drop (different level, non-sibling, onto itself), so no edit is recorded. */
-function handleOutlineMove(payload = { source: "", target: "", position: "before" }) {
-  const model = doc.value;
-  if (!model || !editable.value) {
-    return;
-  }
-  const before = currentSelection(contentRoot.value);
-  // Narrow the payload's position to the DropPosition literal union (espree
-  // bars a type annotation on the handler's own parameter).
-  const position = payload.position === "after" ? "after" : "before";
-  const result = moveHeading(model, payload.source, payload.target, position);
-  if (result) {
-    applyEdit(result, before, "move heading");
-  }
-}
-
-/** The body chevron next to a heading (AC-16): collapse/expand its content.
- * Keyed by "section:block"; purely transient (AC-17). When collapsing the
- * section the caret sits in, move the caret to the heading so it never hides
- * behind collapsed content. */
-function handleBodyHeadingToggle(section = 0, block = 0) {
-  const model = doc.value;
-  if (!model) {
-    return;
-  }
-  const key = blockKey(section, block);
-  const next = new Set(collapsedHeadings.value);
-  if (next.has(key)) {
-    next.delete(key);
-  } else {
-    next.add(key);
-  }
-  collapsedHeadings.value = next;
-  const hidden = hiddenBlockAddresses(model, next);
-  if (caret && hidden.has(blockKey(caret.section, caret.block))) {
-    applyCaretMove({ section, block, offset: 0 });
-  }
-}
-
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
 function handleInsertBreak(kind = "") {
   const root = contentRoot.value;
@@ -4780,175 +3293,20 @@ function handleInsertSectionBreak(start = "") {
   void scrollModelCaretIntoView(caret, true);
 }
 
-/** The paragraph pagination menu's toggles (AC-22..28): each key flips
- * against the first touched paragraph's current state, applied to every
- * touched paragraph. */
-function handleTogglePagination(key = "") {
-  applyParagraphCommand((model, selection) => {
-    const state = paragraphPaginationState(model, selection);
-    if (key === "keepNext") {
-      return applyParagraphFormat(model, selection, { keepNext: !state.keepNext });
-    }
-    if (key === "keepLines") {
-      return applyParagraphFormat(model, selection, { keepLines: !state.keepLines });
-    }
-    if (key === "pageBreakBefore") {
-      return applyParagraphFormat(model, selection, { pageBreakBefore: !state.pageBreakBefore });
-    }
-    return applyParagraphFormat(model, selection, { widowControl: !state.widowControl });
-  }, "paragraph pagination");
-}
-
-const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
-
-const downloadFormat = computed(() => {
-  if (!doc.value) {
-    return "docx";
-  }
-  if (doc.value.format === "odt") {
-    return "odt";
-  }
-  if (doc.value.format === "md") {
-    return "md";
-  }
-  return "docx";
-});
-
-function handleTitleUpdate(newTitle = "") {
-  if (!doc.value) {
-    return;
-  }
-  const trimmed = newTitle.trim();
-  doc.value.title = trimmed.length > 0 ? trimmed : DEFAULT_TITLE;
-  triggerRef(doc);
-  // The assignment above already mutated the stored model (doc.value IS the
-  // raw stored model); touching records the modification time and persists.
-  touchDocument(doc.value.id);
-}
-
-async function handleDownload(format = "") {
-  // PDF export (SPEC-034 AC-14): a rendered-output snapshot, not a save —
-  // it runs its own pipeline and never touches autosave or the model.
-  if (format === "pdf") {
-    void exportPdf();
-    return;
-  }
-  if (!doc.value || (format !== "docx" && format !== "odt" && format !== "md")) {
-    return;
-  }
-  // The dcterms:created/dc:date (SPEC-041 AC-2) stamp: `created` is set only
-  // the first time (kept stable on every later save, matching what General
-  // tab shows once it has a value), `modified` refreshes every save. Both
-  // .docx/.odt writers read `model.properties.created`/`modified` — see
-  // docProps.ts/meta.ts's buildCorePropertiesXml/buildMetaXml — so this
-  // must be resolved into the model *before* writing, then mirrored back so
-  // the in-memory model (and so the Properties dialog, without a reopen)
-  // agrees with what was just written. Markdown never reads `properties`
-  // (SPEC-050: front matter is carried verbatim, never interpreted), but the
-  // stamp is still recorded so a later save as .docx/.odt keeps it.
-  const modified = new Date();
-  const properties = {
-    ...doc.value.properties,
-    created: doc.value.properties?.created ?? modified.toISOString(),
-    modified: modified.toISOString(),
-  };
-  doc.value.properties = properties;
-  const { bytes, dropped } =
-    format === "odt"
-      ? await writeOdt(doc.value, { modified })
-      : format === "md"
-        ? await writeMd(doc.value)
-        : await writeDocx(doc.value, { modified });
-  triggerRef(doc);
-  touchDocument(doc.value.id);
-  const fileName =
-    format === "odt" ? odtFileName(doc.value.title) : format === "md" ? mdFileName(doc.value.title) : docxFileName(doc.value.title);
-  // A transient anchor pointed at an object URL is the download mechanism
-  // that needs no new browser permissions; revocation is deferred so the
-  // browser has started streaming the blob before the URL disappears.
-  const mimeType = format === "odt" ? ODT_MIMETYPE : format === "md" ? MD_MIME_TYPE : DOCX_MIME_TYPE;
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  // A download is SPEC-003's explicit save: promote the state to committed,
-  // and SPEC-040's other commit-point version-history trigger (AC-2).
-  void autosave.commitNow().then(() => noteVersionHistoryCommitPoint());
-  // SPEC-008: content that could not be preserved by a cross-format save is
-  // reported once, after the download has been triggered, unless the user
-  // opted out for this document. SPEC-052 widens this to a same-format save
-  // too, but only ever for an edited chart's lost properties (chartFeature)
-  // — "Conversion report" is the wrong heading there, since nothing
-  // converted; conversionReportSameFormat drives the dialog's own variant.
-  if (dropped.length > 0 && !doc.value.suppressConversionReport) {
-    conversionReportSameFormat.value = doc.value.format === format;
-    conversionReport.value = dropped;
-  }
-}
-
-const conversionReport = ref(noConversionReport());
-const conversionReportSameFormat = ref(false);
-
-function closeConversionReport(dontShowAgain = false) {
-  conversionReport.value = null;
-  if (dontShowAgain && doc.value) {
-    doc.value.suppressConversionReport = true;
-    touchDocument(doc.value.id);
-  }
-}
-
-const confirmingDelete = ref(false);
-
-const savingAsTemplate = ref(false);
-
-// --- mail-merge chip insertion (SPEC-046 AC-12, AC-15, AC-30) ---------------
-// The attached data source (if any) is shared between "Insert -> Merge
-// field...", "Table -> Repeat row for each..." and the merge run dialog —
-// attaching it once populates every named field list, and running the merge
-// re-parses the same file rather than trusting stale state across a session.
-const mergeDataSource = shallowRef(noParsedDataSource());
-const mergeFieldPickerOpen = ref(false);
-const mergeRunDialogOpen = ref(false);
-
-function attachMergeDataSource(parsed = noParsedDataSource()) {
-  mergeDataSource.value = parsed;
-}
-const mergeFieldPickerFields = computed(() => (doc.value ? namedFieldList(mergeDataSource.value, doc.value) : []));
-const repeatRowFieldOptions = computed(() => (doc.value ? namedArrayFieldList(mergeDataSource.value, doc.value) : []));
-
-function insertMergeFieldFromPicker(name = "") {
-  mergeFieldPickerOpen.value = false;
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!name || !root || !model) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  const result = insertMergeChip(model, selection, { kind: "merge", name });
-  applyEdit(result, selection, "insert merge field");
-}
-
-function saveCurrentAsTemplate(name = "") {
-  savingAsTemplate.value = false;
-  if (!doc.value) {
-    return;
-  }
-  const record = saveAsTemplate(doc.value, name);
-  addToast(`Saved template "${record.title}"`);
-}
-
-function deleteOpenDocument() {
-  if (!doc.value) {
-    return;
-  }
-  const { id, title } = doc.value;
-  confirmingDelete.value = false;
-  deleteDocument(id);
-  addToast(`Deleted ${title}`);
-  router.push("/");
-}
+// --- mail-merge fields (SPEC-046) -------------------------------------------
+// The attached data source, the field picker / merge-run dialogs' state and
+// the literal {{...}} conversion live in useMergeFields.
+const {
+  mergeDataSource,
+  mergeFieldPickerOpen,
+  mergeRunDialogOpen,
+  attachMergeDataSource,
+  mergeFieldPickerFields,
+  repeatRowFieldOptions,
+  insertMergeFieldFromPicker,
+  canConvertLiteralChips,
+  convertLiteralChips,
+} = useMergeFields({ ...editorContext, paragraphSelection });
 
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
@@ -4989,18 +3347,13 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 }
 
 // --- Menu bar wiring (SPEC-049) --------------------------------------------
-// The menu bar (File/Edit/View/Insert/Format/Tools, in that order) hosts the
-// non-continuous-use commands relocated off the toolbar strip. It is a stable
-// map of the product: a command that does not apply is disabled, never hidden
-// (AC-7); the toolbar keeps only the continuous-use controls (AC-3).
-const MENUS = [
-  { id: "file", label: "File" },
-  { id: "edit", label: "Edit" },
-  { id: "view", label: "View" },
-  { id: "insert", label: "Insert" },
-  { id: "format", label: "Format" },
-  { id: "tools", label: "Tools" },
-];
+// The menu bar itself (File/Edit/View/Insert/Format/Tools and every item)
+// lives in DocumentMenuBar.vue, which renders menu state from props and
+// reports picks as events. Nullary commands arrive here as string ids
+// through @command and dispatch through the menuCommands table below; picks
+// that carry a payload (table size, break kind, note kind, gallery picks,
+// the image file, the painter's click pair) have dedicated events bound in
+// the template.
 
 // Text colour and highlight stay in the toolbar (continuous-use) but are also
 // listed in the Format menu, so the menus remain a complete map — the spec's
@@ -5018,45 +3371,6 @@ function openHighlightMenu() {
   highlightPickerRef.value?.openMenu();
 }
 
-// The Insert menu's "Image…" command drives the same hidden file picker the
-// old toolbar button did (SPEC-024).
-const menuImageInput = useTemplateRef("menuImageInput");
-
-function triggerImageInsert() {
-  if (editable.value) {
-    menuImageInput.value?.click();
-  }
-}
-
-function handleMenuImageChange(event = new Event("change")) {
-  const target = event.target;
-  const file = target instanceof HTMLInputElement ? target.files?.[0] : undefined;
-  if (file) {
-    handleInsertImageFile(file);
-  }
-  if (target instanceof HTMLInputElement) {
-    // Clear so picking the same file twice still fires a change event.
-    target.value = "";
-  }
-}
-
-// The Insert menu's table-size grid (SPEC-022): the same quick-pick the old
-// toolbar dropdown offered, now a section of the Insert menu.
-const TABLE_GRID_ROWS = Array.from({ length: PICKER_MAX_ROWS }, (_, index) => index + 1);
-const TABLE_GRID_COLS = Array.from({ length: PICKER_MAX_COLS }, (_, index) => index + 1);
-const tableGridHover = ref({ rows: 0, cols: 0 });
-
-function hoverTableGrid(rows = 0, cols = 0) {
-  tableGridHover.value = { rows, cols };
-}
-
-function chooseTableGrid(rows = 0, cols = 0) {
-  handleInsertTable({ rows, cols });
-  // The pick closes the menu, so clear the highlight the pointer left behind:
-  // reopening Insert should show an unlit grid, not the last size chosen.
-  hoverTableGrid(0, 0);
-}
-
 /** "Insert -> Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
  * next drag/click on the canvas draws the chosen geometry. */
 function handleShapePick(geometry = "rect") {
@@ -5072,7 +3386,7 @@ function handleChartPick(chartType = "columnClustered") {
 
 /** Whether a table is selected for "Insert -> Chart from table" (AC-21) —
  * a table block is the target of the active cell-range selection. */
-function tableSelectedForChart() {
+const tableSelectedForChart = computed(() => {
   const model = doc.value;
   const range = cellSelection.value;
   if (!model || !range) {
@@ -5080,7 +3394,7 @@ function tableSelectedForChart() {
   }
   const block = model.sections[range.section]?.blocks[range.block];
   return !!block && block.type === "table";
-}
+});
 
 /** "Insert -> Chart from table" (AC-21, AC-22): reads the selected table's
  * cells (every row/column, not just the range selection — a whole-table
@@ -5103,45 +3417,73 @@ function handleChartFromTable(chartType = "columnClustered") {
   }
 }
 
-// The multilevel-list presets (SPEC-032), absorbed into the Format menu.
-const MULTILEVEL_PRESETS = GALLERY_PRESETS;
+// Every nullary menu command, keyed by the id DocumentMenuBar emits, in the
+// bar's own menu-by-menu order. A Map rather than an object literal: a
+// string-keyed lookup into an inferred object-literal type needs an index
+// signature, which is TS-only syntax espree cannot parse here — Map's get()
+// is typed without one.
+const menuCommands = new Map([
+  // File
+  ["file.print", openPrintPreview],
+  ["file.page-setup", openPageSetup],
+  ["file.properties", openProperties],
+  ["file.version-history", toggleVersionHistoryPane],
+  ["file.save-as-template", () => { savingAsTemplate.value = true; }],
+  ["file.mail-merge", () => { mergeRunDialogOpen.value = true; }],
+  ["file.delete", () => { confirmingDelete.value = true; }],
+  // Edit
+  ["edit.undo", performUndo],
+  ["edit.redo", performRedo],
+  ["edit.cut", contextMenuCut],
+  ["edit.copy", contextMenuCopy],
+  ["edit.paste", contextMenuPaste],
+  ["edit.pastePlain", menuPastePlain],
+  ["edit.selectAll", menuSelectAll],
+  ["find.openReplace", () => { openFind(true); }],
+  ["edit.autocorrect-smart-quotes", toggleAutocorrectSmartQuotes],
+  ["edit.autocorrect-dashes", toggleAutocorrectDashes],
+  // View
+  ["view.ruler", toggleRuler],
+  ["view.outline-pane", toggleOutlinePane],
+  ["view.styles-pane", toggleStylesPane],
+  ["view.comments-pane", toggleCommentsPane],
+  ["view.comments-only", toggleCommentsOnlyView],
+  ["edit.toggleTrackChanges", toggleTrackChangesRecording],
+  ["view.track-changes-pane", toggleTrackChangesPane],
+  // Insert
+  ["insert.table-dialog", () => { insertTableDialogOpen.value = true; }],
+  ["insert.textbox", insertTextBoxAction],
+  ["insert.chart-from-table", () => { handleChartFromTable(); }],
+  ["insert.header", () => { openInsertHeaderFooter("header"); }],
+  ["insert.footer", () => { openInsertHeaderFooter("footer"); }],
+  ["insert.page-number", openPageNumberDialog],
+  ["insert.header-footer-options", openHeaderFooterOptions],
+  ["insert.merge-field", () => { mergeFieldPickerOpen.value = true; }],
+  ["insert.note-settings", openNoteSettings],
+  ["insert.toc", openTocDialog],
+  ["insert.special-character", openSpecialCharacters],
+  ["insert.link", openLinkDialog],
+  ["insert.bookmark", openBookmarkDialog],
+  ["insert.bookmark-list", () => { bookmarkManagerOpen.value = true; }],
+  ["insert.comment", openCommentComposer],
+  // Format
+  ["format.styles-pane", toggleStylesPane],
+  ["format.import-styles", openImportDialog],
+  ["format.clearFormatting", handleClearFormatting],
+  ["format.columns", openColumnsDialog],
+  ["format.multilevel-link-headings", handleLinkHeadingNumbering],
+  ["format.multilevel-define-list", openDefineList],
+  ["format.text-color", openTextColorMenu],
+  ["format.highlight", openHighlightMenu],
+  // Tools
+  ["tools.word-count", openStatistics],
+  ["tools.dictionary", openCustomDictionaryDialog],
+  ["tools.accessibility", openAccessibilityPane],
+  ["tools.convert-merge-fields", convertLiteralChips],
+]);
 
-// Edit-menu Select all / Paste without formatting: menu-invocable forms of
-// the Ctrl+A / Ctrl+Shift+V commands (their keyboard paths call these too).
-function menuSelectAll() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model) {
-    return;
-  }
-  pendingFormat = noPendingFormat();
-  const all = selectAll(model);
-  caret = all.focus;
-  updateCaretStatus({ start: all.anchor, end: all.focus });
-  if (paragraphElementForCaret(root, all.anchor) && paragraphElementForCaret(root, all.focus)) {
-    setDomSelection(root, all.anchor, all.focus);
-  } else {
-    void nextTick().then(() => setDomSelection(root, all.anchor, all.focus));
-  }
-}
-
-async function menuPastePlain() {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  root.focus();
-  const selection = currentSelection(root);
-  if (!selection) {
-    return;
-  }
-  const flavours = await readAsyncClipboard();
-  if (!flavours) {
-    addToast("Clipboard unavailable — paste with the keyboard instead");
-    return;
-  }
-  performPaste({ internal: "", html: "", text: flavours.text, hasImage: false }, selection, true);
+function handleMenuCommand(id = "") {
+  menuCommands.get(id)?.();
 }
 
 </script>
@@ -5172,493 +3514,33 @@ async function menuPastePlain() {
       </div>
     </template>
     <template #menubar>
-      <MenuBar
-        :menus="MENUS"
-        aria-label="Document menu"
-      >
-        <template #file>
-          <MenuItem
-            label="Print"
-            testid="file-menu-print"
-            :shortcut="shortcutLabel('file.print')"
-            @select="openPrintPreview"
-          />
-          <MenuItem
-            label="Page setup"
-            testid="page-setup-button"
-            :disabled="!editable"
-            @select="openPageSetup"
-          />
-          <MenuItem
-            label="Properties…"
-            testid="file-menu-properties"
-            @select="openProperties"
-          />
-          <MenuItem
-            label="Version history"
-            testid="file-menu-version-history"
-            @select="toggleVersionHistoryPane"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Save as template"
-            testid="file-menu-save-as-template"
-            @select="savingAsTemplate = true"
-          />
-          <MenuItem
-            label="Mail merge…"
-            testid="file-menu-mail-merge"
-            @select="mergeRunDialogOpen = true"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Delete document"
-            testid="delete-document"
-            :disabled="!editable"
-            @select="confirmingDelete = true"
-          />
-        </template>
-
-        <template #edit>
-          <MenuItem
-            label="Undo"
-            testid="edit-menu-undo"
-            :shortcut="shortcutLabel('edit.undo')"
-            :disabled="!editable || !undoRedoState.canUndo"
-            @select="performUndo"
-          />
-          <MenuItem
-            label="Redo"
-            testid="edit-menu-redo"
-            :shortcut="shortcutLabel('edit.redo')"
-            :disabled="!editable || !undoRedoState.canRedo"
-            @select="performRedo"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Cut"
-            testid="edit-menu-cut"
-            :disabled="!editable"
-            @select="contextMenuCut"
-          />
-          <MenuItem
-            label="Copy"
-            testid="edit-menu-copy"
-            @select="contextMenuCopy"
-          />
-          <MenuItem
-            label="Paste"
-            testid="edit-menu-paste"
-            :disabled="!editable"
-            @select="contextMenuPaste"
-          />
-          <MenuItem
-            label="Paste without formatting"
-            testid="edit-menu-paste-plain"
-            :shortcut="shortcutLabel('edit.pastePlain')"
-            :disabled="!editable"
-            @select="menuPastePlain"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Select all"
-            testid="edit-menu-select-all"
-            :shortcut="shortcutLabel('edit.selectAll')"
-            @select="menuSelectAll"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Find and replace"
-            testid="edit-menu-find-replace"
-            :shortcut="shortcutLabel('find.openReplace')"
-            @select="openFind(true)"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Autocorrect
-          </div>
-          <MenuCheckItem
-            label="Smart quotes"
-            testid="autocorrect-smart-quotes"
-            :checked="autocorrectSettings.smartQuotes"
-            :disabled="!editable"
-            @select="toggleAutocorrectSmartQuotes"
-          />
-          <MenuCheckItem
-            label="Em and en dashes"
-            testid="autocorrect-dashes"
-            :checked="autocorrectSettings.dashes"
-            :disabled="!editable"
-            @select="toggleAutocorrectDashes"
-          />
-        </template>
-
-        <template #view>
-          <MenuCheckItem
-            label="Ruler"
-            testid="toggle-ruler-button"
-            :checked="doc.showRuler !== false"
-            @select="toggleRuler"
-          />
-          <MenuCheckItem
-            label="Outline pane"
-            testid="view-menu-outline"
-            :checked="outlinePaneOpen"
-            @select="toggleOutlinePane"
-          />
-          <MenuCheckItem
-            label="Styles pane"
-            testid="view-menu-styles-pane"
-            :checked="stylesPaneOpen"
-            @select="toggleStylesPane"
-          />
-          <MenuCheckItem
-            label="Comments pane"
-            testid="view-menu-comments-pane"
-            :checked="commentsPaneOpen"
-            @select="toggleCommentsPane"
-          />
-          <MenuCheckItem
-            label="Comments-only view"
-            testid="view-menu-comments-only"
-            :checked="commentsOnlyView"
-            @select="toggleCommentsOnlyView"
-          />
-          <hr class="menu-separator">
-          <MenuCheckItem
-            label="Track changes"
-            testid="view-menu-track-changes"
-            :shortcut="shortcutLabel('edit.toggleTrackChanges')"
-            :checked="trackChangesRecording"
-            :disabled="!editable"
-            @select="toggleTrackChangesRecording"
-          />
-          <MenuCheckItem
-            label="Track changes pane"
-            testid="view-menu-track-changes-pane"
-            :checked="trackChangesPaneOpen"
-            @select="toggleTrackChangesPane"
-          />
-        </template>
-
-        <template #insert>
-          <div class="menu-section-label">
-            Table
-          </div>
-          <div class="menu-table-grid-wrap">
-            <div
-              class="menu-table-grid"
-              data-testid="insert-table-grid"
-              @mouseleave="hoverTableGrid(0, 0)"
-            >
-              <div
-                v-for="rows in TABLE_GRID_ROWS"
-                :key="rows"
-                class="menu-table-grid-row"
-              >
-                <button
-                  v-for="cols in TABLE_GRID_COLS"
-                  :key="cols"
-                  type="button"
-                  class="menu-table-grid-cell"
-                  :class="{ active: rows <= tableGridHover.rows && cols <= tableGridHover.cols }"
-                  :data-testid="`table-grid-cell-${rows}-${cols}`"
-                  :aria-label="`Insert ${rows} by ${cols} table`"
-                  :disabled="!editable"
-                  tabindex="-1"
-                  @mouseenter="hoverTableGrid(rows, cols)"
-                  @mousedown.prevent
-                  @click="chooseTableGrid(rows, cols)"
-                />
-              </div>
-            </div>
-            <div
-              class="menu-table-grid-label"
-              data-testid="insert-table-grid-label"
-            >
-              {{ tableGridHover.rows > 0 ? `${tableGridHover.rows} × ${tableGridHover.cols}` : "Insert table" }}
-            </div>
-          </div>
-          <MenuItem
-            label="Insert table…"
-            testid="insert-table-dialog-item"
-            :disabled="!editable"
-            @select="insertTableDialogOpen = true"
-          />
-          <MenuItem
-            label="Image…"
-            testid="insert-image-button"
-            :disabled="!editable"
-            @select="triggerImageInsert"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Shape
-          </div>
-          <ShapeGallery @pick="handleShapePick" />
-          <MenuItem
-            label="Text box"
-            testid="insert-textbox-button"
-            :disabled="!editable"
-            @select="insertTextBoxAction"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Chart
-          </div>
-          <ChartGallery @pick="handleChartPick" />
-          <MenuItem
-            label="Chart from table"
-            testid="insert-chart-from-table-button"
-            :disabled="!editable || !tableSelectedForChart()"
-            @select="handleChartFromTable()"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Page break"
-            testid="break-page"
-            :shortcut="shortcutLabel('insert.pageBreak')"
-            :disabled="!editable"
-            @select="handleInsertBreak('page')"
-          />
-          <MenuItem
-            label="Column break"
-            testid="break-column"
-            :disabled="!editable"
-            @select="handleInsertBreak('column')"
-          />
-          <MenuItem
-            label="Section break (next page)"
-            testid="break-section-next"
-            :disabled="!editable"
-            @select="handleInsertSectionBreak('nextPage')"
-          />
-          <MenuItem
-            label="Section break (continuous)"
-            testid="break-section-continuous"
-            :disabled="!editable"
-            @select="handleInsertSectionBreak('continuous')"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Header"
-            testid="hf-menu-header"
-            :disabled="!editable"
-            @select="openInsertHeaderFooter('header')"
-          />
-          <MenuItem
-            label="Footer"
-            testid="hf-menu-footer"
-            :disabled="!editable"
-            @select="openInsertHeaderFooter('footer')"
-          />
-          <MenuItem
-            label="Page number"
-            testid="hf-menu-page-number"
-            :disabled="!editable"
-            @select="openPageNumberDialog"
-          />
-          <MenuItem
-            label="Header and footer options"
-            testid="hf-menu-options"
-            :disabled="!editable"
-            @select="openHeaderFooterOptions"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Merge field…"
-            testid="insert-menu-merge-field"
-            :disabled="!editable"
-            @select="mergeFieldPickerOpen = true"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Footnote"
-            testid="notes-menu-footnote"
-            :shortcut="shortcutLabel('insert.footnote')"
-            :disabled="!editable"
-            @select="handleInsertNote('footnote')"
-          />
-          <MenuItem
-            label="Endnote"
-            testid="notes-menu-endnote"
-            :shortcut="shortcutLabel('insert.endnote')"
-            :disabled="!editable"
-            @select="handleInsertNote('endnote')"
-          />
-          <MenuItem
-            label="Footnote and endnote settings"
-            testid="notes-menu-settings"
-            :disabled="!editable"
-            @select="openNoteSettings"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Table of contents"
-            testid="insert-toc-button"
-            :disabled="!editable"
-            @select="openTocDialog"
-          />
-          <MenuItem
-            label="Special character"
-            testid="insert-special-character-button"
-            :disabled="!editable"
-            @select="openSpecialCharacters"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Link"
-            testid="toolbar-insert-link"
-            :shortcut="shortcutLabel('insert.link')"
-            :disabled="!editable"
-            @select="openLinkDialog"
-          />
-          <MenuItem
-            label="Bookmark"
-            testid="toolbar-insert-bookmark"
-            :disabled="!editable"
-            @select="openBookmarkDialog"
-          />
-          <MenuItem
-            label="Bookmark list"
-            testid="toolbar-bookmarks"
-            @select="bookmarkManagerOpen = true"
-          />
-          <MenuItem
-            label="Comment"
-            testid="toolbar-insert-comment"
-            :shortcut="shortcutLabel('insert.comment')"
-            :disabled="!editable"
-            @select="openCommentComposer"
-          />
-        </template>
-
-        <template #format>
-          <MenuItem
-            label="Styles pane"
-            testid="format-menu-styles-pane"
-            @select="toggleStylesPane"
-          />
-          <MenuItem
-            label="Import styles from another document…"
-            testid="format-menu-import-styles"
-            :disabled="!editable"
-            @select="openImportDialog"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Clear formatting"
-            testid="clear-formatting-button"
-            :shortcut="shortcutLabel('format.clearFormatting')"
-            :disabled="!editable"
-            @select="handleClearFormatting"
-          />
-          <!-- Format painter keeps its double-click-to-lock gesture
-               (SPEC-020 AC-14): data-menu-keep-open holds the menu open
-               across the click/click/dblclick sequence, and its armed state
-               shows as a live check (SPEC-049 AC-11). -->
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            class="menu-item"
-            data-testid="format-painter-button"
-            data-menu-keep-open
-            title="Format painter (double-click to keep it on)"
-            :aria-checked="painterMode !== '' ? 'true' : 'false'"
-            :disabled="!editable"
-            tabindex="-1"
-            @mousedown.prevent
-            @click="handlePainterClick"
-            @dblclick="handlePainterDblClick"
-          >
-            <span
-              class="menu-check"
-              aria-hidden="true"
-            >{{ painterMode !== '' ? '✓' : '' }}</span>
-            <span class="menu-item-label">Format painter</span>
-          </button>
-          <hr class="menu-separator">
-          <MenuItem
-            label="Columns"
-            testid="columns-button"
-            :disabled="!editable"
-            @select="openColumnsDialog"
-          />
-          <hr class="menu-separator">
-          <div class="menu-section-label">
-            Multilevel list
-          </div>
-          <MenuItem
-            v-for="preset in MULTILEVEL_PRESETS"
-            :key="preset.key"
-            :label="preset.label"
-            :testid="`multilevel-preset-${preset.key}`"
-            :disabled="!editable"
-            @select="handleMultilevelPreset(preset.key)"
-          />
-          <MenuItem
-            label="Number headings 1–3"
-            testid="multilevel-link-headings"
-            :disabled="!editable"
-            @select="handleLinkHeadingNumbering"
-          />
-          <MenuItem
-            label="Define new list…"
-            testid="multilevel-define-list"
-            :disabled="!editable"
-            @select="openDefineList"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Text colour"
-            testid="format-menu-text-color"
-            :disabled="!editable"
-            @select="openTextColorMenu"
-          />
-          <MenuItem
-            label="Highlight colour"
-            testid="format-menu-highlight"
-            :disabled="!editable"
-            @select="openHighlightMenu"
-          />
-        </template>
-
-        <template #tools>
-          <MenuItem
-            label="Word count"
-            testid="tools-menu-word-count"
-            @select="openStatistics"
-          />
-          <MenuItem
-            label="Custom dictionary"
-            testid="tools-menu-dictionary"
-            @select="openCustomDictionaryDialog"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Check accessibility"
-            testid="tools-menu-accessibility"
-            @select="openAccessibilityPane"
-          />
-          <hr class="menu-separator">
-          <MenuItem
-            label="Convert {{…}} text to merge fields"
-            testid="tools-menu-convert-merge-fields"
-            :disabled="!editable || !canConvertLiteralChips"
-            @select="convertLiteralChips"
-          />
-        </template>
-      </MenuBar>
-      <!-- The Insert menu's "Image…" command drives this hidden picker
-           (SPEC-024). -->
-      <input
-        ref="menuImageInput"
-        type="file"
-        class="menu-image-input"
-        data-testid="insert-image-file-input"
-        :accept="ACCEPTED_IMAGE_ACCEPT_ATTR"
-        @change="handleMenuImageChange"
-      >
+      <DocumentMenuBar
+        :editable="editable"
+        :undo-redo="undoRedoState"
+        :autocorrect-smart-quotes="autocorrectSettings.smartQuotes"
+        :autocorrect-dashes="autocorrectSettings.dashes"
+        :show-ruler="doc.showRuler !== false"
+        :outline-pane-open="outlinePaneOpen"
+        :styles-pane-open="stylesPaneOpen"
+        :comments-pane-open="commentsPaneOpen"
+        :comments-only-view="commentsOnlyView"
+        :track-changes-recording="trackChangesRecording"
+        :track-changes-pane-open="trackChangesPaneOpen"
+        :can-convert-literal-chips="canConvertLiteralChips"
+        :table-selected-for-chart="tableSelectedForChart"
+        :painter-mode="painterMode"
+        @command="handleMenuCommand"
+        @insert-table-size="(rows, cols) => handleInsertTable({ rows, cols })"
+        @insert-break="handleInsertBreak"
+        @insert-section-break="handleInsertSectionBreak"
+        @insert-note="handleInsertNote"
+        @shape-pick="handleShapePick"
+        @chart-pick="handleChartPick"
+        @multilevel-preset="handleMultilevelPreset"
+        @insert-image-file="handleInsertImageFile"
+        @painter-click="handlePainterClick"
+        @painter-dblclick="handlePainterDblClick"
+      />
     </template>
     <template #toolbar>
       <UndoRedoControls
@@ -6026,111 +3908,13 @@ async function menuPastePlain() {
               }"
             />
           </div>
-          <div
+          <TableHandlesOverlay
             v-if="tableHover"
-            class="table-handles print-exclude"
-            data-testid="table-handles"
-          >
-            <!-- Column handles above the table: an insert button at every
-               column boundary, a delete button over every column centre
-               (AC-20, AC-21). -->
-            <button
-              v-for="boundary in tableHover.cols.length + 1"
-              :key="`ci${boundary}`"
-              type="button"
-              class="table-handle insert"
-              :data-testid="`table-handle-insert-col-${boundary - 1}`"
-              :aria-label="`Insert column at position ${boundary}`"
-              :style="{
-                left: `${(boundary - 1 < tableHover.cols.length
-                  ? tableHover.cols[boundary - 1].left
-                  : tableHover.left + tableHover.width) - 8}px`,
-                top: `${tableHover.top - 20}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('insert-col', boundary - 1)"
-            >
-              +
-            </button>
-            <button
-              v-for="(col, colIndex) in tableHover.cols"
-              :key="`cd${colIndex}`"
-              type="button"
-              class="table-handle delete"
-              :data-testid="`table-handle-delete-col-${colIndex}`"
-              :aria-label="`Delete column ${colIndex + 1}`"
-              :style="{
-                left: `${col.left + col.width / 2 - 8}px`,
-                top: `${tableHover.top - 20}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('delete-col', colIndex)"
-            >
-              ×
-            </button>
-            <!-- Row handles left of the table: same pattern. -->
-            <button
-              v-for="boundary in tableHover.rows.length + 1"
-              :key="`ri${boundary}`"
-              type="button"
-              class="table-handle insert"
-              :data-testid="`table-handle-insert-row-${boundary - 1}`"
-              :aria-label="`Insert row at position ${boundary}`"
-              :style="{
-                left: `${tableHover.left - 20}px`,
-                top: `${(boundary - 1 < tableHover.rows.length
-                  ? tableHover.rows[boundary - 1].top
-                  : tableHover.top + tableHover.height) - 8}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('insert-row', boundary - 1)"
-            >
-              +
-            </button>
-            <button
-              v-for="(row, rowIndex) in tableHover.rows"
-              :key="`rd${rowIndex}`"
-              type="button"
-              class="table-handle delete"
-              :data-testid="`table-handle-delete-row-${rowIndex}`"
-              :aria-label="`Delete row ${rowIndex + 1}`"
-              :style="{
-                left: `${tableHover.left - 20}px`,
-                top: `${row.top + row.height / 2 - 8}px`,
-              }"
-              @mousedown.prevent
-              @click="handleTableHandle('delete-row', rowIndex)"
-            >
-              ×
-            </button>
-            <!-- Column/row resize strips (SPEC-023 AC-1..5): a thin draggable
-               strip along each column's right edge (spanning the table's
-               height) and each row's bottom edge (spanning its width). -->
-            <div
-              v-for="(col, colIndex) in tableHover.cols"
-              :key="`cr${colIndex}`"
-              class="table-resize-handle column"
-              :data-testid="`table-resize-col-${colIndex}`"
-              :style="{
-                left: `${col.left + col.width - 3}px`,
-                top: `${tableHover.top}px`,
-                height: `${tableHover.height}px`,
-              }"
-              @mousedown="startColumnResize($event, colIndex)"
-            />
-            <div
-              v-for="(row, rowIndex) in tableHover.rows"
-              :key="`rr${rowIndex}`"
-              class="table-resize-handle row"
-              :data-testid="`table-resize-row-${rowIndex}`"
-              :style="{
-                left: `${tableHover.left}px`,
-                top: `${row.top + row.height - 3}px`,
-                width: `${tableHover.width}px`,
-              }"
-              @mousedown="startRowResize($event, rowIndex)"
-            />
-          </div>
+            :geometry="tableHover"
+            @handle="handleTableHandle"
+            @column-resize="startColumnResize"
+            @row-resize="startRowResize"
+          />
           <div
             v-if="imageHandles"
             class="image-handles print-exclude"
@@ -6679,61 +4463,6 @@ async function menuPastePlain() {
   cursor: pointer;
 }
 
-/* The Insert menu's table-size quick-pick (SPEC-049), slotted into the menu
-   popup. These rules reach it because slotted content keeps this view's
-   scope id. */
-.menu-image-input {
-  display: none;
-}
-
-/* The hovered size reads out beside the grid rather than under it: the grid
-   is far taller than it is wide, and the Insert menu needs every row of
-   height it can give back to keep fitting a 720px viewport whole (SPEC-028
-   AC-8/AC-9 asserts the break commands further down are inside it). */
-.menu-table-grid-wrap {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.75rem;
-  padding: 0.25rem 1rem 0.5rem;
-}
-
-.menu-table-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.menu-table-grid-row {
-  display: flex;
-  gap: 1px;
-}
-
-.menu-table-grid-cell {
-  width: 0.75rem;
-  height: 0.75rem;
-  padding: 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 2px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.menu-table-grid-cell.active {
-  background: #bbdefb;
-  border-color: #1a73e8;
-}
-
-.menu-table-grid-cell:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
-.menu-table-grid-label {
-  font-size: 0.78rem;
-  color: #5f6368;
-  white-space: nowrap;
-}
-
 /* The format painter button's armed state (SPEC-020 AC-11, AC-14). */
 .toolbar-button[aria-pressed="true"] {
   background: #d2e3fc;
@@ -7033,8 +4762,8 @@ async function menuPastePlain() {
   inset: 0;
   /* Unlike .find-highlight-layer (z-index: 0, never needs to catch clicks),
      these rects must win hit-testing against the text underneath — the
-     same z-index band .table-handles (15) uses for its own clickable
-     overlay controls. */
+     same z-index band the table handles (15, TableHandlesOverlay.vue) use
+     for their own clickable overlay controls. */
   z-index: 5;
   pointer-events: none;
 }
@@ -7072,71 +4801,9 @@ async function menuPastePlain() {
   cursor: copy;
 }
 
-/* The table hover handles (SPEC-022 AC-20, AC-21): a page-relative overlay
-   of small insert (+) and delete (×) buttons above the columns and beside
-   the rows of the hovered table. The layer itself ignores the pointer so
-   text editing underneath is unaffected; only the buttons are clickable. */
-.table-handles {
-  position: absolute;
-  inset: 0;
-  z-index: 15;
-  pointer-events: none;
-}
-
-.table-handle {
-  position: absolute;
-  pointer-events: auto;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 50%;
-  background: #fff;
-  color: #3c4043;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
-}
-
-.table-handle.insert:hover {
-  background: #d2e3fc;
-  border-color: #1a73e8;
-  color: #1a73e8;
-}
-
-.table-handle.delete:hover {
-  background: #fce8e6;
-  border-color: #c5221f;
-  color: #c5221f;
-}
-
-/* Column/row resize strips (SPEC-023 AC-1..5): thin transparent bands
-   along a column's right edge or a row's bottom edge, widened just enough
-   to be a comfortable drag target without covering neighbouring cells. */
-.table-resize-handle {
-  position: absolute;
-  pointer-events: auto;
-  background: transparent;
-}
-
-.table-resize-handle.column {
-  width: 6px;
-  cursor: col-resize;
-}
-
-.table-resize-handle.row {
-  height: 6px;
-  cursor: row-resize;
-}
-
-.table-resize-handle:hover {
-  background: rgb(26 115 232 / 0.35);
-}
-
 /* The selected image's eight resize handles (SPEC-024 AC-8, AC-10..12) —
-   same page-relative overlay layer as .table-handles, positioned per handle
-   by imageHandleStyle(). */
+   same page-relative overlay layer as the table handles
+   (TableHandlesOverlay.vue), positioned per handle by imageHandleStyle(). */
 .image-handles {
   position: absolute;
   inset: 0;
