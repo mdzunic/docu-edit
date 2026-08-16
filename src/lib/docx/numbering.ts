@@ -592,7 +592,7 @@ export function planNumbering(
     if (!def) {
       return false;
     }
-    const instanceKey = `${contextKey} ${list.defId} ${list.listId ?? ""}`;
+    const instanceKey = `${contextKey}\u0000${list.defId}\u0000${list.listId ?? ""}`;
     let instance = definedInstances.get(instanceKey);
     if (!instance) {
       instance = { def, refKeys: [], startOverrides: new Map() };

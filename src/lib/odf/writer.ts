@@ -943,7 +943,7 @@ function instanceSignatureOf(paragraph: Paragraph, styles: AutomaticStyles): str
   if (list?.defId === undefined || styles.listDefinitionFor(list.defId) === undefined) {
     return null;
   }
-  return `${list.defId} ${list.listId ?? ""}`;
+  return `${list.defId}\u0000${list.listId ?? ""}`;
 }
 
 /** A contiguous run of list paragraphs, split into per-instance segments
