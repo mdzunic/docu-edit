@@ -18,7 +18,6 @@ import {
   isToc,
   type Block,
   type DocumentModel,
-  type Paragraph,
 } from "./documentModel";
 import { type ListDefinition, type ListFormatting } from "./core/lists";
 import {
@@ -120,10 +119,4 @@ export function listRunAround(
     last++;
   }
   return { first, last };
-}
-
-/** Whether a paragraph is a list item — a null-safe convenience for `.vue`
- * scripts, which espree bars from optional-chaining into typed fields. */
-export function isListItem(paragraph: Paragraph | undefined): boolean {
-  return !!paragraph?.list;
 }

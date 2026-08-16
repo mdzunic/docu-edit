@@ -141,12 +141,3 @@ export function planOdfChartWrite(
     orphanedObjectDirs,
   };
 }
-
-export const EMPTY_ODF_CHART_PLAN: OdfChartWritePlan = {
-  planFor: () => undefined,
-  manifestEntries: [],
-  zipEntries: [],
-  regeneratedPartXml: new Map(),
-  orphanedPartNames: new Set(),
-  orphanedObjectDirs: new Set(),
-};

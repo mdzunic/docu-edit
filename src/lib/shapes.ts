@@ -48,14 +48,6 @@ export function noShapeLocation(): ShapeLocation | null {
   return null;
 }
 
-/** A shape command bound late to the current model/selection/location,
- * mirroring images.ts's ImageCommand. */
-export type ShapeCommand = (model: DocumentModel, selection: ModelSelection, location: ShapeLocation) => CommandResult;
-
-/** Typed `null` seed for ShapeCommand parameters in `.vue` scripts. */
-export function noShapeCommand(): ShapeCommand | null {
-  return null;
-}
 
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };

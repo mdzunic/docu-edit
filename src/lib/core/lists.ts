@@ -109,11 +109,6 @@ export function asListDefinitions(value: unknown): ListDefinition[] {
   return value as ListDefinition[];
 }
 
-/** Typed empty seed for list-definition arrays in `.vue` scripts. */
-export function noListDefinitions(): ListDefinition[] {
-  return [];
-}
-
 /** Typed pass-through for a list type coming from a `.vue` template's plain
  * string (espree constraint). */
 export function asListType(value: string): ListType {
@@ -137,18 +132,6 @@ export const LIST_INDENT_STEP_CM = 1.27;
 
 /** The marker box hanging before an item's text, in cm (360 twips). */
 export const LIST_MARKER_WIDTH_CM = 0.635;
-
-/** The bullet styles AC-12 offers, in dropdown order. */
-export const BULLET_MARKER_STYLES: ListMarkerStyle[] = ["disc", "circle", "square"];
-
-/** The number styles AC-12 offers, in dropdown order. */
-export const NUMBER_MARKER_STYLES: ListMarkerStyle[] = [
-  "decimal",
-  "lowerAlpha",
-  "upperAlpha",
-  "lowerRoman",
-  "upperRoman",
-];
 
 /** The three-marker cycles AC-5 defines: levels 1–3 use these in order and
  * levels 4–9 repeat them (level N uses entry (N-1) mod 3). */
