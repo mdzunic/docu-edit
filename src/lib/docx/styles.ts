@@ -4,15 +4,10 @@
 // their defined size and weight even when a paragraph carries no direct
 // formatting of its own.
 import type { NamedStyle, ParagraphFormatting, RunFormatting, StyleType } from "../documentModel";
+import { mergeParagraphFormatting, mergeRunFormatting } from "../documentModel";
 import { wordAttr as attr, WORD_NAMESPACE } from "./xml";
 import { childElements, firstChildElement, serializeElement } from "../core/xml";
-import {
-  mergeParagraphFormatting,
-  mergeRunFormatting,
-  parseOutlineLevel,
-  parseParagraphProperties,
-  parseRunProperties,
-} from "./properties";
+import { parseOutlineLevel, parseParagraphProperties, parseRunProperties } from "./properties";
 
 /** `w:type` values SPEC-042 fully models — `"paragraph"` (SPEC-019) and
  * `"character"` (`w:rStyle`). `"table"`/`"numbering"` styles, and any

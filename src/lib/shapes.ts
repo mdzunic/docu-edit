@@ -7,9 +7,11 @@
 // (near-identical) command set because SPEC-024 shipped first and this spec
 // promises "no shipped call site changes" to it.
 import {
+  cloneContainers,
   isChart,
   isImage,
   isShape,
+  splitParagraphAt,
   type Block,
   type Chart,
   type DocumentModel,
@@ -55,46 +57,8 @@ export function noShapeCommand(): ShapeCommand | null {
   return null;
 }
 
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
-
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
-}
-
-function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
-  let consumed = 0;
-  const before: Paragraph = { ...paragraph, runs: [] };
-  const after: Paragraph = {
-    ...paragraph,
-    runs: [],
-    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
-  };
-  const beforeRuns = [];
-  const afterRuns = [];
-  for (const run of paragraph.runs) {
-    const end = consumed + run.text.length;
-    if (end <= offset) {
-      beforeRuns.push(run);
-    } else if (consumed >= offset) {
-      afterRuns.push(run);
-    } else {
-      const cut = offset - consumed;
-      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
-      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
-    }
-    consumed = end;
-  }
-  before.runs = beforeRuns;
-  after.runs = afterRuns;
-  return [before, after];
 }
 
 /** The shape a location addresses, or null. */

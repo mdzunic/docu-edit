@@ -7,7 +7,7 @@
 // Z-order and grouping are NOT duplicated here: Chart already participates
 // in shapes.ts's generic allDrawings-based z-order/grouping machinery
 // (SPEC-052 AC-24 "for free") — see that module's own comment.
-import { isChart, type Chart, type DocumentModel, type ImageWrapMode } from "./documentModel";
+import { cloneContainers, isChart, splitParagraphAt, type Chart, type DocumentModel, type ImageWrapMode } from "./documentModel";
 import { type ChartOptions, type ChartSeries, type ChartType } from "./core/charts";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
@@ -40,46 +40,8 @@ export function noChartCommand(): ChartCommand | null {
   return null;
 }
 
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
-
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
-}
-
-function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
-  let consumed = 0;
-  const before: Paragraph = { ...paragraph, runs: [] };
-  const after: Paragraph = {
-    ...paragraph,
-    runs: [],
-    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
-  };
-  const beforeRuns = [];
-  const afterRuns = [];
-  for (const run of paragraph.runs) {
-    const end = consumed + run.text.length;
-    if (end <= offset) {
-      beforeRuns.push(run);
-    } else if (consumed >= offset) {
-      afterRuns.push(run);
-    } else {
-      const cut = offset - consumed;
-      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
-      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
-    }
-    consumed = end;
-  }
-  before.runs = beforeRuns;
-  after.runs = afterRuns;
-  return [before, after];
 }
 
 /** The chart a location addresses, or null. */

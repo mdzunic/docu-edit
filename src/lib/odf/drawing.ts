@@ -6,9 +6,8 @@
 // reader's inline-content walk) keeps its existing SPEC-008 opaque-inline
 // fallback, exactly as it did before this spec.
 import type { Image, ImageWrapMode } from "../documentModel";
-import type { MediaPart } from "../core/media";
-import { contentTypeForPartName } from "../docx/drawing";
-import { firstChildElement } from "../core/xml";
+import { contentTypeForPartName, type MediaPart } from "../core/media";
+import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";
 import { cmToOdfLength, odfLengthToCm } from "./units";
@@ -112,14 +111,6 @@ export function parseDrawFrame(
   return { image, media: { mediaId: partPath, contentType, data: bytesToBase64(bytes) } };
 }
 
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 /** A generated graphic-family style's properties for a floating wrap mode
  * (never called for "inline", which has no style of its own — see
  * drawFrameXml). The inverse of collectGraphicWrapStyles' own mapping. */
@@ -137,7 +128,7 @@ function graphicPropertiesXml(wrap: ImageWrapMode): string {
  * mode, to be added to content.xml's automatic styles — "inline" needs none
  * (see drawFrameXml). */
 export function graphicStyleXml(name: string, wrap: ImageWrapMode): string {
-  return `<style:style style:name="${escapeXml(name)}" style:family="graphic">${graphicPropertiesXml(wrap)}</style:style>`;
+  return `<style:style style:name="${escapeXmlAttribute(name)}" style:family="graphic">${graphicPropertiesXml(wrap)}</style:style>`;
 }
 
 const FRAME_XMLNS =
@@ -149,12 +140,12 @@ const FRAME_XMLNS =
  * which anchors as a plain character with no positioning style of its own. */
 export function drawFrameXml(image: Image, href: string, graphicStyleName: string | undefined): string {
   const anchorType = image.wrap === "inline" ? "as-char" : "paragraph";
-  const styleAttrXml = graphicStyleName ? ` draw:style-name="${escapeXml(graphicStyleName)}"` : "";
-  const descXml = image.altText ? `<svg:desc>${escapeXml(image.altText)}</svg:desc>` : "";
+  const styleAttrXml = graphicStyleName ? ` draw:style-name="${escapeXmlAttribute(graphicStyleName)}"` : "";
+  const descXml = image.altText ? `<svg:desc>${escapeXmlAttribute(image.altText)}</svg:desc>` : "";
   return (
     `<draw:frame${FRAME_XMLNS} text:anchor-type="${anchorType}"${styleAttrXml}` +
     ` svg:width="${cmToOdfLength(image.widthCm)}" svg:height="${cmToOdfLength(image.heightCm)}">` +
-    `<draw:image xlink:href="${escapeXml(href)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    `<draw:image xlink:href="${escapeXmlAttribute(href)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
     descXml +
     "</draw:frame>"
   );

@@ -77,3 +77,41 @@ export function fitImageSizeCm(
  * leave an image — no AC specifies one, so this just keeps the image
  * visible/selectable rather than collapsing to nothing. */
 export const MIN_IMAGE_SIZE_CM = 0.2;
+
+/** Extension → MIME type for the image formats the packages carry. Shared
+ * by both format readers (typing the bytes behind a `word/media/*` or
+ * `Pictures/*` part path) and docx/writer.ts's `[Content_Types].xml`
+ * Default entries. */
+export const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+};
+
+/** The file extension a media content type is written with, the inverse of
+ * CONTENT_TYPE_BY_EXTENSION's lookup — "jpeg" (not "jpg") is the canonical
+ * spelling the writers pick for JPEG parts. */
+const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpeg",
+  "image/gif": "gif",
+  "image/svg+xml": "svg",
+};
+
+/** The MIME type a media part path's extension implies (case-insensitive),
+ * or undefined for an extension no accepted image format uses. */
+export function contentTypeForPartName(partName: string): string | undefined {
+  const dot = partName.lastIndexOf(".");
+  if (dot < 0) {
+    return undefined;
+  }
+  return CONTENT_TYPE_BY_EXTENSION[partName.slice(dot + 1).toLowerCase()];
+}
+
+/** The extension a media part is written under for its content type —
+ * falls back to "png" for a type outside the accepted set. */
+export function extensionForContentType(contentType: string): string {
+  return EXTENSION_BY_CONTENT_TYPE[contentType] ?? "png";
+}

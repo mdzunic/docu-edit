@@ -141,6 +141,62 @@ export function isCellInRange(
   return row >= bounds.top && row <= bounds.bottom && col >= bounds.left && col <= bounds.right;
 }
 
+// --- merged-cell owner grid (SPEC-023) ---------------------------------------
+
+/** The minimal table shape the owner grid reads. Structural on purpose:
+ * core cannot import the document model (boundary.spec.ts), and
+ * lib/documentModel.ts's Table satisfies this as-is — `rows` is the regular
+ * R×C grid (covered slots included as placeholder cells), `columnWidthsCm`
+ * fixes the column count. */
+export interface OwnerGridTable {
+  rows: Array<{ cells: Array<{ rowSpan?: number; colSpan?: number }> }>;
+  columnWidthsCm: number[];
+}
+
+/** A grid slot's owning (real) cell: the cell at `originRow`/`originCol`
+ * whose `rowSpan`×`colSpan` rectangle covers the slot — itself when the slot
+ * is not covered by anything. Every merge/split/border/shading/padding
+ * operation resolves through this so a click anywhere in a merged cell's
+ * rectangle (or a range that only partly overlaps it) resolves to the same
+ * whole cell; the docx/odf writers walk the same grid to decide which slots
+ * emit a real cell versus a `w:gridSpan`/`w:vMerge` continuation or a
+ * `<table:covered-table-cell/>`. */
+export interface CellOwner {
+  originRow: number;
+  originCol: number;
+  rowSpan: number;
+  colSpan: number;
+}
+
+/** Every grid slot's owner, computed in one forward pass: row-major order
+ * always visits a cell's own (top-left) slot before any slot it covers, so
+ * each covered slot's owner is already known by the time it is reached. */
+export function computeOwnerGrid(table: OwnerGridTable): CellOwner[][] {
+  const rowCount = table.rows.length;
+  const colCount = table.columnWidthsCm.length;
+  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
+  for (let r = 0; r < rowCount; r++) {
+    for (let c = 0; c < colCount; c++) {
+      if (grid[r][c]) {
+        continue;
+      }
+      const cell = table.rows[r].cells[c];
+      const owner: CellOwner = {
+        originRow: r,
+        originCol: c,
+        rowSpan: cell.rowSpan ?? 1,
+        colSpan: cell.colSpan ?? 1,
+      };
+      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
+        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
+          grid[r + dr][c + dc] = owner;
+        }
+      }
+    }
+  }
+  return grid;
+}
+
 // --- border presets (SPEC-023 AC-18..21) -------------------------------------
 
 /** The standard border presets a table properties dialog offers (AC-18..21). */

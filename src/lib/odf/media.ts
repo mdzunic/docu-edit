@@ -7,23 +7,10 @@
 // `draw:image` stores any media type as-is, so every referenced media part
 // is written, none dropped.
 import type { DocumentModel } from "../documentModel";
-import { extensionForContentType } from "../docx/drawing";
+import { extensionForContentType } from "../core/media";
+import { referencedMediaIds } from "../mediaRefs";
 import { base64ToBytes } from "../opaque";
 import type { ZipEntryInput } from "../core/zipWriter";
-
-function referencedMediaIds(model: DocumentModel): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const section of model.sections) {
-    for (const block of section.blocks) {
-      if (block.type === "image" && !seen.has(block.mediaId)) {
-        seen.add(block.mediaId);
-        ids.push(block.mediaId);
-      }
-    }
-  }
-  return ids;
-}
 
 export interface OdtManifestEntry {
   path: string;

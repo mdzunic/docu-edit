@@ -14,6 +14,7 @@ import {
   isShape,
   isTable,
   isToc,
+  mergeRunFormatting,
   type DocumentFormat,
   type DocumentModel,
   type Paragraph,
@@ -22,7 +23,6 @@ import {
   type Table,
 } from "./documentModel";
 import { parseXml, XmlParseError } from "./core/xml";
-import { mergeRunFormatting } from "./docx/properties";
 import {
   diffParagraphFormatting,
   paragraphStyleBase,

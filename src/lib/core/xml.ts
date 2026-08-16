@@ -103,20 +103,43 @@ export function relsPathFor(partPath: string): string {
   return `${dir.length > 0 ? `${dir}/` : ""}_rels/${fileName}.rels`;
 }
 
+// --- XML escaping ------------------------------------------------------------
+// The three escape sets in use across the writers and the canonicalizer.
+// Saved-byte fidelity pins each caller to its historical set (SPEC-008's
+// round-trip rule; e2e asserts byte-identical saves), so these are three
+// distinct functions, not one: swapping a caller to a different set would
+// change its output wherever a quote or apostrophe occurs.
+
+/** Escapes text content: `&`, `<`, `>` only. */
+export function escapeXmlText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Escapes a double-quoted attribute value: `&`, `<`, `>`, `"`. */
+export function escapeXmlAttribute(value: string): string {
+  return escapeXmlText(value).replace(/"/g, "&quot;");
+}
+
+/** Escapes all five predefined entities: `&`, `<`, `>`, `"`, `'`. The
+ * docx/odf document writers (and docProps/meta) have always escaped both
+ * text and attribute values with this full set — `&apos;` is redundant in
+ * text and in double-quoted attributes, but harmless, and their saved bytes
+ * pin it. */
+export function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 // --- XML canonicalization --------------------------------------------------
 // Moved from lib/equality.ts: the C14N-style canonical form SPEC-008's
 // opaque-XML comparisons are stated in, so attribute order, namespace
 // prefixes and quoting can never cause false failures.
 
 const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
-
-function escapeXmlText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeXmlAttribute(value: string): string {
-  return escapeXmlText(value).replace(/"/g, "&quot;");
-}
 
 function canonicalizeElement(el: Element, out: string[]): void {
   const name = `{${el.namespaceURI ?? ""}}${el.localName}`;

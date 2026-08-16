@@ -52,7 +52,7 @@ import type {
   TocOptions,
 } from "../documentModel";
 import type { Margins, PageSize } from "../core/pageSetup";
-import type { BorderLineStyle, BorderSide, CellBorders, CellVerticalAlign } from "../core/tables";
+import { computeOwnerGrid, type BorderLineStyle, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
 import {
   DEFAULT_TITLE,
   isMergeChipField,
@@ -71,6 +71,7 @@ import { replyParagraphText, visibleCommentThreads, type VisibleCommentThread } 
 import { wordAttr, WORD_NAMESPACE } from "./xml";
 import {
   childElements,
+  escapeXml,
   parseRelationships,
   parseXml,
   relsPathFor,
@@ -92,7 +93,8 @@ import {
   type NumberingPlan,
   type NumberingRef,
 } from "./numbering";
-import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
+import { CONTENT_TYPE_BY_EXTENSION } from "../core/media";
+import { drawingXml } from "./drawing";
 import { shapeDrawingXml } from "./shape";
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
 import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";
@@ -138,16 +140,6 @@ const HEADER_FOOTER_TWIPS = 720;
 export function docxFileName(title: string): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : DEFAULT_TITLE}.docx`;
-}
-
-/** Escapes text for use in XML text content or attribute values. */
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 // w:jc values are the inverse of the reader's ALIGNMENT_MAP ("both" is
@@ -796,44 +788,6 @@ const GENERATED_TABLE_BORDERS =
   '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
   '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
   "</w:tblBorders>";
-
-/** A grid slot's owning real cell — the writer's own mirror of lib/tables.ts's
- * same concept (SPEC-023), needed to know, for a merged table, which grid
- * columns/rows a `w:tc` must skip (already covered by an earlier column's
- * `w:gridSpan` in the same row) versus re-emit as a `w:vMerge` continuation
- * (a later row within the origin's `rowSpan`). */
-interface CellOwner {
-  originRow: number;
-  originCol: number;
-  rowSpan: number;
-  colSpan: number;
-}
-
-function computeOwnerGrid(table: Table): CellOwner[][] {
-  const rowCount = table.rows.length;
-  const colCount = table.columnWidthsCm.length;
-  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
-  for (let r = 0; r < rowCount; r++) {
-    for (let c = 0; c < colCount; c++) {
-      if (grid[r][c]) {
-        continue;
-      }
-      const cell = table.rows[r].cells[c];
-      const owner: CellOwner = {
-        originRow: r,
-        originCol: c,
-        rowSpan: cell.rowSpan ?? 1,
-        colSpan: cell.colSpan ?? 1,
-      };
-      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
-        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
-          grid[r + dr][c + dc] = owner;
-        }
-      }
-    }
-  }
-  return grid;
-}
 
 function borderStyleVal(style: BorderLineStyle): string {
   if (style === "none") {

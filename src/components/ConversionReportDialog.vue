@@ -4,9 +4,12 @@
 // The list renders the writer's `dropped: DropRecord[]` directly — it is
 // never derived by comparing models, so the report and the round-trip tests
 // read the same array. Emits close only; the caller owns the "don't show
-// again" persistence.
+// again" persistence. BaseDialog owns the shell and Escape (which this
+// dialog never handled); its title-testid prop carries the
+// "conversion-report-title" testid this dialog's spec asserts on the h2.
 import { computed, ref } from "vue";
 import { asDropRecords, dropKindLabel } from "../lib/opaque";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
   /** The writer's DropRecord[] — { kind, location, reason } per item. */
@@ -25,96 +28,63 @@ const records = computed(() => asDropRecords(props.items));
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="conversion-report"
-    @click.self="emit('close', dontShowAgain)"
+  <BaseDialog
+    :title="sameFormat ? 'Chart changes report' : 'Conversion report'"
+    testid="conversion-report"
+    title-testid="conversion-report-title"
+    width="24rem"
+    @dismiss="emit('close', dontShowAgain)"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="sameFormat ? 'Chart changes report' : 'Conversion report'"
+    <p class="dialog-message">
+      <template v-if="sameFormat">
+        Editing this chart rewrote its underlying data — some of its
+        original formatting could not be carried over and was left out of
+        the saved file.
+      </template>
+      <template v-else>
+        Some content could not be converted to the saved format and was left
+        out of the downloaded file. Your open document still has it.
+      </template>
+    </p>
+    <ul
+      class="report-list"
+      data-testid="conversion-report-items"
     >
-      <h2
-        class="dialog-title"
-        data-testid="conversion-report-title"
+      <li
+        v-for="(item, index) in records"
+        :key="index"
+        class="report-item"
+        data-testid="conversion-report-item"
       >
-        {{ sameFormat ? "Chart changes report" : "Conversion report" }}
-      </h2>
-      <p class="dialog-message">
-        <template v-if="sameFormat">
-          Editing this chart rewrote its underlying data — some of its
-          original formatting could not be carried over and was left out of
-          the saved file.
-        </template>
-        <template v-else>
-          Some content could not be converted to the saved format and was left
-          out of the downloaded file. Your open document still has it.
-        </template>
-      </p>
-      <ul
-        class="report-list"
-        data-testid="conversion-report-items"
+        <span class="report-kind">{{ dropKindLabel(item.kind) }}</span>
+        <span class="report-location">{{ item.location }}</span>
+        <span class="report-reason">{{ item.reason }}</span>
+      </li>
+    </ul>
+    <label class="report-suppress">
+      <input
+        v-model="dontShowAgain"
+        type="checkbox"
+        data-testid="conversion-report-dont-show"
       >
-        <li
-          v-for="(item, index) in records"
-          :key="index"
-          class="report-item"
-          data-testid="conversion-report-item"
-        >
-          <span class="report-kind">{{ dropKindLabel(item.kind) }}</span>
-          <span class="report-location">{{ item.location }}</span>
-          <span class="report-reason">{{ item.reason }}</span>
-        </li>
-      </ul>
-      <label class="report-suppress">
-        <input
-          v-model="dontShowAgain"
-          type="checkbox"
-          data-testid="conversion-report-dont-show"
-        >
-        Don't show again for this document
-      </label>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="conversion-report-close"
-          @click="emit('close', dontShowAgain)"
-        >
-          OK
-        </button>
-      </div>
-    </div>
-  </div>
+      Don't show again for this document
+    </label>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="conversion-report-close"
+        @click="emit('close', dontShowAgain)"
+      >
+        OK
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 24rem;
+/* This dialog capped its panel narrower than the base's 90vw. */
+:deep(.dialog) {
   max-width: min(36rem, 90vw);
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .dialog-message {
@@ -168,13 +138,6 @@ const records = computed(() => asDropRecords(props.items));
   font-size: 0.875rem;
   color: #3c4043;
   cursor: pointer;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

@@ -19,12 +19,14 @@ What lives here, by area:
   are the painters' contract: the document model's `Shape`/`Chart` blocks
   satisfy them structurally, and a Slides model can too.
 - **Tables** — `tables.ts`: border/alignment/width-mode types, grid limits,
-  cell-range arithmetic, DOM resize previews. Cell *content* stays
-  product-typed (a document cell holds paragraphs) and out of core.
+  cell-range arithmetic, the merged-cell owner grid (`computeOwnerGrid`,
+  structural over any row/cell shape), DOM resize previews. Cell *content*
+  stays product-typed (a document cell holds paragraphs) and out of core.
 - **Lists** — `lists.ts` (types, marker styles, ordinal formatting, level
   planning), `listDefinitions.ts` (presets, marker composition, instance
   counters). Deriving markers by walking a document stays in `lib/lists.ts`.
-- **Media** — `media.ts` (MediaPart, acceptance rules, fit math),
+- **Media** — `media.ts` (MediaPart, acceptance rules, fit math, the
+  content-type ↔ file-extension mapping both package formats share),
   `imageDimensions.ts`, `svgToPng.ts`.
 - **Text** — `grapheme.ts`, `marks.ts`, `autocorrect.ts`,
   `specialCharacters.ts`, `language.ts`, `fonts.ts` (the standard catalogue).
@@ -32,11 +34,15 @@ What lives here, by area:
   DOM measurers; the pagination engine itself is document-shaped and stays
   in `lib/pagination.ts`).
 - **Package plumbing** — `zip.ts`, `zipWriter.ts`, `xml.ts` (parsing, OPC
-  relationships, canonicalization), `equality.ts` (equalBytes). Shared by
-  OOXML and ODF packages of any product (`.pptx`/`.odp` included).
+  relationships, canonicalization, the XML escape family — the canonical
+  text/attribute pair plus the writers' full-entity `escapeXml`),
+  `equality.ts` (equalBytes). Shared by OOXML and ODF packages of any
+  product (`.pptx`/`.odp` included).
 - **App plumbing** — `idb.ts` (generic IndexedDB layer), `idleScheduler.ts`,
   `autosaveScheduler.ts`, `versionCadenceScheduler.ts`, `editLock.ts`,
-  `platform.ts`, `colors.ts`, `commentIdentity.ts`, `menuBar.ts`.
+  `platform.ts`, `colors.ts`, `commentIdentity.ts`, `menuBar.ts`,
+  `fileReader.ts` (File → ArrayBuffer), `arrayWindow.ts`
+  (reference-equality array windowing for diff engines).
 
 Known candidates deliberately not (yet) extracted: `textMetrics.ts`'s wrap
 engine (typed against `Paragraph`/`RunFormatting`), the pagination engine,

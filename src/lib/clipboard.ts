@@ -8,14 +8,15 @@
 // The paste commands follow commands.ts's immutability contract: containers
 // are cloned, blocks are replaced (never mutated), untouched paragraphs are
 // shared by reference with the input model.
-import type {
-  DocumentModel,
-  Paragraph,
-  ParagraphAlignment,
-  ParagraphFormatting,
-  PendingFormat,
-  Run,
-  RunFormatting,
+import {
+  cloneContainers,
+  type DocumentModel,
+  type Paragraph,
+  type ParagraphAlignment,
+  type ParagraphFormatting,
+  type PendingFormat,
+  type Run,
+  type RunFormatting,
 } from "./documentModel";
 import {
   applyFormatPatch,
@@ -42,20 +43,6 @@ import { orderedRange, type CommandResult, type ModelSelection } from "./command
  * `navigator.clipboard.read()/write()` accept a fixed allowlist of types,
  * so the async API is never used for the internal flavour. */
 export const DOC_MODEL_MIME = "application/x-docu-edit-docmodel+json";
-
-// commands.ts's container clone, restated here because that module's
-// undo-registry guard test bars exporting helpers: the model object, its
-// sections array, each section and its blocks array are cloned; blocks and
-// everything below stay shared with the input model.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
 
 /** The message shown when an image paste is gated (AC-46). SPEC-024 replaces
  * this path with a real image insert. */

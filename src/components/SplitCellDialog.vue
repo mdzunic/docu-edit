@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, useTemplateRef } from "vue";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Split cell…" dialog (SPEC-023 AC-8, AC-9): asks for the number of
 // rows and columns to split the selected cell into. OK emits the pair for
-// the parent to apply; Cancel just closes.
+// the parent to apply; Cancel just closes. BaseDialog owns the shell,
+// Escape and initial focus (the [autofocus] rows input).
 const emit = defineEmits(["apply", "cancel"]);
 
 const rows = ref("1");
@@ -11,9 +13,11 @@ const cols = ref("2");
 
 const rowsInput = useTemplateRef("rowsInput");
 
+// BaseDialog focuses the [autofocus] rows input; selecting the prefilled
+// count on top of that (type-to-replace) is this dialog's own one-shot
+// behaviour.
 onMounted(async () => {
   await nextTick();
-  rowsInput.value?.focus();
   rowsInput.value?.select();
 });
 
@@ -47,105 +51,68 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="split-cell-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Split cell"
+    testid="split-cell-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Split cell"
-    >
-      <h2 class="dialog-title">
-        Split cell
-      </h2>
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Number of rows</span>
-          <input
-            ref="rowsInput"
-            v-model="rows"
-            class="field-input"
-            data-testid="split-cell-rows"
-            type="number"
-            min="1"
-            :max="MAX_SPLIT"
-            @keydown.enter="apply"
-          >
-        </label>
-        <label class="field">
-          <span class="field-label">Number of columns</span>
-          <input
-            v-model="cols"
-            class="field-input"
-            data-testid="split-cell-cols"
-            type="number"
-            min="1"
-            :max="MAX_SPLIT"
-            @keydown.enter="apply"
-          >
-        </label>
-      </div>
-      <p
-        v-if="error()"
-        class="dialog-error"
-        data-testid="split-cell-error"
-      >
-        {{ error() }}
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="split-cell-cancel"
-          @click="emit('cancel')"
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Number of rows</span>
+        <input
+          ref="rowsInput"
+          v-model="rows"
+          class="field-input"
+          data-testid="split-cell-rows"
+          type="number"
+          min="1"
+          :max="MAX_SPLIT"
+          autofocus
+          @keydown.enter="apply"
         >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="split-cell-apply"
-          :disabled="!!error()"
-          @click="apply"
+      </label>
+      <label class="field">
+        <span class="field-label">Number of columns</span>
+        <input
+          v-model="cols"
+          class="field-input"
+          data-testid="split-cell-cols"
+          type="number"
+          min="1"
+          :max="MAX_SPLIT"
+          @keydown.enter="apply"
         >
-          OK
-        </button>
-      </div>
+      </label>
     </div>
-  </div>
+    <p
+      v-if="error()"
+      class="dialog-error"
+      data-testid="split-cell-error"
+    >
+      {{ error() }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="split-cell-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="split-cell-apply"
+        :disabled="!!error()"
+        @click="apply"
+      >
+        OK
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 20rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .field-row {
   display: flex;
   gap: 0.75rem;
@@ -178,13 +145,6 @@ function apply() {
   margin: 0.5rem 0 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

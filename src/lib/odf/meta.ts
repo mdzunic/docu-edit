@@ -15,17 +15,8 @@ import type {
   ExtraMetadataField,
   UnsupportedCustomProperty,
 } from "../documentModel";
-import { childElements, parseXml, serializeElement, XmlParseError } from "../core/xml";
+import { childElements, escapeXml, parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { DC_NAMESPACE, META_NAMESPACE, OFFICE_NAMESPACE } from "./xml";
-
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
 
 /** A timestamp in the W3CDTF profile meta.xml requires (whole seconds, UTC),
  * e.g. "2026-08-03T12:00:00Z". */

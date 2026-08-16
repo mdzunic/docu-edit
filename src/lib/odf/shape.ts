@@ -6,7 +6,7 @@
 import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
-import { firstChildElement } from "../core/xml";
+import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import {
   DRAW_NAMESPACE,
@@ -263,24 +263,16 @@ export function parseShapeElement(
   return { shape };
 }
 
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function graphicPropertiesXml(shape: Shape): string {
   const fillAttrs = shape.fill
-    ? ` draw:fill="solid" draw:fill-color="${escapeXml(shape.fill)}"`
+    ? ` draw:fill="solid" draw:fill-color="${escapeXmlAttribute(shape.fill)}"`
     : ' draw:fill="none"';
   let strokeAttrs = ' draw:stroke="none"';
   if (shape.outline) {
     const widthCm = (shape.outline.widthPt / 72) * 2.54;
     strokeAttrs =
       ` draw:stroke="${shape.outline.dash === "solid" ? "solid" : "dash"}"` +
-      ` svg:stroke-color="${escapeXml(shape.outline.color)}"` +
+      ` svg:stroke-color="${escapeXmlAttribute(shape.outline.color)}"` +
       ` svg:stroke-width="${cmToOdfLength(widthCm)}"`;
   }
   let wrapAttrs = "";
@@ -300,7 +292,7 @@ function graphicPropertiesXml(shape: Shape): string {
  * its own automatic style (no cross-shape dedup, unlike AutomaticStyles'
  * cached per-wrap-mode image styles) since fill/outline/wrap vary per shape. */
 export function shapeGraphicStyleXml(name: string, shape: Shape): string {
-  return `<style:style style:name="${escapeXml(name)}"${SHAPE_XMLNS} style:family="graphic" style:parent-style-name="Graphics">${graphicPropertiesXml(shape)}</style:style>`;
+  return `<style:style style:name="${escapeXmlAttribute(name)}"${SHAPE_XMLNS} style:family="graphic" style:parent-style-name="Graphics">${graphicPropertiesXml(shape)}</style:style>`;
 }
 
 export interface OdfShapeTextWriteContext {
@@ -325,7 +317,7 @@ function textBoxXml(shape: Shape, ctx: OdfShapeTextWriteContext): string {
  * (see shapeGraphicStyleXml). */
 export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTextWriteContext): string {
   const anchorType = shape.wrap === "inline" ? "as-char" : "paragraph";
-  const descXml = shape.altText ? `<svg:desc>${escapeXml(shape.altText)}</svg:desc>` : "";
+  const descXml = shape.altText ? `<svg:desc>${escapeXmlAttribute(shape.altText)}</svg:desc>` : "";
   const groupAttr = shape.groupOrdinal !== undefined ? ` de:group="${shape.groupOrdinal}"` : "";
   const rotationAttr = shape.rotationDeg ? ` de:rotation="${shape.rotationDeg}"` : "";
   const deXmlns = groupAttr || rotationAttr ? ` xmlns:de="${DE_NAMESPACE}"` : "";
@@ -336,7 +328,7 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
   if (LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml) {
     const markerAttr = shape.geometry === "arrow" ? ' draw:marker-end="Arrow" draw:marker-end-width="0.3cm"' : "";
     return (
-      `<draw:line${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXml(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
+      `<draw:line${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
       ` svg:x1="${cmToOdfLength(xCm ?? 0)}" svg:y1="${cmToOdfLength(yCm ?? 0)}"` +
       ` svg:x2="${cmToOdfLength((xCm ?? 0) + shape.widthCm)}" svg:y2="${cmToOdfLength((yCm ?? 0) + shape.heightCm)}"` +
       `${markerAttr}>` +
@@ -347,7 +339,7 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
 
   const geometryXml = shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"/>`;
   return (
-    `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXml(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
+    `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
     `${posAttrs} svg:width="${cmToOdfLength(shape.widthCm)}" svg:height="${cmToOdfLength(shape.heightCm)}">` +
     descXml +
     textBoxXml(shape, ctx) +

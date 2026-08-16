@@ -3,9 +3,9 @@
 // currently anchored (visible) from the live CommentAnchor points, and the
 // document-order listing the comments-only view and margin pane both read.
 // Framework-free like links.ts/notes.ts, and — like links.ts — a command
-// module OUTSIDE commands.ts, with its own cloneContainers copy (see that
-// file's comment on the split with commands.undo.spec.ts's completeness
-// guard).
+// module OUTSIDE commands.ts, built on documentModel.ts's shared
+// cloneContainers/forEachParagraph (see the comment there on the split with
+// commands.undo.spec.ts's completeness guard).
 //
 // Visibility is always DERIVED from the live commentAnchors side-lists,
 // never cascade-deleted when text is edited: a thread survives in
@@ -15,12 +15,8 @@
 // footnotes (SPEC-031). `visibleCommentThreads` is this module's
 // `referencedNotes` equivalent.
 import {
-  isBreak,
-  isChart,
-  isImage,
-  isShape,
-  isTable,
-  isToc,
+  cloneContainers,
+  forEachParagraph,
   type CommentAnchor,
   type CommentMessage,
   type CommentThread,
@@ -52,48 +48,6 @@ export function createThreadId(): string {
  * reply). */
 export function createMessageId(): string {
   return `comment-msg-${crypto.randomUUID()}`;
-}
-
-// Same container-cloning as commands.ts/links.ts (see commands.ts's header
-// comment for why this is duplicated rather than imported).
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
-
-// Comments anchor only into the main body flow (section blocks and table
-// cells) — the same scope lib/links.ts's bookmarks use, and for the same
-// reason: header/footer content is edited through a throwaway synthetic
-// single-section model (commands.ts's withHeaderFooterModel), so it is
-// never reachable from `model.sections` walks like this one.
-function forEachParagraph(
-  model: DocumentModel,
-  visit: (paragraph: Paragraph, address: ParagraphAddress) => void,
-): void {
-  model.sections.forEach((section, sectionIndex) => {
-    section.blocks.forEach((block, blockIndex) => {
-      if (isTable(block)) {
-        block.rows.forEach((row, rowIndex) => {
-          row.cells.forEach((cell, colIndex) => {
-            cell.blocks.forEach((paragraph, cellBlockIndex) => {
-              visit(paragraph, {
-                section: sectionIndex,
-                block: blockIndex,
-                cell: { row: rowIndex, col: colIndex, block: cellBlockIndex },
-              });
-            });
-          });
-        });
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block)) {
-        visit(block, { section: sectionIndex, block: blockIndex });
-      }
-    });
-  });
 }
 
 // --- deriving visibility from live anchors ----------------------------------

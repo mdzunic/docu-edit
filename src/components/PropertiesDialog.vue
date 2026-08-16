@@ -5,7 +5,9 @@
 // comments and track changes, SPEC-038/SPEC-039) and the "Remove personal
 // information on save" toggle (AC-12a/AC-15: neither ambiguity in the intake
 // names a specific tab for these, so they live outside the tabstrip like a
-// settings panel's shared footer).
+// settings panel's shared footer). BaseDialog owns the shell, Escape and
+// initial focus (the [autofocus] Close button, as this dialog's own
+// onMounted used to arrange).
 //
 // Every field is committed live (no separate Save/Cancel): each edit clones
 // the local `propertiesDraft`, plain-JSON-serialised so nothing reactive
@@ -19,7 +21,7 @@
 // (propertiesDraft's shape, the per-row/new-property drafts) get it from a
 // typed factory function declared in a plain `.ts` module instead — the
 // same trick documentModel.ts's noActiveNote/noBlocks use.
-import { computed, nextTick, onMounted, reactive, ref, useTemplateRef, watch } from "vue";
+import { computed, nextTick, reactive, ref, useTemplateRef, watch } from "vue";
 import { asCustomPropertyType, cloneDocumentProperties, CUSTOM_PROPERTY_TYPES } from "../lib/documentModel";
 import {
   canonicalCustomPropertyValue,
@@ -36,6 +38,7 @@ import { odtFileName } from "../lib/odf/writer";
 import { mdFileName } from "../lib/md/writer";
 import { CORE_EXTRA_FIELD_LABELS } from "../lib/docx/docProps";
 import { META_EXTRA_FIELD_LABELS } from "../lib/odf/meta";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
   model: { type: Object, required: true },
@@ -265,454 +268,418 @@ function removeCustomProperty(index = 0) {
   Object.assign(rowDrafts, shifted);
   commit();
 }
-
-const closeButton = useTemplateRef("closeButton");
-onMounted(async () => {
-  await nextTick();
-  closeButton.value?.focus();
-});
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="properties-dialog"
-    @click.self="emit('close')"
-    @keydown.escape="emit('close')"
+  <BaseDialog
+    title="Document properties"
+    testid="properties-dialog"
+    @dismiss="emit('close')"
   >
     <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Document properties"
+      ref="tablist"
+      class="tablist"
+      role="tablist"
+      aria-label="Document properties tabs"
     >
-      <h2 class="dialog-title">
-        Document properties
-      </h2>
+      <button
+        v-for="tab in TABS"
+        :id="`properties-tab-${tab.id}`"
+        :key="tab.id"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === tab.id ? 'true' : 'false'"
+        :aria-controls="`properties-panel-${tab.id}`"
+        :tabindex="activeTab === tab.id ? 0 : -1"
+        class="tab"
+        :class="{ active: activeTab === tab.id }"
+        :data-testid="`properties-tab-${tab.id}`"
+        @click="activeTab = tab.id"
+        @keydown="onTabKeydown"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <div class="tab-panels">
+      <div
+        v-show="activeTab === 'general'"
+        id="properties-panel-general"
+        role="tabpanel"
+        aria-labelledby="properties-tab-general"
+        data-testid="properties-panel-general"
+      >
+        <dl class="fields-grid">
+          <dt>File name</dt>
+          <dd data-testid="properties-general-filename">
+            {{ fileName }}
+          </dd>
+          <dt>Format</dt>
+          <dd data-testid="properties-general-format">
+            {{ formatLabel }}
+          </dd>
+          <dt>Size</dt>
+          <dd data-testid="properties-general-size">
+            {{ sizeLabel }}
+          </dd>
+          <dt>Created</dt>
+          <dd data-testid="properties-general-created">
+            {{ createdLabel }}
+          </dd>
+          <dt>Modified</dt>
+          <dd data-testid="properties-general-modified">
+            {{ modifiedLabel }}
+          </dd>
+        </dl>
+      </div>
 
       <div
-        ref="tablist"
-        class="tablist"
-        role="tablist"
-        aria-label="Document properties tabs"
+        v-show="activeTab === 'description'"
+        id="properties-panel-description"
+        role="tabpanel"
+        aria-labelledby="properties-tab-description"
+        data-testid="properties-panel-description"
       >
-        <button
-          v-for="tab in TABS"
-          :id="`properties-tab-${tab.id}`"
-          :key="tab.id"
-          type="button"
-          role="tab"
-          :aria-selected="activeTab === tab.id ? 'true' : 'false'"
-          :aria-controls="`properties-panel-${tab.id}`"
-          :tabindex="activeTab === tab.id ? 0 : -1"
-          class="tab"
-          :class="{ active: activeTab === tab.id }"
-          :data-testid="`properties-tab-${tab.id}`"
-          @click="activeTab = tab.id"
-          @keydown="onTabKeydown"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
-
-      <div class="tab-panels">
-        <div
-          v-show="activeTab === 'general'"
-          id="properties-panel-general"
-          role="tabpanel"
-          aria-labelledby="properties-tab-general"
-          data-testid="properties-panel-general"
-        >
-          <dl class="fields-grid">
-            <dt>File name</dt>
-            <dd data-testid="properties-general-filename">
-              {{ fileName }}
-            </dd>
-            <dt>Format</dt>
-            <dd data-testid="properties-general-format">
-              {{ formatLabel }}
-            </dd>
-            <dt>Size</dt>
-            <dd data-testid="properties-general-size">
-              {{ sizeLabel }}
-            </dd>
-            <dt>Created</dt>
-            <dd data-testid="properties-general-created">
-              {{ createdLabel }}
-            </dd>
-            <dt>Modified</dt>
-            <dd data-testid="properties-general-modified">
-              {{ modifiedLabel }}
-            </dd>
-          </dl>
-        </div>
-
-        <div
-          v-show="activeTab === 'description'"
-          id="properties-panel-description"
-          role="tabpanel"
-          aria-labelledby="properties-tab-description"
-          data-testid="properties-panel-description"
-        >
-          <label
-            class="dialog-label"
-            for="properties-title"
-          >Title</label>
-          <input
-            id="properties-title"
-            v-model="propertiesDraft.title"
-            class="dialog-input"
-            data-testid="properties-title-input"
-            @change="commit"
-          >
-
-          <label
-            class="dialog-label"
-            for="properties-subject"
-          >Subject</label>
-          <input
-            id="properties-subject"
-            v-model="propertiesDraft.subject"
-            class="dialog-input"
-            data-testid="properties-subject-input"
-            @change="commit"
-          >
-
-          <label
-            class="dialog-label"
-            for="properties-keywords"
-          >Keywords</label>
-          <input
-            id="properties-keywords"
-            v-model="propertiesDraft.keywords"
-            class="dialog-input"
-            data-testid="properties-keywords-input"
-            @change="commit"
-          >
-
-          <label
-            class="dialog-label"
-            for="properties-comments"
-          >Comments</label>
-          <textarea
-            id="properties-comments"
-            v-model="propertiesDraft.comments"
-            class="dialog-input dialog-textarea"
-            data-testid="properties-comments-input"
-            @change="commit"
-          />
-
-          <label
-            class="dialog-label"
-            for="properties-author"
-          >Author</label>
-          <input
-            id="properties-author"
-            v-model="propertiesDraft.author"
-            class="dialog-input"
-            data-testid="properties-author-input"
-            @change="commit"
-          >
-
-          <label
-            class="dialog-label"
-            for="properties-last-modified-by"
-          >Last modified by</label>
-          <input
-            id="properties-last-modified-by"
-            v-model="propertiesDraft.lastModifiedBy"
-            class="dialog-input"
-            data-testid="properties-last-modified-by-input"
-            @change="commit"
-          >
-
-          <div
-            v-if="extraFields.length > 0"
-            class="extra-fields"
-            data-testid="properties-extra-fields"
-          >
-            <h3 class="section-title">
-              Other properties
-            </h3>
-            <p class="hint">
-              Read from the file; not editable here, but preserved when you save.
-            </p>
-            <dl class="fields-grid">
-              <template
-                v-for="field in extraFields"
-                :key="field.name"
-              >
-                <dt>{{ extraFieldLabel(field.name) }}</dt>
-                <dd>{{ field.value }}</dd>
-              </template>
-            </dl>
-          </div>
-        </div>
-
-        <div
-          v-show="activeTab === 'statistics'"
-          id="properties-panel-statistics"
-          role="tabpanel"
-          aria-labelledby="properties-tab-statistics"
-          data-testid="properties-panel-statistics"
-        >
-          <dl class="fields-grid">
-            <dt>Pages</dt>
-            <dd data-testid="properties-statistics-pages">
-              {{ pages }}
-            </dd>
-            <dt>Words</dt>
-            <dd data-testid="properties-statistics-words">
-              {{ stats.words }}
-            </dd>
-            <dt>Characters (no spaces)</dt>
-            <dd data-testid="properties-statistics-characters-without-spaces">
-              {{ stats.charactersWithoutSpaces }}
-            </dd>
-            <dt>Characters (with spaces)</dt>
-            <dd data-testid="properties-statistics-characters-with-spaces">
-              {{ stats.charactersWithSpaces }}
-            </dd>
-            <dt>Paragraphs</dt>
-            <dd data-testid="properties-statistics-paragraphs">
-              {{ stats.paragraphs }}
-            </dd>
-            <dt>Sentences</dt>
-            <dd data-testid="properties-statistics-sentences">
-              {{ stats.sentences }}
-            </dd>
-          </dl>
-        </div>
-
-        <div
-          v-show="activeTab === 'custom'"
-          id="properties-panel-custom"
-          role="tabpanel"
-          aria-labelledby="properties-tab-custom"
-          data-testid="properties-panel-custom"
-        >
-          <div
-            v-for="(property, index) in propertiesDraft.customProperties"
-            :key="index"
-            class="custom-property-row"
-            data-testid="custom-property-row"
-          >
-            <input
-              class="dialog-input"
-              :value="rowName(index)"
-              data-testid="custom-property-name"
-              aria-label="Custom property name"
-              @input="onRowNameEvent(index, $event)"
-            >
-            <span class="custom-property-type">{{ property.type }}</span>
-            <input
-              v-if="property.type !== 'boolean'"
-              class="dialog-input"
-              :value="rowValue(index)"
-              :placeholder="property.type === 'date' ? 'YYYY-MM-DD' : ''"
-              data-testid="custom-property-value"
-              aria-label="Custom property value"
-              @input="onRowValueEvent(index, $event)"
-            >
-            <select
-              v-else
-              class="dialog-input"
-              :value="rowValue(index)"
-              data-testid="custom-property-value"
-              aria-label="Custom property value"
-              @change="onRowValueEvent(index, $event)"
-            >
-              <option value="true">
-                Yes
-              </option>
-              <option value="false">
-                No
-              </option>
-            </select>
-            <button
-              type="button"
-              data-testid="custom-property-remove"
-              aria-label="Remove custom property"
-              @click="removeCustomProperty(index)"
-            >
-              Remove
-            </button>
-            <p
-              v-if="rowNameError(index)"
-              class="dialog-error"
-              data-testid="custom-property-name-error"
-            >
-              {{ rowNameError(index) }}
-            </p>
-            <p
-              v-if="rowValueError(index)"
-              class="dialog-error"
-              data-testid="custom-property-value-error"
-            >
-              {{ rowValueError(index) }}
-            </p>
-          </div>
-
-          <div
-            v-for="property in unsupportedCustomProperties"
-            :key="property.name"
-            class="custom-property-row unsupported"
-            data-testid="custom-property-unsupported-row"
-          >
-            <span>{{ property.name }}</span>
-            <span class="custom-property-type">{{ property.rawType }} (unsupported type, read-only)</span>
-          </div>
-
-          <h3 class="section-title">
-            Add a custom property
-          </h3>
-          <div class="custom-property-row">
-            <input
-              v-model="newProperty.name"
-              class="dialog-input"
-              placeholder="Name"
-              data-testid="custom-property-new-name"
-              @keydown.enter="addCustomProperty"
-            >
-            <select
-              v-model="newProperty.type"
-              class="dialog-input"
-              data-testid="custom-property-new-type"
-            >
-              <option
-                v-for="type in CUSTOM_PROPERTY_TYPES"
-                :key="type"
-                :value="type"
-              >
-                {{ type }}
-              </option>
-            </select>
-            <input
-              v-if="newProperty.type !== 'boolean'"
-              v-model="newProperty.value"
-              class="dialog-input"
-              :placeholder="newProperty.type === 'date' ? 'YYYY-MM-DD' : 'Value'"
-              data-testid="custom-property-new-value"
-              @keydown.enter="addCustomProperty"
-            >
-            <select
-              v-else
-              v-model="newProperty.value"
-              class="dialog-input"
-              data-testid="custom-property-new-value"
-            >
-              <option value="true">
-                Yes
-              </option>
-              <option value="false">
-                No
-              </option>
-            </select>
-            <button
-              type="button"
-              class="primary"
-              data-testid="custom-property-add"
-              :disabled="!canAddProperty"
-              @click="addCustomProperty"
-            >
-              Add
-            </button>
-          </div>
-          <p
-            v-if="newNameError"
-            class="dialog-error"
-            data-testid="custom-property-new-name-error"
-          >
-            {{ newNameError }}
-          </p>
-          <p
-            v-if="newProperty.value && newValueError"
-            class="dialog-error"
-            data-testid="custom-property-new-value-error"
-          >
-            {{ newValueError }}
-          </p>
-        </div>
-      </div>
-
-      <div class="dialog-footer">
         <label
           class="dialog-label"
-          for="properties-identity"
-        >Your name (used for comments and tracked changes)</label>
+          for="properties-title"
+        >Title</label>
         <input
-          id="properties-identity"
-          v-model="identityDraft"
+          id="properties-title"
+          v-model="propertiesDraft.title"
           class="dialog-input"
-          data-testid="properties-identity-input"
-          @change="commitIdentity"
-          @keydown.enter="commitIdentity"
+          data-testid="properties-title-input"
+          @change="commit"
         >
 
-        <label class="checkbox-field">
-          <input
-            type="checkbox"
-            :checked="removePersonalInfo"
-            data-testid="properties-remove-personal-info-toggle"
-            @change="onToggleRemovePersonalInfo"
-          >
-          <span>Remove personal information on save</span>
-        </label>
-        <p
-          v-if="removePersonalInfo"
-          class="hint"
-          data-testid="properties-remove-personal-info-note"
+        <label
+          class="dialog-label"
+          for="properties-subject"
+        >Subject</label>
+        <input
+          id="properties-subject"
+          v-model="propertiesDraft.subject"
+          class="dialog-input"
+          data-testid="properties-subject-input"
+          @change="commit"
         >
-          Removes the author and last-modified-by fields; replaces comment and
-          tracked-change authors with "Author 1", "Author 2", etc.; and
-          strips revision timestamps.
+
+        <label
+          class="dialog-label"
+          for="properties-keywords"
+        >Keywords</label>
+        <input
+          id="properties-keywords"
+          v-model="propertiesDraft.keywords"
+          class="dialog-input"
+          data-testid="properties-keywords-input"
+          @change="commit"
+        >
+
+        <label
+          class="dialog-label"
+          for="properties-comments"
+        >Comments</label>
+        <textarea
+          id="properties-comments"
+          v-model="propertiesDraft.comments"
+          class="dialog-input dialog-textarea"
+          data-testid="properties-comments-input"
+          @change="commit"
+        />
+
+        <label
+          class="dialog-label"
+          for="properties-author"
+        >Author</label>
+        <input
+          id="properties-author"
+          v-model="propertiesDraft.author"
+          class="dialog-input"
+          data-testid="properties-author-input"
+          @change="commit"
+        >
+
+        <label
+          class="dialog-label"
+          for="properties-last-modified-by"
+        >Last modified by</label>
+        <input
+          id="properties-last-modified-by"
+          v-model="propertiesDraft.lastModifiedBy"
+          class="dialog-input"
+          data-testid="properties-last-modified-by-input"
+          @change="commit"
+        >
+
+        <div
+          v-if="extraFields.length > 0"
+          class="extra-fields"
+          data-testid="properties-extra-fields"
+        >
+          <h3 class="section-title">
+            Other properties
+          </h3>
+          <p class="hint">
+            Read from the file; not editable here, but preserved when you save.
+          </p>
+          <dl class="fields-grid">
+            <template
+              v-for="field in extraFields"
+              :key="field.name"
+            >
+              <dt>{{ extraFieldLabel(field.name) }}</dt>
+              <dd>{{ field.value }}</dd>
+            </template>
+          </dl>
+        </div>
+      </div>
+
+      <div
+        v-show="activeTab === 'statistics'"
+        id="properties-panel-statistics"
+        role="tabpanel"
+        aria-labelledby="properties-tab-statistics"
+        data-testid="properties-panel-statistics"
+      >
+        <dl class="fields-grid">
+          <dt>Pages</dt>
+          <dd data-testid="properties-statistics-pages">
+            {{ pages }}
+          </dd>
+          <dt>Words</dt>
+          <dd data-testid="properties-statistics-words">
+            {{ stats.words }}
+          </dd>
+          <dt>Characters (no spaces)</dt>
+          <dd data-testid="properties-statistics-characters-without-spaces">
+            {{ stats.charactersWithoutSpaces }}
+          </dd>
+          <dt>Characters (with spaces)</dt>
+          <dd data-testid="properties-statistics-characters-with-spaces">
+            {{ stats.charactersWithSpaces }}
+          </dd>
+          <dt>Paragraphs</dt>
+          <dd data-testid="properties-statistics-paragraphs">
+            {{ stats.paragraphs }}
+          </dd>
+          <dt>Sentences</dt>
+          <dd data-testid="properties-statistics-sentences">
+            {{ stats.sentences }}
+          </dd>
+        </dl>
+      </div>
+
+      <div
+        v-show="activeTab === 'custom'"
+        id="properties-panel-custom"
+        role="tabpanel"
+        aria-labelledby="properties-tab-custom"
+        data-testid="properties-panel-custom"
+      >
+        <div
+          v-for="(property, index) in propertiesDraft.customProperties"
+          :key="index"
+          class="custom-property-row"
+          data-testid="custom-property-row"
+        >
+          <input
+            class="dialog-input"
+            :value="rowName(index)"
+            data-testid="custom-property-name"
+            aria-label="Custom property name"
+            @input="onRowNameEvent(index, $event)"
+          >
+          <span class="custom-property-type">{{ property.type }}</span>
+          <input
+            v-if="property.type !== 'boolean'"
+            class="dialog-input"
+            :value="rowValue(index)"
+            :placeholder="property.type === 'date' ? 'YYYY-MM-DD' : ''"
+            data-testid="custom-property-value"
+            aria-label="Custom property value"
+            @input="onRowValueEvent(index, $event)"
+          >
+          <select
+            v-else
+            class="dialog-input"
+            :value="rowValue(index)"
+            data-testid="custom-property-value"
+            aria-label="Custom property value"
+            @change="onRowValueEvent(index, $event)"
+          >
+            <option value="true">
+              Yes
+            </option>
+            <option value="false">
+              No
+            </option>
+          </select>
+          <button
+            type="button"
+            data-testid="custom-property-remove"
+            aria-label="Remove custom property"
+            @click="removeCustomProperty(index)"
+          >
+            Remove
+          </button>
+          <p
+            v-if="rowNameError(index)"
+            class="dialog-error"
+            data-testid="custom-property-name-error"
+          >
+            {{ rowNameError(index) }}
+          </p>
+          <p
+            v-if="rowValueError(index)"
+            class="dialog-error"
+            data-testid="custom-property-value-error"
+          >
+            {{ rowValueError(index) }}
+          </p>
+        </div>
+
+        <div
+          v-for="property in unsupportedCustomProperties"
+          :key="property.name"
+          class="custom-property-row unsupported"
+          data-testid="custom-property-unsupported-row"
+        >
+          <span>{{ property.name }}</span>
+          <span class="custom-property-type">{{ property.rawType }} (unsupported type, read-only)</span>
+        </div>
+
+        <h3 class="section-title">
+          Add a custom property
+        </h3>
+        <div class="custom-property-row">
+          <input
+            v-model="newProperty.name"
+            class="dialog-input"
+            placeholder="Name"
+            data-testid="custom-property-new-name"
+            @keydown.enter="addCustomProperty"
+          >
+          <select
+            v-model="newProperty.type"
+            class="dialog-input"
+            data-testid="custom-property-new-type"
+          >
+            <option
+              v-for="type in CUSTOM_PROPERTY_TYPES"
+              :key="type"
+              :value="type"
+            >
+              {{ type }}
+            </option>
+          </select>
+          <input
+            v-if="newProperty.type !== 'boolean'"
+            v-model="newProperty.value"
+            class="dialog-input"
+            :placeholder="newProperty.type === 'date' ? 'YYYY-MM-DD' : 'Value'"
+            data-testid="custom-property-new-value"
+            @keydown.enter="addCustomProperty"
+          >
+          <select
+            v-else
+            v-model="newProperty.value"
+            class="dialog-input"
+            data-testid="custom-property-new-value"
+          >
+            <option value="true">
+              Yes
+            </option>
+            <option value="false">
+              No
+            </option>
+          </select>
+          <button
+            type="button"
+            class="primary"
+            data-testid="custom-property-add"
+            :disabled="!canAddProperty"
+            @click="addCustomProperty"
+          >
+            Add
+          </button>
+        </div>
+        <p
+          v-if="newNameError"
+          class="dialog-error"
+          data-testid="custom-property-new-name-error"
+        >
+          {{ newNameError }}
+        </p>
+        <p
+          v-if="newProperty.value && newValueError"
+          class="dialog-error"
+          data-testid="custom-property-new-value-error"
+        >
+          {{ newValueError }}
         </p>
       </div>
-
-      <div class="dialog-actions">
-        <button
-          ref="closeButton"
-          type="button"
-          class="primary"
-          data-testid="properties-close"
-          @click="emit('close')"
-        >
-          Close
-        </button>
-      </div>
     </div>
-  </div>
+
+    <div class="dialog-footer">
+      <label
+        class="dialog-label"
+        for="properties-identity"
+      >Your name (used for comments and tracked changes)</label>
+      <input
+        id="properties-identity"
+        v-model="identityDraft"
+        class="dialog-input"
+        data-testid="properties-identity-input"
+        @change="commitIdentity"
+        @keydown.enter="commitIdentity"
+      >
+
+      <label class="checkbox-field">
+        <input
+          type="checkbox"
+          :checked="removePersonalInfo"
+          data-testid="properties-remove-personal-info-toggle"
+          @change="onToggleRemovePersonalInfo"
+        >
+        <span>Remove personal information on save</span>
+      </label>
+      <p
+        v-if="removePersonalInfo"
+        class="hint"
+        data-testid="properties-remove-personal-info-note"
+      >
+        Removes the author and last-modified-by fields; replaces comment and
+        tracked-change authors with "Author 1", "Author 2", etc.; and
+        strips revision timestamps.
+      </p>
+    </div>
+
+    <template #actions>
+      <!-- [autofocus]: BaseDialog's initial focus lands here, as this
+           dialog's own onMounted used to arrange. -->
+      <button
+        type="button"
+        class="primary"
+        data-testid="properties-close"
+        autofocus
+        @click="emit('close')"
+      >
+        Close
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
+/* Fixed 34rem panel laid out as a column so .tab-panels can flex-scroll
+   between the tabstrip and the footer, capped at 85vh — the panel itself
+   never scrolls (only the active tab's panel does). */
+:deep(.dialog) {
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
   width: 34rem;
-  max-width: 90vw;
   max-height: 85vh;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .tablist {
@@ -841,13 +808,6 @@ onMounted(async () => {
   font-size: 0.8125rem;
   color: #3c4043;
   margin-top: 0.75rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
 }
 
 .dialog-actions button {

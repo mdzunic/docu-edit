@@ -6,7 +6,9 @@
 // reference-counted media cleanup (AC-31, AC-32) — the character-level
 // commands stay in commands.ts/textEditing.ts, exactly like tables.ts.
 import {
+  cloneContainers,
   isImage,
+  splitParagraphAt,
   type Block,
   type DocumentModel,
   type Image,
@@ -15,54 +17,10 @@ import {
 } from "./documentModel";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
-
-
-// commands.ts's container clone, restated for the reason clipboard.ts and
-// tables.ts each restate it: the undo-registry guard test bars commands.ts
-// from exporting helpers.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
-}
+import { referencedMediaIds } from "./mediaRefs";
 
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
-}
-
-// A paragraph split into two around a character offset — restated from
-// tables.ts's splitParagraphAt (that primitive writes into the model in
-// place, this one doesn't touch the model yet).
-function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
-  let consumed = 0;
-  const before: Paragraph = { ...paragraph, runs: [] };
-  const after: Paragraph = {
-    ...paragraph,
-    runs: [],
-    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
-  };
-  const beforeRuns = [];
-  const afterRuns = [];
-  for (const run of paragraph.runs) {
-    const end = consumed + run.text.length;
-    if (end <= offset) {
-      beforeRuns.push(run);
-    } else if (consumed >= offset) {
-      afterRuns.push(run);
-    } else {
-      const cut = offset - consumed;
-      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
-      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
-    }
-    consumed = end;
-  }
-  before.runs = beforeRuns;
-  after.runs = afterRuns;
-  return [before, after];
 }
 
 import { pxToCm } from "./core/units";
@@ -186,31 +144,19 @@ function replaceImage(model: DocumentModel, location: ImageLocation, next: Image
   model.sections[location.section].blocks.splice(location.block, 1, next);
 }
 
-/** Every media id an image block in the document still references. */
-function referencedMediaIds(model: DocumentModel): Set<string> {
-  const ids = new Set<string>();
-  for (const section of model.sections) {
-    for (const block of section.blocks) {
-      if (isImage(block)) {
-        ids.add(block.mediaId);
-      }
-    }
-  }
-  return ids;
-}
-
 /** Drops every `model.media` entry no image block references any more — the
  * reference-counted cleanup AC-31/AC-32 describe as happening "on save", but
  * performed here (at the point a use is actually removed) so the model
  * itself never carries dead media, and so undo restores it for free (undo
  * snapshots the whole model, see commands.ts's header comment). An image
  * used twice keeps its media entry as long as either use remains (AC-32),
- * since referencedMediaIds counts every remaining image block. */
+ * since mediaRefs.ts's referencedMediaIds counts every remaining image
+ * block. */
 function pruneUnreferencedMedia(model: DocumentModel): void {
   if (!model.media || model.media.length === 0) {
     return;
   }
-  const referenced = referencedMediaIds(model);
+  const referenced = new Set(referencedMediaIds(model));
   const pruned = model.media.filter((part) => referenced.has(part.mediaId));
   if (pruned.length !== model.media.length) {
     model.media = pruned;

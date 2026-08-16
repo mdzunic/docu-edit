@@ -3,10 +3,11 @@
 // in, computes which body blocks a collapsed heading hides, and the
 // drag-reorder command that moves a heading (with all its content) among its
 // siblings. Framework-free like every lib module, and — like lib/toc.ts and
-// lib/links.ts — a command module OUTSIDE commands.ts with its own
-// cloneContainers copy, so commands.undo.spec.ts's completeness guard (scoped
-// to commands.ts's own exports) never has to account for moveHeading.
-import { type Block, type DocumentModel } from "./documentModel";
+// lib/links.ts — a command module OUTSIDE commands.ts built on
+// documentModel.ts's shared cloneContainers, so commands.undo.spec.ts's
+// completeness guard (scoped to commands.ts's own exports) never has to
+// account for moveHeading.
+import { cloneContainers, type Block, type DocumentModel } from "./documentModel";
 import { listHeadings, type HeadingTarget } from "./links";
 import { compareCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult } from "./commands";
@@ -223,20 +224,6 @@ export function noAnchor(): string | null {
 
 export function noDropPosition(): DropPosition | null {
   return null;
-}
-
-// Same container-cloning as commands.ts (see that file's immutability
-// contract): a shallow copy of the model, every section and every section's
-// `blocks` array, with the block objects themselves shared by reference — a
-// local copy for the same reason toc.ts/links.ts keep one.
-function cloneContainers(model: DocumentModel): DocumentModel {
-  return {
-    ...model,
-    sections: model.sections.map((section) => ({
-      ...section,
-      blocks: [...section.blocks],
-    })),
-  };
 }
 
 // The nearest preceding heading of a strictly shallower level defines a

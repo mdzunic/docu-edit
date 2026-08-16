@@ -11,6 +11,8 @@
 // also the whole picker list for a blank document.
 import {
   HORIZONTAL_RULE_STYLE_ID,
+  mergeParagraphFormatting,
+  mergeRunFormatting,
   type DocumentModel,
   type NamedStyle,
   type Paragraph,
@@ -20,7 +22,6 @@ import {
   type StyleType,
 } from "./documentModel";
 import { type BorderLineStyle, type CellBorders } from "./core/tables";
-import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 import { runStyle } from "./renderFormatting";
 
 /** The id of the style every unstyled paragraph implicitly has. Word's

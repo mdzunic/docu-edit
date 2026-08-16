@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { computed, ref } from "vue";
 import { validateBookmarkName } from "../lib/links";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Insert bookmark" dialog (SPEC-025 AC-22, AC-26..28): names the caret
 // location. Validation (no spaces, unique against the document's existing
 // names) lives in lib/links.ts; a conflict shows the inline error (AC-28).
-// Runtime prop declarations — see AppShell.vue's espree comment.
+// BaseDialog owns the shell, Escape and initial focus (the [autofocus] name
+// input). Runtime prop declarations — see AppShell.vue's espree comment.
 const props = defineProps({
   /** The document's current bookmark names, for uniqueness validation. */
   existingNames: { type: Array, default: () => [] },
@@ -14,12 +16,6 @@ const props = defineProps({
 const emit = defineEmits(["save", "cancel"]);
 
 const draft = ref("");
-const input = useTemplateRef("input");
-
-onMounted(async () => {
-  await nextTick();
-  input.value?.focus();
-});
 
 const error = computed(() =>
   draft.value === "" ? "" : validateBookmarkName(draft.value, props.existingNames.map(String)),
@@ -36,90 +32,52 @@ function save() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="bookmark-dialog"
-    @click.self="emit('cancel')"
+  <BaseDialog
+    title="Insert bookmark"
+    testid="bookmark-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Insert bookmark"
-      @keydown.escape.stop="emit('cancel')"
+    <label
+      class="dialog-label"
+      for="bookmark-name-input"
+    >Bookmark name</label>
+    <input
+      id="bookmark-name-input"
+      v-model="draft"
+      class="dialog-input"
+      data-testid="bookmark-name-input"
+      autofocus
+      @keydown.enter="save"
     >
-      <h2 class="dialog-title">
-        Insert bookmark
-      </h2>
-      <label
-        class="dialog-label"
-        for="bookmark-name-input"
-      >Bookmark name</label>
-      <input
-        id="bookmark-name-input"
-        ref="input"
-        v-model="draft"
-        class="dialog-input"
-        data-testid="bookmark-name-input"
-        @keydown.enter="save"
+    <p
+      v-if="error"
+      class="dialog-error"
+      data-testid="bookmark-error"
+    >
+      {{ error }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="bookmark-cancel"
+        @click="emit('cancel')"
       >
-      <p
-        v-if="error"
-        class="dialog-error"
-        data-testid="bookmark-error"
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="bookmark-save"
+        :disabled="!canSave"
+        @click="save"
       >
-        {{ error }}
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="bookmark-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="bookmark-save"
-          :disabled="!canSave"
-          @click="save"
-        >
-          Add
-        </button>
-      </div>
-    </div>
-  </div>
+        Add
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 20rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .dialog-label {
   display: block;
   margin: 0.5rem 0 0.25rem;
@@ -140,13 +98,6 @@ function save() {
   margin: 0.5rem 0 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

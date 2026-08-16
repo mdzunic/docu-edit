@@ -4,10 +4,17 @@
 // flow. Lists the six shipped templates plus any user templates ("Save as
 // template"), each with a short preview, lets a user template be renamed or
 // deleted in place, and offers importing a .dotx/.ott file as a template.
+// BaseDialog owns the shell and — new with the migration — Escape-to-close;
+// its #header-extra slot carries the import and ✕ close buttons on the
+// title row. The nested rename/delete dialogs are template siblings of the
+// gallery's BaseDialog (a fragment root), not children of its panel, so the
+// gallery's focus trap never reaches into them — they were siblings of the
+// panel before the migration too.
 import { computed, ref, useTemplateRef } from "vue";
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
 import { deleteTemplate, listUserTemplates, renameTemplate } from "../lib/templateStore";
 import { openTemplateFile } from "../lib/openDocument";
+import BaseDialog from "./BaseDialog.vue";
 import RenameDialog from "./RenameDialog.vue";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog.vue";
 
@@ -71,176 +78,137 @@ function confirmDelete() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="template-gallery-dialog"
-    @click.self="emit('close')"
+  <BaseDialog
+    title="New document"
+    testid="template-gallery-dialog"
+    @dismiss="emit('close')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="New document from template"
+    <template #header-extra>
+      <div class="header-actions">
+        <button
+          type="button"
+          class="import-button"
+          data-testid="template-gallery-import"
+          @click="pickTemplateFile"
+        >
+          Import template file…
+        </button>
+        <button
+          type="button"
+          class="close-button"
+          aria-label="Close"
+          data-testid="template-gallery-close"
+          @click="emit('close')"
+        >
+          ✕
+        </button>
+      </div>
+    </template>
+    <input
+      ref="fileInput"
+      type="file"
+      accept=".dotx,.ott"
+      data-testid="template-gallery-import-input"
+      class="visually-hidden"
+      @change="handleTemplateFileChosen"
     >
-      <div class="dialog-header">
-        <h2 class="dialog-title">
-          New document
-        </h2>
-        <div class="header-actions">
-          <button
-            type="button"
-            class="import-button"
-            data-testid="template-gallery-import"
-            @click="pickTemplateFile"
-          >
-            Import template file…
-          </button>
-          <button
-            type="button"
-            class="close-button"
-            aria-label="Close"
-            data-testid="template-gallery-close"
-            @click="emit('close')"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".dotx,.ott"
-        data-testid="template-gallery-import-input"
-        class="visually-hidden"
-        @change="handleTemplateFileChosen"
+    <p
+      v-if="importError"
+      class="import-error"
+      role="alert"
+      data-testid="template-gallery-import-error"
+    >
+      {{ importError }}
+    </p>
+    <div class="gallery-grid">
+      <button
+        type="button"
+        class="template-card"
+        data-testid="template-card-blank"
+        @click="emit('choose-blank')"
       >
-      <p
-        v-if="importError"
-        class="import-error"
-        role="alert"
-        data-testid="template-gallery-import-error"
+        <span class="template-card-title">Blank document</span>
+        <span class="template-card-preview">Start from an empty page.</span>
+      </button>
+      <button
+        v-for="template in BUILTIN_TEMPLATES"
+        :key="template.id"
+        type="button"
+        class="template-card"
+        data-testid="template-card"
+        :data-template-id="template.id"
+        @click="emit('choose-builtin', template.id)"
       >
-        {{ importError }}
-      </p>
-      <div class="gallery-grid">
-        <button
-          type="button"
-          class="template-card"
-          data-testid="template-card-blank"
-          @click="emit('choose-blank')"
-        >
-          <span class="template-card-title">Blank document</span>
-          <span class="template-card-preview">Start from an empty page.</span>
-        </button>
-        <button
-          v-for="template in BUILTIN_TEMPLATES"
-          :key="template.id"
-          type="button"
-          class="template-card"
-          data-testid="template-card"
-          :data-template-id="template.id"
-          @click="emit('choose-builtin', template.id)"
-        >
-          <span class="template-card-title">{{ template.title }}</span>
-          <span class="template-card-preview">{{ template.preview }}</span>
-        </button>
-      </div>
-      <template v-if="userTemplates.length > 0">
-        <h3 class="section-heading">
-          Your templates
-        </h3>
+        <span class="template-card-title">{{ template.title }}</span>
+        <span class="template-card-preview">{{ template.preview }}</span>
+      </button>
+    </div>
+    <template v-if="userTemplates.length > 0">
+      <h3 class="section-heading">
+        Your templates
+      </h3>
+      <div
+        class="gallery-grid"
+        data-testid="user-template-list"
+      >
         <div
-          class="gallery-grid"
-          data-testid="user-template-list"
+          v-for="template in userTemplates"
+          :key="template.id"
+          class="template-card user-template-card"
+          data-testid="user-template-card"
+          :data-template-id="template.id"
         >
-          <div
-            v-for="template in userTemplates"
-            :key="template.id"
-            class="template-card user-template-card"
-            data-testid="user-template-card"
-            :data-template-id="template.id"
+          <button
+            type="button"
+            class="template-card-body"
+            @click="emit('choose-user', template.id)"
           >
+            <span class="template-card-title">{{ template.title }}</span>
+            <span class="template-card-preview">User template</span>
+          </button>
+          <div class="user-template-actions">
             <button
               type="button"
-              class="template-card-body"
-              @click="emit('choose-user', template.id)"
+              data-testid="user-template-rename"
+              aria-label="Rename template"
+              @click="startRename(template.id)"
             >
-              <span class="template-card-title">{{ template.title }}</span>
-              <span class="template-card-preview">User template</span>
+              Rename
             </button>
-            <div class="user-template-actions">
-              <button
-                type="button"
-                data-testid="user-template-rename"
-                aria-label="Rename template"
-                @click="startRename(template.id)"
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                data-testid="user-template-delete"
-                aria-label="Delete template"
-                @click="startDelete(template.id)"
-              >
-                Delete
-              </button>
-            </div>
+            <button
+              type="button"
+              data-testid="user-template-delete"
+              aria-label="Delete template"
+              @click="startDelete(template.id)"
+            >
+              Delete
+            </button>
           </div>
         </div>
-      </template>
-    </div>
-    <RenameDialog
-      v-if="renameTarget"
-      :current-title="renameTarget.title"
-      @save="applyRename"
-      @cancel="renameFor = ''"
-    />
-    <ConfirmDeleteDialog
-      v-if="deleteTarget"
-      kind="template"
-      :document-title="deleteTarget.title"
-      @confirm="confirmDelete"
-      @cancel="deleteFor = ''"
-    />
-  </div>
+      </div>
+    </template>
+  </BaseDialog>
+  <RenameDialog
+    v-if="renameTarget"
+    :current-title="renameTarget.title"
+    @save="applyRename"
+    @cancel="renameFor = ''"
+  />
+  <ConfirmDeleteDialog
+    v-if="deleteTarget"
+    kind="template"
+    :document-title="deleteTarget.title"
+    @confirm="confirmDelete"
+    @cancel="deleteFor = ''"
+  />
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
+/* Fixed 42rem panel with the tall-dialog scroll cap. */
+:deep(.dialog) {
   width: 42rem;
-  max-width: 90vw;
   max-height: 85vh;
   overflow-y: auto;
-  box-sizing: border-box;
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .close-button {

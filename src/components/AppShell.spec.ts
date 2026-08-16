@@ -168,7 +168,10 @@ describe("AppShell", () => {
       await nextTick();
       expect(wrapper.find('[data-testid="shortcuts-dialog"]').exists()).toBe(true);
 
-      await wrapper.get('[data-testid="shortcuts-dialog"]').trigger("keydown", { key: "Escape" });
+      // Fired from the search input — where focus rests while the dialog is
+      // open — bubbling to BaseDialog's panel-level Escape handler (the old
+      // handler sat on the backdrop, which a real keypress never targets).
+      await wrapper.get('[data-testid="shortcuts-search"]').trigger("keydown", { key: "Escape" });
       expect(wrapper.find('[data-testid="shortcuts-dialog"]').exists()).toBe(false);
       wrapper.unmount();
     });

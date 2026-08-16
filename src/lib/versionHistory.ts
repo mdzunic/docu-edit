@@ -41,6 +41,7 @@ import {
   type SourceXml,
 } from "./documentModel";
 import { type MediaPart } from "./core/media";
+import { windowOf } from "./core/arrayWindow";
 import { documentStats } from "./wordCount";
 import { deleteVersionsRecord, getVersionsRecord, putVersionsRecord } from "./idb";
 import { MAX_FILE_SIZE_BYTES } from "./openDocument";
@@ -334,29 +335,6 @@ async function opaqueRefsOf(model: DocumentModel): Promise<OpaqueRef[] | undefin
 
 async function sourceXmlHashOf(model: DocumentModel): Promise<string | undefined> {
   return model.sourceXml ? await hashSourceXml(model.sourceXml) : undefined;
-}
-
-// --- generic reference-equality windowing (trackChangesDiff.ts's technique) -
-
-interface Window<T> {
-  prefixLen: number;
-  suffixLen: number;
-  beforeMid: T[];
-  afterMid: T[];
-}
-
-function windowOf<T>(before: T[], after: T[]): Window<T> {
-  let start = 0;
-  while (start < before.length && start < after.length && before[start] === after[start]) {
-    start++;
-  }
-  let bEnd = before.length;
-  let aEnd = after.length;
-  while (bEnd > start && aEnd > start && before[bEnd - 1] === after[aEnd - 1]) {
-    bEnd--;
-    aEnd--;
-  }
-  return { prefixLen: start, suffixLen: before.length - bEnd, beforeMid: before.slice(start, bEnd), afterMid: after.slice(start, aEnd) };
 }
 
 // --- section/block delta -----------------------------------------------------

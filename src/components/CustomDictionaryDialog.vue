@@ -5,10 +5,13 @@
 // shape; the add form's own validation (non-empty, no duplicate for the
 // selected language) mirrors what lib/customDictionary.ts's addCustomWord
 // already enforces, surfaced here as an inline error instead of a silent
-// no-op.
+// no-op. BaseDialog owns the shell and Escape — no field is marked
+// [autofocus] (this dialog never focused one), so the panel itself takes
+// focus and Escape works immediately.
 import { computed, ref } from "vue";
 import { asCustomDictionaryEntries } from "../lib/customDictionary";
 import { asLanguageOptions } from "../lib/core/language";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
   /** Every custom-dictionary entry, in insertion order. */
@@ -66,165 +69,127 @@ function submitAdd() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="custom-dictionary-dialog"
-    @click.self="emit('close')"
+  <BaseDialog
+    title="Custom dictionary"
+    testid="custom-dictionary-dialog"
+    width="24rem"
+    @dismiss="emit('close')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Custom dictionary"
-      @keydown.escape.stop="emit('close')"
+    <form
+      class="add-form"
+      @submit.prevent="submitAdd"
     >
-      <h2 class="dialog-title">
-        Custom dictionary
-      </h2>
+      <input
+        v-model="newWord"
+        type="text"
+        placeholder="Add a word…"
+        aria-label="Word to add"
+        data-testid="custom-dictionary-add-input"
+      >
+      <select
+        v-model="newWordLanguage"
+        aria-label="Language"
+        data-testid="custom-dictionary-add-language"
+      >
+        <option
+          v-for="option in languageOptions"
+          :key="option.tag"
+          :value="option.tag"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+      <button
+        type="submit"
+        data-testid="custom-dictionary-add-submit"
+      >
+        Add
+      </button>
+    </form>
+    <p
+      v-if="addError"
+      class="error"
+      data-testid="custom-dictionary-add-error"
+    >
+      {{ addError }}
+    </p>
 
-      <form
-        class="add-form"
-        @submit.prevent="submitAdd"
+    <div class="filters">
+      <input
+        v-model="searchText"
+        type="search"
+        placeholder="Search…"
+        aria-label="Search custom dictionary"
+        data-testid="custom-dictionary-search"
       >
-        <input
-          v-model="newWord"
-          type="text"
-          placeholder="Add a word…"
-          aria-label="Word to add"
-          data-testid="custom-dictionary-add-input"
-        >
-        <select
-          v-model="newWordLanguage"
-          aria-label="Language"
-          data-testid="custom-dictionary-add-language"
-        >
-          <option
-            v-for="option in languageOptions"
-            :key="option.tag"
-            :value="option.tag"
-          >
-            {{ option.label }}
-          </option>
-        </select>
-        <button
-          type="submit"
-          data-testid="custom-dictionary-add-submit"
-        >
-          Add
-        </button>
-      </form>
-      <p
-        v-if="addError"
-        class="error"
-        data-testid="custom-dictionary-add-error"
+      <select
+        v-model="languageFilter"
+        aria-label="Filter by language"
+        data-testid="custom-dictionary-language-filter"
       >
-        {{ addError }}
-      </p>
+        <option value="">
+          All languages
+        </option>
+        <option
+          v-for="option in languageOptions"
+          :key="option.tag"
+          :value="option.tag"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+    </div>
 
-      <div class="filters">
-        <input
-          v-model="searchText"
-          type="search"
-          placeholder="Search…"
-          aria-label="Search custom dictionary"
-          data-testid="custom-dictionary-search"
-        >
-        <select
-          v-model="languageFilter"
-          aria-label="Filter by language"
-          data-testid="custom-dictionary-language-filter"
-        >
-          <option value="">
-            All languages
-          </option>
-          <option
-            v-for="option in languageOptions"
-            :key="option.tag"
-            :value="option.tag"
-          >
-            {{ option.label }}
-          </option>
-        </select>
-      </div>
-
-      <p
-        v-if="entries.length === 0"
-        class="empty"
-        data-testid="custom-dictionary-empty"
+    <p
+      v-if="entries.length === 0"
+      class="empty"
+      data-testid="custom-dictionary-empty"
+    >
+      No custom words yet
+    </p>
+    <p
+      v-else-if="filteredEntries.length === 0"
+      class="empty"
+      data-testid="custom-dictionary-no-matches"
+    >
+      No words match
+    </p>
+    <ul
+      v-else
+      class="entry-list"
+    >
+      <li
+        v-for="entry in filteredEntries"
+        :key="`${entry.lang}:${entry.word}`"
+        class="entry-row"
+        data-testid="custom-dictionary-row"
       >
-        No custom words yet
-      </p>
-      <p
-        v-else-if="filteredEntries.length === 0"
-        class="empty"
-        data-testid="custom-dictionary-no-matches"
-      >
-        No words match
-      </p>
-      <ul
-        v-else
-        class="entry-list"
-      >
-        <li
-          v-for="entry in filteredEntries"
-          :key="`${entry.lang}:${entry.word}`"
-          class="entry-row"
-          data-testid="custom-dictionary-row"
-        >
-          <span class="entry-word">{{ entry.word }}</span>
-          <span class="entry-lang">{{ entry.lang }}</span>
-          <button
-            type="button"
-            :aria-label="`Remove ${entry.word}`"
-            data-testid="custom-dictionary-remove"
-            @click="emit('remove', entry.word, entry.lang)"
-          >
-            Remove
-          </button>
-        </li>
-      </ul>
-
-      <div class="dialog-actions">
+        <span class="entry-word">{{ entry.word }}</span>
+        <span class="entry-lang">{{ entry.lang }}</span>
         <button
           type="button"
-          data-testid="custom-dictionary-close"
-          @click="emit('close')"
+          :aria-label="`Remove ${entry.word}`"
+          data-testid="custom-dictionary-remove"
+          @click="emit('remove', entry.word, entry.lang)"
         >
-          Close
+          Remove
         </button>
-      </div>
-    </div>
-  </div>
+      </li>
+    </ul>
+
+    <template #actions>
+      <button
+        type="button"
+        data-testid="custom-dictionary-close"
+        @click="emit('close')"
+      >
+        Close
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 24rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .add-form {
   display: flex;
   gap: 0.5rem;
@@ -318,12 +283,6 @@ function submitAdd() {
 
 .entry-row button:hover {
   background: #f1f3f4;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 1rem;
 }
 
 .dialog-actions button {
