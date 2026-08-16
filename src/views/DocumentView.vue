@@ -2348,47 +2348,11 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (!shortcut) {
     return;
   }
+  // Only the event-dependent commands remain switch cases here — they read
+  // shiftKey or must control preventDefault themselves, so they cannot be
+  // nullary entries in the editorCommands table the default arm dispatches
+  // through.
   switch (shortcut.id) {
-    case "insert.pageBreak": {
-      // Ctrl/Cmd+Enter (AC-4): a manual page break at the caret.
-      event.preventDefault();
-      const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
-      applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
-      // The caret moved to the top of a page that is very likely below the
-      // fold: follow it, or the user types onto a page they cannot see.
-      void scrollModelCaretIntoView(caret, true);
-      break;
-    }
-    case "insert.footnote": {
-      // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
-      event.preventDefault();
-      handleInsertNote("footnote");
-      break;
-    }
-    case "insert.endnote": {
-      // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
-      event.preventDefault();
-      handleInsertNote("endnote");
-      break;
-    }
-    case "insert.comment": {
-      // Ctrl/Cmd+Alt+M (SPEC-038 AC-1).
-      event.preventDefault();
-      openCommentComposer();
-      break;
-    }
-    case "view.formattingMarks": {
-      // Ctrl/Cmd+Shift+P (AC-12).
-      event.preventDefault();
-      toggleFormattingMarks();
-      break;
-    }
-    case "edit.toggleTrackChanges": {
-      // Ctrl/Cmd+Shift+E (SPEC-039 AC-1).
-      event.preventDefault();
-      toggleTrackChangesRecording();
-      break;
-    }
     case "nav.documentStart":
     case "nav.documentEnd": {
       // Ctrl/Cmd+Home/End: start/end of the document, Shift extends.
@@ -2400,77 +2364,12 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       }
       break;
     }
-    case "edit.undo":
-      // Ctrl/Cmd+Z (SPEC-015 AC-1).
-      event.preventDefault();
-      performUndo();
-      break;
-    case "edit.redo":
-      // Ctrl/Cmd+Shift+Z, or Ctrl+Y — the Windows convention (SPEC-015 AC-2, AC-3).
-      event.preventDefault();
-      performRedo();
-      break;
     case "edit.pastePlain":
       // Ctrl/Cmd+Shift+V (SPEC-016 AC-27): arm the plain-text flag and let
       // the browser fire the paste event it produces for this combo — that
       // event hands us every clipboard flavour at once.
       armPlainPaste();
       break;
-    case "insert.nonBreakingSpace":
-      // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
-      // insert, not typed input, so autocorrect never sees it.
-      event.preventDefault();
-      insertSpecialCharacter("\u00A0");
-      break;
-    case "edit.selectAll": {
-      // Ctrl/Cmd+A: select the whole document, exactly to the model's extent.
-      // Shared with the Edit-menu "Select all" command (SPEC-049).
-      event.preventDefault();
-      menuSelectAll();
-      break;
-    }
-    case "format.bold":
-    case "format.italic":
-    case "format.underline":
-      // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
-      event.preventDefault();
-      toggleCharacterFormat(
-        shortcut.id === "format.bold" ? "bold" : shortcut.id === "format.italic" ? "italic" : "underline",
-      );
-      break;
-    case "format.strikethrough":
-      // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
-      event.preventDefault();
-      toggleCharacterFormat("strikethrough");
-      break;
-    case "format.subscript":
-    case "format.superscript":
-      // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
-      event.preventDefault();
-      toggleCharacterFormat(shortcut.id === "format.subscript" ? "subscript" : "superscript");
-      break;
-    case "format.clearFormatting":
-      // Ctrl/Cmd+\ (SPEC-020 AC-3).
-      event.preventDefault();
-      handleClearFormatting();
-      break;
-    case "paragraph.alignLeft":
-    case "paragraph.alignCenter":
-    case "paragraph.alignRight":
-    case "paragraph.alignJustify": {
-      // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
-      event.preventDefault();
-      const alignment =
-        shortcut.id === "paragraph.alignLeft"
-          ? "left"
-          : shortcut.id === "paragraph.alignCenter"
-            ? "center"
-            : shortcut.id === "paragraph.alignRight"
-              ? "right"
-              : "justify";
-      handleAlign(alignment);
-      break;
-    }
     case "paragraph.indent":
     case "paragraph.outdent": {
       // SPEC-014 AC-8..10. A caret collapsed at offset 0 — an empty paragraph
@@ -2532,32 +2431,29 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
       }
       break;
     }
-    case "insert.link":
-      // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
-      event.preventDefault();
-      openLinkDialog();
-      break;
     case "nav.pageUp":
     case "nav.pageDown":
       event.preventDefault();
       void moveCaretByPage(shortcut.id === "nav.pageDown" ? 1 : -1, event.shiftKey);
       break;
-    case "style.normal":
-    case "style.heading1":
-    case "style.heading2":
-    case "style.heading3":
-    case "style.heading4":
-    case "style.heading5":
-    case "style.heading6": {
-      // Ctrl/Cmd+Alt+1..6 apply Heading 1-6, Ctrl/Cmd+Alt+0 Normal
-      // (SPEC-019 AC-5, AC-6).
-      event.preventDefault();
-      const styleId =
-        shortcut.id === "style.normal"
-          ? NORMAL_STYLE_ID
-          : headingStyleId(Number(shortcut.id.slice(-1)));
-      handleApplyStyle(styleId);
-      break;
+    default: {
+      // Every other registry id is a nullary command in editorCommands —
+      // the same table the menu bar dispatches through — except the
+      // document-level ids handleGlobalShortcut owns (find/print keep
+      // working over a read-only too-large document), which must not
+      // double-dispatch from this canvas path on top of that handler.
+      if (shortcut.id === "find.openReplace" || shortcut.id === "file.print") {
+        break;
+      }
+      // Every moved keyboard command called event.preventDefault() before
+      // its body, so a table hit always suppresses the browser default
+      // here; edit.pastePlain stays a case above precisely because it must
+      // NOT preventDefault — the browser's own paste event does the work.
+      const command = editorCommands.get(shortcut.id);
+      if (command) {
+        event.preventDefault();
+        command();
+      }
     }
   }
 }
@@ -3350,7 +3246,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 // The menu bar itself (File/Edit/View/Insert/Format/Tools and every item)
 // lives in DocumentMenuBar.vue, which renders menu state from props and
 // reports picks as events. Nullary commands arrive here as string ids
-// through @command and dispatch through the menuCommands table below; picks
+// through @command and dispatch through the editorCommands table below; picks
 // that carry a payload (table size, break kind, note kind, gallery picks,
 // the image file, the painter's click pair) have dedicated events bound in
 // the template.
@@ -3417,12 +3313,16 @@ function handleChartFromTable(chartType = "columnClustered") {
   }
 }
 
-// Every nullary menu command, keyed by the id DocumentMenuBar emits, in the
-// bar's own menu-by-menu order. A Map rather than an object literal: a
-// string-keyed lookup into an inferred object-literal type needs an index
-// signature, which is TS-only syntax espree cannot parse here — Map's get()
-// is typed without one.
-const menuCommands = new Map([
+// Every nullary editor command, keyed by id — the ONE registry both the
+// menubar (handleMenuCommand) and the keyboard shortcut path (handleKeyDown's
+// default arm) dispatch through, so a new command is wired in exactly one
+// place. Ids reuse the lib/shortcuts.ts names wherever a shortcut exists for
+// the command; menu-only commands follow the same dotted style. Listed in
+// the bar's menu-by-menu order, then the shortcut-only commands. A Map
+// rather than an object literal: a string-keyed lookup into an inferred
+// object-literal type needs an index signature, which is TS-only syntax
+// espree cannot parse here — Map's get() is typed without one.
+const editorCommands = new Map([
   // File
   ["file.print", openPrintPreview],
   ["file.page-setup", openPageSetup],
@@ -3432,12 +3332,16 @@ const menuCommands = new Map([
   ["file.mail-merge", () => { mergeRunDialogOpen.value = true; }],
   ["file.delete", () => { confirmingDelete.value = true; }],
   // Edit
+  // Ctrl/Cmd+Z (SPEC-015 AC-1).
   ["edit.undo", performUndo],
+  // Ctrl/Cmd+Shift+Z, or Ctrl+Y — the Windows convention (SPEC-015 AC-2, AC-3).
   ["edit.redo", performRedo],
   ["edit.cut", contextMenuCut],
   ["edit.copy", contextMenuCopy],
   ["edit.paste", contextMenuPaste],
   ["edit.pastePlain", menuPastePlain],
+  // Ctrl/Cmd+A: select the whole document, exactly to the model's extent —
+  // shared by the Edit-menu item and the shortcut (SPEC-049).
   ["edit.selectAll", menuSelectAll],
   ["find.openReplace", () => { openFind(true); }],
   ["edit.autocorrect-smart-quotes", toggleAutocorrectSmartQuotes],
@@ -3448,6 +3352,7 @@ const menuCommands = new Map([
   ["view.styles-pane", toggleStylesPane],
   ["view.comments-pane", toggleCommentsPane],
   ["view.comments-only", toggleCommentsOnlyView],
+  // Ctrl/Cmd+Shift+E (SPEC-039 AC-1).
   ["edit.toggleTrackChanges", toggleTrackChangesRecording],
   ["view.track-changes-pane", toggleTrackChangesPane],
   // Insert
@@ -3462,13 +3367,16 @@ const menuCommands = new Map([
   ["insert.note-settings", openNoteSettings],
   ["insert.toc", openTocDialog],
   ["insert.special-character", openSpecialCharacters],
+  // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
   ["insert.link", openLinkDialog],
   ["insert.bookmark", openBookmarkDialog],
   ["insert.bookmark-list", () => { bookmarkManagerOpen.value = true; }],
+  // Ctrl/Cmd+Alt+M (SPEC-038 AC-1).
   ["insert.comment", openCommentComposer],
   // Format
   ["format.styles-pane", toggleStylesPane],
   ["format.import-styles", openImportDialog],
+  // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
   ["format.columns", openColumnsDialog],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
@@ -3480,10 +3388,59 @@ const menuCommands = new Map([
   ["tools.dictionary", openCustomDictionaryDialog],
   ["tools.accessibility", openAccessibilityPane],
   ["tools.convert-merge-fields", convertLiteralChips],
+  // Shortcut-only commands: no menubar item emits these ids (the menu
+  // reaches page break and foot/endnotes through the insert-break /
+  // insert-note payload events instead), so they arrive only from
+  // handleKeyDown's registry lookup.
+  ["insert.pageBreak", () => {
+    // Ctrl/Cmd+Enter (AC-4): a manual page break at the caret.
+    const root = contentRoot.value;
+    const model = doc.value;
+    if (!root || !model) {
+      return;
+    }
+    const selection = currentSelection(root) ?? caretSelection(caret ?? documentStart());
+    applyEdit(insertBreak(model, selection, "page"), selection, "insert page break");
+    // The caret moved to the top of a page that is very likely below the
+    // fold: follow it, or the user types onto a page they cannot see.
+    void scrollModelCaretIntoView(caret, true);
+  }],
+  // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
+  ["insert.footnote", () => { handleInsertNote("footnote"); }],
+  // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
+  ["insert.endnote", () => { handleInsertNote("endnote"); }],
+  // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
+  // insert, not typed input, so autocorrect never sees it.
+  ["insert.nonBreakingSpace", () => { insertSpecialCharacter("\u00A0"); }],
+  // Ctrl/Cmd+Shift+P (AC-12).
+  ["view.formattingMarks", toggleFormattingMarks],
+  // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
+  ["format.bold", () => { toggleCharacterFormat("bold"); }],
+  ["format.italic", () => { toggleCharacterFormat("italic"); }],
+  ["format.underline", () => { toggleCharacterFormat("underline"); }],
+  // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
+  ["format.strikethrough", () => { toggleCharacterFormat("strikethrough"); }],
+  // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
+  ["format.subscript", () => { toggleCharacterFormat("subscript"); }],
+  ["format.superscript", () => { toggleCharacterFormat("superscript"); }],
+  // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
+  ["paragraph.alignLeft", () => { handleAlign("left"); }],
+  ["paragraph.alignCenter", () => { handleAlign("center"); }],
+  ["paragraph.alignRight", () => { handleAlign("right"); }],
+  ["paragraph.alignJustify", () => { handleAlign("justify"); }],
+  // Ctrl/Cmd+Alt+1..6 apply Heading 1-6, Ctrl/Cmd+Alt+0 Normal
+  // (SPEC-019 AC-5, AC-6).
+  ["style.normal", () => { handleApplyStyle(NORMAL_STYLE_ID); }],
+  ["style.heading1", () => { handleApplyStyle(headingStyleId(1)); }],
+  ["style.heading2", () => { handleApplyStyle(headingStyleId(2)); }],
+  ["style.heading3", () => { handleApplyStyle(headingStyleId(3)); }],
+  ["style.heading4", () => { handleApplyStyle(headingStyleId(4)); }],
+  ["style.heading5", () => { handleApplyStyle(headingStyleId(5)); }],
+  ["style.heading6", () => { handleApplyStyle(headingStyleId(6)); }],
 ]);
 
 function handleMenuCommand(id = "") {
-  menuCommands.get(id)?.();
+  editorCommands.get(id)?.();
 }
 
 </script>
