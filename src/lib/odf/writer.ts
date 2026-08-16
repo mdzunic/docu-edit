@@ -1146,12 +1146,15 @@ function fieldContentXml(field: FieldSpec, styles: AutomaticStyles): string {
     case "date": {
       const entry = dateTimeFormatEntry(field.format);
       const styleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
-      return `<text:date${styleAttr}>${cached}</text:date>`;
+      // A locked field is "fixed" in ODF (SPEC-053 rule 4): it is not updated.
+      const fixedAttr = field.locked ? ' text:fixed="true"' : "";
+      return `<text:date${styleAttr}${fixedAttr}>${cached}</text:date>`;
     }
     case "time": {
       const entry = dateTimeFormatEntry(field.format);
       const styleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
-      return `<text:time${styleAttr}>${cached}</text:time>`;
+      const fixedAttr = field.locked ? ' text:fixed="true"' : "";
+      return `<text:time${styleAttr}${fixedAttr}>${cached}</text:time>`;
     }
     case "author":
       return `<text:author-name>${cached}</text:author-name>`;

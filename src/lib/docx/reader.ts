@@ -1851,7 +1851,23 @@ function parseFieldSimple(el: Element): Run | null {
     return null;
   }
   const spec = fieldSpecFromInstr(instr, fieldResultText(el));
-  return spec ? createFieldSpecRun(spec) : null;
+  if (!spec) {
+    return null;
+  }
+  return createFieldSpecRun(applyFieldLock(spec, isFldLocked(wordAttr(el, "fldLock"))));
+}
+
+/** Whether a `w:fldLock` attribute value marks the field locked (SPEC-053). */
+function isFldLocked(value: string | null): boolean {
+  return value === "1" || value === "true" || value === "on";
+}
+
+/** Adds `locked: true` to an evaluated field when its source marked it locked. */
+function applyFieldLock(spec: FieldSpec, locked: boolean): FieldSpec {
+  if (!locked || !("cached" in spec) || spec.kind === "unsupported") {
+    return spec;
+  }
+  return { ...spec, locked: true };
 }
 
 /** The concatenated visible text of a field's result runs — every `w:t`
@@ -1877,6 +1893,7 @@ function consumeComplexField(children: Element[], start: number): { run: Run; ne
   let depth = 0;
   let sawSeparate = false;
   let endFound = false;
+  let locked = false;
   let instr = "";
   let cached = "";
   let i = start;
@@ -1891,6 +1908,9 @@ function consumeComplexField(children: Element[], start: number): { run: Run; ne
     }
     const type = runFldCharType(el);
     if (type === "begin") {
+      if (depth === 0) {
+        locked = isFldLocked(runFldCharLock(el));
+      }
       depth += 1;
       continue;
     }
@@ -1922,7 +1942,17 @@ function consumeComplexField(children: Element[], start: number): { run: Run; ne
     return null;
   }
   const spec = fieldSpecFromInstr(instr, cached);
-  return spec ? { run: createFieldSpecRun(spec), next: i } : null;
+  return spec ? { run: createFieldSpecRun(applyFieldLock(spec, locked)), next: i } : null;
+}
+
+/** The `w:fldLock` attribute of a run's `w:fldChar`, or null. */
+function runFldCharLock(rEl: Element): string | null {
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "fldChar") {
+      return wordAttr(child, "fldLock");
+    }
+  }
+  return null;
 }
 
 interface HeaderFooterReference {

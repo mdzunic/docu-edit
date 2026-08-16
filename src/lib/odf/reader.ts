@@ -714,14 +714,28 @@ function collectInline(
       case "date": {
         // SPEC-053: format recovered from the referenced number:date-style
         // name; a foreign producer's own style reads as an unsupported
-        // picture (rendered from cached).
+        // picture (rendered from cached). A `text:fixed` field is locked.
         const format = formatFromOdtDateStyleName(styleAttr(el, "data-style-name") ?? "") ?? "d MMMM yyyy";
-        appendFieldSpec(acc, { kind: "date", format, cached: el.textContent ?? "" }, formatting);
+        const locked = textAttr(el, "fixed") === "true";
+        appendFieldSpec(
+          acc,
+          locked
+            ? { kind: "date", format, cached: el.textContent ?? "", locked: true }
+            : { kind: "date", format, cached: el.textContent ?? "" },
+          formatting,
+        );
         break;
       }
       case "time": {
         const format = formatFromOdtDateStyleName(styleAttr(el, "data-style-name") ?? "") ?? "HH:mm";
-        appendFieldSpec(acc, { kind: "time", format, cached: el.textContent ?? "" }, formatting);
+        const locked = textAttr(el, "fixed") === "true";
+        appendFieldSpec(
+          acc,
+          locked
+            ? { kind: "time", format, cached: el.textContent ?? "", locked: true }
+            : { kind: "time", format, cached: el.textContent ?? "" },
+          formatting,
+        );
         break;
       }
       case "author-name":

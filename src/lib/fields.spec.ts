@@ -195,3 +195,26 @@ describe("format round-trip helpers", () => {
     expect(formatFromOdtDateStyleName("N42")).toBeNull();
   });
 });
+
+// --- SPEC-053 AC-36/37/38: field results are text, never markup or expression
+
+describe("injection safety (SPEC-053 AC-36, AC-37, AC-38)", () => {
+  const MARKUP = '<script>alert("x")</script>';
+
+  it("a docProperty whose value is markup evaluates to that markup as literal text", () => {
+    // Matches SPEC-041's untrusted-text rule: the value is data, never parsed
+    // or executed — it comes back byte-for-byte, and the renderer (Vue) escapes
+    // it as text content, never as markup.
+    const model = docWith([para("")], {
+      properties: { customProperties: [{ name: "Client", type: "text", value: MARKUP }] },
+    });
+    expect(evaluateField({ kind: "docProperty", name: "Client", cached: "" }, ctx(model))).toBe(MARKUP);
+  });
+
+  it("no field evaluates an expression — a property value that looks like a formula is returned verbatim", () => {
+    const model = docWith([para("")], {
+      properties: { customProperties: [{ name: "Total", type: "text", value: "= 1 + 1" }] },
+    });
+    expect(evaluateField({ kind: "docProperty", name: "Total", cached: "" }, ctx(model))).toBe("= 1 + 1");
+  });
+});

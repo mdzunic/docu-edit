@@ -56,6 +56,7 @@ import { computeOwnerGrid, type BorderLineStyle, type BorderSide, type CellBorde
 import {
   DEFAULT_TITLE,
   isEvaluatedField,
+  isFieldLocked,
   isMergeChipField,
   resolveColumnWidthsCm,
   sectionContentWidthCm,
@@ -372,7 +373,10 @@ function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContex
         : run.text;
     const fieldContent = runContentXml(cachedText, deleted ? "delText" : "t");
     const fieldInner = `<w:r>${rPr}${fieldContent}</w:r>`;
-    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}">${fieldInner}</w:fldSimple>`;
+    // SPEC-053 rule 4: a locked field carries w:fldLock so update paths skip
+    // it after a round trip too.
+    const lockAttr = isFieldLocked(run.field) ? ' w:fldLock="1"' : "";
+    return `<w:fldSimple w:instr="${escapeXml(fieldInstr(run.field))}"${lockAttr}>${fieldInner}</w:fldSimple>`;
   }
   const content = runContentXml(run.text, deleted ? "delText" : "t");
   const inner = `<w:r>${rPr}${content}</w:r>`;

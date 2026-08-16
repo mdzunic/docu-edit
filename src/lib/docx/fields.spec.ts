@@ -124,3 +124,14 @@ describe("docx complex-field reading (SPEC-053 AC-47)", () => {
     expect(run.field).toEqual({ kind: "author", cached: "Ada" });
   });
 });
+
+describe("docx injection safety (SPEC-053 AC-36, AC-38)", () => {
+  it("escapes a field's markup cached value and round-trips it verbatim", async () => {
+    const markup = '<w:injected/>& "quoted"';
+    const model = modelWithFields([{ kind: "docProperty", name: "Client", cached: markup }]);
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    const field = (reopened.sections[0].blocks[0] as Paragraph).runs[0].field;
+    expect(field).toEqual({ kind: "docProperty", name: "Client", cached: markup });
+  });
+});
