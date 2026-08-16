@@ -165,18 +165,108 @@ export function asDocumentModel(value: unknown): DocumentModel {
   return value as DocumentModel;
 }
 
+/** A date/time field's stored picture string (SPEC-053). A closed catalogue
+ * of supported patterns lives in `lib/fields.ts` (`SUPPORTED_DATE_TIME_FORMATS`);
+ * a picture string opened from a file that is not in that catalogue is kept
+ * here verbatim and the field renders its `cached` value read-only, because
+ * implementing Word's picture-string language is a spec of its own. Typed as
+ * a bare string, not a literal union, precisely so an unsupported picture
+ * survives a round trip. */
+export type DateTimeFormat = string;
+
+/** What a cross-reference (`ref`/`pageRef`, SPEC-053) shows about its target:
+ * its `text`, the `page` it sits on, or its `position` relative to the
+ * reference (rendered as the computed word "above"/"below", Word's `\p`
+ * switch — the user picks "position", the word follows from layout).
+ * `pageRef` always carries `"page"`; `ref` carries any of the three. */
+export type RefFormat = "text" | "page" | "position";
+
+/** The kinds SPEC-053 adds to the field union that carry a `cached` result —
+ * everything except `page`/`numpages` (recomputed every paint) and merge
+ * chips (resolved once by a merge run). Used to narrow a `FieldSpec` to the
+ * members whose last-computed value round-trips in the file. */
+export type EvaluatedFieldKind =
+  | "date" | "time"
+  | "author" | "docTitle" | "docSubject" | "docKeywords" | "fileName" | "wordCount"
+  | "docProperty" | "ref" | "pageRef" | "unsupported";
+
 /** A run that renders as a computed value instead of literal text
- * (SPEC-029, widened by SPEC-046): a page-number/page-count field, or a
- * mail-merge chip. `Run.text` still holds a one-character placeholder so
- * the field behaves like a normal single-character atom for
- * caret/selection arithmetic (blockLength, splitRuns, …) — every renderer
- * substitutes the live value at paint time instead of reading it. */
-export type FieldSpec = { kind: "page" | "numpages"; format: PageNumberFormat } | MergeFieldSpec;
+ * (SPEC-029, widened by SPEC-046 and SPEC-053): a page-number/page-count
+ * field, a mail-merge chip, or one of SPEC-053's computed fields. `Run.text`
+ * still holds a one-character placeholder so the field behaves like a normal
+ * single-character atom for caret/selection arithmetic (blockLength,
+ * splitRuns, …) — every renderer substitutes the live value at paint time
+ * instead of reading it.
+ *
+ * `cached` is the last-computed result string, document content Word and
+ * Writer display without recalculating; it is compared by
+ * `equality.ts`'s `equalStructural`, which is why field values are
+ * deterministic under test (see `lib/clock.ts`) and opening a document
+ * never updates a field. `page`/`numpages` and merge chips carry no `cached`
+ * — the former recompute on every paint, the latter resolve once.
+ * `locked` (SPEC-053 Recalculation rule 4) skips a field from every update
+ * path. `unsupported` holds the SPEC-008 preservation case: a field type
+ * outside the catalogue keeps its instruction `code` and `cached` result
+ * byte-for-byte and is never recomputed. */
+export type FieldSpec =
+  | { kind: "page" | "numpages"; format: PageNumberFormat }
+  | MergeFieldSpec
+  | { kind: "date" | "time"; format: DateTimeFormat; cached: string; locked?: true }
+  | {
+      kind: "author" | "docTitle" | "docSubject" | "docKeywords" | "wordCount";
+      cached: string;
+      locked?: true;
+    }
+  | { kind: "fileName"; path?: true; cached: string; locked?: true }
+  | { kind: "docProperty"; name: string; cached: string; locked?: true }
+  | { kind: "ref" | "pageRef"; target: string; show: RefFormat; cached: string; locked?: true }
+  | { kind: "unsupported"; code: string; cached: string };
 
 /** Narrows a `FieldSpec` to a merge chip (SPEC-046), as opposed to a
- * SPEC-029 page-number/page-count field. */
+ * SPEC-029 page-number/page-count field or a SPEC-053 computed field. */
 export function isMergeChipField(field: FieldSpec): field is MergeFieldSpec {
   return field.kind === "merge" || field.kind === "if" || field.kind === "endif" || field.kind === "each";
+}
+
+/** A field this spec computes and caches (everything but `page`/`numpages`
+ * and merge chips): the members that carry a `cached` string. */
+export function isEvaluatedField(
+  field: FieldSpec,
+): field is Extract<FieldSpec, { cached: string }> {
+  return "cached" in field;
+}
+
+/** The SPEC-008 preservation case: a field type outside the catalogue,
+ * displayed read-only and never recomputed. */
+export function isUnsupportedField(
+  field: FieldSpec,
+): field is Extract<FieldSpec, { kind: "unsupported" }> {
+  return field.kind === "unsupported";
+}
+
+/** Fields whose value depends on pagination (SPEC-053 Recalculation rule 1):
+ * recomputed on every paint like `page`, so they carry no stable live value.
+ * `ref` counts only when it shows a page (`show: "page"`). */
+export function isPaginationDependentField(field: FieldSpec): boolean {
+  return (
+    field.kind === "page" ||
+    field.kind === "numpages" ||
+    field.kind === "pageRef" ||
+    (field.kind === "ref" && field.show === "page")
+  );
+}
+
+/** Whether a field is locked (SPEC-053 Recalculation rule 4) and so skipped
+ * by every update path. Only evaluated fields can be locked. */
+export function isFieldLocked(field: FieldSpec): boolean {
+  return "locked" in field && field.locked === true;
+}
+
+/** Builds a run carrying an arbitrary SPEC-053 field spec — the same
+ * one-character placeholder convention as `createFieldRun`/`createChipRun`,
+ * so the field is atomic for caret/selection arithmetic. */
+export function createFieldSpecRun(field: FieldSpec, formatting: RunFormatting = {}): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, field };
 }
 
 /** Which note stream a reference belongs to (SPEC-031): footnotes render at
@@ -442,6 +532,13 @@ export interface BookmarkAnchor {
   name: string;
   /** Character offset into the paragraph's concatenated run text. */
   offset: number;
+  /** A bookmark auto-created at a heading so a SPEC-053 cross-reference can
+   * target it (`Insert → Cross-reference` on a heading with no bookmark).
+   * Word does the same, and it lets `.odt`'s `text:bookmark-ref` carry the
+   * reference. Hidden bookmarks are not listed by SPEC-025's bookmark
+   * manager (`listBookmarks`); cross-reference resolution reads them through
+   * `bookmarkCaretIncludingHidden`. */
+  hidden?: true;
 }
 
 /** Which edge of a comment thread's anchored range a `CommentAnchor` marks

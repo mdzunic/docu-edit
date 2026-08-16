@@ -444,15 +444,38 @@ export interface BookmarkLocation {
 }
 
 /** Every bookmark in the document, in document order — the manager's list
- * (AC-23). */
+ * (AC-23). Hidden bookmarks (auto-created at headings for SPEC-053
+ * cross-references) are omitted: the manager never shows them. */
 export function listBookmarks(model: DocumentModel): BookmarkLocation[] {
-  const found: BookmarkLocation[] = [];
+  return listAllBookmarks(model).filter((bookmark) => !bookmark.hidden);
+}
+
+/** Every bookmark including hidden ones, in document order — the list
+ * cross-reference resolution needs (SPEC-053). `hidden` mirrors the anchor's
+ * flag so callers can tell the two apart. */
+export function listAllBookmarks(model: DocumentModel): Array<BookmarkLocation & { hidden?: true }> {
+  const found: Array<BookmarkLocation & { hidden?: true }> = [];
   forEachParagraph(model, (paragraph, address) => {
     for (const bookmark of paragraph.bookmarks ?? []) {
-      found.push({ name: bookmark.name, address, offset: bookmark.offset });
+      found.push({ name: bookmark.name, address, offset: bookmark.offset, ...(bookmark.hidden ? { hidden: true } : {}) });
     }
   });
   return found;
+}
+
+/** Like `bookmarkCaret` but resolves hidden bookmarks too (SPEC-053
+ * cross-reference targets). */
+export function bookmarkCaretIncludingHidden(model: DocumentModel, name: string): CaretPosition | null {
+  const location = listAllBookmarks(model).find((bookmark) => bookmark.name === name);
+  if (!location) {
+    return null;
+  }
+  return clampCaret(model, {
+    section: location.address.section,
+    block: location.address.block,
+    offset: location.offset,
+    cell: location.address.cell,
+  });
 }
 
 /** "" when the name is valid, else the inline error to show (AC-26..28).

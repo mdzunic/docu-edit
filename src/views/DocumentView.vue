@@ -2353,6 +2353,11 @@ onBeforeUnmount(() => {
 });
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
+// "View → Field shading" (SPEC-053 AC-11): a session-local view toggle — like
+// the ruler/marks toggles it decorates the screen only and is never written to
+// the file. Off by default (Word's "When selected" is the closest match, but
+// the toggle explicitly lets a user shade every field at once).
+const fieldShadingOn = ref(false);
 const pageCount = computed(() => Math.max(1, paginationPages.value.length));
 // The displayed page number of every laid-out page (SPEC-029 AC-20..23),
 // recomputed whenever pagination or a section's numbering options change.
@@ -2893,6 +2898,7 @@ const { pagedViews } = usePaginationView({
   noteRemountEpoch,
   tocPageNumberFor,
   trackChangesDisplayMode: effectiveTrackChangesDisplayMode,
+  fieldShadingOn,
 });
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
