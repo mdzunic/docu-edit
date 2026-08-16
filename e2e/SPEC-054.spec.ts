@@ -114,6 +114,34 @@ test("a literal tab renders as a sized .doc-tab box, not white-space:pre-wrap (A
   expect(box!.width).toBeGreaterThan(4);
 });
 
+test("a left tab stop aligns following text at the stop position (AC-1, AC-17)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  // A left stop at 5 cm on this paragraph, via the dialog.
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-tabs").click();
+  await page.getByTestId("tab-position-input").fill("5");
+  await page.getByTestId("tab-alignment-select").selectOption("left");
+  await page.getByTestId("tab-add").click();
+  await page.getByTestId("tabs-apply").click();
+  await content(page).click();
+  await page.keyboard.type("x");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Tab"); // mid-paragraph → a literal tab
+  await page.keyboard.type("y");
+  const tab = content(page).locator(".doc-tab").first();
+  await expect(tab).toHaveCount(1);
+  // The tab box's right edge (where "y" begins) sits ~5 cm (≈189 px at 96 dpi)
+  // from the paragraph's content start — the stop, not the browser's grid.
+  const geom = await page.evaluate(() => {
+    const para = document.querySelector('.doc-paragraph[data-block="0"]') as HTMLElement;
+    const box = document.querySelector(".doc-tab") as HTMLElement;
+    return { paraLeft: para.getBoundingClientRect().left, tabRight: box.getBoundingClientRect().right };
+  });
+  expect(geom.tabRight - geom.paraLeft).toBeGreaterThan(184);
+  expect(geom.tabRight - geom.paraLeft).toBeLessThan(194);
+});
+
 test("Insert -> Tab character inserts a literal tab (AC-31)", async ({ page }) => {
   const id = await createDocument(page);
   await content(page).click();
