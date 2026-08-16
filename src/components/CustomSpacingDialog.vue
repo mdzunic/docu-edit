@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Custom spacing…" dialog (SPEC-014 AC-12..14): a line-spacing mode
 // (multiple / exactly / at least) with its value, plus space before/after
 // in points. OK emits the values for the parent to apply to every touched
 // paragraph; Cancel just closes — the draft state lives here and dies here.
+// BaseDialog owns the shell, Escape and initial focus (the [autofocus]
+// value input).
 const props = defineProps({
   /** Prefill from the first touched paragraph: { mode, value, beforePt,
    * afterPt } with mode "multiple" | "exact" | "atLeast". */
@@ -20,9 +23,11 @@ const afterPt = ref(String(props.initial.afterPt ?? 0));
 
 const valueInput = useTemplateRef("valueInput");
 
+// BaseDialog focuses the [autofocus] value input; selecting the prefilled
+// value on top of that (type-to-replace) is this dialog's own one-shot
+// behaviour.
 onMounted(async () => {
   await nextTick();
-  valueInput.value?.focus();
   valueInput.value?.select();
 });
 
@@ -82,132 +87,96 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="custom-spacing-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Custom spacing"
+    testid="custom-spacing-dialog"
+    width="22rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Custom spacing"
-    >
-      <h2 class="dialog-title">
-        Custom spacing
-      </h2>
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Line spacing</span>
-          <select
-            v-model="mode"
-            class="field-input"
-            data-testid="spacing-mode"
-            @change="handleModeChange"
-          >
-            <option value="multiple">Multiple</option>
-            <option value="exact">Exactly</option>
-            <option value="atLeast">At least</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field-label">{{ isMultiple ? "Lines" : "Points" }}</span>
-          <input
-            ref="valueInput"
-            v-model="value"
-            class="field-input value-input"
-            data-testid="spacing-value"
-            type="number"
-            :step="isMultiple ? 0.05 : 0.5"
-            :aria-label="isMultiple ? 'Line spacing in lines' : 'Line height in points'"
-            @keydown.enter="apply"
-          >
-        </label>
-      </div>
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Space before (pt)</span>
-          <input
-            v-model="beforePt"
-            class="field-input value-input"
-            data-testid="spacing-before"
-            type="number"
-            min="0"
-            step="0.5"
-            @keydown.enter="apply"
-          >
-        </label>
-        <label class="field">
-          <span class="field-label">Space after (pt)</span>
-          <input
-            v-model="afterPt"
-            class="field-input value-input"
-            data-testid="spacing-after"
-            type="number"
-            min="0"
-            step="0.5"
-            @keydown.enter="apply"
-          >
-        </label>
-      </div>
-      <p
-        v-if="error"
-        class="dialog-error"
-        data-testid="spacing-error"
-      >
-        {{ error }}
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="spacing-cancel"
-          @click="emit('cancel')"
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Line spacing</span>
+        <select
+          v-model="mode"
+          class="field-input"
+          data-testid="spacing-mode"
+          @change="handleModeChange"
         >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="spacing-apply"
-          :disabled="!!error"
-          @click="apply"
+          <option value="multiple">Multiple</option>
+          <option value="exact">Exactly</option>
+          <option value="atLeast">At least</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">{{ isMultiple ? "Lines" : "Points" }}</span>
+        <input
+          ref="valueInput"
+          v-model="value"
+          class="field-input value-input"
+          data-testid="spacing-value"
+          type="number"
+          :step="isMultiple ? 0.05 : 0.5"
+          :aria-label="isMultiple ? 'Line spacing in lines' : 'Line height in points'"
+          autofocus
+          @keydown.enter="apply"
         >
-          OK
-        </button>
-      </div>
+      </label>
     </div>
-  </div>
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Space before (pt)</span>
+        <input
+          v-model="beforePt"
+          class="field-input value-input"
+          data-testid="spacing-before"
+          type="number"
+          min="0"
+          step="0.5"
+          @keydown.enter="apply"
+        >
+      </label>
+      <label class="field">
+        <span class="field-label">Space after (pt)</span>
+        <input
+          v-model="afterPt"
+          class="field-input value-input"
+          data-testid="spacing-after"
+          type="number"
+          min="0"
+          step="0.5"
+          @keydown.enter="apply"
+        >
+      </label>
+    </div>
+    <p
+      v-if="error"
+      class="dialog-error"
+      data-testid="spacing-error"
+    >
+      {{ error }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="spacing-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="spacing-apply"
+        :disabled="!!error"
+        @click="apply"
+      >
+        OK
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 22rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .field-row {
   display: flex;
   gap: 0.75rem;
@@ -240,13 +209,6 @@ function apply() {
   margin: 0.5rem 0 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

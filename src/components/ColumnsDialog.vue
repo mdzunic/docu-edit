@@ -3,7 +3,8 @@
 // custom count (1..6) that reverts on an out-of-range entry, per-column
 // widths + gutter, "Line between columns", and an "Apply to" scope. OK emits
 // the resolved layout and scope for the parent to apply through a command;
-// Cancel closes. Same backdrop/role/testid structure as InsertTableDialog.
+// Cancel closes. BaseDialog owns the shell, Escape and initial focus (the
+// [autofocus] count input).
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import {
   MAX_COLUMN_COUNT,
@@ -12,6 +13,7 @@ import {
   asSectionColumns,
   resolveColumnWidthsCm,
 } from "../lib/documentModel";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
   /** { columns: SectionColumns, contentWidthCm: number, applyTo: string }. */
@@ -34,9 +36,11 @@ const applyTo = ref(props.initial.applyTo === "selection" ? "selection" : "thisS
 
 const countInput = useTemplateRef("countInput");
 
+// BaseDialog focuses the [autofocus] count input; selecting the prefilled
+// count on top of that (type-to-replace) is this dialog's own one-shot
+// behaviour.
 onMounted(async () => {
   await nextTick();
-  countInput.value?.focus();
   countInput.value?.select();
 });
 
@@ -105,7 +109,7 @@ const widthError = computed(() => {
   }
   for (const width of widths.value) {
     if (!Number.isFinite(width) || width < MIN_SECTION_COLUMN_WIDTH_CM) {
-      return `Columns are too narrow (minimum ${MIN_SECTION_COLUMN_WIDTH_CM} cm)`;
+      return `Columns are too narrow (minimum ${MIN_SECTION_COLUMN_WIDTH_CM} cm)`;
     }
   }
   return "";
@@ -131,202 +135,164 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="columns-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Columns"
+    testid="columns-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Columns"
-    >
-      <h2 class="dialog-title">
-        Columns
-      </h2>
-
-      <div class="presets">
-        <span class="field-label">Presets</span>
-        <div class="preset-buttons">
-          <button
-            v-for="preset in [1, 2, 3]"
-            :key="preset"
-            type="button"
-            class="preset-button"
-            :class="{ active: count === preset }"
-            :data-testid="`columns-preset-${preset}`"
-            :aria-pressed="count === preset"
-            @click="choosePreset(preset)"
-          >
-            {{ preset }}
-          </button>
-        </div>
-      </div>
-
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Number of columns</span>
-          <input
-            ref="countInput"
-            v-model="countDraft"
-            class="field-input"
-            data-testid="columns-count"
-            type="number"
-            :min="MIN_COLUMN_COUNT"
-            :max="MAX_COLUMN_COUNT"
-            step="1"
-            @change="commitCount"
-            @keydown.enter="commitCount"
-          >
-        </label>
-        <label class="field">
-          <span class="field-label">Spacing (cm)</span>
-          <input
-            v-model.number="gapCm"
-            class="field-input"
-            data-testid="columns-spacing"
-            type="number"
-            min="0"
-            step="0.1"
-            :disabled="count <= 1"
-          >
-        </label>
-      </div>
-      <p
-        v-if="countError"
-        class="dialog-error"
-        data-testid="columns-count-error"
-      >
-        {{ countError }}
-      </p>
-
-      <label
-        v-if="count > 1"
-        class="checkbox-row"
-      >
-        <input
-          v-model="equalWidth"
-          type="checkbox"
-          data-testid="columns-equal"
-          @change="onEqualChange"
-        >
-        <span>Equal column widths</span>
-      </label>
-
-      <div
-        v-if="count > 1"
-        class="widths"
-      >
-        <label
-          v-for="(width, index) in displayWidths"
-          :key="index"
-          class="field width-field"
-        >
-          <span class="field-label">Column {{ index + 1 }} width (cm)</span>
-          <input
-            v-if="equalWidth"
-            class="field-input"
-            :data-testid="`columns-width-${index}`"
-            type="number"
-            :value="width"
-            disabled
-          >
-          <input
-            v-else
-            v-model.number="widths[index]"
-            class="field-input"
-            :data-testid="`columns-width-${index}`"
-            type="number"
-            :min="MIN_SECTION_COLUMN_WIDTH_CM"
-            step="0.1"
-          >
-        </label>
-      </div>
-
-      <label
-        v-if="count > 1"
-        class="checkbox-row"
-      >
-        <input
-          v-model="separator"
-          type="checkbox"
-          data-testid="columns-separator"
-        >
-        <span>Line between columns</span>
-      </label>
-
-      <label class="field">
-        <span class="field-label">Apply to</span>
-        <select
-          v-model="applyTo"
-          class="field-input"
-          data-testid="columns-apply-to"
-        >
-          <option value="thisSection">Current section</option>
-          <option value="selection">Selection</option>
-        </select>
-      </label>
-
-      <p
-        v-if="error"
-        class="dialog-error"
-        data-testid="columns-error"
-      >
-        {{ error }}
-      </p>
-
-      <div class="dialog-actions">
+    <div class="presets">
+      <span class="field-label">Presets</span>
+      <div class="preset-buttons">
         <button
+          v-for="preset in [1, 2, 3]"
+          :key="preset"
           type="button"
-          data-testid="columns-cancel"
-          @click="emit('cancel')"
+          class="preset-button"
+          :class="{ active: count === preset }"
+          :data-testid="`columns-preset-${preset}`"
+          :aria-pressed="count === preset"
+          @click="choosePreset(preset)"
         >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="columns-confirm"
-          :disabled="!!error"
-          @click="apply"
-        >
-          OK
+          {{ preset }}
         </button>
       </div>
     </div>
-  </div>
+
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Number of columns</span>
+        <input
+          ref="countInput"
+          v-model="countDraft"
+          class="field-input"
+          data-testid="columns-count"
+          type="number"
+          :min="MIN_COLUMN_COUNT"
+          :max="MAX_COLUMN_COUNT"
+          step="1"
+          autofocus
+          @change="commitCount"
+          @keydown.enter="commitCount"
+        >
+      </label>
+      <label class="field">
+        <span class="field-label">Spacing (cm)</span>
+        <input
+          v-model.number="gapCm"
+          class="field-input"
+          data-testid="columns-spacing"
+          type="number"
+          min="0"
+          step="0.1"
+          :disabled="count <= 1"
+        >
+      </label>
+    </div>
+    <p
+      v-if="countError"
+      class="dialog-error"
+      data-testid="columns-count-error"
+    >
+      {{ countError }}
+    </p>
+
+    <label
+      v-if="count > 1"
+      class="checkbox-row"
+    >
+      <input
+        v-model="equalWidth"
+        type="checkbox"
+        data-testid="columns-equal"
+        @change="onEqualChange"
+      >
+      <span>Equal column widths</span>
+    </label>
+
+    <div
+      v-if="count > 1"
+      class="widths"
+    >
+      <label
+        v-for="(width, index) in displayWidths"
+        :key="index"
+        class="field width-field"
+      >
+        <span class="field-label">Column {{ index + 1 }} width (cm)</span>
+        <input
+          v-if="equalWidth"
+          class="field-input"
+          :data-testid="`columns-width-${index}`"
+          type="number"
+          :value="width"
+          disabled
+        >
+        <input
+          v-else
+          v-model.number="widths[index]"
+          class="field-input"
+          :data-testid="`columns-width-${index}`"
+          type="number"
+          :min="MIN_SECTION_COLUMN_WIDTH_CM"
+          step="0.1"
+        >
+      </label>
+    </div>
+
+    <label
+      v-if="count > 1"
+      class="checkbox-row"
+    >
+      <input
+        v-model="separator"
+        type="checkbox"
+        data-testid="columns-separator"
+      >
+      <span>Line between columns</span>
+    </label>
+
+    <label class="field">
+      <span class="field-label">Apply to</span>
+      <select
+        v-model="applyTo"
+        class="field-input"
+        data-testid="columns-apply-to"
+      >
+        <option value="thisSection">Current section</option>
+        <option value="selection">Selection</option>
+      </select>
+    </label>
+
+    <p
+      v-if="error"
+      class="dialog-error"
+      data-testid="columns-error"
+    >
+      {{ error }}
+    </p>
+
+    <template #actions>
+      <button
+        type="button"
+        data-testid="columns-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="columns-confirm"
+        :disabled="!!error"
+        @click="apply"
+      >
+        OK
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 20rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .presets {
   margin-bottom: 0.75rem;
 }
@@ -411,13 +377,6 @@ function apply() {
   margin: 0.25rem 0 0;
   font-size: 0.8125rem;
   color: #c5221f;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
 }
 
 .dialog-actions button {

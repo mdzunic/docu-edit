@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { ref } from "vue";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Image options" panel (SPEC-024 AC-15..22): alt text, size in cm with
 // a lock-aspect-ratio toggle, and a "Reset size" button. Same dialog shape
 // as TablePropertiesDialog.vue — a captured `initial` prefill, `apply`/
-// `cancel` emits, local draft refs, OK disabled while invalid.
+// `cancel` emits, local draft refs, OK disabled while invalid. BaseDialog
+// owns the shell, Escape and initial focus (the [autofocus] alt-text
+// input).
 const props = defineProps({
   /** Prefill: { altText, widthCm, heightCm, naturalWidthCm, naturalHeightCm,
    * lockAspectRatio }. */
@@ -23,13 +26,6 @@ const naturalHeightCm = Number(props.initial.naturalHeightCm) || Number(props.in
 // The ratio lock preserves — SPEC-024 AC-19's "original aspect ratio" is the
 // image's natural (source) ratio, not whatever the box currently shows.
 const naturalRatio = naturalWidthCm / naturalHeightCm;
-
-const altTextInput = useTemplateRef("altTextInput");
-
-onMounted(async () => {
-  await nextTick();
-  altTextInput.value?.focus();
-});
 
 function widthError() {
   const value = Number(widthCm.value);
@@ -87,138 +83,105 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="image-options-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Image options"
+    testid="image-options-dialog"
+    width="24rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Image options"
-    >
-      <h2 class="dialog-title">
-        Image options
-      </h2>
-
-      <label class="field">
-        <span class="field-label">Alt text (description)</span>
-        <input
-          ref="altTextInput"
-          v-model="altText"
-          class="field-input"
-          data-testid="image-options-alt-text"
-          type="text"
-          placeholder="Describe this image"
-        >
-      </label>
-
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Width (cm)</span>
-          <input
-            v-model="widthCm"
-            class="field-input"
-            data-testid="image-options-width"
-            type="number"
-            min="0.1"
-            max="500"
-            step="0.1"
-            @input="handleWidthInput"
-          >
-        </label>
-        <label class="field">
-          <span class="field-label">Height (cm)</span>
-          <input
-            v-model="heightCm"
-            class="field-input"
-            data-testid="image-options-height"
-            type="number"
-            min="0.1"
-            max="500"
-            step="0.1"
-            @input="handleHeightInput"
-          >
-        </label>
-      </div>
-      <p
-        v-if="error()"
-        class="dialog-error"
-        data-testid="image-options-size-error"
+    <label class="field">
+      <span class="field-label">Alt text (description)</span>
+      <input
+        v-model="altText"
+        class="field-input"
+        data-testid="image-options-alt-text"
+        type="text"
+        placeholder="Describe this image"
+        autofocus
       >
-        {{ error() }}
-      </p>
+    </label>
 
-      <label class="field-inline">
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Width (cm)</span>
         <input
-          v-model="lockAspectRatio"
-          type="checkbox"
-          data-testid="image-options-lock-aspect"
+          v-model="widthCm"
+          class="field-input"
+          data-testid="image-options-width"
+          type="number"
+          min="0.1"
+          max="500"
+          step="0.1"
+          @input="handleWidthInput"
         >
-        <span>Lock aspect ratio</span>
       </label>
+      <label class="field">
+        <span class="field-label">Height (cm)</span>
+        <input
+          v-model="heightCm"
+          class="field-input"
+          data-testid="image-options-height"
+          type="number"
+          min="0.1"
+          max="500"
+          step="0.1"
+          @input="handleHeightInput"
+        >
+      </label>
+    </div>
+    <p
+      v-if="error()"
+      class="dialog-error"
+      data-testid="image-options-size-error"
+    >
+      {{ error() }}
+    </p>
 
+    <label class="field-inline">
+      <input
+        v-model="lockAspectRatio"
+        type="checkbox"
+        data-testid="image-options-lock-aspect"
+      >
+      <span>Lock aspect ratio</span>
+    </label>
+
+    <button
+      type="button"
+      class="reset-button"
+      data-testid="image-options-reset-size"
+      @click="resetSize"
+    >
+      Reset size
+    </button>
+
+    <template #actions>
       <button
         type="button"
-        class="reset-button"
-        data-testid="image-options-reset-size"
-        @click="resetSize"
+        data-testid="image-options-cancel"
+        @click="emit('cancel')"
       >
-        Reset size
+        Cancel
       </button>
-
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="image-options-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="image-options-apply"
-          :disabled="!!error()"
-          @click="apply"
-        >
-          OK
-        </button>
-      </div>
-    </div>
-  </div>
+      <button
+        type="button"
+        class="primary"
+        data-testid="image-options-apply"
+        :disabled="!!error()"
+        @click="apply"
+      >
+        OK
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 24rem;
-  max-width: 90vw;
+/* This dialog kept its own scroll cap on the panel (the base's .dialog is
+   the short-dialog variant without one). */
+:deep(.dialog) {
   max-height: 85vh;
   overflow-y: auto;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .field {
@@ -275,13 +238,6 @@ function apply() {
   background: #fff;
   cursor: pointer;
   margin-bottom: 0.5rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
 }
 
 .dialog-actions button {

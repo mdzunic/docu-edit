@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { ref } from "vue";
+import BaseDialog from "./BaseDialog.vue";
 
 // The footnote settings dialog (SPEC-031 AC-17..20): numbering format
 // (1/i/a/*), start number, and restart behaviour (continuous, per page,
 // per section) — applied to footnotes or, via the stream selector at the
-// top (Word's own dialog shape), to endnotes.
+// top (Word's own dialog shape), to endnotes. BaseDialog owns the shell,
+// Escape and initial focus (the [autofocus] number-format select, as
+// before — not the stream selector above it).
 const props = defineProps({
   /** Prefill: { kind, footnote: { numberFormat, startAt, restart },
    * endnote: { numberFormat, startAt, restart } } — the effective (default-
@@ -20,13 +23,6 @@ const settingsOf = (which = "footnote") =>
 const numberFormat = ref(String(settingsOf(kind.value).numberFormat ?? "decimal"));
 const startAt = ref(String(settingsOf(kind.value).startAt ?? 1));
 const restart = ref(String(settingsOf(kind.value).restart ?? "continuous"));
-
-const firstField = useTemplateRef("firstField");
-
-onMounted(async () => {
-  await nextTick();
-  firstField.value?.focus();
-});
 
 function switchKind(next = "footnote") {
   kind.value = next;
@@ -55,135 +51,98 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="note-settings-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Footnote settings"
+    testid="note-settings-dialog"
+    width="22rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Footnote settings"
-    >
-      <h2 class="dialog-title">
-        Footnote settings
-      </h2>
-      <label class="field">
-        <span>Apply to</span>
-        <select
-          data-testid="note-settings-kind"
-          :value="kind"
-          @change="onKindChange"
-        >
-          <option value="footnote">Footnotes</option>
-          <option value="endnote">Endnotes</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Number format</span>
-        <select
-          ref="firstField"
-          v-model="numberFormat"
-          data-testid="note-settings-format"
-        >
-          <option value="decimal">1, 2, 3, …</option>
-          <option value="lowerRoman">i, ii, iii, …</option>
-          <option value="lowerAlpha">a, b, c, …</option>
-          <option value="symbol">*, †, ‡, §, …</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Start at</span>
+    <label class="field">
+      <span>Apply to</span>
+      <select
+        data-testid="note-settings-kind"
+        :value="kind"
+        @change="onKindChange"
+      >
+        <option value="footnote">Footnotes</option>
+        <option value="endnote">Endnotes</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Number format</span>
+      <select
+        v-model="numberFormat"
+        data-testid="note-settings-format"
+        autofocus
+      >
+        <option value="decimal">1, 2, 3, …</option>
+        <option value="lowerRoman">i, ii, iii, …</option>
+        <option value="lowerAlpha">a, b, c, …</option>
+        <option value="symbol">*, †, ‡, §, …</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Start at</span>
+      <input
+        v-model="startAt"
+        class="field-input start-input"
+        data-testid="note-settings-start-at"
+        type="number"
+        min="1"
+        step="1"
+      >
+    </label>
+    <fieldset class="restart-group">
+      <legend>Numbering</legend>
+      <label class="radio-field">
         <input
-          v-model="startAt"
-          class="field-input start-input"
-          data-testid="note-settings-start-at"
-          type="number"
-          min="1"
-          step="1"
+          v-model="restart"
+          type="radio"
+          value="continuous"
+          data-testid="note-settings-restart-continuous"
         >
+        <span>Continuous</span>
       </label>
-      <fieldset class="restart-group">
-        <legend>Numbering</legend>
-        <label class="radio-field">
-          <input
-            v-model="restart"
-            type="radio"
-            value="continuous"
-            data-testid="note-settings-restart-continuous"
-          >
-          <span>Continuous</span>
-        </label>
-        <label class="radio-field">
-          <input
-            v-model="restart"
-            type="radio"
-            value="page"
-            data-testid="note-settings-restart-page"
-          >
-          <span>Restart each page</span>
-        </label>
-        <label class="radio-field">
-          <input
-            v-model="restart"
-            type="radio"
-            value="section"
-            data-testid="note-settings-restart-section"
-          >
-          <span>Restart each section</span>
-        </label>
-      </fieldset>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="note-settings-cancel"
-          @click="emit('cancel')"
+      <label class="radio-field">
+        <input
+          v-model="restart"
+          type="radio"
+          value="page"
+          data-testid="note-settings-restart-page"
         >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="note-settings-apply"
-          @click="apply"
+        <span>Restart each page</span>
+      </label>
+      <label class="radio-field">
+        <input
+          v-model="restart"
+          type="radio"
+          value="section"
+          data-testid="note-settings-restart-section"
         >
-          Apply
-        </button>
-      </div>
-    </div>
-  </div>
+        <span>Restart each section</span>
+      </label>
+    </fieldset>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="note-settings-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="note-settings-apply"
+        @click="apply"
+      >
+        Apply
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 22rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .field {
   display: flex;
   align-items: center;
@@ -228,13 +187,6 @@ function apply() {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.25rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {

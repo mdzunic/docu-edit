@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "../lib/core/tables";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Insert table…" dialog (SPEC-022 AC-2): row/column counts beyond the
 // grid picker's 10×10. OK emits the size for the parent to insert at the
 // caret; Cancel just closes — the draft state lives here and dies here.
-// Same structure as CustomSpacingDialog (backdrop, role="dialog", testids).
+// BaseDialog owns the shell, Escape and initial focus (the [autofocus]
+// rows input).
 const emit = defineEmits(["apply", "cancel"]);
 
 const rows = ref("3");
@@ -13,9 +15,11 @@ const cols = ref("3");
 
 const rowsInput = useTemplateRef("rowsInput");
 
+// BaseDialog focuses the [autofocus] rows input; selecting the prefilled
+// count on top of that (type-to-replace) is this dialog's own one-shot
+// behaviour.
 onMounted(async () => {
   await nextTick();
-  rowsInput.value?.focus();
   rowsInput.value?.select();
 });
 
@@ -43,107 +47,71 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="insert-table-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Insert table"
+    testid="insert-table-dialog"
+    width="18rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Insert table"
-    >
-      <h2 class="dialog-title">
-        Insert table
-      </h2>
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Rows</span>
-          <input
-            ref="rowsInput"
-            v-model="rows"
-            class="field-input"
-            data-testid="insert-table-rows"
-            type="number"
-            min="1"
-            :max="MAX_TABLE_ROWS"
-            step="1"
-            @keydown.enter="apply"
-          >
-        </label>
-        <label class="field">
-          <span class="field-label">Columns</span>
-          <input
-            v-model="cols"
-            class="field-input"
-            data-testid="insert-table-cols"
-            type="number"
-            min="1"
-            :max="MAX_TABLE_COLS"
-            step="1"
-            @keydown.enter="apply"
-          >
-        </label>
-      </div>
-      <p
-        v-if="error"
-        class="dialog-error"
-        data-testid="insert-table-error"
-      >
-        {{ error }}
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="insert-table-cancel"
-          @click="emit('cancel')"
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Rows</span>
+        <input
+          ref="rowsInput"
+          v-model="rows"
+          class="field-input"
+          data-testid="insert-table-rows"
+          type="number"
+          min="1"
+          :max="MAX_TABLE_ROWS"
+          step="1"
+          autofocus
+          @keydown.enter="apply"
         >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="insert-table-confirm"
-          :disabled="!!error"
-          @click="apply"
+      </label>
+      <label class="field">
+        <span class="field-label">Columns</span>
+        <input
+          v-model="cols"
+          class="field-input"
+          data-testid="insert-table-cols"
+          type="number"
+          min="1"
+          :max="MAX_TABLE_COLS"
+          step="1"
+          @keydown.enter="apply"
         >
-          Insert
-        </button>
-      </div>
+      </label>
     </div>
-  </div>
+    <p
+      v-if="error"
+      class="dialog-error"
+      data-testid="insert-table-error"
+    >
+      {{ error }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="insert-table-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="insert-table-confirm"
+        :disabled="!!error"
+        @click="apply"
+      >
+        Insert
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 18rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .field-row {
   display: flex;
   gap: 0.75rem;
@@ -176,13 +144,6 @@ function apply() {
   margin: 0.5rem 0 0;
   font-size: 0.8125rem;
   color: #c5221f;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
 }
 
 .dialog-actions button {
