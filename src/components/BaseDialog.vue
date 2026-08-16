@@ -20,6 +20,10 @@ const props = defineProps({
    * actually varied (max-width was a constant 90vw). 20rem is the most
    * common value. */
   width: { type: String, default: "20rem" },
+  /** Optional data-testid applied to the h2 title itself (in addition to
+   * `testid` on the backdrop) — ConversionReportDialog's spec asserts one
+   * on its title. "" (the default) renders no attribute at all. */
+  titleTestid: { type: String, default: "" },
 });
 
 const emit = defineEmits(["dismiss"]);
@@ -100,9 +104,30 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
       :style="{ '--dialog-width': props.width }"
       @keydown="handleKeydown"
     >
+      <!-- Header-row variant: some dialogs (mail merge, special characters,
+           the template gallery) put controls — a ✕ close button, an import
+           button — on the title line. The optional #header-extra slot opts
+           into a flex header row holding the h2 and that content; without
+           it the h2 renders exactly as before, so plain dialogs see no
+           structural change. -->
+      <div
+        v-if="$slots['header-extra']"
+        class="dialog-header"
+      >
+        <h2
+          :id="`${props.testid}-title`"
+          class="dialog-title"
+          :data-testid="props.titleTestid || undefined"
+        >
+          {{ props.title }}
+        </h2>
+        <slot name="header-extra" />
+      </div>
       <h2
+        v-else
         :id="`${props.testid}-title`"
         class="dialog-title"
+        :data-testid="props.titleTestid || undefined"
       >
         {{ props.title }}
       </h2>
@@ -143,6 +168,20 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
   font-size: 1rem;
   font-weight: 600;
   color: #202124;
+}
+
+/* The #header-extra variant: title left, the dialog's own controls right.
+   The row carries the title's usual 1rem bottom spacing (dialogs that had
+   a tighter header override it via :deep). */
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.dialog-header .dialog-title {
+  margin: 0;
 }
 
 .dialog-actions {

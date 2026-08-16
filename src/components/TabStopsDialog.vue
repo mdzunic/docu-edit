@@ -2,10 +2,12 @@
 // The Tabs dialog (SPEC-032 AC-25): lists the selection's custom tab stops
 // and adds/removes them — position in cm, alignment (left/centre/right/
 // decimal, AC-19..22) and leader (AC-23). OK emits the full list; the
-// setTabStops command normalises and applies it. Runtime prop/emit
-// declarations — this script is parsed by espree.
+// setTabStops command normalises and applies it. BaseDialog owns the shell
+// and Escape; @dismiss maps onto cancel. Runtime prop/emit declarations —
+// this script is parsed by espree.
 import { computed, ref } from "vue";
 import { asTabStopAlignment, asTabStops } from "../lib/documentModel";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
   /** The selection's current stops (commands.selectionTabStops). */
@@ -83,166 +85,134 @@ function apply() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="tabs-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Tabs"
+    testid="tabs-dialog"
+    width="26rem"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Tabs"
-    >
-      <h2 class="dialog-title">
-        Tabs
-      </h2>
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Position (cm)</span>
-          <input
-            v-model="position"
-            class="field-input"
-            data-testid="tab-position-input"
-            type="number"
-            min="0"
-            step="0.25"
-            @keydown.enter="addStop"
-          >
-        </label>
-        <label class="field">
-          <span class="field-label">Alignment</span>
-          <select
-            v-model="alignment"
-            class="field-input"
-            data-testid="tab-alignment-select"
-          >
-            <option value="left">Left</option>
-            <option value="center">Centre</option>
-            <option value="right">Right</option>
-            <option value="decimal">Decimal</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field-label">Leader</span>
-          <select
-            v-model="leader"
-            class="field-input"
-            data-testid="tab-leader-select"
-          >
-            <option value="">None</option>
-            <option value="dot">Dot (…)</option>
-            <option value="hyphen">Hyphen (---)</option>
-            <option value="underscore">Underscore (___)</option>
-          </select>
-        </label>
-        <div class="field add-field">
-          <span class="field-label">&nbsp;</span>
-          <button
-            type="button"
-            class="add-button"
-            data-testid="tab-add"
-            :disabled="position === '' || !!positionError"
-            @click="addStop"
-          >
-            Add
-          </button>
-        </div>
-      </div>
-      <p
-        v-if="positionError"
-        class="dialog-error"
-        data-testid="tab-position-error"
-      >
-        {{ positionError }}
-      </p>
-      <ul
-        class="stop-list"
-        data-testid="tab-stop-list"
-      >
-        <li
-          v-for="(stop, index) in stops"
-          :key="`${stop.positionCm}-${index}`"
-          class="stop-entry"
-          data-testid="tab-stop-entry"
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Position (cm)</span>
+        <input
+          v-model="position"
+          class="field-input"
+          data-testid="tab-position-input"
+          type="number"
+          min="0"
+          step="0.25"
+          @keydown.enter="addStop"
         >
-          <span>{{ describe(stop) }}</span>
-          <button
-            type="button"
-            class="remove-button"
-            :data-testid="`tab-remove-${index}`"
-            :aria-label="`Remove tab stop at ${stop.positionCm} cm`"
-            @click="removeStop(index)"
-          >
-            Remove
-          </button>
-        </li>
-        <li
-          v-if="stops.length === 0"
-          class="stop-empty"
+      </label>
+      <label class="field">
+        <span class="field-label">Alignment</span>
+        <select
+          v-model="alignment"
+          class="field-input"
+          data-testid="tab-alignment-select"
         >
-          No custom tab stops
-        </li>
-      </ul>
-      <div class="dialog-actions">
+          <option value="left">Left</option>
+          <option value="center">Centre</option>
+          <option value="right">Right</option>
+          <option value="decimal">Decimal</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Leader</span>
+        <select
+          v-model="leader"
+          class="field-input"
+          data-testid="tab-leader-select"
+        >
+          <option value="">None</option>
+          <option value="dot">Dot (…)</option>
+          <option value="hyphen">Hyphen (---)</option>
+          <option value="underscore">Underscore (___)</option>
+        </select>
+      </label>
+      <div class="field add-field">
+        <span class="field-label">&nbsp;</span>
         <button
           type="button"
-          data-testid="tabs-clear-all"
-          :disabled="stops.length === 0"
-          @click="clearAll"
+          class="add-button"
+          data-testid="tab-add"
+          :disabled="position === '' || !!positionError"
+          @click="addStop"
         >
-          Clear all
-        </button>
-        <span class="actions-spacer" />
-        <button
-          type="button"
-          data-testid="tabs-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="tabs-apply"
-          @click="apply"
-        >
-          OK
+          Add
         </button>
       </div>
     </div>
-  </div>
+    <p
+      v-if="positionError"
+      class="dialog-error"
+      data-testid="tab-position-error"
+    >
+      {{ positionError }}
+    </p>
+    <ul
+      class="stop-list"
+      data-testid="tab-stop-list"
+    >
+      <li
+        v-for="(stop, index) in stops"
+        :key="`${stop.positionCm}-${index}`"
+        class="stop-entry"
+        data-testid="tab-stop-entry"
+      >
+        <span>{{ describe(stop) }}</span>
+        <button
+          type="button"
+          class="remove-button"
+          :data-testid="`tab-remove-${index}`"
+          :aria-label="`Remove tab stop at ${stop.positionCm} cm`"
+          @click="removeStop(index)"
+        >
+          Remove
+        </button>
+      </li>
+      <li
+        v-if="stops.length === 0"
+        class="stop-empty"
+      >
+        No custom tab stops
+      </li>
+    </ul>
+    <!-- Deliberately NOT the base's #actions slot: this row is Clear all on
+         the left, a spacer, then Cancel/OK — align-items: center without
+         justify-content: flex-end, a real layout the base's flex-end
+         actions row cannot express. It stays in the body with its own
+         scoped .dialog-actions styles. -->
+    <div class="dialog-actions">
+      <button
+        type="button"
+        data-testid="tabs-clear-all"
+        :disabled="stops.length === 0"
+        @click="clearAll"
+      >
+        Clear all
+      </button>
+      <span class="actions-spacer" />
+      <button
+        type="button"
+        data-testid="tabs-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="tabs-apply"
+        @click="apply"
+      >
+        OK
+      </button>
+    </div>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 26rem;
-  max-width: 90vw;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
-}
-
 .field-row {
   display: flex;
   gap: 0.75rem;
@@ -327,6 +297,8 @@ function apply() {
   font-size: 0.8125rem;
 }
 
+/* This dialog's own actions row (see the template comment) — lives in the
+   body slot, so these scoped rules apply to it directly. */
 .dialog-actions {
   display: flex;
   align-items: center;

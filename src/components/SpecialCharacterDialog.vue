@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { computed, ref } from "vue";
 import {
   CHARACTER_CATEGORIES,
   displayName,
@@ -9,18 +9,20 @@ import {
   pushRecentCharacter,
   findCharacter,
 } from "../lib/core/specialCharacters";
+import BaseDialog from "./BaseDialog.vue";
 
 // The "Insert → Special characters" picker (SPEC-026). A searchable grid of
 // the fixed catalogue grouped by category, a most-recent-first Recent row and
 // direct-insert buttons for the four hyphen/space specials. Clicking a
 // character emits it for the parent to insert at the caret and keeps the
-// dialog open (AC-5, AC-6). Runtime emit declaration per the espree
+// dialog open (AC-5, AC-6). BaseDialog owns the shell, Escape and initial
+// focus (the [autofocus] search input); its #header-extra slot carries the
+// × close button on the title row. Runtime emit declaration per the espree
 // constraint (see DownloadMenu.vue).
 const emit = defineEmits(["insert", "cancel"]);
 
 const query = ref("");
 const recent = ref(loadRecentCharacters());
-const searchInput = useTemplateRef("searchInput");
 
 // The four direct-insert specials (AC-11..14). Non-breaking space also has a
 // keyboard shortcut, wired in DocumentView.
@@ -30,11 +32,6 @@ const DIRECT_INSERTS = [
   { cp: 0x2014, label: "Em dash" },
   { cp: 0x2011, label: "Non-breaking hyphen" },
 ];
-
-onMounted(async () => {
-  await nextTick();
-  searchInput.value?.focus();
-});
 
 /** Categories with their characters filtered by the current query; empty
  * categories drop out. */
@@ -69,178 +66,147 @@ function pick(cp = 0) {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="special-character-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    title="Special characters"
+    testid="special-character-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Special characters"
+    <template #header-extra>
+      <button
+        type="button"
+        class="close-button"
+        data-testid="special-character-close"
+        aria-label="Close"
+        @click="emit('cancel')"
+      >
+        ×
+      </button>
+    </template>
+
+    <input
+      v-model="query"
+      class="search-input"
+      type="search"
+      placeholder="Search by name, keyword or code point (e.g. 2014)"
+      aria-label="Search special characters"
+      data-testid="special-character-search"
+      autofocus
     >
-      <div class="dialog-header">
-        <h2 class="dialog-title">
-          Special characters
-        </h2>
-        <button
-          type="button"
-          class="close-button"
-          data-testid="special-character-close"
-          aria-label="Close"
-          @click="emit('cancel')"
-        >
-          ×
-        </button>
-      </div>
 
-      <input
-        ref="searchInput"
-        v-model="query"
-        class="search-input"
-        type="search"
-        placeholder="Search by name, keyword or code point (e.g. 2014)"
-        aria-label="Search special characters"
-        data-testid="special-character-search"
+    <div
+      class="direct-inserts"
+      data-testid="special-character-direct"
+    >
+      <button
+        v-for="entry in DIRECT_INSERTS"
+        :key="entry.cp"
+        type="button"
+        class="direct-button"
+        :data-testid="'special-char-direct-' + hex(entry.cp)"
+        :title="entry.label"
+        @mousedown.prevent
+        @click="pick(entry.cp)"
       >
-
-      <div
-        class="direct-inserts"
-        data-testid="special-character-direct"
-      >
-        <button
-          v-for="entry in DIRECT_INSERTS"
-          :key="entry.cp"
-          type="button"
-          class="direct-button"
-          :data-testid="'special-char-direct-' + hex(entry.cp)"
-          :title="entry.label"
-          @mousedown.prevent
-          @click="pick(entry.cp)"
-        >
-          {{ entry.label }}
-        </button>
-      </div>
-
-      <div class="scroll-area">
-        <section
-          v-if="!searching && recentChars.length > 0"
-          class="category"
-          data-testid="special-character-recent"
-        >
-          <h3 class="category-label">
-            Recent
-          </h3>
-          <div class="grid">
-            <button
-              v-for="c in recentChars"
-              :key="'recent-' + c.cp"
-              type="button"
-              class="char-cell"
-              :class="{ glyphless: isGlyphless(c.cp) }"
-              :data-testid="'recent-char-' + hex(c.cp)"
-              :title="displayName(c.name)"
-              :aria-label="displayName(c.name)"
-              @mousedown.prevent
-              @click="pick(c.cp)"
-            >
-              <span
-                v-if="isGlyphless(c.cp)"
-                class="glyphless-box"
-                aria-hidden="true"
-              />
-              <span
-                v-else
-                aria-hidden="true"
-              >{{ glyph(c.cp) }}</span>
-            </button>
-          </div>
-        </section>
-
-        <p
-          v-if="filteredCategories.length === 0"
-          class="no-results"
-          data-testid="special-character-empty"
-        >
-          No characters match “{{ query }}”.
-        </p>
-
-        <section
-          v-for="category in filteredCategories"
-          :key="category.id"
-          class="category"
-          :data-testid="'special-character-category-' + category.id"
-        >
-          <h3 class="category-label">
-            {{ category.label }}
-          </h3>
-          <div class="grid">
-            <button
-              v-for="c in category.chars"
-              :key="c.cp"
-              type="button"
-              class="char-cell"
-              :class="{ glyphless: isGlyphless(c.cp) }"
-              :data-testid="'special-char-' + hex(c.cp)"
-              :title="displayName(c.name)"
-              :aria-label="displayName(c.name)"
-              @mousedown.prevent
-              @click="pick(c.cp)"
-            >
-              <span
-                v-if="isGlyphless(c.cp)"
-                class="glyphless-box"
-                aria-hidden="true"
-              />
-              <span
-                v-else
-                aria-hidden="true"
-              >{{ glyph(c.cp) }}</span>
-            </button>
-          </div>
-        </section>
-      </div>
+        {{ entry.label }}
+      </button>
     </div>
-  </div>
+
+    <div class="scroll-area">
+      <section
+        v-if="!searching && recentChars.length > 0"
+        class="category"
+        data-testid="special-character-recent"
+      >
+        <h3 class="category-label">
+          Recent
+        </h3>
+        <div class="grid">
+          <button
+            v-for="c in recentChars"
+            :key="'recent-' + c.cp"
+            type="button"
+            class="char-cell"
+            :class="{ glyphless: isGlyphless(c.cp) }"
+            :data-testid="'recent-char-' + hex(c.cp)"
+            :title="displayName(c.name)"
+            :aria-label="displayName(c.name)"
+            @mousedown.prevent
+            @click="pick(c.cp)"
+          >
+            <span
+              v-if="isGlyphless(c.cp)"
+              class="glyphless-box"
+              aria-hidden="true"
+            />
+            <span
+              v-else
+              aria-hidden="true"
+            >{{ glyph(c.cp) }}</span>
+          </button>
+        </div>
+      </section>
+
+      <p
+        v-if="filteredCategories.length === 0"
+        class="no-results"
+        data-testid="special-character-empty"
+      >
+        No characters match “{{ query }}”.
+      </p>
+
+      <section
+        v-for="category in filteredCategories"
+        :key="category.id"
+        class="category"
+        :data-testid="'special-character-category-' + category.id"
+      >
+        <h3 class="category-label">
+          {{ category.label }}
+        </h3>
+        <div class="grid">
+          <button
+            v-for="c in category.chars"
+            :key="c.cp"
+            type="button"
+            class="char-cell"
+            :class="{ glyphless: isGlyphless(c.cp) }"
+            :data-testid="'special-char-' + hex(c.cp)"
+            :title="displayName(c.name)"
+            :aria-label="displayName(c.name)"
+            @mousedown.prevent
+            @click="pick(c.cp)"
+          >
+            <span
+              v-if="isGlyphless(c.cp)"
+              class="glyphless-box"
+              aria-hidden="true"
+            />
+            <span
+              v-else
+              aria-hidden="true"
+            >{{ glyph(c.cp) }}</span>
+          </button>
+        </div>
+      </section>
+    </div>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
+/* Fixed 34rem panel, laid out as a column so .scroll-area flex-scrolls
+   under the fixed search/direct-insert rows; keeps its slightly wider
+   92vw cap (the base's is 90vw). */
+:deep(.dialog) {
   width: 34rem;
   max-width: 92vw;
   max-height: 82vh;
-  box-sizing: border-box;
   display: flex;
   flex-direction: column;
 }
 
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.dialog-title {
-  margin: 0 0 0.75rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
+/* The title row sat tighter above the search input than the base's 1rem. */
+:deep(.dialog-header) {
+  margin-bottom: 0.75rem;
 }
 
 .close-button {

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, useTemplateRef } from "vue";
 import { asStringArray, asStyleOptions, noStyleOptions, styleFormInputFromDraft } from "../lib/styles";
+import BaseDialog from "./BaseDialog.vue";
 
 // "New style" / "Modify style" (SPEC-042 AC-3, AC-4): one dialog for both —
 // `mode` decides the title/submit label and whether `type` is editable (a
-// style's family cannot change after creation). Runtime prop/emit
-// declarations, not defineProps<{...}>() generics — see AppShell.vue's
-// comment on the same espree constraint.
+// style's family cannot change after creation). BaseDialog owns the shell,
+// Escape and initial focus (the [autofocus] name input); selecting the
+// prefilled name on top of that is this dialog's own one-shot onMounted.
+// Runtime prop/emit declarations, not defineProps<{...}>() generics — see
+// AppShell.vue's comment on the same espree constraint.
 const props = defineProps({
   mode: { type: String, default: "new" }, // "new" | "modify"
   initialName: { type: String, default: "" },
@@ -64,10 +67,11 @@ const draft = reactive({
   cellBorderColor: props.initialCellBorderColor,
 });
 
+// BaseDialog focuses the [autofocus] name input; selecting the prefilled
+// name on top of that (type-to-replace) mirrors RenameDialog.
 const nameInput = useTemplateRef("nameInput");
 onMounted(async () => {
   await nextTick();
-  nameInput.value?.focus();
   nameInput.value?.select();
 });
 
@@ -100,309 +104,278 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="style-editor-dialog"
-    @click.self="emit('cancel')"
-    @keydown.escape="emit('cancel')"
+  <BaseDialog
+    :title="title"
+    testid="style-editor-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="title"
-    >
-      <h2 class="dialog-title">
-        {{ title }}
-      </h2>
-
-      <label class="field">
-        <span>Name</span>
-        <input
-          ref="nameInput"
-          v-model="draft.name"
-          data-testid="style-name-input"
-          @keydown.enter="save"
-        >
-      </label>
-      <p
-        v-if="nameError"
-        class="dialog-error"
-        data-testid="style-name-error"
+    <label class="field">
+      <span>Name</span>
+      <input
+        ref="nameInput"
+        v-model="draft.name"
+        data-testid="style-name-input"
+        autofocus
+        @keydown.enter="save"
       >
-        {{ nameError }}
-      </p>
+    </label>
+    <p
+      v-if="nameError"
+      class="dialog-error"
+      data-testid="style-name-error"
+    >
+      {{ nameError }}
+    </p>
 
-      <label class="field">
-        <span>Type</span>
-        <select
-          v-model="draft.type"
-          data-testid="style-type-select"
-          :disabled="mode === 'modify'"
+    <label class="field">
+      <span>Type</span>
+      <select
+        v-model="draft.type"
+        data-testid="style-type-select"
+        :disabled="mode === 'modify'"
+      >
+        <option value="paragraph">
+          Paragraph
+        </option>
+        <option value="character">
+          Character
+        </option>
+        <option value="list">
+          List
+        </option>
+        <option value="table">
+          Table
+        </option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Based on</span>
+      <select
+        v-model="draft.basedOn"
+        data-testid="style-based-on-select"
+      >
+        <option value="">
+          (none)
+        </option>
+        <option
+          v-for="option in basedOnList"
+          :key="option.id"
+          :value="option.id"
         >
-          <option value="paragraph">
-            Paragraph
+          {{ option.name }}
+        </option>
+      </select>
+    </label>
+
+    <label
+      v-if="draft.type === 'paragraph' || draft.type === 'list'"
+      class="field"
+    >
+      <span>Style for following paragraph</span>
+      <select
+        v-model="draft.next"
+        data-testid="style-next-select"
+      >
+        <option value="">
+          (same style)
+        </option>
+        <option
+          v-for="option in nextList"
+          :key="option.id"
+          :value="option.id"
+        >
+          {{ option.name }}
+        </option>
+      </select>
+    </label>
+
+    <template v-if="draft.type === 'paragraph' || draft.type === 'character' || draft.type === 'list'">
+      <fieldset class="field-group">
+        <legend>Font</legend>
+        <label class="field">
+          <span>Font family</span>
+          <input
+            v-model="draft.fontFamily"
+            data-testid="style-font-family-input"
+          >
+        </label>
+        <label class="field">
+          <span>Font size (pt)</span>
+          <input
+            v-model.number="draft.fontSizePt"
+            type="number"
+            min="1"
+            data-testid="style-font-size-input"
+          >
+        </label>
+        <label class="checkbox-field">
+          <input
+            v-model="draft.bold"
+            type="checkbox"
+            data-testid="style-bold-checkbox"
+          >
+          <span>Bold</span>
+        </label>
+        <label class="checkbox-field">
+          <input
+            v-model="draft.italic"
+            type="checkbox"
+            data-testid="style-italic-checkbox"
+          >
+          <span>Italic</span>
+        </label>
+        <label class="checkbox-field">
+          <input
+            v-model="draft.underline"
+            type="checkbox"
+            data-testid="style-underline-checkbox"
+          >
+          <span>Underline</span>
+        </label>
+        <label class="field">
+          <span>Colour</span>
+          <input
+            v-model="draft.color"
+            placeholder="#000000"
+            data-testid="style-color-input"
+          >
+        </label>
+      </fieldset>
+    </template>
+
+    <fieldset
+      v-if="draft.type === 'paragraph'"
+      class="field-group"
+    >
+      <legend>Paragraph</legend>
+      <label class="field">
+        <span>Alignment</span>
+        <select
+          v-model="draft.alignment"
+          data-testid="style-alignment-select"
+        >
+          <option value="">
+            (inherit)
           </option>
-          <option value="character">
-            Character
-          </option>
-          <option value="list">
-            List
-          </option>
-          <option value="table">
-            Table
+          <option
+            v-for="alignment in ALIGNMENTS"
+            :key="alignment"
+            :value="alignment"
+          >
+            {{ alignment }}
           </option>
         </select>
       </label>
+    </fieldset>
 
+    <fieldset
+      v-if="draft.type === 'list'"
+      class="field-group"
+    >
+      <legend>Numbering</legend>
       <label class="field">
-        <span>Based on</span>
+        <span>Preset</span>
         <select
-          v-model="draft.basedOn"
-          data-testid="style-based-on-select"
+          v-model="draft.listPresetKey"
+          data-testid="style-list-preset-select"
+        >
+          <option
+            v-for="preset in LIST_PRESETS"
+            :key="preset.key"
+            :value="preset.key"
+          >
+            {{ preset.label }}
+          </option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset
+      v-if="draft.type === 'table'"
+      class="field-group"
+    >
+      <legend>Borders &amp; shading</legend>
+      <label class="field">
+        <span>Border style</span>
+        <select
+          v-model="draft.cellBorderStyle"
+          data-testid="style-border-style-select"
         >
           <option value="">
             (none)
           </option>
           <option
-            v-for="option in basedOnList"
-            :key="option.id"
-            :value="option.id"
+            v-for="style in BORDER_STYLES"
+            :key="style"
+            :value="style"
           >
-            {{ option.name }}
+            {{ style }}
           </option>
         </select>
       </label>
-
       <label
-        v-if="draft.type === 'paragraph' || draft.type === 'list'"
+        v-if="draft.cellBorderStyle"
         class="field"
       >
-        <span>Style for following paragraph</span>
-        <select
-          v-model="draft.next"
-          data-testid="style-next-select"
+        <span>Border width (pt)</span>
+        <input
+          v-model.number="draft.cellBorderWidthPt"
+          type="number"
+          min="0.25"
+          step="0.25"
+          data-testid="style-border-width-input"
         >
-          <option value="">
-            (same style)
-          </option>
-          <option
-            v-for="option in nextList"
-            :key="option.id"
-            :value="option.id"
-          >
-            {{ option.name }}
-          </option>
-        </select>
       </label>
-
-      <template v-if="draft.type === 'paragraph' || draft.type === 'character' || draft.type === 'list'">
-        <fieldset class="field-group">
-          <legend>Font</legend>
-          <label class="field">
-            <span>Font family</span>
-            <input
-              v-model="draft.fontFamily"
-              data-testid="style-font-family-input"
-            >
-          </label>
-          <label class="field">
-            <span>Font size (pt)</span>
-            <input
-              v-model.number="draft.fontSizePt"
-              type="number"
-              min="1"
-              data-testid="style-font-size-input"
-            >
-          </label>
-          <label class="checkbox-field">
-            <input
-              v-model="draft.bold"
-              type="checkbox"
-              data-testid="style-bold-checkbox"
-            >
-            <span>Bold</span>
-          </label>
-          <label class="checkbox-field">
-            <input
-              v-model="draft.italic"
-              type="checkbox"
-              data-testid="style-italic-checkbox"
-            >
-            <span>Italic</span>
-          </label>
-          <label class="checkbox-field">
-            <input
-              v-model="draft.underline"
-              type="checkbox"
-              data-testid="style-underline-checkbox"
-            >
-            <span>Underline</span>
-          </label>
-          <label class="field">
-            <span>Colour</span>
-            <input
-              v-model="draft.color"
-              placeholder="#000000"
-              data-testid="style-color-input"
-            >
-          </label>
-        </fieldset>
-      </template>
-
-      <fieldset
-        v-if="draft.type === 'paragraph'"
-        class="field-group"
+      <label
+        v-if="draft.cellBorderStyle"
+        class="field"
       >
-        <legend>Paragraph</legend>
-        <label class="field">
-          <span>Alignment</span>
-          <select
-            v-model="draft.alignment"
-            data-testid="style-alignment-select"
-          >
-            <option value="">
-              (inherit)
-            </option>
-            <option
-              v-for="alignment in ALIGNMENTS"
-              :key="alignment"
-              :value="alignment"
-            >
-              {{ alignment }}
-            </option>
-          </select>
-        </label>
-      </fieldset>
+        <span>Border colour</span>
+        <input
+          v-model="draft.cellBorderColor"
+          data-testid="style-border-color-input"
+        >
+      </label>
+      <label class="field">
+        <span>Shading</span>
+        <input
+          v-model="draft.cellShadingFill"
+          placeholder="#eeeeee"
+          data-testid="style-shading-input"
+        >
+      </label>
+    </fieldset>
 
-      <fieldset
-        v-if="draft.type === 'list'"
-        class="field-group"
+    <template #actions>
+      <button
+        type="button"
+        data-testid="style-editor-cancel"
+        @click="emit('cancel')"
       >
-        <legend>Numbering</legend>
-        <label class="field">
-          <span>Preset</span>
-          <select
-            v-model="draft.listPresetKey"
-            data-testid="style-list-preset-select"
-          >
-            <option
-              v-for="preset in LIST_PRESETS"
-              :key="preset.key"
-              :value="preset.key"
-            >
-              {{ preset.label }}
-            </option>
-          </select>
-        </label>
-      </fieldset>
-
-      <fieldset
-        v-if="draft.type === 'table'"
-        class="field-group"
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="style-editor-save"
+        :disabled="!!nameError"
+        @click="save"
       >
-        <legend>Borders &amp; shading</legend>
-        <label class="field">
-          <span>Border style</span>
-          <select
-            v-model="draft.cellBorderStyle"
-            data-testid="style-border-style-select"
-          >
-            <option value="">
-              (none)
-            </option>
-            <option
-              v-for="style in BORDER_STYLES"
-              :key="style"
-              :value="style"
-            >
-              {{ style }}
-            </option>
-          </select>
-        </label>
-        <label
-          v-if="draft.cellBorderStyle"
-          class="field"
-        >
-          <span>Border width (pt)</span>
-          <input
-            v-model.number="draft.cellBorderWidthPt"
-            type="number"
-            min="0.25"
-            step="0.25"
-            data-testid="style-border-width-input"
-          >
-        </label>
-        <label
-          v-if="draft.cellBorderStyle"
-          class="field"
-        >
-          <span>Border colour</span>
-          <input
-            v-model="draft.cellBorderColor"
-            data-testid="style-border-color-input"
-          >
-        </label>
-        <label class="field">
-          <span>Shading</span>
-          <input
-            v-model="draft.cellShadingFill"
-            placeholder="#eeeeee"
-            data-testid="style-shading-input"
-          >
-        </label>
-      </fieldset>
-
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="style-editor-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="style-editor-save"
-          :disabled="!!nameError"
-          @click="save"
-        >
-          {{ submitLabel }}
-        </button>
-      </div>
-    </div>
-  </div>
+        {{ submitLabel }}
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
+/* Fixed 26rem panel with the tall-dialog scroll cap. The actions row now
+   sits at the base's 1.25rem gap rather than this dialog's old 0.5rem — a
+   deliberate unification with every other dialog's spacing. */
+:deep(.dialog) {
   width: 26rem;
-  max-width: 90vw;
   max-height: 85vh;
   overflow-y: auto;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .field {
@@ -446,13 +419,6 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
   margin: -0.5rem 0 0.75rem;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
 }
 
 .dialog-actions button {

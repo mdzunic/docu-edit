@@ -4,13 +4,17 @@
 // "Table -> Repeat row for each…" (array names only — the caller passes an
 // already-narrowed `fields` list either way). A template can be written
 // before its data exists, so a name not yet in the list can be typed too,
-// validated against the same grammar chip insertion enforces.
-import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+// validated against the same grammar chip insertion enforces. BaseDialog
+// owns the shell, Escape and initial focus (the [autofocus] name input) —
+// which also fixes the old bug where Escape was bound to the input only
+// and did nothing while a button or the field list had focus.
+import { computed, ref } from "vue";
 import { isValidChipName } from "../lib/mergeChips";
 import { asNamedFieldList } from "../lib/merge";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
-  /** Dialog heading and aria-label. */
+  /** Dialog heading and accessible name. */
   heading: { type: String, required: true },
   /** { name, array }[] — in "The named field list"'s order: source columns
    * first, then names already used by a chip in this document. */
@@ -25,12 +29,6 @@ const emit = defineEmits(["insert", "cancel"]);
 const fields = computed(() => asNamedFieldList(props.fields));
 
 const customName = ref("");
-const input = useTemplateRef("input");
-
-onMounted(async () => {
-  await nextTick();
-  input.value?.focus();
-});
 
 const trimmed = computed(() => customName.value.trim());
 const customNameError = computed(() => {
@@ -53,114 +51,80 @@ function insertCustom() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="merge-field-picker-dialog"
-    @click.self="emit('cancel')"
+  <BaseDialog
+    :title="props.heading"
+    testid="merge-field-picker-dialog"
+    @dismiss="emit('cancel')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="props.heading"
+    <ul
+      v-if="fields.length > 0"
+      class="field-list"
+      data-testid="merge-field-picker-list"
     >
-      <h2 class="dialog-title">
-        {{ props.heading }}
-      </h2>
-      <ul
-        v-if="fields.length > 0"
-        class="field-list"
-        data-testid="merge-field-picker-list"
+      <li
+        v-for="field in fields"
+        :key="field.name"
       >
-        <li
-          v-for="field in fields"
-          :key="field.name"
-        >
-          <button
-            type="button"
-            class="field-option"
-            data-testid="merge-field-picker-option"
-            @click="choose(field.name)"
-          >
-            {{ field.name }}
-          </button>
-        </li>
-      </ul>
-      <p
-        v-else
-        class="field-list-empty"
-      >
-        No fields yet — type a name below.
-      </p>
-      <div class="custom-field-row">
-        <input
-          ref="input"
-          v-model="customName"
-          class="dialog-input"
-          data-testid="merge-field-picker-custom-input"
-          aria-label="Field name"
-          placeholder="field_name"
-          @keydown.enter="insertCustom"
-          @keydown.escape="emit('cancel')"
-        >
         <button
           type="button"
-          class="primary"
-          data-testid="merge-field-picker-custom-insert"
-          :disabled="trimmed.length === 0 || !!customNameError"
-          @click="insertCustom"
+          class="field-option"
+          data-testid="merge-field-picker-option"
+          @click="choose(field.name)"
         >
-          Insert
+          {{ field.name }}
         </button>
-      </div>
-      <p
-        v-if="customNameError"
-        class="dialog-error"
-        data-testid="merge-field-picker-error"
+      </li>
+    </ul>
+    <p
+      v-else
+      class="field-list-empty"
+    >
+      No fields yet — type a name below.
+    </p>
+    <div class="custom-field-row">
+      <input
+        v-model="customName"
+        class="dialog-input"
+        data-testid="merge-field-picker-custom-input"
+        aria-label="Field name"
+        placeholder="field_name"
+        autofocus
+        @keydown.enter="insertCustom"
       >
-        {{ customNameError }}
-      </p>
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="merge-field-picker-cancel"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-      </div>
+      <button
+        type="button"
+        class="primary"
+        data-testid="merge-field-picker-custom-insert"
+        :disabled="trimmed.length === 0 || !!customNameError"
+        @click="insertCustom"
+      >
+        Insert
+      </button>
     </div>
-  </div>
+    <p
+      v-if="customNameError"
+      class="dialog-error"
+      data-testid="merge-field-picker-error"
+    >
+      {{ customNameError }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        data-testid="merge-field-picker-cancel"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
-  min-width: 20rem;
-  max-width: 90vw;
+/* The field list can be long, so the panel keeps its own scroll cap. */
+:deep(.dialog) {
   max-height: 80vh;
   overflow-y: auto;
-  box-sizing: border-box;
-}
-
-.dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .field-list {
@@ -218,13 +182,6 @@ function insertCustom() {
   margin: 0.5rem 0 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button,

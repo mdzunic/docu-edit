@@ -5,7 +5,9 @@
 // record) or a single page-break-concatenated document. Template errors
 // block the run before any document is produced; data errors (missing
 // fields, a non-array {{#each}} target) never fail it, landing in the
-// post-run report instead.
+// post-run report instead. BaseDialog owns the shell and — new with the
+// migration — Escape-to-close, which this dialog never bound; its
+// #header-extra slot carries the ✕ close button on the title row.
 import { computed, ref, shallowRef, toRaw, useTemplateRef } from "vue";
 import {
   asMergeDelivery,
@@ -25,6 +27,7 @@ import { asDocumentModel } from "../lib/documentModel";
 import { blockText } from "../lib/textEditing";
 import { DOCX_MIME_TYPE } from "../lib/docx/writer";
 import { ODT_MIMETYPE } from "../lib/odf/writer";
+import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
   model: { type: Object, required: true },
@@ -143,292 +146,259 @@ async function run() {
 </script>
 
 <template>
-  <div
-    class="dialog-backdrop"
-    data-testid="merge-run-dialog"
-    @click.self="emit('close')"
+  <BaseDialog
+    title="Mail merge"
+    testid="merge-run-dialog"
+    @dismiss="emit('close')"
   >
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Mail merge"
-    >
-      <div class="dialog-header">
-        <h2 class="dialog-title">
-          Mail merge
-        </h2>
-        <button
-          type="button"
-          class="close-button"
-          aria-label="Close"
-          data-testid="merge-run-close"
-          @click="emit('close')"
-        >
-          ✕
-        </button>
-      </div>
-
-      <section class="merge-section">
-        <h3 class="section-heading">
-          Data source
-        </h3>
-        <button
-          type="button"
-          data-testid="merge-run-attach"
-          @click="pickSourceFile"
-        >
-          {{ source ? "Change file…" : "Attach CSV or JSON…" }}
-        </button>
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".csv,.json"
-          data-testid="merge-run-attach-input"
-          class="visually-hidden"
-          @change="handleSourceFileChosen"
-        >
-        <span
-          v-if="sourceFileName"
-          class="source-file-name"
-          data-testid="merge-run-source-name"
-        >{{ sourceFileName }}</span>
-        <p
-          v-if="sourceError"
-          class="dialog-error"
-          role="alert"
-          data-testid="merge-run-source-error"
-        >
-          {{ sourceError }}
-        </p>
-        <p
-          v-if="source"
-          class="record-count"
-          data-testid="merge-run-record-count"
-        >
-          {{ source.records.length }} record{{ source.records.length === 1 ? "" : "s" }}
-        </p>
-      </section>
-
-      <section
-        v-if="templateErrors.length > 0"
-        class="merge-section"
+    <template #header-extra>
+      <button
+        type="button"
+        class="close-button"
+        aria-label="Close"
+        data-testid="merge-run-close"
+        @click="emit('close')"
       >
-        <h3 class="section-heading error-heading">
-          Template errors — the run is blocked
-        </h3>
-        <ul
-          class="error-list"
-          data-testid="merge-run-template-errors"
-        >
-          <li
-            v-for="(error, index) in templateErrors"
-            :key="index"
-          >
-            {{ error.message }}
-          </li>
-        </ul>
-      </section>
+        ✕
+      </button>
+    </template>
 
-      <section
-        v-if="source"
-        class="merge-section"
+    <section class="merge-section">
+      <h3 class="section-heading">
+        Data source
+      </h3>
+      <button
+        type="button"
+        data-testid="merge-run-attach"
+        @click="pickSourceFile"
       >
-        <h3 class="section-heading">
-          Field mapping
-        </h3>
-        <ul
-          class="mapping-list"
-          data-testid="merge-run-mapping"
-        >
-          <li
-            v-for="column in mappingReport.columns"
-            :key="column.name"
-            :data-mapped="column.mapped"
-          >
-            {{ column.name }} — {{ column.mapped ? "mapped" : "unmapped" }}
-          </li>
-        </ul>
-        <p v-if="mappingReport.unmappedChips.length > 0">
-          Chips with no matching column: {{ mappingReport.unmappedChips.join(", ") }}
-        </p>
-      </section>
-
-      <section
-        v-if="previewLines.length > 0"
-        class="merge-section"
+        {{ source ? "Change file…" : "Attach CSV or JSON…" }}
+      </button>
+      <input
+        ref="fileInput"
+        type="file"
+        accept=".csv,.json"
+        data-testid="merge-run-attach-input"
+        class="visually-hidden"
+        @change="handleSourceFileChosen"
       >
-        <h3 class="section-heading">
-          Preview — first record
-        </h3>
-        <div
-          class="preview-box"
-          data-testid="merge-run-preview"
-        >
-          <p
-            v-for="(line, index) in previewLines"
-            :key="index"
-          >
-            {{ line }}
-          </p>
-        </div>
-      </section>
-
-      <section class="merge-section">
-        <h3 class="section-heading">
-          Output
-        </h3>
-        <label class="option-row">
-          Format
-          <select
-            v-model="format"
-            data-testid="merge-run-format"
-          >
-            <option value="docx">
-              Word (.docx)
-            </option>
-            <option value="odt">
-              OpenDocument (.odt)
-            </option>
-          </select>
-        </label>
-        <label class="option-row">
-          Delivery
-          <select
-            v-model="delivery"
-            data-testid="merge-run-delivery"
-          >
-            <option value="zip">
-              One .zip, one document per record
-            </option>
-            <option value="single">
-              Single document, one record per page
-            </option>
-          </select>
-        </label>
-        <label
-          v-if="delivery === 'zip'"
-          class="option-row"
-        >
-          Name field (optional)
-          <select
-            v-model="nameField"
-            data-testid="merge-run-name-field"
-          >
-            <option value="">
-              None — 001.docx, 002.docx, …
-            </option>
-            <option
-              v-for="field in scalarSourceFields"
-              :key="field"
-              :value="field"
-            >
-              {{ field }}
-            </option>
-          </select>
-        </label>
-      </section>
-
+      <span
+        v-if="sourceFileName"
+        class="source-file-name"
+        data-testid="merge-run-source-name"
+      >{{ sourceFileName }}</span>
       <p
-        v-if="runError"
+        v-if="sourceError"
         class="dialog-error"
         role="alert"
-        data-testid="merge-run-error"
+        data-testid="merge-run-source-error"
       >
-        {{ runError }}
+        {{ sourceError }}
       </p>
-
-      <section
-        v-if="runReport"
-        class="merge-section"
+      <p
+        v-if="source"
+        class="record-count"
+        data-testid="merge-run-record-count"
       >
-        <h3 class="section-heading">
-          Merge report
-        </h3>
-        <p data-testid="merge-run-report-summary">
-          {{ runReport.recordCount }} record{{ runReport.recordCount === 1 ? "" : "s" }} merged.
-        </p>
-        <ul
-          v-if="runReport.missingFields.length > 0"
-          data-testid="merge-run-report-missing"
-        >
-          <li
-            v-for="(entry, index) in runReport.missingFields"
-            :key="index"
-          >
-            Record {{ entry.recordIndex + 1 }}: missing "{{ entry.field }}"
-          </li>
-        </ul>
-        <ul
-          v-if="runReport.arrayFieldErrors.length > 0"
-          data-testid="merge-run-report-array-errors"
-        >
-          <li
-            v-for="(entry, index) in runReport.arrayFieldErrors"
-            :key="index"
-          >
-            Record {{ entry.recordIndex + 1 }}: "{{ entry.field }}" is not a list
-          </li>
-        </ul>
-      </section>
+        {{ source.records.length }} record{{ source.records.length === 1 ? "" : "s" }}
+      </p>
+    </section>
 
-      <div class="dialog-actions">
-        <button
-          type="button"
-          data-testid="merge-run-cancel"
-          @click="emit('close')"
+    <section
+      v-if="templateErrors.length > 0"
+      class="merge-section"
+    >
+      <h3 class="section-heading error-heading">
+        Template errors — the run is blocked
+      </h3>
+      <ul
+        class="error-list"
+        data-testid="merge-run-template-errors"
+      >
+        <li
+          v-for="(error, index) in templateErrors"
+          :key="index"
         >
-          Close
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="merge-run-run"
-          :disabled="!canRun || running"
-          @click="run"
+          {{ error.message }}
+        </li>
+      </ul>
+    </section>
+
+    <section
+      v-if="source"
+      class="merge-section"
+    >
+      <h3 class="section-heading">
+        Field mapping
+      </h3>
+      <ul
+        class="mapping-list"
+        data-testid="merge-run-mapping"
+      >
+        <li
+          v-for="column in mappingReport.columns"
+          :key="column.name"
+          :data-mapped="column.mapped"
         >
-          {{ running ? "Running…" : "Run merge" }}
-        </button>
+          {{ column.name }} — {{ column.mapped ? "mapped" : "unmapped" }}
+        </li>
+      </ul>
+      <p v-if="mappingReport.unmappedChips.length > 0">
+        Chips with no matching column: {{ mappingReport.unmappedChips.join(", ") }}
+      </p>
+    </section>
+
+    <section
+      v-if="previewLines.length > 0"
+      class="merge-section"
+    >
+      <h3 class="section-heading">
+        Preview — first record
+      </h3>
+      <div
+        class="preview-box"
+        data-testid="merge-run-preview"
+      >
+        <p
+          v-for="(line, index) in previewLines"
+          :key="index"
+        >
+          {{ line }}
+        </p>
       </div>
-    </div>
-  </div>
+    </section>
+
+    <section class="merge-section">
+      <h3 class="section-heading">
+        Output
+      </h3>
+      <label class="option-row">
+        Format
+        <select
+          v-model="format"
+          data-testid="merge-run-format"
+        >
+          <option value="docx">
+            Word (.docx)
+          </option>
+          <option value="odt">
+            OpenDocument (.odt)
+          </option>
+        </select>
+      </label>
+      <label class="option-row">
+        Delivery
+        <select
+          v-model="delivery"
+          data-testid="merge-run-delivery"
+        >
+          <option value="zip">
+            One .zip, one document per record
+          </option>
+          <option value="single">
+            Single document, one record per page
+          </option>
+        </select>
+      </label>
+      <label
+        v-if="delivery === 'zip'"
+        class="option-row"
+      >
+        Name field (optional)
+        <select
+          v-model="nameField"
+          data-testid="merge-run-name-field"
+        >
+          <option value="">
+            None — 001.docx, 002.docx, …
+          </option>
+          <option
+            v-for="field in scalarSourceFields"
+            :key="field"
+            :value="field"
+          >
+            {{ field }}
+          </option>
+        </select>
+      </label>
+    </section>
+
+    <p
+      v-if="runError"
+      class="dialog-error"
+      role="alert"
+      data-testid="merge-run-error"
+    >
+      {{ runError }}
+    </p>
+
+    <section
+      v-if="runReport"
+      class="merge-section"
+    >
+      <h3 class="section-heading">
+        Merge report
+      </h3>
+      <p data-testid="merge-run-report-summary">
+        {{ runReport.recordCount }} record{{ runReport.recordCount === 1 ? "" : "s" }} merged.
+      </p>
+      <ul
+        v-if="runReport.missingFields.length > 0"
+        data-testid="merge-run-report-missing"
+      >
+        <li
+          v-for="(entry, index) in runReport.missingFields"
+          :key="index"
+        >
+          Record {{ entry.recordIndex + 1 }}: missing "{{ entry.field }}"
+        </li>
+      </ul>
+      <ul
+        v-if="runReport.arrayFieldErrors.length > 0"
+        data-testid="merge-run-report-array-errors"
+      >
+        <li
+          v-for="(entry, index) in runReport.arrayFieldErrors"
+          :key="index"
+        >
+          Record {{ entry.recordIndex + 1 }}: "{{ entry.field }}" is not a list
+        </li>
+      </ul>
+    </section>
+
+    <template #actions>
+      <button
+        type="button"
+        data-testid="merge-run-cancel"
+        @click="emit('close')"
+      >
+        Close
+      </button>
+      <button
+        type="button"
+        class="primary"
+        data-testid="merge-run-run"
+        :disabled="!canRun || running"
+        @click="run"
+      >
+        {{ running ? "Running…" : "Run merge" }}
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
+/* This dialog is a fixed 32rem wide (not the base's min-width knob) and
+   tall enough to need the panel-level scroll cap. */
+:deep(.dialog) {
   width: 32rem;
-  max-width: 90vw;
   max-height: 85vh;
   overflow-y: auto;
-  box-sizing: border-box;
 }
 
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+/* Its header row sat tighter above the first section than the base's 1rem. */
+:deep(.dialog-header) {
   margin-bottom: 0.5rem;
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
 }
 
 .close-button {
@@ -527,13 +497,6 @@ async function run() {
   margin: 0.5rem 0;
   color: #b3261e;
   font-size: 0.8125rem;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
 }
 
 .dialog-actions button {
