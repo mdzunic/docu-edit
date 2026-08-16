@@ -208,4 +208,34 @@ describe("full .odt round trip (AC-27, AC-28)", () => {
       { positionCm: 6, alignment: "decimal", leader: "underscore" },
     ]);
   });
+
+  it("drops each bar tab stop with a DropRecord and keeps the rest (SPEC-054 AC-38)", async () => {
+    // A bar stop only reaches an .odt save from a .docx-sourced document
+    // (ODF has no bar tab, so the .odt reader never produces one); the drop
+    // report fires on that cross-format save.
+    const model = docWith(paragraph("barred"));
+    model.format = "docx";
+    asParagraph(model.sections[0].blocks[0]).formatting = {
+      tabStops: [
+        { positionCm: 3, alignment: "bar" },
+        { positionCm: 5, alignment: "left" },
+      ],
+    };
+    const { bytes, dropped } = await writeOdt(model);
+    const barDrop = dropped.find((record) => record.kind === "tabStop");
+    expect(barDrop).toBeDefined();
+    expect(barDrop?.reason).toContain("no bar tab stop");
+    // The non-bar stop survives; the bar stop is gone (ODF has no equivalent).
+    const parsed = await parseOdt(bytes);
+    const stops = asParagraph(parsed.sections[0].blocks[0]).formatting?.tabStops;
+    expect(stops).toEqual([{ positionCm: 5, alignment: "left" }]);
+  });
+
+  it("round-trips the document default tab interval as style:tab-stop-distance (SPEC-054 AC-37)", async () => {
+    const model = docWith(paragraph("spaced"));
+    model.defaultStyles.defaultTabStopCm = 1.5;
+    const { bytes } = await writeOdt(model);
+    const reopened = await parseOdt(bytes);
+    expect(reopened.defaultStyles.defaultTabStopCm).toBeCloseTo(1.5, 4);
+  });
 });

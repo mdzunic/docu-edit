@@ -195,6 +195,7 @@ const TAB_ALIGNMENT_MAP: Record<string, TabStopAlignment> = {
   end: "right",
   center: "center",
   decimal: "decimal",
+  bar: "bar",
 };
 
 const TAB_LEADER_MAP: Record<string, TabLeader> = {
@@ -241,9 +242,9 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
     }
   }
 
-  // Custom tab stops (SPEC-032 AC-19..25). `clear`/`bar`/`num` stops have
-  // no model equivalent and are skipped; `start`/`end` are the strict-schema
-  // names for left/right.
+  // Custom tab stops (SPEC-032 AC-19..25, SPEC-054). `bar` maps to the bar
+  // alignment (SPEC-054); `clear`/`num` have no model equivalent and are
+  // skipped; `start`/`end` are the strict-schema names for left/right.
   const tabsEl = firstChildElement(pPr, WORD_NAMESPACE, "tabs");
   if (tabsEl) {
     const stops: TabStop[] = [];

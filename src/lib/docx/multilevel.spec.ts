@@ -221,4 +221,36 @@ describe("full .docx round trip (AC-26, AC-28)", () => {
       ["decimal", "underscore"],
     ]);
   });
+
+  it("round-trips a bar tab stop through w:tab/@w:val=bar (SPEC-054 AC-36)", async () => {
+    const model = docWith(paragraph("barred"));
+    asParagraph(model.sections[0].blocks[0]).formatting = {
+      tabStops: [
+        { positionCm: 3, alignment: "bar" },
+        { positionCm: 5, alignment: "left" },
+      ],
+    };
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    const stops = asParagraph(reopened.sections[0].blocks[0]).formatting?.tabStops;
+    expect(stops?.map((stop) => stop.alignment)).toEqual(["bar", "left"]);
+  });
+
+  it("round-trips the document default tab interval as w:defaultTabStop (SPEC-054 AC-36)", async () => {
+    const model = docWith(paragraph("spaced"));
+    model.defaultStyles.defaultTabStopCm = 2;
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    // .docx stores twips, so the reopened value is within SPEC-014's 0.01 cm
+    // tolerance rather than exact.
+    expect(reopened.defaultStyles.defaultTabStopCm).toBeCloseTo(2, 2);
+  });
+
+  it("omits w:defaultTabStop when the document keeps the default (SPEC-054)", async () => {
+    const model = docWith(paragraph("plain"));
+    const { bytes } = await writeDocx(model);
+    expect(new TextDecoder().decode(bytes)).not.toContain("defaultTabStop");
+    const reopened = await parseDocx(bytes);
+    expect(reopened.defaultStyles.defaultTabStopCm).toBeUndefined();
+  });
 });

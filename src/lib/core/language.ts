@@ -97,6 +97,23 @@ export function asLanguageOptions(value: unknown): LanguageOption[] {
   return value as LanguageOption[];
 }
 
+/** The decimal separator a language writes numbers with (SPEC-054 AC-19): a
+ * decimal tab stop aligns text on this character. Derived from the platform's
+ * Intl data for the effective language, falling back to "." when Intl is
+ * unavailable or the tag does not resolve — the same character English uses,
+ * and the one the decimal-stop layout treats as its primary separator before
+ * the AC-20 "first separator character" fallback. */
+export function decimalSeparatorFor(tag: string | undefined): string {
+  const normalized = normalizeLanguageTag(tag ?? DEFAULT_LANGUAGE);
+  try {
+    const parts = new Intl.NumberFormat(normalized).formatToParts(1.1);
+    const decimal = parts.find((part) => part.type === "decimal");
+    return decimal?.value ?? ".";
+  } catch {
+    return ".";
+  }
+}
+
 /** ODF's "no linguistic content" language code (ISO 639-2's `zxx`) — the
  * convention ODF producers (including LibreOffice's own "None (Do not check
  * spelling)" language entry) use to mark text as not to be spell-checked,

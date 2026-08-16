@@ -2139,25 +2139,36 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
         }
         break;
       }
-      // SPEC-018 AC-3/AC-4: inside a list item — at any offset — Tab demotes
-      // and Shift+Tab promotes, taking priority over the indent behaviours.
-      const touchesList = touchedBlocks(model, selection).some(
-        (address) => !!paragraphAt(model, address)?.list,
-      );
-      if (touchesList) {
+      // SPEC-054's Tab precedence table ("What the Tab key does"), rules 2–4,
+      // most specific first. A caret collapsed at offset 0 is the gate for
+      // both the list and indent behaviours; every other position — mid-
+      // paragraph, a non-collapsed selection, the start of a wrapped
+      // continuation line — falls through to a literal tab, so Tab resolves
+      // to exactly one behaviour per context (AC-29, AC-30).
+      const collapsedAtStart = isCollapsed(selection) && selection.focus.offset === 0;
+      // Rule 2 (SPEC-018 AC-3/AC-4): only at offset 0 of a list item does Tab
+      // demote and Shift+Tab promote — narrowed from SPEC-018's original
+      // "at any offset" so it no longer overlaps rule 4 (AC-30).
+      const listAtStart =
+        collapsedAtStart &&
+        touchedBlocks(model, selection).some((address) => !!paragraphAt(model, address)?.list);
+      if (listAtStart) {
         applyParagraphCommand(
           (current, target) => changeListLevel(current, target, event.shiftKey ? -1 : 1),
           "list level",
         );
-      } else if (isCollapsed(selection) && selection.focus.offset === 0) {
+      } else if (collapsedAtStart) {
+        // Rule 3 (SPEC-014 AC-8/AC-9): offset 0 of any other paragraph
+        // increases/decreases indent.
         applyParagraphCommand(
           (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
           "indent",
         );
       } else if (!event.shiftKey) {
-        // Any other position — mid-paragraph or a non-collapsed selection —
-        // inserts a literal tab character (AC-10), grouped with typing like
-        // any other inserted character (SPEC-015 AC-9).
+        // Rule 4 (SPEC-014 AC-10): any other position — mid-paragraph, a
+        // non-collapsed selection, the start of a wrapped line — inserts a
+        // literal tab character, grouped with typing like any other inserted
+        // character (SPEC-015 AC-9).
         applyEdit(insertText(model, selection, "\t", pendingFormat), selection, "typing", { groupable: true });
       }
       break;
@@ -3214,6 +3225,12 @@ const editorCommands = new Map([
   // Ctrl/Cmd+Shift+Space (SPEC-026 AC-11): a direct non-breaking space
   // insert, not typed input, so autocorrect never sees it.
   ["insert.nonBreakingSpace", () => { insertSpecialCharacter("\u00A0"); }],
+  // SPEC-054: "Insert \u2192 Tab character" inserts a literal U+0009 regardless of
+  // context (AC-31) \u2014 the only way to type a tab inside a table cell, where
+  // the Tab key navigates cells instead (AC-32).
+  ["insert.tab-character", () => { insertSpecialCharacter("\t"); }],
+  // SPEC-054: "Format \u2192 Tabs\u2026" opens the tab-stops dialog.
+  ["format.tabs", openTabsDialog],
   // Ctrl/Cmd+Shift+P (AC-12).
   ["view.formattingMarks", toggleFormattingMarks],
   // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).

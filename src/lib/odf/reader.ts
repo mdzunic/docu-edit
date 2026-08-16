@@ -2491,6 +2491,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     fontSizePt: catalog.defaultRunFormatting.fontSizePt ?? fallback.fontSizePt,
     language: catalog.defaultLanguage ?? fallback.language,
   };
+  if (catalog.defaultTabStopCm !== undefined) {
+    defaultStyles.defaultTabStopCm = catalog.defaultTabStopCm;
+  }
 
   // content.xml and meta.xml are rebuilt on save (body/title/timestamp);
   // everything else — mimetype, styles.xml, the manifest, settings,

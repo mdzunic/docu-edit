@@ -97,6 +97,9 @@ export type DropKind =
   | "opaquePart"
   | "runShading"
   | "svgImage"
+  // SPEC-054: a bar tab stop, which OpenDocument Text has no equivalent for —
+  // a .docx → .odt save drops each one and reports it (AC-38).
+  | "tabStop"
   | "trackedPropertyChange"
   // SPEC-051: a shape geometry outside the catalogue that a cross-format
   // save cannot carry into the target format (AC-61).
@@ -157,6 +160,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaquePart: "Package part",
   runShading: "Run shading",
   svgImage: "SVG image",
+  tabStop: "Bar tab stop",
   shapeGeometry: "Shape geometry",
   chartFeature: "Chart feature",
   trackedPropertyChange: "Tracked table property change",
@@ -276,6 +280,7 @@ const REASONS: Record<DropKind, string> = {
   runShading:
     "the target format has a single text background, which the highlight colour occupies",
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
+  tabStop: "OpenDocument Text has no bar tab stop — the vertical rule it draws is lost",
   shapeGeometry: "this shape's geometry is outside the catalogue and cannot be converted between formats",
   // Overridden per call by collectEditedChartDropRecords with the specific
   // lost property; this generic text is the fallback record() would use if
@@ -456,6 +461,16 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
             paragraph.runs.some((run) => run.formatting.shadingFill !== undefined)
           ) {
             dropped.push(record("runShading", `paragraph ${paragraphNumber}`, target));
+          }
+          // Bar tab stops (SPEC-054 AC-38): OpenDocument Text has no bar tab,
+          // so a save to .odt drops every one and reports it. One record per
+          // bar stop, located by paragraph.
+          if (target === "odt") {
+            for (const stop of paragraph.formatting?.tabStops ?? []) {
+              if (stop.alignment === "bar") {
+                dropped.push(record("tabStop", `paragraph ${paragraphNumber}`, target));
+              }
+            }
           }
         }
       }

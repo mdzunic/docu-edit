@@ -317,10 +317,13 @@ function paragraphPropertiesXml(
   // Custom tab stops (SPEC-032 AC-19..25): a style:tab-stops child. The
   // leader is written BOTH as style:leader-style and style:leader-text so
   // either form recovers it on read — including foreign files that carry
-  // only the style keyword.
+  // only the style keyword. Bar stops (SPEC-054) have no ODF equivalent and
+  // are dropped here — the DropRecord for each is reported by opaque.ts's
+  // collectPackageDropRecords (AC-38).
   let tabStops = "";
-  if (formatting.tabStops !== undefined && formatting.tabStops.length > 0) {
-    tabStops = formatting.tabStops
+  const writableStops = (formatting.tabStops ?? []).filter((stop) => stop.alignment !== "bar");
+  if (writableStops.length > 0) {
+    tabStops = writableStops
       .map((stop) => {
         let stopAttrs = `style:position="${cmToOdfLength(stop.positionCm)}"`;
         if (stop.alignment === "decimal") {
@@ -2701,7 +2704,14 @@ export function patchOdtDefaultLanguage(model: DocumentModel, originalStylesXml:
 }
 
 export function buildStylesXml(model: DocumentModel): string {
-  const { fontFamily, fontSizePt, language } = model.defaultStyles;
+  const { fontFamily, fontSizePt, language, defaultTabStopCm } = model.defaultStyles;
+  // The document's default tab interval (SPEC-054): style:tab-stop-distance on
+  // the default paragraph style. Omitted when the model carries no explicit
+  // value.
+  const defaultTabProps =
+    defaultTabStopCm !== undefined
+      ? `<style:paragraph-properties style:tab-stop-distance="${cmToOdfLength(defaultTabStopCm)}"/>`
+      : "";
   const languageAttrs = (() => {
     if (language === undefined) {
       return "";
@@ -2733,6 +2743,7 @@ export function buildStylesXml(model: DocumentModel): string {
     `${XML_DECLARATION}<office:document-styles${DOCUMENT_XMLNS} office:version="1.2">` +
     "<office:styles>" +
     '<style:default-style style:family="paragraph">' +
+    defaultTabProps +
     `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
     "</style:default-style>" +
     namedStyles +
