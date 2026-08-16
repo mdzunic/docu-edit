@@ -71,7 +71,7 @@ import {
   sectionPageSize,
 } from "../documentModel";
 import { chipLabel } from "../mergeChips";
-import { dateTimeFormatEntry, type DateTimeFormatEntry } from "../fields";
+import { dateTimeFormatEntry, odtDateStyleName, type DateTimeFormatEntry } from "../fields";
 import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../core/language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
@@ -100,6 +100,7 @@ import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import {
   FO_NAMESPACE,
+  NUMBER_NAMESPACE,
   OFFICE_NAMESPACE,
   STYLE_NAMESPACE,
   TABLE_NAMESPACE,
@@ -107,6 +108,11 @@ import {
   XLINK_NAMESPACE,
   styleAttr,
 } from "./xml";
+
+// Declared locally on each number:date-style/time-style element (the
+// TABLE_XMLNS pattern), so content.xml is unchanged for documents with no
+// date/time field (SPEC-053).
+const NUMBER_XMLNS = ` xmlns:number="${NUMBER_NAMESPACE}"`;
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
 import { buildMetaXml, type OdfMetaInput } from "./meta";
@@ -682,10 +688,10 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
       if (existing !== undefined) {
         return existing;
       }
-      const name = claimName(entry.odtStyleTag === "time" ? "NT" : "ND", "");
+      const name = odtDateStyleName(entry);
       dateStyleNames.set(entry.format, name);
       const tag = entry.odtStyleTag === "time" ? "number:time-style" : "number:date-style";
-      defs.push(`<${tag} style:name="${escapeXml(name)}">${entry.odtStyleBody}</${tag}>`);
+      defs.push(`<${tag}${NUMBER_XMLNS} style:name="${escapeXml(name)}">${entry.odtStyleBody}</${tag}>`);
       return name;
     },
 
@@ -1167,10 +1173,14 @@ function fieldContentXml(field: FieldSpec, styles: AutomaticStyles): string {
     case "pageRef":
       return `<text:bookmark-ref text:reference-format="page" text:ref-name="${escapeXml(field.target)}">${cached}</text:bookmark-ref>`;
     case "unsupported":
-      // A field type with no ODF catalogue element — re-emit as a
-      // conditional-text placeholder carrying its saved value (SPEC-053
-      // preservation; a cross-format save also records a DropRecord).
-      return `<text:placeholder text:placeholder-type="text">${cached}</text:placeholder>`;
+      // An unsupported field read from an `.odt` keeps its whole source
+      // element as `code`, re-emitted verbatim (SPEC-053 byte-for-byte). One
+      // read from a `.docx` (code is an instruction string) has no ODF
+      // element, so it degrades to a placeholder carrying its saved value;
+      // the cross-format save records a DropRecord for it.
+      return field.code.startsWith("<")
+        ? field.code
+        : `<text:placeholder text:placeholder-type="text">${cached}</text:placeholder>`;
     default:
       return cached;
   }
@@ -2338,10 +2348,10 @@ function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
       if (existing !== undefined) {
         return existing;
       }
-      const name = `${prefix}${entry.odtStyleTag === "time" ? "NT" : "ND"}${dateStyleNames.size + 1}`;
+      const name = odtDateStyleName(entry);
       dateStyleNames.set(entry.format, name);
       const tag = entry.odtStyleTag === "time" ? "number:time-style" : "number:date-style";
-      defs.push(`<${tag} style:name="${escapeXml(name)}">${entry.odtStyleBody}</${tag}>`);
+      defs.push(`<${tag}${NUMBER_XMLNS} style:name="${escapeXml(name)}">${entry.odtStyleBody}</${tag}>`);
       return name;
     },
     registerUserField(name: string): void {

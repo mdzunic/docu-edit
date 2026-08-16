@@ -144,6 +144,25 @@ export function dateTimeFormatEntry(format: string): DateTimeFormatEntry | undef
   return CATALOGUE_BY_FORMAT.get(format);
 }
 
+/** The deterministic `number:date-style`/`number:time-style` name the `.odt`
+ * writer gives a catalogue format, keyed by its catalogue index so the reader
+ * recovers the exact pattern from the referenced style name without matching
+ * the style body — a foreign producer's own date-style names simply don't
+ * match and read as an unsupported picture (rendered from `cached`). */
+export function odtDateStyleName(entry: DateTimeFormatEntry): string {
+  return `FieldDT${DATE_TIME_CATALOGUE.indexOf(entry)}`;
+}
+
+/** Recovers a catalogue format from an `.odt` date/time field's referenced
+ * `style:data-style-name`, or null when the name isn't one this editor wrote. */
+export function formatFromOdtDateStyleName(name: string): string | null {
+  const match = /^FieldDT(\d+)$/.exec(name);
+  if (!match) {
+    return null;
+  }
+  return DATE_TIME_CATALOGUE[Number(match[1])]?.format ?? null;
+}
+
 // --- date/time rendering -----------------------------------------------------
 
 function pad2(value: number): string {
@@ -173,12 +192,19 @@ export function renderDateTime(format: string, instant: Date, language: string):
   const mm = pad2(instant.getMinutes());
   const ss = pad2(instant.getSeconds());
   const h = String(((hours24 + 11) % 12) + 1);
-  // The localised AM/PM marker (falls back to the English pair if the locale
-  // omits a day-period part).
+  // The AM/PM marker. ICU renders the English pair lowercase for some locales
+  // (en-GB → "pm"), but the spec's catalogue shows the uppercase "PM"; so an
+  // English-style "am"/"pm" is normalised to the uppercase pair, while a
+  // genuinely localised marker (other scripts) is kept as ICU gives it.
   const dayPeriodPart = new Intl.DateTimeFormat(language, { hour: "numeric", hour12: true })
     .formatToParts(instant)
     .find((part) => part.type === "dayPeriod");
-  const a = dayPeriodPart?.value ?? (hours24 < 12 ? "AM" : "PM");
+  const rawDayPeriod = dayPeriodPart?.value ?? "";
+  const a = rawDayPeriod === "" || /^[ap]\.?m\.?$/i.test(rawDayPeriod)
+    ? hours24 < 12
+      ? "AM"
+      : "PM"
+    : rawDayPeriod;
   switch (format) {
     case "d MMMM yyyy":
       return `${d} ${monthLong} ${yyyy}`;

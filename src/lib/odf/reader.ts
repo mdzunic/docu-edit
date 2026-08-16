@@ -26,6 +26,7 @@ import type {
   PageNumberFormat,
   Paragraph,
   ParagraphFormatting,
+  RefFormat,
   Run,
   RunFormatting,
   RunTrackedChanges,
@@ -59,6 +60,7 @@ import { cmToTwips } from "../core/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { sanitizeHref } from "../links";
 import { parseChipText } from "../mergeChips";
+import { formatFromOdtDateStyleName } from "../fields";
 import { createMessageId, parseReplyParagraphText } from "../comments";
 import { blockText } from "../textEditing";
 import {
@@ -344,6 +346,27 @@ function appendField(
   acc.pieces.push({ text: FIELD_PLACEHOLDER_TEXT, formatting, field: { kind, format } });
   acc.mergeBarrier = true;
   acc.lastChar = FIELD_PLACEHOLDER_TEXT;
+}
+
+/** Appends a SPEC-053 field run (date, author, cross-reference, …) as its own
+ * text piece — a field is always a merge barrier so it never coalesces into a
+ * neighbouring plain-text run. */
+function appendFieldSpec(acc: InlineAccumulator, field: FieldSpec, formatting: RunFormatting): void {
+  acc.pieces.push({ text: FIELD_PLACEHOLDER_TEXT, formatting, field });
+  acc.mergeBarrier = true;
+  acc.lastChar = FIELD_PLACEHOLDER_TEXT;
+}
+
+/** The ODF `text:reference-format` value mapped back to a `RefFormat`
+ * (SPEC-053): `page` → page, `direction` → position, everything else → text. */
+function refFormatFromOdt(value: string | null): RefFormat {
+  if (value === "page") {
+    return "page";
+  }
+  if (value === "direction") {
+    return "position";
+  }
+  return "text";
 }
 
 const WHITESPACE_RUN = /[ \t\r\n]+/g;
@@ -687,6 +710,74 @@ function collectInline(
       case "page-count":
         // SPEC-029 AC-25, AC-26: the document's total page count.
         appendField(acc, "numpages", fieldNumberFormat(el), formatting);
+        break;
+      case "date": {
+        // SPEC-053: format recovered from the referenced number:date-style
+        // name; a foreign producer's own style reads as an unsupported
+        // picture (rendered from cached).
+        const format = formatFromOdtDateStyleName(styleAttr(el, "data-style-name") ?? "") ?? "d MMMM yyyy";
+        appendFieldSpec(acc, { kind: "date", format, cached: el.textContent ?? "" }, formatting);
+        break;
+      }
+      case "time": {
+        const format = formatFromOdtDateStyleName(styleAttr(el, "data-style-name") ?? "") ?? "HH:mm";
+        appendFieldSpec(acc, { kind: "time", format, cached: el.textContent ?? "" }, formatting);
+        break;
+      }
+      case "author-name":
+        appendFieldSpec(acc, { kind: "author", cached: el.textContent ?? "" }, formatting);
+        break;
+      case "title":
+        appendFieldSpec(acc, { kind: "docTitle", cached: el.textContent ?? "" }, formatting);
+        break;
+      case "subject":
+        appendFieldSpec(acc, { kind: "docSubject", cached: el.textContent ?? "" }, formatting);
+        break;
+      case "keywords":
+        appendFieldSpec(acc, { kind: "docKeywords", cached: el.textContent ?? "" }, formatting);
+        break;
+      case "word-count":
+        appendFieldSpec(acc, { kind: "wordCount", cached: el.textContent ?? "" }, formatting);
+        break;
+      case "file-name":
+        appendFieldSpec(
+          acc,
+          textAttr(el, "display") === "full"
+            ? { kind: "fileName", path: true, cached: el.textContent ?? "" }
+            : { kind: "fileName", cached: el.textContent ?? "" },
+          formatting,
+        );
+        break;
+      case "user-field-get":
+        // A custom-property field (SPEC-053): its value is declared in
+        // text:user-field-decls; the field name is enough to model it.
+        appendFieldSpec(
+          acc,
+          { kind: "docProperty", name: textAttr(el, "name") ?? "", cached: el.textContent ?? "" },
+          formatting,
+        );
+        break;
+      case "bookmark-ref": {
+        const show = refFormatFromOdt(textAttr(el, "reference-format"));
+        const target = textAttr(el, "ref-name") ?? "";
+        appendFieldSpec(
+          acc,
+          show === "page"
+            ? { kind: "pageRef", target, show: "page", cached: el.textContent ?? "" }
+            : { kind: "ref", target, show, cached: el.textContent ?? "" },
+          formatting,
+        );
+        break;
+      }
+      case "conditional-text":
+        // A field type outside the catalogue (SPEC-053): preserved verbatim
+        // as an unsupported field so it displays its saved value read-only
+        // and round-trips byte-for-byte.
+        appendFieldSpec(
+          acc,
+          { kind: "unsupported", code: serializeElement(el), cached: el.textContent ?? "" },
+          formatting,
+        );
         break;
       case "placeholder": {
         // A mail-merge chip (SPEC-046): its content is the same canonical
