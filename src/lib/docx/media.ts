@@ -10,34 +10,14 @@
 // else in the package references a media path except the relationship this
 // module writes).
 import type { Block, DocumentModel } from "../documentModel";
-import type { MediaPart } from "../core/media";
+import { extensionForContentType, type MediaPart } from "../core/media";
+import { referencedMediaIds } from "../mediaRefs";
 import { base64ToBytes } from "../opaque";
 import { yieldToMainThread } from "../core/idleScheduler";
-import { extensionForContentType } from "./drawing";
 import type { Relationship } from "../core/xml";
 import type { ZipEntryInput } from "../core/zipWriter";
 
 export const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
-
-/** Every mediaId an Image block in the document still references, in
- * document order — the writers' own mirror of lib/images.ts's
- * referencedMediaIds (which returns a Set), computed at save time since a
- * save must never trust stale bookkeeping over the model itself (the same
- * principle every other writer derivation in this file follows). Exported
- * for odf/media.ts, whose plan derives from the identical walk. */
-export function referencedMediaIds(model: DocumentModel): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const section of model.sections) {
-    for (const block of section.blocks) {
-      if (block.type === "image" && !seen.has(block.mediaId)) {
-        seen.add(block.mediaId);
-        ids.push(block.mediaId);
-      }
-    }
-  }
-  return ids;
-}
 
 /** The next unused `rId` at or after `start`, given the relationship ids a
  * preserved rels part (or an in-progress plan) already claims. */

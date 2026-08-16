@@ -24,6 +24,8 @@ import {
   createNoteRun,
   isShape,
   isTable,
+  mergeParagraphFormatting,
+  mergeRunFormatting,
   sectionHeaderFooter,
   type Block,
   type BreakBlock,
@@ -67,7 +69,6 @@ import { type CellBorders } from "./core/tables";
 import { type MeasurementUnit } from "./core/units";
 import { createNoteId } from "./notes";
 import { cmToTwips, twipsToCm } from "./core/units";
-import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
 import { listRunAround } from "./lists";
 import {
   clampListLevel,

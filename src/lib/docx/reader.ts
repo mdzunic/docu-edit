@@ -62,6 +62,8 @@ import {
   createNoteRun,
   DEFAULT_COLUMN_GAP_CM,
   MAX_COLUMN_COUNT,
+  mergeParagraphFormatting,
+  mergeRunFormatting,
 } from "../documentModel";
 import { parseChipText } from "../mergeChips";
 import { sanitizeHref } from "../links";
@@ -93,8 +95,6 @@ import {
   type NumberingCatalog,
 } from "./numbering";
 import {
-  mergeParagraphFormatting,
-  mergeRunFormatting,
   parseOutlineLevel,
   parseParagraphProperties,
   parseParagraphPropertiesChange,

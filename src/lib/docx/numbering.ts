@@ -35,7 +35,7 @@ import {
 } from "../core/lists";
 import type { DocumentModel } from "../documentModel";
 import { wordAttr, WORD_NAMESPACE } from "./xml";
-import { firstChildElement, parseXml, serializeElement } from "../core/xml";
+import { escapeXmlAttribute, firstChildElement, parseXml, serializeElement } from "../core/xml";
 import { cmToTwips, twipsToCm } from "../core/units";
 
 export const NUMBERING_RELATIONSHIP =
@@ -471,14 +471,6 @@ export function cellNumberingRefFor(
   return plan.refs.get(`${section}:${block}:${row}:${col}:${cellBlock}`);
 }
 
-function escapeAttr(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function levelXml(ilvl: number, def: PlannedListLevel): string {
   const numFmt = def.type === "bullet" ? "bullet" : NUM_FMT_BY_STYLE[def.style];
   const lvlText = def.type === "bullet" ? BULLET_CHAR_BY_STYLE[def.style] : `%${ilvl + 1}.`;
@@ -486,7 +478,7 @@ function levelXml(ilvl: number, def: PlannedListLevel): string {
     `<w:lvl w:ilvl="${ilvl}">` +
     `<w:start w:val="${def.startAt}"/>` +
     `<w:numFmt w:val="${numFmt}"/>` +
-    `<w:lvlText w:val="${escapeAttr(lvlText)}"/>` +
+    `<w:lvlText w:val="${escapeXmlAttribute(lvlText)}"/>` +
     '<w:lvlJc w:val="left"/>' +
     `<w:pPr><w:ind w:left="${cmToTwips(def.indentCm)}" w:hanging="${HANGING_TWIPS}"/></w:pPr>` +
     "</w:lvl>"
@@ -551,8 +543,8 @@ export function definitionAbstractXml(def: ListDefinition, abstractId: number): 
       `<w:lvl w:ilvl="${level - 1}">` +
         `<w:start w:val="${levelDef.startAt ?? 1}"/>` +
         `<w:numFmt w:val="${numFmt}"/>` +
-        (link !== undefined ? `<w:pStyle w:val="${escapeAttr(link)}"/>` : "") +
-        `<w:lvlText w:val="${escapeAttr(levelTemplate(def, level))}"/>` +
+        (link !== undefined ? `<w:pStyle w:val="${escapeXmlAttribute(link)}"/>` : "") +
+        `<w:lvlText w:val="${escapeXmlAttribute(levelTemplate(def, level))}"/>` +
         `<w:lvlJc w:val="${levelDef.alignment ?? "left"}"/>` +
         `<w:pPr>${ind}</w:pPr>` +
         "</w:lvl>",

@@ -17,6 +17,7 @@ import {
 } from "./documentModel";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
+import { referencedMediaIds } from "./mediaRefs";
 
 function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
@@ -143,31 +144,19 @@ function replaceImage(model: DocumentModel, location: ImageLocation, next: Image
   model.sections[location.section].blocks.splice(location.block, 1, next);
 }
 
-/** Every media id an image block in the document still references. */
-function referencedMediaIds(model: DocumentModel): Set<string> {
-  const ids = new Set<string>();
-  for (const section of model.sections) {
-    for (const block of section.blocks) {
-      if (isImage(block)) {
-        ids.add(block.mediaId);
-      }
-    }
-  }
-  return ids;
-}
-
 /** Drops every `model.media` entry no image block references any more — the
  * reference-counted cleanup AC-31/AC-32 describe as happening "on save", but
  * performed here (at the point a use is actually removed) so the model
  * itself never carries dead media, and so undo restores it for free (undo
  * snapshots the whole model, see commands.ts's header comment). An image
  * used twice keeps its media entry as long as either use remains (AC-32),
- * since referencedMediaIds counts every remaining image block. */
+ * since mediaRefs.ts's referencedMediaIds counts every remaining image
+ * block. */
 function pruneUnreferencedMedia(model: DocumentModel): void {
   if (!model.media || model.media.length === 0) {
     return;
   }
-  const referenced = referencedMediaIds(model);
+  const referenced = new Set(referencedMediaIds(model));
   const pruned = model.media.filter((part) => referenced.has(part.mediaId));
   if (pruned.length !== model.media.length) {
     model.media = pruned;

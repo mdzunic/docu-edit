@@ -93,7 +93,8 @@ import {
   type NumberingPlan,
   type NumberingRef,
 } from "./numbering";
-import { CONTENT_TYPE_BY_EXTENSION, drawingXml } from "./drawing";
+import { CONTENT_TYPE_BY_EXTENSION } from "../core/media";
+import { drawingXml } from "./drawing";
 import { shapeDrawingXml } from "./shape";
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
 import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";

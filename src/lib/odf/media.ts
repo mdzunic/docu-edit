@@ -7,8 +7,8 @@
 // `draw:image` stores any media type as-is, so every referenced media part
 // is written, none dropped.
 import type { DocumentModel } from "../documentModel";
-import { extensionForContentType } from "../docx/drawing";
-import { referencedMediaIds } from "../docx/media";
+import { extensionForContentType } from "../core/media";
+import { referencedMediaIds } from "../mediaRefs";
 import { base64ToBytes } from "../opaque";
 import type { ZipEntryInput } from "../core/zipWriter";
 

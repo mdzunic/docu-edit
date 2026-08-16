@@ -1870,3 +1870,24 @@ export function forEachParagraph(
     });
   });
 }
+
+/** Layers one RunFormatting over another: every key `override` explicitly
+ * carries wins, `base` fills the rest. A plain spread, but named — and
+ * format-neutral, living here rather than in either format's reader — so
+ * every layering site (the docx/odf readers' style-chain resolution,
+ * commands.ts/styles.ts's style application, equality.ts's semantic
+ * resolve, opaque.ts's formatting masks) provably composes layers the same
+ * way. An explicit `false`/`0` in `override` overrides `base`; only an
+ * absent key inherits. */
+export function mergeRunFormatting(base: RunFormatting, override: RunFormatting): RunFormatting {
+  return { ...base, ...override };
+}
+
+/** The ParagraphFormatting counterpart of mergeRunFormatting — same
+ * present-keys-win layering rule. */
+export function mergeParagraphFormatting(
+  base: ParagraphFormatting,
+  override: ParagraphFormatting,
+): ParagraphFormatting {
+  return { ...base, ...override };
+}

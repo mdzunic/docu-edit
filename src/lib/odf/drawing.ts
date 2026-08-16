@@ -6,8 +6,7 @@
 // reader's inline-content walk) keeps its existing SPEC-008 opaque-inline
 // fallback, exactly as it did before this spec.
 import type { Image, ImageWrapMode } from "../documentModel";
-import type { MediaPart } from "../core/media";
-import { contentTypeForPartName } from "../docx/drawing";
+import { contentTypeForPartName, type MediaPart } from "../core/media";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";

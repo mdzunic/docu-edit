@@ -19,7 +19,7 @@
 import { canonicalizeXml, XmlParseError } from "./core/xml";
 import type { Block, DocumentModel, HeaderFooterContent, Paragraph } from "./documentModel";
 import { resolveNamedStyle } from "./styles";
-import { mergeParagraphFormatting, mergeRunFormatting } from "./docx/properties";
+import { mergeParagraphFormatting, mergeRunFormatting } from "./documentModel";
 
 
 function xmlEquivalent(a: string, b: string): boolean {
@@ -153,7 +153,7 @@ export function equalStructural(a: unknown, b: unknown): boolean {
 function resolveParagraph(model: DocumentModel, paragraph: Paragraph): void {
   const styleResolved = resolveNamedStyle(model, paragraph.styleId);
   // mergeParagraphFormatting/mergeRunFormatting are a plain `{...base,
-  // ...override}` (docx/properties.ts) — the style's own contribution
+  // ...override}` (documentModel.ts) — the style's own contribution
   // underneath whatever the paragraph/run already bakes, so a fully-baked
   // run (every reader's own convention) is unaffected (its keys already
   // cover the style's) while a run that merely references a style for a

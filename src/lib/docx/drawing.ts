@@ -7,7 +7,7 @@
 // spec. This module only ever narrows what is already preserved, never
 // widens what gets dropped.
 import type { Image, ImageWrapMode } from "../documentModel";
-import type { MediaPart } from "../core/media";
+import { contentTypeForPartName, type MediaPart } from "../core/media";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64Async } from "../opaque";
 import { escapeXmlAttribute, firstChildElement, resolvePartPath, type Relationship } from "../core/xml";
@@ -19,36 +19,6 @@ const PIC_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 const R_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 export const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
-
-export const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  svg: "image/svg+xml",
-};
-
-/** The file extension a media content type is written with, the inverse of
- * CONTENT_TYPE_BY_EXTENSION's lookup — "jpeg" (not "jpg") is the canonical
- * spelling this writer picks for JPEG parts. */
-const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpeg",
-  "image/gif": "gif",
-  "image/svg+xml": "svg",
-};
-
-export function contentTypeForPartName(partName: string): string | undefined {
-  const dot = partName.lastIndexOf(".");
-  if (dot < 0) {
-    return undefined;
-  }
-  return CONTENT_TYPE_BY_EXTENSION[partName.slice(dot + 1).toLowerCase()];
-}
-
-export function extensionForContentType(contentType: string): string {
-  return EXTENSION_BY_CONTENT_TYPE[contentType] ?? "png";
-}
 
 /** One parsed `w:drawing`: the modelled image (its `mediaId` is the source
  * package's media part path, e.g. "word/media/image1.png" — stable and

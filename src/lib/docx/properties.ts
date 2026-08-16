@@ -345,14 +345,3 @@ export function parseOutlineLevel(pPr: Element | undefined): number | undefined 
   const level = Number(val);
   return Number.isNaN(level) ? undefined : level + 1;
 }
-
-export function mergeRunFormatting(base: RunFormatting, override: RunFormatting): RunFormatting {
-  return { ...base, ...override };
-}
-
-export function mergeParagraphFormatting(
-  base: ParagraphFormatting,
-  override: ParagraphFormatting,
-): ParagraphFormatting {
-  return { ...base, ...override };
-}
