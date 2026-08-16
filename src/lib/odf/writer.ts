@@ -76,7 +76,13 @@ import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../core/language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
 import { collectChanges } from "../trackChanges";
-import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import {
+  collectBarTabDropRecords,
+  collectDropRecords,
+  collectEditedChartDropRecords,
+  opaquePartBytes,
+  type WriteResult,
+} from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import {
@@ -3263,6 +3269,13 @@ export async function writeOdt(
 
   // SPEC-008's rule that a same-format save reports nothing still holds for
   // every part except an edited chart's (SPEC-052 "Rewriting a chart" — the
-  // one narrow, documented exception).
-  return { bytes: await zip(entries), dropped: collectEditedChartDropRecords(model, "odt") };
+  // one narrow, documented exception) and a bar tab stop, which OpenDocument
+  // Text cannot express: it is stripped from the rebuilt content.xml above
+  // (paragraphPropertiesXml filters alignment==='bar'), so every one must be
+  // reported here too, not only on the fresh/cross-format path (SPEC-054
+  // AC-38 — a document opened from .odt takes this same-format branch).
+  return {
+    bytes: await zip(entries),
+    dropped: [...collectEditedChartDropRecords(model, "odt"), ...collectBarTabDropRecords(model, "odt")],
+  };
 }

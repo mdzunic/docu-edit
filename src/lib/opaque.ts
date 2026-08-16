@@ -712,8 +712,10 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
 
 /** One `tabStop` DropRecord per bar tab stop in the model (SPEC-054 AC-38),
  * located by paragraph — table cell paragraphs included, addressed by the
- * table's own block position, mirroring collectPackageDropRecords. */
-function collectBarTabDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
+ * table's own block position, mirroring collectPackageDropRecords. Exported so
+ * a same-format .odt save (which reports edited-chart drops rather than the
+ * cross-format collectDropRecords) can still surface every dropped bar rule. */
+export function collectBarTabDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
   const dropped: DropRecord[] = [];
   let paragraphOffset = 0;
   for (const section of model.sections) {

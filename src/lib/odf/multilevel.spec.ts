@@ -17,6 +17,7 @@ import {
 } from "../commands";
 import { asParagraph, createDocument, type DocumentModel, type Paragraph } from "../documentModel";
 import { listMarkers } from "../lists";
+import { opaquePartBytes } from "../opaque";
 import { buildContentXml, writeOdt } from "./writer";
 import { parseOdt } from "./reader";
 
@@ -226,6 +227,38 @@ describe("full .odt round trip (AC-27, AC-28)", () => {
     // The non-bar stop survives; the bar stop is gone (ODF has no equivalent).
     const parsed = await parseOdt(bytes);
     const stops = asParagraph(parsed.sections[0].blocks[0]).formatting?.tabStops;
+    expect(stops).toEqual([{ positionCm: 5, alignment: "left" }]);
+  });
+
+  it("reports a bar tab stop dropped on a same-format .odt→.odt save (opened-from-.odt, SPEC-054 AC-38)", async () => {
+    // A document opened from .odt has format 'odt' and preserved opaque parts,
+    // so its save takes writeOdt's same-format branch — which rebuilds
+    // content.xml (stripping every bar stop) and must STILL report the drop.
+    // The fresh-document test above never exercises that branch (no preserved
+    // parts), so the same-format path once stripped the rule silently.
+    const seed = docWith(paragraph("barred"));
+    const parsed = await parseOdt((await writeOdt(seed)).bytes);
+    const opened: DocumentModel = {
+      ...createDocument("opened-from-odt"),
+      format: "odt",
+      sections: parsed.sections,
+      opaque: parsed.opaque,
+    };
+    // Preserved parts present → writeOdt takes the same-format branch, not the fresh one.
+    expect(opaquePartBytes(opened).size).toBeGreaterThan(0);
+    asParagraph(opened.sections[0].blocks[0]).formatting = {
+      tabStops: [
+        { positionCm: 3, alignment: "bar" },
+        { positionCm: 5, alignment: "left" },
+      ],
+    };
+    const { bytes, dropped } = await writeOdt(opened);
+    const barDrop = dropped.find((record) => record.kind === "tabStop");
+    expect(barDrop).toBeDefined();
+    expect(barDrop?.reason).toContain("no bar tab stop");
+    // The bar stop is really gone from the rebuilt content.xml; the rest stays.
+    const reparsed = await parseOdt(bytes);
+    const stops = asParagraph(reparsed.sections[0].blocks[0]).formatting?.tabStops;
     expect(stops).toEqual([{ positionCm: 5, alignment: "left" }]);
   });
 
