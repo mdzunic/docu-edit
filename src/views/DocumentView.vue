@@ -32,6 +32,8 @@ import ColumnsDialog from "../components/ColumnsDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
 import TrackChangesPane from "../components/TrackChangesPane.vue";
 import AccessibilityPane from "../components/AccessibilityPane.vue";
+import FontsPane from "../components/FontsPane.vue";
+import FontLoadingSkeleton from "../components/FontLoadingSkeleton.vue";
 import VersionHistoryPane from "../components/VersionHistoryPane.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
@@ -75,6 +77,8 @@ import { asCommentFilter, useComments } from "./document/useComments";
 import { asChangeEntries, useTrackChanges } from "./document/useTrackChanges";
 import { useVersionHistory } from "./document/useVersionHistory";
 import { useAccessibilityCheck } from "./document/useAccessibilityCheck";
+import { useFonts } from "./document/useFonts";
+import { useFeatureHooks } from "./document/useFeatureHooks";
 import { useFindReplace } from "./document/useFindReplace";
 import { usePdfExport } from "./document/usePdfExport";
 import { usePrintPreview } from "./document/usePrintPreview";
@@ -205,7 +209,6 @@ import {
   MIN_ROW_HEIGHT_CM,
   noCellRange,
 } from "../lib/core/tables";
-import { documentFontFamilies } from "../lib/fonts";
 import { acquireEditLock, noEditLock } from "../lib/core/editLock";
 import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../lib/supportedCeiling";
 import {
@@ -466,32 +469,10 @@ function refreshUndoRedoState() {
 }
 
 // --- feature lifecycle hooks ------------------------------------------------
-// Extracted feature composables register callbacks the backbone runs at the
-// points they care about (session close, unmount, scroll, post-edit find
-// refresh), so the backbone need not import feature modules and there are no
-// import cycles. Registration callbacks are idempotent per feature.
-// No TS annotations here — ESLint parses .vue scripts with espree, which
-// cannot parse them (see the other espree notes in this file). A dummy
-// no-op keeps `findRefreshScheduler` function-typed via inference.
-// The callbacks are typed by inference — a `() => {}` seed makes each Set a
-// `Set<() => void>` and each param a `() => void` (see note above: espree).
-const sessionCloseHooks = new Set([() => {}]);
-const unmountHooks = new Set([() => {}]);
-const scrollHooks = new Set([() => {}]);
-let findRefreshScheduler = () => {};
-
-function onSessionClose(cb = () => {}) {
-  sessionCloseHooks.add(cb);
-}
-function onUnmount(cb = () => {}) {
-  unmountHooks.add(cb);
-}
-function onScroll(cb = () => {}) {
-  scrollHooks.add(cb);
-}
-function registerFindRefresh(fn = () => {}) {
-  findRefreshScheduler = fn;
-}
+// The registry (session close, unmount, scroll, post-edit find refresh) lives
+// in useFeatureHooks; the backbone fires the exposed Sets at the right moments.
+const { sessionCloseHooks, unmountHooks, scrollHooks, onSessionClose, onUnmount, onScroll, registerFindRefresh, fireFindRefresh } =
+  useFeatureHooks();
 
 // --- tables (SPEC-022) ------------------------------------------------------
 // The rectangular cell-range selection (AC-15, AC-16). The ref stays here —
@@ -580,12 +561,6 @@ const styleState = ref(emptyToolbarStyleState());
 const characterStyleState = ref(emptyToolbarStyleState());
 // The formatting dialogs' state (custom spacing, define-list, tabs) and the
 // recent-colours list live in useFormattingSurfaces, wired below.
-// The families used by the open document, for the dropdown's "Fonts in
-// this document" group — doc.value is replaced on every edit, so this
-// recomputes as families come and go.
-const documentFonts = computed(() => (doc.value ? documentFontFamilies(doc.value) : []));
-
-
 // --- IME composition (SPEC-011) --------------------------------------------
 // While the user composes (Japanese/Chinese/Korean input, dead keys) the
 // browser owns the DOM: preedit updates are neither cancelable nor modelled.
@@ -1301,7 +1276,7 @@ function applyEdit(
   }
   // An edit made with the find bar open shifts match positions; refresh off
   // the keystroke path so typing stays responsive (SPEC-017 AC-31).
-  findRefreshScheduler?.();
+  fireFindRefresh();
 }
 
 /** Ctrl/Cmd+Z / the toolbar's Undo button (AC-1, AC-4). */
@@ -1349,7 +1324,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // break pulls it back a whole page — so follow it, the way the break
   // insertion it reverses does.
   void scrollModelCaretIntoView(caret);
-  findRefreshScheduler?.();
+  fireFindRefresh();
 }
 
 /** Whether a caret's own block address (ignoring any cell path) is a TOC
@@ -2783,6 +2758,14 @@ function handleImageOptionsApplyAndRescan(payload = { altText: "", widthCm: 0, h
   }
 }
 
+// --- font fallback & embedding (SPEC-048): registers bundled + embedded
+// faces, drives the Fonts panel; relayout re-measures on a face arriving.
+// documentFonts is the toolbar dropdown's "Fonts in this document" list.
+const { fontsPaneOpen, fontsReady, fontReport, documentFonts, openFontsPane, closeFontsPane } = useFonts({
+  ...editorContext,
+  relayout: () => pagination.invalidateAll(),
+});
+
 // --- document properties and metadata (SPEC-041) ---------------------------
 const {
   propertiesOpen,
@@ -3182,6 +3165,7 @@ const editorCommands = new Map([
   ["tools.word-count", openStatistics],
   ["tools.dictionary", openCustomDictionaryDialog],
   ["tools.accessibility", openAccessibilityPane],
+  ["tools.fonts", openFontsPane],
   ["tools.convert-merge-fields", convertLiteralChips],
   // SPEC-053 field update paths and View toggle.
   ["tools.update-all-fields", handleUpdateAllFields],
@@ -3552,7 +3536,17 @@ function handleMenuCommand(id = "") {
           @fix="applyAccessibilityFix"
         />
       </div>
+      <div
+        v-if="fontsPaneOpen"
+        class="fonts-dock print-exclude"
+      >
+        <FontsPane
+          :entries="fontReport"
+          @close="closeFontsPane"
+        />
+      </div>
       <div class="page-wrap">
+        <FontLoadingSkeleton v-if="!fontsReady" />
         <div
           v-if="findVisible"
           class="find-bar-dock print-exclude"
@@ -4461,9 +4455,11 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
 }
 
-/* The accessibility checker's own dock (SPEC-043) — same shape as the other
-   docked panes, on the same edge (not normally opened together with them). */
-.accessibility-dock {
+/* The accessibility checker's own dock (SPEC-043), and the Fonts panel's
+   (SPEC-048) — same shape as the other docked panes, on the same edge (not
+   normally opened together with them). */
+.accessibility-dock,
+.fonts-dock {
   position: absolute;
   top: 0;
   right: 0;
@@ -4474,6 +4470,10 @@ function handleMenuCommand(id = "") {
 }
 
 .accessibility-dock :deep(.accessibility-pane) {
+  pointer-events: auto;
+}
+
+.fonts-dock :deep(.fonts-pane) {
   pointer-events: auto;
 }
 

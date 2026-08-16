@@ -616,6 +616,11 @@ function chooseTableGrid(rows = 0, cols = 0) {
         testid="tools-menu-accessibility"
         @select="emit('command', 'tools.accessibility')"
       />
+      <MenuItem
+        label="Fonts"
+        testid="tools-menu-fonts"
+        @select="emit('command', 'tools.fonts')"
+      />
       <hr class="menu-separator">
       <MenuItem
         label="Convert {{…}} text to merge fields"
