@@ -45,9 +45,11 @@ describe("runStyle", () => {
     expect(style.textDecorationLine).toBe("underline line-through");
   });
 
-  it("maps font family, size and colour", () => {
+  it("maps font family to its metric-twin stack, size and colour (SPEC-048 AC-2/AC-5)", () => {
     const style = runStyle({ fontFamily: "Arial", fontSizePt: 14, color: "#1155cc" });
-    expect(style.fontFamily).toBe("Arial");
+    // The run keeps "Arial" in the model; the CSS renders the original if
+    // installed, else the bundled metric twin, so layout matches Word.
+    expect(style.fontFamily).toBe("Arial, Liberation Sans, sans-serif");
     expect(style.fontSize).toBe("14pt");
     expect(style.color).toBe("#1155cc");
   });

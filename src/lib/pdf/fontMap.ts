@@ -1,9 +1,13 @@
 // Maps the CSS font families the canvas actually renders with onto the
-// bundled Liberation faces the PDF embeds (SPEC-034 AC-20). The app never
-// ships the document's own font files, so export substitutes the
-// metric-compatible Liberation family of the same classification —
-// sans/serif/mono × regular/bold/italic — exactly like the screen falls
-// back for uninstalled fonts. Framework-free per the src/lib convention.
+// bundled faces the PDF embeds (SPEC-034 AC-20). The app never ships the
+// document's own font files, so export substitutes the metric-compatible
+// bundled family — Carlito for Calibri, Caladea for Cambria, else the
+// Liberation family of the same classification (sans/serif/mono) × regular/
+// bold/italic — exactly like the screen falls back for uninstalled fonts
+// (SPEC-048). Because both the screen and this classifier key off the same
+// first family, the PDF embeds the same face the screen rendered.
+// Framework-free per the src/lib convention.
+import { substituteFor } from "../fonts/substitution";
 
 export type FaceKey =
   | "sans-regular"
@@ -17,7 +21,15 @@ export type FaceKey =
   | "mono-regular"
   | "mono-bold"
   | "mono-italic"
-  | "mono-bolditalic";
+  | "mono-bolditalic"
+  | "calibri-regular"
+  | "calibri-bold"
+  | "calibri-italic"
+  | "calibri-bolditalic"
+  | "cambria-regular"
+  | "cambria-bold"
+  | "cambria-italic"
+  | "cambria-bolditalic";
 
 const SERIF_NAMES = [
   "times",
@@ -65,9 +77,24 @@ export function classifyFamily(cssFontFamily: string): "sans" | "serif" | "mono"
   return "sans";
 }
 
+/** The metric-twin face group for a family that has a bundled twin — Calibri
+ * → Carlito, Cambria → Caladea — so the PDF embeds the same twin the screen
+ * rendered rather than the generic Liberation classification (which would put
+ * Calibri on Arial metrics). Returns null for families we classify generically. */
+function twinGroup(cssFontFamily: string): "calibri" | "cambria" | null {
+  const sub = substituteFor(firstFamilyName(cssFontFamily));
+  if (sub?.family === "Carlito") {
+    return "calibri";
+  }
+  if (sub?.family === "Caladea") {
+    return "cambria";
+  }
+  return null;
+}
+
 /** The face a rendered run maps to, from its computed style. */
 export function faceKeyFor(cssFontFamily: string, bold: boolean, italic: boolean): FaceKey {
-  const family = classifyFamily(cssFontFamily);
+  const family = twinGroup(cssFontFamily) ?? classifyFamily(cssFontFamily);
   const style = bold && italic ? "bolditalic" : bold ? "bold" : italic ? "italic" : "regular";
   return `${family}-${style}`;
 }
@@ -85,6 +112,14 @@ const FACE_FILES: Record<FaceKey, string> = {
   "mono-bold": "LiberationMono-Bold.ttf",
   "mono-italic": "LiberationMono-Italic.ttf",
   "mono-bolditalic": "LiberationMono-BoldItalic.ttf",
+  "calibri-regular": "Carlito-Regular.ttf",
+  "calibri-bold": "Carlito-Bold.ttf",
+  "calibri-italic": "Carlito-Italic.ttf",
+  "calibri-bolditalic": "Carlito-BoldItalic.ttf",
+  "cambria-regular": "Caladea-Regular.ttf",
+  "cambria-bold": "Caladea-Bold.ttf",
+  "cambria-italic": "Caladea-Italic.ttf",
+  "cambria-bolditalic": "Caladea-BoldItalic.ttf",
 };
 
 /** The bundled font file (under /fonts/) that carries a face. */

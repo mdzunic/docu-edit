@@ -255,7 +255,8 @@ function toUnicodeCMap(usage: FaceUsage): string {
 
 function descriptorFlags(face: FaceKey): number {
   let flags = 32; // Nonsymbolic
-  if (face.startsWith("serif")) {
+  // Cambria's twin (Caladea) is a serif; Calibri's twin (Carlito) is sans.
+  if (face.startsWith("serif") || face.startsWith("cambria")) {
     flags |= 2;
   }
   if (face.startsWith("mono")) {
