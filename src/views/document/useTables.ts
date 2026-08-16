@@ -1,9 +1,9 @@
 // Table editing (SPEC-022, SPEC-023): insert/delete rows and columns, merge and
 // split cells, the table properties dialog, and live column/row resizing with
 // the hover handles. The cell-range drag *selection* itself stays in the canvas
-// event hub in DocumentView (it shares mousedown/mousemove/mouseup with image
-// and TOC deselect); this composable owns the actions those ranges and the
-// context menu trigger.
+// event hub in useCanvasGestures (it shares mousedown/mousemove/mouseup with
+// image and TOC deselect); this composable owns the actions those ranges and
+// the context menu trigger.
 import type { Ref } from "vue";
 import {
   applyBorderPreset,
