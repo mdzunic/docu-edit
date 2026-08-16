@@ -26,6 +26,11 @@ import { authorColor } from "./trackChangesIdentity";
 // formats' readers/writers (SPEC-013) — the model stores the OOXML colour
 // name as-is.
 import { HIGHLIGHT_HEX } from "./core/colors";
+// Metric-compatible substitution (SPEC-048): the model keeps the original
+// family name; here it becomes the CSS stack that renders the bundled twin
+// when the original is unavailable. Measurement (textMetrics) routes the same
+// family through the same helper, so measure and paint agree.
+import { fontStack } from "./fonts/substitution";
 
 /** The HTML tag a paragraph should render as: h1-h6 for a resolved heading
  * level (clamped to h6), otherwise a plain paragraph. */
@@ -88,7 +93,9 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
     style.textDecorationLine = decorations.join(" ");
   }
   if (formatting.fontFamily) {
-    style.fontFamily = formatting.fontFamily;
+    // Substitution is a rendering decision only (AC-5): the run keeps its
+    // original family name in the model; the CSS gets the metric twin stack.
+    style.fontFamily = fontStack(formatting.fontFamily);
   }
   if (formatting.fontSizePt) {
     style.fontSize = `${formatting.fontSizePt}pt`;
