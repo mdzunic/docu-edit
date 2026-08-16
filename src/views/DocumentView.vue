@@ -2758,10 +2758,9 @@ function handleImageOptionsApplyAndRescan(payload = { altText: "", widthCm: 0, h
   }
 }
 
-// --- font fallback & embedding (SPEC-048): registers bundled + embedded
-// faces, drives the Fonts panel; relayout re-measures on a face arriving.
-// documentFonts is the toolbar dropdown's "Fonts in this document" list.
-const { fontsPaneOpen, fontsReady, fontReport, documentFonts, openFontsPane, closeFontsPane } = useFonts({
+// --- font fallback & embedding (SPEC-048): bundled+embedded @font-face, the
+// Fonts panel, embed-on-save; relayout re-measures when a face arrives.
+const { fontsPaneOpen, fontsReady, fontReport, documentFonts, embedControls, openFontsPane, closeFontsPane } = useFonts({
   ...editorContext,
   relayout: () => pagination.invalidateAll(),
 });
@@ -3542,6 +3541,7 @@ function handleMenuCommand(id = "") {
       >
         <FontsPane
           :entries="fontReport"
+          :controls="embedControls"
           @close="closeFontsPane"
         />
       </div>

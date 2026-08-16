@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import EmbedFontsDialog from "./EmbedFontsDialog.vue";
 import { asFontReportEntries, fontStatusLabel } from "../views/document/useFonts";
 
 // The "Fonts" panel (SPEC-048 AC-7/8/10): every family the document uses,
-// each marked available / substituted (naming the twin) / missing. Pure
-// disclosure — docked the same way AccessibilityPane is. Runtime prop/emit
-// declarations, not the generic form, since espree parses .vue scripts.
+// each marked available / substituted (naming the twin) / missing. Also hosts
+// the "Embed fonts in this file" action and its dialog (AC-15/16/17/18); the
+// embed controller is passed in from useFonts. Runtime prop/emit declarations,
+// since espree parses .vue scripts.
 const props = defineProps({
   entries: { type: Array, default: () => [] },
+  controls: { type: Object, default: () => ({}) },
 });
 
 const emit = defineEmits(["close"]);
@@ -41,6 +44,17 @@ const entriesTyped = computed(() => asFontReportEntries(props.entries));
       {{ entriesTyped.length }} font{{ entriesTyped.length === 1 ? "" : "s" }} used
     </p>
 
+    <button
+      v-if="props.controls.available"
+      type="button"
+      class="fonts-embed-button"
+      data-testid="fonts-embed"
+      :disabled="props.controls.busy"
+      @click="props.controls.open()"
+    >
+      Embed fonts in this file…
+    </button>
+
     <ul
       class="fonts-list"
       data-testid="fonts-list"
@@ -61,6 +75,16 @@ const entriesTyped = computed(() => asFontReportEntries(props.entries));
         </span>
       </li>
     </ul>
+
+    <EmbedFontsDialog
+      v-if="props.controls.dialogOpen"
+      :face-count="props.controls.faceCount"
+      :size-text="props.controls.sizeText"
+      :skipped="props.controls.skipped"
+      :busy="props.controls.busy"
+      @confirm="props.controls.confirm()"
+      @close="props.controls.close()"
+    />
   </aside>
 </template>
 
@@ -113,6 +137,21 @@ const entriesTyped = computed(() => asFontReportEntries(props.entries));
   margin: 0;
   padding: 0 0.75rem 0.5rem;
   color: #5f6368;
+}
+
+.fonts-embed-button {
+  margin: 0 0.75rem 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.fonts-embed-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .fonts-list {
