@@ -68,7 +68,6 @@ import TabStopsDialog from "../components/TabStopsDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
 import { useAutosave } from "../composables/useAutosave";
-import { usePagination } from "../composables/usePagination";
 import { useToasts } from "../composables/useToasts";
 import { noApplyEditOptions } from "./document/context";
 import { useAutocorrect } from "./document/useAutocorrect";
@@ -91,6 +90,7 @@ import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
+import { usePaginationEngine } from "./document/usePaginationEngine";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { usePageNavigation } from "./document/usePageNavigation";
@@ -309,23 +309,13 @@ import {
   touchedBlocks,
   verticalAlignState,
 } from "../lib/commands";
-import {
-  collectNoteRefs,
-  effectiveNoteSettings,
-  noteLabels,
-  noteText,
-} from "../lib/notes";
+import { effectiveNoteSettings } from "../lib/notes";
 import { headingTag, isExternalLink, paragraphStyle, runKey, runLinkHref, runStyle } from "../lib/renderFormatting";
 import { markSegments } from "../lib/core/marks";
 import { noIdleHandle, scheduleIdleWork } from "../lib/core/idleScheduler";
 import { sectionColumnFlowWidthPx, wholePageItem } from "../lib/pagination";
 import { noNoteArea, noNoteAreaItems } from "../lib/notesLayout";
-import {
-  computePageNumbers,
-  fieldValueText,
-  headerFooterForPage,
-  resolveHeaderFooterKind,
-} from "../lib/pageNumbering";
+import { fieldValueText, headerFooterForPage, resolveHeaderFooterKind } from "../lib/pageNumbering";
 import { noRenderEntries } from "../lib/pageRender";
 import {
   deleteImage,
@@ -987,7 +977,7 @@ const recoveryTime = computed(() =>
 
 async function focusAndRestore() {
   await nextTick();
-  // The first layout is deferred out of the mount task (see the pagination
+  // The first layout is deferred out of the mount task (usePaginationEngine's
   // prime kick): until it lands there are no page heights to scroll within
   // and no block DOM to place the caret in, so a session restore racing it
   // would clamp the scroll to 0 and drop the caret. Wait for the first
@@ -2167,8 +2157,8 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
 
 // --- document outline navigator (SPEC-037) ---------------------------------
 // The pane's state, the outline tree and its handlers live in useOutlinePane.
-// Wired BEFORE usePagination below, whose layout closure reads the
-// destructured hiddenBodyBlocks. caretPosition is the backbone caret mirror
+// Wired BEFORE usePaginationEngine below, which takes the destructured
+// hiddenBodyBlocks as an extra. caretPosition is the backbone caret mirror
 // declared with the caret tracking above; jumpToAnchor is destructured from
 // useLinks, wired after pagination — the lambda defers the read to call time
 // (an event handler, past setup), never during this deps object's evaluation.
@@ -2190,156 +2180,25 @@ const {
   jumpToAnchor: (anchor) => jumpToAnchor(anchor),
 });
 
-// --- pagination (SPEC-028) --------------------------------------------------
-// The controller owns measurement; every doc.value replacement re-lays-out
-// synchronously (flush: "sync") so the rendered pages always agree with the
-// new model's block indices before Vue patches the canvas.
-
-const pagination = usePagination(
-  () => doc.value,
-  () => contentRoot.value,
-  (noteId) => noteLabelsMap.value.get(noteId) ?? "",
-  () => hiddenBodyBlocks.value,
-);
-// A body-heading collapse/expand changes only the hidden set, not the model,
-// so re-lay-out explicitly when it changes (AC-16). Empty-to-empty is not a
-// change: the computed mints a fresh Set object whenever `doc` is replaced
-// (opening a document), and relaying out for that fused a second full
-// relayout into the open mount task (SPEC-047 AC-16) for a hidden set that
-// is still "nothing hidden".
-watch(hiddenBodyBlocks, (now, prev) => {
-  if (now.size === 0 && prev !== undefined && prev.size === 0) {
-    return;
-  }
-  pagination.schedule();
-});
-const paginationPages = pagination.pages;
-const paginationBusy = pagination.busy;
-const paginationState = pagination.state;
-
-// --- open progress indicator (SPEC-047 AC-3..5): shown from this
-// document's mount until pagination first reports settled, distinct from
-// paginationBusy above (which reappears on every later edit-triggered
-// relayout too — this one only ever fires once per document open). ------
-const documentOpening = ref(true);
-watch(documentId, () => {
-  documentOpening.value = true;
-});
-watch(paginationState, (state) => {
-  if (state === "clean") {
-    documentOpening.value = false;
-  }
-});
-// The "never needs to measure" fallback lives in the initial-layout kick
-// below (see the doc watcher): a document whose pagination never
-// transitions through "measuring" gives the state watcher above no change
-// to observe, so the kick checks once, right after the first layout ran.
-
-// --- note numbering (SPEC-031 AC-7..9, AC-17..20) ---------------------------
-// Displayed note numbers, derived fresh from mark order and the numbering
-// settings on every model change — never persisted, like list numbering.
-// Footnotes thread the per-page assignment through for "restart each page".
-const noteLabelsMap = computed(() => {
-  const model = doc.value;
-  if (!model) {
-    return new Map();
-  }
-  const refPages = pagination.footnoteRefPages.value;
-  const labels = noteLabels(model, "footnote", collectNoteRefs(model, "footnote"), (ref, index) => refPages[index] ?? 0);
-  for (const [noteId, label] of noteLabels(model, "endnote", collectNoteRefs(model, "endnote"))) {
-    labels.set(noteId, label);
-  }
-  return labels;
-});
-
-/** Reference-mark tooltips (AC-14): each note's plain text. */
-const noteTooltipsMap = computed(() => {
-  const model = doc.value;
-  const tooltips = new Map();
-  for (const note of model?.notes ?? []) {
-    tooltips.set(note.noteId, noteText(note));
-  }
-  return tooltips;
-});
-
-// A mark's rendered label width differs per number, and the measurement
-// cache is keyed by block object identity — so when an existing note's
-// label CHANGES (an earlier note inserted/deleted renumbers it), the
-// paragraphs holding those marks must re-measure. New ids (a fresh insert)
-// need none: nothing measured them yet.
-let knownNoteLabels = new Map();
-watch(noteLabelsMap, (labels) => {
-  let changed = false;
-  for (const [noteId, label] of labels) {
-    const known = knownNoteLabels.get(noteId);
-    if (known !== undefined && known !== label) {
-      changed = true;
-      break;
-    }
-  }
-  knownNoteLabels = new Map(labels);
-  if (changed) {
-    pagination.invalidateAll();
-  }
-});
-
-watch(doc, () => pagination.schedule(), { flush: "sync", immediate: true });
-// The controller starts un-primed: every layout request up to here (the
-// immediate watcher above, document.fonts.ready, anything else that fires
-// during setup/mount) is only RECORDED, so the whole estimate pass, first
-// page render and viewport refresh stop fusing into the component's own
-// mount task — the largest main-thread block of the open phase (SPEC-047
-// AC-16). prime() runs the recorded layout in its own frame task; the
-// rAF-less fallback keeps the old synchronous mount timing for
-// non-browser environments.
-let initialLayoutFrame = 0;
-let initialLayoutTimer = 0;
-let initialLayoutIdle = 0;
-onMounted(() => {
-  const kick = () => {
-    pagination.prime();
-    // A document whose pagination never needs to measure never transitions
-    // through "measuring", so the paginationState watcher above never
-    // observes a change — checked once here, right after the first layout.
-    if (paginationState.value === "clean") {
-      documentOpening.value = false;
-    }
-  };
-  // canMeasureOffscreen doubles as the "real rendering environment" probe
-  // (it is false exactly where canvas measurement — and painting — do not
-  // exist, i.e. jsdom): only a painting browser gains anything from
-  // deferring the first layout past the mount task, and the unit suites
-  // interact with the canvas synchronously after mount. requestIdleCallback
-  // (not rAF, not a bare timer) is the deferral that actually separates the
-  // tasks: a same-frame rAF callback runs in the mount task's own rendering
-  // update, and a timer can beat the frame — both fuse the layout right
-  // back into the block it was deferred out of. The timeout bounds how long
-  // a busy frame can hold the first layout back.
-  if (pagination.canMeasureOffscreen && typeof window.requestAnimationFrame === "function") {
-    if (typeof window.requestIdleCallback === "function") {
-      initialLayoutIdle = window.requestIdleCallback(kick, { timeout: 100 });
-    } else {
-      initialLayoutFrame = window.requestAnimationFrame(() => {
-        initialLayoutFrame = 0;
-        initialLayoutTimer = window.setTimeout(kick, 0);
-      });
-    }
-  } else {
-    kick();
-  }
-});
-onBeforeUnmount(() => {
-  if (initialLayoutFrame !== 0 && typeof window.cancelAnimationFrame === "function") {
-    window.cancelAnimationFrame(initialLayoutFrame);
-  }
-  if (initialLayoutTimer !== 0) {
-    window.clearTimeout(initialLayoutTimer);
-  }
-  if (initialLayoutIdle !== 0 && typeof window.cancelIdleCallback === "function") {
-    window.cancelIdleCallback(initialLayoutIdle);
-  }
-  pagination.stop();
-});
+// --- pagination (SPEC-028, SPEC-031, SPEC-047) -------------------------------
+// The controller's session lifecycle — construction over this document, the
+// relayout triggers (model replacement, the outline's hidden set, a renumbered
+// note label), the first-layout deferral and the open progress flag — lives in
+// usePaginationEngine, together with the note numbering it is mutually
+// recursive with (see that composable's header). Wired after useOutlinePane,
+// whose hiddenBodyBlocks it lays out around, and before every consumer of
+// `pagination` below.
+const {
+  pagination,
+  paginationPages,
+  paginationBusy,
+  paginationState,
+  documentOpening,
+  noteLabelsMap,
+  noteTooltipsMap,
+  pageCount,
+  pageNumbers,
+} = usePaginationEngine({ ...editorContext, hiddenBodyBlocks });
 
 const marksOn = computed(() => doc.value?.showFormattingMarks === true);
 // "View → Field shading" (SPEC-053 AC-11): a session-local view toggle — like
@@ -2347,13 +2206,6 @@ const marksOn = computed(() => doc.value?.showFormattingMarks === true);
 // the file. Off by default (Word's "When selected" is the closest match, but
 // the toggle explicitly lets a user shade every field at once).
 const fieldShadingOn = ref(false);
-const pageCount = computed(() => Math.max(1, paginationPages.value.length));
-// The displayed page number of every laid-out page (SPEC-029 AC-20..23),
-// recomputed whenever pagination or a section's numbering options change.
-const pageNumbers = computed(() => {
-  const model = doc.value;
-  return model ? computePageNumbers(paginationPages.value, model) : [];
-});
 
 // Print preview and printing (SPEC-034): the preview overlays the canvas
 // (which is itself the preview surface), owns the page-range state and the
