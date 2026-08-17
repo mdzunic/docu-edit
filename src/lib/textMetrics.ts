@@ -15,11 +15,12 @@
 // Framework-free like the rest of src/lib; the canvas measurer degrades to
 // null where the environment cannot measure text (jsdom), in which case
 // callers keep their estimates and the DOM path.
-import type { Paragraph, RunFormatting } from "./documentModel";
+import type { Paragraph, RunFormatting, TabStop } from "./documentModel";
 import { fontStack } from "./fonts/substitution";
 import { listIndentCm } from "./core/lists";
 import { type BlockMetrics, type LineBox } from "./core/pageMetrics";
 import { PX_PER_CM } from "./core/units";
+import { layoutParagraphTabs, stopsToPx, type ParagraphTabLayout } from "./tabLayout";
 
 const PX_PER_PT = 96 / 72;
 
@@ -71,6 +72,59 @@ export interface MeasuredParagraph {
    * resolves with Range hit-testing, but known for free here because the
    * wrap decided them. */
   lineOffsets: number[];
+}
+
+/** The tab context a paragraph is measured/rendered against (SPEC-054): its
+ * effective stops (styles.tabContextFor), the document default interval and
+ * the decimal separator for its language. Absent leaves tabs on the browser's
+ * default 8-space grid (the pre-SPEC-054 behaviour), used by callers that do
+ * not resolve tab stops (unit tests, note measurement). */
+export interface TabLayoutConfig {
+  stops: TabStop[];
+  defaultTabStopCm: number;
+  decimalSeparator: string;
+}
+
+/** Builds the paragraph's font-boundary spans without vertical geometry —
+ * enough for measureRange, which only reads font/start/end. Shared by the
+ * wrap predictor and the standalone tab-layout helper. */
+function fontSpansOf(paragraph: Paragraph, base: BaseFont): { text: string; spans: FontSpan[] } {
+  const text = paragraph.runs.map((run) => run.text).join("");
+  const spans: FontSpan[] = [];
+  let offset = 0;
+  for (const run of paragraph.runs) {
+    if (run.text.length === 0) {
+      continue;
+    }
+    spans.push({
+      font: resolveRunFont(run.formatting, base),
+      start: offset,
+      end: offset + run.text.length,
+      advancePx: 0,
+      inkHeightPx: 0,
+    });
+    offset += run.text.length;
+  }
+  return { text, spans };
+}
+
+/** The tab geometry for a paragraph (SPEC-054): the same resolution the wrap
+ * predictor uses, exposed for the DOM renderer so measured and rendered tab
+ * advances are identical. */
+export function paragraphTabLayout(
+  paragraph: Paragraph,
+  config: TabLayoutConfig,
+  base: BaseFont,
+  measurer: TextMeasurer,
+): ParagraphTabLayout {
+  const { text, spans } = fontSpansOf(paragraph, base);
+  return layoutParagraphTabs(
+    text,
+    stopsToPx(config.stops),
+    config.defaultTabStopCm * PX_PER_CM,
+    config.decimalSeparator,
+    (from, to) => measureRange(text, spans, from, to, measurer),
+  );
 }
 
 function resolveRunFont(formatting: RunFormatting, base: BaseFont): ResolvedFont {
@@ -167,6 +221,7 @@ export function measureParagraphText(
   base: BaseFont,
   marksOn: boolean,
   measurer: TextMeasurer,
+  tabConfig?: TabLayoutConfig,
 ): MeasuredParagraph | null {
   const formatting = paragraph.formatting;
   const baseFont: ResolvedFont = { family: base.family, sizePx: base.sizePx, bold: false, italic: false };
@@ -254,6 +309,20 @@ export function measureParagraphText(
 
   const lineWidth = (): number => (advances.length === 0 ? firstWidth : availWidth);
 
+  // Resolved tab advances (SPEC-054): when the caller supplies the paragraph's
+  // tab context, each U+0009 advances to its stop with the right alignment;
+  // otherwise tabs fall back to the browser's default 8-space grid below.
+  const tabAdvances =
+    tabConfig && text.includes("\t")
+      ? layoutParagraphTabs(
+          text,
+          stopsToPx(tabConfig.stops),
+          tabConfig.defaultTabStopCm * PX_PER_CM,
+          tabConfig.decimalSeparator,
+          (from, to) => measureRange(text, spans, from, to, measurer),
+        ).advances
+      : null;
+
   // Fast path: most paragraphs of a bulk document fit on one line, and one
   // whole-text measurement decides that without the per-token walk (the
   // whole string is also the closest match to how the layout engine shapes
@@ -287,9 +356,14 @@ export function measureParagraphText(
       continue;
     }
     if (ch === "\t") {
-      const font = fontAt(spans, i) ?? baseFont;
-      const stop = TAB_SIZE_SPACES * measurer.widthOf(" ", font);
-      x = stop > 0 ? (Math.floor(x / stop + FIT_EPS) + 1) * stop : x;
+      const resolved = tabAdvances?.get(i);
+      if (resolved) {
+        x += resolved.widthPx;
+      } else {
+        const font = fontAt(spans, i) ?? baseFont;
+        const stop = TAB_SIZE_SPACES * measurer.widthOf(" ", font);
+        x = stop > 0 ? (Math.floor(x / stop + FIT_EPS) + 1) * stop : x;
+      }
       registerFonts(i, i + 1);
       breakAt = i + 1;
       i += 1;

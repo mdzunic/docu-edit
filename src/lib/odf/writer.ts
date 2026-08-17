@@ -76,7 +76,13 @@ import { collectNoteRefs, noteLabels, referencedNotes } from "../notes";
 import { composeLanguageTag, DEFAULT_LANGUAGE, ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../core/language";
 import { replyParagraphText, visibleCommentThreads } from "../comments";
 import { collectChanges } from "../trackChanges";
-import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import {
+  collectBarTabDropRecords,
+  collectDropRecords,
+  collectEditedChartDropRecords,
+  opaquePartBytes,
+  type WriteResult,
+} from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import {
@@ -317,10 +323,13 @@ function paragraphPropertiesXml(
   // Custom tab stops (SPEC-032 AC-19..25): a style:tab-stops child. The
   // leader is written BOTH as style:leader-style and style:leader-text so
   // either form recovers it on read — including foreign files that carry
-  // only the style keyword.
+  // only the style keyword. Bar stops (SPEC-054) have no ODF equivalent and
+  // are dropped here — the DropRecord for each is reported by opaque.ts's
+  // collectPackageDropRecords (AC-38).
   let tabStops = "";
-  if (formatting.tabStops !== undefined && formatting.tabStops.length > 0) {
-    tabStops = formatting.tabStops
+  const writableStops = (formatting.tabStops ?? []).filter((stop) => stop.alignment !== "bar");
+  if (writableStops.length > 0) {
+    tabStops = writableStops
       .map((stop) => {
         let stopAttrs = `style:position="${cmToOdfLength(stop.positionCm)}"`;
         if (stop.alignment === "decimal") {
@@ -2701,7 +2710,14 @@ export function patchOdtDefaultLanguage(model: DocumentModel, originalStylesXml:
 }
 
 export function buildStylesXml(model: DocumentModel): string {
-  const { fontFamily, fontSizePt, language } = model.defaultStyles;
+  const { fontFamily, fontSizePt, language, defaultTabStopCm } = model.defaultStyles;
+  // The document's default tab interval (SPEC-054): style:tab-stop-distance on
+  // the default paragraph style. Omitted when the model carries no explicit
+  // value.
+  const defaultTabProps =
+    defaultTabStopCm !== undefined
+      ? `<style:paragraph-properties style:tab-stop-distance="${cmToOdfLength(defaultTabStopCm)}"/>`
+      : "";
   const languageAttrs = (() => {
     if (language === undefined) {
       return "";
@@ -2733,6 +2749,7 @@ export function buildStylesXml(model: DocumentModel): string {
     `${XML_DECLARATION}<office:document-styles${DOCUMENT_XMLNS} office:version="1.2">` +
     "<office:styles>" +
     '<style:default-style style:family="paragraph">' +
+    defaultTabProps +
     `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
     "</style:default-style>" +
     namedStyles +
@@ -3252,6 +3269,13 @@ export async function writeOdt(
 
   // SPEC-008's rule that a same-format save reports nothing still holds for
   // every part except an edited chart's (SPEC-052 "Rewriting a chart" — the
-  // one narrow, documented exception).
-  return { bytes: await zip(entries), dropped: collectEditedChartDropRecords(model, "odt") };
+  // one narrow, documented exception) and a bar tab stop, which OpenDocument
+  // Text cannot express: it is stripped from the rebuilt content.xml above
+  // (paragraphPropertiesXml filters alignment==='bar'), so every one must be
+  // reported here too, not only on the fresh/cross-format path (SPEC-054
+  // AC-38 — a document opened from .odt takes this same-format branch).
+  return {
+    bytes: await zip(entries),
+    dropped: [...collectEditedChartDropRecords(model, "odt"), ...collectBarTabDropRecords(model, "odt")],
+  };
 }

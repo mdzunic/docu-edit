@@ -156,6 +156,13 @@ const REGISTRY: Record<string, Scenario> = {
     commands.setTabStops(model, caretSelection(caret(0, 0)), [
       { positionCm: 4, alignment: "right", leader: "dot" },
     ]),
+  setTabStopsWithDefault: (model) =>
+    commands.setTabStopsWithDefault(
+      model,
+      caretSelection(caret(0, 0)),
+      [{ positionCm: 4, alignment: "bar" }],
+      2,
+    ),
   // SPEC-042: custom styles manager.
   applyCharacterStyle: (model) =>
     commands.applyCharacterStyle(model, range(caret(0, 0), caret(0, 5)), "Emphasis"),
@@ -236,6 +243,8 @@ const QUERIES = new Set([
   "normalizeDefinitionLevels",
   "selectionListDefinitionLevels",
   "selectionTabStops",
+  // SPEC-054: the Tabs dialog's default-interval readout — a pure read.
+  "documentDefaultTabStopCm",
   // SPEC-042: the caret's character-style readout, the paragraph-style
   // readout's sibling — a pure read, not a command.
   "toolbarCharacterStyleState",

@@ -79,11 +79,13 @@ export {
   continueListNumbering,
   linkHeadingNumbering,
   normalizeDefinitionLevels,
+  documentDefaultTabStopCm,
   restartListNumbering,
   selectionListDefinitionLevels,
   selectionTabStops,
   setListNumberingValue,
   setTabStops,
+  setTabStopsWithDefault,
 } from "./commands.multilevel";
 export {
   applyParagraphStyle,

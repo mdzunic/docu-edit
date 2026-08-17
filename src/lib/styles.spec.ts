@@ -13,7 +13,9 @@ import {
   styleChainIncludes,
   styleDisplayName,
   stylePickerEntries,
+  tabContextFor,
 } from "./styles";
+import type { Paragraph, TabStop } from "./documentModel";
 
 function modelWith(styles?: NamedStyle[]): DocumentModel {
   const model = createDocument("styles-fixture");
@@ -104,6 +106,39 @@ describe("SPEC-019 — resolution through basedOn chains (AC-7)", () => {
     ]);
     expect(resolveNamedStyle(model, "BackLtr").paragraphFormatting.direction).toBeUndefined();
     expect(resolveNamedStyle(model, "Rtl").paragraphFormatting.direction).toBe("rtl");
+  });
+});
+
+describe("SPEC-054 — tabContextFor (AC-27, AC-28)", () => {
+  const styleStops: TabStop[] = [{ positionCm: 4, alignment: "right", leader: "dot" }];
+
+  function modelWithTabStyle(): DocumentModel {
+    return modelWith([
+      { id: "Figures", name: "Figures", paragraphFormatting: { tabStops: styleStops } },
+    ]);
+  }
+
+  it("inherits the paragraph style's tab stops when the paragraph sets none (AC-27)", () => {
+    const model = modelWithTabStyle();
+    const paragraph: Paragraph = { type: "paragraph", runs: [], styleId: "Figures" };
+    expect(tabContextFor(model, paragraph)).toEqual(styleStops);
+  });
+
+  it("returns the paragraph's own stops, replacing (not merging) the inherited list (AC-28)", () => {
+    const model = modelWithTabStyle();
+    const ownStops: TabStop[] = [{ positionCm: 2, alignment: "left" }];
+    const paragraph: Paragraph = {
+      type: "paragraph",
+      runs: [],
+      styleId: "Figures",
+      formatting: { tabStops: ownStops },
+    };
+    expect(tabContextFor(model, paragraph)).toEqual(ownStops);
+  });
+
+  it("resolves to no stops for an unstyled paragraph with none of its own", () => {
+    const model = modelWith();
+    expect(tabContextFor(model, { type: "paragraph", runs: [] })).toEqual([]);
   });
 });
 

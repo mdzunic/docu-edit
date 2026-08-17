@@ -162,6 +162,10 @@ export interface OdfStyleCatalog {
    * `defaultRunFormatting` — see the lift-out comment in
    * parseOdfStyleCatalog (mirrors docx/styles.ts's docDefaultLanguage). */
   defaultLanguage?: string;
+  /** The document's default tab interval (SPEC-054): `style:tab-stop-distance`
+   * on the default paragraph style. Undefined means the model's 1.27 cm
+   * default applies. */
+  defaultTabStopCm?: number;
   /** From the first `style:master-page`'s `style:page-layout` in styles.xml. */
   pageSize?: PageSize;
   margins?: Margins;
@@ -575,7 +579,18 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
         if (styleAttr(defaultEl, "family") !== "paragraph") {
           continue;
         }
-        catalog.defaultParagraphFormatting = parseParagraphProperties(paragraphPropertiesOf(defaultEl));
+        const defaultParagraphProps = paragraphPropertiesOf(defaultEl);
+        catalog.defaultParagraphFormatting = parseParagraphProperties(defaultParagraphProps);
+        // SPEC-054: the document default tab interval is an attribute of the
+        // default paragraph style's properties, not a per-paragraph value, so
+        // it is lifted onto defaultStyles.defaultTabStopCm rather than kept in
+        // defaultParagraphFormatting (which bakes onto every paragraph).
+        const tabDistanceCm = defaultParagraphProps
+          ? odfLengthToCm(styleAttr(defaultParagraphProps, "tab-stop-distance"))
+          : undefined;
+        if (tabDistanceCm !== undefined && tabDistanceCm > 0) {
+          catalog.defaultTabStopCm = tabDistanceCm;
+        }
         // A percentage font size on the default style has nothing to resolve
         // against, so only the absolute formatting is kept.
         catalog.defaultRunFormatting = parseTextProperties(textPropertiesOf(defaultEl), fontFaces).formatting;

@@ -359,14 +359,23 @@ test("the tab dialog accepts stops of every alignment and leader (AC-19..23, AC-
   await expect(page.getByTestId("ruler-tab-stop-3")).toBeVisible();
 });
 
-test("tab stops are settable and removable via the ruler (AC-24)", async ({ page }) => {
+test("tab stops are settable via the ruler and removable by dragging off (AC-24, SPEC-054 AC-5)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
   const lane = page.getByTestId("ruler-tab-lane");
   await lane.click({ position: { x: 120, y: 5 } });
-  await expect(page.getByTestId("ruler-tab-stop-0")).toBeVisible();
-  // Clicking the handle removes the stop again.
-  await page.getByTestId("ruler-tab-stop-0").click();
+  const handle = page.getByTestId("ruler-tab-stop-0");
+  await expect(handle).toBeVisible();
+  // SPEC-054 AC-5: dragging the handle down off the ruler removes the stop
+  // (SPEC-054 replaced SPEC-032's click-to-remove with drag-off-to-remove).
+  const box = await handle.boundingBox();
+  if (!box) {
+    throw new Error("tab handle has no bounding box");
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + 60, { steps: 5 });
+  await page.mouse.up();
   await expect(page.getByTestId("ruler-tab-stop-0")).toHaveCount(0);
 });
 

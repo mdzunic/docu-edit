@@ -147,13 +147,15 @@ function endDrag(kind = "", event = new PointerEvent("pointerup")) {
  * lays a stop of this type. */
 const tabType = ref("left");
 
-const TAB_TYPE_CYCLE = ["left", "center", "right", "decimal"];
+// SPEC-054: the selector cycles all five alignments, including the new bar.
+const TAB_TYPE_CYCLE = ["left", "center", "right", "decimal", "bar"];
 
 const TAB_TYPE_GLYPHS = {
   left: "L",
   center: "⊥",
   right: "⌐",
   decimal: "⊥.",
+  bar: "|",
 };
 
 const TAB_TYPE_LABELS = {
@@ -161,6 +163,7 @@ const TAB_TYPE_LABELS = {
   center: "Centre tab",
   right: "Right tab",
   decimal: "Decimal tab",
+  bar: "Bar tab",
 };
 
 function tabTypeGlyph(kind = "left") {
@@ -172,6 +175,9 @@ function tabTypeGlyph(kind = "left") {
   }
   if (kind === "decimal") {
     return TAB_TYPE_GLYPHS.decimal;
+  }
+  if (kind === "bar") {
+    return TAB_TYPE_GLYPHS.bar;
   }
   return TAB_TYPE_GLYPHS.left;
 }
@@ -185,6 +191,9 @@ function tabTypeLabel(kind = "left") {
   }
   if (kind === "decimal") {
     return TAB_TYPE_LABELS.decimal;
+  }
+  if (kind === "bar") {
+    return TAB_TYPE_LABELS.bar;
   }
   return TAB_TYPE_LABELS.left;
 }
@@ -204,15 +213,56 @@ function openTabsDialog() {
   }
 }
 
-/** The rendered handles: each stop positioned at margin + position. */
+/** Whether the current paragraph runs right-to-left: a tab stop's start-
+ * relative position then mirrors onto the page's right (start) edge, exactly
+ * as the indent markers do (SPEC-014, AC-35). */
+const rtl = computed(() => props.formatting?.direction === "rtl");
+
+/** A start-relative stop position mapped to its physical page cm. */
+function pageCmForPosition(positionCm = 0) {
+  return rtl.value
+    ? props.pageWidthCm - props.marginRightCm - positionCm
+    : props.marginLeftCm + positionCm;
+}
+
+/** The inverse of pageCmForPosition: a physical page cm back to a start-
+ * relative position, snapped to the drag grid. */
+function positionCmForPage(pageCm = 0) {
+  const raw = rtl.value ? props.pageWidthCm - props.marginRightCm - pageCm : pageCm - props.marginLeftCm;
+  return Math.round(raw / 0.05) * 0.05;
+}
+
+// --- tab handle drag (SPEC-054 AC-4/AC-5) ----------------------------------
+// A handle drags live and, if released off the ruler, is removed. Its visual
+// position follows the pointer through local drag state; the model commits
+// only on release, so a mid-drag re-sort never invalidates the handle index.
+const tabDragging = ref(-1);
+const tabDragPageCm = ref(0);
+const tabDragOff = ref(false);
+
+/** The rendered handles: each stop positioned at its physical page cm, or the
+ * live drag position for the handle being dragged. */
 const tabHandles = computed(() =>
   asTabStops(props.tabStops).map((stop, index) => ({
     index,
     alignment: stop.alignment,
     positionCm: stop.positionCm,
-    pageCm: props.marginLeftCm + stop.positionCm,
+    pageCm: index === tabDragging.value ? tabDragPageCm.value : pageCmForPosition(stop.positionCm),
+    dragging: index === tabDragging.value,
+    off: index === tabDragging.value && tabDragOff.value,
   })),
 );
+
+/** True when a pointer y is far enough outside the ruler band to count as
+ * "dragged off" (SPEC-054 AC-5) — the removal gesture. */
+function pointerOffRuler(event = new PointerEvent("pointermove")) {
+  const el = root.value;
+  if (!el) {
+    return false;
+  }
+  const rect = el.getBoundingClientRect();
+  return event.clientY < rect.top - 8 || event.clientY > rect.bottom + 8;
+}
 
 /** A click on the free lane lays a new stop of the armed type at the
  * clicked position (SPEC-032 AC-24), snapped like the drag markers. */
@@ -220,20 +270,54 @@ function handleTabLaneClick(event = new MouseEvent("click")) {
   if (props.disabled) {
     return;
   }
-  const positionCm = positionCmFromEvent(
-    new PointerEvent("pointermove", { clientX: event.clientX }),
+  const relativeCm = positionCmForPage(
+    positionCmFromEvent(new PointerEvent("pointermove", { clientX: event.clientX })),
   );
-  const relativeCm = Math.round(((positionCm - props.marginLeftCm) / 0.05)) * 0.05;
   if (relativeCm <= 0) {
     return;
   }
   emit("update", { kind: "add-tab", positionCm: relativeCm, alignment: tabType.value });
 }
 
-/** Clicking an existing handle removes its stop (the lane toggle). */
-function handleTabHandleClick(index = 0) {
-  if (!props.disabled) {
+function startTabDrag(index = 0, event = new PointerEvent("pointerdown")) {
+  if (props.disabled || !(event.target instanceof Element)) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  tabDragging.value = index;
+  tabDragPageCm.value = pageCmForPosition(asTabStops(props.tabStops)[index]?.positionCm ?? 0);
+  tabDragOff.value = false;
+  event.target.setPointerCapture(event.pointerId);
+}
+
+function moveTabDrag(index = 0, event = new PointerEvent("pointermove")) {
+  if (tabDragging.value !== index) {
+    return;
+  }
+  tabDragPageCm.value = positionCmFromEvent(event);
+  tabDragOff.value = pointerOffRuler(event);
+}
+
+function endTabDrag(index = 0, event = new PointerEvent("pointerup")) {
+  if (tabDragging.value !== index) {
+    return;
+  }
+  const off = tabDragOff.value || pointerOffRuler(event);
+  const positionCm = positionCmForPage(positionCmFromEvent(event));
+  tabDragging.value = -1;
+  tabDragOff.value = false;
+  if (event.target instanceof Element && event.target.hasPointerCapture(event.pointerId)) {
+    event.target.releasePointerCapture(event.pointerId);
+  }
+  if (props.disabled) {
+    return;
+  }
+  if (off || positionCm <= 0) {
+    // Dragged off the ruler (AC-5), or dragged past the start edge — remove.
     emit("update", { kind: "remove-tab", index });
+  } else {
+    emit("update", { kind: "move-tab", index, positionCm });
   }
 }
 
@@ -325,13 +409,17 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       :key="`tab-${handle.index}`"
       type="button"
       class="tab-handle"
+      :class="{ 'tab-handle-dragging': handle.dragging, 'tab-handle-off': handle.off }"
       :data-testid="`ruler-tab-stop-${handle.index}`"
       :data-tab-alignment="handle.alignment"
       :style="{ left: `${handle.pageCm}cm` }"
-      :title="`${handle.alignment} tab stop — click to remove`"
+      :title="`${handle.alignment} tab stop — drag to move, drag off to remove`"
       :aria-label="`${handle.alignment} tab stop at ${handle.positionCm} cm`"
       :disabled="disabled"
-      @click.stop="handleTabHandleClick(handle.index)"
+      @pointerdown="startTabDrag(handle.index, $event)"
+      @pointermove="moveTabDrag(handle.index, $event)"
+      @pointerup="endTabDrag(handle.index, $event)"
+      @pointercancel="endTabDrag(handle.index, $event)"
     >
       {{ tabTypeGlyph(handle.alignment) }}
     </button>
@@ -497,6 +585,16 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
 .tab-handle:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* A handle being dragged tracks the pointer; when dragged off the ruler it
+   fades to signal the release-to-remove gesture (SPEC-054 AC-4/AC-5). */
+.tab-handle-dragging {
+  cursor: grabbing;
+}
+
+.tab-handle-off {
+  opacity: 0.3;
 }
 
 /* Column boundary handle: a full-height bar centred in the gutter. */

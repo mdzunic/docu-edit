@@ -394,9 +394,11 @@ export interface ParagraphFormatting {
 
 // --- tab stops (SPEC-032) ---------------------------------------------------
 
-/** A custom tab stop's alignment (AC-19..22): where the tabbed text sits
- * relative to the stop — "decimal" aligns on the decimal separator. */
-export type TabStopAlignment = "left" | "right" | "center" | "decimal";
+/** A custom tab stop's alignment (SPEC-032 AC-19..22, SPEC-054): where the
+ * tabbed text sits relative to the stop — "decimal" aligns on the decimal
+ * separator; "bar" (SPEC-054) draws a vertical rule at the position and
+ * consumes no tab advance. */
+export type TabStopAlignment = "left" | "right" | "center" | "decimal" | "bar";
 
 /** The leader drawn in the space a tab jumps over (AC-23); absent means
  * none. */
@@ -1438,7 +1440,16 @@ export interface DefaultStyles {
    * lib/language.ts. Absent means the product default (DEFAULT_LANGUAGE);
    * a run's own `RunFormatting.lang` overrides this for its own text. */
   language?: string;
+  /** The document-level default tab interval (SPEC-054): a tab past the last
+   * explicit stop advances to the next multiple of this distance. Absent
+   * means `DEFAULT_TAB_STOP_CM` (1.27 cm). Round-trips as `w:defaultTabStop`
+   * (.docx, in settings.xml) and `style:tab-stop-distance` (.odt). */
+  defaultTabStopCm?: number;
 }
+
+/** The default tab interval when a document sets none (SPEC-054): 1.27 cm =
+ * 0.5 in = 720 twips, Word's own default. */
+export const DEFAULT_TAB_STOP_CM = 1.27;
 
 /** The source format a document was opened from, if any — drives the format
  * badge in the app bar. Undefined for documents created blank (SPEC-002).

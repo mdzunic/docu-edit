@@ -12,7 +12,7 @@ a separate part with its own indirection.
 
 ## Acceptance criteria
 - [ ] Toolbar buttons toggle a bulleted list and a numbered list on every paragraph in the selection
-- [ ] Tab and Shift+Tab inside a list item demote and promote it, up to 9 levels, and levels use distinct markers (•, ◦, ▪ / 1., a., i.)
+- [ ] Tab and Shift+Tab inside a list item demote and promote it, up to 9 levels, and levels use distinct markers (•, ◦, ▪ / 1., a., i.) — "inside a list item" is the caret collapsed at the item's offset 0, per SPEC-054's Tab precedence table; a Tab pressed mid-item inserts a literal tab
 - [ ] Enter on a list item creates the next item at the same level; Enter on an empty list item outdents it, and on an empty top-level item converts it to a normal paragraph
 - [ ] Backspace at the start of a list item removes the list formatting from that item without deleting text
 - [ ] Numbering is continuous across consecutive list items and restarts when a non-list paragraph interrupts the list

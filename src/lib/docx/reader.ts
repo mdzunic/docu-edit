@@ -2585,6 +2585,18 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   const settingsText = readPart(settingsPartPath);
   const evenAndOddHeaders = !!settingsText && /<[\w:]*evenAndOddHeaders\b/.test(settingsText);
   const trackChangesRecording = !!settingsText && /<[\w:]*trackChanges\b/.test(settingsText);
+  // The document's default tab interval (SPEC-054): w:defaultTabStop in
+  // settings.xml. Absent leaves defaultStyles.defaultTabStopCm undefined
+  // (the model's 1.27 cm default applies).
+  const defaultTabMatch = settingsText
+    ? /<[\w:]*defaultTabStop\b[^>]*\bw:val="(-?\d+)"/.exec(settingsText)
+    : null;
+  if (defaultTabMatch) {
+    const twips = Number(defaultTabMatch[1]);
+    if (Number.isFinite(twips) && twips > 0) {
+      defaultStyles.defaultTabStopCm = twipsToCm(twips);
+    }
+  }
   const headerFooterContentCache = new Map<string, { blocks: Block[]; media: MediaPart[] }>();
   rawSections.forEach((raw, index) => {
     const isFinal = index === rawSections.length - 1;

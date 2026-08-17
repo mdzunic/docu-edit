@@ -9,6 +9,14 @@ export interface MarkSegment {
   text: string;
   /** "text" renders bare; "space"/"tab" get a marked span. */
   kind: "text" | "space" | "tab";
+  /** SPEC-054: a tab segment's resolved box width in px (the advance it fills
+   * to reach its stop) — set only on "tab" segments the renderer sizes. */
+  widthPx?: number;
+  /** SPEC-054: the leader the tab's box is filled with (dots/hyphens/an
+   * underscore), if its target stop carried one. Kept as a bare union rather
+   * than documentModel's `TabLeader` so this core module imports nothing from
+   * outside src/lib/core (see core/boundary.spec.ts). */
+  leader?: "dot" | "hyphen" | "underscore";
 }
 
 /** Splits text into mark segments. Consecutive spaces split one segment per
@@ -26,6 +34,30 @@ export function markSegments(text: string): MarkSegment[] {
       segments.push({ text: char, kind: char === "\t" ? "tab" : "space" });
     } else {
       plain += char;
+    }
+  }
+  if (plain) {
+    segments.push({ text: plain, kind: "text" });
+  }
+  return segments;
+}
+
+/** Splits text at tabs only (SPEC-054), leaving other characters — including
+ * spaces — in plain segments. Used when formatting marks are OFF but tabs
+ * still need their own sized boxes; the tab keeps its real "\t" text so the
+ * caret arithmetic counts it exactly as before. */
+export function tabOnlySegments(text: string): MarkSegment[] {
+  const segments: MarkSegment[] = [];
+  let plain = "";
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "\t") {
+      if (plain) {
+        segments.push({ text: plain, kind: "text" });
+        plain = "";
+      }
+      segments.push({ text: "\t", kind: "tab" });
+    } else {
+      plain += text[i];
     }
   }
   if (plain) {

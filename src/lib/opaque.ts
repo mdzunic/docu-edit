@@ -97,6 +97,9 @@ export type DropKind =
   | "opaquePart"
   | "runShading"
   | "svgImage"
+  // SPEC-054: a bar tab stop, which OpenDocument Text has no equivalent for —
+  // a .docx → .odt save drops each one and reports it (AC-38).
+  | "tabStop"
   | "trackedPropertyChange"
   // SPEC-051: a shape geometry outside the catalogue that a cross-format
   // save cannot carry into the target format (AC-61).
@@ -157,6 +160,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   opaquePart: "Package part",
   runShading: "Run shading",
   svgImage: "SVG image",
+  tabStop: "Bar tab stop",
   shapeGeometry: "Shape geometry",
   chartFeature: "Chart feature",
   trackedPropertyChange: "Tracked table property change",
@@ -276,6 +280,7 @@ const REASONS: Record<DropKind, string> = {
   runShading:
     "the target format has a single text background, which the highlight colour occupies",
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
+  tabStop: "OpenDocument Text has no bar tab stop — the vertical rule it draws is lost",
   shapeGeometry: "this shape's geometry is outside the catalogue and cannot be converted between formats",
   // Overridden per call by collectEditedChartDropRecords with the specific
   // lost property; this generic text is the fallback record() would use if
@@ -690,8 +695,48 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
   if (source !== undefined && source !== target) {
     dropped.push(...collectPackageDropRecords(model, source, target));
   }
+  if (target === "odt") {
+    // Bar tab stops (SPEC-054 AC-38): OpenDocument Text has no bar tab, so
+    // ANY save to .odt drops every one — regardless of source, unlike the
+    // package-level opaque content above (a bar stop is a modelled feature
+    // ODF cannot express, not preserved-but-untranslated XML). A brand-new
+    // document has no source format, so this cannot ride on the cross-format
+    // gate above.
+    dropped.push(...collectBarTabDropRecords(model, target));
+  }
   if (target === "md") {
     dropped.push(...collectMarkdownDropRecords(model));
+  }
+  return dropped;
+}
+
+/** One `tabStop` DropRecord per bar tab stop in the model (SPEC-054 AC-38),
+ * located by paragraph — table cell paragraphs included, addressed by the
+ * table's own block position, mirroring collectPackageDropRecords. Exported so
+ * a same-format .odt save (which reports edited-chart drops rather than the
+ * cross-format collectDropRecords) can still surface every dropped bar rule. */
+export function collectBarTabDropRecords(model: DocumentModel, target: DocumentFormat): DropRecord[] {
+  const dropped: DropRecord[] = [];
+  let paragraphOffset = 0;
+  for (const section of model.sections) {
+    section.blocks.forEach((block, index) => {
+      const paragraphNumber = paragraphOffset + index + 1;
+      const paragraphs =
+        block.type === "table"
+          ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
+          : [block];
+      for (const paragraph of paragraphs) {
+        if (paragraph.type !== "paragraph") {
+          continue;
+        }
+        for (const stop of paragraph.formatting?.tabStops ?? []) {
+          if (stop.alignment === "bar") {
+            dropped.push(record("tabStop", `paragraph ${paragraphNumber}`, target));
+          }
+        }
+      }
+    });
+    paragraphOffset += section.blocks.length;
   }
   return dropped;
 }

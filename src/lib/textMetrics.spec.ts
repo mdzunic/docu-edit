@@ -7,6 +7,7 @@ import type { Paragraph, ParagraphFormatting, Run } from "./documentModel";
 import { PX_PER_CM } from "./core/units";
 import {
   measureParagraphText,
+  paragraphTabLayout,
   type BaseFont,
   type LineGeometry,
   type ResolvedFont,
@@ -198,5 +199,45 @@ describe("measureParagraphText", () => {
     // advance 20, ink 19.2 → half-leading 0.4; line 2 top = 20 + 0.4.
     expect(result.metrics.lines[0].top).toBeCloseTo(0.4);
     expect(result.metrics.lines[1].top).toBeCloseTo(20.4);
+  });
+});
+
+describe("paragraphTabLayout (SPEC-054)", () => {
+  it("resolves a tab's advance against the paragraph fonts and stop", () => {
+    // Each char is 8 px (sizePx/2). Pen after "a" is 8 px; a left stop at 3 cm
+    // fills the tab to 3 cm − 8 px.
+    const layout = paragraphTabLayout(
+      para("a\tb"),
+      { stops: [{ positionCm: 3, alignment: "left" }], defaultTabStopCm: 1.27, decimalSeparator: "." },
+      BASE,
+      fakeMeasurer,
+    );
+    expect(layout.advances.get(1)?.widthPx).toBeCloseTo(3 * PX_PER_CM - 8, 3);
+  });
+
+  it("reports bar-stop positions for the renderer", () => {
+    const layout = paragraphTabLayout(
+      para("hello"),
+      { stops: [{ positionCm: 2, alignment: "bar" }], defaultTabStopCm: 1.27, decimalSeparator: "." },
+      BASE,
+      fakeMeasurer,
+    );
+    expect(layout.bars).toHaveLength(1);
+    expect(layout.bars[0]).toBeCloseTo(2 * PX_PER_CM, 3);
+  });
+
+  it("wrap measurement uses the resolved tab advance, not the 8-space grid", () => {
+    // "a\tbbbb" at a 300 px width: a left stop at 8 cm (≈302 px) pushes "bbbb"
+    // (32 px) past the edge → it wraps to a second line. Without the config the
+    // tab only reaches the 64 px default grid, so the line fits.
+    const config = {
+      stops: [{ positionCm: 8, alignment: "left" as const }],
+      defaultTabStopCm: 1.27,
+      decimalSeparator: ".",
+    };
+    const wrapped = measureParagraphText(para("a\tbbbb"), 300, BASE, false, fakeMeasurer, config)!;
+    expect(wrapped.lineOffsets.length).toBe(2);
+    const noConfig = measureParagraphText(para("a\tbbbb"), 300, BASE, false, fakeMeasurer)!;
+    expect(noConfig.lineOffsets.length).toBe(1);
   });
 });

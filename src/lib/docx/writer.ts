@@ -1741,9 +1741,12 @@ function notePrXml(tag: "footnotePr" | "endnotePr", settings: NoteSettings | und
  * recording-enabled flag (`w:trackChanges`) is set — OOXML's only
  * representation of either is a document-wide flag, so a document that
  * never asked for either never gains a settings part at all. */
-function buildSettingsXml(trackChangesRecording: boolean): string {
+function buildSettingsXml(trackChangesRecording: boolean, defaultTabTwips?: number): string {
   const trackChanges = trackChangesRecording ? "<w:trackChanges/>" : "";
-  return `${XML_DECLARATION}<w:settings xmlns:w="${WORD_NAMESPACE}"><w:evenAndOddHeaders/>${trackChanges}</w:settings>`;
+  // The document's default tab interval (SPEC-054): omitted when the model
+  // carries no explicit value (Word then applies its own 720-twip default).
+  const defaultTab = defaultTabTwips !== undefined ? `<w:defaultTabStop w:val="${defaultTabTwips}"/>` : "";
+  return `${XML_DECLARATION}<w:settings xmlns:w="${WORD_NAMESPACE}">${defaultTab}<w:evenAndOddHeaders/>${trackChanges}</w:settings>`;
 }
 
 /** Adds or removes `w:evenAndOddHeaders`/`w:trackChanges` on a preserved
@@ -1755,6 +1758,7 @@ export function patchSettingsXml(
   evenAndOddHeaders: boolean,
   trackChangesRecording: boolean,
   originalXml: string,
+  defaultTabTwips?: number,
 ): string | null {
   let xml = originalXml;
   let changed = false;
@@ -1771,6 +1775,19 @@ export function patchSettingsXml(
     xml = trackChangesRecording
       ? xml.replace(/(<w:settings[^>]*>)/, "$1<w:trackChanges/>")
       : xml.replace(/<[\w:]*trackChanges\s*\/>/, "");
+  }
+  // The document default tab interval (SPEC-054): set, replace or remove
+  // w:defaultTabStop on a preserved settings part so it round-trips.
+  const currentTab = /<[\w:]*defaultTabStop\b[^>]*\bw:val="(-?\d+)"/.exec(xml);
+  const currentTwips = currentTab ? Number(currentTab[1]) : undefined;
+  if (defaultTabTwips !== currentTwips) {
+    changed = true;
+    if (currentTab) {
+      xml = xml.replace(/<[\w:]*defaultTabStop\b[^>]*\/>/, "");
+    }
+    if (defaultTabTwips !== undefined) {
+      xml = xml.replace(/(<w:settings[^>]*>)/, `$1<w:defaultTabStop w:val="${defaultTabTwips}"/>`);
+    }
   }
   return changed ? xml : null;
 }
@@ -2667,7 +2684,12 @@ export async function writeDocx(
       new Set(),
       true,
     );
-    const needsSettingsPart = headerFooterPlan.evenAndOddHeaders || !!model.trackChangesRecording;
+    const defaultTabTwips =
+      model.defaultStyles.defaultTabStopCm !== undefined
+        ? cmToTwips(model.defaultStyles.defaultTabStopCm)
+        : undefined;
+    const needsSettingsPart =
+      headerFooterPlan.evenAndOddHeaders || !!model.trackChangesRecording || defaultTabTwips !== undefined;
     const settingsOverride = needsSettingsPart
       ? `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/>`
       : "";
@@ -2726,7 +2748,7 @@ export async function writeDocx(
     if (needsSettingsPart) {
       entries.push({
         name: "word/settings.xml",
-        data: encoder.encode(buildSettingsXml(!!model.trackChangesRecording)),
+        data: encoder.encode(buildSettingsXml(!!model.trackChangesRecording, defaultTabTwips)),
       });
     }
     for (const partPlan of headerFooterPlan.parts) {
@@ -2923,10 +2945,21 @@ export async function writeDocx(
   const settingsPartName = settingsRel ? resolvePartPath(mainPartName, settingsRel.target) : `${mainDir}settings.xml`;
   const preservedSettings = preservedParts.get(settingsPartName);
   const trackChangesRecording = !!model.trackChangesRecording;
+  const defaultTabTwips =
+    model.defaultStyles.defaultTabStopCm !== undefined
+      ? cmToTwips(model.defaultStyles.defaultTabStopCm)
+      : undefined;
   const patchedSettings = preservedSettings
-    ? patchSettingsXml(headerFooterPlan.evenAndOddHeaders, trackChangesRecording, decoder.decode(preservedSettings))
+    ? patchSettingsXml(
+        headerFooterPlan.evenAndOddHeaders,
+        trackChangesRecording,
+        decoder.decode(preservedSettings),
+        defaultTabTwips,
+      )
     : null;
-  const addSettingsPart = !preservedSettings && (headerFooterPlan.evenAndOddHeaders || trackChangesRecording);
+  const addSettingsPart =
+    !preservedSettings &&
+    (headerFooterPlan.evenAndOddHeaders || trackChangesRecording || defaultTabTwips !== undefined);
 
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
@@ -3063,7 +3096,10 @@ export async function writeDocx(
   }
   entries.push(...chartPlan.zipEntries);
   if (addSettingsPart) {
-    entries.push({ name: "word/settings.xml", data: encoder.encode(buildSettingsXml(trackChangesRecording)) });
+    entries.push({
+      name: "word/settings.xml",
+      data: encoder.encode(buildSettingsXml(trackChangesRecording, defaultTabTwips)),
+    });
   }
   for (const partPlan of headerFooterPlan.parts) {
     const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";

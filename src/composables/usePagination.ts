@@ -52,9 +52,14 @@ import {
 import {
   createCanvasTextMeasurer,
   measureParagraphText,
+  paragraphTabLayout,
   type BaseFont,
   type CanvasTextMeasurer,
+  type TabLayoutConfig,
 } from "../lib/textMetrics";
+import type { ParagraphTabLayout } from "../lib/tabLayout";
+import { tabContextFor } from "../lib/styles";
+import { decimalSeparatorFor } from "../lib/core/language";
 import { sliceStartOf } from "../lib/domCaret";
 import { scheduleEagerWork, type IdleHandle } from "../lib/core/idleScheduler";
 import type { CaretPosition } from "../lib/textEditing";
@@ -165,6 +170,10 @@ export interface PaginationController {
    * until measured — the renderer's slice windows and the caret page
    * refinement both read it. */
   lineOffsetsFor: (block: Block) => number[] | null;
+  /** The resolved tab geometry for a paragraph (SPEC-054) — the DOM renderer
+   * sizes tab boxes and draws bar rules from it, using the same measurer as
+   * the wrap predictor so the two agree. Null when text cannot be measured. */
+  tabLayoutFor: (model: DocumentModel, paragraph: Paragraph) => ParagraphTabLayout | null;
   /** The 0-based page the caret renders on. */
   pageOfCaret: (caret: CaretPosition) => number;
   stop: () => void;
@@ -289,6 +298,38 @@ export function usePagination(
     return baseFont;
   }
 
+  /** The tab context a paragraph is laid out against (SPEC-054): its effective
+   * stops (style-inherited until it sets its own), the document default
+   * interval and the document language's decimal separator. */
+  function tabConfigFor(model: DocumentModel, paragraph: Paragraph): TabLayoutConfig {
+    return {
+      stops: tabContextFor(model, paragraph),
+      defaultTabStopCm: model.defaultStyles.defaultTabStopCm ?? 1.27,
+      decimalSeparator: decimalSeparatorFor(model.defaultStyles.language),
+    };
+  }
+
+  /** The tab config only when the paragraph actually contains a tab — the
+   * wrap predictor needs stops only then, and resolving the style chain for
+   * every tab-free paragraph would be wasted work on a bulk document. */
+  function measureTabConfig(model: DocumentModel, paragraph: Paragraph): TabLayoutConfig | undefined {
+    return paragraph.runs.some((run) => run.text.includes("\t"))
+      ? tabConfigFor(model, paragraph)
+      : undefined;
+  }
+
+  /** The resolved tab geometry for a rendered paragraph (SPEC-054), for the
+   * DOM renderer to size tab boxes and draw bar rules with — computed against
+   * the same measurer and base font as the wrap predictor, so the two agree.
+   * Null when text cannot be measured (jsdom). */
+  function tabLayoutFor(model: DocumentModel, paragraph: Paragraph): ParagraphTabLayout | null {
+    const root = rootOf();
+    if (!root || !measurer) {
+      return null;
+    }
+    return paragraphTabLayout(paragraph, tabConfigFor(model, paragraph), baseFontOf(root), measurer);
+  }
+
   function noteInteraction(): void {
     lastInteraction = performance.now();
   }
@@ -339,6 +380,7 @@ export function usePagination(
             baseFontOf(root),
             model.showFormattingMarks === true,
             measurer,
+            measureTabConfig(model, block),
           );
           if (measured) {
             cache.set(block, { metrics: measured.metrics, lineOffsets: measured.lineOffsets });
@@ -538,6 +580,7 @@ export function usePagination(
         baseFontOf(root),
         model.showFormattingMarks === true,
         measurer,
+        measureTabConfig(model, rendered),
       );
       if (measured) {
         const lineOffsets =
@@ -831,6 +874,7 @@ export function usePagination(
     invalidateAll,
     isMeasured,
     lineOffsetsFor,
+    tabLayoutFor,
     pageOfCaret,
     stop,
   };

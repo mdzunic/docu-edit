@@ -475,6 +475,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :disabled="!editable"
         @select="emit('command', 'insert.special-character')"
       />
+      <MenuItem
+        label="Tab character"
+        testid="insert-tab-character-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.tab-character')"
+      />
       <hr class="menu-separator">
       <MenuItem
         label="Link"
@@ -522,6 +528,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :shortcut="shortcutLabel('format.clearFormatting')"
         :disabled="!editable"
         @select="emit('command', 'format.clearFormatting')"
+      />
+      <MenuItem
+        label="Tabs…"
+        testid="format-menu-tabs"
+        :disabled="!editable"
+        @select="emit('command', 'format.tabs')"
       />
       <!-- Format painter keeps its double-click-to-lock gesture
            (SPEC-020 AC-14): data-menu-keep-open holds the menu open

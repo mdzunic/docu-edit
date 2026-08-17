@@ -391,7 +391,15 @@ test("Ctrl/Cmd+Shift+P shows paragraph marks, spaces, tabs and break markers (AC
 
   await page.keyboard.press(`${MOD}+Shift+P`);
   await expect(page.locator(".mark-space").first()).toBeVisible();
-  await expect(page.locator(".mark-tab")).toHaveCount(1);
+  // SPEC-054: a tab now renders as a sized .doc-tab box; its → formatting mark
+  // is a pseudo-element shown only under .marks-on (AC-33), replacing the old
+  // .mark-tab span this test looked for before tabs advanced to stops.
+  await expect(page.locator(".doc-tab")).toHaveCount(1);
+  const tabMark = await page
+    .locator(".doc-tab")
+    .first()
+    .evaluate((el) => getComputedStyle(el, "::before").content);
+  expect(tabMark).toContain("→");
   // The pilcrow is a pseudo-element over byte-identical text.
   const pilcrow = await page
     .locator('[data-section="0"][data-block="0"]')

@@ -102,6 +102,10 @@ export interface RenderEntry {
   tocStaleHeadings?: boolean;
   tocStalePagination?: boolean;
   runs?: RenderRun[];
+  /** SPEC-054 bar tab stops (AC-22): the start-relative px positions of the
+   * vertical rules this paragraph draws through its line height. Positioned
+   * with `inset-inline-start`, so they mirror for RTL for free (AC-35). */
+  barRules?: number[];
   needsBr?: boolean;
   /** A body heading that owns content and so shows a collapse chevron
    * (SPEC-037 AC-16); only on the heading's first slice. */

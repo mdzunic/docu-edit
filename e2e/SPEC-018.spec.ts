@@ -135,6 +135,14 @@ test("the numbered toggle numbers the selection and toggles off with the same se
 });
 
 // --- Tab / Shift+Tab (AC-3, AC-4, AC-5) ------------------------------------
+//
+// AC-3's "inside a list item" is the caret collapsed at offset 0 of the item:
+// SPEC-054's Tab precedence table gives the demote rule 2 (offset 0) and a
+// literal tab rule 4 (anywhere else in the paragraph), so a Tab pressed
+// mid-text advances to a tab stop instead of demoting. Clicking a paragraph
+// lands the caret wherever the click was, so these tests press LINE_START
+// first to sit where the demote binding lives. The levels, markers, clamping
+// and round trips asserted below are unchanged.
 
 test("Tab demotes and Shift+Tab promotes a list item, clamped to levels 1..9 (AC-3, AC-4)", async ({ page }) => {
   await createDocument(page);
@@ -142,6 +150,7 @@ test("Tab demotes and Shift+Tab promotes a list item, clamped to levels 1..9 (AC
   await page.keyboard.type("item");
   await page.getByTestId("list-bulleted").click();
   await content(page).click();
+  await page.keyboard.press(LINE_START);
 
   await page.keyboard.press("Tab");
   await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-level", "2");
@@ -169,6 +178,7 @@ test("each level shows its distinct marker, cycling every three levels (AC-5)", 
   await page.keyboard.type("bullets");
   await page.getByTestId("list-bulleted").click();
   await content(page).click();
+  await page.keyboard.press(LINE_START);
   const bulletCycle = ["•", "◦", "▪", "•", "◦", "▪", "•", "◦", "▪"];
   for (let level = 1; level <= 9; level++) {
     await expect(paragraphAt(page, 0)).toHaveAttribute("data-list-marker", bulletCycle[level - 1]);
@@ -177,6 +187,7 @@ test("each level shows its distinct marker, cycling every three levels (AC-5)", 
   // Numbered: levels 1..3 then the cycle repeats at level 4.
   await page.getByTestId("list-numbered").click();
   await content(page).click();
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < 9; i++) {
     await page.keyboard.press("Shift+Tab");
   }
@@ -306,6 +317,8 @@ test("picking a marker style re-renders every item at the current level immediat
   await page.getByTestId("list-numbered").click();
   await content(page).click();
   await paragraphAt(page, 2).click();
+  // Offset 0 is where the demote lives (see the Tab section above).
+  await page.keyboard.press(LINE_START);
   await page.keyboard.press("Tab");
   await expect(paragraphAt(page, 2)).toHaveAttribute("data-list-marker", "a.");
 
@@ -408,6 +421,8 @@ async function buildListsDocument(page: Page): Promise<void> {
   await page.getByTestId("list-numbered").click();
   await content(page).click();
   await paragraphAt(page, 1).click();
+  // Offset 0 is where the demote lives (see the Tab section above).
+  await page.keyboard.press(LINE_START);
   await page.keyboard.press("Tab");
   await expect(paragraphAt(page, 1)).toHaveAttribute("data-list-marker", "a.");
 }

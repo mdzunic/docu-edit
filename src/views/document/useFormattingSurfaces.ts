@@ -20,6 +20,7 @@ import {
   applyParagraphFormat,
   caretSelection,
   clearFormatting,
+  documentDefaultTabStopCm,
   formatState,
   INDENT_STEP_CM,
   isCollapsed,
@@ -33,6 +34,7 @@ import {
   setListMarker,
   setPageMargins,
   setTabStops,
+  setTabStopsWithDefault,
   toggleFormat,
   toggleList,
   toggleSpaceBefore,
@@ -156,9 +158,11 @@ export function useFormattingSurfaces(deps: FormattingSurfacesDeps) {
   // decimal preset).
   const defineListOpen = ref(false);
   const defineListInitial = ref(asListLevelDefinitions([]));
-  // The Tabs dialog (AC-25): open flag plus the selection's current stops.
+  // The Tabs dialog (AC-25): open flag plus the selection's current stops and
+  // the document's default tab interval (SPEC-054 AC-10).
   const tabsDialogOpen = ref(false);
   const tabsDialogInitial = ref(asTabStops([]));
+  const tabsDialogDefaultInterval = ref(1.27);
   // Recently applied text colours, shared across documents (SPEC-013 AC).
   const recentColors = ref(loadRecentColors());
 
@@ -460,13 +464,16 @@ export function useFormattingSurfaces(deps: FormattingSurfacesDeps) {
       return;
     }
     tabsDialogInitial.value = selectionTabStops(model, paragraphSelection(root));
+    tabsDialogDefaultInterval.value = documentDefaultTabStopCm(model);
     tabsDialogOpen.value = true;
   }
 
-  function handleTabsApply(stops = asTabStops([])) {
+  function handleTabsApply(payload = { stops: asTabStops([]), defaultIntervalCm: 1.27 }) {
     tabsDialogOpen.value = false;
+    const stops = asTabStops(payload.stops ?? []);
+    const defaultIntervalCm = payload.defaultIntervalCm ?? 1.27;
     applyParagraphCommand(
-      (model, selection) => setTabStops(model, selection, asTabStops(stops)),
+      (model, selection) => setTabStopsWithDefault(model, selection, stops, defaultIntervalCm),
       "tab stops",
     );
   }
@@ -583,8 +590,26 @@ export function useFormattingSurfaces(deps: FormattingSurfacesDeps) {
         "tab stops",
         false,
       );
+    } else if (update.kind === "move-tab") {
+      // Releasing a dragged handle on the ruler moves its stop live
+      // (SPEC-054 AC-4). The dragged stop is identified by its index in the
+      // first touched paragraph's list.
+      const index = update.index ?? 0;
+      const positionCm = update.positionCm ?? 0;
+      applyParagraphCommand(
+        (model, selection) => {
+          const stops = selectionTabStops(model, selection);
+          if (stops[index]) {
+            stops[index] = { ...stops[index], positionCm };
+          }
+          return setTabStops(model, selection, stops);
+        },
+        "tab stops",
+        false,
+      );
     } else if (update.kind === "remove-tab") {
-      // Clicking a laid handle removes its stop (SPEC-032 AC-24).
+      // Clicking a laid handle, or dragging it off the ruler, removes its stop
+      // (SPEC-032 AC-24, SPEC-054 AC-5).
       const index = update.index ?? 0;
       applyParagraphCommand(
         (model, selection) => {
@@ -641,6 +666,7 @@ export function useFormattingSurfaces(deps: FormattingSurfacesDeps) {
     handleDefineListApply,
     tabsDialogOpen,
     tabsDialogInitial,
+    tabsDialogDefaultInterval,
     openTabsDialog,
     handleTabsApply,
     handleToggleDirection,

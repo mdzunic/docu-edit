@@ -20,6 +20,7 @@ import {
   type ParagraphFormatting,
   type RunFormatting,
   type StyleType,
+  type TabStop,
 } from "./documentModel";
 import { type BorderLineStyle, type CellBorders } from "./core/tables";
 import { runStyle } from "./renderFormatting";
@@ -232,6 +233,23 @@ export function resolveNamedStyle(
     delete paragraphFormatting.direction;
   }
   return { paragraphFormatting, runFormatting, headingLevel };
+}
+
+/** The effective tab stops for a paragraph (SPEC-054 AC-27/28): the
+ * paragraph's own stops when it has set any, otherwise the list inherited
+ * from its paragraph style (SPEC-019). Setting any stop on a paragraph
+ * writes `formatting.tabStops` in full, so a present field always *replaces*
+ * the inherited list rather than merging with it — a paragraph that has never
+ * set a stop resolves to the style's list, and clearing every stop removes
+ * the field (setTabStops) and so falls back to the style again. Returns a
+ * fresh array; the caller may keep or reorder it freely. */
+export function tabContextFor(model: DocumentModel, paragraph: Paragraph): TabStop[] {
+  const own = paragraph.formatting?.tabStops;
+  if (own !== undefined) {
+    return own.map((stop) => ({ ...stop }));
+  }
+  const inherited = resolveNamedStyle(model, paragraph.styleId).paragraphFormatting.tabStops;
+  return (inherited ?? []).map((stop) => ({ ...stop }));
 }
 
 /** The nearest style in the id's chain that carries a display name — for a
