@@ -172,7 +172,14 @@ describe("writeOdt — structural equality after an unedited fresh-then-reopen c
     const chart = baseChart();
     const { bytes: firstBytes } = await writeOdt(modelWithChart(chart));
     const opened = await parseOdt(firstBytes);
-    const { bytes: secondBytes } = await writeOdt(rewrap(opened));
+    // writeOdt stamps dc:date with the current time when no `modified` is
+    // given (odf/writer.ts:3153), so two saves either side of a second tick
+    // compare unequal. Pin it to the first save's stamp, as
+    // odf/roundTrip.spec.ts:141 does — the docx twin of this test had the same
+    // race and was fixed in b79da32.
+    const { bytes: secondBytes } = await writeOdt(rewrap(opened), {
+      modified: new Date(opened.properties!.modified!),
+    });
     const reopenedAgain = await parseOdt(secondBytes);
     expect(equalStructural(opened, reopenedAgain)).toBe(true);
   });
