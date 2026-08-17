@@ -15,6 +15,7 @@ import {
   asParagraphBlock,
   asToc,
   createEmptyHeaderFooterContent,
+  documentFileName,
   isBreak,
   isChart,
   isImage,
@@ -413,7 +414,7 @@ function renderEntryFor(
   const fieldCtx: FieldContext = {
     model,
     now: now(),
-    fileName: model.title ?? "",
+    fileName: documentFileName(model),
     pageOfBookmark: (name) => deps.tocPageNumberFor(model, name),
   };
   let noteSig = "";
@@ -631,7 +632,7 @@ function headerFooterRenderEntries(
         return fieldRenderRun(
           run,
           runIndex,
-          { model, now: now(), fileName: model.title ?? "", pageNumber, totalPages, pageOfBookmark: (name) => deps.tocPageNumberFor(model, name) },
+          { model, now: now(), fileName: documentFileName(model), pageNumber, totalPages, pageOfBookmark: (name) => deps.tocPageNumberFor(model, name) },
           runStyle(run.formatting),
           effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
           false,

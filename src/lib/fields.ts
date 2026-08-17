@@ -241,7 +241,12 @@ export interface FieldContext {
   model: DocumentModel;
   /** The instant from `clock.now()` — never read the wall clock here. */
   now: Date;
-  /** The document's file name (SPEC-053 `fileName`); "" when unsaved. */
+  /** The document's file name (SPEC-053 `fileName`) as
+   * `documentFileName(model)` returns it: the extension included, and a
+   * directory path in front when the open path knew one — the `\p` option
+   * renders this whole string and the plain form its last segment, so an
+   * extension-stripped title here silently makes both forms wrong and equal.
+   * "" only when there is no document. */
   fileName: string;
   /** The field run's own position, for `ref` above/below and self page. */
   here?: CaretPosition | null;

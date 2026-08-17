@@ -74,6 +74,25 @@ function deriveFileName(response: Response, url: string): string {
   return fileNameFromContentDisposition(response.headers.get("content-disposition")) ?? fileNameFromUrl(url);
 }
 
+/** The path-bearing file name this open path can record where the picker and
+ * drag-and-drop cannot (SPEC-053's `fileName` field and its `\p` option, see
+ * `DocumentModel.fileName`): the location the document was fetched from, with
+ * the URL's last segment replaced by the name it was actually opened under —
+ * a `Content-Disposition` name need not match the URL's. The query and
+ * fragment are dropped: they address the request, not the file. Falls back to
+ * the bare name for a URL that will not parse (the same fallback
+ * `fileNameFromUrl` already takes). */
+function filePathFromUrl(url: string, fileName: string): string {
+  try {
+    const parsed = new URL(url);
+    const directory = decodeURIComponent(parsed.pathname).replace(/[^/]*$/, "");
+    const origin = parsed.origin && parsed.origin !== "null" ? parsed.origin : "";
+    return `${origin}${directory}${fileName}`;
+  } catch {
+    return fileName;
+  }
+}
+
 /** Fetches, validates and parses the document at `url` (SPEC-009 AC-9..
  * AC-14). Delegates to `openDocumentFile` once the bytes are in hand, so
  * format detection, the size limit and parsing errors all match the
@@ -104,13 +123,18 @@ export async function openDocumentFromUrl(url: string): Promise<DocumentModel> {
   }
 
   const buffer = await response.arrayBuffer();
-  const file = new File([buffer], deriveFileName(response, url));
+  const fileName = deriveFileName(response, url);
+  const file = new File([buffer], fileName);
   try {
     // SPEC-050: a relative image `src` in a Markdown file opened this way
     // resolves against the document's own URL — the one open path that has
     // one (a picked/dropped file has no base to resolve a relative path
     // against at all).
-    return await openDocumentFile(file, { baseUrl: url });
+    const model = await openDocumentFile(file, { baseUrl: url });
+    // A `File` carries a name and never a path, so `openDocumentFile` records
+    // the bare name; this path knows where the file actually lives (SPEC-053).
+    model.fileName = filePathFromUrl(url, fileName);
+    return model;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpenFromUrlError(reason);

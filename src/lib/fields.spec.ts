@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { createDocument, type DocumentModel, type Paragraph, type FieldSpec } from "./documentModel";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  createDocument,
+  documentFileName,
+  type DocumentModel,
+  type Paragraph,
+  type FieldSpec,
+} from "./documentModel";
+import { openDocumentFile } from "./openDocument";
 import { insertBookmark } from "./links";
 import { caretSelection } from "./commands";
 import {
@@ -33,8 +43,12 @@ function para(text: string, extra: Partial<Paragraph> = {}): Paragraph {
   return { type: "paragraph", runs: [{ text, formatting: {} }], ...extra };
 }
 
+/** The evaluation context, with `fileName` derived from the model exactly as
+ * useFields and usePaginationView derive it. Injecting a name here instead
+ * would let a `fileName` test pass on a string the app never produces — which
+ * is how `FILENAME` came to render the extension-stripped `title`. */
 function ctx(model: DocumentModel, extra: Partial<FieldContext> = {}): FieldContext {
-  return { model, now: INSTANT, fileName: "report.docx", ...extra };
+  return { model, now: INSTANT, fileName: documentFileName(model), ...extra };
 }
 
 describe("clock (SPEC-053 Determinism, AC-49)", () => {
@@ -108,13 +122,54 @@ describe("evaluateField (SPEC-053)", () => {
   });
 
   it("fileName honours the path option", () => {
-    const model = docWith([para("")]);
-    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(model, { fileName: "/docs/report.docx" }))).toBe(
-      "report.docx",
-    );
-    expect(
-      evaluateField({ kind: "fileName", path: true, cached: "" }, ctx(model, { fileName: "/docs/report.docx" })),
-    ).toBe("/docs/report.docx");
+    const model = docWith([para("")], { fileName: "/docs/report.docx" });
+    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(model))).toBe("report.docx");
+    expect(evaluateField({ kind: "fileName", path: true, cached: "" }, ctx(model))).toBe("/docs/report.docx");
+  });
+
+  it("fileName shows the name a never-opened document would be saved under", () => {
+    // No source file, so the name is what a save writes — `title` plus the
+    // format's extension, never the bare title (SPEC-006/007's file names).
+    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(docWith([para("")])))).toBe("Untitled document.docx");
+    const odt = docWith([para("")], { title: "Minutes", format: "odt" });
+    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(odt))).toBe("Minutes.odt");
+  });
+});
+
+// The regression this guards: `FILENAME` used to be fed `model.title`, which
+// `titleFromFileName` has already stripped the extension off — so an opened
+// "report.docx" rendered "report", and `\p` (include path) rendered exactly
+// the same string as no `\p` at all. Building the model through the real open
+// path, rather than injecting a `fileName` into the context, is what makes
+// that visible here.
+describe("fileName over the real open path (SPEC-053)", () => {
+  const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "docx", "fixtures");
+
+  async function openAs(name: string): Promise<DocumentModel> {
+    const bytes = readFileSync(join(fixturesDir, "word-authored.docx"));
+    return openDocumentFile(new File([bytes], name));
+  }
+
+  it("renders the opened file's name with its extension, not the app bar's title", async () => {
+    const model = await openAs("report.docx");
+    expect(model.title).toBe("report");
+    expect(model.fileName).toBe("report.docx");
+    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(model))).toBe("report.docx");
+  });
+
+  it("keeps the extension a title cannot carry, whatever the name looks like", async () => {
+    const model = await openAs("Meeting.Notes.v2.docx");
+    expect(model.title).toBe("Meeting.Notes.v2");
+    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(model))).toBe("Meeting.Notes.v2.docx");
+  });
+
+  it("renders both \\p forms the same for a picked file, which has no path", async () => {
+    // A browser `File` exposes a name and never a directory, so there is no
+    // path to include — the two forms agreeing here is correct, unlike the
+    // case above where they agreed because the name had been mangled.
+    const model = await openAs("report.docx");
+    expect(evaluateField({ kind: "fileName", path: true, cached: "" }, ctx(model))).toBe("report.docx");
+    expect(evaluateField({ kind: "fileName", cached: "" }, ctx(model))).toBe("report.docx");
   });
 
   it("wordCount reads the SPEC-036 body counter", () => {

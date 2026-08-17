@@ -1608,6 +1608,16 @@ export function cloneDocumentProperties(properties?: DocumentProperties): Docume
 export interface DocumentModel {
   id: string;
   title: string;
+  /** The file this document was opened from: its name *with* the extension,
+   * and with a directory path in front when the open path knew one (the
+   * `/open?url=` fetch does — the browser's file picker and drag-and-drop
+   * never expose one). Deliberately separate from `title`, which is the same
+   * name with its extension stripped for the app bar and library (SPEC-003
+   * AC-29): SPEC-053's `fileName` field shows the file's real name and its
+   * `\p` option the path, and `title` can carry neither. Absent for a
+   * document never opened from a file — `documentFileName` below then falls
+   * back to the name a save would write. */
+  fileName?: string;
   sections: Section[];
   defaultStyles: DefaultStyles;
   /** The document's own paragraph-style catalogue (SPEC-019), read from the
@@ -1674,6 +1684,26 @@ export interface DocumentModel {
 }
 
 export const DEFAULT_TITLE = "Untitled document";
+
+/** The extension each save format writes, matching docxFileName/odtFileName/
+ * mdFileName in the writers (which this module must not import — they pull in
+ * the whole serialiser). */
+const FORMAT_EXTENSION: Record<DocumentFormat, string> = { docx: ".docx", odt: ".odt", md: ".md" };
+
+/** The file name SPEC-053's `fileName` field renders: the file the document
+ * was opened from when that is known (`model.fileName`, directory path
+ * included, which is what the field's `\p` option shows), and otherwise the
+ * name a save would write — `title` plus the format's extension. Never
+ * `title` on its own: `titleFromFileName` has stripped the extension off it,
+ * so a `FILENAME` fed from `title` renders a name that neither the source
+ * file nor Word agrees with. */
+export function documentFileName(model: Pick<DocumentModel, "fileName" | "title" | "format">): string {
+  if (model.fileName) {
+    return model.fileName;
+  }
+  const title = model.title.trim();
+  return `${title.length > 0 ? title : DEFAULT_TITLE}${FORMAT_EXTENSION[model.format ?? "docx"]}`;
+}
 
 const A4_PAGE_SIZE: PageSize = { widthCm: 21, heightCm: 29.7 };
 

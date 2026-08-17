@@ -15,9 +15,14 @@ import { writeDocx } from "./docx/writer";
 import { parseOdt } from "./odf/reader";
 import { writeOdt } from "./odf/writer";
 import { equalStructural } from "./equality";
+import { unzip } from "./core/zip";
+import { caretSelection, documentStart } from "./commands";
+import { updateAllFields } from "./commands.fields";
+import { titleFromFileName } from "./openDocument";
 import {
   createDocument,
   createFieldSpecRun,
+  documentFileName,
   type Block,
   type DocumentModel,
   type FieldSpec,
@@ -124,6 +129,22 @@ function allFields(model: Pick<DocumentModel, "sections">): FieldSpec[] {
   return found;
 }
 
+/** The `.docx` package's FILENAME field, as the bytes on disk spell it —
+ * `<w:fldSimple w:instr="FILENAME">` wrapping its cached result run. Compared
+ * as a string so "unchanged" means unchanged markup, not just an equal model. */
+async function fileNameFieldXml(bytes: Uint8Array): Promise<string> {
+  const parts = await unzip(bytes);
+  const xml = new TextDecoder().decode(parts.get("word/document.xml") ?? new Uint8Array());
+  return /<w:fldSimple[^>]*\bFILENAME\b[^>]*>[\s\S]*?<\/w:fldSimple>/.exec(xml)?.[0] ?? "";
+}
+
+/** The model the app holds for a fixture opened from disk: `openDocumentFile`
+ * strips the extension off for `title` (the app bar) and keeps the whole name
+ * in `fileName` (what a FILENAME field renders). */
+function openedAs(parsed: Awaited<ReturnType<typeof parseDocx>>, id: string, fileName: string): DocumentModel {
+  return { ...parsed, id, title: titleFromFileName(fileName), fileName } as DocumentModel;
+}
+
 let docxBytes: Uint8Array;
 let odtBytes: Uint8Array;
 
@@ -167,6 +188,25 @@ describe("SPEC-053 .docx field fixture (AC-51, AC-52, AC-53)", () => {
     const reparsed = await parseDocx(rewritten);
     expect(equalStructural(reparsed.sections, reopened.sections)).toBe(true);
     expect(allFields(reparsed)).toEqual(allFields(reopened));
+  });
+
+  it("leaves the FILENAME field byte-identical through Tools → Update all fields (AC-16, AC-53)", async () => {
+    // The regression: the update path was fed `model.title`, which has had the
+    // extension stripped off it, so one Update-all silently rewrote the value
+    // Word shows ("word-fields.docx") to "word-fields".
+    const opened = openedAs(await parseDocx(docxBytes), "word-fields", "word-fields.docx");
+    const updated = updateAllFields(
+      opened,
+      caretSelection(documentStart()),
+      { now: FIXED_MODIFIED, fileName: documentFileName(opened) },
+      () => null,
+    );
+    expect(allFields(updated.model).find((field) => field.kind === "fileName")).toEqual({
+      kind: "fileName",
+      cached: "word-fields.docx",
+    });
+    const rewritten = (await writeDocx(updated.model, { modified: FIXED_MODIFIED })).bytes;
+    expect(await fileNameFieldXml(rewritten)).toBe(await fileNameFieldXml(docxBytes));
   });
 });
 

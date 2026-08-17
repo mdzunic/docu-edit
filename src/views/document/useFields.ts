@@ -15,7 +15,7 @@ import {
   updateFieldAtCaret,
   type FieldUpdateContext,
 } from "../../lib/commands.fields";
-import type { DocumentModel, FieldSpec } from "../../lib/documentModel";
+import { documentFileName, type DocumentModel, type FieldSpec } from "../../lib/documentModel";
 import type { ModelSelection } from "../../lib/commands";
 import { DATE_TIME_CATALOGUE, evaluateField, renderDateTime } from "../../lib/fields";
 import { caretFromDomPoint } from "../../lib/domCaret";
@@ -59,8 +59,12 @@ export function useFields(deps: FieldsDeps) {
     return deps.currentSelection(root) ?? caretSelection(deps.getCaret() ?? documentStart());
   }
 
+  /** The name a `fileName` field renders (SPEC-053) — the opened file's own
+     name with its extension and path, never the extension-stripped `title`
+     the app bar shows. */
   function fileName(): string {
-    return model()?.title ?? "";
+    const m = model();
+    return m ? documentFileName(m) : "";
   }
 
   function documentLanguage(): string {
@@ -337,6 +341,9 @@ export function useFields(deps: FieldsDeps) {
     crossReferenceHeadings,
     crossReferenceBookmarks,
     showFieldCodes,
+    /** The Insert → Field… dialog's preview reads the same name the inserted
+       field will render, so preview and result cannot disagree. */
+    fieldFileName: computed(() => fileName()),
     documentLanguage: computed(() => documentLanguage()),
     openFieldDialog,
     handleFieldInsert,

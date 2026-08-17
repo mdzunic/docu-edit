@@ -106,6 +106,11 @@ export function assembleDocumentModel(
      * `.docx`/`.odt` parse. */
     frontMatter?: string;
   },
+  /** The name of the file `title` was derived from — extension included, and
+   * with a directory path in front when the open path knows one (SPEC-053's
+   * `fileName` field; see `DocumentModel.fileName`). Omitted by callers that
+   * have a title but no file behind it (`readDocxBytes`/`readOdtBytes`). */
+  fileName?: string,
 ): DocumentModel {
   const model: DocumentModel = {
     id: crypto.randomUUID(),
@@ -114,6 +119,9 @@ export function assembleDocumentModel(
     sections: parsed.sections,
     defaultStyles: parsed.defaultStyles,
   };
+  if (fileName) {
+    model.fileName = fileName;
+  }
   if (parsed.frontMatter !== undefined) {
     model.frontMatter = parsed.frontMatter;
   }
@@ -191,12 +199,12 @@ export async function openDocumentFile(file: File, options: ParseMdOptions = {})
     throw new FlatOdfError(FLAT_ODF_MESSAGE);
   }
   if (odf === "package") {
-    return assembleDocumentModel(titleFromFileName(file.name), "odt", await parseOdt(bytes));
+    return assembleDocumentModel(titleFromFileName(file.name), "odt", await parseOdt(bytes), file.name);
   }
   if (/\.(md|markdown)$/i.test(file.name) && !(await isZipPackage(bytes))) {
-    return assembleDocumentModel(titleFromFileName(file.name), "md", await parseMd(bytes, options));
+    return assembleDocumentModel(titleFromFileName(file.name), "md", await parseMd(bytes, options), file.name);
   }
-  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(bytes));
+  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(bytes), file.name);
 }
 
 /** Reads and parses a `.dotx`/`.ott` File as a template (SPEC-046 AC-9..11):
@@ -215,11 +223,17 @@ export async function openDocumentFile(file: File, options: ParseMdOptions = {})
  * that declaration would resurface on every later save, so a "new document
  * from a template" would quietly keep re-saving as a template too. Dropping
  * the retained package here makes every future save rebuild a fresh,
- * ordinary .docx/.odt from the model instead of reusing the template's. */
+ * ordinary .docx/.odt from the model instead of reusing the template's.
+ *
+ * `fileName` goes for the same reason (SPEC-053): the new document is not the
+ * `.dotx`/`.ott` that seeded it and will never be saved as one, so a FILENAME
+ * field in the template must render the name the next save writes — which is
+ * what `documentFileName` derives from `title` once this is absent. */
 export async function openTemplateFile(file: File): Promise<DocumentModel> {
   const model = await openDocumentFile(file);
   delete model.opaque;
   delete model.sourceXml;
+  delete model.fileName;
   return model;
 }
 
@@ -227,7 +241,7 @@ export async function openTemplateFile(file: File): Promise<DocumentModel> {
  * stored or navigated to — the caller does that once this resolves). */
 export async function openDocxFile(file: File): Promise<DocumentModel> {
   const buffer = await readFileAsArrayBuffer(file);
-  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(buffer));
+  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(buffer), file.name);
 }
 
 /** Reads and parses `.docx` bytes directly into a new DocumentModel, with

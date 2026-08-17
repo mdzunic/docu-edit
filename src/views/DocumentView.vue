@@ -2806,6 +2806,7 @@ const {
   crossReferenceDialogOpen,
   nowMs: fieldNowMs,
   fieldPreviews,
+  fieldFileName,
   propertyNames: fieldPropertyNames,
   crossReferenceHeadings,
   crossReferenceBookmarks,
@@ -3937,7 +3938,7 @@ function handleMenuCommand(id = "") {
       v-if="fieldDialogOpen && doc"
       :model="doc"
       :now-ms="fieldNowMs"
-      :file-name="doc.title"
+      :file-name="fieldFileName"
       :property-names="fieldPropertyNames"
       @insert="handleFieldInsert"
       @cancel="() => { fieldDialogOpen = false; }"

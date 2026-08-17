@@ -55,6 +55,13 @@ export function useFileActions(deps: FileActionsDeps) {
     }
     const trimmed = newTitle.trim();
     doc.value.title = trimmed.length > 0 ? trimmed : DEFAULT_TITLE;
+    // The title is what a download names the file (see handleDownload), so a
+    // rename retires the name this document was opened under: keeping it would
+    // leave a SPEC-053 `fileName` field showing the old name for a file that
+    // will never be saved again. Dropping it lets `documentFileName` derive
+    // the name the next save writes. The path a `/open?url=` gave us goes with
+    // it — there is no honest path for a file the user has just renamed.
+    delete doc.value.fileName;
     triggerRef(doc);
     // The assignment above already mutated the stored model (doc.value IS the
     // raw stored model); touching records the modification time and persists.
