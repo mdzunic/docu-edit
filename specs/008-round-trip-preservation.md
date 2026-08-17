@@ -127,3 +127,28 @@ first spec to need it builds it (see SPEC-002's "Implementation status"):
   Apply the exclusions as a transform on the source model —
   `equalSemantic(withoutDropped(source, dropped), reopened)` — never as a
   hand-rolled subset comparison.
+
+### Determinism — pin `modified` whenever two saves are compared
+Both writers stamp the modification timestamp (`dcterms:created`/
+`dcterms:modified` in `docProps/core.xml`, `dc:date` in `meta.xml`) from
+`options.modified`, which **defaults to `new Date()`**. A save is therefore not
+a pure function of the model, and anything that compares two saves — or that
+commits a save's bytes — must pass a fixed `modified`:
+
+- **Round-trip and byte-equality tests**: pass the same fixed `Date` to every
+  `writeDocx`/`writeOdt` call being compared. Without it a save→reopen→save
+  assertion can pass all day and fail when the two saves land either side of
+  midnight, or compare unequal bytes purely because the clock moved between
+  them. `equalStructural` ignores the stamp, but `equalBytes` and any
+  whole-part XML comparison do not.
+- **Fixture generators** (`scripts/build-spec*-fixtures.*`): pin it too, so
+  re-running a generator against an unchanged model rewrites the same content
+  instead of churning the committed bytes with the day it was re-run — a diff
+  that says nothing about the change being made and hides the ones that do.
+
+Related: a generator is a script, run deliberately. Never regenerate a
+committed fixture as a side effect of `npm test` — the e2e suite loads those
+same files, so a unit run and an e2e run in one checkout can collide over a
+half-written package. A spec that wants to guard a fixture should read the
+committed bytes and compare (see `src/lib/fixtures.fields.spec.ts`), leaving
+the writing to `scripts/`.
