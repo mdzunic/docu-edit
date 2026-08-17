@@ -25,6 +25,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const e2eFixturesDir = path.join(__dirname, "..", "e2e", "fixtures");
 mkdirSync(e2eFixturesDir, { recursive: true });
 
+// Pinned so a regenerated fixture's dcterms:modified / dc:date stays put
+// instead of becoming whichever day someone re-ran this script — otherwise
+// regenerating churns the committed bytes for a reason unrelated to the
+// change being made (SPEC-008's round-trip determinism rule).
+const FIXED_MODIFIED = new Date("2026-01-01T00:00:00.000Z");
+
 function paragraph(text) {
   return { type: "paragraph", runs: text ? [{ text, formatting: {} }] : [] };
 }
@@ -82,16 +88,21 @@ async function main() {
   // second master page linked via style:next-style-name, out of scope for
   // this pass, see odf/writer.ts's header comments) — so only a .docx
   // fixture demonstrates it.
-  const firstPageDocx = await writeDocx(firstPageModel("spec029-first-page-docx"));
+  const firstPageDocx = await writeDocx(firstPageModel("spec029-first-page-docx"), { modified: FIXED_MODIFIED });
   writeFileSync(path.join(e2eFixturesDir, "spec029-first-page.docx"), firstPageDocx.bytes);
 
-  const oddEvenDocx = await writeDocx(oddEvenModel("spec029-odd-even-docx"));
+  const oddEvenDocx = await writeDocx(oddEvenModel("spec029-odd-even-docx"), { modified: FIXED_MODIFIED });
   writeFileSync(path.join(e2eFixturesDir, "spec029-odd-even.docx"), oddEvenDocx.bytes);
 
-  const oddEvenOdt = await writeOdt(oddEvenModel("spec029-odd-even-odt"));
+  const oddEvenOdt = await writeOdt(oddEvenModel("spec029-odd-even-odt"), { modified: FIXED_MODIFIED });
   writeFileSync(path.join(e2eFixturesDir, "spec029-odd-even.odt"), oddEvenOdt.bytes);
 
   console.log("Wrote SPEC-029 fixtures to", e2eFixturesDir);
 }
 
-main();
+await main();
+// writeDocx/writeOdt's chunked save path yields through idleScheduler's
+// shared MessageChannel, whose started port keeps Node's event loop alive
+// after the files are fully written — without an explicit exit this script
+// hangs forever (same reason build-spec047-fixture.mjs ends this way).
+process.exit(0);
