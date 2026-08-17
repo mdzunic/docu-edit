@@ -205,11 +205,12 @@ function mapAllFields(
  * `evaluateIn` is the model field values are read from, and defaults to
  * `model` — the body caret's case, where they are the same document. A nested
  * editing surface addresses its content as a throwaway single-section model
- * (commands.headers.ts's `withHeaderFooterModel`), so a header/footer caret
- * passes that synthetic model as `model` — it is the caret's coordinate space —
- * and the real document as `evaluateIn`. Evaluating in the synthetic model
- * instead would count only the header's own words for `wordCount` and would
- * find no body bookmark for a cross-reference. */
+ * (`withHeaderFooterModel` in commands.headers.ts, `withNoteModel` in
+ * commands.notes.ts, `withShapeModel` in commands.shapes.ts), so a caret in one
+ * of those surfaces passes that synthetic model as `model` — it is the caret's
+ * coordinate space — and the real document as `evaluateIn`. Evaluating in the
+ * synthetic model instead would count only the surface's own words for
+ * `wordCount` and would find no body bookmark for a cross-reference. */
 export function updateFieldAtCaret(
   model: DocumentModel,
   selection: ModelSelection,

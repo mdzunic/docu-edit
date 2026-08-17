@@ -213,12 +213,12 @@ export function useFields(deps: FieldsDeps) {
   }
 
   /** F9 with the caret in a nested editing surface (AC-15 with AC-33, which
-     puts fields in headers and footers): those surfaces stop keydown before it
-     reaches the canvas shortcut registry — deliberately, since a body command
-     must not act on their caret — so they dispatch the update themselves and
-     own the commit. They pass their synthetic single-section model and the
-     caret inside it; values still come from the real document. Returns null
-     when there is nothing to update. */
+     puts fields in headers, footers, footnotes/endnotes and shape text boxes):
+     those surfaces stop keydown before it reaches the canvas shortcut registry
+     — deliberately, since a body command must not act on their caret — so they
+     dispatch the update themselves and own the commit. They pass their
+     synthetic single-section model and the caret inside it; values still come
+     from the real document. Returns null when there is nothing to update. */
   function updateFieldInSurface(surfaceModel: DocumentModel, selection: ModelSelection): CommandResult | null {
     if (!model() || !deps.editable.value) {
       return null;

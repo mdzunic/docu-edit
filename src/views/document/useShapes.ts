@@ -27,6 +27,7 @@ import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { CM_PER_PX } from "../../lib/core/units";
 import { modelRangeFromSelection, setDomCaret, setDomSelection } from "../../lib/domCaret";
+import { findShortcut } from "../../lib/shortcuts";
 import { blockLength, noCaret } from "../../lib/textEditing";
 import { recordEdit as recordHistoryEdit } from "../../lib/undoHistory";
 import { replaceDocumentModel } from "../../lib/documentStore";
@@ -110,7 +111,15 @@ type ShapeMutate = (model: DocumentModel, selection: ModelSelection, location: S
  * must fold a synthetic withShapeModel result back into the real document
  * (commitShapeModel) before it can go through the normal history/store
  * pipeline, so it needs `markDirty`/`refreshUndoRedoState` directly. */
-export type ShapesDeps = EditorContext;
+export interface ShapesDeps extends EditorContext {
+  /** Late-binding: useFields' surface-scoped F9 update (set up later), which
+   * runs the command against the text frame's synthetic model — see
+   * `updateFieldInShapeText`. */
+  getUpdateFieldInSurface: () => (
+    surfaceModel: DocumentModel,
+    selection: ModelSelection,
+  ) => CommandResult | null;
+}
 
 export function useShapes(deps: ShapesDeps) {
   const {
@@ -122,6 +131,7 @@ export function useShapes(deps: ShapesDeps) {
     currentSelection,
     applyEdit,
     clearCellSelection,
+    getUpdateFieldInSurface,
     getCaret,
     markDirty,
     refreshUndoRedoState,
@@ -313,10 +323,38 @@ export function useShapes(deps: ShapesDeps) {
     }
   }
 
+  /** F9 inside a shape's text frame (SPEC-053 AC-15 with AC-33, which puts
+   * fields in shape text boxes): the field at the frame's caret is recomputed
+   * and the result folded back like any other shape text edit. It is
+   * dispatched here rather than by the canvas shortcut registry because the
+   * text frame stops keydown before the canvas sees it — which is right: a
+   * registry command reads the *body* caret, so anything it did here would
+   * edit the wrong surface. Only this one command is forwarded; the rest stay
+   * body-scoped until they grow a frame-aware path of their own. Mirrors
+   * useHeadersFooters' updateFieldInBand and useNotes' updateFieldInNote. */
+  function updateFieldInShapeText(): void {
+    const location = shapeSelection.value;
+    const model = doc.value;
+    const selection = currentShapeTextSelection();
+    if (!location || !model || !editable.value || !selection) {
+      return;
+    }
+    const synthetic = withShapeModel(model, location);
+    const updated = getUpdateFieldInSurface()(synthetic, selection);
+    if (updated) {
+      applyShapeTextEdit(updated.model, updated.selection, "update field");
+    }
+  }
+
   function handleShapeTextKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.stopPropagation();
       exitShapeTextEditing();
+      return;
+    }
+    if (findShortcut(event)?.id === "field.update") {
+      event.preventDefault();
+      updateFieldInShapeText();
     }
   }
 
