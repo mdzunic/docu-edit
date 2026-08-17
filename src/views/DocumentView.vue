@@ -660,6 +660,7 @@ const {
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
   getClearImageSelection: () => clearImageSelection,
   getExitNoteEditing: () => exitNoteEditing,
+  getUpdateFieldInSurface: () => updateFieldInSurface,
 });
 
 // --- images (SPEC-024) -------------------------------------------------------
@@ -2816,6 +2817,7 @@ const {
   openCrossReferenceDialog,
   handleCrossReferenceInsert,
   handleUpdateField,
+  updateFieldInSurface,
   handleUpdateAllFields,
   followCrossReference,
   selectField,

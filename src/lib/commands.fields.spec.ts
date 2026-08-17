@@ -7,7 +7,7 @@ import {
   type Paragraph,
   type TableOfContents,
 } from "./documentModel";
-import { caretSelection, type ModelSelection } from "./commands";
+import { caretSelection, commitHeaderFooterModel, withHeaderFooterModel, type ModelSelection } from "./commands";
 import {
   fieldSpanningSelection,
   insertFieldCommand,
@@ -116,6 +116,73 @@ describe("F9 — updateFieldAtCaret (SPEC-053 AC-15)", () => {
     const out = updateFieldAtCaret(model, caretAt(0, 0), CTX);
     expect(firstField(out.model, 0)).toMatchObject({ cached: "4 March 2026" });
     expect(firstField(out.model, 1)).toMatchObject({ cached: "old author" });
+  });
+});
+
+// F9 with the caret in a header/footer band (AC-15 with AC-33). The band
+// addresses its content as a throwaway single-section model, so the update
+// runs in that coordinate space while values still come from the real
+// document — the composition useHeadersFooters' `updateFieldInBand` performs.
+describe("F9 in a header/footer band (SPEC-053 AC-15, AC-33)", () => {
+  function headerDoc(...header: FieldSpec[]): DocumentModel {
+    const model = createDocument("cmd-fields-header");
+    model.defaultStyles.language = "en-GB";
+    model.sections = [
+      {
+        blocks: [
+          {
+            type: "paragraph",
+            runs: [{ text: "Body words go here", formatting: {} }],
+            bookmarks: [{ name: "intro", offset: 0 }],
+          },
+        ],
+        headers: {
+          default: {
+            blocks: header.map((field) => ({ type: "paragraph", runs: [createFieldSpecRun(field)] })),
+          },
+        },
+      },
+    ];
+    return model;
+  }
+
+  function headerField(model: DocumentModel, block = 0): FieldSpec | undefined {
+    const paragraph = model.sections[0].headers?.default?.blocks[block] as Paragraph;
+    return paragraph.runs[0].field;
+  }
+
+  it("recomputes the header field at the caret and folds it back into the header", () => {
+    const model = headerDoc({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" });
+    const synthetic = withHeaderFooterModel(model, 0, "header", "default");
+    const out = updateFieldAtCaret(synthetic, caretAt(0, 0), CTX, model);
+    const committed = commitHeaderFooterModel(model, 0, "header", "default", out.model);
+    expect(headerField(committed)).toMatchObject({ cached: "4 March 2026" });
+    // The band's own commit must not disturb the body it was addressed from.
+    expect((committed.sections[0].blocks[0] as Paragraph).runs[0].text).toBe("Body words go here");
+  });
+
+  it("evaluates against the real document, not the band's synthetic model", () => {
+    // Both would silently evaluate wrong against the synthetic model: the
+    // header holds no bookmark to resolve, and its own word count is not the
+    // document's.
+    const model = headerDoc(
+      { kind: "ref", target: "intro", show: "text", cached: "stale" },
+      { kind: "wordCount", cached: "0" },
+    );
+    const synthetic = withHeaderFooterModel(model, 0, "header", "default");
+    let out = updateFieldAtCaret(synthetic, caretAt(0, 0), CTX, model);
+    out = updateFieldAtCaret(out.model, caretAt(1, 0), CTX, model);
+    const committed = commitHeaderFooterModel(model, 0, "header", "default", out.model);
+    expect(headerField(committed, 0)).toMatchObject({ cached: "Body words go here" });
+    expect(headerField(committed, 1)).toMatchObject({ cached: "4" });
+  });
+
+  it("skips a locked header field", () => {
+    const model = headerDoc({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020", locked: true });
+    const synthetic = withHeaderFooterModel(model, 0, "header", "default");
+    const out = updateFieldAtCaret(synthetic, caretAt(0, 0), CTX, model);
+    const committed = commitHeaderFooterModel(model, 0, "header", "default", out.model);
+    expect(headerField(committed)).toMatchObject({ cached: "1 January 2020" });
   });
 });
 
