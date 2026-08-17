@@ -39,9 +39,11 @@ rejecting SPEC-007 as ambiguous:
    `specs/004-open-docx-text-and-paragraphs.md` (readers) and
    `specs/006-save-as-docx.md` (writers). The shared fixture set and its
    `manifest.json` are defined in SPEC-004. The anchored drawing object —
-   position, wrap, z-order, grouping and the canvas/ARIA-proxy rendering every
+   position, wrap, z-order and the canvas/ARIA-proxy rendering every
    floating object uses — is defined in
-   `specs/051-drawing-shapes-and-text-boxes.md`. Nothing redefines these.
+   `specs/051-drawing-shapes-and-text-boxes.md`; the drawing **group
+   container** that supersedes SPEC-051's flat grouping is defined in
+   `specs/057-group-and-ungroup-drawings.md`. Nothing redefines these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -143,3 +145,4 @@ that `equalSemantic` is specified but not yet implemented; see SPEC-002's
 | SPEC-054 | Tab stops and the tab ruler — resolves the SPEC-014/SPEC-032 conflict |
 | SPEC-055 | Captions, caption cross-references and the table of figures |
 | SPEC-056 | Equations |
+| SPEC-057 | Group and ungroup drawings — native containers, nesting and editing in place |
