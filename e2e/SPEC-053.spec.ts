@@ -166,6 +166,58 @@ test("F9 updates the field at the caret and Update-all updates every unlocked fi
   await expect(content(page)).toContainText("1 March 2025"); // AC-16 locked field untouched
 });
 
+// F9 with the caret in a header band. The band routes its keydown to the
+// header/footer handler and stops it before the canvas shortcut registry, so
+// F9 used to be inert there and Tools → Update all fields was a header field's
+// only refresh — AC-15 puts no such limit on where the caret is, and AC-33 puts
+// fields in headers. No UI inserts a field into a header, so the fixture is
+// built here, the same way the AC-35 test builds its page-field header.
+test("F9 updates the field at the caret inside a header (AC-15, AC-33)", async ({ page }) => {
+  const model = buildDocumentModel("spec053-header-f9");
+  const headerPara: Paragraph = {
+    type: "paragraph",
+    runs: [createFieldSpecRun({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" })],
+  };
+  // A body date field saved at the same stale value: it must still be stale
+  // afterwards, which is what proves F9 acted on the header caret rather than
+  // on the body caret the registry path would have read.
+  const bodyPara: Paragraph = {
+    type: "paragraph",
+    runs: [
+      { text: "Signed ", formatting: {} },
+      createFieldSpecRun({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" }),
+    ],
+  };
+  model.sections = [{ blocks: [bodyPara], headers: { default: { blocks: [headerPara] } } }];
+  model.title = "spec053-header-f9.docx";
+  const bytes = (await writeDocx(model)).bytes;
+  const file = join(mkdtempSync(join(tmpdir(), "spec053-")), "spec053-header-f9.docx");
+  writeFileSync(file, bytes);
+
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(file);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page)).toBeVisible();
+
+  const band = page.getByTestId("page-header-band").first();
+  await expect(band).toContainText("1 January 2020");
+
+  // Enter header editing: the caret lands at the start of the header's first
+  // block, which is the field atom's leading edge — "the field at the caret".
+  const box = await band.boundingBox();
+  if (!box) {
+    throw new Error("header band has no bounding box");
+  }
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(band).toHaveAttribute("data-hf-editable", "1");
+
+  await page.keyboard.press("F9");
+  await expect(band).toContainText(todayLong());
+  await expect(band).not.toContainText("1 January 2020");
+  // The body field was not at the caret, so it keeps its saved value.
+  await expect(content(page)).toContainText("Signed 1 January 2020");
+});
+
 // Insert → Cross-reference inserts a reference field for each "show" mode. The
 // handler read a null selection before the fix, so nothing was inserted.
 test("Insert → Cross-reference inserts text / page / position references (AC-23, AC-24, AC-25)", async ({
