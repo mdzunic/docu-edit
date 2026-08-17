@@ -242,6 +242,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             </button>
             <div
               class="note-body"
+              data-testid="note-body"
               :contenteditable="note.editable"
               :data-note-editable="note.editable ? '1' : undefined"
               spellcheck="false"
@@ -291,6 +292,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
         </button>
         <div
           class="note-body"
+          data-testid="note-body"
           :contenteditable="note.editable"
           :data-note-editable="note.editable ? '1' : undefined"
           spellcheck="false"

@@ -675,6 +675,8 @@ function headerFooterRenderEntries(
 function noteBlocksEntries(
   note: NoteContent,
   items: NoteAreaItem[],
+  pageNumber: number,
+  totalPages: number,
   marks: boolean,
   deps: PaginationViewDeps,
 ): RenderEntry[] {
@@ -741,6 +743,39 @@ function noteBlocksEntries(
     }
     const continuation = sliceStart !== undefined && sliceStart > 0;
     const renderRuns = runs.map((run, runIndex) => {
+      if (run.field && isMergeChipField(run.field)) {
+        // A merge chip in a note (SPEC-046) — resolution happens on the model
+        // before the writers, so one still here means an unresolved template;
+        // show the canonical label, same as the body and header/footer.
+        return {
+          key: runKey(run, runIndex),
+          href: "",
+          styleObj: runStyle(run.formatting),
+          text: chipLabel(run.field),
+          segments: null,
+          atomText: run.text,
+          atomClass: "doc-merge-chip",
+          lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
+        };
+      }
+      if (run.field && model) {
+        // A SPEC-053 field in a footnote/endnote (AC-33 lists notes among the
+        // surfaces fields work in): its value substituted at paint time, the
+        // same branch headerFooterRenderEntries takes. Without this a note
+        // field painted its raw one-character placeholder, so a note field
+        // could never show a value — nor show F9 having recomputed it.
+        // Shaded only via the View toggle: the note caret lives in the note's
+        // own synthetic coordinates, not the body caret this pass can read.
+        return fieldRenderRun(
+          run,
+          runIndex,
+          { model, now: now(), fileName: model.title ?? "", pageNumber, totalPages, pageOfBookmark: (name) => deps.tocPageNumberFor(model, name) },
+          runStyle(run.formatting),
+          effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
+          false,
+          deps.fieldShadingOn.value,
+        );
+      }
       const segments = marks ? markSegments(run.text) : null;
       const marked = segments && segments.some((segment) => segment.kind !== "text");
       return {
@@ -754,7 +789,19 @@ function noteBlocksEntries(
     });
     entries.push({
       key: `note:${note.noteId}:${item.blockIndex}${continuation ? `@${sliceStart}` : ""}`,
-      memo: [block, item.blockIndex, `${sliceStart ?? ""}:${sliceEnd ?? ""}`, marks, deps.noteRemountEpoch.value],
+      // pageNumber/totalPages join the memo for the same reason the header's
+      // entry carries them: a `page` field in a note has to repaint when
+      // repagination moves the note to another page.
+      memo: [
+        block,
+        item.blockIndex,
+        `${sliceStart ?? ""}:${sliceEnd ?? ""}`,
+        pageNumber,
+        totalPages,
+        marks,
+        deps.fieldShadingOn.value,
+        deps.noteRemountEpoch.value,
+      ],
       kind: "paragraph",
       tag: headingTag(paragraph.headingLevel),
       className: paragraphClassName(paragraph),
@@ -774,6 +821,8 @@ function noteBlocksEntries(
 function noteAreaView(
   model: DocumentModel,
   area: NoteArea | null,
+  pageNumber: number,
+  totalPages: number,
   marks: boolean,
   deps: PaginationViewDeps,
 ): NoteAreaView | null {
@@ -811,7 +860,7 @@ function noteAreaView(
       kind: note.kind,
       label: starts ? (labels.get(note.noteId) ?? "") : "",
       editable: isActive,
-      entries: noteBlocksEntries(note, items, marks, deps),
+      entries: noteBlocksEntries(note, items, pageNumber, totalPages, marks, deps),
     });
   }
   return notes.length > 0 ? { kind: area.kind, notes } : null;
@@ -1008,8 +1057,8 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
       // Note areas (SPEC-031): the footnote band pins to the content bottom;
       // the endnote area flows after the body content (AC-2, AC-4).
       const footnotePlan = pageNoteAreas.footnotes[pageIndex] ?? null;
-      const footnoteView = footnotePlan ? noteAreaView(model, footnotePlan, marks, deps) : null;
-      const endnoteView = noteAreaView(model, pageNoteAreas.endnotes[pageIndex] ?? null, marks, deps);
+      const footnoteView = footnotePlan ? noteAreaView(model, footnotePlan, pageNumber, totalPages, marks, deps) : null;
+      const endnoteView = noteAreaView(model, pageNoteAreas.endnotes[pageIndex] ?? null, pageNumber, totalPages, marks, deps);
       return {
         pageStyle: {
           width: `${page.pageSize.widthCm}cm`,

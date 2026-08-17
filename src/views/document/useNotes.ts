@@ -36,9 +36,10 @@ import {
   type ActiveNoteTarget,
 } from "../../lib/documentModel";
 import { collectNoteRefs, createNoteId, effectiveNoteSettings, noteById } from "../../lib/notes";
+import { findShortcut } from "../../lib/shortcuts";
 import type { EditorContext } from "./context";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { ModelSelection } from "../../lib/commands";
+import type { CommandResult, ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
 
 export interface NotesDeps extends EditorContext {
@@ -46,6 +47,13 @@ export interface NotesDeps extends EditorContext {
   clearImageSelection: () => void;
   /** Leaves header/footer editing before entering a note (one live surface). */
   exitHeaderFooterEditing: () => void;
+  /** Late-binding: useFields' surface-scoped F9 update (set up later), which
+   * runs the command against the note's synthetic model — see
+   * `updateFieldInNote`. */
+  getUpdateFieldInSurface: () => (
+    surfaceModel: DocumentModel,
+    selection: ModelSelection,
+  ) => CommandResult | null;
 }
 
 export function useNotes(deps: NotesDeps) {
@@ -62,6 +70,7 @@ export function useNotes(deps: NotesDeps) {
     clearCellSelection,
     clearImageSelection,
     exitHeaderFooterEditing,
+    getUpdateFieldInSurface,
     getCaret,
     markDirty,
     refreshUndoRedoState,
@@ -221,10 +230,38 @@ export function useNotes(deps: NotesDeps) {
     }
   }
 
+  /** F9 inside the note body (SPEC-053 AC-15 with AC-33, which puts fields in
+   * footnotes and endnotes): the field at the note caret is recomputed and the
+   * result folded back like any other note edit. It is dispatched here rather
+   * than by the canvas shortcut registry because the note body stops keydown
+   * before the canvas sees it — which is right: a registry command reads the
+   * *body* caret, so anything it did here would edit the wrong surface. Only
+   * this one command is forwarded; the rest stay body-scoped until they grow a
+   * note-aware path of their own. Mirrors useHeadersFooters' updateFieldInBand
+   * and useShapes' updateFieldInShapeText. */
+  function updateFieldInNote(): void {
+    const active = activeNote.value;
+    const model = doc.value;
+    const selection = currentNoteSelection();
+    if (!active || !model || !editable.value || !selection) {
+      return;
+    }
+    const synthetic = withNoteModel(model, active.noteId);
+    const updated = getUpdateFieldInSurface()(synthetic, selection);
+    if (updated) {
+      applyNoteEdit(updated.model, updated.selection, "update field");
+    }
+  }
+
   function handleNoteKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.stopPropagation();
       exitNoteEditing();
+      return;
+    }
+    if (findShortcut(event)?.id === "field.update") {
+      event.preventDefault();
+      updateFieldInNote();
     }
   }
 
