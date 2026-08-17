@@ -202,9 +202,14 @@ rest of the ruler because `positionCm` is start-relative.
   later spec)" is resolved: the later spec is this one. Its Tab-key criteria
   are unchanged, and become rows 3 and 4 of the precedence table.
 - `specs/022-tables-insert-and-edit.md` and
-  `specs/018-bulleted-and-numbered-lists.md` — their Tab criteria are unchanged
-  in behaviour and become rows 1 and 2. What changes is that the overlap
-  between them is now decided rather than left to whichever handler runs first.
+  `specs/018-bulleted-and-numbered-lists.md` — their Tab criteria keep their
+  behaviour and become rows 1 and 2. What changes is that the overlap between
+  them is now decided rather than left to whichever handler runs first, and
+  that SPEC-018's "inside a list item" is narrowed to the caret collapsed at
+  offset 0 — mid-item, row 4 now inserts a literal tab where SPEC-018 demoted.
+  SPEC-018's criterion and the five e2e cases that clicked mid-item before
+  pressing Tab are amended to press LINE_START first; every level, marker,
+  clamp and round-trip assertion they make is unchanged.
 - `specs/008-round-trip-preservation.md` — `DropRecord['kind']` gains
   `'tabStop'`, as SPEC-050 widens the same union.
 - `specs/049-menu-bar-and-toolbar-consolidation.md` — the Insert menu gains

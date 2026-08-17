@@ -16,6 +16,7 @@
 // null where the environment cannot measure text (jsdom), in which case
 // callers keep their estimates and the DOM path.
 import type { Paragraph, RunFormatting, TabStop } from "./documentModel";
+import { fontStack } from "./fonts/substitution";
 import { listIndentCm } from "./core/lists";
 import { type BlockMetrics, type LineBox } from "./core/pageMetrics";
 import { PX_PER_CM } from "./core/units";
@@ -134,7 +135,11 @@ function resolveRunFont(formatting: RunFormatting, base: BaseFont): ResolvedFont
     sizePx = formatting.fontSizePt ? formatting.fontSizePt * 0.65 * PX_PER_PT : base.sizePx * 0.65;
   }
   return {
-    family: formatting.fontFamily ?? base.family,
+    // Measure with the same metric-twin stack renderFormatting paints with
+    // (SPEC-048), so the canvas/DOM measurer and the screen agree on widths
+    // and line-height for a substituted font. An unset family keeps the
+    // inherited base (already the computed CSS the run renders in).
+    family: formatting.fontFamily ? fontStack(formatting.fontFamily) : base.family,
     sizePx,
     bold: formatting.bold === true,
     italic: formatting.italic === true,

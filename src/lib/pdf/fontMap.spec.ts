@@ -39,14 +39,25 @@ describe("faceKeyFor", () => {
     expect(faceKeyFor("Georgia", false, true)).toBe("serif-italic");
     expect(faceKeyFor("Courier New", true, true)).toBe("mono-bolditalic");
   });
+
+  it("routes Calibri to Carlito and Cambria to Caladea, not the generic class (SPEC-048)", () => {
+    // Calibri would otherwise classify as sans (Arial metrics) — the twin
+    // keeps Calibri's own metrics so the PDF matches the on-screen layout.
+    expect(faceKeyFor("Calibri, Carlito, sans-serif", false, false)).toBe("calibri-regular");
+    expect(faceKeyFor("Calibri", true, true)).toBe("calibri-bolditalic");
+    expect(faceKeyFor('"Cambria", Caladea, serif', true, false)).toBe("cambria-bold");
+    expect(faceKeyFor("Cambria", false, true)).toBe("cambria-italic");
+  });
 });
 
 describe("faceFileName", () => {
-  it("names a bundled Liberation file for every face key", () => {
+  it("names a bundled TrueType file for every face key", () => {
     for (const key of allFaceKeys()) {
-      expect(faceFileName(key)).toMatch(/^Liberation(Sans|Serif|Mono)-\w+\.ttf$/);
+      expect(faceFileName(key)).toMatch(/^(Liberation(Sans|Serif|Mono)|Carlito|Caladea)-\w+\.ttf$/);
     }
     expect(faceFileName("serif-bolditalic")).toBe("LiberationSerif-BoldItalic.ttf");
+    expect(faceFileName("calibri-regular")).toBe("Carlito-Regular.ttf");
+    expect(faceFileName("cambria-bolditalic")).toBe("Caladea-BoldItalic.ttf");
   });
 });
 

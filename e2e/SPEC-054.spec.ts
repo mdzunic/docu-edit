@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LINE_END, LINE_START } from "./keys";
 
 // SPEC-054 — tab stops and the tab ruler: the Tab-key precedence table, the
 // literal-tab routes, tab advances rendering as sized boxes, the bar rule and
@@ -84,7 +85,7 @@ test("Tab mid-word in a list item inserts a literal tab, not a demote (AC-29, AC
   await page.getByTestId("list-bulleted").click();
   await page.keyboard.type("hello world");
   // Caret collapsed mid-word (offset 5, between "hello" and " world").
-  await page.keyboard.press("Home");
+  await page.keyboard.press(LINE_START);
   for (let i = 0; i < 5; i++) {
     await page.keyboard.press("ArrowRight");
   }
@@ -126,7 +127,7 @@ test("a left tab stop aligns following text at the stop position (AC-1, AC-17)",
   await page.getByTestId("tabs-apply").click();
   await content(page).click();
   await page.keyboard.type("x");
-  await page.keyboard.press("End");
+  await page.keyboard.press(LINE_END);
   await page.keyboard.press("Tab"); // mid-paragraph → a literal tab
   await page.keyboard.type("y");
   const tab = content(page).locator(".doc-tab").first();
