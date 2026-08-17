@@ -166,6 +166,165 @@ test("F9 updates the field at the caret and Update-all updates every unlocked fi
   await expect(content(page)).toContainText("1 March 2025"); // AC-16 locked field untouched
 });
 
+// F9 with the caret in a header band. The band routes its keydown to the
+// header/footer handler and stops it before the canvas shortcut registry, so
+// F9 used to be inert there and Tools → Update all fields was a header field's
+// only refresh — AC-15 puts no such limit on where the caret is, and AC-33 puts
+// fields in headers. No UI inserts a field into a header, so the fixture is
+// built here, the same way the AC-35 test builds its page-field header.
+test("F9 updates the field at the caret inside a header (AC-15, AC-33)", async ({ page }) => {
+  const model = buildDocumentModel("spec053-header-f9");
+  const headerPara: Paragraph = {
+    type: "paragraph",
+    runs: [createFieldSpecRun({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" })],
+  };
+  // A body date field saved at the same stale value: it must still be stale
+  // afterwards, which is what proves F9 acted on the header caret rather than
+  // on the body caret the registry path would have read.
+  const bodyPara: Paragraph = {
+    type: "paragraph",
+    runs: [
+      { text: "Signed ", formatting: {} },
+      createFieldSpecRun({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" }),
+    ],
+  };
+  model.sections = [{ blocks: [bodyPara], headers: { default: { blocks: [headerPara] } } }];
+  model.title = "spec053-header-f9.docx";
+  const bytes = (await writeDocx(model)).bytes;
+  const file = join(mkdtempSync(join(tmpdir(), "spec053-")), "spec053-header-f9.docx");
+  writeFileSync(file, bytes);
+
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(file);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page)).toBeVisible();
+
+  const band = page.getByTestId("page-header-band").first();
+  await expect(band).toContainText("1 January 2020");
+
+  // Enter header editing: the caret lands at the start of the header's first
+  // block, which is the field atom's leading edge — "the field at the caret".
+  const box = await band.boundingBox();
+  if (!box) {
+    throw new Error("header band has no bounding box");
+  }
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(band).toHaveAttribute("data-hf-editable", "1");
+
+  await page.keyboard.press("F9");
+  await expect(band).toContainText(todayLong());
+  await expect(band).not.toContainText("1 January 2020");
+  // The body field was not at the caret, so it keeps its saved value.
+  await expect(content(page)).toContainText("Signed 1 January 2020");
+});
+
+/** A stale date field, saved at a value no clock will produce again — the
+ * "before" every F9 check below asserts against. */
+function staleDateRun() {
+  return createFieldSpecRun({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" });
+}
+
+/** Writes `model` as a .docx in a fresh temp dir and returns its path — the
+ * surface fixtures below all need a saved file, since no UI inserts a field
+ * into a note or a shape's text frame. */
+async function writeFixture(model: Parameters<typeof writeDocx>[0], name: string): Promise<string> {
+  model.title = `${name}.docx`;
+  const bytes = (await writeDocx(model)).bytes;
+  const file = join(mkdtempSync(join(tmpdir(), "spec053-")), `${name}.docx`);
+  writeFileSync(file, bytes);
+  return file;
+}
+
+// F9 with the caret in a footnote body — the header band's defect exactly:
+// DocPage routes the note's keydown to the note handler and stops it before the
+// canvas shortcut registry, so F9 was inert there too. AC-15 puts no limit on
+// where the caret is and AC-33 lists footnotes among the surfaces fields work
+// in.
+test("F9 updates the field at the caret inside a footnote (AC-15, AC-33)", async ({ page }) => {
+  const model = buildDocumentModel("spec053-note-f9");
+  // The note's content hangs off the reference mark in the body: the note area
+  // is derived from the marks, so without this run the note never renders.
+  const refPara: Paragraph = {
+    type: "paragraph",
+    runs: [
+      { text: "Body text", formatting: {} },
+      { text: "", formatting: {}, note: { noteId: "n1", kind: "footnote" } },
+    ],
+  };
+  // A body date field saved at the same stale value: it must still be stale
+  // afterwards, which is what proves F9 acted on the note caret rather than on
+  // the body caret the registry path would have read.
+  const bodyPara: Paragraph = {
+    type: "paragraph",
+    runs: [{ text: "Signed ", formatting: {} }, staleDateRun()],
+  };
+  model.sections = [{ blocks: [refPara, bodyPara] }];
+  model.notes = [
+    { noteId: "n1", kind: "footnote", blocks: [{ type: "paragraph", runs: [staleDateRun()] }] },
+  ];
+  const file = await writeFixture(model, "spec053-note-f9");
+
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(file);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page)).toBeVisible();
+
+  const noteBody = page.getByTestId("note-body").first();
+  await expect(noteBody).toContainText("1 January 2020");
+
+  // Clicking a read-only note body enters editing with the caret at the end of
+  // its last block — for a lone field atom that is the atom's trailing edge,
+  // which is still "the field at the caret".
+  await noteBody.click();
+  await expect(noteBody).toHaveAttribute("data-note-editable", "1");
+
+  await page.keyboard.press("F9");
+  await expect(noteBody).toContainText(todayLong());
+  await expect(noteBody).not.toContainText("1 January 2020");
+  // The body field was not at the caret, so it keeps its saved value.
+  await expect(content(page)).toContainText("Signed 1 January 2020");
+});
+
+// F9 with the caret in a shape's text frame — the third surface with the same
+// defect (DocShapeBlock stops the frame's keydown before the canvas registry).
+// AC-33 lists shape text boxes.
+test("F9 updates the field at the caret inside a shape text box (AC-15, AC-33)", async ({ page }) => {
+  const model = buildDocumentModel("spec053-shape-f9");
+  const bodyPara: Paragraph = {
+    type: "paragraph",
+    runs: [{ text: "Signed ", formatting: {} }, staleDateRun()],
+  };
+  const textBox: Block = {
+    type: "shape",
+    geometry: "rect",
+    widthCm: 8,
+    heightCm: 3,
+    wrap: "square",
+    text: { blocks: [{ type: "paragraph", runs: [staleDateRun()] }], vAlign: "top" },
+  };
+  model.sections = [{ blocks: [bodyPara, textBox] }];
+  const file = await writeFixture(model, "spec053-shape-f9");
+
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(file);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page)).toBeVisible();
+
+  const frame = content(page).locator('[data-testid="drawing-0"] [data-testid="shape-text"]');
+  await expect(frame).toContainText("1 January 2020");
+
+  // Double-clicking the shape enters text editing with the caret at the end of
+  // the frame's last block — the field atom's trailing edge (AC-17).
+  await content(page).locator('[data-testid="drawing-0"]').dblclick();
+  await expect(frame).toHaveAttribute("contenteditable", "true");
+
+  await page.keyboard.press("F9");
+  await expect(frame).toContainText(todayLong());
+  await expect(frame).not.toContainText("1 January 2020");
+  // The body field was not at the caret, so it keeps its saved value.
+  await expect(content(page)).toContainText("Signed 1 January 2020");
+});
+
 // Insert → Cross-reference inserts a reference field for each "show" mode. The
 // handler read a null selection before the fix, so nothing was inserted.
 test("Insert → Cross-reference inserts text / page / position references (AC-23, AC-24, AC-25)", async ({

@@ -37,9 +37,10 @@ import {
   type ActiveHeaderFooterTarget,
 } from "../../lib/documentModel";
 import { resolveHeaderFooterKind } from "../../lib/pageNumbering";
+import { findShortcut } from "../../lib/shortcuts";
 import type { EditorContext } from "./context";
 import type { CaretPosition } from "../../lib/textEditing";
-import type { ModelSelection } from "../../lib/commands";
+import type { CommandResult, ModelSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
 import type { PageLayout } from "../../lib/pagination";
 
@@ -55,6 +56,13 @@ export interface HeadersFootersDeps extends EditorContext {
   getClearImageSelection: () => () => void;
   /** Late-binding: the note composable's exitNoteEditing (set up later). */
   getExitNoteEditing: () => () => void;
+  /** Late-binding: useFields' surface-scoped F9 update (set up later), which
+   * runs the command against the band's synthetic model — see
+   * `updateFieldInBand`. */
+  getUpdateFieldInSurface: () => (
+    surfaceModel: DocumentModel,
+    selection: ModelSelection,
+  ) => CommandResult | null;
 }
 
 export function useHeadersFooters(deps: HeadersFootersDeps) {
@@ -72,6 +80,7 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
     clearCellSelection,
     getClearImageSelection,
     getExitNoteEditing,
+    getUpdateFieldInSurface,
     getCaret,
     markDirty,
     refreshUndoRedoState,
@@ -250,10 +259,37 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
     }
   }
 
+  /** F9 inside the band (SPEC-053 AC-15 with AC-33): the field at the
+   * header/footer caret is recomputed and the result folded back like any
+   * other band edit. It is dispatched here rather than by the canvas shortcut
+   * registry because the band stops keydown before the canvas sees it — which
+   * is right: a registry command reads the *body* caret, so anything it did
+   * here would edit the wrong surface. Only this one command is forwarded;
+   * the rest stay body-scoped until they grow a band-aware path of their
+   * own. */
+  function updateFieldInBand(): void {
+    const active = activeHeaderFooter.value;
+    const model = doc.value;
+    const selection = currentHfSelection();
+    if (!active || !model || !editable.value || !selection) {
+      return;
+    }
+    const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+    const updated = getUpdateFieldInSurface()(synthetic, selection);
+    if (updated) {
+      applyHeaderFooterEdit(updated.model, updated.selection, "update field");
+    }
+  }
+
   function handleHfKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.stopPropagation();
       exitHeaderFooterEditing();
+      return;
+    }
+    if (findShortcut(event)?.id === "field.update") {
+      event.preventDefault();
+      updateFieldInBand();
     }
   }
 

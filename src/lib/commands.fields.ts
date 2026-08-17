@@ -200,11 +200,22 @@ function mapAllFields(
 }
 
 /** F9 (SPEC-053 AC-15): recomputes the field at the caret. A locked or
- * unsupported field is left untouched; a caret not on a field is a no-op. */
+ * unsupported field is left untouched; a caret not on a field is a no-op.
+ *
+ * `evaluateIn` is the model field values are read from, and defaults to
+ * `model` — the body caret's case, where they are the same document. A nested
+ * editing surface addresses its content as a throwaway single-section model
+ * (`withHeaderFooterModel` in commands.headers.ts, `withNoteModel` in
+ * commands.notes.ts, `withShapeModel` in commands.shapes.ts), so a caret in one
+ * of those surfaces passes that synthetic model as `model` — it is the caret's
+ * coordinate space — and the real document as `evaluateIn`. Evaluating in the
+ * synthetic model instead would count only the surface's own words for
+ * `wordCount` and would find no body bookmark for a cross-reference. */
 export function updateFieldAtCaret(
   model: DocumentModel,
   selection: ModelSelection,
   ctx: FieldUpdateContext,
+  evaluateIn: DocumentModel = model,
 ): CommandResult {
   const caret = orderedRange(model, selection).start;
   const paragraph = paragraphAt(model, caret);
@@ -221,7 +232,7 @@ export function updateFieldAtCaret(
     // The field atom occupies [here.offset, here.offset + 1]; the caret is
     // "on it" when it sits at either edge.
     const onField = sameParagraph && caret.offset >= here.offset && caret.offset <= here.offset + 1;
-    return onField ? recomputeField(field, here, model, ctx).field : field;
+    return onField ? recomputeField(field, here, evaluateIn, ctx).field : field;
   });
   return result(next, caret);
 }

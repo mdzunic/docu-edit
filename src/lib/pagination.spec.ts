@@ -237,14 +237,31 @@ describe("paginate", () => {
     expect(itemsOf(pages[0])).toEqual([[0, undefined, undefined]]);
   });
 
-  it("lays out a 200-page document fast enough for interactive re-layout (AC-34/35)", () => {
+  // "Paginates a 200-page document without freezing the UI" (AC-34/35) is a
+  // claim about the browser's main thread, and it is gated where it can
+  // actually be observed: e2e/SPEC-028.spec.ts's large-document test (typing
+  // lands while pagination settles, far pages stay virtualized, earlier pages
+  // keep their DOM nodes) and SPEC-047's long-task budgets, measured against
+  // the container-calibrated e2e/perf-baseline.json. What this unit test can
+  // gate — deterministically, on any machine — is the property those rest on:
+  // the layout pass is linear, measuring every block exactly once. A rescan
+  // or a re-measure pass shows up here as a multiple of the block count,
+  // whereas a wall-clock ceiling on a pass that takes ~1ms would have to
+  // regress a hundredfold to trip, and can fail on a loaded machine without
+  // any regression at all.
+  it("lays out a 200-page document in a single linear pass (AC-34/35)", () => {
     const blocks = Array.from({ length: 10 * 200 }, () => paragraph(1));
     const model = fixture(...blocks);
-    const started = performance.now();
-    const pages = paginate(model, fakeMetrics);
-    const elapsed = performance.now() - started;
+    let measurements = 0;
+    const countingMetrics: MetricsProvider = {
+      metricsFor: (sectionIndex, blockIndex, block, contentWidthPx) => {
+        measurements += 1;
+        return fakeMetrics.metricsFor(sectionIndex, blockIndex, block, contentWidthPx);
+      },
+    };
+    const pages = paginate(model, countingMetrics);
     expect(pages).toHaveLength(200);
-    expect(elapsed).toBeLessThan(300);
+    expect(measurements).toBe(blocks.length);
   });
 });
 

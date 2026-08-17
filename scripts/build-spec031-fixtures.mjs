@@ -23,6 +23,12 @@ mkdirSync(e2eFixturesDir, { recursive: true });
 const PAGES = 4;
 const NOTES_PER_PAGE = 6;
 
+// Pinned so a regenerated fixture's dcterms:modified stays put instead of
+// becoming whichever day someone re-ran this script — otherwise regenerating
+// churns the committed bytes for a reason unrelated to the change being made
+// (SPEC-008's round-trip determinism rule).
+const FIXED_MODIFIED = new Date("2026-01-01T00:00:00.000Z");
+
 function model() {
   const doc = createDocument("spec031-footnotes-fixture");
   doc.title = "Twenty-four footnotes";
@@ -58,10 +64,15 @@ function model() {
 }
 
 async function main() {
-  const { bytes } = await writeDocx(model());
+  const { bytes } = await writeDocx(model(), { modified: FIXED_MODIFIED });
   const target = path.join(e2eFixturesDir, "spec031-footnotes.docx");
   writeFileSync(target, bytes);
   console.log(`wrote ${target} (${bytes.length} bytes)`);
 }
 
 await main();
+// writeDocx's chunked save path yields through idleScheduler's shared
+// MessageChannel, whose started port keeps Node's event loop alive after the
+// file is fully written — without an explicit exit this script hangs forever
+// (same reason build-spec047-fixture.mjs ends this way).
+process.exit(0);

@@ -27,6 +27,15 @@ model.sections = [
   },
 ];
 
-const { bytes } = await writeDocx(model);
+// `modified` is pinned so a regenerated fixture's dcterms:modified stays put
+// instead of becoming whichever day someone re-ran this script — otherwise
+// regenerating churns the committed bytes for a reason unrelated to the
+// change being made (SPEC-008's round-trip determinism rule).
+const { bytes } = await writeDocx(model, { modified: new Date("2026-01-01T00:00:00.000Z") });
 writeFileSync("e2e/fixtures/two-column-section.docx", bytes);
 console.log(`wrote e2e/fixtures/two-column-section.docx (${bytes.length} bytes)`);
+// writeDocx's chunked save path yields through idleScheduler's shared
+// MessageChannel, whose started port keeps Node's event loop alive after the
+// file is fully written — without an explicit exit this script hangs forever
+// (same reason build-spec047-fixture.mjs ends this way).
+process.exit(0);

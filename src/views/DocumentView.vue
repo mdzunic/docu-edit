@@ -660,6 +660,7 @@ const {
   pageOfCaret: (caretPos) => pagination.pageOfCaret(caretPos),
   getClearImageSelection: () => clearImageSelection,
   getExitNoteEditing: () => exitNoteEditing,
+  getUpdateFieldInSurface: () => updateFieldInSurface,
 });
 
 // --- images (SPEC-024) -------------------------------------------------------
@@ -738,7 +739,7 @@ const {
   disarmShapeDraw,
   startShapeDraw,
   insertTextBoxAction,
-} = useShapes({ ...editorContext });
+} = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
 
 // --- charts (SPEC-052) -------------------------------------------------------
 // Chart selection/handles/toolbar, insertion at the caret and the data
@@ -834,6 +835,7 @@ const {
   activeHeaderFooter,
   clearImageSelection,
   exitHeaderFooterEditing,
+  getUpdateFieldInSurface: () => updateFieldInSurface,
 });
 
 // --- character & paragraph formatting (SPEC-012, SPEC-013, SPEC-014) --------
@@ -2817,6 +2819,7 @@ const {
   openCrossReferenceDialog,
   handleCrossReferenceInsert,
   handleUpdateField,
+  updateFieldInSurface,
   handleUpdateAllFields,
   followCrossReference,
   selectField,
