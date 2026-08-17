@@ -234,10 +234,16 @@ test("a page field in a header shows the correct value on every page (AC-35)", a
   expect(total).toBeGreaterThanOrEqual(2);
 
   const bands = page.getByTestId("page-header-band");
-  const values: string[] = [];
-  for (let i = 0; i < (await bands.count()); i++) {
-    const atom = bands.nth(i).locator('[data-testid="field"]').first();
-    if (await atom.count()) values.push(((await atom.textContent()) ?? "").trim());
-  }
-  expect(values).toEqual(Array.from({ length: total }, (_, i) => String(i + 1)));
+  const expected = Array.from({ length: total }, (_, i) => String(i + 1));
+  // The bands paint page by page as pagination lands, so the indicator can
+  // already read "of 4" while only three bands exist. Collect them under a
+  // retrying assertion; the expectation itself is unchanged.
+  await expect(async () => {
+    const values: string[] = [];
+    for (let i = 0; i < (await bands.count()); i++) {
+      const atom = bands.nth(i).locator('[data-testid="field"]').first();
+      if (await atom.count()) values.push(((await atom.textContent()) ?? "").trim());
+    }
+    expect(values).toEqual(expected);
+  }).toPass({ timeout: 10_000 });
 });
