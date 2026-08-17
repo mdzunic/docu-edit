@@ -25,11 +25,33 @@ async function loadStore(overrides: Record<string, unknown> = {}) {
 // AC-16) before their putRecord call — a getOrCreateDocument()'s
 // fire-and-forget persist() is still in flight when the synchronous test
 // body continues, so a test that reconfigures the mocked putRecord right
-// after must flush that pending macrotask first, or its deferred call
+// after must wait for that write to LAND first. Otherwise the deferred call
 // picks up the reconfigured mock instead of the one active when it was
-// issued.
-function flushMacrotask(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+// issued, and because persist() is the SPEC-003 write-through it catches
+// into markStorageUnavailable() — a rejection staged for the autosave path
+// latches the banner the test is asserting stays clear.
+//
+// It waits on the write itself, not on one setTimeout(0) tick: the pending
+// write resumes from a MessageChannel message task while the tick is a timer
+// task, and the two task sources have no ordering guarantee between them (an
+// already-expired timer runs in Node's timers phase, before the poll phase
+// that drains the MessagePort). A single tick therefore raced the write and
+// lost about once per 200 runs of this file. The closing expect keeps a
+// barrier that stops working loud instead of silent.
+//
+// One putRecord call is the whole of a fresh document's persist(): a
+// createDocument() model has no `media`, so persistMedia() skips its write
+// and only the shell record goes out.
+async function flushSetupWrite(putRecord: {
+  mock: { calls: unknown[] };
+}): Promise<void> {
+  for (let tick = 0; tick < 100 && putRecord.mock.calls.length === 0; tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(
+    putRecord.mock.calls.length,
+    "setup persist() never reached putRecord — the barrier below is not holding",
+  ).toBeGreaterThan(0);
 }
 
 beforeEach(() => {
@@ -88,8 +110,7 @@ describe("saveDraft", () => {
   it("retries the committed media write after a failed one instead of latching it as persisted", async () => {
     const { store, putRecord } = await loadStore();
     const doc = store.getOrCreateDocument("doc-r");
-    await flushMacrotask();
-    await flushMacrotask();
+    await flushSetupWrite(putRecord);
     doc.media = [{ mediaId: "m1", contentType: "image/png", data: "aGk=" }];
     putRecord.mockClear();
     putRecord.mockRejectedValueOnce(new DOMException("quota", "QuotaExceededError"));
@@ -109,7 +130,7 @@ describe("saveDraft", () => {
   it("rejects on write failure WITHOUT latching the SPEC-003 banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-2");
-    await flushMacrotask();
+    await flushSetupWrite(putRecord);
     putRecord.mockRejectedValue(
       new DOMException("quota", "QuotaExceededError"),
     );
@@ -170,7 +191,7 @@ describe("commitDocument", () => {
   it("rejects when the committed write fails, without latching the banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-6");
-    await flushMacrotask();
+    await flushSetupWrite(putRecord);
     putRecord.mockRejectedValue(new Error("full"));
     await expect(store.commitDocument("doc-6", null, 0)).rejects.toBeTruthy();
     expect(store.isStorageAvailable()).toBe(true);
