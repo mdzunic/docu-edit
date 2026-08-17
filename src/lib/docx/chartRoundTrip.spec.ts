@@ -302,7 +302,15 @@ describe("writeDocx — structural equality after an unedited fresh-then-reopen 
       opaque: opened.opaque,
       sourceXml: opened.sourceXml,
     };
-    const { bytes: secondBytes } = await writeDocx(openedModel);
+    // A save with no explicit `modified` stamps docProps with the current time
+    // truncated to whole seconds, so two saves either side of a second tick
+    // differ in core.xml and this comparison fails — intermittently, and mostly
+    // on a loaded or slow machine (proved: stamps 13:17:48Z vs 13:17:49Z).
+    // Reuse the opened document's own stamp, as docx/roundTrip.spec.ts does,
+    // so what is compared is the content.
+    const { bytes: secondBytes } = await writeDocx(openedModel, {
+      modified: new Date(opened.properties!.modified!),
+    });
     const reopenedAgain = await parseDocx(secondBytes);
     expect(equalStructural(opened, reopenedAgain)).toBe(true);
   });

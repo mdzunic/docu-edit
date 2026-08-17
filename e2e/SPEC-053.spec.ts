@@ -7,6 +7,8 @@ import { MOD } from "./keys";
 import { createDocument as buildDocumentModel, createFieldSpecRun } from "../src/lib/documentModel";
 import type { Block, Paragraph } from "../src/lib/documentModel";
 import { writeDocx } from "../src/lib/docx/writer";
+import { renderDateTime } from "../src/lib/fields";
+import { DEFAULT_LANGUAGE } from "../src/lib/core/language";
 
 // SPEC-053 — the unified field system. Unit/component tests cover the evaluator,
 // the readers/writers, the dialogs and the field commands in isolation; this
@@ -19,6 +21,19 @@ import { writeDocx } from "../src/lib/docx/writer";
 // resolving per page.
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+/** Today under the fixture's date-field pattern, rendered by the same catalogue
+ * function the editor recomputes through (src/lib/fields.ts). Both assertions
+ * about "today" below used to spell out the date this spec was written on
+ * (16 August 2026), so at the next midnight main went red on AC-15 while the
+ * AC-19 check that today's date must NOT appear quietly became vacuous — it
+ * was naming a date no clock would ever produce again. */
+function todayLong(): string {
+  const rendered = renderDateTime("d MMMM yyyy", new Date(), DEFAULT_LANGUAGE);
+  // A null here would make the assertions below trivially true.
+  expect(rendered).not.toBeNull();
+  return rendered ?? "";
+}
 
 async function createDocument(page: Page): Promise<void> {
   await page.goto("/");
@@ -125,7 +140,7 @@ test("opening a document shows saved cached values, never a live recompute (AC-1
   await expect(content(page)).toContainText("4 March 2026"); // saved date field
   await expect(content(page)).toContainText("14:30"); // saved time field
   const body = await content(page).innerText();
-  expect(body).not.toContain("16 August 2026"); // today's date must not appear
+  expect(body).not.toContain(todayLong()); // today's date must not appear
 });
 
 // F9 recalculates the field at the caret; Tools → Update all recalculates every
@@ -139,7 +154,10 @@ test("F9 updates the field at the caret and Update-all updates every unlocked fi
   await dateField.click();
   await expect(page.getByTestId("field-toolbar")).toBeVisible();
   await page.keyboard.press("F9");
-  await expect(content(page)).toContainText("16 August 2026"); // AC-15 recomputed to today
+  await expect(content(page)).toContainText(todayLong()); // AC-15 recomputed to today
+  // The saved value it replaced is gone, so an F9 that did nothing fails here
+  // even on a day whose date happens to appear elsewhere in the fixture.
+  await expect(content(page)).not.toContainText("4 March 2026");
 
   // Update-all: the deleted-target cross-reference is reported, not fatal.
   await openMenu(page, "tools");
@@ -206,8 +224,13 @@ test("a page field in a header shows the correct value on every page (AC-35)", a
   await expect(page).toHaveURL(/\/doc\/.+/);
   await expect(content(page)).toBeVisible();
 
-  const indicator = await page.getByTestId("page-indicator").textContent();
-  const total = Number((indicator ?? "").match(/of\s+(\d+)/)?.[1] ?? "1");
+  // Pagination is deferred off the idle callback, so this used to sample
+  // "of 1" before the second page existed — a one-shot textContent() read has
+  // no retry, and the test failed roughly one run in three. Wait for the
+  // indicator to settle on a multi-page count, then read the settled text.
+  const indicator = page.getByTestId("page-indicator");
+  await expect(indicator).toContainText(/of\s+([2-9]|\d\d+)/);
+  const total = Number(((await indicator.textContent()) ?? "").match(/of\s+(\d+)/)?.[1] ?? "1");
   expect(total).toBeGreaterThanOrEqual(2);
 
   const bands = page.getByTestId("page-header-band");
