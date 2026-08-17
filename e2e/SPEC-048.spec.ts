@@ -2,6 +2,9 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { embedFontsIntoDocx } from "../src/lib/fonts/embedDocx";
 import { unzip } from "../src/lib/core/zip";
+import { createDocument as buildDocumentModel } from "../src/lib/documentModel";
+import { writeDocx } from "../src/lib/docx/writer";
+import { DOCUMENTED_DEFAULT_FAMILY, fontStack } from "../src/lib/fonts/substitution";
 
 // SPEC-048 — font fallback & embedding. Substitution keeps the original family
 // name in the model while rendering (and measuring, and exporting) on a bundled
@@ -33,6 +36,38 @@ function withFsType(src: Uint8Array, value: number): Uint8Array {
     }
   }
   throw new Error("no OS/2 table in the fixture face");
+}
+
+/** A family that is genuinely missing on every host: nothing ships it, we do
+ * not bundle it, and `substituteFor` is an exact-name table so it has no
+ * metric twin. Spelled with a serif hint so `genericOf` classifies it serif
+ * and the fallback contrast below is measured against the host's serif — on a
+ * Linux container bare `sans-serif` can itself resolve to Liberation Sans,
+ * which would make the contrast vacuous.
+ *
+ * This used to be "Georgia", with the comment "not installed on this host".
+ * That is true of the CI container and false of macOS, where Georgia ships
+ * with the OS — so the test failed for everyone running it locally, asserting
+ * a fact about the machine rather than about the app. */
+const MISSING_FAMILY = "Nonesuch Serif";
+
+/** A .docx whose body text names `MISSING_FAMILY`. Built here rather than
+ * chosen from the toolbar's font list, which only offers real families. */
+async function missingFontDocx(): Promise<Buffer> {
+  const model = buildDocumentModel("spec-048-missing-font");
+  model.format = "docx";
+  model.sections = [
+    {
+      blocks: [
+        {
+          type: "paragraph",
+          runs: [{ text: "Text in a missing font", formatting: { fontFamily: MISSING_FAMILY } }],
+        },
+      ],
+    },
+  ];
+  const { bytes } = await writeDocx(model);
+  return Buffer.from(bytes);
 }
 
 /** word-authored.docx (uses Calibri) carrying an embedded Calibri face —
@@ -167,23 +202,20 @@ test("the Fonts panel lists document fonts with a status (AC-7/8/10)", async ({ 
 test("a genuinely missing font falls back to the documented default and reads Missing (AC-9/10)", async ({
   page,
 }) => {
-  await newDocument(page);
-  await page.getByTestId("document-content").click();
-  await page.keyboard.type("Text in a missing font");
-  await page.keyboard.press("ControlOrMeta+a");
-  // Georgia has no bundled twin and is not installed on this host.
-  await page.getByTestId("font-family-select").selectOption("Georgia");
+  await openBuffer(page, "missing-font.docx", await missingFontDocx());
 
-  // AC-10: read the panel status BEFORE any canvas measurement — measuring
-  // "Georgia" on a canvas first warms fontconfig alias resolution and can flip
+  // AC-10: read the panel status BEFORE any canvas measurement — measuring a
+  // family on a canvas first warms fontconfig alias resolution and can flip
   // the install probe, so the cold read is the faithful one.
   await openFontsPane(page);
-  await expect(page.getByTestId("fonts-status-Georgia")).toHaveText("Missing");
+  await expect(page.getByTestId(`fonts-status-${MISSING_FAMILY}`)).toHaveText("Missing");
 
-  // AC-9: the app's fallback stack is the documented default (Liberation Sans),
-  // measurably distinct from the bare generic.
-  const stack = await widthOf(page, `"Georgia", "Liberation Sans", serif`);
-  const dflt = await widthOf(page, `"Liberation Sans", serif`);
+  // AC-9: the app's fallback stack is the documented default (Liberation
+  // Sans), measurably distinct from the bare generic. Measured through
+  // `fontStack` itself, so this follows the stack the app actually renders
+  // and measures with rather than a copy of it typed out here.
+  const stack = await widthOf(page, fontStack(MISSING_FAMILY));
+  const dflt = await widthOf(page, `"${DOCUMENTED_DEFAULT_FAMILY}", serif`);
   const bareSerif = await widthOf(page, `serif`);
   expect(stack).toBeCloseTo(dflt, 1);
   expect(Math.abs(stack - bareSerif)).toBeGreaterThan(1);
