@@ -69,5 +69,17 @@ test("caption a table selected by clicking a cell, then a fresh table of figures
   await expect(page.getByTestId("tof-block")).toBeVisible();
   await expect(page.getByTestId("tof-update-bar")).toHaveCount(0);
 
+  // Regression: selecting the ToF, then clicking into a body paragraph and
+  // pressing Backspace must NOT delete the whole table of figures. The stale
+  // tofSelection previously misrouted the keystroke into handleTofDelete
+  // because the selection was never cleared on click-away (parity with the
+  // TOC, which clears tocSelection in handleCanvasMouseDown).
+  await page.getByTestId("tof-block").click();
+  // The body caption run (not the ToF entry link, which also contains the text).
+  await content(page).getByText(": Quarterly results", { exact: true }).click();
+  await page.keyboard.press("Backspace");
+  await expect(page.getByTestId("tof-block")).toBeVisible();
+  await expect(page.getByTestId("tof-entry")).toHaveCount(1);
+
   expect(errors, `console errors:\n${errors.join("\n")}`).toEqual([]);
 });

@@ -1235,6 +1235,7 @@ function applyEdit(
   const priorImageSelection = imageSelection.value;
   clearImageSelection();
   clearTocSelection();
+  clearTofSelection();
   const before = doc.value;
   // SPEC-039: with recording on, rewrite the command's result into tracked-
   // change markup before it ever reaches undo history or the model — every
@@ -1947,6 +1948,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     disarmShapeDraw();
     clearChartSelection();
     clearTocSelection();
+    clearTofSelection();
     exitHeaderFooterEditing();
     exitNoteEditing();
     return;
@@ -2020,16 +2022,14 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     return;
   }
   if (tofSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
-    // Deleting a selected table of figures (SPEC-055 AC-35) — the same
-    // dedicated keydown path a selected TOC uses; the captions it lists are
-    // separate blocks and are untouched.
+    // Deleting a selected table of figures (SPEC-055 AC-35), like a selected TOC. tofSelection is
+    // cleared on click-away (useCanvasGestures), so this fires only while it's genuinely selected.
     event.preventDefault();
     handleTofDelete();
     return;
   }
   if (tofSelection.value && isContentKey(event)) {
-    // Typing inside a table of figures (SPEC-055): not editable — show the
-    // update hint instead of letting the keystroke land elsewhere.
+    // Typing while a table of figures is selected (SPEC-055): not editable.
     event.preventDefault();
     addToast('This table of figures isn’t editable — use "Update table of figures" instead.');
     return;
@@ -2367,9 +2367,9 @@ const {
   clearImageSelection,
   insertImageFromFile,
   clearTocSelection,
+  clearTofSelection: () => clearTofSelection(),
   jumpToAnchor,
-  // Deferred: useFields is initialised below, so wrap the read in an arrow so
-  // it resolves at click time, not during this call's argument evaluation.
+  // Deferred: useCaptions/useFields initialise below, so wrap the read in an arrow that resolves at click time.
   followCrossReference: (target) => followCrossReference(target),
   selectField: (target) => selectField(target),
   openLinkTarget,
