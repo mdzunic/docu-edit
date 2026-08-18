@@ -2886,8 +2886,6 @@ const {
   imageSelection,
   chartSelection,
   cellSelection,
-  // anchorCaret resolves caption anchors too, so useLinks's page lookup works
-  // for captions unchanged (SPEC-055).
   tofPageNumberFor: tocPageNumberFor,
   jumpToAnchor,
   handleImageDelete,
@@ -3948,12 +3946,14 @@ function handleMenuCommand(id = "") {
       :list-actions="!!contextMenuListTarget"
       :field-actions="contextMenuOnField"
       :field-locked="contextMenuFieldLocked"
+      :caption-action="captionTargetSelected"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
       @table-action="handleContextMenuTableAction"
       @list-action="handleContextMenuListAction"
       @field-action="handleFieldAction"
+      @caption-action="() => { closeContextMenu(); openCaptionDialog(); }"
       @dismiss="closeContextMenu"
     />
     <SpellContextMenu

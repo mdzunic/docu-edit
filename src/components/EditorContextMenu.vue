@@ -27,9 +27,12 @@ const props = defineProps({
   /** Whether the field under the cursor is locked, so the section offers
    * "Unlock field" instead of "Lock field". */
   fieldLocked: { type: Boolean, default: false },
+  /** True when a captionable object (image/chart/table) is selected — shows
+   * "Insert caption" (SPEC-055 AC-1). */
+  captionAction: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "field-action", "dismiss"]);
+const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "field-action", "caption-action", "dismiss"]);
 
 // The field section's entries (SPEC-053 AC-13). The key doubles as the
 // emitted action id and testid suffix.
@@ -164,6 +167,21 @@ onBeforeUnmount(() => {
         @click="emit('field-action', fieldLocked ? 'unlock' : 'lock')"
       >
         <span>{{ fieldLocked ? "Unlock field" : "Lock field" }}</span>
+      </button>
+    </template>
+    <template v-if="captionAction">
+      <div
+        class="context-menu-separator"
+        role="separator"
+      />
+      <button
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        data-testid="context-menu-insert-caption"
+        @click="emit('caption-action')"
+      >
+        <span>Insert caption</span>
       </button>
     </template>
     <template v-if="listActions">
