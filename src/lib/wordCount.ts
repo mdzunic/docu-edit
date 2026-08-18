@@ -22,6 +22,7 @@ import {
   isImage,
   isTable,
   isToc,
+  isTof,
   type Block,
   type DocumentModel,
 } from "./documentModel";
@@ -177,7 +178,7 @@ export function countBlock(block: Block): CountStats {
     }
     return stats;
   }
-  if (isImage(block) || isBreak(block) || isToc(block)) {
+  if (isImage(block) || isBreak(block) || isToc(block) || isTof(block)) {
     return emptyCountStats();
   }
   return { ...countText(visibleBlockText(block)), paragraphs: 1 };

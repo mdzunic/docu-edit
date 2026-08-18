@@ -153,6 +153,26 @@ export function mdBuiltInStyles(): NamedStyle[] {
   return [...builtInStyles(), structuredClone(MD_CODE_CHAR_STYLE), structuredClone(MD_HORIZONTAL_RULE_STYLE)];
 }
 
+/** The built-in Caption style id (SPEC-019, used by SPEC-055): the style a
+ * caption paragraph carries so a caption is a plain, findable, countable,
+ * commentable paragraph rather than a special node. Word's own built-in id,
+ * so a saved `.docx` writes `w:pStyle w:val="Caption"`. */
+export const CAPTION_STYLE_ID = "Caption";
+
+/** The Caption style's definition — resolvable through `styleById` (so a
+ * caption's baked formatting separates cleanly into style vs direct
+ * formatting and the writers emit `pStyle="Caption"`) but deliberately kept
+ * OUT of `builtInStyles()`, whose exact contents SPEC-019 AC-2 pins: like
+ * Word's Caption, it only enters a document's own catalogue once a caption is
+ * inserted (captions.ts's `ensureCaptionStyle`). */
+export const CAPTION_STYLE: NamedStyle = {
+  id: CAPTION_STYLE_ID,
+  name: "Caption",
+  basedOn: NORMAL_STYLE_ID,
+  runFormatting: { fontSizePt: 9, italic: true, color: "#1F3864" },
+  paragraphFormatting: { spaceBeforePt: 6, spaceAfterPt: 10 },
+};
+
 /** Fresh copies of the built-in styles — the catalogue seed when a
  * document without one of its own has a style updated, so the picker keeps
  * offering the full built-in set afterwards. */
@@ -171,7 +191,8 @@ export function headingStyleId(level: number): string {
 export function styleById(model: DocumentModel, styleId: string): NamedStyle | undefined {
   return (
     model.styles?.find((style) => style.id === styleId) ??
-    BUILT_IN_STYLES.find((style) => style.id === styleId)
+    BUILT_IN_STYLES.find((style) => style.id === styleId) ??
+    (styleId === CAPTION_STYLE_ID ? CAPTION_STYLE : undefined)
   );
 }
 

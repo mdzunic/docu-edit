@@ -55,6 +55,8 @@ import type {
   TableOfContents,
   TocEntry,
   TocOptions,
+  TableOfFigures,
+  TofEntry,
   TrackedChangeInfo,
 } from "../documentModel";
 import type { ListDefinition } from "../core/lists";
@@ -85,6 +87,7 @@ import {
 } from "../opaque";
 import { equalStructural } from "../equality";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
+import { TOF_PLACEHOLDER_TEXT } from "../tof";
 import {
   BULLET_CHARS,
   clampListLevel,
@@ -600,7 +603,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
-      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "chart") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "tof" || block.type === "chart") {
         continue;
       }
       if (block.type === "shape") {
@@ -1116,11 +1119,17 @@ const FIELD_NUM_FORMAT: Record<PageNumberFormat, string> = {
  * producer's own field elements carry (their content is the last-rendered
  * result, recomputed live by the consuming application). */
 // The ODF `text:reference-format` value for a cross-reference's show mode
-// (SPEC-053): plain text, the target's page, or its above/below position.
+// (SPEC-053): plain text, the target's page, or its above/below position;
+// SPEC-055 adds the caption formats — `category-and-value` (label + number),
+// `value` (number only) and `caption` (the text past the label/number).
 const REF_FORMAT_ATTR: Record<RefFormat, string> = {
   text: "text",
   page: "page",
   position: "direction",
+  full: "text",
+  labelAndNumber: "category-and-value",
+  numberOnly: "value",
+  textOnly: "caption",
 };
 
 /** The `text:user-field-decls` block declaring every `docProperty` field's
@@ -1621,6 +1630,54 @@ function tocXml(toc: TableOfContents): string {
   );
 }
 
+// --- table of figures (SPEC-055) --------------------------------------------
+
+/** The ODF index element name a label maps to: a "Table" label indexes tables
+ * (`text:table-index`), every other label indexes illustrations
+ * (`text:illustration-index`) — Writer's own split for figure vs table lists. */
+function tofIndexTag(label: string): string {
+  return label.toLowerCase() === "table" ? "text:table-index" : "text:illustration-index";
+}
+
+/** The paragraph style ODF entries carry, per index kind. */
+function tofEntryStyle(label: string): string {
+  return label.toLowerCase() === "table" ? "Table_20_index_20_1" : "Illustration_20_Index_20_1";
+}
+
+/** One ToF entry as an index-body paragraph: the caption text as an internal
+ * hyperlink, plus (unless hyperlinks/page-numbers are off) a tab and the
+ * cached page number. Mirrors `tocEntryParagraphXml`. */
+function tofEntryParagraphXml(entry: TofEntry, tof: TableOfFigures): string {
+  const style = tofEntryStyle(tof.label);
+  const trailer =
+    tof.options.pageNumbers && tof.options.hyperlinks
+      ? `<text:tab/>${escapeXml(String(entry.page ?? ""))}`
+      : "";
+  return (
+    `<text:p text:style-name="${style}"${LINK_XMLNS}>` +
+    `<text:a xlink:type="simple" xlink:href="#${escapeXml(entry.targetBookmark)}">${escapeXml(entry.text)}${trailer}</text:a>` +
+    "</text:p>"
+  );
+}
+
+/** A table of figures as `text:illustration-index` / `text:table-index`
+ * (SPEC-055), mirroring `tocXml`: a source config carrying the label as its
+ * caption sequence plus an index body holding the cached entries. */
+function tofXml(tof: TableOfFigures): string {
+  const tag = tofIndexTag(tof.label);
+  const sourceTag = `${tag}-source`;
+  const body =
+    tof.entries.length === 0
+      ? `<text:p text:style-name="${tofEntryStyle(tof.label)}">${escapeXml(TOF_PLACEHOLDER_TEXT)}</text:p>`
+      : tof.entries.map((entry) => tofEntryParagraphXml(entry, tof)).join("");
+  return (
+    `<${tag} text:protected="true" text:name="${escapeXml(tof.label)}Index1">` +
+    `<${sourceTag} text:caption-sequence-name="${escapeXml(tof.label)}"/>` +
+    `<text:index-body>${body}</text:index-body>` +
+    `</${tag}>`
+  );
+}
+
 /** A pending paragraph-mark change's own tracked-change marker (SPEC-039
  * AC-16): a point `text:change` appended after the paragraph's own inline
  * content. ODF has no `w:pPr/w:rPr/w:ins`-equivalent slot for "this
@@ -2026,6 +2083,15 @@ export function buildContentXml(
           blockXml.push(carrierParagraphXml(styles, options));
         }
         blockXml.push(tocXml(block));
+        i++;
+        continue;
+      }
+      if (block.type === "tof") {
+        const options = takeStyleOptions();
+        if (options) {
+          blockXml.push(carrierParagraphXml(styles, options));
+        }
+        blockXml.push(tofXml(block));
         i++;
         continue;
       }

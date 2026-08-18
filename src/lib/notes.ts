@@ -12,6 +12,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   type Block,
   type DocumentModel,
   type NoteContent,
@@ -93,7 +94,7 @@ export function collectNoteRefs(model: DocumentModel, kind: NoteKind): NoteRefLo
         }
         continue;
       }
-      if (isImage(target) || isShape(target) || isChart(target) || isBreak(target) || isToc(target)) {
+      if (isImage(target) || isShape(target) || isChart(target) || isBreak(target) || isToc(target) || isTof(target)) {
         continue;
       }
       collectParagraphRefs(target, kind, section, block, undefined, refs);

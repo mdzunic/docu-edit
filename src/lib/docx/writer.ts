@@ -50,6 +50,9 @@ import type {
   TableOfContents,
   TocEntry,
   TocOptions,
+  TableOfFigures,
+  TofEntry,
+  TofOptions,
 } from "../documentModel";
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderLineStyle, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
@@ -69,6 +72,7 @@ import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, typ
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
+import { TOF_PLACEHOLDER_TEXT } from "../tof";
 import { referencedNotes } from "../notes";
 import { replyParagraphText, visibleCommentThreads, type VisibleCommentThread } from "../comments";
 import { wordAttr, WORD_NAMESPACE } from "./xml";
@@ -1413,6 +1417,58 @@ function tocFieldXml(toc: TableOfContents, model: DocumentModel, sectionIndex: n
     .join("");
 }
 
+// --- table of figures (SPEC-055) --------------------------------------------
+
+/** The `TOC \c "<label>"` instruction Word writes for a table of figures —
+ * `\c` selects a caption label's SEQ sequence rather than the outline. */
+function tofFieldInstr(label: string): string {
+  return ` TOC \\h \\z \\c "${label}" `;
+}
+
+/** One ToF entry's inline content: the caption text as an internal hyperlink
+ * to the caption's anchor, plus (unless hyperlinks-only or page numbers are
+ * off) a dot-leader tab and the cached page number. Mirrors
+ * `tocEntryContentXml`. */
+function tofEntryContentXml(entry: TofEntry, options: TofOptions): string {
+  const textRun = `<w:r><w:t xml:space="preserve">${escapeXml(entry.text)}</w:t></w:r>`;
+  const trailer =
+    options.pageNumbers && options.hyperlinks
+      ? `<w:r><w:tab/></w:r><w:r><w:t>${escapeXml(String(entry.page ?? ""))}</w:t></w:r>`
+      : "";
+  return `<w:hyperlink w:anchor="${escapeXml(entry.targetBookmark)}">${textRun}${trailer}</w:hyperlink>`;
+}
+
+/** The `w:p` sequence a table of figures writes (SPEC-055), mirroring
+ * `tocFieldXml`: a real complex `TOC \c` field whose cached RESULT is the
+ * caption entries themselves, so Word shows them on open without an update
+ * prompt. */
+function tofFieldXml(tof: TableOfFigures, model: DocumentModel, sectionIndex: number): string {
+  const tabPosTwips = cmToTwips(sectionContentWidthCm(model, sectionIndex));
+  const beginRuns =
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+    `<w:r><w:instrText xml:space="preserve">${escapeXml(tofFieldInstr(tof.label))}</w:instrText></w:r>` +
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>';
+  const endRun = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+  if (tof.entries.length === 0) {
+    return (
+      `<w:p><w:pPr><w:pStyle w:val="TableOfFigures"/></w:pPr>${beginRuns}` +
+      `<w:r><w:t>${escapeXml(TOF_PLACEHOLDER_TEXT)}</w:t></w:r>${endRun}</w:p>`
+    );
+  }
+  const includeTab = tof.options.pageNumbers && tof.options.hyperlinks;
+  const tabs = includeTab
+    ? `<w:tabs><w:tab w:val="right" w:leader="${tof.options.dotLeader ? "dot" : "none"}" w:pos="${tabPosTwips}"/></w:tabs>`
+    : "";
+  const pPr = `<w:pPr><w:pStyle w:val="TableOfFigures"/>${tabs}</w:pPr>`;
+  return tof.entries
+    .map((entry, index) => {
+      const boundary = index === 0 ? beginRuns : "";
+      const trailingEnd = index === tof.entries.length - 1 ? endRun : "";
+      return `<w:p>${pPr}${boundary}${tofEntryContentXml(entry, tof.options)}${trailingEnd}</w:p>`;
+    })
+    .join("");
+}
+
 /** One header/footer part's full XML (SPEC-029 AC-3..6, AC-24): its own
  * paragraphs/tables/images, sharing the exact same per-block serialisation
  * body content uses (paragraphXml/tableXml/imageParagraphXml) rather than a
@@ -1442,9 +1498,10 @@ function headerFooterPartXml(
       if (block.type === "break") {
         return "";
       }
-      if (block.type === "toc") {
-        // A TOC is a body-level feature (SPEC-033); one is never inserted
-        // into a header/footer, but the Block union covers it structurally.
+      if (block.type === "toc" || block.type === "tof") {
+        // A TOC/ToF is a body-level feature (SPEC-033/055); one is never
+        // inserted into a header/footer, but the Block union covers it
+        // structurally.
         return "";
       }
       return paragraphXml(block, includeOpaque, inlineCtx);
@@ -1575,7 +1632,7 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
           if (block.type === "table") {
             return tableXml(block, includeOpaque, inlineCtx, () => undefined);
           }
-          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "break" || block.type === "toc") {
+          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "break" || block.type === "toc" || block.type === "tof") {
             // A note body holds paragraphs (and its first block must, to
             // carry the reference marker); images/shapes/charts/breaks/TOCs
             // have no valid per-note serialisation, so they are omitted here
@@ -1988,6 +2045,8 @@ function* documentBlockXml(
           yield `<w:p><w:r><w:br w:type="${block.kind}"/></w:r></w:p>`;
         } else if (block.type === "toc") {
           yield tocFieldXml(block, model, sectionIndex);
+        } else if (block.type === "tof") {
+          yield tofFieldXml(block, model, sectionIndex);
         } else {
           yield paragraphXml(
             block,
@@ -2116,7 +2175,7 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "chart") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "tof" || block.type === "chart") {
         continue;
       }
       if (block.type === "shape") {
