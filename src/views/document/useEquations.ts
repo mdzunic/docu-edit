@@ -46,6 +46,17 @@ import type { EditorContext } from "./context";
 
 export type EquationsDeps = EditorContext;
 
+/** The shape of `useEquations`'s return — the object DocumentView hands to
+ * EquationEditorHost.vue as its single `api` prop. */
+export type EquationsApi = ReturnType<typeof useEquations>;
+
+/** Typed-access seam for EquationEditorHost.vue: the espree constraint bars an
+ * inline `as` cast in a `.vue` script, so the host casts its runtime `Object`
+ * prop through this helper (same idiom as asChart/asVisibleCommentThreads). */
+export function asEquationsApi(api: unknown): EquationsApi {
+  return api as EquationsApi;
+}
+
 /** Where an equation run lives in the model, so an edit session can write its
  * new body back. `cell` descends into a table cell (row/column). */
 interface EquationLocator {
@@ -211,6 +222,24 @@ export function useEquations(deps: EquationsDeps) {
   const down = () => editState.value && apply(moveDown(editState.value));
   const back = () => editState.value && apply(backspace(editState.value));
 
+  /** Dispatch an EquationEditor "op" event to the matching engine call — the
+   * single entry point the editor panel drives, so DocumentView needs no
+   * per-operation wiring. */
+  const op = (o: { kind: string; text?: string; id?: string }) => {
+    switch (o.kind) {
+      case "type": if (o.text) type(o.text); break;
+      case "template": if (o.id) template(o.id); break;
+      case "glyph": if (o.text) glyph(o.text); break;
+      case "tab": tab(); break;
+      case "shiftTab": shiftTab(); break;
+      case "left": left(); break;
+      case "right": right(); break;
+      case "up": up(); break;
+      case "down": down(); break;
+      case "backspace": back(); break;
+    }
+  };
+
   /** Insert a glyph from SPEC-026's character picker into the equation
    * (AC-14/15). Returns true when the glyph was consumed by an open session. */
   function insertPickerGlyph(g: string): boolean {
@@ -316,16 +345,7 @@ export function useEquations(deps: EquationsDeps) {
     equationAltText: editAltText,
     equationDisplay: editDisplay,
     equationLinearForm: () => (editState.value ? editLinearForm(editState.value) : ""),
-    equationType: type,
-    equationTemplate: template,
-    equationGlyph: glyph,
-    equationTab: tab,
-    equationShiftTab: shiftTab,
-    equationLeft: left,
-    equationRight: right,
-    equationUp: up,
-    equationDown: down,
-    equationBackspace: back,
+    equationOp: op,
     setEquationAltText: setAltText,
     commitEquation: commitAndClose,
     closeEquationEditor: close,

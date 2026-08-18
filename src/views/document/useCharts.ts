@@ -7,7 +7,7 @@
 // grouping UI (Chart still participates in shapes.ts's generic z-order/
 // grouping machinery at the model level, SPEC-052 AC-24, just not through a
 // dedicated Chart-side gesture here).
-import { nextTick, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { caretSelection, documentStart, type CommandResult, type ModelSelection } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { CM_PER_PX } from "../../lib/core/units";
@@ -24,7 +24,7 @@ import {
   setChartWrap,
   type ChartLocation,
 } from "../../lib/charts";
-import { chartDataFromTableCells, type ChartFromTableResult } from "../../lib/core/charts";
+import { chartDataFromTableCells, SINGLE_SERIES_CHART_TYPES, type ChartFromTableResult } from "../../lib/core/charts";
 import { isChart, type DocumentModel, type ImageWrapMode } from "../../lib/documentModel";
 import { type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
 import type { CaretPosition } from "../../lib/textEditing";
@@ -307,8 +307,49 @@ export function useCharts(deps: ChartsDeps) {
   void editable;
   void CM_PER_PX;
 
+  /** The data sheet dialog's prefill (SPEC-052 AC-4..AC-13): the selected
+   * chart's current categories/series, and whether its type renders only the
+   * first series (pie/doughnut). */
+  const chartDataSheetInitial = computed(() => {
+    const model = doc.value;
+    const location = chartSelection.value;
+    const chart = model && location ? chartAt(model, location) : null;
+    if (!chart) {
+      return { categories: [], series: [], singleSeriesOnly: false };
+    }
+    return {
+      categories: chart.categories,
+      series: chart.series,
+      singleSeriesOnly: SINGLE_SERIES_CHART_TYPES.has(chart.chartType),
+    };
+  });
+
+  /** The options panel's prefill (SPEC-052 AC-14..AC-20). */
+  const chartOptionsInitial = computed(() => {
+    const model = doc.value;
+    const location = chartSelection.value;
+    const chart = model && location ? chartAt(model, location) : null;
+    if (!chart) {
+      return { legend: "none", dataLabels: false, gridlines: false, series: [], hasAxes: false };
+    }
+    return {
+      title: chart.options.title,
+      categoryAxisTitle: chart.options.categoryAxisTitle,
+      valueAxisTitle: chart.options.valueAxisTitle,
+      legend: chart.options.legend,
+      dataLabels: chart.options.dataLabels,
+      gridlines: chart.options.gridlines,
+      valueAxisMin: chart.options.valueAxisMin,
+      valueAxisMax: chart.options.valueAxisMax,
+      series: chart.series,
+      hasAxes: chart.chartType !== "pie" && chart.chartType !== "doughnut",
+    };
+  });
+
   return {
     chartSelection,
+    chartDataSheetInitial,
+    chartOptionsInitial,
     chartHandles,
     editingChartData,
     editingChartOptions,

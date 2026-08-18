@@ -149,7 +149,7 @@ import {
   noBlocks,
   noNoteContent,
 } from "../lib/documentModel";
-import { asChartType, CHART_CATALOGUE, SINGLE_SERIES_CHART_TYPES } from "../lib/core/charts";
+import { asChartType, CHART_CATALOGUE } from "../lib/core/charts";
 import { asShapeGeometry } from "../lib/core/shapes";
 import {
   asBorderLineStyle,
@@ -350,7 +350,7 @@ import StylesPane from "../components/StylesPane.vue";
 import StyleEditorDialog from "../components/StyleEditorDialog.vue";
 import StyleDeleteDialog from "../components/StyleDeleteDialog.vue";
 import ImportStylesDialog from "../components/ImportStylesDialog.vue";
-import EquationEditor from "../components/EquationEditor.vue";
+import EquationEditorHost from "../components/EquationEditorHost.vue";
 import {
   breakGroup as breakTypingGroup,
   canRedo as canRedoDocument,
@@ -772,101 +772,29 @@ const {
   handleChartDuplicate,
   chartToolbarStyle,
   chartAtClientPoint,
+  chartDataSheetInitial,
+  chartOptionsInitial,
 } = useCharts({ ...editorContext });
 
-// Equations (SPEC-056): Insert → Equation / Display equation and Alt+=.
-const {
-  insertEquation,
-  insertDisplayEquationAtCaret,
-  insertNumberedDisplayEquationAtCaret,
-  activateEquation,
-  insertPickerGlyph,
-  equationEditState,
-  equationAltText,
-  equationLinearForm,
-  equationType,
-  equationTemplate,
-  equationGlyph,
-  equationTab,
-  equationShiftTab,
-  equationLeft,
-  equationRight,
-  equationUp,
-  equationDown,
-  equationBackspace,
-  setEquationAltText,
-  commitEquation,
-  closeEquationEditor,
-} = useEquations({ ...editorContext });
-
-// SPEC-056: dispatch an EquationEditor "op" event to the right engine call.
-function handleEquationOp(op = { kind: "", text: "", id: "" }) {
-  switch (op.kind) {
-    case "type": if (op.text) equationType(op.text); break;
-    case "template": if (op.id) equationTemplate(op.id); break;
-    case "glyph": if (op.text) equationGlyph(op.text); break;
-    case "tab": equationTab(); break;
-    case "shiftTab": equationShiftTab(); break;
-    case "left": equationLeft(); break;
-    case "right": equationRight(); break;
-    case "up": equationUp(); break;
-    case "down": equationDown(); break;
-    case "backspace": equationBackspace(); break;
-  }
-}
+// Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
+// session's editing surface, op dispatch and overlay live in the composable
+// and EquationEditorHost.vue; DocumentView keeps only the insert commands, the
+// clicked-equation `provide`, the character-picker route, and the host tag.
+const equations = useEquations({ ...editorContext });
 
 // SPEC-056: an equation clicked in the document opens the editor. Provided to
 // the paint components (DocPageBlock/DocBlockEntries) which own the click.
-provide("activateEquation", activateEquation);
+provide("activateEquation", equations.activateEquation);
 
 // SPEC-056: route a character-picker glyph into an open equation (AC-14/15);
 // otherwise it inserts into the document as before.
 function onSpecialCharacterInsert(text = "") {
-  if (insertPickerGlyph(text)) {
+  if (equations.insertPickerGlyph(text)) {
     specialCharacterDialogOpen.value = false;
     return;
   }
   handleSpecialCharacterInsert(text);
 }
-
-/** The data sheet dialog's prefill (AC-4..AC-13): the selected chart's
- * current categories/series, and whether its type renders only the first
- * series (AC "the data sheet says so", pie/doughnut). */
-const chartDataSheetInitial = computed(() => {
-  const model = doc.value;
-  const location = chartSelection.value;
-  const chart = model && location ? chartAt(model, location) : null;
-  if (!chart) {
-    return { categories: [], series: [], singleSeriesOnly: false };
-  }
-  return {
-    categories: chart.categories,
-    series: chart.series,
-    singleSeriesOnly: SINGLE_SERIES_CHART_TYPES.has(chart.chartType),
-  };
-});
-
-/** The options panel's prefill (AC-14..AC-20). */
-const chartOptionsInitial = computed(() => {
-  const model = doc.value;
-  const location = chartSelection.value;
-  const chart = model && location ? chartAt(model, location) : null;
-  if (!chart) {
-    return { legend: "none", dataLabels: false, gridlines: false, series: [], hasAxes: false };
-  }
-  return {
-    title: chart.options.title,
-    categoryAxisTitle: chart.options.categoryAxisTitle,
-    valueAxisTitle: chart.options.valueAxisTitle,
-    legend: chart.options.legend,
-    dataLabels: chart.options.dataLabels,
-    gridlines: chart.options.gridlines,
-    valueAxisMin: chart.options.valueAxisMin,
-    valueAxisMax: chart.options.valueAxisMax,
-    series: chart.series,
-    hasAxes: chart.chartType !== "pie" && chart.chartType !== "doughnut",
-  };
-});
 
 // Footnotes and endnotes (SPEC-031) live in useNotes; it provides `activeNote` /
 // `noteRemountEpoch` that usePaginationView renders the note areas from.
@@ -3172,11 +3100,11 @@ const editorCommands = new Map([
     void scrollModelCaretIntoView(caret, true);
   }],
   // Alt+= (SPEC-056 AC-3), and Insert → Equation (AC-1).
-  ["insert.equation", () => { insertEquation(); }],
+  ["insert.equation", () => { equations.insertEquation(); }],
   // Insert → Display equation (SPEC-056 AC-2).
-  ["insert.display-equation", () => { insertDisplayEquationAtCaret(); }],
+  ["insert.display-equation", () => { equations.insertDisplayEquationAtCaret(); }],
   // Insert → Numbered equation (SPEC-056 AC-17).
-  ["insert.numbered-equation", () => { insertNumberedDisplayEquationAtCaret(); }],
+  ["insert.numbered-equation", () => { equations.insertNumberedDisplayEquationAtCaret(); }],
   // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
   ["insert.footnote", () => { handleInsertNote("footnote"); }],
   // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
@@ -4193,21 +4121,7 @@ function handleMenuCommand(id = "") {
       @insert="onSpecialCharacterInsert"
       @cancel="specialCharacterDialogOpen = false"
     />
-    <div
-      v-if="equationEditState"
-      class="equation-editor-overlay"
-      style="position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 60;"
-    >
-      <EquationEditor
-        :body="equationEditState.body"
-        :linear="equationLinearForm()"
-        :alt-text="equationAltText"
-        @op="handleEquationOp"
-        @alt-text="setEquationAltText"
-        @commit="commitEquation"
-        @close="closeEquationEditor"
-      />
-    </div>
+    <EquationEditorHost :api="equations" />
     <ImageOptionsDialog
       v-if="imageOptionsOpen"
       :initial="imageOptionsInitial"

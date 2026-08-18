@@ -9,7 +9,7 @@
 import { shallowRef, ref } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import { useEquations } from "./useEquations";
-import { createDocument, type DocumentModel, type Paragraph } from "../../lib/documentModel";
+import { createDocument, type DocumentModel } from "../../lib/documentModel";
 import type { ApplyEditOptions } from "./context";
 
 interface ApplyEditCall {
@@ -72,7 +72,7 @@ describe("useEquations focus hand-off (AC-1/2/3/17)", () => {
     eq.insertEquation();
     // Type into the just-opened session, then commit — the caret must return
     // to the document, so this applyEdit must NOT skip caret restore.
-    eq.equationType("a");
+    eq.equationOp({ kind: "type", text: "a" });
     eq.commitEquation();
     const commit = calls.find((c) => c.label === "edit equation");
     expect(commit).toBeDefined();
