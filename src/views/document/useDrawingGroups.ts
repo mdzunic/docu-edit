@@ -87,17 +87,6 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     return sel ? containerAt(sel.section, sel.block) : null;
   }
 
-  /** The member the selection addresses, or null when the container itself is
-   * selected (empty path). */
-  function selectedMember(): DrawingMember | null {
-    const sel = groupSelection.value;
-    const container = selectedContainer();
-    if (!sel || !container || !sel.path || sel.path.length === 0) {
-      return null;
-    }
-    return memberAtPath(container, sel.path);
-  }
-
   function selectionIsContainer(): boolean {
     const sel = groupSelection.value;
     return !!sel && (!sel.path || sel.path.length === 0);
@@ -155,7 +144,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     }
     if (sel.path && sel.path.length > 0) {
       groupSelection.value = { section: sel.section, block: sel.block, path: sel.path.slice(0, -1) };
-      void nextTick().then(remeasureGroupHandles);
+      void nextTick().then(() => { focusSelectedProxy(); remeasureGroupHandles(); });
       return true;
     }
     clearGroupSelection();
@@ -208,6 +197,48 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
       widthCm: rect.width * CM_PER_PX,
       heightCm: rect.height * CM_PER_PX,
     };
+  }
+
+  /** Moves DOM focus to the currently selected container/member proxy so
+   * keyboard traversal and screen readers follow the selection (SPEC-057
+   * "Rendering and test surface"). The proxy testids are built from the
+   * container's own `drawing-<index>` base, which we read off the rendered
+   * container proxy. */
+  function focusSelectedProxy() {
+    const sel = groupSelection.value;
+    const root = contentRoot.value;
+    if (!sel || !root) {
+      return;
+    }
+    const anchor = root.querySelector(`.doc-group-anchor[data-section="${sel.section}"][data-block="${sel.block}"]`);
+    const containerProxy = anchor?.querySelector(".doc-group-proxy");
+    const base = containerProxy?.getAttribute("data-testid");
+    if (!base) {
+      return;
+    }
+    const path = sel.path ?? [];
+    const testid = path.length === 0 ? base : base + path.map((j) => `-member-${j}`).join("");
+    const el = root.querySelector(`[data-testid="${testid}"]`);
+    if (el instanceof HTMLElement) {
+      el.focus();
+    }
+  }
+
+  /** The container `.members.length` at the selected path's parent, for Tab
+   * traversal, plus whether the selected drawing is itself an enterable
+   * container (for Enter). */
+  function selectedNode() {
+    const container = selectedContainer();
+    const sel = groupSelection.value;
+    if (!container || !sel) {
+      return { node: null, siblingCount: 0, parent: null };
+    }
+    const path = sel.path ?? [];
+    const node = memberAtPath(container, path);
+    const parentPath = path.slice(0, -1);
+    const parent = memberAtPath(container, parentPath);
+    const siblingCount = parent && isDrawingGroup(parent) ? parent.members.length : 0;
+    return { node, siblingCount, parent };
   }
 
   function remeasureGroupHandles() {
@@ -399,7 +430,33 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
    * Ctrl/Cmd+D duplicate, and arrow-key nudge. Returns whether it handled the
    * event; the caller only calls it while a group is selected. */
   function handleGroupKeyDown(event: KeyboardEvent): boolean {
-    if (!groupSelection.value) {
+    const sel = groupSelection.value;
+    if (!sel) {
+      return false;
+    }
+    if (event.key === "Enter") {
+      // Enter descends into the focused group proxy (SPEC-057 AC-41).
+      const { node } = selectedNode();
+      if (node && isDrawingGroup(node) && node.members.length > 0) {
+        event.preventDefault();
+        groupSelection.value = { section: sel.section, block: sel.block, path: [...(sel.path ?? []), 0] };
+        void nextTick().then(() => { focusSelectedProxy(); remeasureGroupHandles(); });
+        return true;
+      }
+      return false;
+    }
+    if (event.key === "Tab" && sel.path && sel.path.length > 0) {
+      // Tab traverses siblings within a group proxy (SPEC-057 AC-43), wrapping.
+      const { siblingCount } = selectedNode();
+      if (siblingCount > 1) {
+        event.preventDefault();
+        const path = sel.path;
+        const i = path[path.length - 1];
+        const next = event.shiftKey ? (i - 1 + siblingCount) % siblingCount : (i + 1) % siblingCount;
+        groupSelection.value = { section: sel.section, block: sel.block, path: [...path.slice(0, -1), next] };
+        void nextTick().then(() => { focusSelectedProxy(); remeasureGroupHandles(); });
+        return true;
+      }
       return false;
     }
     if (event.key === "Delete" || event.key === "Backspace") {
@@ -449,6 +506,27 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     return selectionIsContainer() ? selectedContainer() : null;
   }
 
+  /** The container toolbar's full prop bag (SPEC-057 AC-49), or null when no
+   * container is selected or its handles are not yet measured — so
+   * DocumentView renders `<GroupToolbar v-if=state v-bind=state />` in one
+   * line. A sealed container shows rotation off and alt text read-only. */
+  function groupToolbarState() {
+    const container = selectedGroupBlock();
+    if (!container || !groupHandles.value) {
+      return null;
+    }
+    const pos = groupToolbarStyle();
+    return {
+      left: pos.left,
+      top: pos.top,
+      placement: pos.placement,
+      wrap: container.wrap,
+      rotationDeg: container.rotationDeg ?? 0,
+      altText: container.altText ?? "",
+      sealed: isSealedGroup(container),
+    };
+  }
+
   return {
     groupSelection,
     multiSelection,
@@ -470,8 +548,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     setSelectedWrap,
     remeasureGroupHandles,
     groupToolbarStyle,
-    selectedGroupBlock,
-    selectedMember,
+    groupToolbarState,
     selectionIsContainer,
     handleGroupKeys,
   };

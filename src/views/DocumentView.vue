@@ -23,6 +23,7 @@ import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.v
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
+import GroupToolbar from "../components/GroupToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
@@ -757,6 +758,7 @@ const {
 // — see that composable's header comment).
 const {
   chartSelection,
+  handleChartKeys,
   chartHandles,
   editingChartData,
   editingChartOptions,
@@ -1962,20 +1964,8 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (drawingGroups.handleGroupKeys(event)) {
     return;
   }
-  if (chartSelection.value && !editingChartData.value && !editingChartOptions.value) {
-    // A selected chart's keyboard interactions (SPEC-052) — the same
-    // dedicated keydown path shapes/images use: a chart click never places
-    // a DOM caret/selection inside a contenteditable region.
-    if (event.key === "Delete" || event.key === "Backspace") {
-      event.preventDefault();
-      deleteChartWithCaptionPrompt();
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
-      event.preventDefault();
-      handleChartDuplicate();
-      return;
-    }
+  if (handleChartKeys(event, deleteChartWithCaptionPrompt)) {
+    return;
   }
   if (tocSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
     // Deleting a selected TOC (SPEC-033 AC-16) is the same dedicated
@@ -3917,6 +3907,17 @@ function handleMenuCommand(id = "") {
       @ungroup="handleUngroupSelected"
       @delete="handleShapeDelete"
       @duplicate="handleShapeDuplicate"
+    />
+    <GroupToolbar
+      v-if="drawingGroups.groupToolbarState()"
+      v-bind="drawingGroups.groupToolbarState()"
+      class="print-exclude"
+      @wrap="drawingGroups.setSelectedWrap"
+      @rotation="drawingGroups.setSelectedRotation"
+      @alt-text="drawingGroups.setSelectedAltText"
+      @duplicate="drawingGroups.duplicateSelected"
+      @delete="drawingGroups.deleteSelected"
+      @ungroup="drawingGroups.ungroupSelectedContainer"
     />
     <ChartToolbar
       v-if="chartSelection && chartHandles && doc && chartAt(doc, chartSelection)"

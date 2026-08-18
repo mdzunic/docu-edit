@@ -346,8 +346,30 @@ export function useCharts(deps: ChartsDeps) {
     };
   });
 
+  /** A selected chart's keyboard interactions (SPEC-052): Delete (through the
+   * caller's caption-aware delete) and Ctrl/Cmd+D duplicate. Returns whether
+   * it handled the event. A chart click never places a DOM caret, so this is a
+   * dedicated keydown path. */
+  function handleChartKeys(event: KeyboardEvent, deleteWithCaptionPrompt: () => void): boolean {
+    if (!chartSelection.value || editingChartData.value || editingChartOptions.value) {
+      return false;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteWithCaptionPrompt();
+      return true;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      handleChartDuplicate();
+      return true;
+    }
+    return false;
+  }
+
   return {
     chartSelection,
+    handleChartKeys,
     chartDataSheetInitial,
     chartOptionsInitial,
     chartHandles,
