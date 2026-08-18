@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiButton from "./ui/UiButton.vue";
 // The floating chart toolbar (SPEC-052): shown near a selected chart,
 // offering "Edit data" (opens the data sheet, AC-5), "Chart options" (opens
 // the options panel) and delete/duplicate. Mirrors ShapeToolbar.vue's own
@@ -35,46 +36,42 @@ function toolbarStyle(left = 0, top = 0) {
       </span>
     </template>
     <template v-else>
-      <button
-        type="button"
-        class="chart-toolbar-option"
+      <UiButton
+        variant="ghost"
         data-testid="chart-edit-data-button"
         @mousedown.prevent
         @click="$emit('edit-data')"
       >
         Edit data
-      </button>
-      <button
-        type="button"
-        class="chart-toolbar-option"
+      </UiButton>
+      <UiButton
+        variant="ghost"
         data-testid="chart-options-button"
         @mousedown.prevent
         @click="$emit('options')"
       >
         Chart options
-      </button>
+      </UiButton>
     </template>
     <span class="chart-toolbar-separator" />
-    <button
-      type="button"
-      class="chart-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="chart-duplicate-button"
       title="Duplicate"
       @mousedown.prevent
       @click="$emit('duplicate')"
     >
       Duplicate
-    </button>
-    <button
-      type="button"
-      class="chart-toolbar-option"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="chart-delete-button"
       title="Delete chart"
       @mousedown.prevent
       @click="$emit('delete')"
     >
       Delete
-    </button>
+    </UiButton>
   </div>
 </template>
 
@@ -98,22 +95,6 @@ function toolbarStyle(left = 0, top = 0) {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   padding: var(--space-2) var(--space-3);
-}
-
-.chart-toolbar-option {
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.chart-toolbar-option:hover {
-  background: var(--surface-canvas);
 }
 
 .chart-toolbar-separator {

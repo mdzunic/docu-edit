@@ -8,6 +8,7 @@ import { computed, ref } from "vue";
 import { asStringList } from "../lib/documentModel";
 import { isValidNewLabel } from "../lib/captions";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** Every label the dialog offers: the three built-ins plus any custom
@@ -171,21 +172,20 @@ function insert() {
     </label>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="caption-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="caption-insert"
         @click="insert"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -239,22 +239,6 @@ function insert() {
   margin-bottom: var(--space-2);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled,
 .new-label-controls button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

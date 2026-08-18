@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The table properties dialog (SPEC-023 AC-10..23): border style/width/
 // colour with the four standard presets, cell shading, padding, vertical
@@ -303,22 +304,21 @@ function apply() {
     </section>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="table-props-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="table-props-apply"
         :disabled="!!error()"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -418,23 +418,4 @@ function apply() {
   font-size: var(--text-md);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

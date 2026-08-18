@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The "Image options" panel (SPEC-024 AC-15..22): alt text, size in cm with
 // a lock-aspect-ratio toggle, and a "Reset size" button. Same dialog shape
@@ -156,22 +157,21 @@ function apply() {
     </button>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="image-options-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="image-options-apply"
         :disabled="!!error()"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -240,23 +240,4 @@ function apply() {
   margin-bottom: var(--space-3);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

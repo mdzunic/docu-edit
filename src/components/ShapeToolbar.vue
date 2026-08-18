@@ -5,6 +5,7 @@
 // ImageToolbar.vue's own pattern and positioning convention. Runtime
 // prop/emit declarations per the espree constraint (see AppShell.vue).
 import { ref, watch } from "vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   left: { type: Number, required: true },
@@ -154,15 +155,14 @@ function onZOrderChange(event = new Event("change")) {
         @mousedown.stop
       >
     </label>
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="shape-fill-none"
       @mousedown.prevent
       @click="onFillNone"
     >
       No fill
-    </button>
+    </UiButton>
     <span class="shape-toolbar-separator" />
     <label
       class="shape-toolbar-field"
@@ -210,15 +210,14 @@ function onZOrderChange(event = new Event("change")) {
         Dotted
       </option>
     </select>
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="shape-outline-none"
       @mousedown.prevent
       @click="onOutlineNone"
     >
       No outline
-    </button>
+    </UiButton>
     <span class="shape-toolbar-separator" />
     <label
       class="shape-toolbar-field"
@@ -273,26 +272,24 @@ function onZOrderChange(event = new Event("change")) {
         {{ option.label }}
       </option>
     </select>
-    <button
+    <UiButton
       v-if="canGroup"
-      type="button"
-      class="shape-toolbar-option"
+      variant="ghost"
       data-testid="shape-group-button"
       @mousedown.prevent
       @click="emit('group')"
     >
       Group
-    </button>
-    <button
+    </UiButton>
+    <UiButton
       v-if="grouped"
-      type="button"
-      class="shape-toolbar-option"
+      variant="ghost"
       data-testid="shape-ungroup-button"
       @mousedown.prevent
       @click="emit('ungroup')"
     >
       Ungroup
-    </button>
+    </UiButton>
     <span class="shape-toolbar-separator" />
     <label
       class="shape-toolbar-field"
@@ -309,26 +306,24 @@ function onZOrderChange(event = new Event("change")) {
       >
     </label>
     <span class="shape-toolbar-separator" />
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="shape-duplicate-button"
       title="Duplicate"
       @mousedown.prevent
       @click="emit('duplicate')"
     >
       Duplicate
-    </button>
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="shape-delete-button"
       title="Delete shape"
       @mousedown.prevent
       @click="emit('delete')"
     >
       Delete
-    </button>
+    </UiButton>
   </div>
 </template>
 
@@ -375,22 +370,6 @@ function onZOrderChange(event = new Event("change")) {
 
 .shape-toolbar-select {
   font-size: var(--text-md);
-}
-
-.shape-toolbar-option {
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.shape-toolbar-option:hover {
-  background: var(--surface-canvas);
 }
 
 .shape-toolbar-separator {

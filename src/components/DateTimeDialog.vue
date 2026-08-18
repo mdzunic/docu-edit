@@ -8,6 +8,7 @@
 import { computed, ref } from "vue";
 import { asDateTimePreviews } from "../lib/fields";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** Each catalogue format already rendered for the preview column, in the
@@ -73,22 +74,21 @@ function insert() {
     </label>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="date-time-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="date-time-insert"
         :disabled="!selected"
         @click="insert"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -128,25 +128,5 @@ function insert() {
   align-items: center;
   gap: var(--space-3);
   font-size: var(--text-lg);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

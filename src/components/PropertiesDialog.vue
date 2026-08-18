@@ -39,6 +39,7 @@ import { mdFileName } from "../lib/md/writer";
 import { CORE_EXTRA_FIELD_LABELS } from "../lib/docx/docProps";
 import { META_EXTRA_FIELD_LABELS } from "../lib/odf/meta";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   model: { type: Object, required: true },
@@ -658,15 +659,14 @@ function removeCustomProperty(index = 0) {
     <template #actions>
       <!-- [autofocus]: BaseDialog's initial focus lands here, as this
            dialog's own onMounted used to arrange. -->
-      <button
-        type="button"
-        class="primary"
+      <UiButton
+        variant="secondary"
         data-testid="properties-close"
         autofocus
         @click="emit('close')"
       >
         Close
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -810,16 +810,6 @@ function removeCustomProperty(index = 0) {
   margin-top: var(--space-4);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary,
 .custom-property-row button.primary {
   background: var(--surface-brand);
   border-color: var(--surface-brand);

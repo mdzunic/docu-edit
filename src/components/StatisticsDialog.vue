@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The statistics dialog (SPEC-036 AC-4..12): pages, words, characters (with
 // and without spaces), paragraphs, sentences and a separate CJK character
@@ -71,15 +72,14 @@ function onToggleIncludeNotes(event = new Event("change")) {
       <span>Include footnotes and endnotes</span>
     </label>
     <template #actions>
-      <button
-        type="button"
-        class="primary"
+      <UiButton
+        variant="secondary"
         data-testid="statistics-close"
         autofocus
         @click="emit('close')"
       >
         Close
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -110,20 +110,5 @@ function onToggleIncludeNotes(event = new Event("change")) {
   gap: var(--space-3);
   font-size: var(--text-md);
   color: var(--text-primary);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
 }
 </style>

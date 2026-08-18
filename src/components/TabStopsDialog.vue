@@ -8,6 +8,7 @@
 import { computed, ref } from "vue";
 import { asTabStopAlignment, asTabStops } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** The selection's current stops (commands.selectionTabStops). */
@@ -218,30 +219,29 @@ function apply() {
          actions row cannot express. It stays in the body with its own
          scoped .dialog-actions styles. -->
     <div class="dialog-actions">
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="tabs-clear-all"
         :disabled="stops.length === 0"
         @click="clearAll"
       >
         Clear all
-      </button>
+      </UiButton>
       <span class="actions-spacer" />
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="tabs-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="tabs-apply"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </div>
   </BaseDialog>
 </template>
@@ -347,25 +347,5 @@ function apply() {
 
 .actions-spacer {
   flex: 1;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

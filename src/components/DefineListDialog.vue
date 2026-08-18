@@ -11,6 +11,7 @@ import { computed, ref } from "vue";
 import { definedMarkerText } from "../lib/core/listDefinitions";
 import { asListLevelDefinitions } from "../lib/core/lists";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** The nine ListLevelDefinition entries to prefill from (see
@@ -276,22 +277,21 @@ function apply() {
       {{ error }}
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="define-list-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="define-list-apply"
         :disabled="!!error"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -337,23 +337,4 @@ function apply() {
   font-size: var(--text-md);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

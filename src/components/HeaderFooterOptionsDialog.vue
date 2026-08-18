@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // "Header/footer options" (SPEC-029 AC-11, AC-12, AC-22, AC-23): "Different
 // first page" and "Different odd and even pages" toggles, plus "Start
@@ -78,21 +79,20 @@ function apply() {
       Leave unchecked to continue numbering from the previous section.
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="hf-options-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="hf-options-apply"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -125,20 +125,5 @@ function apply() {
   margin: var(--space-3) 0 0;
   font-size: var(--text-sm);
   color: var(--text-secondary);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
 }
 </style>

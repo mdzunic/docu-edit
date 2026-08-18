@@ -2,6 +2,8 @@
 import { onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { shortcutLabel } from "../lib/shortcuts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import AppIcon from "./AppIcon.vue";
+import UiToggleButton from "./ui/UiToggleButton.vue";
 
 // Paragraph geometry controls (SPEC-014): alignment, indent step buttons,
 // the line-spacing menu (presets, the space-before toggle, "Custom
@@ -51,10 +53,10 @@ const emit = defineEmits([
 // Static per mount, like FormatToolbar's FORMATS list. Shortcut text is read
 // from the SPEC-021 registry rather than hardcoded (AC-15, AC-16).
 const ALIGNMENTS = [
-  { key: "left", label: "Align left", shortcut: shortcutLabel("paragraph.alignLeft") },
-  { key: "center", label: "Align centre", shortcut: shortcutLabel("paragraph.alignCenter") },
-  { key: "right", label: "Align right", shortcut: shortcutLabel("paragraph.alignRight") },
-  { key: "justify", label: "Justify", shortcut: shortcutLabel("paragraph.alignJustify") },
+  { key: "left", label: "Align left", shortcut: shortcutLabel("paragraph.alignLeft"), icon: "align-left" },
+  { key: "center", label: "Align centre", shortcut: shortcutLabel("paragraph.alignCenter"), icon: "align-center" },
+  { key: "right", label: "Align right", shortcut: shortcutLabel("paragraph.alignRight"), icon: "align-right" },
+  { key: "justify", label: "Justify", shortcut: shortcutLabel("paragraph.alignJustify"), icon: "align-justify" },
 ];
 
 const decreaseIndentTitle = `Decrease indent (${shortcutLabel("paragraph.outdent")} at the start of a paragraph)`;
@@ -233,25 +235,17 @@ onBeforeUnmount(() => {
     aria-label="Paragraph formatting"
     @keydown="handleKeydown"
   >
-    <button
+    <UiToggleButton
       v-for="entry in ALIGNMENTS"
       :key="entry.key"
-      type="button"
-      class="paragraph-button"
-      :data-testid="`align-${entry.key}`"
+      :icon="entry.icon"
+      :label="`${entry.label} (${entry.shortcut})`"
+      :pressed="alignment === entry.key"
       :disabled="disabled"
-      :title="`${entry.label} (${entry.shortcut})`"
-      :aria-label="`${entry.label} (${entry.shortcut})`"
-      :aria-pressed="alignment === entry.key ? 'true' : 'false'"
+      :data-testid="`align-${entry.key}`"
       @mousedown.prevent
       @click="emit('align', entry.key)"
-    >
-      <span
-        class="align-glyph"
-        :class="`align-glyph-${entry.key}`"
-        aria-hidden="true"
-      />
-    </button>
+    />
     <button
       type="button"
       class="paragraph-button"
@@ -262,7 +256,7 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="emit('indent', -1)"
     >
-      ⇤
+      <AppIcon name="indent-decrease" />
     </button>
     <button
       type="button"
@@ -274,25 +268,22 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="emit('indent', 1)"
     >
-      ⇥
+      <AppIcon name="indent-increase" />
     </button>
     <!-- Bulleted/numbered list toggles (SPEC-018 AC-1, AC-2), each with a
          marker-style dropdown on a separate expander next to the toggle
          (AC-12) so a plain click still just toggles. -->
     <div class="list-cluster">
-      <button
-        type="button"
-        class="paragraph-button list-toggle"
-        data-testid="list-bulleted"
+      <UiToggleButton
+        class="list-toggle"
+        icon="bullet-list"
+        label="Bulleted list"
+        :pressed="bulleted"
         :disabled="disabled"
-        title="Bulleted list"
-        aria-label="Bulleted list"
-        :aria-pressed="bulleted ? 'true' : 'false'"
+        data-testid="list-bulleted"
         @mousedown.prevent
         @click="emit('toggle-list', 'bullet')"
-      >
-        •≡
-      </button>
+      />
       <button
         ref="bulletMenuButton"
         type="button"
@@ -306,7 +297,7 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="toggleBulletMenu"
       >
-        ▾
+        <AppIcon name="chevron-down" />
       </button>
       <div
         v-if="bulletMenuOpen"
@@ -333,19 +324,16 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div class="list-cluster">
-      <button
-        type="button"
-        class="paragraph-button list-toggle"
-        data-testid="list-numbered"
+      <UiToggleButton
+        class="list-toggle"
+        icon="numbered-list"
+        label="Numbered list"
+        :pressed="numbered"
         :disabled="disabled"
-        title="Numbered list"
-        aria-label="Numbered list"
-        :aria-pressed="numbered ? 'true' : 'false'"
+        data-testid="list-numbered"
         @mousedown.prevent
         @click="emit('toggle-list', 'number')"
-      >
-        1≡
-      </button>
+      />
       <button
         ref="numberMenuButton"
         type="button"
@@ -359,7 +347,7 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="toggleNumberMenu"
       >
-        ▾
+        <AppIcon name="chevron-down" />
       </button>
       <div
         v-if="numberMenuOpen"
@@ -411,7 +399,7 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="toggleSpacingMenu"
     >
-      ↕≡
+      <AppIcon name="line-spacing" />
     </button>
     <div
       v-if="spacingOpen"
@@ -526,37 +514,6 @@ onBeforeUnmount(() => {
 .paragraph-button[aria-pressed="true"] {
   background: var(--accent-subtle);
   border-color: var(--accent-subtle);
-}
-
-/* Alignment glyphs: four text lines whose ragged edge shows the alignment.
-   Drawn with gradients so no icon asset or extra dependency is needed. */
-.align-glyph {
-  width: 14px;
-  height: 12px;
-  background-repeat: no-repeat;
-  background-image:
-    linear-gradient(var(--text-secondary), var(--text-secondary)),
-    linear-gradient(var(--text-secondary), var(--text-secondary)),
-    linear-gradient(var(--text-secondary), var(--text-secondary)),
-    linear-gradient(var(--text-secondary), var(--text-secondary));
-  background-size: 100% 2px, 70% 2px, 100% 2px, 70% 2px;
-}
-
-.align-glyph-left {
-  background-position: left 0, left 3.33px, left 6.66px, left 10px;
-}
-
-.align-glyph-center {
-  background-position: center 0, center 3.33px, center 6.66px, center 10px;
-}
-
-.align-glyph-right {
-  background-position: right 0, right 3.33px, right 6.66px, right 10px;
-}
-
-.align-glyph-justify {
-  background-size: 100% 2px, 100% 2px, 100% 2px, 100% 2px;
-  background-position: left 0, left 3.33px, left 6.66px, left 10px;
 }
 
 /* position/left/top come inline from useFloatingMenu (fixed, escapes the

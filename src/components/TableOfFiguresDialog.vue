@@ -6,6 +6,7 @@
 import { ref } from "vue";
 import { asStringList } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** The caption labels the document has, e.g. ["Figure", "Table"]. */
@@ -82,21 +83,20 @@ function apply() {
     </label>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="tof-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="tof-insert"
         @click="apply"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -126,20 +126,5 @@ function apply() {
   gap: var(--space-3);
   font-size: var(--text-lg);
   margin-bottom: var(--space-3);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
 }
 </style>

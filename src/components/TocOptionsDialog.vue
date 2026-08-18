@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // "Insert table of contents" options (SPEC-033 AC-5..7): which heading
 // levels to include, whether to show page numbers, and whether entries are
@@ -84,21 +85,20 @@ function apply() {
       <span>Use hyperlinks instead of page numbers</span>
     </label>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="toc-options-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="toc-options-apply"
         @click="apply"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -131,20 +131,5 @@ function apply() {
 
 .level-field {
   margin-bottom: var(--space-2);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
 }
 </style>

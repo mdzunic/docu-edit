@@ -7,6 +7,7 @@
 import { computed, ref } from "vue";
 import { asCrossRefBookmarks, asCrossRefCaptions, asCrossRefHeadings } from "../lib/fields";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** Heading targets: `[{ index, text, level }]` in document order. */
@@ -183,22 +184,21 @@ function insert() {
     </div>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="cross-reference-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="cross-reference-insert"
         :disabled="!target"
         @click="insert"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -263,23 +263,4 @@ function insert() {
   color: var(--text-secondary);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

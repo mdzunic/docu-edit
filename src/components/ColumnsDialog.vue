@@ -14,6 +14,7 @@ import {
   resolveColumnWidthsCm,
 } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** { columns: SectionColumns, contentWidthCm: number, applyTo: string }. */
@@ -272,22 +273,21 @@ function apply() {
     </p>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="columns-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="columns-confirm"
         :disabled="!!error"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -377,27 +377,5 @@ function apply() {
   margin: var(--space-2) 0 0;
   font-size: var(--text-md);
   color: var(--text-danger);
-}
-
-.dialog-actions button {
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button.primary:disabled {
-  background: var(--text-disabled);
-  border-color: var(--text-disabled);
-  cursor: default;
 }
 </style>

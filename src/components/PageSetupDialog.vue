@@ -13,6 +13,7 @@ import {
 } from "../lib/core/pageSetup";
 import { fromCm, roundForDisplay, toCm } from "../lib/core/units";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The "Page setup" dialog (SPEC-027 AC-1..9): paper size (a standard size or
 // Custom width/height), orientation and the four margins, all edited in the
@@ -337,22 +338,21 @@ function apply() {
     </section>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="page-setup-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="page-setup-apply"
         :disabled="!!error"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -415,25 +415,5 @@ function apply() {
   margin: var(--space-3) 0 0;
   color: var(--text-danger);
   font-size: var(--text-md);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

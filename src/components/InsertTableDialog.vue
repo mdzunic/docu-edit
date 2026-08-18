@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "../lib/core/tables";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The "Insert table…" dialog (SPEC-022 AC-2): row/column counts beyond the
 // grid picker's 10×10. OK emits the size for the parent to insert at the
@@ -91,22 +92,21 @@ function apply() {
       {{ error }}
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="insert-table-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="insert-table-confirm"
         :disabled="!!error"
         @click="apply"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -144,27 +144,5 @@ function apply() {
   margin: var(--space-3) 0 0;
   font-size: var(--text-md);
   color: var(--danger);
-}
-
-.dialog-actions button {
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button.primary:disabled {
-  background: var(--text-disabled);
-  border-color: var(--text-disabled);
-  cursor: default;
 }
 </style>

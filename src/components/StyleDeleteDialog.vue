@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // "Delete style" confirmation (SPEC-042 AC-7): asks before proceeding, and
 // when the style is in use (AC-2), warns that its paragraphs/runs/tables
@@ -37,21 +38,20 @@ const emit = defineEmits(["confirm", "cancel"]);
       will revert to its parent style, or to the default if it has none.
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="style-delete-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="danger"
+      </UiButton>
+      <UiButton
+        variant="danger"
         data-testid="style-delete-confirm"
         @click="emit('confirm')"
       >
         Delete
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -71,20 +71,5 @@ const emit = defineEmits(["confirm", "cancel"]);
   border-radius: var(--radius-sm);
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-md);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.danger {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: var(--text-on-brand);
 }
 </style>

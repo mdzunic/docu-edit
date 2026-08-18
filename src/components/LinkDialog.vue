@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { asLinkTargetEntries, isDangerousUrl, sanitizeHref } from "../lib/links";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The link dialog (SPEC-025 AC-1..3, AC-14..16, AC-19..21): display text, a
 // web address, and — as the alternative target — the document's headings and
@@ -188,22 +189,21 @@ function save() {
       </template>
     </div>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="link-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="link-save"
         :disabled="!canSave"
         @click="save"
       >
         Apply
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -281,25 +281,5 @@ function save() {
   background: var(--surface-selected);
   border-color: var(--accent-subtle);
   color: var(--text-accent);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, useTemplateRef } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The "Split cell…" dialog (SPEC-023 AC-8, AC-9): asks for the number of
 // rows and columns to split the selected cell into. OK emits the pair for
@@ -92,22 +93,21 @@ function apply() {
       {{ error() }}
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="split-cell-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="split-cell-apply"
         :disabled="!!error()"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -145,25 +145,5 @@ function apply() {
   margin: var(--space-3) 0 0;
   color: var(--text-danger);
   font-size: var(--text-md);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

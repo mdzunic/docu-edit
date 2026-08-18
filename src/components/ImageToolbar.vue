@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UiButton from "./ui/UiButton.vue";
+import UiToggleButton from "./ui/UiToggleButton.vue";
 // The floating image toolbar (SPEC-024 AC-9, AC-13): shown near a selected
 // image, offering the four wrap modes plus "Image options…". Positioned the
 // same way PasteOptionsChip is — a measured content rect turned into fixed
@@ -33,40 +35,35 @@ function toolbarStyle() {
     aria-label="Image formatting"
     :style="toolbarStyle()"
   >
-    <button
+    <UiToggleButton
       v-for="option in WRAP_MODES"
       :key="option.mode"
-      type="button"
-      class="image-toolbar-option"
-      :class="{ applied: option.mode === wrap }"
+      :label="option.label"
+      :pressed="option.mode === wrap"
       :data-testid="`image-wrap-${option.mode}`"
-      :aria-pressed="option.mode === wrap ? 'true' : 'false'"
-      :title="option.label"
       @mousedown.prevent
       @click="emit('wrap', option.mode)"
     >
       {{ option.label }}
-    </button>
+    </UiToggleButton>
     <span class="image-toolbar-separator" />
-    <button
-      type="button"
-      class="image-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="image-options-button"
       @mousedown.prevent
       @click="emit('options')"
     >
       Image options…
-    </button>
-    <button
-      type="button"
-      class="image-toolbar-option"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="image-delete-button"
       title="Delete image"
       @mousedown.prevent
       @click="emit('delete')"
     >
       Delete
-    </button>
+    </UiButton>
   </div>
 </template>
 
@@ -82,28 +79,6 @@ function toolbarStyle() {
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
-}
-
-.image-toolbar-option {
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.image-toolbar-option:hover {
-  background: var(--surface-canvas);
-}
-
-.image-toolbar-option.applied {
-  background: var(--surface-selected);
-  border-color: var(--accent-subtle);
-  color: var(--text-accent);
 }
 
 .image-toolbar-separator {

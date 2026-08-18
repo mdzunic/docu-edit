@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { MAX_TITLE_LENGTH } from "../lib/documentStore";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // Modal for renaming a library document. Owns the input-level validation
 // (non-empty, max length — the maxlength attribute already blocks typing
@@ -75,22 +76,21 @@ function save() {
       {{ error }}
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="rename-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="rename-save"
         :disabled="!!error"
         @click="save"
       >
         {{ props.confirmLabel }}
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -109,25 +109,5 @@ function save() {
   margin: var(--space-3) 0 0;
   color: var(--text-danger);
   font-size: var(--text-md);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

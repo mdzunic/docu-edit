@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // "Insert page number" (SPEC-029 AC-14..19): position (header/footer,
 // left/centre/right), numbering format (1, 2, 3 / i, ii, iii / a, b, c)
@@ -87,21 +88,20 @@ function apply() {
       <span>Page X of Y</span>
     </label>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="page-number-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="page-number-apply"
         @click="apply"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -142,20 +142,5 @@ function apply() {
   font-size: var(--text-md);
   color: var(--text-primary);
   margin-bottom: var(--space-3);
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: var(--space-3) var(--space-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: var(--surface-brand);
-  border-color: var(--surface-brand);
-  color: var(--text-on-brand);
 }
 </style>
