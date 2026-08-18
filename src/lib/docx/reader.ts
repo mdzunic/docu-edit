@@ -69,6 +69,7 @@ import {
   mergeRunFormatting,
   type FieldSpec,
 } from "../documentModel";
+import { migrateLegacyGroups } from "../drawingGroups";
 import { parseChipText } from "../mergeChips";
 import { canonicalDateTimeFormatFromDocx } from "../fields";
 import { sanitizeHref } from "../links";
@@ -2648,7 +2649,10 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
   });
 
   const sections: Section[] = rawSections.map((raw) => {
-    const section: Section = { blocks: raw.blocks };
+    // Legacy migration (SPEC-057): drawings sharing a `de:group` ordinal
+    // collapse into one native DrawingGroup container per section, so a
+    // shipped SPEC-051 fixture opens with its grouped pair as one drawing.
+    const section: Section = { blocks: migrateLegacyGroups(raw.blocks) };
     if (raw.opaqueBlocks.length > 0) {
       section.opaqueBlocks = raw.opaqueBlocks;
     }

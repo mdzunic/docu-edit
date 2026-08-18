@@ -58,6 +58,7 @@ import {
   NOTE_PLACEHOLDER_TEXT,
 } from "../documentModel";
 import { bytesToBase64 } from "../opaque";
+import { migrateLegacyGroups } from "../drawingGroups";
 import { ZipError, unzip } from "../core/zip";
 import { cmToTwips } from "../core/units";
 import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../core/xml";
@@ -2447,7 +2448,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   let sectionPageNumberStart: number | undefined;
   let leadingPageNumberStart: number | undefined;
   const finishSection = () => {
-    const section: Section = { blocks };
+    // Legacy migration (SPEC-057): drawings sharing a `de:group` ordinal
+    // collapse into one native DrawingGroup container per section.
+    const section: Section = { blocks: migrateLegacyGroups(blocks) };
     if (opaqueBlocks.length > 0) {
       section.opaqueBlocks = opaqueBlocks;
     }
