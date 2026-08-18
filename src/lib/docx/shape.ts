@@ -154,6 +154,76 @@ export interface ParsedShapeDrawing {
   shape: Shape;
 }
 
+/** Parses a `wps:wsp` element that is a **member** of a `wpg:wgp` group
+ * (SPEC-057) into a Shape member: its `a:xfrm` `a:off` gives the offset (in
+ * cm, from the container's top-left after the caller applies the group's
+ * child-space transform), `a:ext` the size, and its `wps:cNvPr/@descr` the
+ * member alt text. `wrap` is the fixed member placeholder `"square"`; anchor
+ * fields are absent. Returns null when the element is not a modellable shape.
+ * `scaleX`/`scaleY` and `chOff` apply the group's non-identity child space:
+ * frame position `= (off − chOff) · s`, size `= ext · s`. */
+export function parseGroupMemberWsp(
+  wsp: Element,
+  transform: { scaleX: number; scaleY: number; chOffX: number; chOffY: number },
+  ctx: ShapeTextContext,
+): Shape | null {
+  const spPr = firstChildElement(wsp, WPS_NAMESPACE, "spPr");
+  if (!spPr) {
+    return null;
+  }
+  const prstGeom = firstChildElement(spPr, A_NAMESPACE, "prstGeom");
+  const prst = prstGeom?.getAttribute("prst") ?? "";
+  const geometry = PRST_TO_GEOMETRY[prst];
+
+  const xfrm = firstChildElement(spPr, A_NAMESPACE, "xfrm");
+  const off = xfrm ? firstChildElement(xfrm, A_NAMESPACE, "off") : undefined;
+  const ext = xfrm ? firstChildElement(xfrm, A_NAMESPACE, "ext") : undefined;
+  const offX = off ? Number(off.getAttribute("x")) : 0;
+  const offY = off ? Number(off.getAttribute("y")) : 0;
+  const cx = ext ? Number(ext.getAttribute("cx")) : NaN;
+  const cy = ext ? Number(ext.getAttribute("cy")) : NaN;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+    return null;
+  }
+  const rotAttr = xfrm?.getAttribute("rot");
+  const rotationDeg = rotAttr ? ooxmlRotToDeg(Number(rotAttr)) : 0;
+
+  const cNvPr = firstChildElement(wsp, WPS_NAMESPACE, "cNvPr");
+  const altText = cNvPr?.getAttribute("descr") || undefined;
+
+  const shape: Shape = {
+    type: "shape",
+    geometry: geometry ?? "rect",
+    widthCm: emuToCm(cx * transform.scaleX),
+    heightCm: emuToCm(cy * transform.scaleY),
+    wrap: "square",
+    offsetXCm: emuToCm((offX - transform.chOffX) * transform.scaleX),
+    offsetYCm: emuToCm((offY - transform.chOffY) * transform.scaleY),
+  };
+  if (!geometry) {
+    shape.unsupportedGeometryXml = serializeElement(prstGeom ?? spPr);
+  }
+  if (rotationDeg) {
+    shape.rotationDeg = rotationDeg;
+  }
+  if (altText) {
+    shape.altText = altText;
+  }
+  const fill = parseFill(spPr);
+  if (fill) {
+    shape.fill = fill;
+  }
+  const outline = parseOutline(spPr);
+  if (outline) {
+    shape.outline = outline;
+  }
+  const text = parseShapeText(wsp, ctx);
+  if (text) {
+    shape.text = text;
+  }
+  return shape;
+}
+
 /** Parses a `w:drawing` element into a Shape, or null when it is not a
  * single, recognisable `wps:wsp` this spec models — the caller's existing
  * SPEC-008 opaque-inline fallback then preserves it verbatim. */

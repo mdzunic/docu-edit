@@ -9,6 +9,7 @@ import type {
   BreakKind,
   CellPropertyChange,
   Chart,
+  DrawingGroup,
   CommentAnchor,
   CommentMessage,
   CommentThread,
@@ -93,6 +94,7 @@ import {
 } from "../core/xml";
 import { fillPendingMediaData, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
+import { parseGroupDrawing } from "./groupReader";
 import { parseChartDrawing } from "./chart";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
@@ -758,6 +760,27 @@ function shapeRunDrawing(
   return parsed?.shape ?? null;
 }
 
+/** A `w:r` whose only content is one `w:drawing` holding a `wpg:wgp` group
+ * (SPEC-057) — the group-flavoured sibling of imageRunDrawing/shapeRunDrawing.
+ * Null for every other run, and for a group holding a member kind the group
+ * reader does not yet model, which keeps the SPEC-008 opaque fallback. */
+function groupRunDrawing(
+  rEl: Element,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+  links: LinkReadContext | undefined,
+): DrawingGroup | null {
+  const contentChildren = Array.from(rEl.children).filter(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
+  );
+  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+    return null;
+  }
+  return parseGroupDrawing(contentChildren[0], {
+    parseParagraph: (pEl) => parseParagraph(pEl, styleCatalog, numberingCatalog, links),
+  });
+}
+
 /** A `w:r` whose only content is one `w:drawing` holding a `c:chart`
  * reference (SPEC-052) — the chart-flavoured sibling of imageRunDrawing/
  * shapeRunDrawing. Null for every other run, which keeps falling through to
@@ -1125,6 +1148,7 @@ function parseBodyParagraphBlocks(
   const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
   const hasShapeRun = runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
   const hasChartRun = runElements.some((r) => chartRunDrawing(r, ctx) !== null);
+  const hasGroupRun = runElements.some((r) => groupRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
   // A typed w:br in an otherwise-modelled run splits the paragraph the same
   // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
   // of that run's verbatim XML — splitting an unmodelled run could not
@@ -1132,7 +1156,7 @@ function parseBodyParagraphBlocks(
   const hasBreakRun = runElements.some(
     (r) => !runHasUnmodelledContent(r) && runHasTypedBreak(r),
   );
-  if (!hasImageRun && !hasShapeRun && !hasChartRun && !hasBreakRun) {
+  if (!hasImageRun && !hasShapeRun && !hasChartRun && !hasGroupRun && !hasBreakRun) {
     return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog, links)], media: [] };
   }
 
@@ -1177,6 +1201,12 @@ function parseBodyParagraphBlocks(
       if (chart) {
         flush();
         blocks.push(chart);
+        continue;
+      }
+      const group = groupRunDrawing(child, styleCatalog, numberingCatalog, links);
+      if (group) {
+        flush();
+        blocks.push(group);
         continue;
       }
       if (isCommentReferenceRun(child)) {

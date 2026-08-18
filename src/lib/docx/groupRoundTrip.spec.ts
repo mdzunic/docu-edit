@@ -9,6 +9,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
 import { writeDocx } from "./writer";
+import { equalStructural, firstStructuralDifference } from "../equality";
 import { isDrawingGroup, type DocumentModel } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -52,5 +53,16 @@ describe("SPEC-057 legacy migration — word-shapes.docx (AC-2, AC-65)", () => {
     // The container writes as a native wpg:wgp, never the private de:group.
     expect(documentXml).toContain("wordprocessingGroup");
     expect(documentXml).not.toContain("de:group");
+  });
+
+  it("save then reopen keeps the container — the migration test (AC-66)", async () => {
+    const opened = modelFrom(await parseDocx(loadFixture("word-shapes.docx")));
+    const { bytes } = await writeDocx(opened);
+    const reopened = modelFrom(await parseDocx(bytes));
+    const reopenedGroups = reopened.sections.flatMap((s) => s.blocks).filter(isDrawingGroup);
+    expect(reopenedGroups).toHaveLength(1);
+    const diff = firstStructuralDifference(opened, reopened);
+    expect(diff, diff ? JSON.stringify(diff) : "").toBeNull();
+    expect(equalStructural(opened, reopened)).toBe(true);
   });
 });
