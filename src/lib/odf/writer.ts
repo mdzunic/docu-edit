@@ -104,6 +104,8 @@ import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
 import { chartFrameXml } from "./chart";
 import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
+import { formulaFrameXml, formulaObjectDirsInManifest } from "./formula";
+import { formulaFrameAltText, planOdfFormulaWrite, type OdfFormulaWritePlan } from "./formulaWritePlan";
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
@@ -1286,6 +1288,12 @@ interface OdtRegionDef {
 // here; see collectOdtUnrepresentableTrackedChanges. */
 let odtChangedRegionsContext: Map<string, OdtRegionDef> | null = null;
 
+// SPEC-056: the formula write plan for the whole body — set by buildContentXml
+// around its body walk, mirroring odtNotesContext, so an equation run anywhere
+// in the flow (inline, or the sole run of a display paragraph) emits its
+// draw:frame/draw:object referencing the right embedded formula sub-document.
+let odtFormulaContext: OdfFormulaWritePlan | null = null;
+
 /** Walks paragraph marks and table row/cell insert/delete throughout
  * `blocks` (recursing into table cells), reporting each one found — the
  * structural half of odtChangedRegionsWriteContext (see its doc comment for
@@ -1479,7 +1487,16 @@ function runXml(run: Run, styles: AutomaticStyles, state: WhitespaceState): stri
   }
   const styleName = styles.textNameFor(run.formatting, run.styleId);
   let span: string;
-  if (run.field) {
+  if (run.equation) {
+    // SPEC-056: an inline/display equation is an embedded formula object
+    // referenced by an as-char draw:frame (AC-31). The frame is wrapped in a
+    // styled span so the run's own formatting still applies; the placeholder
+    // character never reaches the output.
+    state.lastChar = FIELD_PLACEHOLDER_TEXT;
+    const href = odtFormulaContext?.hrefFor(run);
+    const frame = href ? formulaFrameXml(run.equation, href, formulaFrameAltText(run)) : "";
+    span = `<text:span text:style-name="${styleName}">${frame}</text:span>`;
+  } else if (run.field) {
     state.lastChar = FIELD_PLACEHOLDER_TEXT;
     span = `<text:span text:style-name="${styleName}">${fieldContentXml(run.field, styles)}</text:span>`;
   } else {
@@ -1969,6 +1986,7 @@ export function buildContentXml(
   mediaPlan: OdtMediaWritePlan = planOdtMediaWrite(model),
   masterNames?: (string | null)[],
   chartPlan: OdfChartWritePlan = planOdfChartWrite(model, new Set()),
+  formulaPlan: OdfFormulaWritePlan = planOdfFormulaWrite(model),
 ): string {
   const includeOpaque = model.format === "odt";
   const styles = createAutomaticStyles(model);
@@ -1984,6 +2002,9 @@ export function buildContentXml(
   // text:change-start/-end through this context; cleared with the others
   // below. The definitions block itself is built from the same context.
   odtChangedRegionsContext = odtChangedRegionsWriteContext(model);
+  // Equations (SPEC-056): an equation run anywhere in the body emits its
+  // draw:frame/draw:object through this plan; cleared with the others below.
+  odtFormulaContext = formulaPlan;
   // Defined-list instance continuity for the whole body (SPEC-032): one map
   // across every section, so an instance interrupted by a section break
   // still writes text:continue-list on its later segments.
@@ -2145,6 +2166,7 @@ export function buildContentXml(
   odtNotesContext = null;
   odtCommentsContext = null;
   odtChangedRegionsContext = null;
+  odtFormulaContext = null;
   const body = blockXml.length > 0 ? blockXml.join("") : "<text:p/>";
   // SPEC-053: declare every user field a `docProperty` field references, its
   // value taken from the matching custom property (SPEC-041). LibreOffice
@@ -3258,7 +3280,16 @@ export async function writeOdt(
     ? chartObjectDirsInManifest(decoder.decode(preservedManifestBytes))
     : new Set<string>();
   const chartPlan = planOdfChartWrite(model, preservedChartObjectDirs, preservedParts.size === 0);
-  const content = buildContentXml(model, mediaPlan, sectionNames.masters, chartPlan);
+  // Equations (SPEC-056): every equation regenerates its embedded formula
+  // sub-document fresh (the MathNode body is the source of truth), and any
+  // preserved formula object dir is orphaned — the formula counterpart of the
+  // chart plan, but with no verbatim-reuse case since equations are fully
+  // modelled.
+  const preservedFormulaObjectDirs = preservedManifestBytes
+    ? formulaObjectDirsInManifest(decoder.decode(preservedManifestBytes))
+    : new Set<string>();
+  const formulaPlan = planOdfFormulaWrite(model, preservedFormulaObjectDirs);
+  const content = buildContentXml(model, mediaPlan, sectionNames.masters, chartPlan, formulaPlan);
 
   if (preservedParts.size === 0) {
     const bytes = await zip([
@@ -3271,10 +3302,17 @@ export async function writeOdt(
       { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
       {
         name: "META-INF/manifest.xml",
-        data: encoder.encode(buildManifestXml([...mediaPlan.manifestEntries, ...chartPlan.manifestEntries])),
+        data: encoder.encode(
+          buildManifestXml([
+            ...mediaPlan.manifestEntries,
+            ...chartPlan.manifestEntries,
+            ...formulaPlan.manifestEntries,
+          ]),
+        ),
       },
       ...mediaPlan.zipEntries,
       ...chartPlan.zipEntries,
+      ...formulaPlan.zipEntries,
     ]);
     return { bytes, dropped: collectDropRecords(model, "odt") };
   }
@@ -3291,6 +3329,7 @@ export async function writeOdt(
     ...(addSettings ? [{ path: "settings.xml", mediaType: "text/xml" }] : []),
     ...mediaPlan.manifestEntries,
     ...chartPlan.manifestEntries,
+    ...formulaPlan.manifestEntries,
   ];
   // Named-style changes (SPEC-019) first, then the per-section master pages
   // content.xml references (SPEC-028 AC-33), then header/footer content
@@ -3319,12 +3358,13 @@ export async function writeOdt(
     if (name === "mimetype" || name === "content.xml" || name === "meta.xml") {
       continue; // Already emitted or rebuilt below.
     }
-    if (chartPlan.orphanedPartNames.has(name)) {
-      continue; // A deleted chart's embedded object — SPEC-008 preservation must not resurrect it (AC).
+    if (chartPlan.orphanedPartNames.has(name) || formulaPlan.orphanedPartNames.has(name)) {
+      continue; // A deleted chart / regenerated formula's embedded object — not resurrected (SPEC-008).
     }
     if (name === "META-INF/manifest.xml") {
       let manifestXml = withManifestEntries(decoder.decode(data), addedPaths);
       manifestXml = withoutManifestObjectDirs(manifestXml, chartPlan.orphanedObjectDirs);
+      manifestXml = withoutManifestObjectDirs(manifestXml, formulaPlan.orphanedObjectDirs);
       entries.push({ name, data: encoder.encode(manifestXml) });
     } else if (patchedStyles !== null && name === "styles.xml") {
       entries.push({ name, data: encoder.encode(patchedStyles) });
@@ -3337,6 +3377,7 @@ export async function writeOdt(
   entries.push({ name: "meta.xml", data: encoder.encode(buildMetaXml(metaInput, modified)) });
   entries.push(...mediaPlan.zipEntries);
   entries.push(...chartPlan.zipEntries);
+  entries.push(...formulaPlan.zipEntries);
   if (addSettings) {
     entries.push({ name: "settings.xml", data: encoder.encode(buildSettingsXml()) });
   }

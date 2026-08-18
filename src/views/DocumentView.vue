@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import DocumentMenuBar from "../components/DocumentMenuBar.vue";
@@ -98,6 +98,7 @@ import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useCaptions } from "./document/useCaptions";
 import { renumberCaptions } from "../lib/captions";
+import { useEquations } from "./document/useEquations";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
@@ -148,7 +149,7 @@ import {
   noBlocks,
   noNoteContent,
 } from "../lib/documentModel";
-import { asChartType, CHART_CATALOGUE, SINGLE_SERIES_CHART_TYPES } from "../lib/core/charts";
+import { asChartType, CHART_CATALOGUE } from "../lib/core/charts";
 import { asShapeGeometry } from "../lib/core/shapes";
 import {
   asBorderLineStyle,
@@ -349,6 +350,7 @@ import StylesPane from "../components/StylesPane.vue";
 import StyleEditorDialog from "../components/StyleEditorDialog.vue";
 import StyleDeleteDialog from "../components/StyleDeleteDialog.vue";
 import ImportStylesDialog from "../components/ImportStylesDialog.vue";
+import EquationEditorHost from "../components/EquationEditorHost.vue";
 import {
   breakGroup as breakTypingGroup,
   canRedo as canRedoDocument,
@@ -770,46 +772,29 @@ const {
   handleChartDuplicate,
   chartToolbarStyle,
   chartAtClientPoint,
+  chartDataSheetInitial,
+  chartOptionsInitial,
 } = useCharts({ ...editorContext });
 
-/** The data sheet dialog's prefill (AC-4..AC-13): the selected chart's
- * current categories/series, and whether its type renders only the first
- * series (AC "the data sheet says so", pie/doughnut). */
-const chartDataSheetInitial = computed(() => {
-  const model = doc.value;
-  const location = chartSelection.value;
-  const chart = model && location ? chartAt(model, location) : null;
-  if (!chart) {
-    return { categories: [], series: [], singleSeriesOnly: false };
-  }
-  return {
-    categories: chart.categories,
-    series: chart.series,
-    singleSeriesOnly: SINGLE_SERIES_CHART_TYPES.has(chart.chartType),
-  };
-});
+// Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
+// session's editing surface, op dispatch and overlay live in the composable
+// and EquationEditorHost.vue; DocumentView keeps only the insert commands, the
+// clicked-equation `provide`, the character-picker route, and the host tag.
+const equations = useEquations({ ...editorContext });
 
-/** The options panel's prefill (AC-14..AC-20). */
-const chartOptionsInitial = computed(() => {
-  const model = doc.value;
-  const location = chartSelection.value;
-  const chart = model && location ? chartAt(model, location) : null;
-  if (!chart) {
-    return { legend: "none", dataLabels: false, gridlines: false, series: [], hasAxes: false };
+// SPEC-056: an equation clicked in the document opens the editor. Provided to
+// the paint components (DocPageBlock/DocBlockEntries) which own the click.
+provide("activateEquation", equations.activateEquation);
+
+// SPEC-056: route a character-picker glyph into an open equation (AC-14/15);
+// otherwise it inserts into the document as before.
+function onSpecialCharacterInsert(text = "") {
+  if (equations.insertPickerGlyph(text)) {
+    specialCharacterDialogOpen.value = false;
+    return;
   }
-  return {
-    title: chart.options.title,
-    categoryAxisTitle: chart.options.categoryAxisTitle,
-    valueAxisTitle: chart.options.valueAxisTitle,
-    legend: chart.options.legend,
-    dataLabels: chart.options.dataLabels,
-    gridlines: chart.options.gridlines,
-    valueAxisMin: chart.options.valueAxisMin,
-    valueAxisMax: chart.options.valueAxisMax,
-    series: chart.series,
-    hasAxes: chart.chartType !== "pie" && chart.chartType !== "doughnut",
-  };
-});
+  handleSpecialCharacterInsert(text);
+}
 
 // Footnotes and endnotes (SPEC-031) live in useNotes; it provides `activeNote` /
 // `noteRemountEpoch` that usePaginationView renders the note areas from.
@@ -1265,7 +1250,9 @@ function applyEdit(
   noteEdit();
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
-  void restoreCaretAfterRender();
+  if (!options.skipCaretRestore) {
+    void restoreCaretAfterRender();
+  }
   void keepCaretVisible();
   void refreshLinkChip();
   if (
@@ -3112,6 +3099,12 @@ const editorCommands = new Map([
     // fold: follow it, or the user types onto a page they cannot see.
     void scrollModelCaretIntoView(caret, true);
   }],
+  // Alt+= (SPEC-056 AC-3), and Insert → Equation (AC-1).
+  ["insert.equation", () => { equations.insertEquation(); }],
+  // Insert → Display equation (SPEC-056 AC-2).
+  ["insert.display-equation", () => { equations.insertDisplayEquationAtCaret(); }],
+  // Insert → Numbered equation (SPEC-056 AC-17).
+  ["insert.numbered-equation", () => { equations.insertNumberedDisplayEquationAtCaret(); }],
   // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
   ["insert.footnote", () => { handleInsertNote("footnote"); }],
   // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
@@ -4125,9 +4118,10 @@ function handleMenuCommand(id = "") {
     />
     <SpecialCharacterDialog
       v-if="specialCharacterDialogOpen"
-      @insert="handleSpecialCharacterInsert"
+      @insert="onSpecialCharacterInsert"
       @cancel="specialCharacterDialogOpen = false"
     />
+    <EquationEditorHost :api="equations" />
     <ImageOptionsDialog
       v-if="imageOptionsOpen"
       :initial="imageOptionsInitial"

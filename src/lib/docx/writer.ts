@@ -76,7 +76,8 @@ import { TOC_PLACEHOLDER_TEXT } from "../toc";
 import { TOF_PLACEHOLDER_TEXT } from "../tof";
 import { referencedNotes } from "../notes";
 import { replyParagraphText, visibleCommentThreads, type VisibleCommentThread } from "../comments";
-import { wordAttr, WORD_NAMESPACE } from "./xml";
+import { wordAttr, WORD_NAMESPACE, MATH_NAMESPACE } from "./xml";
+import { serializeOmmlEquation } from "./omml";
 import {
   childElements,
   escapeXml,
@@ -374,6 +375,11 @@ function fieldInstr(field: FieldSpec): string {
  * runs are never wrapped: their content is a computed placeholder, not
  * text a tracked edit could sensibly mark. */
 function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContext): string {
+  if (run.equation) {
+    // An inline (`m:oMath`) or display (`m:oMathPara`) equation (SPEC-056),
+    // emitted directly inside the `w:p` with no drawing wrapper.
+    return serializeOmmlEquation(run.equation);
+  }
   if (run.note) {
     const id = noteIds?.get(run.note.noteId);
     if (id === undefined) {
@@ -1530,7 +1536,7 @@ function headerFooterPartXml(
     })
     .join("");
   return (
-    `${XML_DECLARATION}<w:${rootTag} xmlns:w="${WORD_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}">` +
+    `${XML_DECLARATION}<w:${rootTag} xmlns:w="${WORD_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}" xmlns:m="${MATH_NAMESPACE}">` +
     (body.length > 0 ? body : "<w:p/>") +
     `</w:${rootTag}>`
   );
@@ -1672,7 +1678,7 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
     })
     .join("");
   return (
-    `${XML_DECLARATION}<w:${rootTag} xmlns:w="${WORD_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}">` +
+    `${XML_DECLARATION}<w:${rootTag} xmlns:w="${WORD_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}" xmlns:m="${MATH_NAMESPACE}">` +
     `<w:${tag} w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:${tag}>` +
     `<w:${tag} w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:${tag}>` +
     noteXml +
@@ -2121,7 +2127,7 @@ function documentXmlFromBlocks(
             notePrXml("endnotePr", model.endnoteSettings),
         );
   return (
-    `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}">` +
+    `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}" xmlns:m="${MATH_NAMESPACE}">` +
     `<w:body>${body}${sectPr}</w:body></w:document>`
   );
 }

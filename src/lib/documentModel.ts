@@ -319,6 +319,12 @@ export interface Run {
   /** Marks this run as a footnote/endnote reference mark (SPEC-031); see
    * NoteRef. Mutually exclusive with `field` by construction. */
   note?: NoteRef;
+  /** Marks this run as an inline/display equation (SPEC-056); see
+   * EquationSpec. Mutually exclusive with `field` and `note` by
+   * construction — the run's `text` is the one-character
+   * FIELD_PLACEHOLDER_TEXT so the equation is a single caret atom and the
+   * renderer substitutes the laid-out equation at paint time. */
+  equation?: EquationSpec;
   /** Character-style reference (SPEC-042), independent of the containing
    * paragraph's `styleId`: `w:rStyle` (.docx) / a `text:span`'s
    * `text:style-name` resolving to a family="text" style (.odt). Baked
@@ -352,6 +358,67 @@ export function createFieldRun(
 export function createChipRun(field: MergeFieldSpec, formatting: RunFormatting = {}): Run {
   return { text: FIELD_PLACEHOLDER_TEXT, formatting, field };
 }
+
+/** The closed construct set of an equation (SPEC-056). A math expression is a
+ * `MathNode[]` — an ordered row of nodes — and every node's slots are
+ * themselves `MathNode[]`. The set is deliberately closed: the layout engine
+ * is written for this spec (no KaTeX/MathJax) and anything outside the set is
+ * preserved as an `opaqueMath` node rather than approximated.
+ *
+ * `sym.variant` carries the italic/upright decision (SPEC-056 Layout rules);
+ * it is set by the linear parser and mapped from OMML `m:sty` / MathML
+ * `mathvariant` by the readers. `opaqueMath` is SPEC-008's opaque-node rule
+ * applied inside an equation: `source` holds the original OMML or MathML
+ * subtree verbatim (compared with `canonicalizeXml`), `linear` the best
+ * plain-text rendering shown in the read-only box. */
+export type MathNode =
+  | { kind: "sym"; text: string; variant: "italic" | "upright" }
+  | { kind: "frac"; num: MathNode[]; den: MathNode[]; bar: boolean }
+  | { kind: "script"; base: MathNode[]; sup?: MathNode[]; sub?: MathNode[] }
+  | { kind: "radical"; radicand: MathNode[]; index?: MathNode[] }
+  | { kind: "nary"; op: string; lower?: MathNode[]; upper?: MathNode[]; body: MathNode[] }
+  | { kind: "delim"; open: string; close: string; body: MathNode[] }
+  | { kind: "matrix"; rows: MathNode[][][] }
+  | { kind: "accent"; accent: string; base: MathNode[] }
+  | { kind: "func"; name: string; body: MathNode[] }
+  | { kind: "text"; text: string }
+  | { kind: "opaqueMath"; source: string; linear: string };
+
+/** An inline or display equation carried on a `Run` (SPEC-056). A display
+ * equation is a paragraph whose only run carries an `EquationSpec` with
+ * `display: "block"`; the paragraph centres it. `altText` defaults to the
+ * linear form regenerated from `body`; an empty string means "no alt text". */
+export interface EquationSpec {
+  display: "inline" | "block";
+  body: MathNode[];
+  /** Defaults to the linear form; "" means none. */
+  altText?: string;
+}
+
+/** Builds a run carrying an equation (SPEC-056) — the same one-character
+ * placeholder convention as `createFieldRun`, so the equation is atomic for
+ * caret/selection arithmetic. */
+export function createEquationRun(equation: EquationSpec, formatting: RunFormatting = {}): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, equation };
+}
+
+/** Typed pass-through for an EquationSpec coming from a `.vue` template's
+ * runtime `Object` prop (same espree constraint as asParagraph/asImage — a
+ * `.vue` script cannot carry a type annotation or cast). */
+export function asEquationSpec(value: unknown): EquationSpec {
+  return value as EquationSpec;
+}
+
+/** Typed pass-through for a `MathNode[]` body coming from a `.vue` template's
+ * runtime `Array` prop (same espree constraint as asEquationSpec). */
+export function asMathNodes(value: unknown): MathNode[] {
+  return (Array.isArray(value) ? value : []) as MathNode[];
+}
+
+/** The typed no-op default for the `activateEquation` inject (SPEC-056): a
+ * `.vue` script cannot write `inject<(spec) => void>(…)` (espree parses the
+ * generic as comparisons), so the fallback's signature is supplied here. */
+export function noopEquationActivate(_spec: unknown): void {}
 
 export type ParagraphAlignment = "left" | "center" | "right" | "justify";
 

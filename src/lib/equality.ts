@@ -45,6 +45,10 @@ const XML_STRING_KEYS = new Set([
   "docxTblPr",
   "docxTrPr",
   "docxTcPr",
+  // The verbatim OMML/MathML subtree of an unsupported equation construct
+  // (SPEC-056 opaqueMath.source, AC-49) — compared with the same C14N pass
+  // SPEC-008 applies to preserved XML.
+  "source",
 ]);
 
 /** Model fields holding arrays of XML strings. */

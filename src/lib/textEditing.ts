@@ -312,7 +312,7 @@ function sameChanges(a: Run["changes"], b: Run["changes"]): boolean {
  * with neighbouring runs: merging would silently turn the marker into
  * literal text. */
 function isMarkerRun(run: Run): boolean {
-  return run.field !== undefined || run.note !== undefined;
+  return run.field !== undefined || run.note !== undefined || run.equation !== undefined;
 }
 
 /** Drops empty runs and coalesces adjacent runs with identical formatting,

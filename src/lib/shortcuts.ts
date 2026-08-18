@@ -136,6 +136,12 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     bindings: [{ key: "Enter", mod: true }],
   },
   {
+    id: "insert.equation",
+    label: "Insert equation",
+    category: "Insert",
+    bindings: [{ key: "=", alt: true }],
+  },
+  {
     id: "insert.footnote",
     label: "Insert footnote",
     category: "Insert",

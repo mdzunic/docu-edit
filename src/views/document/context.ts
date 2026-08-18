@@ -43,6 +43,12 @@ export interface ApplyEditOptions {
    * commands themselves, whose result IS the reviewer's chosen final state,
    * not a new edit to re-diff. */
   skipTrackChanges?: boolean;
+  /** Skips placing the DOM caret/selection back in the canvas after this
+   * edit (SPEC-056): the equation insert paths hand focus straight to the
+   * equation editor's own surface, and restoreCaretAfterRender's DOM-selection
+   * write would otherwise implicitly refocus the contenteditable root and
+   * steal the keystrokes the user means for the equation. */
+  skipCaretRestore?: boolean;
 }
 
 /** Typed empty-options seed for the `.vue` script's applyEdit default

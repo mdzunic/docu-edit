@@ -6,7 +6,7 @@
 // objects, run render lists) — this component holds no document logic of
 // its own, same as DocPage before the split. Runtime prop/emit
 // declarations, not the generic form — this script is parsed by espree.
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
 import DocShapeBlock from "./DocShapeBlock.vue";
 import DocChartBlock from "./DocChartBlock.vue";
@@ -14,12 +14,17 @@ import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
 import DocTofBlock from "./DocTofBlock.vue";
 import DocHeadingToggle from "./DocHeadingToggle.vue";
+import EquationView from "./EquationView.vue";
 import { asRenderEntries, noRenderEntries } from "../lib/pageRender";
+import { noopEquationActivate } from "../lib/documentModel";
 
 const props = defineProps({
   entries: { type: Array, default: () => noRenderEntries() },
   cellRange: { type: Object, default: null },
 });
+
+// SPEC-056: clicking an equation opens the editor. Provided by DocumentView.
+const activateEquation = inject("activateEquation", noopEquationActivate);
 
 defineEmits([
   "image-select",
@@ -115,11 +120,23 @@ function componentFor(entry = noRenderEntries()[0]) {
         <!-- The plain (no-marks) variants keep a single text child, so
              the span's firstChild stays the run's own text node — DOM
              shapes older specs' tests and tooling rely on. -->
+        <!-- An equation (SPEC-056): the laid-out equation replaces the
+             one-character placeholder, as a contenteditable=false caret atom
+             carrying its model character in data-caret-atom. -->
+        <span
+          v-if="run.equation"
+          class="doc-equation"
+          contenteditable="false"
+          :data-caret-atom="run.atomText"
+          :style="run.styleObj"
+          :lang="run.lang"
+          @click="activateEquation(run.equation)"
+        ><EquationView :equation="run.equation" /></span>
         <!-- A note reference mark (SPEC-031): renders its computed number
              but stands for the one-character model placeholder carried in
              data-caret-atom (see lib/domCaret.ts's caret-atom mapping). -->
         <span
-          v-if="run.atomText"
+          v-else-if="run.atomText"
           :class="run.atomClass || 'doc-note-ref'"
           contenteditable="false"
           :data-caret-atom="run.atomText"
