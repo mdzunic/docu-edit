@@ -5,8 +5,14 @@
 </template>
 
 <style>
+/* The design system's tokens (SPEC-058). Imported once here, from the app's
+   only unscoped style block, so :root custom properties are visible to every
+   scoped component style. Must be the first rule — @import is only valid at
+   the top of a stylesheet. */
+@import "./styles/tokens.css";
+
 :root {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-ui);
 }
 
 html,
