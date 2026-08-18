@@ -279,20 +279,23 @@ onUnmounted(() => {
   flex: none;
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
-  background: #2c3e50;
-  color: #fff;
+  gap: var(--space-4);
+  /* One stated height (AC-15): the app bar reads the brand surface token. */
+  height: var(--height-app-bar);
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-brand);
+  color: var(--text-on-brand);
+  box-sizing: border-box;
 }
 
 .product-name {
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .document-title {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 400;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-regular);
 }
 
 h1.document-title[role="button"] {
@@ -301,11 +304,11 @@ h1.document-title[role="button"] {
 
 .document-title-input {
   font: inherit;
-  color: inherit;
-  background: rgb(255 255 255 / 0.15);
-  border: 1px solid rgb(255 255 255 / 0.5);
-  border-radius: 2px;
-  padding: 0 0.25rem;
+  color: var(--text-primary);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
 }
 
 /* Pushed to the far edge of the app bar; align-self keeps the actions
@@ -316,12 +319,13 @@ h1.document-title[role="button"] {
 }
 
 .format-badge {
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.03em;
-  padding: 0.125rem 0.375rem;
-  border-radius: 3px;
-  background: rgb(255 255 255 / 0.15);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: var(--border-width) solid var(--text-on-brand);
   color: inherit;
 }
 
@@ -340,14 +344,15 @@ h1.document-title[role="button"] {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.25rem;
-  min-height: 2.5rem;
-  padding: 0.25rem 1rem;
+  gap: var(--space-2);
+  /* One stated height (AC-49): the strip never sizes to its content. */
+  min-height: var(--height-toolbar);
+  padding: var(--space-2) var(--space-5);
   overflow-x: auto;
   overflow-y: hidden;
   white-space: nowrap;
-  background: #f5f5f5;
-  border-bottom: 1px solid #d0d0d0;
+  background: var(--surface-raised);
+  border-bottom: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
 }
 
@@ -357,7 +362,7 @@ h1.document-title[role="button"] {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
-  background: #e8eaed;
+  background: var(--surface-canvas);
 }
 
 /* The status bar (SPEC-028 AC-3): a slim strip under the canvas the view
@@ -367,13 +372,14 @@ h1.document-title[role="button"] {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  min-height: 1.5rem;
-  padding: 0.125rem 1rem;
-  border-top: 1px solid #dadce0;
-  background: #f8f9fa;
-  color: #5f6368;
-  font-size: 0.75rem;
+  gap: var(--space-5);
+  /* One stated height (AC-51): the status bar never sizes to its content. */
+  min-height: var(--height-status-bar);
+  padding: var(--space-1) var(--space-5);
+  border-top: var(--border-width) solid var(--border-default);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 
 .drop-overlay {
@@ -383,11 +389,11 @@ h1.document-title[role="button"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #fff;
-  background: rgb(26 82 118 / 0.85);
-  border: 4px dashed rgb(255 255 255 / 0.8);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  color: var(--text-on-brand);
+  background: var(--surface-overlay);
+  border: calc(4 * var(--border-width)) dashed var(--text-on-brand);
   pointer-events: none;
 }
 
@@ -399,10 +405,11 @@ h1.document-title[role="button"] {
   z-index: 150;
   margin: 0;
   max-width: 32rem;
-  padding: 0.625rem 1.25rem;
-  border-radius: 4px;
-  background: #fdecea;
-  color: #b3261e;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  color: var(--text-danger);
+  border: var(--border-width) solid var(--danger);
+  box-shadow: var(--shadow-2);
 }
 </style>

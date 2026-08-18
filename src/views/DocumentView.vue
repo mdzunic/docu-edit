@@ -4186,24 +4186,24 @@ function handleMenuCommand(id = "") {
 <style scoped>
 .toolbar-button {
   font: inherit;
-  font-size: 0.875rem;
-  padding: 0.25rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-4);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 /* The format painter button's armed state (SPEC-020 AC-11, AC-14). */
 .toolbar-button[aria-pressed="true"] {
-  background: #d2e3fc;
-  border-color: #8ab4f8;
+  background: var(--surface-selected);
+  border-color: var(--accent);
 }
 
 .app-bar-cluster {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 /* Sits in the status bar next to the page indicator (SPEC-036 AC-1, AC-4):
@@ -4213,7 +4213,7 @@ function handleMenuCommand(id = "") {
    keydown handling (AC-27). */
 .word-count-button {
   font: inherit;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   color: inherit;
   padding: 0;
   border: none;
@@ -4231,23 +4231,23 @@ function handleMenuCommand(id = "") {
    matches word-count-button's plain-until-hovered look. */
 .track-changes-toolbar-toggle {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.6rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: none;
   cursor: pointer;
 }
 
 .track-changes-toolbar-toggle[aria-pressed="true"] {
-  background: #e6f4ea;
-  color: #188038;
-  border-color: #188038;
+  background: var(--surface-sunken);
+  color: var(--success);
+  border-color: var(--success);
 }
 
 .track-changes-status-indicator {
   font: inherit;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   color: inherit;
   padding: 0;
   border: none;
@@ -4257,18 +4257,18 @@ function handleMenuCommand(id = "") {
 
 .track-changes-status-indicator[aria-pressed="true"] {
   text-decoration: underline;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .save-state {
-  font-size: 0.8125rem;
-  color: rgb(255 255 255 / 0.85);
+  font-size: var(--text-md);
+  color: var(--text-on-brand);
   white-space: nowrap;
 }
 
 .save-state-download {
-  font-size: 0.8125rem;
-  color: #fff;
+  font-size: var(--text-md);
+  color: var(--text-on-brand);
 }
 
 /* Sticky so the conflict/recovery notice stays visible while the canvas
@@ -4279,22 +4279,22 @@ function handleMenuCommand(id = "") {
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
-  background: #e8f0fe;
-  border-bottom: 1px solid #aecbfa;
-  color: #174ea6;
-  font-size: 0.875rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-selected);
+  border-bottom: var(--border-width) solid var(--accent-subtle);
+  color: var(--text-accent);
+  font-size: var(--text-md);
 }
 
 .notice-button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.125rem 0.75rem;
-  border: 1px solid #aecbfa;
-  border-radius: 4px;
-  background: #fff;
-  color: #174ea6;
+  font-size: var(--text-md);
+  padding: var(--space-1) var(--space-4);
+  border: var(--border-width) solid var(--accent-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  color: var(--text-accent);
   cursor: pointer;
 }
 
@@ -4610,7 +4610,7 @@ function handleMenuCommand(id = "") {
   height: 10px;
   margin-left: -5px;
   margin-top: -2px;
-  background: #1a73e8;
+  background: var(--accent);
   clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 
@@ -4634,12 +4634,12 @@ function handleMenuCommand(id = "") {
   left: 50%;
   transform: translateX(-50%);
   z-index: 130;
-  padding: 0.5rem 1.25rem;
-  border-radius: 999px;
-  background: #202124;
-  color: #fff;
-  font-size: 0.875rem;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-pill);
+  background: var(--surface-brand);
+  color: var(--text-on-brand);
+  font-size: var(--text-md);
+  box-shadow: var(--shadow-2);
   pointer-events: none;
 }
 
@@ -4649,12 +4649,12 @@ function handleMenuCommand(id = "") {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  color: #3c4043;
+  gap: var(--space-3);
+  color: var(--text-secondary);
 }
 
 .not-found-message {
   margin: 0;
-  font-size: 1.125rem;
+  font-size: var(--text-xl);
 }
 </style>

@@ -317,9 +317,11 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 0 0.5rem;
-  background: #fafafa;
-  border-bottom: 1px solid #e0e0e0;
+  /* One stated height (AC-50): the bar never sizes to its content. */
+  height: var(--height-menu-bar);
+  padding: 0 var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: var(--border-width) solid var(--border-default);
 }
 
 .menu-bar-item {
@@ -328,23 +330,18 @@ onBeforeUnmount(() => {
 }
 
 .menu-title {
-  border: 1px solid transparent;
+  border: var(--border-width) solid transparent;
   background: transparent;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.85rem;
-  color: #3c4043;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
+  color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .menu-title:hover,
 .menu-title[aria-expanded="true"] {
-  background: #eceff1;
-}
-
-.menu-title:focus-visible {
-  outline: 2px solid #1a73e8;
-  outline-offset: -2px;
+  background: var(--state-hover);
 }
 
 /* Absolutely positioned so an open menu overlays the toolbar/canvas below
@@ -359,11 +356,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 15rem;
-  padding: 0.25rem 0;
-  border: 1px solid #dadce0;
-  border-radius: 0 0 6px 6px;
-  background: #fff;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.18);
+  padding: var(--space-1) 0;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-3);
   /* A long menu (Insert) never runs off the bottom of the viewport: it caps
      its height and scrolls, so every command stays reachable. */
   max-height: calc(100vh - 6rem);
@@ -378,33 +375,35 @@ onBeforeUnmount(() => {
 .menu-popup :deep([role="menuitemradio"]) {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
   width: 100%;
   box-sizing: border-box;
   border: 0;
   background: transparent;
-  padding: 0.4rem 1rem;
+  padding: var(--space-2) var(--space-5);
   text-align: left;
   font: inherit;
-  font-size: 0.85rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
+/* The active-row highlight is the background fill; focus keeps whatever ring
+   the global :focus-visible rule paints on top of it — the outline is never
+   removed (AC-46). */
 .menu-popup :deep([role="menuitem"]:hover:not(:disabled)),
 .menu-popup :deep([role="menuitemcheckbox"]:hover:not(:disabled)),
 .menu-popup :deep([role="menuitemradio"]:hover:not(:disabled)),
 .menu-popup :deep([role="menuitem"]:focus),
 .menu-popup :deep([role="menuitemcheckbox"]:focus),
 .menu-popup :deep([role="menuitemradio"]:focus) {
-  background: #f1f3f4;
-  outline: none;
+  background: var(--state-hover);
 }
 
 .menu-popup :deep([role="menuitem"]:disabled),
 .menu-popup :deep([role="menuitemcheckbox"]:disabled),
 .menu-popup :deep([role="menuitemradio"]:disabled) {
-  color: #9aa0a6;
+  color: var(--text-disabled);
   cursor: default;
 }
 
@@ -414,30 +413,30 @@ onBeforeUnmount(() => {
   display: inline-block;
   width: 1rem;
   flex: none;
-  color: #1a73e8;
+  color: var(--accent);
 }
 
 /* The accelerator label, pushed to the trailing edge. */
 .menu-popup :deep(.menu-shortcut) {
   margin-left: auto;
-  padding-left: 1.5rem;
-  color: #80868b;
-  font-size: 0.78rem;
+  padding-left: var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 
 .menu-popup :deep(.menu-separator) {
-  margin: 0.25rem 0;
+  margin: var(--space-1) 0;
   border: none;
-  border-top: 1px solid #e8eaed;
+  border-top: var(--border-width) solid var(--border-subtle);
 }
 
 .menu-popup :deep(.menu-section-label) {
-  padding: 0.125rem 1rem 0.0625rem;
-  font-size: 0.7rem;
-  line-height: 1.2;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-5) var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--line-tight);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #80868b;
+  color: var(--text-secondary);
 }
 </style>

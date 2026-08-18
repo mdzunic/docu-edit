@@ -101,13 +101,13 @@ function handleChange(event = new Event("change")) {
 <style scoped>
 .font-family-select {
   font: inherit;
-  font-size: 0.875rem;
-  height: 1.75rem;
+  font-size: var(--text-md);
+  height: var(--height-control);
   max-width: 11rem;
-  padding: 0 0.25rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 

@@ -146,7 +146,7 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgb(0 0 0 / 0.4);
+  background: var(--surface-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -154,20 +154,20 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .dialog {
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
-  padding: 1.25rem 1.5rem;
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  padding: var(--space-6) var(--space-6);
   min-width: var(--dialog-width, 20rem);
   max-width: 90vw;
   box-sizing: border-box;
 }
 
 .dialog-title {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #202124;
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 /* The #header-extra variant: title left, the dialog's own controls right.
@@ -177,7 +177,7 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-5);
 }
 
 .dialog-header .dialog-title {
@@ -187,7 +187,7 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
 }
 </style>
