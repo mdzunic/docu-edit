@@ -339,6 +339,38 @@ function txbxXml(shape: Shape, ctx: ShapeTextWriteContext): string {
   );
 }
 
+/** Serialises a Shape as a `wps:wsp` **member** of a `wpg:wgp` group
+ * (SPEC-057): the same shape body `shapeDrawingXml` builds, but its `a:xfrm`
+ * carries the member's offset (from the container's top-left) rather than the
+ * `0,0` a standalone anchor uses, and it carries its own `wps:cNvPr` so a
+ * member's `altText` rides on its non-visual properties. `offXEmu`/`offYEmu`
+ * are the member offset in EMU. */
+export function shapeGroupChildXml(shape: Shape, id: number, offXEmu: number, offYEmu: number, ctx: ShapeTextWriteContext): string {
+  const cx = cmToEmu(shape.widthCm);
+  const cy = cmToEmu(Math.max(0, shape.heightCm));
+  const name = `Shape ${id}`;
+  const descrAttr = shape.altText ? ` descr="${escapeXmlAttribute(shape.altText)}"` : "";
+  const prst = shape.unsupportedGeometryXml ? undefined : GEOMETRY_TO_PRST[shape.geometry];
+  const geomXml = shape.unsupportedGeometryXml ?? `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>`;
+  const rotAttr = shape.rotationDeg ? ` rot="${degToOoxmlRot(shape.rotationDeg)}"` : "";
+  const isLine = LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml;
+  const spPr =
+    "<wps:spPr>" +
+    `<a:xfrm${rotAttr}><a:off x="${offXEmu}" y="${offYEmu}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    geomXml +
+    (isLine ? "" : fillXml(shape.fill)) +
+    outlineXml(shape.outline) +
+    "</wps:spPr>";
+  return (
+    `<wps:wsp xmlns:wps="${WPS_NAMESPACE}" xmlns:a="${A_NAMESPACE}">` +
+    `<wps:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"${descrAttr}/>` +
+    "<wps:cNvSpPr/>" +
+    spPr +
+    txbxXml(shape, ctx) +
+    "</wps:wsp>"
+  );
+}
+
 /** Serialises a Shape + the assigned docPrId into a `w:drawing` element
  * (wrapped by the caller in `<w:r>`, in `<w:p>` — mirrors drawing.ts's
  * drawingXml). Writes explicit `wp:positionH`/`wp:positionV` offsets (unlike

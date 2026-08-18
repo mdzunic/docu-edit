@@ -44,6 +44,7 @@ import type {
   SectionColumns,
   SectionStart,
   Shape,
+  DrawingGroup,
   Table,
   TableCell,
   TableRow,
@@ -105,6 +106,7 @@ import {
 import { CONTENT_TYPE_BY_EXTENSION } from "../core/media";
 import { drawingXml } from "./drawing";
 import { shapeDrawingXml } from "./shape";
+import { groupDrawingXml } from "./group";
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
 import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";
 import {
@@ -1517,10 +1519,10 @@ function headerFooterPartXml(
       if (block.type === "image") {
         return imageParagraphXml(block, plan.mediaPlan, docPrId++);
       }
-      if (block.type === "shape" || block.type === "chart") {
-        // A drawn shape/chart (SPEC-051/SPEC-052) is a body-level feature;
-        // one is never inserted into a header/footer, but the Block union
-        // covers it structurally the same way a TOC does below.
+      if (block.type === "shape" || block.type === "chart" || block.type === "drawingGroup") {
+        // A drawn shape/chart/group (SPEC-051/052/057) is a body-level
+        // feature; one is never inserted into a header/footer, but the Block
+        // union covers it structurally the same way a TOC does below.
         return "";
       }
       if (block.type === "break") {
@@ -1660,11 +1662,11 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
           if (block.type === "table") {
             return tableXml(block, includeOpaque, inlineCtx, () => undefined);
           }
-          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "break" || block.type === "toc" || block.type === "tof") {
+          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "drawingGroup" || block.type === "break" || block.type === "toc" || block.type === "tof") {
             // A note body holds paragraphs (and its first block must, to
-            // carry the reference marker); images/shapes/charts/breaks/TOCs
-            // have no valid per-note serialisation, so they are omitted here
-            // the way they are omitted from the note areas.
+            // carry the reference marker); images/shapes/charts/groups/breaks/
+            // TOCs have no valid per-note serialisation, so they are omitted
+            // here the way they are omitted from the note areas.
             return "";
           }
           if (markerPending) {
@@ -2066,6 +2068,14 @@ function* documentBlockXml(
           yield shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++);
         } else if (block.type === "chart") {
           yield chartParagraphXml(block, chartPlan, sectionIndex, i, docPrId++);
+        } else if (block.type === "drawingGroup") {
+          const drawing = groupDrawingXml(
+            block,
+            { paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, inlineCtx) },
+            mediaPlan,
+            { next: () => docPrId++ },
+          );
+          yield `<w:p><w:r>${drawing}</w:r></w:p>`;
         } else if (block.type === "break") {
           // A manual break block (SPEC-028 AC-30): a paragraph holding just
           // the typed w:br run, the shape the reader folds back into a
@@ -2198,6 +2208,22 @@ function styleNameFor(styleId: string): string {
   return match ? `heading ${match[1]}` : styleId;
 }
 
+/** Collects the style ids referenced by a drawing group's members' text
+ * frames, recursing into nested containers (SPEC-057). */
+function collectGroupMemberStyleIds(group: DrawingGroup, referencedIds: Set<string>): void {
+  for (const member of group.members) {
+    if (member.type === "shape") {
+      for (const shapeBlock of member.text?.blocks ?? []) {
+        if (shapeBlock.type === "paragraph" && shapeBlock.styleId) {
+          referencedIds.add(shapeBlock.styleId);
+        }
+      }
+    } else if (member.type === "drawingGroup") {
+      collectGroupMemberStyleIds(member, referencedIds);
+    }
+  }
+}
+
 /** Every style id the model's paragraphs reference, in first-use order. */
 function collectReferencedStyleIds(model: DocumentModel): Set<string> {
   const referencedIds = new Set<string>();
@@ -2212,6 +2238,12 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
             referencedIds.add(shapeBlock.styleId);
           }
         }
+        continue;
+      }
+      if (block.type === "drawingGroup") {
+        // A container's members can hold text (a grouped text box); collect
+        // the styles their paragraphs reference recursively (SPEC-057).
+        collectGroupMemberStyleIds(block, referencedIds);
         continue;
       }
       const paragraphs =

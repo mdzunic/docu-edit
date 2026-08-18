@@ -895,9 +895,13 @@ export interface DrawingPlacement {
   zOrder?: number;
   /** Whole degrees clockwise, 0-359. */
   rotationDeg?: number;
-  /** Group membership as an ordinal — deliberately not named `id`: see
-   * IGNORED_KEYS in lib/equality.ts, the same trap `NoteRef.noteId` is named
-   * around. */
+  /** LEGACY (SPEC-051, retired by SPEC-057): flat group membership as an
+   * ordinal. No writer emits it any more; it survives only as a transient
+   * carrier on the read side, where both format readers still accept the
+   * private `de:group` attribute and the legacy-migration pass collapses
+   * drawings sharing an ordinal into one `DrawingGroup` container. Never
+   * persisted on a modelled drawing after migration. Deliberately not named
+   * `id`: see IGNORED_KEYS in lib/equality.ts. */
   groupOrdinal?: number;
 }
 
@@ -1061,6 +1065,82 @@ export function isChart(block: Block | undefined): block is Chart {
  * pattern). */
 export function asChart(value: unknown): Chart {
   return value as Chart;
+}
+
+// --- drawing groups (SPEC-057) ----------------------------------------------
+
+/** What a `DrawingGroup` may hold. A nested `DrawingGroup` is a member like
+ * any other, so groups nest to arbitrary depth (SPEC-057). */
+export type DrawingMember = Shape | Image | Chart | DrawingGroup;
+
+/** A native group container (SPEC-057): a drawing that holds its members by
+ * containment rather than the retired flat `groupOrdinal` tag. Moving,
+ * nudging, anchoring, wrapping, z-ordering, deleting and duplicating a group
+ * then *are* the single-drawing code paths — the container is one drawing.
+ *
+ * The container itself is an ordinary anchored `DrawingPlacement`: its own
+ * `wrap`, offsets, anchor references, `zOrder`, `rotationDeg` and `altText`
+ * behave exactly as for a `Shape`. A member's `offsetXCm`/`offsetYCm` are
+ * measured from the container's top-left corner and are always present
+ * (normalization writes 0 explicitly); a member's `relativeToH`,
+ * `relativeToV` and `zOrder` are meaningless inside a container and absent;
+ * `wrap` carries the fixed placeholder `"square"` (never read, overwritten by
+ * Ungroup). See "The group container" in specs/057. */
+export interface DrawingGroup extends DrawingPlacement {
+  type: "drawingGroup";
+  /** Paint order: earlier = further from the reader. Never empty; in
+   * practice `members.length >= 2` holds everywhere (a container reduced to
+   * one member dissolves). */
+  members: DrawingMember[];
+  /** Present when a member at any depth is outside the modellable catalogue
+   * (a preserved shape/chart, or a catalogue geometry carrying an
+   * un-modelled attribute such as a flip): the whole container is **sealed**
+   * and carries its source subtree verbatim — the `.docx` `wpg:wgp` or `.odt`
+   * `draw:g` element XML — re-emitted unchanged (apart from position patches)
+   * on a same-format save, the way a preserved shape carries
+   * `unsupportedGeometryXml`. Deliberately not named `id` (see IGNORED_KEYS
+   * in lib/equality.ts). A sealed container does not enter, offers no resize
+   * or rotation handles, and shows read-only alt text. */
+  preservedSubtreeXml?: string;
+  /** Pending tracked insertion/deletion of this container block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+}
+
+/** Whether a block is a drawing group — the isShape-style narrowing helper
+ * (also usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isDrawingGroup(block: Block | undefined): block is DrawingGroup {
+  return block?.type === "drawingGroup";
+}
+
+/** Typed pass-through for a DrawingGroup arriving as a runtime-declared Object
+ * prop (espree bars the type annotation — see tables.ts's asTable). */
+export function asDrawingGroup(value: unknown): DrawingGroup {
+  return value as DrawingGroup;
+}
+
+/** Whether a member at any depth is a preserved (un-modellable) drawing, which
+ * seals every container above it (SPEC-057 "Preserved members and preserved
+ * containers"). A member is preserved when it carries
+ * `unsupportedGeometryXml` (Shape) or `unsupportedChartXml` (Chart), or is a
+ * nested sealed group. */
+export function memberIsPreserved(member: DrawingMember): boolean {
+  if (isDrawingGroup(member)) {
+    return member.preservedSubtreeXml !== undefined || member.members.some(memberIsPreserved);
+  }
+  if (isShape(member)) {
+    return member.unsupportedGeometryXml !== undefined;
+  }
+  if (isChart(member)) {
+    return member.unsupportedChartXml !== undefined;
+  }
+  return false;
+}
+
+/** Whether a container is sealed — holds a preserved member at any depth, so
+ * it carries its source subtree verbatim and cannot enter/resize/rotate. */
+export function isSealedGroup(group: DrawingGroup): boolean {
+  return group.preservedSubtreeXml !== undefined || group.members.some(memberIsPreserved);
 }
 
 // MediaPart moved to core/media.ts (product-neutral media storage);
@@ -1527,7 +1607,8 @@ export type Block =
   | TableOfContents
   | TableOfFigures
   | Shape
-  | Chart;
+  | Chart
+  | DrawingGroup;
 
 /** A section groups block-level content; documents have one or more. A
  * section boundary IS the section break (SPEC-028): inserting a section
@@ -2120,7 +2201,7 @@ export function forEachParagraph(
             });
           });
         });
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block) && !isDrawingGroup(block)) {
         visit(block, { section: sectionIndex, block: blockIndex });
       }
     });

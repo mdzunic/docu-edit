@@ -159,6 +159,32 @@ function anchorWrapParts(wrap: ImageWrapMode): { behindDoc: string; wrapXml: str
   return { behindDoc: "0", wrapXml: "<wp:wrapNone/>" };
 }
 
+/** Serialises an Image as a `pic:pic` **member** of a `wpg:wgp` group
+ * (SPEC-057): the same picture body `drawingXml` embeds, positioned by the
+ * member offset in its `a:xfrm` rather than the `0,0` a standalone anchor
+ * uses. `offXEmu`/`offYEmu` are the member offset in EMU; `id` is the
+ * document-unique id for its `pic:cNvPr`. */
+export function imageGroupChildXml(image: Image, relId: string, id: number, offXEmu: number, offYEmu: number): string {
+  const cx = cmToEmu(image.widthCm);
+  const cy = cmToEmu(image.heightCm);
+  const name = `Picture ${id}`;
+  const descrAttr = image.altText ? ` descr="${escapeXmlAttribute(image.altText)}"` : "";
+  const rotAttr = image.rotationDeg ? ` rot="${Math.round(image.rotationDeg * 60000)}"` : "";
+  return (
+    `<pic:pic xmlns:pic="${PIC_NAMESPACE}" xmlns:a="${A_NAMESPACE}">` +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"${descrAttr}/><pic:cNvPicPr/></pic:nvPicPr>` +
+    "<pic:blipFill>" +
+    `<a:blip xmlns:r="${R_NAMESPACE}" r:embed="${relId}"/>` +
+    "<a:stretch><a:fillRect/></a:stretch>" +
+    "</pic:blipFill>" +
+    "<pic:spPr>" +
+    `<a:xfrm${rotAttr}><a:off x="${offXEmu}" y="${offYEmu}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+    "</pic:spPr>" +
+    "</pic:pic>"
+  );
+}
+
 /** Serialises an Image + the relationship id its media was written under
  * into a `w:drawing` element (wrapped by the caller in `<w:r>`, itself
  * wrapped in `<w:p>` — SPEC-024's Image block has no direct OOXML body-level
