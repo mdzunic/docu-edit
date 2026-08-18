@@ -5,7 +5,7 @@
 // The parent resolves a heading target to a (hidden) bookmark and computes the
 // cached value. Runtime prop/emit declarations per the espree constraint.
 import { computed, ref } from "vue";
-import { asCrossRefBookmarks, asCrossRefHeadings } from "../lib/fields";
+import { asCrossRefBookmarks, asCrossRefCaptions, asCrossRefHeadings } from "../lib/fields";
 import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
@@ -13,23 +13,39 @@ const props = defineProps({
   headings: { type: Array, default: () => [] },
   /** Bookmark targets: `[{ name }]`, hidden bookmarks excluded. */
   bookmarks: { type: Array, default: () => [] },
+  /** Caption targets: `[{ anchor, label, text }]` (SPEC-055 AC-23). */
+  captions: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(["insert", "cancel"]);
 
 const headings = computed(() => asCrossRefHeadings(props.headings));
 const bookmarks = computed(() => asCrossRefBookmarks(props.bookmarks));
+const captions = computed(() => asCrossRefCaptions(props.captions));
 
-// "text" and "position" insert a `ref`; "page" inserts a `pageRef`.
+// The distinct caption labels, each its own category (SPEC-055 AC-23).
+const captionLabels = computed(() => Array.from(new Set(captions.value.map((caption) => caption.label))));
+
+// "text"/"position"/the caption formats insert a `ref`; "page" a `pageRef`.
 const show = ref("text");
-// The selected target, encoded as "heading:<index>" or "bookmark:<name>".
+// The selected target: "heading:<index>", "bookmark:<name>" or "caption:<anchor>".
 const target = ref(
   headings.value.length > 0
     ? `heading:${headings.value[0].index}`
     : bookmarks.value.length > 0
       ? `bookmark:${bookmarks.value[0].name}`
-      : "",
+      : captions.value.length > 0
+        ? `caption:${captions.value[0].anchor}`
+        : "",
 );
+
+/** A caption target offers the six caption formats (SPEC-055 AC-24); a
+ * heading/bookmark keeps SPEC-053's three. */
+const isCaptionTarget = computed(() => target.value.startsWith("caption:"));
+
+function captionsFor(label = "") {
+  return captions.value.filter((caption) => caption.label === label);
+}
 
 function insert() {
   if (!target.value) {
@@ -54,15 +70,37 @@ function insert() {
         class="row-input"
         data-testid="cross-reference-show"
       >
-        <option value="text">
-          Text
-        </option>
-        <option value="page">
-          Page number
-        </option>
-        <option value="position">
-          Above/below
-        </option>
+        <template v-if="isCaptionTarget">
+          <option value="full">
+            Entire caption
+          </option>
+          <option value="labelAndNumber">
+            Label and number
+          </option>
+          <option value="numberOnly">
+            Number only
+          </option>
+          <option value="textOnly">
+            Caption text only
+          </option>
+          <option value="page">
+            Page number
+          </option>
+          <option value="position">
+            Above/below
+          </option>
+        </template>
+        <template v-else>
+          <option value="text">
+            Text
+          </option>
+          <option value="page">
+            Page number
+          </option>
+          <option value="position">
+            Above/below
+          </option>
+        </template>
       </select>
     </label>
 
@@ -113,12 +151,34 @@ function insert() {
           <span>{{ bookmark.name }}</span>
         </label>
       </template>
+      <template
+        v-for="label in captionLabels"
+        :key="`caption-group:${label}`"
+      >
+        <p class="group-label">
+          {{ label }}
+        </p>
+        <label
+          v-for="caption in captionsFor(label)"
+          :key="`caption:${caption.anchor}`"
+          class="target-row"
+        >
+          <input
+            v-model="target"
+            type="radio"
+            name="cross-reference-target"
+            :value="`caption:${caption.anchor}`"
+            :data-testid="`cross-reference-caption-${caption.anchor}`"
+          >
+          <span>{{ caption.text }}</span>
+        </label>
+      </template>
       <p
-        v-if="headings.length === 0 && bookmarks.length === 0"
+        v-if="headings.length === 0 && bookmarks.length === 0 && captions.length === 0"
         class="empty"
         data-testid="cross-reference-empty"
       >
-        This document has no headings or bookmarks to reference yet.
+        This document has no headings, bookmarks or captions to reference yet.
       </p>
     </div>
 

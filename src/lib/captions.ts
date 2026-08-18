@@ -26,8 +26,8 @@ import {
 } from "./documentModel";
 import { formatOrdinal } from "./core/lists";
 import { CAPTION_STYLE, CAPTION_STYLE_ID } from "./styles";
-import { paragraphAt, type ParagraphAddress } from "./textEditing";
-import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
+import { clampCaret, paragraphAt, type ParagraphAddress } from "./textEditing";
+import { caretSelection, type CommandResult } from "./commands";
 
 /** The three built-in caption labels the dialog offers (SPEC-055 AC-5). Custom
  * labels are added by "New label…" and live only in the captions the user
@@ -295,7 +295,7 @@ export function captionForObject(
  * caption's baked run formatting comes from the Caption style so it renders
  * distinctly without a catalogue lookup at paint time. */
 function captionRuns(options: CaptionOptions): { runs: Run[]; textOffset: number } {
-  const runFormatting: RunFormatting = { ...(CAPTION_STYLE.runFormatting ?? {}) };
+  const runFormatting: RunFormatting = { ...CAPTION_STYLE.runFormatting };
   const runs: Run[] = [];
   let textOffset = 0;
   if (!options.excludeLabel) {
@@ -331,7 +331,7 @@ export function insertCaption(
     type: "paragraph",
     runs,
     styleId: CAPTION_STYLE_ID,
-    formatting: { ...(CAPTION_STYLE.paragraphFormatting ?? {}) },
+    formatting: { ...CAPTION_STYLE.paragraphFormatting },
   };
   const at = options.position === "below" ? object.block + 1 : object.block;
   blocks.splice(at, 0, caption);
@@ -348,4 +348,28 @@ export function insertCaption(
 export function captionParagraphAt(model: DocumentModel, address: ParagraphAddress): Paragraph | undefined {
   const block = paragraphAt(model, address);
   return block ?? undefined;
+}
+
+/** Deletes both a captioned object and its bound caption in one edit (SPEC-055
+ * AC-20, AC-21 — "delete its caption too"), then renumbers the remaining
+ * captions. Both are top-level blocks in the same section; the higher index is
+ * spliced first so the lower one stays valid. */
+export function deleteObjectWithCaption(
+  model: DocumentModel,
+  object: ParagraphAddress,
+  caption: ParagraphAddress,
+): CommandResult {
+  const next = cloneContainers(model);
+  const blocks = next.sections[object.section].blocks;
+  const indices = [object.block, caption.block].sort((a, b) => b - a);
+  for (const index of indices) {
+    blocks.splice(index, 1);
+  }
+  const renumbered = renumberCaptions(next);
+  const caret = clampCaret(renumbered, {
+    section: object.section,
+    block: Math.min(object.block, caption.block),
+    offset: 0,
+  });
+  return { model: renumbered, selection: caretSelection(caret) };
 }

@@ -15,7 +15,8 @@ import {
   updateFieldAtCaret,
   type FieldUpdateContext,
 } from "../../lib/commands.fields";
-import type { DocumentModel, FieldSpec } from "../../lib/documentModel";
+import type { DocumentModel, FieldSpec, RefFormat } from "../../lib/documentModel";
+import { listCaptions } from "../../lib/captions";
 import type { CommandResult, ModelSelection } from "../../lib/commands";
 import { DATE_TIME_CATALOGUE, evaluateField, renderDateTime } from "../../lib/fields";
 import { caretFromDomPoint } from "../../lib/domCaret";
@@ -160,6 +161,21 @@ export function useFields(deps: FieldsDeps) {
 
   const crossReferenceHeadings = shallowRef<Array<{ index: number; text: string; level: number }>>([]);
   const crossReferenceBookmarks = shallowRef<Array<{ name: string }>>([]);
+  // SPEC-055 AC-23: one category per caption label, its captions by full text.
+  const crossReferenceCaptions = shallowRef<Array<{ anchor: string; label: string; text: string }>>([]);
+
+  /** The dialog's `show` string narrowed to a non-page RefFormat (SPEC-053 +
+   * SPEC-055): the caption formats and position pass through, anything else is
+   * plain text. */
+  function crossRefShow(show: string): RefFormat {
+    return show === "position" ||
+      show === "full" ||
+      show === "labelAndNumber" ||
+      show === "numberOnly" ||
+      show === "textOnly"
+      ? (show as RefFormat)
+      : "text";
+  }
 
   function openCrossReferenceDialog() {
     const m = model();
@@ -172,6 +188,11 @@ export function useFields(deps: FieldsDeps) {
       level: heading.level,
     }));
     crossReferenceBookmarks.value = listBookmarks(m).map((bookmark) => ({ name: bookmark.name }));
+    crossReferenceCaptions.value = listCaptions(m).map((caption) => ({
+      anchor: caption.anchor,
+      label: caption.label,
+      text: caption.text,
+    }));
     crossReferenceDialogOpen.value = true;
   }
 
@@ -191,11 +212,22 @@ export function useFields(deps: FieldsDeps) {
       const ensured = ensureHeadingBookmark(m, heading.address, headingAnchor(heading.text, Number(payload.targetId)));
       m = ensured.model;
       targetName = ensured.name;
+    } else if (payload.targetType === "caption") {
+      // Referencing a caption inserts a hidden bookmark spanning it if it has
+      // none (SPEC-055), the same mechanism headings use — its derived anchor
+      // is both the ensured bookmark name and the ref target.
+      const caption = listCaptions(m).find((entry) => entry.anchor === payload.targetId);
+      if (!caption) {
+        return;
+      }
+      const ensured = ensureHeadingBookmark(m, caption.address, caption.anchor);
+      m = ensured.model;
+      targetName = ensured.name;
     }
     const field: FieldSpec =
       payload.show === "page"
         ? { kind: "pageRef", target: targetName, show: "page", cached: "" }
-        : { kind: "ref", target: targetName, show: payload.show === "position" ? "position" : "text", cached: "" };
+        : { kind: "ref", target: targetName, show: crossRefShow(payload.show), cached: "" };
     const withCached = fillCached(field, m, selection);
     deps.applyEdit(insertFieldCommand(m, selection, withCached), selection, "insert cross-reference");
   }
@@ -350,6 +382,7 @@ export function useFields(deps: FieldsDeps) {
     propertyNames,
     crossReferenceHeadings,
     crossReferenceBookmarks,
+    crossReferenceCaptions,
     showFieldCodes,
     documentLanguage: computed(() => documentLanguage()),
     openFieldDialog,

@@ -49,6 +49,9 @@ import OutlinePane from "../components/OutlinePane.vue";
 import FieldDialog from "../components/FieldDialog.vue";
 import DateTimeDialog from "../components/DateTimeDialog.vue";
 import CrossReferenceDialog from "../components/CrossReferenceDialog.vue";
+import CaptionDialog from "../components/CaptionDialog.vue";
+import TableOfFiguresDialog from "../components/TableOfFiguresDialog.vue";
+import DeleteCaptionPrompt from "../components/DeleteCaptionPrompt.vue";
 import FieldToolbar from "../components/FieldToolbar.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
@@ -93,6 +96,7 @@ import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationEngine } from "./document/usePaginationEngine";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
+import { useCaptions } from "./document/useCaptions";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
@@ -1813,6 +1817,10 @@ const {
     tableFormattingLocation = location;
   },
   getContextMenuTableCell: () => contextMenuTableCell,
+  // Deferred behind a lambda (SPEC-055): requestObjectDelete is destructured
+  // from useCaptions, wired after useLinks below — invoked only at
+  // delete-table time, never during this deps object's evaluation.
+  requestObjectDelete: (object, kind, perform) => requestObjectDelete(object, kind, perform),
 });
 
 /** The selection paragraph commands target: the live/tracked selection, or
@@ -1972,7 +1980,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     // a DOM caret/selection inside a contenteditable region.
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
-      handleChartDelete();
+      deleteChartWithCaptionPrompt();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
@@ -2005,7 +2013,22 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     // places a DOM caret/selection inside the contenteditable region for
     // that flow to act on.
     event.preventDefault();
-    handleImageDelete();
+    deleteImageWithCaptionPrompt();
+    return;
+  }
+  if (tofSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+    // Deleting a selected table of figures (SPEC-055 AC-35) — the same
+    // dedicated keydown path a selected TOC uses; the captions it lists are
+    // separate blocks and are untouched.
+    event.preventDefault();
+    handleTofDelete();
+    return;
+  }
+  if (tofSelection.value && isContentKey(event)) {
+    // Typing inside a table of figures (SPEC-055): not editable — show the
+    // update hint instead of letting the keystroke land elsewhere.
+    event.preventDefault();
+    addToast('This table of figures isn’t editable — use "Update table of figures" instead.');
     return;
   }
   if (handleLineEdgeKey(event)) {
@@ -2811,6 +2834,7 @@ const {
   propertyNames: fieldPropertyNames,
   crossReferenceHeadings,
   crossReferenceBookmarks,
+  crossReferenceCaptions,
   openFieldDialog,
   handleFieldInsert,
   openDateTimeDialog,
@@ -2827,6 +2851,50 @@ const {
   onContextMenu,
   handleFieldAction,
 } = useFields({ ...editorContext, tocPageNumberFor, handleContextMenu, closeContextMenu });
+
+const {
+  captionDialogOpen,
+  captionLabels,
+  captionTargetSelected,
+  openCaptionDialog,
+  handleCaptionInsert,
+  handleCaptionCancel,
+  captionSettings,
+  toggleAutoImages,
+  toggleAutoTables,
+  requestObjectDelete,
+  deleteCaptionPromptOpen,
+  deleteCaptionKind,
+  confirmDeleteBoth,
+  confirmKeepCaption,
+  cancelDeletePrompt,
+  deleteImageWithCaptionPrompt,
+  deleteChartWithCaptionPrompt,
+  insertImageFileWithAutoCaption,
+  insertTableWithAutoCaption,
+  tofDialogOpen,
+  tofLabels,
+  tofSelection,
+  openTableOfFiguresDialog,
+  handleTofInsert,
+  handleTofCancel,
+  handleTofAction,
+  handleTofDelete,
+  clearTofSelection,
+} = useCaptions({
+  ...editorContext,
+  imageSelection,
+  chartSelection,
+  cellSelection,
+  // anchorCaret resolves caption anchors too, so useLinks's page lookup works
+  // for captions unchanged (SPEC-055).
+  tofPageNumberFor: tocPageNumberFor,
+  jumpToAnchor,
+  handleImageDelete,
+  handleChartDelete,
+  insertImageFromFile,
+  handleInsertTable,
+});
 
 /** The registry shortcuts that act regardless of where focus sits in the
  * document view — Ctrl/Cmd+F/H (which work from the canvas, not just once
@@ -2994,6 +3062,10 @@ const editorCommands = new Map([
   ["insert.date-time", openDateTimeDialog],
   ["insert.cross-reference", openCrossReferenceDialog],
   ["insert.toc", openTocDialog],
+  ["insert.caption", openCaptionDialog],
+  ["insert.table-of-figures", openTableOfFiguresDialog],
+  ["format.auto-caption-images", toggleAutoImages],
+  ["format.auto-caption-tables", toggleAutoTables],
   ["insert.special-character", openSpecialCharacters],
   // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
   ["insert.link", openLinkDialog],
@@ -3124,17 +3196,20 @@ function handleMenuCommand(id = "") {
         :track-changes-pane-open="trackChangesPaneOpen"
         :can-convert-literal-chips="canConvertLiteralChips"
         :table-selected-for-chart="tableSelectedForChart"
+        :caption-target-selected="captionTargetSelected"
+        :auto-caption-images="captionSettings.autoImages"
+        :auto-caption-tables="captionSettings.autoTables"
         :painter-mode="painterMode"
         :field-shading="fieldShadingOn"
         @command="handleMenuCommand"
-        @insert-table-size="(rows, cols) => handleInsertTable({ rows, cols })"
+        @insert-table-size="(rows, cols) => insertTableWithAutoCaption({ rows, cols })"
         @insert-break="handleInsertBreak"
         @insert-section-break="handleInsertSectionBreak"
         @insert-note="handleInsertNote"
         @shape-pick="handleShapePick"
         @chart-pick="handleChartPick"
         @multilevel-preset="handleMultilevelPreset"
-        @insert-image-file="handleInsertImageFile"
+        @insert-image-file="insertImageFileWithAutoCaption"
         @painter-click="handlePainterClick"
         @painter-dblclick="handlePainterDblClick"
       />
@@ -3635,6 +3710,7 @@ function handleMenuCommand(id = "") {
               @chart-select="handleChartSelect"
               @chart-edit-data="handleChartEditData"
               @toc-action="handleTocAction"
+              @tof-action="handleTofAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"
               @dblclick-footer="handleDblclickFooter(pageIndex)"
               @dblclick-body="handleDblclickBody"
@@ -3823,7 +3899,7 @@ function handleMenuCommand(id = "") {
       :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
       @wrap="handleImageWrap"
       @options="openImageOptions"
-      @delete="handleImageDelete"
+      @delete="deleteImageWithCaptionPrompt"
     />
     <ShapeToolbar
       v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection) && !movingShape"
@@ -3859,7 +3935,7 @@ function handleMenuCommand(id = "") {
       :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
       @edit-data="handleChartEditData(chartSelection.section, chartSelection.block)"
       @options="openChartOptions"
-      @delete="handleChartDelete"
+      @delete="deleteChartWithCaptionPrompt"
       @duplicate="handleChartDuplicate"
     />
     <EditorContextMenu
@@ -3955,6 +4031,7 @@ function handleMenuCommand(id = "") {
       v-if="crossReferenceDialogOpen"
       :headings="crossReferenceHeadings"
       :bookmarks="crossReferenceBookmarks"
+      :captions="crossReferenceCaptions"
       @insert="handleCrossReferenceInsert"
       @cancel="() => { crossReferenceDialogOpen = false; }"
     />
@@ -3963,6 +4040,25 @@ function handleMenuCommand(id = "") {
       :initial="defaultTocOptions()"
       @apply="handleTocInsert"
       @cancel="handleTocCancel"
+    />
+    <CaptionDialog
+      v-if="captionDialogOpen"
+      :labels="captionLabels"
+      @insert="handleCaptionInsert"
+      @cancel="handleCaptionCancel"
+    />
+    <TableOfFiguresDialog
+      v-if="tofDialogOpen"
+      :labels="tofLabels"
+      @apply="handleTofInsert"
+      @cancel="handleTofCancel"
+    />
+    <DeleteCaptionPrompt
+      v-if="deleteCaptionPromptOpen"
+      :object-kind="deleteCaptionKind"
+      @delete-both="confirmDeleteBoth"
+      @keep-caption="confirmKeepCaption"
+      @cancel="cancelDeletePrompt"
     />
     <HeaderFooterOptionsDialog
       v-if="headerFooterOptionsOpen"

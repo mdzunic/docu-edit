@@ -3,13 +3,12 @@ import { parseDocx } from "./docx/reader";
 import { writeDocx } from "./docx/writer";
 import { parseOdt } from "./odf/reader";
 import { writeOdt } from "./odf/writer";
-import { equalStructural, firstStructuralDifference } from "./equality";
+import { firstStructuralDifference } from "./equality";
 import {
   createDocument,
   createFieldSpecRun,
   isTof,
   type DocumentModel,
-  type Image,
   type Paragraph,
   type TableOfFigures,
   type Run,
@@ -17,9 +16,7 @@ import {
 } from "./documentModel";
 import { CAPTION_STYLE_ID } from "./styles";
 
-function image(mediaId: string): Image {
-  return { type: "image", mediaId, widthCm: 4, heightCm: 3 } as Image;
-}
+type CaptionRefShow = "full" | "labelAndNumber" | "numberOnly" | "textOnly";
 
 function captionParagraph(label: string, cached: string, text: string, anchor: string): Paragraph {
   return {
@@ -35,7 +32,7 @@ function captionParagraph(label: string, cached: string, text: string, anchor: s
   };
 }
 
-function refRun(show: FieldSpec extends { show: infer S } ? never : "full" | "labelAndNumber" | "numberOnly" | "textOnly", target: string, cached: string): Run {
+function refRun(show: CaptionRefShow, target: string, cached: string): Run {
   return createFieldSpecRun({ kind: "ref", target, show, cached });
 }
 

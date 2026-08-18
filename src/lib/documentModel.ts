@@ -1416,6 +1416,13 @@ export function asTofOptions(value: unknown): TofOptions {
   return value as TofOptions;
 }
 
+/** Typed pass-through for a `string[]` arriving from a `.vue` component's
+ * untyped Array prop (same espree constraint as asTabStops) — the caption
+ * dialog's label list. */
+export function asStringList(value: unknown[]): string[] {
+  return value as string[];
+}
+
 /** A table of figures block (SPEC-055): a generated, block-level atom that
  * mirrors `TableOfContents` — built from the document's Caption-styled
  * paragraphs of one `label` (captions.ts's `listCaptions`) rather than its

@@ -450,6 +450,18 @@ export function asCrossRefBookmarks(value: unknown): CrossRefBookmark[] {
   return value as CrossRefBookmark[];
 }
 
+/** One caption target row of the Cross-reference dialog (SPEC-055): its
+ * derived anchor, label (the category it groups under) and full text. */
+export interface CrossRefCaption {
+  anchor: string;
+  label: string;
+  text: string;
+}
+
+export function asCrossRefCaptions(value: unknown): CrossRefCaption[] {
+  return value as CrossRefCaption[];
+}
+
 /** Typed pass-through for a plain string list prop (the Field dialog's
  * custom-property names). */
 export function asStringList(value: unknown): string[] {

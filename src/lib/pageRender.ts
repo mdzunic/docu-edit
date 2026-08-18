@@ -59,7 +59,7 @@ export interface RenderEntry {
   key: string;
   /** The v-memo array: every value the entry's DOM depends on. */
   memo: unknown[];
-  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "break" | "toc" | "marker";
+  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "break" | "toc" | "tof" | "marker";
   /** Element tag for paragraph/break/marker entries ("p", "h2", "div"). */
   tag?: string;
   className?: string;
@@ -101,6 +101,10 @@ export interface RenderEntry {
    * AC-10, AC-11). */
   tocStaleHeadings?: boolean;
   tocStalePagination?: boolean;
+  /** Staleness flags a table-of-figures entry's update control reacts to
+   * (SPEC-055). */
+  tofStaleEntries?: boolean;
+  tofStalePagination?: boolean;
   runs?: RenderRun[];
   /** SPEC-054 bar tab stops (AC-22): the start-relative px positions of the
    * vertical rules this paragraph draws through its line height. Positioned
