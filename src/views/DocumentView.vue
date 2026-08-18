@@ -785,7 +785,7 @@ const {
 // and member gestures, the container toolbar and keyboard proxy traversal.
 // clearOtherSelections keeps a group selection exclusive with the per-kind
 // shape/image/chart selections.
-const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); } });
+const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); }, getGroupCandidates: () => shapeMultiSelection.value });
 const groupSelection = drawingGroups.groupSelection;
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
@@ -3903,7 +3903,7 @@ function handleMenuCommand(id = "") {
       @wrap="handleShapeWrap"
       @alt-text="handleShapeAltText"
       @z-order="handleShapeZOrder"
-      @group="handleGroupSelected(currentGroupMembers())"
+      @group="drawingGroups.groupSelectedDrawings()"
       @ungroup="handleUngroupSelected"
       @delete="handleShapeDelete"
       @duplicate="handleShapeDuplicate"

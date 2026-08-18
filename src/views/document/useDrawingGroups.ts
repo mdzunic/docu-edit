@@ -49,6 +49,11 @@ import { asNudgeDirection, type NudgeDirection } from "../../lib/core/shapes";
  * the sibling per-kind selections (so a group selection is exclusive). */
 export interface DrawingGroupsDeps extends EditorContext {
   clearOtherSelections: () => void;
+  /** The current cross-kind multi-selection of top-level drawings (SPEC-057
+   * "Selection across drawing kinds") — SPEC-051's shape Shift-click list,
+   * widened to carry any drawing kind's `{ section, block }`. Group reads it
+   * live; it is kind-agnostic in storage. */
+  getGroupCandidates: () => { section: number; block: number }[];
 }
 
 /** A top-level drawing address in the unified multi-selection (SPEC-057
@@ -60,7 +65,7 @@ interface DrawingRef {
 }
 
 export function useDrawingGroups(deps: DrawingGroupsDeps) {
-  const { doc, contentRoot, pageRef, currentSelection, applyEdit, getCaret, clearOtherSelections } = deps;
+  const { doc, contentRoot, pageRef, currentSelection, applyEdit, getCaret, clearOtherSelections, getGroupCandidates } = deps;
 
   /** The selected container or member (SPEC-057): `path` empty = the
    * container itself, non-empty = a member by index path. */
@@ -164,12 +169,28 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     toggleMultiSelection({ section, block });
   }
 
+  /** The drawings Group would combine: SPEC-051's shape Shift-click list
+   * (kind-agnostic in storage) unioned with any containers this composable's
+   * own Shift-click added, de-duplicated by address. */
+  function groupCandidates(): DrawingRef[] {
+    const seen = new Set<string>();
+    const out: DrawingRef[] = [];
+    for (const r of [...getGroupCandidates(), ...multiSelection.value]) {
+      const key = `${r.section}:${r.block}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ section: r.section, block: r.block });
+      }
+    }
+    return out;
+  }
+
   function canGroup(): boolean {
-    if (multiSelection.value.length < 2) {
+    const candidates = groupCandidates();
+    if (candidates.length < 2) {
       return false;
     }
-    const sections = new Set(multiSelection.value.map((r) => r.section));
-    return sections.size === 1;
+    return new Set(candidates.map((r) => r.section)).size === 1;
   }
 
   // --- DOM measurement (the layout the lib module is kept free of) ----------
@@ -266,7 +287,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
       return;
     }
     const entries: GroupEntry[] = [];
-    for (const ref of multiSelection.value) {
+    for (const ref of groupCandidates()) {
       const rect = drawingRectCm(ref.section, ref.block);
       if (!rect) {
         return;
