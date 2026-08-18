@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import AppIcon from "../AppIcon.vue";
 
 // Two-state toggle primitive (SPEC-058) — bold/italic/underline and every
@@ -18,14 +19,22 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
 });
 
+// Normalise the tri-state into the exact aria-pressed value: the string
+// "mixed", or a real boolean (never a bare string like "true").
+const ariaPressed = computed(() =>
+  props.pressed === "mixed" ? "mixed" : props.pressed === true,
+);
+const isPressed = computed(
+  () => props.pressed === true || props.pressed === "mixed",
+);
 </script>
 
 <template>
   <button
     type="button"
     class="ui-toggle-button"
-    :class="{ 'is-pressed': props.pressed === true || props.pressed === 'mixed' }"
-    :aria-pressed="props.pressed"
+    :class="{ 'is-pressed': isPressed }"
+    :aria-pressed="ariaPressed"
     :aria-label="props.label || undefined"
     :title="props.label || undefined"
     :disabled="props.disabled"
