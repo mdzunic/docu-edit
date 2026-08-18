@@ -168,6 +168,19 @@ export function useImages(deps: ImagesDeps) {
     clearImageSelection();
   }
 
+  /** A selected image's keyboard interaction (SPEC-024 AC-30): Delete through
+   * the caller's caption-aware delete. Returns whether it handled the event; an
+   * image click never places a DOM caret, so this is a dedicated keydown
+   * path. */
+  function handleImageKeys(event: KeyboardEvent, deleteWithCaptionPrompt: () => void): boolean {
+    if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+      event.preventDefault();
+      deleteWithCaptionPrompt();
+      return true;
+    }
+    return false;
+  }
+
   function openImageOptions() {
     const model = doc.value;
     const location = imageSelection.value;
@@ -308,6 +321,7 @@ export function useImages(deps: ImagesDeps) {
 
   return {
     imageSelection,
+    handleImageKeys,
     imageHandles,
     imageOptionsOpen,
     imageOptionsInitial,

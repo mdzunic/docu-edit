@@ -14,6 +14,8 @@ import {
 } from "../../lib/commands";
 import { CM_PER_PX } from "../../lib/core/units";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
+import { asImageHandle, resizedImageSize } from "../../lib/imageResize";
+import { unrotateDelta } from "../../lib/core/shapeGeometry";
 import {
   isDrawingGroup,
   isSealedGroup,
@@ -28,10 +30,14 @@ import {
   duplicatedMemberPath,
   groupDrawings,
   memberAtPath,
+  moveGroupContainer,
+  moveMember,
   nudgeGroupContainer,
   nudgeMember,
   noDrawingLocation,
   reorderMember,
+  resizeGroupContainer,
+  resizeMember,
   rotateGroupContainer,
   rotateMember,
   setGroupAltText,
@@ -225,24 +231,30 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
    * "Rendering and test surface"). The proxy testids are built from the
    * container's own `drawing-<index>` base, which we read off the rendered
    * container proxy. */
-  function focusSelectedProxy() {
+  /** The DOM proxy element of the currently selected container/member — the
+   * hit/measure surface every handle and focus attaches to. Its testid is the
+   * container's own `drawing-<index>` base (read off the rendered container
+   * proxy) plus one `-member-<j>` per path step. */
+  function selectedProxyEl(): HTMLElement | null {
     const sel = groupSelection.value;
     const root = contentRoot.value;
     if (!sel || !root) {
-      return;
+      return null;
     }
     const anchor = root.querySelector(`.doc-group-anchor[data-section="${sel.section}"][data-block="${sel.block}"]`);
     const containerProxy = anchor?.querySelector(".doc-group-proxy");
     const base = containerProxy?.getAttribute("data-testid");
     if (!base) {
-      return;
+      return null;
     }
     const path = sel.path ?? [];
     const testid = path.length === 0 ? base : base + path.map((j) => `-member-${j}`).join("");
     const el = root.querySelector(`[data-testid="${testid}"]`);
-    if (el instanceof HTMLElement) {
-      el.focus();
-    }
+    return el instanceof HTMLElement ? el : null;
+  }
+
+  function focusSelectedProxy() {
+    selectedProxyEl()?.focus();
   }
 
   /** The container `.members.length` at the selected path's parent, for Tab
@@ -262,18 +274,225 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     return { node, siblingCount, parent };
   }
 
+  /** Measures the selected container/member's handle geometry (SPEC-057) — the
+   * selected proxy is the box every handle attaches to, so members get handles
+   * inside their container exactly as the container gets them on the page. */
   function remeasureGroupHandles() {
-    const sel = groupSelection.value;
     const pageEl = pageRef.value;
-    const root = contentRoot.value;
-    if (!sel || !pageEl || !root) {
-      groupHandles.value = null;
+    const el = selectedProxyEl();
+    groupHandles.value = pageEl && el ? measureImageGeometry(pageEl, el) : null;
+  }
+
+  // --- container / member resize + rotation drag ----------------------------
+  // Both commit once, on release (SPEC-057 "Undo"): a mid-drag preview turns
+  // the content layer / resizes the box via CSS, the model changes only at
+  // mouseup. Resize/rotate are the same handles a single shape uses, so a
+  // member is resized/rotated inside its container exactly as on the page.
+
+  /** The selected drawing (container when the path is empty, else the member
+   * the path addresses). */
+  function selectedDrawing(): DrawingMember | null {
+    const container = selectedContainer();
+    const sel = groupSelection.value;
+    if (!container || !sel) {
+      return null;
+    }
+    return memberAtPath(container, sel.path ?? []);
+  }
+
+  interface ResizeDrag {
+    handle: string;
+    startClientX: number;
+    startClientY: number;
+    startWidthCm: number;
+    startHeightCm: number;
+    rotationDeg: number;
+    widthCm: number;
+    heightCm: number;
+  }
+  let resizeDrag: ResizeDrag | null = null;
+  let resizeMoved = false;
+
+  interface RotateDrag {
+    centerClientX: number;
+    centerClientY: number;
+    startAngle: number;
+    startRotation: number;
+    contentEl: HTMLElement | null;
+  }
+  let rotateDrag: RotateDrag | null = null;
+  let rotateMoved = false;
+
+  /** The rotated content layer of the selected drawing (for live rotation
+   * preview): the container's own `.doc-group-content`, or a member wrapper. */
+  function selectedContentEl(): HTMLElement | null {
+    const proxy = selectedProxyEl();
+    if (!proxy) {
+      return null;
+    }
+    // Container proxy → its sibling content layer; member proxy → its wrapper.
+    const content = proxy.parentElement?.querySelector(":scope > .doc-group-content");
+    return content instanceof HTMLElement ? content : (proxy.parentElement instanceof HTMLElement ? proxy.parentElement : null);
+  }
+
+  function startGroupResize(event: MouseEvent, handle = "se") {
+    const drawing = selectedDrawing();
+    if (!drawing) {
       return;
     }
-    const el = root.querySelector(
-      `.doc-group-anchor[data-section="${sel.section}"][data-block="${sel.block}"] .doc-group`,
+    event.preventDefault();
+    resizeMoved = false;
+    resizeDrag = {
+      handle,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startWidthCm: drawing.widthCm,
+      startHeightCm: drawing.heightCm,
+      rotationDeg: drawing.rotationDeg ?? 0,
+      widthCm: drawing.widthCm,
+      heightCm: drawing.heightCm,
+    };
+    window.addEventListener("mousemove", handleGroupResizeMove);
+    window.addEventListener("mouseup", finishGroupResize);
+  }
+
+  function handleGroupResizeMove(event: MouseEvent) {
+    const drag = resizeDrag;
+    if (!drag) {
+      return;
+    }
+    resizeMoved = true;
+    const local = unrotateDelta(
+      (event.clientX - drag.startClientX) * CM_PER_PX,
+      (event.clientY - drag.startClientY) * CM_PER_PX,
+      drag.rotationDeg,
     );
-    groupHandles.value = el ? measureImageGeometry(pageEl, el) : null;
+    const size = resizedImageSize({ widthCm: drag.startWidthCm, heightCm: drag.startHeightCm }, asImageHandle(drag.handle), local.dx, local.dy, event.shiftKey);
+    drag.widthCm = size.widthCm;
+    drag.heightCm = size.heightCm;
+  }
+
+  function finishGroupResize() {
+    window.removeEventListener("mousemove", handleGroupResizeMove);
+    window.removeEventListener("mouseup", finishGroupResize);
+    const drag = resizeDrag;
+    resizeDrag = null;
+    const sel = groupSelection.value;
+    const model = doc.value;
+    if (!drag || !resizeMoved || !sel || !model) {
+      return;
+    }
+    const before = beforeSelection();
+    if (selectionIsContainer()) {
+      applyEdit(resizeGroupContainer(model, before, sel.section, sel.block, drag.widthCm, drag.heightCm), before, "resize group");
+    } else {
+      applyEdit(resizeMember(model, before, sel, drag.widthCm, drag.heightCm), before, "edit group member");
+    }
+    void nextTick().then(remeasureGroupHandles);
+  }
+
+  function startGroupRotate(event: MouseEvent) {
+    const drawing = selectedDrawing();
+    const proxy = selectedProxyEl();
+    if (!drawing || !proxy) {
+      return;
+    }
+    event.preventDefault();
+    const rect = proxy.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    rotateMoved = false;
+    rotateDrag = {
+      centerClientX: cx,
+      centerClientY: cy,
+      startAngle: (Math.atan2(event.clientY - cy, event.clientX - cx) * 180) / Math.PI,
+      startRotation: drawing.rotationDeg ?? 0,
+      contentEl: selectedContentEl(),
+    };
+    window.addEventListener("mousemove", handleGroupRotateMove);
+    window.addEventListener("mouseup", finishGroupRotate);
+  }
+
+  let rotatePreviewDeg = 0;
+
+  function handleGroupRotateMove(event: MouseEvent) {
+    const drag = rotateDrag;
+    if (!drag) {
+      return;
+    }
+    rotateMoved = true;
+    const angle = (Math.atan2(event.clientY - drag.centerClientY, event.clientX - drag.centerClientX) * 180) / Math.PI;
+    rotatePreviewDeg = Math.round(drag.startRotation + (angle - drag.startAngle));
+    // Live preview: turn the content layer without touching the model.
+    if (drag.contentEl) {
+      const prop = selectionIsContainer() ? "--group-rotation" : "--member-rotation";
+      drag.contentEl.style.setProperty(prop, `${rotatePreviewDeg}deg`);
+    }
+  }
+
+  function finishGroupRotate() {
+    window.removeEventListener("mousemove", handleGroupRotateMove);
+    window.removeEventListener("mouseup", finishGroupRotate);
+    const drag = rotateDrag;
+    rotateDrag = null;
+    const sel = groupSelection.value;
+    const model = doc.value;
+    if (!drag || !rotateMoved || !sel || !model) {
+      return;
+    }
+    const before = beforeSelection();
+    if (selectionIsContainer()) {
+      applyEdit(rotateGroupContainer(model, before, sel.section, sel.block, rotatePreviewDeg), before, "rotate group");
+    } else {
+      applyEdit(rotateMember(model, before, sel, rotatePreviewDeg), before, "edit group member");
+    }
+    void nextTick().then(remeasureGroupHandles);
+  }
+
+  /** Drags the selected container/member's body to move it (SPEC-057
+   * AC-10/AC-26); commits once on release. Armed by useCanvasGestures on a
+   * `.doc-group-anchor` mousedown while a group is selected. */
+  let moveDrag: { startClientX: number; startClientY: number } | null = null;
+  let moveMoved = false;
+
+  function startGroupMove(event: MouseEvent) {
+    if (!groupSelection.value) {
+      return;
+    }
+    moveMoved = false;
+    moveDrag = { startClientX: event.clientX, startClientY: event.clientY };
+    window.addEventListener("mousemove", handleGroupMoveMove);
+    window.addEventListener("mouseup", finishGroupMove);
+  }
+
+  function handleGroupMoveMove(event: MouseEvent) {
+    if (!moveDrag) {
+      return;
+    }
+    if (Math.abs(event.clientX - moveDrag.startClientX) > 2 || Math.abs(event.clientY - moveDrag.startClientY) > 2) {
+      moveMoved = true;
+    }
+  }
+
+  function finishGroupMove(event: MouseEvent) {
+    window.removeEventListener("mousemove", handleGroupMoveMove);
+    window.removeEventListener("mouseup", finishGroupMove);
+    const drag = moveDrag;
+    moveDrag = null;
+    const sel = groupSelection.value;
+    const model = doc.value;
+    if (!drag || !moveMoved || !sel || !model) {
+      return;
+    }
+    const dxCm = (event.clientX - drag.startClientX) * CM_PER_PX;
+    const dyCm = (event.clientY - drag.startClientY) * CM_PER_PX;
+    const before = beforeSelection();
+    if (selectionIsContainer()) {
+      applyEdit(moveGroupContainer(model, before, sel.section, sel.block, dxCm, dyCm), before, "move group");
+    } else {
+      applyEdit(moveMember(model, before, sel, dxCm, dyCm), before, "edit group member");
+    }
+    void nextTick().then(remeasureGroupHandles);
   }
 
   // --- Group / Ungroup ------------------------------------------------------
@@ -527,6 +746,22 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     return selectionIsContainer() ? selectedContainer() : null;
   }
 
+  /** The selected drawing's rotation (handles turn with it). */
+  function selectedRotationDeg(): number {
+    return selectedDrawing()?.rotationDeg ?? 0;
+  }
+
+  /** Whether the selected drawing offers resize/rotation handles — a sealed
+   * container does not (SPEC-057 AC-72/73); its preserved geometry must not be
+   * re-coordinated. Members and unsealed containers do. */
+  function selectedHasHandles(): boolean {
+    if (!groupSelection.value || !groupHandles.value) {
+      return false;
+    }
+    const container = selectedContainer();
+    return !(selectionIsContainer() && container !== null && isSealedGroup(container));
+  }
+
   /** The container toolbar's full prop bag (SPEC-057 AC-49), or null when no
    * container is selected or its handles are not yet measured — so
    * DocumentView renders `<GroupToolbar v-if=state v-bind=state />` in one
@@ -571,6 +806,11 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     groupToolbarStyle,
     groupToolbarState,
     selectionIsContainer,
+    selectedRotationDeg,
+    selectedHasHandles,
+    startGroupResize,
+    startGroupRotate,
+    startGroupMove,
     handleGroupKeys,
   };
 }

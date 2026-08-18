@@ -25,6 +25,7 @@ import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import GroupToolbar from "../components/GroupToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
+import DrawingGroupHandles from "../components/DrawingGroupHandles.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -677,6 +678,7 @@ const {
 // canvas and applyEdit reach them through these returned bindings.
 const {
   imageSelection,
+  handleImageKeys,
   imageHandles,
   imageOptionsOpen,
   imageOptionsInitial,
@@ -1985,13 +1987,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     addToast('This table of contents isn’t editable — use "Update table of contents" instead.');
     return;
   }
-  if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
-    // Deleting a selected image (SPEC-024 AC-30) is a dedicated keydown
-    // path, not the native beforeinput deletion flow: an image click never
-    // places a DOM caret/selection inside the contenteditable region for
-    // that flow to act on.
-    event.preventDefault();
-    deleteImageWithCaptionPrompt();
+  if (handleImageKeys(event, deleteImageWithCaptionPrompt)) {
     return;
   }
   if (tofSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
@@ -2331,6 +2327,9 @@ const {
   shapeAtClientPoint,
   clearShapeSelection,
   startShapeMove,
+  groupSelectionActive: () => drawingGroups.groupSelection.value !== null,
+  startGroupMove: drawingGroups.startGroupMove,
+  clearGroupSelection: drawingGroups.clearGroupSelection,
   handleChartSelect,
   handleChartEditData,
   chartAtClientPoint,
@@ -3617,6 +3616,13 @@ function handleMenuCommand(id = "") {
               @mousedown="startShapeRotate($event)"
             />
           </div>
+          <DrawingGroupHandles
+            v-if="drawingGroups.selectedHasHandles()"
+            :handles="drawingGroups.groupHandles.value || undefined"
+            :rotation-deg="drawingGroups.selectedRotationDeg()"
+            @resize-start="(handle, event) => drawingGroups.startGroupResize(event, handle)"
+            @rotate-start="drawingGroups.startGroupRotate"
+          />
           <div
             v-if="shapeAnchorMarker"
             class="shape-anchor-marker print-exclude"
