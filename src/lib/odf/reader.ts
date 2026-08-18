@@ -76,6 +76,7 @@ import {
 } from "../core/lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { parseShapeElement } from "./shape";
+import { parseGroupElement } from "./groupReader";
 import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
@@ -1266,7 +1267,11 @@ function parseBodyTextBlockOrSplit(
     (frame) =>
       firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined && !isFormulaFrame(frame, ctx.parts),
   );
-  if (!hasImage && !hasShape && !hasChart) {
+  const groupCtx = { ...shapeTextCtx, contentDoc: ctx.contentDoc, stylesDoc: ctx.stylesDoc, graphicWrapStyles: ctx.graphicWrapStyles };
+  const hasGroup = Array.from(el.children).some(
+    (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "g" && parseGroupElement(child, groupCtx) !== null,
+  );
+  if (!hasImage && !hasShape && !hasChart && !hasGroup) {
     return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
   }
 
@@ -1344,6 +1349,14 @@ function parseBodyTextBlockOrSplit(
         if (parsedShape) {
           flush();
           blocks.push(parsedShape.shape);
+          continue;
+        }
+      }
+      if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "g") {
+        const parsedGroup = parseGroupElement(frameEl, groupCtx);
+        if (parsedGroup) {
+          flush();
+          blocks.push(parsedGroup);
           continue;
         }
       }
