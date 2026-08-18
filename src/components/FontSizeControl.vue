@@ -157,15 +157,31 @@ function step(direction = 1) {
 }
 
 .size-step {
+  position: relative;
+  z-index: 1;
   font: inherit;
   font-size: var(--text-md);
   width: 1.5rem;
-  height: 1.75rem;
+  height: var(--height-control);
   padding: 0;
   line-height: 1;
   border: var(--border-width) solid var(--border-strong);
   background: var(--surface-base);
   cursor: pointer;
+}
+
+/* A transparent out-of-flow hit area lifts each stepper to the 32×32 minimum
+   (AC-48) without widening the 24px visual button — so the toolbar stays
+   within its 1280px budget (AC-60). Clicks on the pseudo dispatch on the host
+   <button>, and z-index:1 lifts the overhang above the sibling input. */
+.size-step::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--height-control);
+  height: var(--height-control);
+  transform: translate(-50%, -50%);
 }
 
 .size-step:first-child {
@@ -181,7 +197,7 @@ function step(direction = 1) {
   font: inherit;
   font-size: var(--text-md);
   width: 2.75rem;
-  height: 1.75rem;
+  height: var(--height-control);
   padding: 0 var(--space-2);
   text-align: center;
   border: var(--border-width) solid var(--border-strong);
