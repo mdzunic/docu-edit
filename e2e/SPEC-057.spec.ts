@@ -121,6 +121,46 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(drawingAt(page, 14)).toHaveAttribute("role", "img");
   });
 
+  test("double-clicking a member enters its text, editable in place through SPEC-051's lifecycle (AC-25)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    await expect(drawings(page)).toHaveCount(2);
+
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
+    await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height * 0.72 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await rightShape.click({ modifiers: ["Shift"], position: { x: rightBox.width / 2, y: rightBox.height * 0.72 } });
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "group");
+
+    // Select a member (first click selects the container, second descends),
+    // then double-click to enter its text — the SPEC-051 gesture.
+    const member0 = page.locator('[data-testid="drawing-0-member-0"]');
+    await member0.click();
+    await member0.click();
+    await expect(member0).toHaveAttribute("tabindex", "0");
+    await member0.dblclick();
+
+    const text = page.getByTestId("member-shape-text");
+    await expect(text).toHaveAttribute("contenteditable", "true");
+    await page.keyboard.type("In group");
+    await expect(text).toContainText("In group");
+
+    // Clicking away re-renders the member read-only from the model — the text
+    // surviving proves it landed in the member's Shape.text, not just the
+    // transient contenteditable DOM.
+    await content(page).click({ position: { x: 60, y: 560 } });
+    await expect(page.getByTestId("member-shape-text")).toContainText("In group");
+  });
+
   test("the container carries editable alt text from its toolbar (AC-49)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);

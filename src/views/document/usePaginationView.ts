@@ -96,6 +96,9 @@ export interface FlatEntry {
   /** For a container: the selected drawing's path relative to it (SPEC-057) —
    * `[]` = the container, `[j,...]` = a member, `null` = no selection here. */
   groupSelectedPath: number[] | null;
+  /** For a container: the member whose text frame is being edited in place
+   * (SPEC-057 AC-25) — `[j,...]` = that member, `null` = none here. */
+  groupEditingPath: number[] | null;
   /** Whether this exact shape is the one in text-editing mode (SPEC-051
    * AC-17, AC-18) — true only when it's also shapeSelected. */
   shapeEditing: boolean;
@@ -171,8 +174,9 @@ export interface PaginationViewDeps extends EditorContext {
    * multi-select array (no chart group-selection gesture). */
   chartSelection: Ref<ChartLocation | null>;
   /** The selected drawing-group container or member (SPEC-057): `path` empty
-   * = the container, non-empty = a member by index path. */
-  groupSelection: Ref<{ section: number; block: number; path?: number[] } | null>;
+   * = the container, non-empty = a member by index path. `editingPath` (AC-25)
+   * carries the member whose text frame is being edited in place, or null. */
+  groupSelection: Ref<{ section: number; block: number; path?: number[]; editingPath?: number[] | null } | null>;
   /** Body headings collapsed in the document body (SPEC-037 AC-16), keyed by
    * their "section:block" address — drives the chevron direction. */
   collapsedHeadings: Ref<ReadonlySet<string>>;
@@ -305,6 +309,7 @@ function renderEntryFor(
         flatEntry.blockIndex,
         flatEntry.marker,
         flatEntry.groupSelectedPath,
+        flatEntry.groupEditingPath,
         flatEntry.drawingIndex,
         column,
         deps.trackChangesDisplayMode.value,
@@ -315,6 +320,7 @@ function renderEntryFor(
       blockIndexProp: flatEntry.blockIndex,
       drawingIndex: flatEntry.drawingIndex,
       groupSelectedPath: flatEntry.groupSelectedPath,
+      groupEditingPath: flatEntry.groupEditingPath,
       groupModel: model,
       listDefinitions: model.listDefinitions ?? [],
       column,
@@ -990,10 +996,10 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         const group = isDrawingGroup(block);
         const toc = isToc(block);
         const tof = isTof(block);
-        const groupSelectedPath =
-          group && selectedGroup && selectedGroup.section === sectionIndex && selectedGroup.block === blockIndex
-            ? selectedGroup.path ?? []
-            : null;
+        const groupIsSelected =
+          group && selectedGroup && selectedGroup.section === sectionIndex && selectedGroup.block === blockIndex;
+        const groupSelectedPath = groupIsSelected ? selectedGroup.path ?? [] : null;
+        const groupEditingPath = groupIsSelected ? selectedGroup.editingPath ?? null : null;
         const cellSel =
           table && range && range.section === sectionIndex && range.block === blockIndex
             ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
@@ -1025,6 +1031,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           shapeEditing: shape && shapeIsPrimarySelection && shapeTextEditing,
           chartSelected,
           groupSelectedPath,
+          groupEditingPath,
           drawingIndex: shape || chart || group || image ? drawingCounter++ : -1,
           section: sectionIndex,
           blockIndex,

@@ -34,6 +34,9 @@ const props = defineProps({
   /** The selected drawing's path RELATIVE to this container: `[]` = this
    * container, `[j,...]` = a member, `null` = nothing here selected. */
   selectedPath: { type: Array, default: null },
+  /** The path of the member whose text frame is being edited (SPEC-057
+   * AC-25), RELATIVE to this container, or `null` when none here is. */
+  editingPath: { type: Array, default: null },
   /** Whether a member proxy of THIS container is focusable — a member is
    * focusable only once its container is entered (SPEC-057 AC-40/41). */
   parentEntered: { type: Boolean, default: false },
@@ -43,13 +46,42 @@ const props = defineProps({
   model: { type: Object, default: null },
 });
 
-const emit = defineEmits(["select", "edit-text"]);
+const emit = defineEmits([
+  "select",
+  "edit-text",
+  "text-beforeinput",
+  "text-keydown",
+  "text-compositionstart",
+  "text-compositionend",
+]);
 
 /** The selected path relative to this container (`[]` = container, `null` =
  * nothing here) as a real array or null — the prop is a plain Object/Array. */
 function relativePath() {
   const path = props.selectedPath;
   return Array.isArray(path) ? path : null;
+}
+
+/** The editing path relative to this container as a real array or null. */
+function editingRelativePath() {
+  const path = props.editingPath;
+  return Array.isArray(path) ? path : null;
+}
+
+/** The editing path relative to member `index`, or undefined. */
+function childEditingPath(index = 0) {
+  const path = editingRelativePath();
+  if (path && path.length >= 1 && path[0] === index) {
+    return path.slice(1);
+  }
+  return undefined;
+}
+
+/** A leaf member's text frame is being edited when the editing path is exactly
+ * `[index]` (SPEC-057 AC-25). */
+function memberEditing(index = 0) {
+  const child = childEditingPath(index);
+  return Array.isArray(child) && child.length === 0;
 }
 
 /** The container is entered (its direct members are focusable) when a member
@@ -175,22 +207,32 @@ function containerLabel() {
             :block-index="blockIndex"
             :testid-base="memberTestid(j)"
             :selected-path="childSelectedPath(j)"
+            :editing-path="childEditingPath(j)"
             :parent-entered="entered()"
             :display-mode="displayMode"
             :list-definitions="listDefinitions"
             :model="model"
             @select="(payload) => emit('select', { path: [j, ...payload.path], shiftKey: payload.shiftKey })"
             @edit-text="(payload) => emit('edit-text', { path: [j, ...payload.path] })"
+            @text-beforeinput="(event) => emit('text-beforeinput', event)"
+            @text-keydown="(event) => emit('text-keydown', event)"
+            @text-compositionstart="() => emit('text-compositionstart')"
+            @text-compositionend="(event) => emit('text-compositionend', event)"
           />
           <template v-else>
             <DocGroupMemberVisual
               :block="m"
               :model="model"
               :list-definitions="listDefinitions"
+              :editing-text="memberEditing(j)"
+              @text-beforeinput="(event) => emit('text-beforeinput', event)"
+              @text-keydown="(event) => emit('text-keydown', event)"
+              @text-compositionstart="() => emit('text-compositionstart')"
+              @text-compositionend="(event) => emit('text-compositionend', event)"
             />
             <span
               class="doc-group-member-proxy"
-              :class="{ 'doc-group-member-selected': memberSelected(j) }"
+              :class="{ 'doc-group-member-selected': memberSelected(j), 'doc-group-member-proxy-editing': memberEditing(j) }"
               :style="memberProxyStyle(j)"
               :data-testid="memberTestid(j)"
               :role="memberRole(j)"
@@ -245,6 +287,12 @@ function containerLabel() {
   background: transparent;
   outline: none;
   cursor: pointer;
+}
+
+/* While its member's text is being edited (AC-25) the proxy steps aside so
+   every click reaches the live contenteditable text frame beneath it. */
+.doc-group-member-proxy-editing {
+  pointer-events: none;
 }
 
 /* Selection frames turn with their drawing, exactly as DocShapeBlock's do:

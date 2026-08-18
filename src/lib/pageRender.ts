@@ -106,6 +106,9 @@ export interface RenderEntry {
    * container itself is selected, `[j,...]` = a member, `null`/absent = no
    * selection in this container. */
   groupSelectedPath?: number[] | null;
+  /** The path of the member whose text frame is being edited in place
+   * (SPEC-057 AC-25): `[j,...]` = that member, `null`/absent = none here. */
+  groupEditingPath?: number[] | null;
   /** The document model, passed to a container entry so its image members can
    * resolve their media parts (SPEC-057). */
   groupModel?: DocumentModel;

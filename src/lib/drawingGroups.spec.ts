@@ -525,3 +525,94 @@ describe("container-level edits (the container as one drawing, SPEC-057)", () =>
     expect(Math.min(...container.members.map((m) => m.offsetXCm ?? 0))).toBe(0);
   });
 });
+
+import {
+  commitMemberTextModel,
+  ensureMemberTextFrame,
+  memberShapeAt,
+  withMemberTextModel,
+} from "./drawingGroups";
+import { insertText } from "./commands";
+
+describe("member text-frame editing seam (SPEC-057 AC-25)", () => {
+  /** A container whose second member is a text box (a shape carrying text). */
+  function textBoxContainer(): DrawingGroup {
+    return {
+      type: "drawingGroup",
+      widthCm: 8,
+      heightCm: 5,
+      wrap: "square",
+      offsetXCm: 2,
+      offsetYCm: 2,
+      members: [
+        shape({ widthCm: 3, heightCm: 2, offsetXCm: 0, offsetYCm: 0 }),
+        shape({
+          widthCm: 3,
+          heightCm: 2,
+          offsetXCm: 5,
+          offsetYCm: 3,
+          text: { blocks: [paragraph("hi")], vAlign: "top" },
+        }),
+      ],
+    };
+  }
+
+  it("memberShapeAt returns a shape member and null for non-shapes / the container", () => {
+    const model = doc(textBoxContainer());
+    expect(memberShapeAt(model, { section: 0, block: 0, path: [1] })?.type).toBe("shape");
+    // The container itself (empty path) is not a text-bearing member.
+    expect(memberShapeAt(model, { section: 0, block: 0, path: [] })).toBeNull();
+    // An image member has no text frame.
+    const withImage = doc({
+      type: "drawingGroup",
+      widthCm: 8,
+      heightCm: 5,
+      wrap: "square",
+      members: [shape({ offsetXCm: 0, offsetYCm: 0 }), image({ offsetXCm: 5, offsetYCm: 0 })],
+    });
+    expect(memberShapeAt(withImage, { section: 0, block: 0, path: [1] })).toBeNull();
+  });
+
+  it("withMemberTextModel exposes the member's own text blocks as a single section", () => {
+    const model = doc(textBoxContainer());
+    const synthetic = withMemberTextModel(model, { section: 0, block: 0, path: [1] });
+    expect(synthetic.sections).toHaveLength(1);
+    expect(synthetic.sections[0].blocks).toHaveLength(1);
+    expect((synthetic.sections[0].blocks[0] as Paragraph).runs[0].text).toBe("hi");
+  });
+
+  it("withMemberTextModel starts an empty (text-less) shape from one blank paragraph", () => {
+    const model = doc(pairContainer());
+    const synthetic = withMemberTextModel(model, { section: 0, block: 0, path: [0] });
+    expect(synthetic.sections[0].blocks).toEqual([{ type: "paragraph", runs: [] }]);
+  });
+
+  it("an edit through the seam round-trips back into the member's text, geometry intact", () => {
+    const model = doc(textBoxContainer());
+    const location = { section: 0, block: 0, path: [1] };
+    const synthetic = withMemberTextModel(model, location);
+    const edited = insertText(synthetic, caretSelection({ section: 0, block: 0, offset: 2 }), "!", null);
+    const committed = commitMemberTextModel(model, location, edited.model);
+    const container = committed.sections[0].blocks[0] as DrawingGroup;
+    const member = container.members[1] as Shape;
+    expect((member.text?.blocks[0] as Paragraph).runs.map((r) => r.text).join("")).toBe("hi!");
+    // The edit changed only text: the member keeps its box and the container
+    // stays normalized (min member offset 0 on each axis).
+    expect(member.widthCm).toBe(3);
+    expect(Math.min(...container.members.map((m) => m.offsetXCm ?? 0))).toBe(0);
+    expect(Math.min(...container.members.map((m) => m.offsetYCm ?? 0))).toBe(0);
+    // The other member is untouched.
+    expect((container.members[0] as Shape).text).toBeUndefined();
+  });
+
+  it("ensureMemberTextFrame gives a text-less shape member an empty frame; no-op once it has one", () => {
+    const model = doc(textBoxContainer());
+    const filled = ensureMemberTextFrame(model, anySelection, { section: 0, block: 0, path: [0] });
+    const container = filled.model.sections[0].blocks[0] as DrawingGroup;
+    expect((container.members[0] as Shape).text?.blocks).toEqual([{ type: "paragraph", runs: [] }]);
+    // A member that already has text is left exactly as-is.
+    const again = ensureMemberTextFrame(filled.model, anySelection, { section: 0, block: 0, path: [1] });
+    const c2 = again.model.sections[0].blocks[0] as DrawingGroup;
+    expect((c2.members[1] as Shape).text?.blocks[0]).toEqual(paragraph("hi"));
+  });
+});

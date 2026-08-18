@@ -39,6 +39,10 @@ defineEmits([
   "chart-edit-data",
   "group-select",
   "group-edit-text",
+  "group-text-beforeinput",
+  "group-text-keydown",
+  "group-text-compositionstart",
+  "group-text-compositionend",
   "toc-action",
   "tof-action",
   "outline-toggle",
@@ -101,6 +105,7 @@ const entry = computed(() => asRenderEntry(props.entry));
     :drawing-index="entry.drawingIndex"
     :editing-text="entry.kind === 'shape' ? entry.shapeEditing : undefined"
     :selected-path="entry.kind === 'drawingGroup' ? (entry.groupSelectedPath ?? undefined) : undefined"
+    :editing-path="entry.kind === 'drawingGroup' ? (entry.groupEditingPath ?? undefined) : undefined"
     :model="entry.kind === 'drawingGroup' ? entry.groupModel : undefined"
     :stale-headings="entry.kind === 'toc' ? entry.tocStaleHeadings : undefined"
     :stale-entries="entry.kind === 'tof' ? entry.tofStaleEntries : undefined"
@@ -108,10 +113,10 @@ const entry = computed(() => asRenderEntry(props.entry));
     @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'chart' ? $emit('chart-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'drawingGroup' ? $emit('group-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
     @edit-text="entry.kind === 'shape' ? $emit('shape-edit-text', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'drawingGroup' ? $emit('group-edit-text', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
     @edit-data="entry.kind === 'chart' ? $emit('chart-edit-data', entry.sectionProp, entry.blockIndexProp) : undefined"
-    @text-beforeinput="entry.kind === 'shape' ? $emit('shape-text-beforeinput', $event) : undefined"
-    @text-keydown="entry.kind === 'shape' ? $emit('shape-text-keydown', $event) : undefined"
-    @text-compositionstart="entry.kind === 'shape' ? $emit('shape-text-compositionstart') : undefined"
-    @text-compositionend="entry.kind === 'shape' ? $emit('shape-text-compositionend', $event) : undefined"
+    @text-beforeinput="entry.kind === 'shape' ? $emit('shape-text-beforeinput', $event) : entry.kind === 'drawingGroup' ? $emit('group-text-beforeinput', $event) : undefined"
+    @text-keydown="entry.kind === 'shape' ? $emit('shape-text-keydown', $event) : entry.kind === 'drawingGroup' ? $emit('group-text-keydown', $event) : undefined"
+    @text-compositionstart="entry.kind === 'shape' ? $emit('shape-text-compositionstart') : entry.kind === 'drawingGroup' ? $emit('group-text-compositionstart') : undefined"
+    @text-compositionend="entry.kind === 'shape' ? $emit('shape-text-compositionend', $event) : entry.kind === 'drawingGroup' ? $emit('group-text-compositionend', $event) : undefined"
     @action="entry.kind === 'toc' ? $emit('toc-action', $event) : entry.kind === 'tof' ? $emit('tof-action', $event) : undefined"
   >
     <DocHeadingToggle

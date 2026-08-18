@@ -72,6 +72,10 @@ defineEmits([
   "chart-edit-data",
   "group-select",
   "group-edit-text",
+  "group-text-beforeinput",
+  "group-text-keydown",
+  "group-text-compositionstart",
+  "group-text-compositionend",
   "toc-action",
   "tof-action",
   "dblclick-header",
@@ -185,6 +189,10 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               @chart-edit-data="(section, blockIndex) => $emit('chart-edit-data', section, blockIndex)"
               @group-select="(section, blockIndex, payload) => $emit('group-select', section, blockIndex, payload)"
               @group-edit-text="(section, blockIndex, payload) => $emit('group-edit-text', section, blockIndex, payload)"
+              @group-text-beforeinput="(event) => $emit('group-text-beforeinput', event)"
+              @group-text-keydown="(event) => $emit('group-text-keydown', event)"
+              @group-text-compositionstart="() => $emit('group-text-compositionstart')"
+              @group-text-compositionend="(event) => $emit('group-text-compositionend', event)"
               @toc-action="(payload) => $emit('toc-action', payload)"
               @tof-action="(payload) => $emit('tof-action', payload)"
               @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
@@ -214,6 +222,10 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             @chart-edit-data="(section, block) => $emit('chart-edit-data', section, block)"
             @group-select="(section, block, payload) => $emit('group-select', section, block, payload)"
             @group-edit-text="(section, block, payload) => $emit('group-edit-text', section, block, payload)"
+            @group-text-beforeinput="(event) => $emit('group-text-beforeinput', event)"
+            @group-text-keydown="(event) => $emit('group-text-keydown', event)"
+            @group-text-compositionstart="() => $emit('group-text-compositionstart')"
+            @group-text-compositionend="(event) => $emit('group-text-compositionend', event)"
             @toc-action="(payload) => $emit('toc-action', payload)"
             @tof-action="(payload) => $emit('tof-action', payload)"
             @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"

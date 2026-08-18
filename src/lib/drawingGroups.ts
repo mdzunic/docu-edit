@@ -15,6 +15,7 @@ import {
   type DrawingGroup,
   type DrawingMember,
   type ImageWrapMode,
+  type Shape,
 } from "./documentModel";
 import { MIN_SHAPE_SIZE_CM, normalizeRotationDeg, NUDGE_FINE_PT_CM, NUDGE_PT_CM, type NudgeDirection } from "./core/shapes";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
@@ -488,6 +489,93 @@ export function setMemberAltText(model: DocumentModel, selection: ModelSelection
     delete updated.altText;
   }
   commitContainer(next, location.section, location.block, updateMemberAtPath(container, path, updated));
+  return { model: next, selection };
+}
+
+// --- member text-frame editing seam (SPEC-057 AC-25) ------------------------
+// A grouped text box's text is editable in place through the exact SPEC-051
+// shape-text lifecycle: these mirror commands.shapes.ts's withShapeModel /
+// commitShapeModel, but address the shape MEMBER a DrawingLocation path points
+// at rather than a top-level block. Entering edit mode populates an empty
+// frame first (ensureMemberTextFrame), just as handleShapeEditText does for a
+// bare shape — so every character/paragraph feature body text accepts (lists,
+// tables, fields, IME) works unchanged against a member's text.
+
+/** The shape member a location addresses, or null when the path is empty or
+ * points at a non-shape (an image/chart/nested container holds no text). */
+export function memberShapeAt(model: DocumentModel, location: DrawingLocation): Shape | null {
+  const container = model.sections[location.section]?.blocks[location.block];
+  const path = location.path ?? [];
+  if (!isDrawingGroup(container) || path.length === 0) {
+    return null;
+  }
+  const member = memberAtPath(container, path);
+  return member && isShape(member) ? member : null;
+}
+
+/** Addresses a shape member's text frame as a throwaway single-section
+ * document (SPEC-057 AC-25) — withShapeModel's seam, reused for a member. An
+ * empty (or absent) frame starts from one empty paragraph. */
+export function withMemberTextModel(model: DocumentModel, location: DrawingLocation): DocumentModel {
+  const shape = memberShapeAt(model, location);
+  const blocks: Block[] =
+    shape && shape.text && shape.text.blocks.length > 0
+      ? shape.text.blocks
+      : [{ type: "paragraph", runs: [] }];
+  return { ...model, sections: [{ blocks }] };
+}
+
+/** Replaces the shape member at `path` inside `container` with the same shape
+ * carrying `blocks` as its text (vAlign untouched), renormalizing exactly as
+ * every other interior edit does. A text edit never changes member count or
+ * geometry, so the renormalized container is geometrically identical. */
+function withMemberText(container: DrawingGroup, path: number[], blocks: Block[]): DrawingMember {
+  const shape = memberAtPath(container, path);
+  if (!shape || !isShape(shape)) {
+    return container;
+  }
+  const updated: Shape = { ...shape, text: { blocks, vAlign: shape.text?.vAlign ?? "top" } };
+  return updateMemberAtPath(container, path, updated);
+}
+
+/** Folds a `withMemberTextModel` command result back into the member's text
+ * frame (SPEC-057 AC-25) — commitShapeModel's sibling for a member: the
+ * synthetic section's blocks become the member shape's `text.blocks`, the real
+ * sections come back from `before`, and every other model-level change the
+ * inner command made (e.g. a new list definition) is kept from `result`. */
+export function commitMemberTextModel(before: DocumentModel, location: DrawingLocation, result: DocumentModel): DocumentModel {
+  const path = location.path ?? [];
+  const blocks = result.sections[0]?.blocks ?? [];
+  const sections = before.sections.map((section, sectionIndex) => {
+    if (sectionIndex !== location.section) {
+      return section;
+    }
+    return {
+      ...section,
+      blocks: section.blocks.map((block, blockIndex) =>
+        blockIndex === location.block && isDrawingGroup(block) ? (withMemberText(block, path, blocks) as Block) : block,
+      ),
+    };
+  });
+  return { ...result, sections };
+}
+
+/** Populates an empty shape member's text frame (SPEC-057 AC-25) — the
+ * member equivalent of ensureShapeTextFrame, so double-clicking a grouped
+ * shape that holds no text yet gives it one to edit. A no-op for a member
+ * that is not a text-less shape. */
+export function ensureMemberTextFrame(model: DocumentModel, selection: ModelSelection, location: DrawingLocation): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[location.section]?.blocks[location.block];
+  const path = location.path ?? [];
+  if (!isDrawingGroup(container) || path.length === 0) {
+    return { model: next, selection };
+  }
+  const shape = memberAtPath(container, path);
+  if (!shape || !isShape(shape) || shape.text) {
+    return { model: next, selection };
+  }
+  commitContainer(next, location.section, location.block, withMemberText(container, path, [{ type: "paragraph", runs: [] }]));
   return { model: next, selection };
 }
 

@@ -6,30 +6,47 @@
 // state and the DOM measurement the layout-free lib deliberately does not.
 // Runtime-safe TS (this is a .ts composable, not a .vue script) — see
 // useShapes.ts, the sibling this mirrors.
-import { nextTick, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   caretSelection,
+  deleteBackward,
+  deleteForward,
+  deleteRange,
   documentStart,
+  insertLineBreak,
+  insertText,
+  isCollapsed,
+  noPendingFormat,
+  noSelection,
+  splitBlock,
   type ModelSelection,
 } from "../../lib/commands";
 import { CM_PER_PX } from "../../lib/core/units";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { asImageHandle, resizedImageSize } from "../../lib/imageResize";
 import { unrotateDelta } from "../../lib/core/shapeGeometry";
+import { modelRangeFromSelection, setDomCaret, setDomSelection } from "../../lib/domCaret";
+import { blockLength, noCaret, type CaretPosition } from "../../lib/textEditing";
+import { recordEdit as recordHistoryEdit } from "../../lib/undoHistory";
+import { replaceDocumentModel } from "../../lib/documentStore";
 import {
   isDrawingGroup,
   isSealedGroup,
+  type DocumentModel,
   type DrawingGroup,
   type DrawingMember,
 } from "../../lib/documentModel";
 import {
+  commitMemberTextModel,
   deleteGroupContainer,
   deleteMember,
   duplicateGroupContainer,
   duplicateMember,
   duplicatedMemberPath,
+  ensureMemberTextFrame,
   groupDrawings,
   memberAtPath,
+  memberShapeAt,
   moveGroupContainer,
   moveMember,
   nudgeGroupContainer,
@@ -44,6 +61,7 @@ import {
   setGroupWrap,
   setMemberAltText,
   ungroupDrawing,
+  withMemberTextModel,
   type DrawingLocation,
   type GroupEntry,
   type MemberReorder,
@@ -72,7 +90,7 @@ interface DrawingRef {
 }
 
 export function useDrawingGroups(deps: DrawingGroupsDeps) {
-  const { doc, contentRoot, pageRef, currentSelection, applyEdit, getCaret, clearOtherSelections, getGroupCandidates } = deps;
+  const { doc, contentRoot, pageRef, editable, documentId, currentSelection, applyEdit, getCaret, clearOtherSelections, getGroupCandidates, markDirty, refreshUndoRedoState } = deps;
 
   /** The selected container or member (SPEC-057): `path` empty = the
    * container itself, non-empty = a member by index path. */
@@ -108,6 +126,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     groupSelection.value = null;
     multiSelection.value = [];
     groupHandles.value = null;
+    resetMemberTextEditingState();
   }
 
   // --- selection (click-to-enter, one level per click) ----------------------
@@ -123,6 +142,9 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     if (!container) {
       return;
     }
+    // Selecting any proxy (never a click inside the live text frame, whose
+    // proxy goes pointer-events:none) leaves member text editing.
+    resetMemberTextEditingState();
     clearOtherSelections();
     if (shiftKey) {
       toggleMultiSelection({ section, block });
@@ -141,11 +163,225 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     void nextTick().then(remeasureGroupHandles);
   }
 
-  /** Double-click composes from clicks (SPEC-057): on a text-bearing member it
-   * would enter the member's text; for now it descends selection to the
-   * member so the member is at least reachable. */
+  /** Double-clicking a member (SPEC-057 AC-25): descends selection to it and,
+   * when it is a shape member (a grouped text box), enters its text through
+   * SPEC-051's own shape-text lifecycle — so text inside a grouped text box is
+   * editable in place with every feature that lifecycle gives (typing, lists,
+   * tables, IME, Escape-to-leave). A non-shape member (image/chart/nested
+   * container) or a sealed container just settles the selection. */
   function handleGroupEditText(section = 0, block = 0, payload = { path: [] as number[] }) {
-    handleGroupSelect(section, block, { path: payload?.path ?? [], shiftKey: false });
+    const path = payload?.path ?? [];
+    const container = containerAt(section, block);
+    if (!container || isSealedGroup(container)) {
+      return;
+    }
+    clearOtherSelections();
+    multiSelection.value = [];
+    groupSelection.value = { section, block, path };
+    const model = doc.value;
+    const location: DrawingLocation = { section, block, path };
+    if (model && path.length > 0 && memberShapeAt(model, location)) {
+      enterMemberTextEditing(location);
+    } else {
+      void nextTick().then(remeasureGroupHandles);
+    }
+  }
+
+  // --- member text-frame editing (SPEC-057 AC-25) ---------------------------
+  // A grouped shape member's text frame is a second live-editable surface, the
+  // same one-live-surface pattern useShapes.ts follows for a top-level shape:
+  // its own caret/anchor/pending-format/composition state, addressed through
+  // withMemberTextModel's synthetic single-section coordinates (section 0) and
+  // folded back by applyMemberTextEdit (commitMemberTextModel). The member the
+  // path addresses is always the current groupSelection while editing.
+
+  /** True while a shape member's text frame is being edited in place. */
+  const editingMemberText = ref(false);
+  let memberTextCaret: CaretPosition | null = noCaret();
+  let memberTextSelectionAnchor: CaretPosition | null = noCaret();
+  let memberTextPendingFormat: ReturnType<typeof noPendingFormat> = null;
+  let memberTextComposing = false;
+  let memberTextCompositionRange: ModelSelection | null = noSelection();
+
+  /** The one DOM element currently rendering as a member's editable text frame
+   * — DocGroupMemberVisual sets data-member-text-editable only on the member
+   * whose path is being edited, so at most one exists at a time. */
+  function memberTextRootEl(): HTMLElement | null {
+    const found = contentRoot.value?.querySelector("[data-member-text-editable]");
+    return found instanceof HTMLElement ? found : null;
+  }
+
+  function currentMemberTextSelection(): ModelSelection | null {
+    const root = memberTextRootEl();
+    if (root) {
+      const range = modelRangeFromSelection(root, document.getSelection());
+      if (range) {
+        return { anchor: range.start, focus: range.end };
+      }
+    }
+    return memberTextCaret ? { anchor: memberTextSelectionAnchor ?? memberTextCaret, focus: memberTextCaret } : null;
+  }
+
+  function resetMemberTextEditingState(): void {
+    editingMemberText.value = false;
+    memberTextCaret = noCaret();
+    memberTextSelectionAnchor = noCaret();
+    memberTextPendingFormat = noPendingFormat();
+  }
+
+  /** Leaves member text editing (Escape), keeping the member selected. */
+  function exitMemberTextEditing(): void {
+    if (!editingMemberText.value) {
+      return;
+    }
+    resetMemberTextEditingState();
+    void nextTick().then(() => { (contentRoot.value as HTMLElement | null)?.focus(); remeasureGroupHandles(); });
+  }
+
+  /** Puts the caret inside a shape member's text frame (AC-25), populating an
+   * empty frame first — the member equivalent of handleShapeEditText. */
+  function enterMemberTextEditing(location: DrawingLocation) {
+    const model = doc.value;
+    if (!model || !editable.value || !memberShapeAt(model, location)) {
+      return;
+    }
+    if (!memberShapeAt(model, location)?.text) {
+      const before = beforeSelection();
+      applyEdit(ensureMemberTextFrame(model, before, location), before, "add shape text");
+    }
+    editingMemberText.value = true;
+    const current = doc.value;
+    const text = current ? memberShapeAt(current, location)?.text : undefined;
+    const lastBlock = text ? Math.max(0, text.blocks.length - 1) : 0;
+    const lastLength = text ? blockLength(text.blocks[lastBlock]) : 0;
+    memberTextCaret = { section: 0, block: lastBlock, offset: lastLength };
+    memberTextSelectionAnchor = noCaret();
+    memberTextPendingFormat = noPendingFormat();
+    void nextTick().then(() => {
+      remeasureGroupHandles();
+      const root = memberTextRootEl();
+      if (root) {
+        root.focus();
+        setDomCaret(root, memberTextCaret ?? { section: 0, block: 0, offset: 0 });
+      }
+    });
+  }
+
+  /** Folds a `withMemberTextModel` command result back into the real document
+   * and commits it — applyShapeTextEdit's sibling (see useShapes.ts). Keeps the
+   * caret inside the member frame, so editing continues uninterrupted. */
+  function applyMemberTextEdit(resultModel: DocumentModel, resultSelection: ModelSelection, label = ""): void {
+    const sel = groupSelection.value;
+    const before = doc.value;
+    if (!sel || !before || !resultSelection) {
+      return;
+    }
+    const location: DrawingLocation = { section: sel.section, block: sel.block, path: sel.path ?? [] };
+    const nextModel = commitMemberTextModel(before, location, resultModel);
+    const bodyFiller = caretSelection(getCaret() ?? documentStart());
+    recordHistoryEdit(documentId.value, {
+      before: { model: before, selection: bodyFiller },
+      after: { model: nextModel, selection: bodyFiller },
+      label,
+      groupable: false,
+    });
+    doc.value = replaceDocumentModel(documentId.value, nextModel);
+    memberTextCaret = resultSelection.focus;
+    memberTextSelectionAnchor = isCollapsed(resultSelection) ? noCaret() : resultSelection.anchor;
+    markDirty();
+    refreshUndoRedoState();
+    void nextTick().then(() => {
+      const root = memberTextRootEl();
+      if (!root || !memberTextCaret) {
+        return;
+      }
+      if (memberTextSelectionAnchor) {
+        setDomSelection(root, memberTextSelectionAnchor, memberTextCaret);
+      } else {
+        setDomCaret(root, memberTextCaret);
+      }
+    });
+  }
+
+  function handleMemberTextBeforeInput(event: InputEvent) {
+    const type = event.inputType;
+    if (memberTextComposing || event.isComposing || type === "insertCompositionText") {
+      return;
+    }
+    event.preventDefault();
+    const sel = groupSelection.value;
+    const model = doc.value;
+    if (!sel || !model || !editable.value) {
+      return;
+    }
+    const location: DrawingLocation = { section: sel.section, block: sel.block, path: sel.path ?? [] };
+    const selection = currentMemberTextSelection();
+    if (!selection) {
+      return;
+    }
+    const synthetic = withMemberTextModel(model, location);
+    let result: { model: DocumentModel; selection: ModelSelection } | null = null;
+    let label = "";
+    if (type === "insertText" || type === "insertFromPaste") {
+      const text = event.data ?? (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
+      if (text) {
+        result = insertText(synthetic, selection, text, memberTextPendingFormat);
+        label = "typing";
+      }
+    } else if (type === "insertParagraph") {
+      result = splitBlock(synthetic, selection);
+      label = "new paragraph";
+    } else if (type === "insertLineBreak") {
+      result = insertLineBreak(synthetic, selection);
+      label = "line break";
+    } else if (type === "deleteContentBackward") {
+      result = deleteBackward(synthetic, selection);
+      label = "delete";
+    } else if (type === "deleteContentForward") {
+      result = deleteForward(synthetic, selection);
+      label = "delete";
+    } else if (type === "deleteByCut" || type === "deleteContent") {
+      result = isCollapsed(selection) ? null : deleteRange(synthetic, selection);
+      label = "delete";
+    }
+    if (result) {
+      memberTextPendingFormat = noPendingFormat();
+      applyMemberTextEdit(result.model, result.selection, label);
+    }
+  }
+
+  function handleMemberTextKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      exitMemberTextEditing();
+    }
+  }
+
+  function handleMemberTextCompositionStart() {
+    if (!memberTextRootEl() || !editable.value) {
+      return;
+    }
+    memberTextComposing = true;
+    memberTextCompositionRange = currentMemberTextSelection();
+  }
+
+  function handleMemberTextCompositionEnd(event: CompositionEvent) {
+    memberTextComposing = false;
+    const range = memberTextCompositionRange;
+    memberTextCompositionRange = null;
+    const sel = groupSelection.value;
+    const model = doc.value;
+    if (!sel || !model || !editable.value || !range) {
+      return;
+    }
+    const data = event.data ?? "";
+    if (!data) {
+      return;
+    }
+    const location: DrawingLocation = { section: sel.section, block: sel.block, path: sel.path ?? [] };
+    const synthetic = withMemberTextModel(model, location);
+    const result = insertText(synthetic, range, data, null);
+    applyMemberTextEdit(result.model, result.selection, "typing");
   }
 
   /** Escape steps back out one level of group selection (SPEC-057 AC-24). */
@@ -153,6 +389,12 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     const sel = groupSelection.value;
     if (!sel) {
       return false;
+    }
+    // While editing a member's text, Escape leaves the text (member stays
+    // selected) before it steps the selection out a level.
+    if (editingMemberText.value) {
+      exitMemberTextEditing();
+      return true;
     }
     if (sel.path && sel.path.length > 0) {
       groupSelection.value = { section: sel.section, block: sel.block, path: sel.path.slice(0, -1) };
@@ -804,8 +1046,34 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     };
   }
 
+  /** Selection plus the member being text-edited, for the render layer: the
+   * pagination view derives both the selected member path and the editing path
+   * (which member's text frame goes contenteditable) from this one object, so
+   * the memoized group entry re-renders when either changes. */
+  const groupRenderSelection = computed(() =>
+    groupSelection.value
+      ? { ...groupSelection.value, editingPath: editingMemberText.value ? groupSelection.value.path ?? [] : null }
+      : null,
+  );
+
+  /** The DocPage listener bag DocumentView binds with a single `v-on` — the
+   * container/member selection and double-click-to-edit gestures plus the
+   * four member text-frame edit events (AC-25). Keys are the camelCased event
+   * names DocPage emits (group-select → groupSelect, …). */
+  const groupListeners = {
+    groupSelect: handleGroupSelect,
+    groupEditText: handleGroupEditText,
+    groupTextBeforeinput: handleMemberTextBeforeInput,
+    groupTextKeydown: handleMemberTextKeyDown,
+    groupTextCompositionstart: handleMemberTextCompositionStart,
+    groupTextCompositionend: handleMemberTextCompositionEnd,
+  };
+
   return {
     groupSelection,
+    groupRenderSelection,
+    groupListeners,
+    editingMemberText,
     multiSelection,
     groupHandles,
     clearGroupSelection,

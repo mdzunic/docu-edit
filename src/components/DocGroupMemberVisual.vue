@@ -27,7 +27,17 @@ const props = defineProps({
   /** The document's multilevel list definitions — a text-box member's own
    * list paragraphs resolve markers/indents from the same catalogue. */
   listDefinitions: { type: Array, default: () => [] },
+  /** Whether this member's text frame is the one being edited in place
+   * (SPEC-057 AC-25): only then is it contenteditable and interactive. */
+  editingText: { type: Boolean, default: false },
 });
+
+defineEmits([
+  "text-beforeinput",
+  "text-keydown",
+  "text-compositionstart",
+  "text-compositionend",
+]);
 
 const canvasEl = useTemplateRef("canvasEl");
 
@@ -116,8 +126,16 @@ function shapeTextEntries() {
     <div
       v-if="isShapeMember() && block.text"
       class="doc-group-member-text"
-      :class="`doc-shape-valign-${block.text.vAlign}`"
+      :class="[`doc-shape-valign-${block.text.vAlign}`, { 'doc-group-member-text-editing': editingText }]"
       data-canvas-ignore="1"
+      data-testid="member-shape-text"
+      :data-member-text-editable="editingText ? '1' : undefined"
+      :contenteditable="editingText"
+      spellcheck="false"
+      @beforeinput.stop="editingText ? $emit('text-beforeinput', $event) : undefined"
+      @keydown.stop="editingText ? $emit('text-keydown', $event) : undefined"
+      @compositionstart.stop="editingText ? $emit('text-compositionstart') : undefined"
+      @compositionend.stop="editingText ? $emit('text-compositionend', $event) : undefined"
     >
       <DocBlockEntries :entries="shapeTextEntries()" />
     </div>
@@ -151,6 +169,15 @@ function shapeTextEntries() {
   word-wrap: break-word;
   line-height: normal;
   pointer-events: none;
+}
+
+/* While editing (AC-25) the frame is the live surface: it sits above its
+   member proxy (which the container drops to pointer-events:none) and takes
+   the caret, exactly like DocShapeBlock's own .doc-shape-text does. */
+.doc-group-member-text-editing {
+  pointer-events: auto;
+  cursor: text;
+  z-index: 1;
 }
 
 .doc-shape-valign-top {

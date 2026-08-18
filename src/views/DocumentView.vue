@@ -2742,7 +2742,7 @@ const { pagedViews } = usePaginationView({
   shapeMultiSelection,
   editingShapeText,
   chartSelection,
-  groupSelection: drawingGroups.groupSelection,
+  groupSelection: drawingGroups.groupRenderSelection,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -3646,7 +3646,7 @@ function handleMenuCommand(id = "") {
             aria-multiline="true"
             aria-label="Document content"
             :aria-readonly="editable ? undefined : 'true'"
-            :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText"
+            :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText && !drawingGroups.editingMemberText.value"
             spellcheck="false"
             @beforeinput="handleBeforeInput"
             @keydown="handleKeyDown"
@@ -3693,8 +3693,7 @@ function handleMenuCommand(id = "") {
               @shape-text-compositionend="handleShapeTextCompositionEnd"
               @chart-select="handleChartSelect"
               @chart-edit-data="handleChartEditData"
-              @group-select="drawingGroups.handleGroupSelect"
-              @group-edit-text="drawingGroups.handleGroupEditText"
+              v-on="drawingGroups.groupListeners"
               @toc-action="handleTocAction"
               @tof-action="handleTofAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"
