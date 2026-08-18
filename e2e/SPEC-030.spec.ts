@@ -15,10 +15,19 @@ async function createDocument(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/doc\/.+/);
 }
 
+/** Opens a document through the real picker and waits until it is laid out.
+ * The URL changes as soon as the document is stored, which is *before* the
+ * parse finishes and well before pagination has run — and columns are a
+ * pagination product, so a one-shot `docColumns(page).count()` taken at that
+ * moment reads 0 and the assertion fails with no bug behind it. Waiting for
+ * the "Opening…" indicator to clear and for pagination to report `clean` is
+ * the same barrier SPEC-047's `waitForFullyInteractive` uses. */
 async function openFixture(page: Page, path: string): Promise<void> {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(page.getByTestId("document-opening")).toBeHidden();
+  await expect(page.getByTestId("document-pages")).toHaveAttribute("data-pagination-state", "clean");
 }
 
 /** The column index (and rendered page index) the caret currently sits in,
@@ -73,6 +82,9 @@ async function applyColumns(page: Page, count: number): Promise<void> {
   await page.getByTestId(`columns-preset-${count}`).click();
   await page.getByTestId("columns-confirm").click();
   await expect(page.getByTestId("columns-dialog")).toHaveCount(0);
+  // The dialog closes on the model edit; the column boxes appear one
+  // pagination pass later. Same barrier as openFixture, for the same reason.
+  await expect(page.getByTestId("document-pages")).toHaveAttribute("data-pagination-state", "clean");
 }
 
 test.describe("SPEC-030 multi-column layout", () => {
