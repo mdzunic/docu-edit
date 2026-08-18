@@ -89,27 +89,27 @@ const records = computed(() => asDropRecords(props.items));
 
 .dialog-message {
   margin: 0;
-  color: #3c4043;
-  font-size: 0.9375rem;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
 }
 
 .report-list {
-  margin: 1rem 0 0;
+  margin: var(--space-5) 0 0;
   padding: 0;
   list-style: none;
   max-height: 40vh;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .report-item {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid #eee;
-  font-size: 0.875rem;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  font-size: var(--text-md);
 }
 
 .report-item:last-child {
@@ -117,35 +117,35 @@ const records = computed(() => asDropRecords(props.items));
 }
 
 .report-kind {
-  font-weight: 600;
-  color: #202124;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .report-location {
-  color: #3c4043;
+  color: var(--text-primary);
 }
 
 .report-reason {
-  color: #5f6368;
-  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 
 .report-suppress {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  font-size: 0.875rem;
-  color: #3c4043;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  font-size: var(--text-md);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 </style>

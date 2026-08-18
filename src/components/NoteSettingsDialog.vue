@@ -147,20 +147,20 @@ function apply() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.8125rem;
-  color: #3c4043;
-  margin-bottom: 0.625rem;
+  gap: var(--space-4);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
 }
 
 .field select,
 .field-input {
   font: inherit;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .start-input {
@@ -168,39 +168,39 @@ function apply() {
 }
 
 .restart-group {
-  margin: 0.75rem 0 0;
-  padding: 0.5rem 0.75rem 0.625rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  font-size: 0.8125rem;
-  color: #3c4043;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .restart-group legend {
-  padding: 0 0.25rem;
-  font-size: 0.75rem;
-  color: #5f6368;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .radio-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 </style>

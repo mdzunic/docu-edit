@@ -195,13 +195,13 @@ function insert() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.9375rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-4);
 }
 
 .row-label {
-  color: #5f6368;
+  color: var(--text-secondary);
   min-width: 6rem;
 }
 
@@ -213,7 +213,7 @@ function insert() {
 
 .new-label-controls {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-3);
   align-items: center;
   flex: 1 1 auto;
 }
@@ -226,7 +226,7 @@ function insert() {
   font: inherit;
   background: none;
   border: none;
-  color: #1a73e8;
+  color: var(--text-accent);
   cursor: pointer;
   padding: 0;
 }
@@ -234,24 +234,24 @@ function insert() {
 .checkbox-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
-  margin-bottom: 0.25rem;
+  gap: var(--space-3);
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled,

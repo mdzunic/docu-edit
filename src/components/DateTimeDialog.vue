@@ -95,54 +95,54 @@ function insert() {
 
 <style scoped>
 .hint {
-  margin: 0 0 0.5rem;
-  font-size: 0.875rem;
-  color: #5f6368;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .format-list {
   list-style: none;
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-4);
   padding: 0;
   max-height: 16rem;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .format-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3);
   cursor: pointer;
-  font-size: 0.9375rem;
+  font-size: var(--text-lg);
 }
 
 .format-row:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .auto-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
+  gap: var(--space-3);
+  font-size: var(--text-lg);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

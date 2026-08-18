@@ -69,22 +69,22 @@ const emit = defineEmits(["confirm", "close"]);
 
 <style scoped>
 .dialog-message {
-  margin: 0 0 0.75rem;
-  color: #3c4043;
-  font-size: 0.9375rem;
+  margin: 0 0 var(--space-4);
+  color: var(--text-primary);
+  font-size: var(--text-lg);
 }
 
 .embed-skipped {
-  font-size: 0.8125rem;
-  color: #5f6368;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .embed-skipped-title {
-  margin: 0 0 0.25rem;
+  margin: 0 0 var(--space-2);
 }
 
 .embed-skipped ul {
   margin: 0;
-  padding-left: 1.1rem;
+  padding-left: var(--space-5);
 }
 </style>

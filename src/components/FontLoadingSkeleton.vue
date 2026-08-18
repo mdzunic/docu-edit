@@ -17,11 +17,11 @@
 <style scoped>
 .fonts-skeleton {
   position: absolute;
-  inset: 2rem 1rem;
+  inset: var(--space-7) var(--space-5);
   z-index: 15;
   pointer-events: none;
-  border-radius: 4px;
-  background: linear-gradient(100deg, #f1f3f4 30%, #e8eaed 50%, #f1f3f4 70%);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(100deg, var(--surface-canvas) 30%, var(--surface-sunken) 50%, var(--surface-canvas) 70%);
   background-size: 200% 100%;
   animation: fonts-skeleton-shimmer 1.1s ease-in-out infinite;
 }

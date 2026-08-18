@@ -216,25 +216,25 @@ function confirmDelete() {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #5f6368;
-  font-size: 1rem;
-  padding: 0.25rem 0.5rem;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  padding: var(--space-2) var(--space-3);
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .import-button {
   font: inherit;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
 }
 
 .visually-hidden {
@@ -242,7 +242,7 @@ function confirmDelete() {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--border-width));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -250,22 +250,22 @@ function confirmDelete() {
 }
 
 .import-error {
-  margin: 0 0 0.75rem;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: 0 0 var(--space-4);
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .section-heading {
-  margin: 1.25rem 0 0.75rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #5f6368;
+  margin: var(--space-6) 0 var(--space-4);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
 }
 
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 .template-card {
@@ -273,27 +273,27 @@ function confirmDelete() {
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.75rem;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  background: #fff;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .template-card:hover {
-  border-color: #2c3e50;
-  background: #f8f9fa;
+  border-color: var(--surface-brand);
+  background: var(--surface-raised);
 }
 
 .template-card-title {
-  font-weight: 600;
-  color: #202124;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .template-card-preview {
-  font-size: 0.8125rem;
-  color: #5f6368;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .user-template-card {
@@ -307,8 +307,8 @@ function confirmDelete() {
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.75rem;
+  gap: var(--space-2);
+  padding: var(--space-4);
   border: none;
   background: transparent;
   cursor: pointer;
@@ -318,25 +318,25 @@ function confirmDelete() {
 
 .user-template-actions {
   display: flex;
-  border-top: 1px solid #f0f0f0;
+  border-top: var(--border-width) solid var(--border-subtle);
 }
 
 .user-template-actions button {
   font: inherit;
   flex: 1;
-  padding: 0.375rem 0.5rem;
+  padding: var(--space-3) var(--space-3);
   border: none;
-  background: #fff;
+  background: var(--surface-base);
   cursor: pointer;
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .user-template-actions button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .user-template-actions button + button {
-  border-left: 1px solid #f0f0f0;
+  border-left: var(--border-width) solid var(--border-subtle);
 }
 </style>

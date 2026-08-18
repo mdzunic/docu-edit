@@ -721,34 +721,34 @@ function chooseTableGrid(rows = 0, cols = 0) {
 .menu-table-grid-wrap {
   display: flex;
   align-items: flex-end;
-  gap: 0.75rem;
-  padding: 0.25rem 1rem 0.5rem;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5) var(--space-3);
 }
 
 .menu-table-grid {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--border-width);
 }
 
 .menu-table-grid-row {
   display: flex;
-  gap: 1px;
+  gap: var(--border-width);
 }
 
 .menu-table-grid-cell {
   width: 0.75rem;
   height: 0.75rem;
   padding: 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 2px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .menu-table-grid-cell.active {
-  background: #bbdefb;
-  border-color: #1a73e8;
+  background: var(--accent-subtle);
+  border-color: var(--accent);
 }
 
 .menu-table-grid-cell:disabled {
@@ -757,8 +757,8 @@ function chooseTableGrid(rows = 0, cols = 0) {
 }
 
 .menu-table-grid-label {
-  font-size: 0.78rem;
-  color: #5f6368;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 </style>

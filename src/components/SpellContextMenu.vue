@@ -112,42 +112,42 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 40;
   min-width: 12rem;
-  padding: 0.25rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
+  padding: var(--space-2);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 .context-menu-item {
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
+  gap: var(--space-6);
   width: 100%;
-  padding: 0.375rem 0.75rem;
+  padding: var(--space-3) var(--space-4);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .context-menu-item:hover:not(:disabled) {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .context-menu-item:disabled {
-  color: #9aa0a6;
+  color: var(--text-disabled);
   cursor: default;
 }
 
 .context-menu-separator {
   height: 1px;
-  margin: 0.25rem 0;
-  background: #e0e0e0;
+  margin: var(--space-2) 0;
+  background: var(--border-default);
 }
 </style>

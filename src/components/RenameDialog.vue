@@ -100,30 +100,30 @@ function save() {
   font: inherit;
   width: 100%;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

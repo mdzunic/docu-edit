@@ -59,32 +59,32 @@ const emit = defineEmits(["confirm", "cancel"]);
 <style scoped>
 .dialog-message {
   margin: 0;
-  color: #3c4043;
-  font-size: 0.9375rem;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
   overflow-wrap: anywhere;
 }
 
 .dialog-warning {
-  margin: 0.75rem 0 0;
-  color: #b06000;
-  background: #fef7e0;
-  border-radius: 4px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8125rem;
+  margin: var(--space-4) 0 0;
+  color: var(--warning);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-md);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.danger {
-  background: #b3261e;
-  border-color: #b3261e;
-  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--text-on-brand);
 }
 </style>

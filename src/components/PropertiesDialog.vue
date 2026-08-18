@@ -684,25 +684,25 @@ function removeCustomProperty(index = 0) {
 
 .tablist {
   display: flex;
-  gap: 0.25rem;
-  border-bottom: 1px solid #e0e0e0;
-  margin-bottom: 1rem;
+  gap: var(--space-2);
+  border-bottom: var(--border-width) solid var(--border-default);
+  margin-bottom: var(--space-5);
 }
 
 .tab {
   font: inherit;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-3) var(--space-4);
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: calc(2 * var(--border-width)) solid transparent;
   background: transparent;
   cursor: pointer;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .tab.active {
-  color: #2c3e50;
-  border-bottom-color: #2c3e50;
-  font-weight: 600;
+  color: var(--surface-brand);
+  border-bottom-color: var(--surface-brand);
+  font-weight: var(--weight-bold);
 }
 
 .tab-panels {
@@ -714,35 +714,35 @@ function removeCustomProperty(index = 0) {
 .fields-grid {
   display: grid;
   grid-template-columns: 10rem 1fr;
-  gap: 0.375rem 1rem;
-  margin: 0 0 1rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3) var(--space-5);
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-md);
 }
 
 .fields-grid dt {
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .fields-grid dd {
   margin: 0;
-  color: #202124;
+  color: var(--text-primary);
   word-break: break-word;
 }
 
 .dialog-label {
   display: block;
-  margin: 0.5rem 0 0.25rem;
-  font-size: 0.8125rem;
-  color: #5f6368;
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .dialog-input {
   font: inherit;
   width: 100%;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .dialog-textarea {
@@ -751,87 +751,87 @@ function removeCustomProperty(index = 0) {
 }
 
 .dialog-error {
-  margin: 0.25rem 0 0;
-  color: #b3261e;
-  font-size: 0.75rem;
+  margin: var(--space-2) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-sm);
 }
 
 .section-title {
-  margin: 1rem 0 0.25rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #3c4043;
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .hint {
-  margin: 0 0 0.5rem;
-  font-size: 0.75rem;
-  color: #5f6368;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .extra-fields {
-  margin-top: 1rem;
-  border-top: 1px solid #e0e0e0;
-  padding-top: 0.5rem;
+  margin-top: var(--space-5);
+  border-top: var(--border-width) solid var(--border-default);
+  padding-top: var(--space-3);
 }
 
 .custom-property-row {
   display: grid;
   grid-template-columns: 1fr 5.5rem 1fr auto;
-  gap: 0.375rem;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .custom-property-row.unsupported {
   grid-template-columns: 1fr 1fr;
-  color: #5f6368;
-  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 
 .custom-property-type {
-  font-size: 0.75rem;
-  color: #5f6368;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
   text-transform: capitalize;
 }
 
 .dialog-footer {
-  border-top: 1px solid #e0e0e0;
-  padding-top: 0.75rem;
-  margin-top: 0.5rem;
+  border-top: var(--border-width) solid var(--border-default);
+  padding-top: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  color: #3c4043;
-  margin-top: 0.75rem;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  margin-top: var(--space-4);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary,
 .custom-property-row button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .custom-property-row button {
   font: inherit;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 

@@ -3,9 +3,10 @@
 // current language, and opens a popover to change it — self-contained
 // (button + popover in one component) the same way HighlightPicker.vue is,
 // anchored with the same useFloatingMenu escape-the-clipped-strip pattern.
-import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import { asLanguageOptions } from "../lib/core/language";
+import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 const props = defineProps({
   currentLanguageTag: { type: String, default: "" },
@@ -22,9 +23,8 @@ const emit = defineEmits(["select", "manage-dictionary", "toggle-no-proof"]);
 const options = asLanguageOptions(props.languageOptions);
 
 const open = ref(false);
-const root = useTemplateRef("root");
 const triggerEl = useTemplateRef("triggerEl");
-const menuEl = useTemplateRef("menuEl");
+const menuSurface = useTemplateRef("menuSurface");
 
 // The status bar sits at the bottom of the viewport, so the popover opens
 // upward (placement: "above") — "below" (the default, right for toolbar
@@ -32,7 +32,7 @@ const menuEl = useTemplateRef("menuEl");
 const { menuStyle } = useFloatingMenu({
   open: () => open.value,
   anchor: () => triggerEl.value,
-  menu: () => menuEl.value,
+  menu: () => menuSurface.value?.$el ?? null,
   align: "center",
   placement: "above",
 });
@@ -56,30 +56,12 @@ function manageDictionary() {
   emit("manage-dictionary");
 }
 
-function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  if (open.value && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
-    open.value = false;
-  }
-}
-
-function handleKeydown(event = new KeyboardEvent("keydown")) {
-  if (event.key === "Escape") {
-    open.value = false;
-  }
-}
-
-document.addEventListener("mousedown", handleDocumentMousedown);
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", handleDocumentMousedown);
-});
+// Outside-click and Escape dismissal (and focus return) are owned by
+// UiMenuSurface — the shared, tested implementation.
 </script>
 
 <template>
-  <div
-    ref="root"
-    class="language-control"
-    @keydown="handleKeydown"
-  >
+  <div class="language-control">
     <button
       ref="triggerEl"
       type="button"
@@ -92,14 +74,16 @@ onBeforeUnmount(() => {
     >
       {{ currentLanguageLabel }}
     </button>
-    <div
-      v-if="open"
-      ref="menuEl"
+    <UiMenuSurface
+      ref="menuSurface"
+      :open="open"
+      :anchor="triggerEl"
       class="language-menu"
       data-testid="language-menu"
       role="menu"
       aria-label="Language"
       :style="menuStyle"
+      @dismiss="open = false"
     >
       <button
         v-for="option in options"
@@ -141,7 +125,7 @@ onBeforeUnmount(() => {
       >
         Custom dictionary…
       </button>
-    </div>
+    </UiMenuSurface>
   </div>
 </template>
 
@@ -166,53 +150,47 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
-/* position/left/top come inline from useFloatingMenu (fixed, escapes the
-   status bar's own clipping the same way HighlightPicker's does). */
+/* position/left/top come inline from useFloatingMenu; the box is UiMenuSurface's. */
 .language-menu {
   z-index: 30;
   min-width: 10rem;
-  padding: 0.25rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
 }
 
 .language-option {
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
   display: block;
   width: 100%;
-  padding: 0.375rem 0.625rem;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .language-option:hover {
-  background: #f1f3f4;
+  background: var(--state-hover);
 }
 
 .language-option.active {
-  background: #d2e3fc;
+  background: var(--surface-selected);
 }
 
 .language-menu-separator {
   height: 1px;
-  margin: 0.25rem 0;
-  background: #e0e0e0;
+  margin: var(--space-2) 0;
+  background: var(--border-subtle);
 }
 
 .no-proof-option {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0.625rem;
-  font-size: 0.8125rem;
-  color: #202124;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
   cursor: pointer;
 }
 </style>

@@ -208,13 +208,13 @@ function insert() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.9375rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-4);
 }
 
 .row-label {
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .row-input {
@@ -223,59 +223,59 @@ function insert() {
 }
 
 .hint {
-  margin: 0 0 0.35rem;
-  font-size: 0.875rem;
-  color: #5f6368;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .target-list {
   max-height: 16rem;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  padding: 0.35rem 0;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 0;
 }
 
 .group-label {
-  margin: 0.35rem 0.6rem 0.15rem;
-  font-size: 0.75rem;
-  font-weight: 600;
+  margin: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
-  color: #9aa0a6;
+  color: var(--text-disabled);
 }
 
 .target-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.6rem;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   cursor: pointer;
-  font-size: 0.9375rem;
+  font-size: var(--text-lg);
 }
 
 .target-row:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .empty {
-  margin: 0.5rem 0.6rem;
-  font-size: 0.875rem;
-  color: #5f6368;
+  margin: var(--space-3) var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

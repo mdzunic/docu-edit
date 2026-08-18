@@ -154,13 +154,13 @@ function handleRangeInput(event = new Event("input")) {
   right: 1.5rem;
   z-index: 120;
   width: 17rem;
-  padding: 1rem;
-  background: #fff;
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
-  color: #202124;
-  font-size: 0.875rem;
+  padding: var(--space-5);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  color: var(--text-primary);
+  font-size: var(--text-md);
 }
 
 .panel-header {
@@ -171,40 +171,40 @@ function handleRangeInput(event = new Event("input")) {
 
 .panel-title {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
 }
 
 .panel-close {
   border: none;
   background: none;
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
   line-height: 1;
-  color: #5f6368;
+  color: var(--text-secondary);
   cursor: pointer;
-  padding: 0.125rem 0.375rem;
+  padding: var(--space-1) var(--space-3);
 }
 
 .panel-count {
-  margin: 0.5rem 0 0;
-  color: #5f6368;
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
 }
 
 .panel-empty {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
 }
 
 .panel-range {
-  margin: 0.75rem 0 0;
-  padding: 0.5rem 0.75rem 0.75rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
 }
 
 .range-option {
   display: block;
-  padding: 0.125rem 0;
+  padding: var(--space-1) 0;
   cursor: pointer;
 }
 
@@ -212,44 +212,44 @@ function handleRangeInput(event = new Event("input")) {
   font: inherit;
   width: 100%;
   box-sizing: border-box;
-  margin-top: 0.375rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .range-error {
-  margin: 0.375rem 0 0;
-  color: #b3261e;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
 }
 
 .panel-actions {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 1rem;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .panel-print {
   font: inherit;
-  padding: 0.375rem 1.25rem;
+  padding: var(--space-3) var(--space-6);
   border: none;
-  border-radius: 4px;
-  background: #1a73e8;
-  color: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--text-on-brand);
   cursor: pointer;
 }
 
 .panel-print:disabled {
-  background: #a8c7fa;
+  background: var(--accent-subtle);
   cursor: default;
 }
 
 .panel-cancel {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 </style>

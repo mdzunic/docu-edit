@@ -25,23 +25,23 @@ const { toasts } = useToasts();
 <style scoped>
 .toast-region {
   position: fixed;
-  bottom: 1.5rem;
+  bottom: var(--space-6);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
   z-index: 100;
   pointer-events: none;
 }
 
 .toast {
-  padding: 0.625rem 1.25rem;
-  border-radius: 4px;
-  background: #202124;
-  color: #fff;
-  font-size: 0.875rem;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.3);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-sm);
+  background: var(--text-primary);
+  color: var(--text-on-brand);
+  font-size: var(--text-md);
+  box-shadow: var(--shadow-2);
 }
 </style>

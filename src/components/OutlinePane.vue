@@ -322,59 +322,61 @@ function onDragEnd() {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  background: #f8f9fa;
-  border-right: 1px solid #dadce0;
+  background: var(--surface-raised);
+  border-right: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
 }
 
 .outline-heading {
   flex: none;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .outline-empty {
   margin: 0;
-  padding: 0.25rem 0.75rem 0.75rem;
-  font-size: 0.8125rem;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  font-size: var(--text-md);
   font-style: italic;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .outline-tree:focus {
-  outline: none;
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
 }
 
 .outline-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding-top: 0.2rem;
-  padding-bottom: 0.2rem;
-  padding-right: 0.5rem;
-  font-size: 0.8125rem;
-  color: #202124;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+  padding-right: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
   cursor: pointer;
   user-select: none;
 }
 
 .outline-item:hover {
-  background: #f1f3f4;
+  background: var(--surface-sunken);
 }
 
 .outline-item.is-active {
-  background: #e8f0fe;
-  color: #1a73e8;
-  font-weight: 600;
+  background: var(--surface-selected);
+  color: var(--text-accent);
+  font-weight: var(--weight-bold);
 }
 
 .outline-tree:focus .outline-item.is-focused {
-  box-shadow: inset 2px 0 0 #1a73e8;
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--space-1));
 }
 
 .outline-item.drop-before::before,
@@ -384,7 +386,7 @@ function onDragEnd() {
   left: 0;
   right: 0;
   height: 2px;
-  background: #1a73e8;
+  background: var(--accent);
 }
 
 .outline-item.drop-before::before {
@@ -404,15 +406,15 @@ function onDragEnd() {
   justify-content: center;
   border: 0;
   background: transparent;
-  color: #5f6368;
-  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   line-height: 1;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .outline-twisty:hover {
-  background: #e0e0e0;
+  background: var(--surface-sunken);
 }
 
 .outline-twisty-spacer {

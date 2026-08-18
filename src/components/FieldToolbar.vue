@@ -66,27 +66,27 @@ const emit = defineEmits(["field-action"]);
 <style scoped>
 .field-toolbar {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
   align-items: center;
-  padding: 0.25rem 0.375rem;
-  background: #f1f3f4;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-canvas);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
 }
 
 .field-toolbar button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.2rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .field-toolbar button:hover:not(:disabled) {
-  background: #e0e0e0;
+  background: var(--surface-sunken);
 }
 
 .field-toolbar button:disabled {

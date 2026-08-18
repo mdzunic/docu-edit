@@ -294,110 +294,110 @@ function apply() {
 
 <style scoped>
 .presets {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-4);
 }
 
 .preset-buttons {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .preset-button {
   font: inherit;
   min-width: 2.5rem;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .preset-button.active {
-  border-color: #1a73e8;
-  background: #e8f0fe;
-  color: #1a73e8;
+  border-color: var(--accent);
+  background: var(--surface-selected);
+  color: var(--text-accent);
 }
 
 .field-row {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .field {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .field-input:disabled {
-  background: #f1f3f4;
-  color: #80868b;
+  background: var(--surface-canvas);
+  color: var(--text-disabled);
 }
 
 .widths {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 .width-field {
   flex: 1 1 6rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .checkbox-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.875rem;
-  color: #3c4043;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .dialog-error {
-  margin: 0.25rem 0 0;
-  font-size: 0.8125rem;
-  color: #c5221f;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-md);
+  color: var(--text-danger);
 }
 
 .dialog-actions button {
   font: inherit;
-  font-size: 0.875rem;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #1a73e8;
-  border-color: #1a73e8;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button.primary:disabled {
-  background: #9e9e9e;
-  border-color: #9e9e9e;
+  background: var(--text-disabled);
+  border-color: var(--text-disabled);
   cursor: default;
 }
 </style>

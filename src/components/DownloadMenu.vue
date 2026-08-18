@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { ref, useTemplateRef } from "vue";
+import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // Runtime emit declaration (not the defineEmits<{...}>() generic) because
 // ESLint parses .vue scripts with espree, which rejects TS-only syntax;
@@ -10,16 +11,10 @@ import { onMounted, onUnmounted, ref } from "vue";
 const emit = defineEmits(["download"]);
 
 const open = ref(false);
+const triggerEl = useTemplateRef("triggerEl");
 
-function closeMenu() {
-  open.value = false;
-}
-
-// Any click that bubbles to the document (the component's root stops
-// propagation) closes the menu — same pattern as HomeView's row menu.
-onMounted(() => document.addEventListener("click", closeMenu));
-onUnmounted(() => document.removeEventListener("click", closeMenu));
-
+// Outside-click and Escape dismissal (and focus return to the trigger) are
+// owned by UiMenuSurface — the shared, tested implementation.
 function choose(format = "") {
   open.value = false;
   emit("download", format);
@@ -27,12 +22,9 @@ function choose(format = "") {
 </script>
 
 <template>
-  <div
-    class="download"
-    @click.stop
-    @keydown.escape="closeMenu"
-  >
+  <div class="download">
     <button
+      ref="triggerEl"
       type="button"
       class="download-button"
       data-testid="download-menu"
@@ -42,12 +34,14 @@ function choose(format = "") {
     >
       Download
     </button>
-    <div
-      v-if="open"
+    <UiMenuSurface
+      :open="open"
+      :anchor="triggerEl"
       class="download-list"
       role="menu"
       aria-label="Download formats"
       data-testid="download-menu-list"
+      @dismiss="open = false"
     >
       <button
         type="button"
@@ -81,7 +75,7 @@ function choose(format = "") {
       >
         PDF (.pdf)
       </button>
-    </div>
+    </UiMenuSurface>
   </div>
 </template>
 
@@ -93,47 +87,43 @@ function choose(format = "") {
 /* Sits on the dark app bar, so the idle state is a quiet outline button. */
 .download-button {
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   color: inherit;
-  background: rgb(255 255 255 / 0.1);
-  border: 1px solid rgb(255 255 255 / 0.4);
-  border-radius: 4px;
-  padding: 0.125rem 0.75rem;
+  background: transparent;
+  border: var(--border-width) solid var(--text-on-brand);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-4);
   cursor: pointer;
 }
 
 .download-button:hover {
-  background: rgb(255 255 255 / 0.2);
+  background: var(--state-hover);
 }
 
 .download-list {
   position: absolute;
   right: 0;
-  top: calc(100% + 0.25rem);
+  top: calc(100% + var(--space-2));
   z-index: 30;
   min-width: 10rem;
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
-  padding: 0.25rem 0;
 }
 
 .download-list button {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .download-list button:hover {
-  background: #f1f3f4;
+  background: var(--state-hover);
 }
 </style>

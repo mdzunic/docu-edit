@@ -305,44 +305,44 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
   z-index: 20;
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
-  padding: 0.5rem 0.625rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
-  font-size: 0.8125rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  font-size: var(--text-md);
 }
 
 .find-row {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: var(--space-3);
 }
 
 .find-input {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
   width: 15rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .find-input:focus {
-  outline: 2px solid #1a73e8;
-  outline-offset: -1px;
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--border-width));
 }
 
 .find-count {
   min-width: 3.5rem;
-  color: #5f6368;
+  color: var(--text-secondary);
   white-space: nowrap;
   text-align: right;
 }
 
 .find-status {
-  color: #c5221f;
+  color: var(--text-danger);
   white-space: nowrap;
 }
 
@@ -350,65 +350,65 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
   font: inherit;
   min-width: 1.75rem;
   height: 1.75rem;
-  padding: 0 0.375rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .find-icon-button:hover:not(:disabled) {
-  background: #f1f3f4;
+  background: var(--surface-sunken);
 }
 
 .find-icon-button:disabled {
-  color: #bdbdbd;
+  color: var(--text-disabled);
   cursor: default;
 }
 
 .find-options {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: var(--space-3);
 }
 
 .find-option {
   font: inherit;
-  font-size: 0.75rem;
-  padding: 0.125rem 0.5rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  background: #fff;
-  color: #3c4043;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .find-option[aria-pressed="true"] {
-  background: #e8f0fe;
-  border-color: #aecbfa;
-  color: #174ea6;
+  background: var(--surface-selected);
+  border-color: var(--accent-subtle);
+  color: var(--text-accent);
 }
 
 .find-scope {
   margin-left: auto;
-  color: #5f6368;
+  color: var(--text-secondary);
   cursor: help;
 }
 
 .find-text-button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  color: #202124;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .find-text-button:disabled {
-  color: #bdbdbd;
+  color: var(--text-disabled);
   cursor: default;
 }
 </style>

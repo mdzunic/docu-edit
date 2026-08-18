@@ -206,50 +206,50 @@ function pick(cp = 0) {
 
 /* The title row sat tighter above the search input than the base's 1rem. */
 :deep(.dialog-header) {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-4);
 }
 
 .close-button {
   font: inherit;
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
   line-height: 1;
   border: none;
   background: none;
-  color: #5f6368;
+  color: var(--text-secondary);
   cursor: pointer;
-  padding: 0 0.25rem;
+  padding: 0 var(--space-2);
 }
 
 .search-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  margin-bottom: 0.75rem;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
 }
 
 .direct-inserts {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .direct-button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .direct-button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .scroll-area {
@@ -258,55 +258,55 @@ function pick(cp = 0) {
 }
 
 .category {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-4);
 }
 
 .category-label {
-  margin: 0 0 0.375rem;
-  font-size: 0.75rem;
-  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr));
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .char-cell {
   font: inherit;
-  font-size: 1.125rem;
+  font-size: var(--text-xl);
   aspect-ratio: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
   padding: 0;
   overflow: hidden;
 }
 
 .char-cell:hover {
-  background: #e8f0fe;
-  border-color: #1a73e8;
+  background: var(--surface-selected);
+  border-color: var(--accent);
 }
 
 .glyphless-box {
   width: 1rem;
   height: 1rem;
-  border: 1px dotted #9e9e9e;
-  border-radius: 2px;
+  border: var(--border-width) dotted var(--border-strong);
+  border-radius: var(--radius-sm);
   display: block;
 }
 
 .no-results {
-  margin: 0.5rem 0;
-  font-size: 0.875rem;
-  color: #5f6368;
+  margin: var(--space-3) 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 </style>

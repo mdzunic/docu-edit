@@ -100,10 +100,10 @@ const entriesTyped = computed(() => asFontReportEntries(props.entries));
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  background: #f8f9fa;
-  border-left: 1px solid #dadce0;
+  background: var(--surface-raised);
+  border-left: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
 }
 
 .fonts-pane-header {
@@ -111,41 +111,41 @@ const entriesTyped = computed(() => asFontReportEntries(props.entries));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
 }
 
 .fonts-pane-title {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .fonts-close {
   border: none;
   background: transparent;
-  font-size: 1rem;
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .fonts-summary {
   flex: none;
   margin: 0;
-  padding: 0 0.75rem 0.5rem;
-  color: #5f6368;
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--text-secondary);
 }
 
 .fonts-embed-button {
-  margin: 0 0.75rem 0.5rem;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  background: #fff;
-  font-size: 0.78rem;
+  margin: 0 var(--space-4) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -157,43 +157,43 @@ const entriesTyped = computed(() => asFontReportEntries(props.entries));
 .fonts-list {
   list-style: none;
   margin: 0;
-  padding: 0 0.5rem 0.5rem;
+  padding: 0 var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-2);
 }
 
 .fonts-item {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
+  gap: var(--space-3);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-3);
 }
 
 .fonts-family {
-  font-weight: 600;
-  color: #202124;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .fonts-status {
   flex: none;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .fonts-status-available {
-  color: #188038;
+  color: var(--success);
 }
 
 .fonts-status-substituted {
-  color: #b06000;
+  color: var(--warning);
 }
 
 .fonts-status-missing {
-  color: #c5221f;
+  color: var(--text-danger);
 }
 </style>

@@ -85,40 +85,40 @@ function toolbarStyle(left = 0, top = 0) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: var(--space-2);
+  padding: var(--space-2);
   max-width: 480px;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 .chart-toolbar-notice {
-  font-size: 0.75rem;
-  color: #5f6368;
-  padding: 0.25rem 0.5rem;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: var(--space-2) var(--space-3);
 }
 
 .chart-toolbar-option {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .chart-toolbar-option:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .chart-toolbar-separator {
   width: 1px;
   align-self: stretch;
-  background: #dadce0;
+  background: var(--border-default);
 }
 </style>

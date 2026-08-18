@@ -187,13 +187,13 @@ function apply() {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .field-row {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 .field-row .field {
@@ -203,56 +203,56 @@ function apply() {
 .field-inline {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.875rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-md);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .dialog-error {
-  margin: -0.5rem 0 0.75rem;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: calc(-1 * var(--space-3)) 0 var(--space-4);
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .reset-button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

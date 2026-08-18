@@ -56,33 +56,33 @@ function chipStyle() {
   position: fixed;
   z-index: 30;
   display: flex;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 .paste-chip-option {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.625rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .paste-chip-option:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .paste-chip-option.applied {
-  background: #e8f0fe;
-  border-color: #aecbfa;
-  color: #174ea6;
+  background: var(--surface-selected);
+  border-color: var(--accent-subtle);
+  color: var(--text-accent);
 }
 </style>

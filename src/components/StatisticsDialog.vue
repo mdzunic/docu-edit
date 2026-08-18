@@ -88,42 +88,42 @@ function onToggleIncludeNotes(event = new Event("change")) {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 0.375rem 1rem;
-  margin: 0 0 1rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3) var(--space-5);
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-md);
 }
 
 .stats-grid dt {
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .stats-grid dd {
   margin: 0;
   text-align: right;
-  color: #202124;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  color: #3c4043;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 </style>

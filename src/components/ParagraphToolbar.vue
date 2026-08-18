@@ -499,22 +499,22 @@ onBeforeUnmount(() => {
 <style scoped>
 .paragraph-toolbar {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .paragraph-button {
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   min-width: 1.75rem;
   height: 1.75rem;
-  padding: 0 0.25rem;
+  padding: 0 var(--space-2);
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -524,8 +524,8 @@ onBeforeUnmount(() => {
 }
 
 .paragraph-button[aria-pressed="true"] {
-  background: #d2e3fc;
-  border-color: #8ab4f8;
+  background: var(--accent-subtle);
+  border-color: var(--accent-subtle);
 }
 
 /* Alignment glyphs: four text lines whose ragged edge shows the alignment.
@@ -535,10 +535,10 @@ onBeforeUnmount(() => {
   height: 12px;
   background-repeat: no-repeat;
   background-image:
-    linear-gradient(#5f6368, #5f6368),
-    linear-gradient(#5f6368, #5f6368),
-    linear-gradient(#5f6368, #5f6368),
-    linear-gradient(#5f6368, #5f6368);
+    linear-gradient(var(--text-secondary), var(--text-secondary)),
+    linear-gradient(var(--text-secondary), var(--text-secondary)),
+    linear-gradient(var(--text-secondary), var(--text-secondary)),
+    linear-gradient(var(--text-secondary), var(--text-secondary));
   background-size: 100% 2px, 70% 2px, 100% 2px, 70% 2px;
 }
 
@@ -566,33 +566,33 @@ onBeforeUnmount(() => {
   min-width: 14rem;
   display: flex;
   flex-direction: column;
-  padding: 0.25rem 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  padding: var(--space-2) 0;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-2);
 }
 
 .spacing-menu button {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  padding: var(--space-3) var(--space-5);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .spacing-menu button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .spacing-separator {
-  margin: 0.25rem 0;
+  margin: var(--space-2) 0;
   border: none;
-  border-top: 1px solid #e0e0e0;
+  border-top: var(--border-width) solid var(--border-default);
 }
 
 /* A list toggle and its dropdown expander read as one control. */
@@ -608,7 +608,7 @@ onBeforeUnmount(() => {
 .list-cluster .list-menu-button {
   min-width: 1rem;
   padding: 0;
-  font-size: 0.625rem;
+  font-size: var(--text-xs);
   border-inline-start: none;
   border-start-start-radius: 0;
   border-end-start-radius: 0;
@@ -620,30 +620,30 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 4rem;
-  padding: 0.25rem 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  padding: var(--space-2) 0;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-2);
 }
 
 .marker-menu button {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  padding: var(--space-3) var(--space-5);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .marker-menu button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .marker-menu button.checked {
-  background: #d2e3fc;
+  background: var(--accent-subtle);
 }
 </style>

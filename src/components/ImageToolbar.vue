@@ -76,39 +76,39 @@ function toolbarStyle() {
   z-index: 30;
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 .image-toolbar-option {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .image-toolbar-option:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .image-toolbar-option.applied {
-  background: #e8f0fe;
-  border-color: #aecbfa;
-  color: #174ea6;
+  background: var(--surface-selected);
+  border-color: var(--accent-subtle);
+  color: var(--text-accent);
 }
 
 .image-toolbar-separator {
   width: 1px;
   align-self: stretch;
-  background: #dadce0;
+  background: var(--border-default);
 }
 </style>

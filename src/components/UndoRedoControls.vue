@@ -66,20 +66,20 @@ function redoTitle() {
 <style scoped>
 .undo-redo {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .undo-redo-button {
   font: inherit;
-  font-size: 1rem;
+  font-size: var(--text-lg);
   width: 1.75rem;
   height: 1.75rem;
   padding: 0;
   line-height: 1;
   text-align: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 

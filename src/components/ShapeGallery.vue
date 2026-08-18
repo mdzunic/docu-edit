@@ -87,10 +87,10 @@ function iconClass(geometry = "rect") {
 .shape-gallery {
   display: flex;
   flex-direction: column;
-  gap: 0.1875rem;
+  gap: var(--space-1);
   /* The 1rem side padding is MenuBar's own command gutter, so the icon grid
      starts on the same vertical line as the menu's labels above and below. */
-  padding: 0.125rem 1rem 0.25rem;
+  padding: var(--space-1) var(--space-5) var(--space-2);
 }
 
 /* Each group is a label beside its own row rather than above it: the Insert
@@ -101,18 +101,18 @@ function iconClass(geometry = "rect") {
 .shape-gallery-group {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .shape-gallery-group-label {
   flex: none;
   width: 4rem;
-  font-size: 0.625rem;
-  font-weight: 600;
-  line-height: 1.15;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  line-height: var(--line-tight);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #80868b;
+  color: var(--text-secondary);
 }
 
 .shape-gallery-items {
@@ -121,7 +121,7 @@ function iconClass(geometry = "rect") {
   /* Fixed track count with equal shares: every cell holds the same
      fixed-size icon, so the columns line up across all four groups. */
   grid-template-columns: repeat(6, 1fr);
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 /* A fixed row height (rather than a square cell) keeps the four groups
@@ -132,18 +132,24 @@ function iconClass(geometry = "rect") {
   align-items: center;
   justify-content: center;
   height: 1.5rem;
-  padding: 0.125rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-1);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
-.shape-gallery-item:hover,
+.shape-gallery-item:hover {
+  background: var(--surface-sunken);
+  border-color: var(--accent);
+}
+
+/* Focus keeps the accent border AND a full 2px --focus-ring (AC-45/46). */
 .shape-gallery-item:focus-visible {
-  background: #f1f3f4;
-  border-color: #1a73e8;
-  outline: none;
+  background: var(--surface-sunken);
+  border-color: var(--accent);
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
 }
 
 .shape-gallery-icon {
@@ -153,15 +159,15 @@ function iconClass(geometry = "rect") {
 }
 
 .shape-gallery-icon-area {
-  fill: #e8f0fe;
-  stroke: #3c4043;
+  fill: var(--surface-selected);
+  stroke: var(--text-primary);
   stroke-width: 1.25;
   stroke-linejoin: round;
 }
 
 .shape-gallery-icon-line {
-  fill: #3c4043;
-  stroke: #3c4043;
+  fill: var(--text-primary);
+  stroke: var(--text-primary);
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;

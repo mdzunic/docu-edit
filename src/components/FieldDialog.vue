@@ -243,24 +243,24 @@ function insert() {
 .field-body {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.9375rem;
+  gap: var(--space-4);
+  font-size: var(--text-lg);
 }
 
 .check-row {
   justify-content: flex-start;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .row-label {
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .row-input {
@@ -272,27 +272,27 @@ function insert() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid #e0e0e0;
+  gap: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--border-width) solid var(--border-default);
 }
 
 .preview-value {
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 </style>

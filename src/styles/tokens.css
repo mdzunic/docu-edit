@@ -30,7 +30,7 @@
   /* Lines. */
   --border-subtle:         #e8eaed;   /* separators inside a surface */
   --border-default:        #dadce0;   /* control outlines */
-  --border-strong:         #9aa0a6;   /* emphasised/hovered outlines */
+  --border-strong:         #80868b;   /* emphasised/hovered outlines — ≥3:1 on surfaces */
 
   /* Accent and status. */
   --accent:                #1a73e8;

@@ -65,7 +65,7 @@ function iconMarks(chartType = "columnClustered") {
   /* The 1rem side padding is MenuBar's own command gutter, so the grid
      starts and ends on the same vertical lines as the menu's labels above
      and below it — and as ShapeGallery.vue's own grid. */
-  padding: 0.125rem 1rem 0.25rem;
+  padding: var(--space-1) var(--space-5) var(--space-2);
 }
 
 .chart-gallery-items {
@@ -76,7 +76,7 @@ function iconMarks(chartType = "columnClustered") {
      one row of height rather than two. */
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .chart-gallery-item {
@@ -84,18 +84,25 @@ function iconMarks(chartType = "columnClustered") {
   align-items: center;
   justify-content: center;
   height: 1.5rem;
-  padding: 0.125rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-1);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
-.chart-gallery-item:hover,
+.chart-gallery-item:hover {
+  background: var(--surface-sunken);
+  border-color: var(--accent);
+}
+
+/* Focus keeps the accent border AND a full 2px --focus-ring (AC-45/46): the
+   ring is never removed, only reinforced. */
 .chart-gallery-item:focus-visible {
-  background: #f1f3f4;
-  border-color: #1a73e8;
-  outline: none;
+  background: var(--surface-sunken);
+  border-color: var(--accent);
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
 }
 
 .chart-gallery-icon {
@@ -106,28 +113,28 @@ function iconMarks(chartType = "columnClustered") {
 
 .chart-gallery-mark-axis {
   fill: none;
-  stroke: #9aa0a6;
+  stroke: var(--border-strong);
   stroke-width: 1;
 }
 
 .chart-gallery-mark-fill {
-  fill: #e8f0fe;
+  fill: var(--surface-selected);
   fill-rule: evenodd;
-  stroke: #3c4043;
+  stroke: var(--text-primary);
   stroke-width: 1.25;
   stroke-linejoin: round;
 }
 
 .chart-gallery-mark-line {
   fill: none;
-  stroke: #3c4043;
+  stroke: var(--text-primary);
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .chart-gallery-mark-dot {
-  fill: #3c4043;
+  fill: var(--text-primary);
   stroke: none;
 }
 </style>

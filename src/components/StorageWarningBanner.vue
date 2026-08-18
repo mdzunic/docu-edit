@@ -26,10 +26,10 @@ onUnmounted(unsubscribe);
 <style scoped>
 .storage-warning {
   flex: none;
-  padding: 0.5rem 1rem;
-  background: #fef7e0;
-  color: #7a5d00;
-  border-bottom: 1px solid #f0dfa6;
-  font-size: 0.875rem;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-raised);
+  color: var(--warning);
+  border-bottom: var(--border-width) solid var(--warning);
+  font-size: var(--text-md);
 }
 </style>

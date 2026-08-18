@@ -77,20 +77,20 @@ function toggle(key = "") {
 <style scoped>
 .format-toolbar {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .format-button {
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   width: 1.75rem;
   height: 1.75rem;
   padding: 0;
   line-height: 1;
   text-align: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -101,12 +101,12 @@ function toggle(key = "") {
 
 .format-button[aria-pressed="true"],
 .format-button[aria-pressed="mixed"] {
-  background: #d2e3fc;
-  border-color: #8ab4f8;
+  background: var(--accent-subtle);
+  border-color: var(--accent-subtle);
 }
 
 .format-bold {
-  font-weight: bold;
+  font-weight: var(--weight-bold);
 }
 
 .format-italic {
