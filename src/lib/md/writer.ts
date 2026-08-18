@@ -14,6 +14,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   type Block,
   type DocumentModel,
   type Paragraph,
@@ -208,6 +209,13 @@ function renderBlock(
     // paragraph per entry, matching what `withoutDropped`'s "tableOfContents"
     // mask replaces the block with, so a docx -> md -> docx round trip's
     // masked source and reopened model agree.
+    return block.entries.map((entry) => escapeLineStart(escapeInline(entry.text))).join("\n\n");
+  }
+  if (isTof(block)) {
+    listCounters.length = 0;
+    // SPEC-055: same as the TOC — a table of figures has no Markdown field,
+    // so it emits its rendered entry text (matching `withoutDropped`'s
+    // "tableOfFigures" mask) rather than being lost.
     return block.entries.map((entry) => escapeLineStart(escapeInline(entry.text))).join("\n\n");
   }
   if (isImage(block)) {

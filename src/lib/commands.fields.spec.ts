@@ -29,6 +29,7 @@ import {
   type FieldUpdateContext,
 } from "./commands.fields";
 import { noTocPageNumbers } from "./toc";
+import { CAPTION_STYLE_ID } from "./styles";
 
 const INSTANT = new Date(2026, 2, 4, 14, 30, 0);
 const CTX: FieldUpdateContext = { now: INSTANT, fileName: "report.docx" };
@@ -366,6 +367,34 @@ describe("Update all fields (SPEC-053 AC-16..18, AC-28)", () => {
     const model = fieldDoc({ kind: "unsupported", code: "SEQ x", cached: "42" });
     const out = updateAllFields(model, caretAt(0, 0), CTX, noTocPageNumbers());
     expect(firstField(out.model, 0)).toEqual({ kind: "unsupported", code: "SEQ x", cached: "42" });
+  });
+
+  it("keeps header and footnote seq captions cached — the counter never sees them (SPEC-055 AC-37, AC-38)", () => {
+    const caption = (cached: string): Paragraph => ({
+      type: "paragraph",
+      styleId: CAPTION_STYLE_ID,
+      runs: [
+        { text: "Figure ", formatting: {} },
+        createFieldSpecRun({ kind: "seq", label: "Figure", format: "decimal", cached }),
+      ],
+    });
+    const model = createDocument("seq-surfaces");
+    model.sections = [
+      {
+        blocks: [caption("5"), caption("5")],
+        headers: { default: { blocks: [caption("7")] } },
+      },
+    ];
+    model.notes = [{ noteId: "n1", kind: "footnote", blocks: [caption("9")] }];
+    const out = updateAllFields(model, caretAt(0, 0), CTX, noTocPageNumbers());
+    const seqAt = (p: Paragraph) => p.runs.find((r) => r.field)?.field;
+    // Body captions renumber 1..2 as if the surface captions did not exist.
+    expect(seqAt(out.model.sections[0].blocks[0] as Paragraph)).toMatchObject({ cached: "1" });
+    expect(seqAt(out.model.sections[0].blocks[1] as Paragraph)).toMatchObject({ cached: "2" });
+    // The header and footnote captions keep their saved cached values even
+    // though Update-all walks headers and notes for every other field kind.
+    expect(seqAt(out.model.sections[0].headers!.default!.blocks[0] as Paragraph)).toMatchObject({ cached: "7" });
+    expect(seqAt(out.model.notes![0].blocks[0] as Paragraph)).toMatchObject({ cached: "9" });
   });
 
   it("rebuilds a table of contents through the shared path (AC-17)", () => {

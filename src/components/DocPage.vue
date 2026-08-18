@@ -71,6 +71,7 @@ defineEmits([
   "chart-select",
   "chart-edit-data",
   "toc-action",
+  "tof-action",
   "dblclick-header",
   "dblclick-footer",
   "dblclick-body",
@@ -181,6 +182,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               @chart-select="(section, blockIndex, shiftKey) => $emit('chart-select', section, blockIndex, shiftKey)"
               @chart-edit-data="(section, blockIndex) => $emit('chart-edit-data', section, blockIndex)"
               @toc-action="(payload) => $emit('toc-action', payload)"
+              @tof-action="(payload) => $emit('tof-action', payload)"
               @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
             />
           </div>
@@ -207,6 +209,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             @chart-select="(section, block, shiftKey) => $emit('chart-select', section, block, shiftKey)"
             @chart-edit-data="(section, block) => $emit('chart-edit-data', section, block)"
             @toc-action="(payload) => $emit('toc-action', payload)"
+            @tof-action="(payload) => $emit('tof-action', payload)"
             @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"
           />
         </template>

@@ -14,6 +14,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   resolveColumnWidthsCm,
   sectionColumns,
   sectionContentWidthCm,
@@ -195,7 +196,7 @@ interface Frame {
 }
 
 function paragraphOf(block: Block): Paragraph | null {
-  return isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block) ? null : block;
+  return isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block) || isTof(block) ? null : block;
 }
 
 /** The rendered height (px) of a block's `[startLine, endLine)` slice —
@@ -660,7 +661,7 @@ export function estimateMetrics(
       estimated: true,
     };
   }
-  if (isToc(block)) {
+  if (isToc(block) || isTof(block)) {
     const rows = Math.max(1, block.entries.length);
     return {
       contentWidthPx,

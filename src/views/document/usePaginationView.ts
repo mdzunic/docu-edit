@@ -14,6 +14,7 @@ import {
   asImage,
   asParagraphBlock,
   asToc,
+  asTof,
   createEmptyHeaderFooterContent,
   isBreak,
   isChart,
@@ -22,6 +23,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   type ActiveHeaderFooterTarget,
   type ActiveNoteTarget,
   type Block,
@@ -63,6 +65,7 @@ import type { ParagraphTabLayout } from "../../lib/tabLayout";
 import { splitRuns } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
+import { tofEntriesStale, tofPageNumbersStale } from "../../lib/tof";
 import { blockKey, headingContentLength } from "../../lib/outline";
 import { mediaDataUri } from "../../lib/core/media";
 import type { PaginationController } from "../../composables/usePagination";
@@ -83,6 +86,7 @@ export interface FlatEntry {
   isShape: boolean;
   isChart: boolean;
   isToc: boolean;
+  isTof: boolean;
   imageSrc: string;
   imageSelected: boolean;
   shapeSelected: boolean;
@@ -329,6 +333,23 @@ function renderEntryFor(
       blockIndexProp: flatEntry.blockIndex,
       tocStaleHeadings: staleHeadings,
       tocStalePagination: stalePagination,
+      column,
+    } as RenderEntry;
+  }
+  if (flatEntry.isTof) {
+    const tof = asTof(block);
+    const staleEntries = tofEntriesStale(model, tof);
+    const stalePagination = tofPageNumbersStale(tof, (anchor) => deps.tocPageNumberFor(model, anchor));
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, staleEntries, stalePagination, column],
+      kind: "tof",
+      uneditable: true,
+      blockProp: block,
+      sectionProp: flatEntry.section,
+      blockIndexProp: flatEntry.blockIndex,
+      tofStaleEntries: staleEntries,
+      tofStalePagination: stalePagination,
       column,
     } as RenderEntry;
   }
@@ -916,6 +937,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         const shape = isShape(block);
         const chart = isChart(block);
         const toc = isToc(block);
+        const tof = isTof(block);
         const cellSel =
           table && range && range.section === sectionIndex && range.block === blockIndex
             ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
@@ -939,6 +961,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           isShape: shape,
           isChart: chart,
           isToc: toc,
+          isTof: tof,
           imageSrc: image ? mediaSrc(deps.doc.value, block) : "",
           imageSelected: imgSelected,
           shapeSelected,

@@ -46,7 +46,10 @@ const CATALOGUE: FieldSpec[] = [
 const LOCKED: FieldSpec = { kind: "date", format: "d MMMM yyyy", cached: "1 March 2025", locked: true };
 const DELETED_TARGET: FieldSpec = { kind: "ref", target: "gone", show: "text", cached: "Error! Reference source not found." };
 const UNKNOWN_PICTURE: FieldSpec = { kind: "date", format: "MMMM/yy", cached: "March/26" };
-const UNSUPPORTED_DOCX: FieldSpec = { kind: "unsupported", code: "SEQ Figure \\* ARABIC", cached: "7" };
+// GREETINGLINE has no model field of its own — a genuinely unsupported type.
+// (SPEC-055 promoted SEQ, this fixture's old unsupported instruction, to a real
+// caption `seq` field, so it can no longer stand in for the unsupported case.)
+const UNSUPPORTED_DOCX: FieldSpec = { kind: "unsupported", code: "GREETINGLINE \\* MERGEFORMAT", cached: "7" };
 const UNSUPPORTED_ODT: FieldSpec = {
   kind: "unsupported",
   code: '<text:conditional-text text:condition="ooow:x==1" text:string-value-if-true="Yes" text:string-value-if-false="No">No</text:conditional-text>',

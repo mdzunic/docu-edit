@@ -105,6 +105,16 @@ export interface TablesDeps extends EditorContext, HeaderFooterBridge {
   getTableFormattingLocation: () => TableLoc;
   setTableFormattingLocation: (location: TableLoc) => void;
   getContextMenuTableCell: () => TableCellTarget | null;
+  /** Routes a "delete table" through the caption-delete prompt (SPEC-055
+   * AC-20): given the table's block address and a `perform` that does the
+   * plain delete, it prompts first when the table has a bound caption, else
+   * calls `perform` immediately. Forward-referenced from useCaptions, which is
+   * wired after this composable — only ever invoked at user-action time. */
+  requestObjectDelete: (
+    object: { section: number; block: number },
+    objectKind: string,
+    perform: () => void,
+  ) => void;
 }
 
 export function useTables(deps: TablesDeps) {
@@ -131,6 +141,7 @@ export function useTables(deps: TablesDeps) {
     getTableFormattingLocation,
     setTableFormattingLocation,
     getContextMenuTableCell,
+    requestObjectDelete,
     onUnmount,
   } = deps;
 
@@ -175,8 +186,18 @@ export function useTables(deps: TablesDeps) {
       result = deleteTableColumn(model, selection, location);
       label = "delete column";
     } else if (action === "delete-table") {
-      result = deleteTable(model, selection, location);
-      label = "delete table";
+      // SPEC-055 AC-20: prompt whether to delete a bound caption too before
+      // removing the table (falls through to a plain delete when uncaptioned).
+      requestObjectDelete({ section: location.section, block: location.block }, "table", () => {
+        const current = doc.value;
+        const currentRoot = contentRoot.value as HTMLElement | null;
+        if (!current || !currentRoot) {
+          return;
+        }
+        applyEdit(deleteTable(current, selection, location), selection, "delete table");
+        currentRoot.focus();
+      });
+      return;
     }
     if (result) {
       applyEdit(result, selection, label);

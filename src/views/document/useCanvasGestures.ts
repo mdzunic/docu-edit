@@ -68,6 +68,11 @@ export interface CanvasGesturesDeps extends EditorContext {
   // --- from useLinks (SPEC-025, SPEC-033) -----------------------------------
   clearTocSelection: () => void;
   jumpToAnchor: (anchor?: string) => void;
+  // --- from useCaptions (SPEC-055) ------------------------------------------
+  /** Clears a selected table of figures — its click-away lifecycle mirrors
+     the TOC's clearTocSelection, so a stale selection can't misroute a later
+     Delete/Backspace into deleting the whole ToF. */
+  clearTofSelection: () => void;
   // --- from useFields (SPEC-053) --------------------------------------------
   followCrossReference: (target: string) => void;
   /** Selects the whole one-character atom of a clicked field (AC-7); returns
@@ -104,6 +109,7 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     clearImageSelection,
     insertImageFromFile,
     clearTocSelection,
+    clearTofSelection,
     jumpToAnchor,
     followCrossReference,
     selectField,
@@ -273,6 +279,14 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     const tocTarget = event.target instanceof Element ? event.target.closest(".doc-toc") : null;
     if (!tocTarget) {
       clearTocSelection();
+    }
+    // Same for a selected table of figures (SPEC-055) — a click on one is
+    // handled by DocTofBlock's own @action "select", which fires afterward.
+    // Without this parity a stale tofSelection would misroute the next
+    // Delete/Backspace into deleting the whole ToF (see DocumentView keydown).
+    const tofTarget = event.target instanceof Element ? event.target.closest(".doc-tof") : null;
+    if (!tofTarget) {
+      clearTofSelection();
     }
   }
 

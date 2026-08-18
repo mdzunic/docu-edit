@@ -50,6 +50,12 @@ const props = defineProps({
   /** Whether "Insert -> Chart from table" applies (a table holds the active
    * cell-range selection) — computed by the view, which owns the model. */
   tableSelectedForChart: { type: Boolean, default: false },
+  /** Whether "Insert -> Caption" applies (an image/chart/table is selected) —
+   * computed by the view (SPEC-055 AC-1). */
+  captionTargetSelected: { type: Boolean, default: false },
+  /** "Auto-caption new images/tables" checked states (SPEC-055 AC-18). */
+  autoCaptionImages: { type: Boolean, default: false },
+  autoCaptionTables: { type: Boolean, default: false },
   /** The format painter's armed state: "" | "once" | "repeat". */
   painterMode: { type: String, default: "" },
 });
@@ -464,10 +470,36 @@ function chooseTableGrid(rows = 0, cols = 0) {
         @select="emit('command', 'insert.cross-reference')"
       />
       <MenuItem
+        label="Caption"
+        testid="insert-caption-button"
+        :disabled="!editable || !captionTargetSelected"
+        @select="emit('command', 'insert.caption')"
+      />
+      <MenuItem
         label="Table of contents"
         testid="insert-toc-button"
         :disabled="!editable"
         @select="emit('command', 'insert.toc')"
+      />
+      <MenuItem
+        label="Table of figures"
+        testid="insert-table-of-figures-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.table-of-figures')"
+      />
+      <MenuCheckItem
+        label="Auto-caption new images"
+        testid="auto-caption-images"
+        :checked="autoCaptionImages"
+        :disabled="!editable"
+        @select="emit('command', 'format.auto-caption-images')"
+      />
+      <MenuCheckItem
+        label="Auto-caption new tables"
+        testid="auto-caption-tables"
+        :checked="autoCaptionTables"
+        :disabled="!editable"
+        @select="emit('command', 'format.auto-caption-tables')"
       />
       <MenuItem
         label="Special character"

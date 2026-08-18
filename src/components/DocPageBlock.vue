@@ -11,6 +11,7 @@ import DocShapeBlock from "./DocShapeBlock.vue";
 import DocChartBlock from "./DocChartBlock.vue";
 import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
+import DocTofBlock from "./DocTofBlock.vue";
 import DocHeadingToggle from "./DocHeadingToggle.vue";
 import { asRenderEntry, noRenderEntries } from "../lib/pageRender";
 
@@ -31,6 +32,7 @@ defineEmits([
   "chart-select",
   "chart-edit-data",
   "toc-action",
+  "tof-action",
   "outline-toggle",
 ]);
 
@@ -49,6 +51,9 @@ function componentFor(entry = noRenderEntries()[0]) {
   }
   if (entry.kind === "toc") {
     return DocTocBlock;
+  }
+  if (entry.kind === "tof") {
+    return DocTofBlock;
   }
   return entry.tag || "div";
 }
@@ -85,7 +90,8 @@ const entry = computed(() => asRenderEntry(props.entry));
     :drawing-index="entry.drawingIndex"
     :editing-text="entry.kind === 'shape' ? entry.shapeEditing : undefined"
     :stale-headings="entry.kind === 'toc' ? entry.tocStaleHeadings : undefined"
-    :stale-pagination="entry.kind === 'toc' ? entry.tocStalePagination : undefined"
+    :stale-entries="entry.kind === 'tof' ? entry.tofStaleEntries : undefined"
+    :stale-pagination="entry.kind === 'toc' ? entry.tocStalePagination : entry.kind === 'tof' ? entry.tofStalePagination : undefined"
     @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'chart' ? $emit('chart-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
     @edit-text="entry.kind === 'shape' ? $emit('shape-edit-text', entry.sectionProp, entry.blockIndexProp) : undefined"
     @edit-data="entry.kind === 'chart' ? $emit('chart-edit-data', entry.sectionProp, entry.blockIndexProp) : undefined"
@@ -93,7 +99,7 @@ const entry = computed(() => asRenderEntry(props.entry));
     @text-keydown="entry.kind === 'shape' ? $emit('shape-text-keydown', $event) : undefined"
     @text-compositionstart="entry.kind === 'shape' ? $emit('shape-text-compositionstart') : undefined"
     @text-compositionend="entry.kind === 'shape' ? $emit('shape-text-compositionend', $event) : undefined"
-    @action="entry.kind === 'toc' ? $emit('toc-action', $event) : undefined"
+    @action="entry.kind === 'toc' ? $emit('toc-action', $event) : entry.kind === 'tof' ? $emit('tof-action', $event) : undefined"
   >
     <DocHeadingToggle
       v-if="entry.outlineToggle"

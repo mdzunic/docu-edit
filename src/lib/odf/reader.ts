@@ -37,6 +37,8 @@ import type {
   TableRow,
   TableOfContents,
   TocEntry,
+  TableOfFigures,
+  TofEntry,
   TrackedChangeInfo,
 } from "../documentModel";
 import type { ListDefinition, ListFormatting, ListLevelDefinition } from "../core/lists";
@@ -358,13 +360,24 @@ function appendFieldSpec(acc: InlineAccumulator, field: FieldSpec, formatting: R
 }
 
 /** The ODF `text:reference-format` value mapped back to a `RefFormat`
- * (SPEC-053): `page` → page, `direction` → position, everything else → text. */
+ * (SPEC-053 + SPEC-055): `page` → page, `direction` → position, the caption
+ * formats `category-and-value`/`value`/`caption` → their `show`, everything
+ * else → text. */
 function refFormatFromOdt(value: string | null): RefFormat {
   if (value === "page") {
     return "page";
   }
   if (value === "direction") {
     return "position";
+  }
+  if (value === "category-and-value") {
+    return "labelAndNumber";
+  }
+  if (value === "value") {
+    return "numberOnly";
+  }
+  if (value === "caption") {
+    return "textOnly";
   }
   return "text";
 }
@@ -783,6 +796,30 @@ function collectInline(
         );
         break;
       }
+      case "sequence-ref": {
+        // A caption cross-reference (SPEC-055): resolves against the caption's
+        // hidden bookmark by name, the same as a bookmark-ref.
+        const show = refFormatFromOdt(textAttr(el, "reference-format"));
+        const target = textAttr(el, "ref-name") ?? "";
+        appendFieldSpec(
+          acc,
+          show === "page"
+            ? { kind: "pageRef", target, show: "page", cached: el.textContent ?? "" }
+            : { kind: "ref", target, show, cached: el.textContent ?? "" },
+          formatting,
+        );
+        break;
+      }
+      case "sequence": {
+        // A caption's `seq` number field (SPEC-055): the sequence name is the
+        // caption label; only its number is computed.
+        appendFieldSpec(
+          acc,
+          { kind: "seq", label: textAttr(el, "name") ?? "Figure", format: fieldNumberFormat(el), cached: el.textContent ?? "" },
+          formatting,
+        );
+        break;
+      }
       case "conditional-text":
         // A field type outside the catalogue (SPEC-053): preserved verbatim
         // as an unsupported field so it displays its saved value read-only
@@ -1086,6 +1123,74 @@ function parseTableOfContent(el: Element): TableOfContents {
   return {
     type: "toc",
     options: { levels, showPageNumbers: hasPageNumbers, hyperlinksOnly: !hasPageNumbers },
+    entries,
+  };
+}
+
+/** One table-of-figures entry from an index-body paragraph (SPEC-055): its
+ * caption text, anchor and trailing page number. Mirrors
+ * tocEntryFromParagraph but produces a TofEntry. */
+function tofEntryFromParagraph(pEl: Element): TofEntry | null {
+  const link = firstChildElement(pEl, TEXT_NAMESPACE, "a");
+  if (!link) {
+    return null;
+  }
+  const href = xlinkAttr(link, "href") ?? "";
+  const anchor = href.startsWith("#") ? href.slice(1) : href;
+  let text = "";
+  let pageNumberText = "";
+  let sawTab = false;
+  for (const node of Array.from(link.childNodes)) {
+    if (node.nodeType === node.TEXT_NODE) {
+      const value = node.textContent ?? "";
+      if (sawTab) {
+        pageNumberText += value;
+      } else {
+        text += value;
+      }
+    } else if (node.nodeType === node.ELEMENT_NODE) {
+      const el = node as Element;
+      if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "tab") {
+        sawTab = true;
+      } else if (sawTab) {
+        pageNumberText += el.textContent ?? "";
+      } else {
+        text += el.textContent ?? "";
+      }
+    }
+  }
+  const page = /^\d+$/.test(pageNumberText) ? Number(pageNumberText) : null;
+  return { text, page, targetBookmark: anchor };
+}
+
+/** Parses a `text:illustration-index`/`text:table-index` element into one
+ * TableOfFigures block (SPEC-055): every index-body paragraph is an entry, and
+ * the label comes from the source's `text:caption-sequence-name`, falling back
+ * to "Table" for a table index and "Figure" otherwise. */
+function parseTableOfFigures(el: Element): TableOfFigures {
+  const body = firstChildElement(el, TEXT_NAMESPACE, "index-body");
+  const entries: TofEntry[] = [];
+  if (body) {
+    for (const child of Array.from(body.children)) {
+      if (child.namespaceURI !== TEXT_NAMESPACE || child.localName !== "p") {
+        continue;
+      }
+      const entry = tofEntryFromParagraph(child);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+  }
+  const sourceTag = `${el.localName}-source`;
+  const source = firstChildElement(el, TEXT_NAMESPACE, sourceTag);
+  const label =
+    (source ? textAttr(source, "caption-sequence-name") : null) ??
+    (el.localName === "table-index" ? "Table" : "Figure");
+  const hasPageNumbers = entries.some((entry) => entry.page !== null);
+  return {
+    type: "tof",
+    label,
+    options: { pageNumbers: hasPageNumbers, dotLeader: true, hyperlinks: hasPageNumbers },
     entries,
   };
 }
@@ -2428,6 +2533,12 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     } else if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "table-of-content") {
       // SPEC-033 AC-18..20: a generated table of contents.
       blocks.push(parseTableOfContent(child));
+    } else if (
+      child.namespaceURI === TEXT_NAMESPACE &&
+      (child.localName === "illustration-index" || child.localName === "table-index")
+    ) {
+      // SPEC-055: a generated table of figures.
+      blocks.push(parseTableOfFigures(child));
     } else {
       // Sequence declarations, frames, ... — unmodelled body children are
       // preserved verbatim, anchored to their position among the

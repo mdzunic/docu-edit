@@ -14,6 +14,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   mergeRunFormatting,
   type DocumentFormat,
   type DocumentModel,
@@ -118,6 +119,7 @@ export type DropKind =
   | "note"
   | "comment"
   | "tableOfContents"
+  | "tableOfFigures"
   | "bookmark"
   | "runFormatting"
   | "paragraphFormatting"
@@ -171,6 +173,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   note: "Footnote/endnote",
   comment: "Comment",
   tableOfContents: "Table of contents field",
+  tableOfFigures: "Table of figures field",
   bookmark: "Bookmark",
   runFormatting: "Character formatting",
   paragraphFormatting: "Paragraph formatting",
@@ -295,6 +298,7 @@ const REASONS: Record<DropKind, string> = {
   note: "Markdown has no footnote/endnote mechanism",
   comment: "Markdown has no review-comment mechanism",
   tableOfContents: "Markdown cannot carry a live table of contents field — its rendered text is kept instead",
+  tableOfFigures: "Markdown cannot carry a live table of figures field — its rendered text is kept instead",
   bookmark: "Markdown has no bookmark mechanism",
   runFormatting: "Markdown carries only bold, italic, strikethrough and code — other character formatting is lost",
   paragraphFormatting: "Markdown has no alignment, indent or spacing properties",
@@ -382,8 +386,8 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           // A break block carries no content and no unmodelled XML.
           continue;
         }
-        if (isToc(blockAt)) {
-          // A TOC's generated entries are plain data, not preserved XML —
+        if (isToc(blockAt) || isTof(blockAt)) {
+          // A TOC/ToF's generated entries are plain data, not preserved XML —
           // both writers regenerate its field/index markup fresh, so there
           // is nothing here that could be dropped by a format conversion.
           continue;
@@ -652,6 +656,10 @@ function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
       const paragraphNumber = paragraphOffset + index + 1;
       if (isToc(block)) {
         dropped.push(record("tableOfContents", `paragraph ${paragraphNumber}`, target));
+        return;
+      }
+      if (isTof(block)) {
+        dropped.push(record("tableOfFigures", `paragraph ${paragraphNumber}`, target));
         return;
       }
       if (isTable(block)) {
@@ -928,6 +936,16 @@ export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): Do
     }
   }
 
+  if (kinds.has("tableOfFigures")) {
+    for (const section of model.sections) {
+      section.blocks = section.blocks.flatMap((block) =>
+        isTof(block)
+          ? block.entries.map((entry): Paragraph => ({ type: "paragraph", runs: [{ text: entry.text, formatting: {} }] }))
+          : [block],
+      );
+    }
+  }
+
   if (kinds.has("comment")) {
     delete model.comments;
   }
@@ -994,7 +1012,7 @@ export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): Do
             paragraphs.push(...cell.blocks);
           }
         }
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
         paragraphs.push(block);
       }
     }

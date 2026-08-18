@@ -16,6 +16,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   type Block,
   type DocumentModel,
 } from "./documentModel";
@@ -28,7 +29,7 @@ import {
 import { clampListLevel, markerStyleOf, markerText } from "./core/lists";
 
 function listOf(block: Block | undefined): ListFormatting | undefined {
-  return block === undefined || isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block)
+  return block === undefined || isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block) || isTof(block)
     ? undefined
     : block.list;
 }

@@ -178,8 +178,28 @@ export type DateTimeFormat = string;
  * its `text`, the `page` it sits on, or its `position` relative to the
  * reference (rendered as the computed word "above"/"below", Word's `\p`
  * switch — the user picks "position", the word follows from layout).
- * `pageRef` always carries `"page"`; `ref` carries any of the three. */
-export type RefFormat = "text" | "page" | "position";
+ * `pageRef` always carries `"page"`; `ref` carries any of the others.
+ *
+ * SPEC-055 widens this with the four caption-reference formats: `full` is the
+ * caption's entire text ("Figure 3: Revenue by quarter"), `labelAndNumber`
+ * its label and number ("Figure 3"), `numberOnly` just the number ("3") and
+ * `textOnly` the caption text past the separator ("Revenue by quarter"). They
+ * only differ from `text` on a caption target (whose number lives in a `seq`
+ * field, not literal text); on any other target they fall back to the target
+ * paragraph's plain text. The dialog's "Above/below" is `position`. */
+export type RefFormat =
+  | "text"
+  | "page"
+  | "position"
+  | "full"
+  | "labelAndNumber"
+  | "numberOnly"
+  | "textOnly";
+
+/** The numbering formats a `seq` field (SPEC-055) offers — the same three
+ * SPEC-029 fixes for page numbers (1, 2, 3 / i, ii, iii / a, b, c), reused so
+ * the caption dialog, both writers and `formatOrdinal` share one vocabulary. */
+export type NumberFormat = PageNumberFormat;
 
 /** The kinds SPEC-053 adds to the field union that carry a `cached` result —
  * everything except `page`/`numpages` (recomputed every paint) and merge
@@ -188,7 +208,7 @@ export type RefFormat = "text" | "page" | "position";
 export type EvaluatedFieldKind =
   | "date" | "time"
   | "author" | "docTitle" | "docSubject" | "docKeywords" | "fileName" | "wordCount"
-  | "docProperty" | "ref" | "pageRef" | "unsupported";
+  | "docProperty" | "ref" | "pageRef" | "seq" | "unsupported";
 
 /** A run that renders as a computed value instead of literal text
  * (SPEC-029, widened by SPEC-046 and SPEC-053): a page-number/page-count
@@ -220,6 +240,7 @@ export type FieldSpec =
   | { kind: "fileName"; path?: true; cached: string; locked?: true }
   | { kind: "docProperty"; name: string; cached: string; locked?: true }
   | { kind: "ref" | "pageRef"; target: string; show: RefFormat; cached: string; locked?: true }
+  | { kind: "seq"; label: string; format: NumberFormat; cached: string; locked?: true }
   | { kind: "unsupported"; code: string; cached: string };
 
 /** Narrows a `FieldSpec` to a merge chip (SPEC-046), as opposed to a
@@ -1365,10 +1386,81 @@ export function asToc(value: unknown): TableOfContents {
   return value as TableOfContents;
 }
 
+// --- table of figures (SPEC-055) --------------------------------------------
+
+/** One caption listed in a table of figures: the caption's rendered text (its
+ * label, number and text — the number taken from its `seq` field's cached
+ * value, not the placeholder character), the page it fell on when the block
+ * was last generated/updated (null until pagination has resolved it once, the
+ * same snapshot rule as `TocEntry.pageNumber`), and the derived anchor an
+ * entry click jumps to and page numbers resolve through (captions.ts's
+ * `captionAnchor`). Deliberately not named `id`, per the equality.ts rule. */
+export interface TofEntry {
+  text: string;
+  page: number | null;
+  targetBookmark: string;
+}
+
+/** A table of figures's configuration (SPEC-055), mirroring `TocOptions`:
+ * which label it lists, and — like the TOC — whether it shows page numbers,
+ * a dot leader, and hyperlinked entries. */
+export interface TofOptions {
+  pageNumbers: boolean;
+  dotLeader: boolean;
+  hyperlinks: boolean;
+}
+
+/** Typed pass-through for a TofOptions arriving from a `.vue` template as a
+ * runtime-declared Object (same espree constraint as asTocOptions). */
+export function asTofOptions(value: unknown): TofOptions {
+  return value as TofOptions;
+}
+
+/** Typed pass-through for a `string[]` arriving from a `.vue` component's
+ * untyped Array prop (same espree constraint as asTabStops) — the caption
+ * dialog's label list. */
+export function asStringList(value: unknown[]): string[] {
+  return value as string[];
+}
+
+/** A table of figures block (SPEC-055): a generated, block-level atom that
+ * mirrors `TableOfContents` — built from the document's Caption-styled
+ * paragraphs of one `label` (captions.ts's `listCaptions`) rather than its
+ * headings, and not directly editable. Round-trips as a `TOC \c "Figure"`
+ * field with a cached result (.docx) and `text:illustration-index` /
+ * `text:table-index` (.odt). A document may hold one per label. */
+export interface TableOfFigures {
+  type: "tof";
+  /** "Figure", "Table", or a custom label. */
+  label: string;
+  options: TofOptions;
+  entries: TofEntry[];
+}
+
+/** Whether a block is a table of figures — the isToc-style narrowing helper
+ * (also usable from espree-parsed `.vue` scripts). */
+export function isTof(block: Block | undefined): block is TableOfFigures {
+  return block?.type === "tof";
+}
+
+/** Typed pass-through for a TableOfFigures arriving as a runtime-declared
+ * Object prop (same espree constraint as asToc). */
+export function asTof(value: unknown): TableOfFigures {
+  return value as TableOfFigures;
+}
+
 /** Block-level children of a section: paragraphs, tables (SPEC-022),
- * images (SPEC-024), manual breaks (SPEC-028) and tables of contents
- * (SPEC-033). */
-export type Block = Paragraph | Table | Image | BreakBlock | TableOfContents | Shape | Chart;
+ * images (SPEC-024), manual breaks (SPEC-028), tables of contents
+ * (SPEC-033) and tables of figures (SPEC-055). */
+export type Block =
+  | Paragraph
+  | Table
+  | Image
+  | BreakBlock
+  | TableOfContents
+  | TableOfFigures
+  | Shape
+  | Chart;
 
 /** A section groups block-level content; documents have one or more. A
  * section boundary IS the section break (SPEC-028): inserting a section
@@ -1961,7 +2053,7 @@ export function forEachParagraph(
             });
           });
         });
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
         visit(block, { section: sectionIndex, block: blockIndex });
       }
     });

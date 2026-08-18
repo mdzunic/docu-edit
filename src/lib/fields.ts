@@ -14,6 +14,7 @@ import { formatOrdinal } from "./core/lists";
 import { documentBodyStats } from "./wordCount";
 import { effectiveLanguage } from "./core/language";
 import { bookmarkCaretIncludingHidden } from "./links";
+import { captionRefText, isCaptionParagraph } from "./captions";
 import { isEvaluatedField, isMergeChipField, isPaginationDependentField } from "./documentModel";
 import { chipLabel } from "./mergeChips";
 import type { DocumentModel, FieldSpec, PageNumberFormat, RefFormat } from "./documentModel";
@@ -297,6 +298,16 @@ function evaluateRef(field: Extract<FieldSpec, { kind: "ref" | "pageRef" }>, ctx
   if (show === "position") {
     return relativePosition(ctx.model, field.target, ctx.here) ?? field.cached;
   }
+  if (show === "labelAndNumber" || show === "numberOnly" || show === "textOnly" || show === "full") {
+    const caret = bookmarkCaretIncludingHidden(ctx.model, field.target);
+    const paragraph = caret ? paragraphAt(ctx.model, caret) : null;
+    if (paragraph && isCaptionParagraph(paragraph)) {
+      return captionRefText(paragraph, show);
+    }
+    // A non-caption target (a heading/bookmark) has no label/number to show —
+    // fall back to its plain text, the same value `text`/`full` renders.
+    return bookmarkTargetText(ctx.model, field.target) ?? REF_SOURCE_NOT_FOUND;
+  }
   return bookmarkTargetText(ctx.model, field.target) ?? REF_SOURCE_NOT_FOUND;
 }
 
@@ -333,6 +344,11 @@ export function evaluateField(field: FieldSpec, ctx: FieldContext): string {
     case "ref":
     case "pageRef":
       return evaluateRef(field, ctx);
+    case "seq":
+      // A caption's number is computed by captions.ts's renumberCaptions over
+      // the whole document (per-label document order), not per field — this
+      // path just returns the last renumbered value (SPEC-055 AC-13).
+      return field.cached;
     case "unsupported":
       return field.cached;
     default:
@@ -432,6 +448,18 @@ export interface CrossRefBookmark {
 
 export function asCrossRefBookmarks(value: unknown): CrossRefBookmark[] {
   return value as CrossRefBookmark[];
+}
+
+/** One caption target row of the Cross-reference dialog (SPEC-055): its
+ * derived anchor, label (the category it groups under) and full text. */
+export interface CrossRefCaption {
+  anchor: string;
+  label: string;
+  text: string;
+}
+
+export function asCrossRefCaptions(value: unknown): CrossRefCaption[] {
+  return value as CrossRefCaption[];
 }
 
 /** Typed pass-through for a plain string list prop (the Field dialog's

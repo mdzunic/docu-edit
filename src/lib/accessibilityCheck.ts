@@ -17,6 +17,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   type Chart,
   type DocumentModel,
   type Image,
@@ -554,7 +555,7 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
         targets.push({ kind: "shape", address: { section: sectionIndex, block: blockIndex }, shape: block });
       } else if (isChart(block)) {
         targets.push({ kind: "chart", address: { section: sectionIndex, block: blockIndex }, chart: block });
-      } else if (isBreak(block) || isToc(block)) {
+      } else if (isBreak(block) || isToc(block) || isTof(block)) {
         // Nothing to check.
       } else {
         const next = section.blocks[blockIndex + 1];
@@ -562,7 +563,7 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
           kind: "paragraph",
           address: { section: sectionIndex, block: blockIndex },
           paragraph: block,
-          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isBreak(next) && !isToc(next) ? next : undefined,
+          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isBreak(next) && !isToc(next) && !isTof(next) ? next : undefined,
         });
       }
     });

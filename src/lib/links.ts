@@ -33,6 +33,7 @@ import {
   type CommandResult,
   type ModelSelection,
 } from "./commands";
+import { listCaptions } from "./captions";
 
 /** A link's destination: exactly one of `href` (external URL) or `anchor`
  * (a bookmark name or heading anchor in this document) is set. */
@@ -391,11 +392,15 @@ export function inlineWriteLayout(paragraph: Paragraph): InlineWriteLayout {
     let sliceStart = 0;
     for (const offset of cutOffsets) {
       if (offset > pos && offset < end) {
-        runs.push({ text: run.text.slice(sliceStart, offset - pos), formatting: run.formatting });
+        // Spread the run so a split text run keeps every property (field/note/
+        // styleId/changes); cut offsets fall on run boundaries, never inside a
+        // one-character field atom, so a field run is never split (SPEC-055 —
+        // a caption carries both a hidden bookmark and a seq field run).
+        runs.push({ ...run, text: run.text.slice(sliceStart, offset - pos) });
         sliceStart = offset - pos;
       }
     }
-    runs.push({ text: run.text.slice(sliceStart), formatting: run.formatting });
+    runs.push({ ...run, text: run.text.slice(sliceStart) });
     indexMap.push(runs.length);
     pos = end;
   }
@@ -629,15 +634,36 @@ export function anchorCaret(model: DocumentModel, anchor: string): CaretPosition
   if (bookmark) {
     return bookmark;
   }
+  const hiddenBookmark = listAllBookmarks(model).find((entry) => entry.name === anchor);
+  if (hiddenBookmark) {
+    return clampCaret(model, {
+      section: hiddenBookmark.address.section,
+      block: hiddenBookmark.address.block,
+      offset: hiddenBookmark.offset,
+      cell: hiddenBookmark.address.cell,
+    });
+  }
   const heading = listHeadings(model).find((entry) => entry.anchor === anchor);
-  if (!heading) {
+  if (heading) {
+    return clampCaret(model, {
+      section: heading.address.section,
+      block: heading.address.block,
+      offset: 0,
+      cell: heading.address.cell,
+    });
+  }
+  // A table-of-figures entry / caption cross-reference derived anchor
+  // (captions.ts's captionAnchor) — resolved so TOF page numbers and entry
+  // clicks land on the caption even before any hidden bookmark is inserted.
+  const caption = listCaptions(model).find((entry) => entry.anchor === anchor);
+  if (!caption) {
     return null;
   }
   return clampCaret(model, {
-    section: heading.address.section,
-    block: heading.address.block,
+    section: caption.address.section,
+    block: caption.address.block,
     offset: 0,
-    cell: heading.address.cell,
+    cell: caption.address.cell,
   });
 }
 
