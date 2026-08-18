@@ -17,7 +17,7 @@ const docxShapesFixture = join(fixturesDir, "word-shapes.docx");
 const odtShapesFixture = join(fixturesDir, "lo-shapes.odt");
 
 const content = (page: Page) => page.getByTestId("document-content");
-const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]');
+const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]:not([data-testid*="-member-"])');
 const drawingAt = (page: Page, index: number) => content(page).locator(`[data-testid="drawing-${index}"]`);
 
 async function openFixture(page: Page, path: string): Promise<void> {

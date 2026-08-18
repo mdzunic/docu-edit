@@ -32,7 +32,7 @@ async function openFixture(page: Page, path: string): Promise<void> {
 }
 
 const content = (page: Page) => page.getByTestId("document-content");
-const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]');
+const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]:not([data-testid*="-member-"])');
 const drawingAt = (page: Page, index: number) => content(page).locator(`[data-testid="drawing-${index}"]`);
 
 // The catalogue geometries in the fixed fixture order above, with the alt
@@ -106,9 +106,12 @@ async function canvasHasOpaquePixel(proxy: Locator): Promise<boolean> {
  * duplicating every assertion. */
 function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: string): void {
   test.describe(`SPEC-051 — opening ${formatLabel}'s shape fixture (${acTag})`, () => {
-    test(`renders all 18 shapes, one proxy per drawing, in document order (${acTag})`, async ({ page }) => {
+    test(`renders all top-level drawings, one proxy each, in document order (the de:group pair now one container, ${acTag})`, async ({ page }) => {
       await openFixture(page, fixturePath);
-      await expect(drawings(page)).toHaveCount(18);
+      // 14 catalogue shapes (0..13) + 1 migrated container (14) + text box
+      // (15) + unsupported geometry (16) = 17 top-level drawings; the old
+      // 18th was the group's second member, now nested in the container.
+      await expect(drawings(page)).toHaveCount(17);
     });
 
     test(`renders every catalogue geometry with a focusable, correctly labelled ARIA proxy (${acTag})`, async ({ page }) => {
