@@ -73,6 +73,6 @@ function toggle(key = "") {
 <style scoped>
 .format-toolbar {
   display: inline-flex;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 </style>

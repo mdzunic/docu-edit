@@ -347,7 +347,7 @@ h1.document-title[role="button"] {
   gap: var(--space-2);
   /* One stated height (AC-49): the strip never sizes to its content. */
   min-height: var(--height-toolbar);
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--space-3);
   overflow-x: auto;
   overflow-y: hidden;
   white-space: nowrap;
