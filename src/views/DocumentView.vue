@@ -2887,12 +2887,12 @@ const {
   imageSelection,
   chartSelection,
   cellSelection,
+  caretPosition,
   tofPageNumberFor: tocPageNumberFor,
   jumpToAnchor,
   handleImageDelete,
   handleChartDelete,
-  insertImageFromFile,
-  handleInsertTable,
+  insertImageFromFile, handleInsertTable,
 });
 
 /** The registry shortcuts that act regardless of where focus sits in the

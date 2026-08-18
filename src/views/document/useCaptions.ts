@@ -29,7 +29,7 @@ import {
   updateTofPageNumbersOnly,
 } from "../../lib/tof";
 import { caretSelection, deleteRange, documentStart } from "../../lib/commands";
-import type { ParagraphAddress } from "../../lib/textEditing";
+import type { CaretPosition, ParagraphAddress } from "../../lib/textEditing";
 import {
   loadCaptionSettings,
   saveCaptionSettings,
@@ -48,6 +48,10 @@ export interface CaptionsDeps extends EditorContext {
   tofPageNumberFor: (model: DocumentModel, anchor: string) => number | null;
   /** Scroll to an internal anchor (a caption entry click). */
   jumpToAnchor: (anchor: string) => void;
+  /** The reactive caret mirror (DocumentView's caretPosition) — so
+   * captionTargetSelected re-evaluates when the caret enters/leaves a table
+   * cell (a plain getCaret() read would make the computed stale). */
+  caretPosition: Ref<CaretPosition | null>;
   /** The object composables' own delete/insert paths, wrapped here so a
    * captioned object's deletion prompts first (AC-20) and a freshly inserted
    * object auto-captions (AC-19). */
@@ -106,7 +110,7 @@ export function useCaptions(deps: CaptionsDeps) {
         return { section: range.section, block: range.block };
       }
     }
-    const caret = currentSelection(contentRoot.value as HTMLElement | null)?.focus ?? getCaret();
+    const caret = deps.caretPosition.value ?? getCaret();
     if (caret?.cell) {
       const block = model.sections[caret.section]?.blocks[caret.block];
       if (block?.type === "table") {
