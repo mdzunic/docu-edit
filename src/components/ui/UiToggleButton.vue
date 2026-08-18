@@ -11,17 +11,20 @@ const props = defineProps({
   icon: { type: String, default: "" },
   /** Accessible name + tooltip; required whenever the button is icon-only. */
   label: { type: String, default: "" },
-  /** The on/off state — rendered as aria-pressed and the selected styling. */
-  pressed: { type: Boolean, default: false },
+  /** The on/off state — rendered as aria-pressed and the selected styling.
+   * Accepts the ARIA tri-state "mixed" (an indeterminate selection) as well as
+   * a boolean; "mixed" reads as pressed for styling. */
+  pressed: { type: [Boolean, String], default: false },
   disabled: { type: Boolean, default: false },
 });
+
 </script>
 
 <template>
   <button
     type="button"
     class="ui-toggle-button"
-    :class="{ 'is-pressed': props.pressed }"
+    :class="{ 'is-pressed': props.pressed === true || props.pressed === 'mixed' }"
     :aria-pressed="props.pressed"
     :aria-label="props.label || undefined"
     :title="props.label || undefined"
