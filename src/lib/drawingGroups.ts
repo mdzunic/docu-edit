@@ -635,6 +635,92 @@ export function rotateGroupContainer(model: DocumentModel, selection: ModelSelec
   return { model: next, selection };
 }
 
+// --- container-level edits (the container as one drawing) -------------------
+
+/** Moves a selected container by a page-space delta — the container is one
+ * drawing, so this is a plain offset shift (SPEC-057 AC-10). */
+export function moveGroupContainer(model: DocumentModel, selection: ModelSelection, section: number, block: number, dxCm: number, dyCm: number): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[section]?.blocks[block];
+  if (!isDrawingGroup(container)) {
+    return { model: next, selection };
+  }
+  const updated: DrawingGroup = {
+    ...container,
+    offsetXCm: (container.offsetXCm ?? 0) + dxCm,
+    offsetYCm: (container.offsetYCm ?? 0) + dyCm,
+  };
+  commitContainer(next, section, block, updated);
+  return { model: next, selection };
+}
+
+/** Arrow-key nudge / fine nudge of a selected container (SPEC-057 AC-11). */
+export function nudgeGroupContainer(model: DocumentModel, selection: ModelSelection, section: number, block: number, direction: NudgeDirection, fine: boolean): CommandResult {
+  const step = fine ? NUDGE_FINE_PT_CM : NUDGE_PT_CM;
+  const dx = direction === "left" ? -step : direction === "right" ? step : 0;
+  const dy = direction === "up" ? -step : direction === "down" ? step : 0;
+  return moveGroupContainer(model, selection, section, block, dx, dy);
+}
+
+/** Deletes a selected container from the block list (SPEC-057 AC-12). */
+export function deleteGroupContainer(model: DocumentModel, selection: ModelSelection, section: number, block: number): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[section]?.blocks[block];
+  if (!isDrawingGroup(container)) {
+    return { model: next, selection };
+  }
+  next.sections[section].blocks.splice(block, 1);
+  return { model: next, selection: caretSelection({ section, block: Math.max(0, block - 1), offset: 0 }) };
+}
+
+/** Duplicates a selected container as a sibling right after it, offset by
+ * 0.5cm (SPEC-057 AC-13). The duplicate lands at block+1 and is left
+ * selected by the caller. */
+export function duplicateGroupContainer(model: DocumentModel, selection: ModelSelection, section: number, block: number): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[section]?.blocks[block];
+  if (!isDrawingGroup(container)) {
+    return { model: next, selection };
+  }
+  const copy = deepCloneMember({
+    ...container,
+    offsetXCm: (container.offsetXCm ?? 0) + DUPLICATE_OFFSET_CM,
+    offsetYCm: (container.offsetYCm ?? 0) + DUPLICATE_OFFSET_CM,
+  }) as DrawingGroup;
+  next.sections[section].blocks.splice(block + 1, 0, copy as Block);
+  return { model: next, selection: caretSelection({ section, block: block + 1, offset: 0 }) };
+}
+
+/** Sets a selected container's alt text (SPEC-057 AC-49). A sealed container's
+ * alt text is read-only; the caller enforces that. */
+export function setGroupAltText(model: DocumentModel, selection: ModelSelection, section: number, block: number, altText: string): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[section]?.blocks[block];
+  if (!isDrawingGroup(container)) {
+    return { model: next, selection };
+  }
+  const updated: DrawingGroup = { ...container };
+  if (altText) {
+    updated.altText = altText;
+  } else {
+    delete updated.altText;
+  }
+  commitContainer(next, section, block, updated);
+  return { model: next, selection };
+}
+
+/** Sets a selected container's wrap mode (SPEC-057) — the container is one
+ * drawing, so this is the same wrap the surrounding text flows around. */
+export function setGroupWrap(model: DocumentModel, selection: ModelSelection, section: number, block: number, wrap: ImageWrapMode): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[section]?.blocks[block];
+  if (!isDrawingGroup(container)) {
+    return { model: next, selection };
+  }
+  commitContainer(next, section, block, { ...container, wrap });
+  return { model: next, selection };
+}
+
 // --- legacy migration -------------------------------------------------------
 
 /** Collapses drawings sharing a legacy `groupOrdinal` into native containers

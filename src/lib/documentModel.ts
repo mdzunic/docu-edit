@@ -987,6 +987,12 @@ export function asShape(value: unknown): Shape {
   return value as Shape;
 }
 
+/** Typed pass-through for a Block arriving as a runtime-declared Object prop
+ * (espree bars the annotation — see asShape). */
+export function asBlock(value: unknown): Block {
+  return value as Block;
+}
+
 /** Typed pass-through for a wrap mode coming from a `.vue` template's plain
  * string (same espree constraint as asCharacterFormatKey). */
 export function asImageWrapMode(value: string): ImageWrapMode {

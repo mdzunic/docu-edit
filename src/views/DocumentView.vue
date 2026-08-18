@@ -88,6 +88,7 @@ import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
+import { useDrawingGroups } from "./document/useDrawingGroups";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
@@ -775,6 +776,43 @@ const {
   chartDataSheetInitial,
   chartOptionsInitial,
 } = useCharts({ ...editorContext });
+
+// --- native drawing-group containers (SPEC-057) ------------------------------
+// Container/member selection (click-to-enter), Group/Ungroup, the container
+// and member gestures, the container toolbar and keyboard proxy traversal.
+// clearOtherSelections keeps a group selection exclusive with the per-kind
+// shape/image/chart selections.
+const {
+  groupSelection,
+  multiSelection: groupMultiSelection,
+  groupHandles,
+  clearGroupSelection,
+  handleGroupSelect,
+  handleGroupEditText,
+  escapeGroupSelection,
+  addToMultiSelection: addDrawingToGroupSelection,
+  canGroup: canGroupDrawings,
+  groupSelectedDrawings,
+  ungroupSelectedContainer,
+  deleteSelected: deleteGroupSelected,
+  duplicateSelected: duplicateGroupSelected,
+  nudgeSelected: nudgeGroupSelected,
+  reorderSelectedMember: reorderGroupMember,
+  setSelectedRotation: setGroupRotation,
+  setSelectedAltText: setGroupSelectedAltText,
+  setSelectedWrap: setGroupSelectedWrap,
+  remeasureGroupHandles,
+  groupToolbarStyle,
+  selectedGroupBlock,
+  selectionIsContainer: groupSelectionIsContainer,
+} = useDrawingGroups({
+  ...editorContext,
+  clearOtherSelections: () => {
+    clearShapeSelection();
+    clearImageSelection();
+    clearChartSelection();
+  },
+});
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
 // session's editing surface, op dispatch and overlay live in the composable
@@ -1920,6 +1958,13 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (!root || !model || !editable.value) {
     return;
   }
+  if (event.key === "Escape" && groupSelection.value) {
+    // Escape steps back out one level of group selection (SPEC-057 AC-24),
+    // before the general dismiss-everything path below.
+    event.preventDefault();
+    escapeGroupSelection();
+    return;
+  }
   if (event.key === "Escape") {
     // Escape dismisses the paste options chip, the context menu, the
     // cell-range selection (SPEC-022) and the format painter (SPEC-020
@@ -1934,6 +1979,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     clearShapeSelection();
     disarmShapeDraw();
     clearChartSelection();
+    clearGroupSelection();
     clearTocSelection();
     clearTofSelection();
     exitHeaderFooterEditing();
@@ -1963,6 +2009,44 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     if (direction) {
       event.preventDefault();
       handleShapeNudge(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
+      return;
+    }
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "g") {
+    // Group / Ungroup (SPEC-057): Ctrl/Cmd+G groups the multi-selection,
+    // Ctrl/Cmd+Shift+G ungroups the selected container.
+    event.preventDefault();
+    if (event.shiftKey) {
+      if (groupSelection.value && groupSelectionIsContainer()) {
+        ungroupSelectedContainer();
+      }
+    } else if (canGroupDrawings()) {
+      groupSelectedDrawings();
+    }
+    return;
+  }
+  if (groupSelection.value) {
+    // A selected container/member's keyboard interactions (SPEC-057) — the
+    // dedicated keydown path shapes use: a group click never places a DOM
+    // caret inside the contenteditable region.
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteGroupSelected();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      duplicateGroupSelected();
+      return;
+    }
+    const groupDirection =
+      event.key === "ArrowUp" ? "up" :
+      event.key === "ArrowDown" ? "down" :
+      event.key === "ArrowLeft" ? "left" :
+      event.key === "ArrowRight" ? "right" : "";
+    if (groupDirection) {
+      event.preventDefault();
+      nudgeGroupSelected(asNudgeDirection(groupDirection), event.ctrlKey || event.metaKey);
       return;
     }
   }
@@ -2758,6 +2842,7 @@ const { pagedViews } = usePaginationView({
   shapeMultiSelection,
   editingShapeText,
   chartSelection,
+  groupSelection,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -3701,6 +3786,8 @@ function handleMenuCommand(id = "") {
               @shape-text-compositionend="handleShapeTextCompositionEnd"
               @chart-select="handleChartSelect"
               @chart-edit-data="handleChartEditData"
+              @group-select="handleGroupSelect"
+              @group-edit-text="handleGroupEditText"
               @toc-action="handleTocAction"
               @tof-action="handleTofAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"

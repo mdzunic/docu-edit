@@ -10,6 +10,7 @@ import { computed, inject } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
 import DocShapeBlock from "./DocShapeBlock.vue";
 import DocChartBlock from "./DocChartBlock.vue";
+import DocDrawingGroupBlock from "./DocDrawingGroupBlock.vue";
 import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
 import DocTofBlock from "./DocTofBlock.vue";
@@ -36,6 +37,8 @@ defineEmits([
   "shape-text-compositionend",
   "chart-select",
   "chart-edit-data",
+  "group-select",
+  "group-edit-text",
   "toc-action",
   "tof-action",
   "outline-toggle",
@@ -55,6 +58,9 @@ function componentFor(entry = noRenderEntries()[0]) {
   }
   if (entry.kind === "chart") {
     return DocChartBlock;
+  }
+  if (entry.kind === "drawingGroup") {
+    return DocDrawingGroupBlock;
   }
   if (entry.kind === "toc") {
     return DocTocBlock;
@@ -95,11 +101,13 @@ function componentFor(entry = noRenderEntries()[0]) {
     :selected="entry.kind === 'shape' ? entry.shapeSelected : entry.kind === 'chart' ? entry.chartSelected : entry.imageSelected"
     :drawing-index="entry.drawingIndex"
     :editing-text="entry.kind === 'shape' ? entry.shapeEditing : undefined"
+    :selected-path="entry.kind === 'drawingGroup' ? (entry.groupSelectedPath ?? undefined) : undefined"
+    :model="entry.kind === 'drawingGroup' ? entry.groupModel : undefined"
     :stale-headings="entry.kind === 'toc' ? entry.tocStaleHeadings : undefined"
     :stale-entries="entry.kind === 'tof' ? entry.tofStaleEntries : undefined"
     :stale-pagination="entry.kind === 'toc' ? entry.tocStalePagination : entry.kind === 'tof' ? entry.tofStalePagination : undefined"
-    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'chart' ? $emit('chart-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
-    @edit-text="entry.kind === 'shape' ? $emit('shape-edit-text', entry.sectionProp, entry.blockIndexProp) : undefined"
+    @select="entry.kind === 'image' ? $emit('image-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'shape' ? $emit('shape-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'chart' ? $emit('chart-select', entry.sectionProp, entry.blockIndexProp, $event) : entry.kind === 'drawingGroup' ? $emit('group-select', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
+    @edit-text="entry.kind === 'shape' ? $emit('shape-edit-text', entry.sectionProp, entry.blockIndexProp) : entry.kind === 'drawingGroup' ? $emit('group-edit-text', entry.sectionProp, entry.blockIndexProp, $event) : undefined"
     @edit-data="entry.kind === 'chart' ? $emit('chart-edit-data', entry.sectionProp, entry.blockIndexProp) : undefined"
     @text-beforeinput="entry.kind === 'shape' ? $emit('shape-text-beforeinput', $event) : undefined"
     @text-keydown="entry.kind === 'shape' ? $emit('shape-text-keydown', $event) : undefined"

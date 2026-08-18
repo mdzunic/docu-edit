@@ -6,6 +6,7 @@
 import {
   HORIZONTAL_RULE_STYLE_ID,
   type Chart,
+  type DrawingGroup,
   type Image,
   type Paragraph,
   type ParagraphFormatting,
@@ -449,6 +450,26 @@ export function shapeDisplayStyle(shape: Shape): Record<string, string> {
     // high its zOrder climbs relative to an "in front" shape's own.
     const order = shape.zOrder ?? 0;
     style.zIndex = String(shape.wrap === "behind" ? order - 100000 : 100000 + order);
+  }
+  return style;
+}
+
+/** A drawing group's size and position rendering (SPEC-057) — a container is
+ * an ordinary anchored drawing, so this is shapeDisplayStyle's logic over the
+ * container's own `DrawingPlacement` fields (its members are positioned within
+ * the box by DocDrawingGroupBlock.vue). Kept per-kind like the others. */
+export function groupDisplayStyle(group: DrawingGroup): Record<string, string> {
+  const heightCm = Math.max(group.heightCm, 0.05);
+  const style: Record<string, string> = {
+    width: `${group.widthCm}cm`,
+    height: `${heightCm}cm`,
+  };
+  if (group.wrap !== "inline") {
+    style.position = "absolute";
+    style.left = `${group.offsetXCm ?? 0}cm`;
+    style.top = `${group.offsetYCm ?? 0}cm`;
+    const order = group.zOrder ?? 0;
+    style.zIndex = String(group.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
 }
