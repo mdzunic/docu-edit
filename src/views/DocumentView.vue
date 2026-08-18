@@ -1322,7 +1322,9 @@ function applyEdit(
   noteEdit();
   updateCaretStatus({ start: result.selection.anchor, end: result.selection.focus });
   refreshUndoRedoState();
-  void restoreCaretAfterRender();
+  if (!options.skipCaretRestore) {
+    void restoreCaretAfterRender();
+  }
   void keepCaretVisible();
   void refreshLinkChip();
   if (

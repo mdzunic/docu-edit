@@ -126,7 +126,7 @@ export function useEquations(deps: EquationsDeps) {
     const selection = selectionNow();
     if (!model || !editable.value || !selection) return;
     const command = insertInlineEquation(model, selection);
-    applyEdit(command, selection, "insert equation");
+    applyEdit(command, selection, "insert equation", { skipCaretRestore: true });
     const spec = newestEquation(command.model);
     if (spec) openEditor(command.model, spec);
   }
@@ -137,7 +137,7 @@ export function useEquations(deps: EquationsDeps) {
     const selection = selectionNow();
     if (!model || !editable.value || !selection) return;
     const command = insertDisplayEquation(model, selection);
-    applyEdit(command, selection, "insert display equation");
+    applyEdit(command, selection, "insert display equation", { skipCaretRestore: true });
     const spec = newestEquation(command.model);
     if (spec) openEditor(command.model, spec);
   }
@@ -148,7 +148,7 @@ export function useEquations(deps: EquationsDeps) {
     const selection = selectionNow();
     if (!model || !editable.value || !selection) return;
     const command = insertNumberedDisplayEquation(model, selection);
-    applyEdit(command, selection, "insert numbered equation");
+    applyEdit(command, selection, "insert numbered equation", { skipCaretRestore: true });
     const spec = newestEquation(command.model);
     if (spec) openEditor(command.model, spec);
   }
