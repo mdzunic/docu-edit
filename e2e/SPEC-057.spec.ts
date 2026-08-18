@@ -102,6 +102,25 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(drawings(page)).toHaveCount(2);
   });
 
+  test("a second click selects a member, whose toolbar offers the reorder verbs; Delete dissolves a two-member container (AC-23, AC-31/32, AC-33..36)", async ({ page }) => {
+    await openFixture(page, docxShapesFixture);
+    const member0 = page.locator('[data-testid="drawing-14-member-0"]');
+    // First click selects the container, second descends to the member.
+    await member0.click();
+    await member0.click();
+    await expect(page.getByTestId("group-member-reorder")).toBeVisible();
+    // Send it to the back — reorders it among its siblings (member order is
+    // paint order).
+    await page.getByTestId("group-member-reorder").selectOption("back");
+    // Deleting a member of a two-member container dissolves it into the
+    // remaining member: the container proxy at index 14 is gone, replaced by a
+    // plain shape.
+    await page.locator('[data-testid="drawing-14-member-0"]').click();
+    await page.locator('[data-testid="drawing-14-member-0"]').click();
+    await page.keyboard.press("Delete");
+    await expect(drawingAt(page, 14)).toHaveAttribute("role", "img");
+  });
+
   test("the container carries editable alt text from its toolbar (AC-49)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);

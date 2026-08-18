@@ -468,6 +468,29 @@ export function rotateMember(model: DocumentModel, selection: ModelSelection, lo
   return { model: next, selection };
 }
 
+/** Sets a selected member's alt text (SPEC-057) — its shape toolbar's alt-text
+ * field edits the member in place. */
+export function setMemberAltText(model: DocumentModel, selection: ModelSelection, location: DrawingLocation, altText: string): CommandResult {
+  const next = cloneContainers(model);
+  const container = next.sections[location.section]?.blocks[location.block];
+  const path = location.path ?? [];
+  if (!isDrawingGroup(container) || path.length === 0) {
+    return { model: next, selection };
+  }
+  const member = memberAtPath(container, path);
+  if (!member) {
+    return { model: next, selection };
+  }
+  const updated: DrawingMember = { ...member };
+  if (altText) {
+    updated.altText = altText;
+  } else {
+    delete updated.altText;
+  }
+  commitContainer(next, location.section, location.block, updateMemberAtPath(container, path, updated));
+  return { model: next, selection };
+}
+
 /** Deletes a selected member from its container (SPEC-057 AC-31). A container
  * reduced to one member dissolves into it (AC-32). */
 export function deleteMember(model: DocumentModel, selection: ModelSelection, location: DrawingLocation): CommandResult {

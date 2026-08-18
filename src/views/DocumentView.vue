@@ -788,7 +788,6 @@ const {
 // clearOtherSelections keeps a group selection exclusive with the per-kind
 // shape/image/chart selections.
 const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); }, getGroupCandidates: () => shapeMultiSelection.value });
-const groupSelection = drawingGroups.groupSelection;
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
 // session's editing surface, op dispatch and overlay live in the composable
@@ -2743,7 +2742,7 @@ const { pagedViews } = usePaginationView({
   shapeMultiSelection,
   editingShapeText,
   chartSelection,
-  groupSelection,
+  groupSelection: drawingGroups.groupSelection,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -3921,6 +3920,7 @@ function handleMenuCommand(id = "") {
       @wrap="drawingGroups.setSelectedWrap"
       @rotation="drawingGroups.setSelectedRotation"
       @alt-text="drawingGroups.setSelectedAltText"
+      @reorder="drawingGroups.reorderSelectedMember"
       @duplicate="drawingGroups.duplicateSelected"
       @delete="drawingGroups.deleteSelected"
       @ungroup="drawingGroups.ungroupSelectedContainer"

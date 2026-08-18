@@ -42,6 +42,7 @@ import {
   rotateMember,
   setGroupAltText,
   setGroupWrap,
+  setMemberAltText,
   ungroupDrawing,
   type DrawingLocation,
   type GroupEntry,
@@ -625,16 +626,21 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     void nextTick().then(remeasureGroupHandles);
   }
 
-  /** Alt text from the container toolbar (SPEC-057 AC-49). Read-only for a
-   * sealed container — the caller hides the input in that case. */
+  /** Alt text from the toolbar (SPEC-057 AC-49) — the container's own, or a
+   * selected member's in place. Read-only for a sealed container (the caller
+   * hides the input). */
   function setSelectedAltText(altText: string) {
     const model = doc.value;
     const sel = groupSelection.value;
-    if (!model || !sel || !selectionIsContainer()) {
+    if (!model || !sel) {
       return;
     }
     const before = beforeSelection();
-    applyEdit(setGroupAltText(model, before, sel.section, sel.block, altText), before, "shape alt text");
+    if (selectionIsContainer()) {
+      applyEdit(setGroupAltText(model, before, sel.section, sel.block, altText), before, "shape alt text");
+    } else {
+      applyEdit(setMemberAltText(model, before, sel, altText), before, "shape alt text");
+    }
   }
 
   /** Wrap mode from the container toolbar (SPEC-057). */
@@ -741,11 +747,6 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     return { left: handles.left, top: Math.max(0, handles.top - 44), placement: "above" };
   }
 
-  /** The selected container's own model (for the toolbar), or null. */
-  function selectedGroupBlock(): DrawingGroup | null {
-    return selectionIsContainer() ? selectedContainer() : null;
-  }
-
   /** The selected drawing's rotation (handles turn with it). */
   function selectedRotationDeg(): number {
     return selectedDrawing()?.rotationDeg ?? 0;
@@ -762,24 +763,44 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     return !(selectionIsContainer() && container !== null && isSealedGroup(container));
   }
 
-  /** The container toolbar's full prop bag (SPEC-057 AC-49), or null when no
-   * container is selected or its handles are not yet measured — so
-   * DocumentView renders `<GroupToolbar v-if=state v-bind=state />` in one
-   * line. A sealed container shows rotation off and alt text read-only. */
+  /** The toolbar's full prop bag (SPEC-057), or null when nothing is selected
+   * or its handles are not yet measured — so DocumentView renders
+   * `<GroupToolbar v-if=state v-bind=state />` in one line. A selected
+   * container shows wrap/alt-text/Ungroup (rotation off + alt text read-only
+   * when sealed, AC-49/73/74); a selected member shows the four reorder verbs
+   * in place of wrap and z-order (AC-33..36). */
   function groupToolbarState() {
-    const container = selectedGroupBlock();
-    if (!container || !groupHandles.value) {
+    const sel = groupSelection.value;
+    if (!sel || !groupHandles.value) {
       return null;
     }
     const pos = groupToolbarStyle();
+    const base = { left: pos.left, top: pos.top, placement: pos.placement };
+    if (selectionIsContainer()) {
+      const container = selectedContainer();
+      if (!container) {
+        return null;
+      }
+      return {
+        ...base,
+        member: false,
+        wrap: container.wrap,
+        rotationDeg: container.rotationDeg ?? 0,
+        altText: container.altText ?? "",
+        sealed: isSealedGroup(container),
+      };
+    }
+    const member = selectedDrawing();
+    if (!member) {
+      return null;
+    }
     return {
-      left: pos.left,
-      top: pos.top,
-      placement: pos.placement,
-      wrap: container.wrap,
-      rotationDeg: container.rotationDeg ?? 0,
-      altText: container.altText ?? "",
-      sealed: isSealedGroup(container),
+      ...base,
+      member: true,
+      wrap: "square",
+      rotationDeg: member.rotationDeg ?? 0,
+      altText: member.altText ?? "",
+      sealed: false,
     };
   }
 
