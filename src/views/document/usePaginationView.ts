@@ -439,6 +439,22 @@ function renderEntryFor(
   };
   let noteSig = "";
   const renderRuns = runs.map((run, runIndex) => {
+    // An inline/display equation (SPEC-056): the laid-out equation is
+    // substituted for the one-character placeholder at paint time, as a caret
+    // atom (data-caret-atom) so one Backspace removes the whole equation and
+    // caret arithmetic counts it as a single character.
+    if (run.equation) {
+      return {
+        key: runKey(run, runIndex),
+        href: "",
+        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        text: "",
+        segments: null,
+        atomText: run.text,
+        equation: run.equation,
+        lang: effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
+      };
+    }
     // A mail-merge chip (SPEC-046): renders its canonical `{{...}}` label
     // as a caret atom standing for the one-character model placeholder —
     // the same atomText/data-caret-atom mechanism as a note reference mark

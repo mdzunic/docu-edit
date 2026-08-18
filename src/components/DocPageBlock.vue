@@ -5,7 +5,7 @@
 // exact same markup from one place — the component's single root element IS
 // the block element, so the produced DOM is byte-identical to the previous
 // inline template. Runtime prop/emit declarations (espree, see AppShell.vue).
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import DocImageBlock from "./DocImageBlock.vue";
 import DocShapeBlock from "./DocShapeBlock.vue";
 import DocChartBlock from "./DocChartBlock.vue";
@@ -13,13 +13,18 @@ import DocTableBlock from "./DocTableBlock.vue";
 import DocTocBlock from "./DocTocBlock.vue";
 import DocTofBlock from "./DocTofBlock.vue";
 import DocHeadingToggle from "./DocHeadingToggle.vue";
+import EquationView from "./EquationView.vue";
 import { asRenderEntry, noRenderEntries } from "../lib/pageRender";
+import { noopEquationActivate } from "../lib/documentModel";
 
 const props = defineProps({
   /** One lib/pageRender.RenderEntry — typed via the default seed. */
   entry: { type: Object, default: () => noRenderEntries()[0] },
   cellRange: { type: Object, default: null },
 });
+
+// SPEC-056: clicking an equation opens the editor. Provided by DocumentView.
+const activateEquation = inject("activateEquation", noopEquationActivate);
 
 defineEmits([
   "image-select",
@@ -111,11 +116,21 @@ const entry = computed(() => asRenderEntry(props.entry));
         v-for="run in entry.runs"
         :key="run.key"
       >
+        <!-- An equation (SPEC-056): laid-out equation as a caret atom, kept
+             in sync with DocBlockEntries.vue's single-column branch. -->
+        <span
+          v-if="run.equation"
+          class="doc-equation"
+          contenteditable="false"
+          :data-caret-atom="run.atomText"
+          :style="run.styleObj"
+          @click="activateEquation(run.equation)"
+        ><EquationView :equation="run.equation" /></span>
         <!-- The plain (no-marks) variants keep a single text child, so the
              span's firstChild stays the run's own text node — DOM shapes
              older specs' tests and tooling rely on. -->
         <a
-          v-if="run.href && !run.segments"
+          v-else-if="run.href && !run.segments"
           data-doc-link=""
           :href="run.href"
           :target="run.target"

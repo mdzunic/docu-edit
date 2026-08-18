@@ -3,7 +3,7 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
 import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
@@ -50,6 +50,11 @@ export interface RenderRun {
    * so lib/domCaret.ts's offset mapping counts it exactly as if the text
    * were showing (see lib/renderFormatting.ts's trackChangeRunHidden). */
   caretAtom?: string;
+  /** An inline/display equation (SPEC-056): the renderer substitutes the
+   * laid-out equation for the one-character placeholder at paint time, as a
+   * `contenteditable="false"` caret atom carrying `atomText` in
+   * `data-caret-atom` so caret offsets count it as one character. */
+  equation?: EquationSpec;
 }
 
 /** One page item's precomputed rendering — a paragraph (possibly a slice of

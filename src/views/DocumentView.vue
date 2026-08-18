@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import DocumentMenuBar from "../components/DocumentMenuBar.vue";
@@ -98,6 +98,7 @@ import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useCaptions } from "./document/useCaptions";
 import { renumberCaptions } from "../lib/captions";
+import { useEquations } from "./document/useEquations";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
@@ -349,6 +350,7 @@ import StylesPane from "../components/StylesPane.vue";
 import StyleEditorDialog from "../components/StyleEditorDialog.vue";
 import StyleDeleteDialog from "../components/StyleDeleteDialog.vue";
 import ImportStylesDialog from "../components/ImportStylesDialog.vue";
+import EquationEditor from "../components/EquationEditor.vue";
 import {
   breakGroup as breakTypingGroup,
   canRedo as canRedoDocument,
@@ -771,6 +773,61 @@ const {
   chartToolbarStyle,
   chartAtClientPoint,
 } = useCharts({ ...editorContext });
+
+// Equations (SPEC-056): Insert → Equation / Display equation and Alt+=.
+const {
+  insertEquation,
+  insertDisplayEquationAtCaret,
+  insertNumberedDisplayEquationAtCaret,
+  activateEquation,
+  insertPickerGlyph,
+  equationEditState,
+  equationAltText,
+  equationLinearForm,
+  equationType,
+  equationTemplate,
+  equationGlyph,
+  equationTab,
+  equationShiftTab,
+  equationLeft,
+  equationRight,
+  equationUp,
+  equationDown,
+  equationBackspace,
+  setEquationAltText,
+  commitEquation,
+  closeEquationEditor,
+} = useEquations({ ...editorContext });
+
+// SPEC-056: dispatch an EquationEditor "op" event to the right engine call.
+function handleEquationOp(op = { kind: "", text: "", id: "" }) {
+  switch (op.kind) {
+    case "type": if (op.text) equationType(op.text); break;
+    case "template": if (op.id) equationTemplate(op.id); break;
+    case "glyph": if (op.text) equationGlyph(op.text); break;
+    case "tab": equationTab(); break;
+    case "shiftTab": equationShiftTab(); break;
+    case "left": equationLeft(); break;
+    case "right": equationRight(); break;
+    case "up": equationUp(); break;
+    case "down": equationDown(); break;
+    case "backspace": equationBackspace(); break;
+  }
+}
+
+// SPEC-056: an equation clicked in the document opens the editor. Provided to
+// the paint components (DocPageBlock/DocBlockEntries) which own the click.
+provide("activateEquation", activateEquation);
+
+// SPEC-056: route a character-picker glyph into an open equation (AC-14/15);
+// otherwise it inserts into the document as before.
+function onSpecialCharacterInsert(text = "") {
+  if (insertPickerGlyph(text)) {
+    specialCharacterDialogOpen.value = false;
+    return;
+  }
+  handleSpecialCharacterInsert(text);
+}
 
 /** The data sheet dialog's prefill (AC-4..AC-13): the selected chart's
  * current categories/series, and whether its type renders only the first
@@ -3112,6 +3169,12 @@ const editorCommands = new Map([
     // fold: follow it, or the user types onto a page they cannot see.
     void scrollModelCaretIntoView(caret, true);
   }],
+  // Alt+= (SPEC-056 AC-3), and Insert → Equation (AC-1).
+  ["insert.equation", () => { insertEquation(); }],
+  // Insert → Display equation (SPEC-056 AC-2).
+  ["insert.display-equation", () => { insertDisplayEquationAtCaret(); }],
+  // Insert → Numbered equation (SPEC-056 AC-17).
+  ["insert.numbered-equation", () => { insertNumberedDisplayEquationAtCaret(); }],
   // Ctrl/Cmd+Alt+F (SPEC-031 AC-1).
   ["insert.footnote", () => { handleInsertNote("footnote"); }],
   // Ctrl/Cmd+Alt+D (SPEC-031 AC-3).
@@ -4125,9 +4188,24 @@ function handleMenuCommand(id = "") {
     />
     <SpecialCharacterDialog
       v-if="specialCharacterDialogOpen"
-      @insert="handleSpecialCharacterInsert"
+      @insert="onSpecialCharacterInsert"
       @cancel="specialCharacterDialogOpen = false"
     />
+    <div
+      v-if="equationEditState"
+      class="equation-editor-overlay"
+      style="position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 60;"
+    >
+      <EquationEditor
+        :body="equationEditState.body"
+        :linear="equationLinearForm()"
+        :alt-text="equationAltText"
+        @op="handleEquationOp"
+        @alt-text="setEquationAltText"
+        @commit="commitEquation"
+        @close="closeEquationEditor"
+      />
+    </div>
     <ImageOptionsDialog
       v-if="imageOptionsOpen"
       :initial="imageOptionsInitial"

@@ -452,6 +452,26 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <hr class="menu-separator">
       <MenuItem
+        label="Equation"
+        testid="insert-equation-button"
+        :shortcut="shortcutLabel('insert.equation')"
+        :disabled="!editable"
+        @select="emit('command', 'insert.equation')"
+      />
+      <MenuItem
+        label="Display equation"
+        testid="insert-display-equation-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.display-equation')"
+      />
+      <MenuItem
+        label="Numbered equation"
+        testid="insert-numbered-equation-button"
+        :disabled="!editable"
+        @select="emit('command', 'insert.numbered-equation')"
+      />
+      <hr class="menu-separator">
+      <MenuItem
         label="Field…"
         testid="insert-field-button"
         :disabled="!editable"

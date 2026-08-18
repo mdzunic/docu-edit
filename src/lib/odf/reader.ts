@@ -40,6 +40,7 @@ import type {
   TableOfFigures,
   TofEntry,
   TrackedChangeInfo,
+  EquationSpec,
 } from "../documentModel";
 import type { ListDefinition, ListFormatting, ListLevelDefinition } from "../core/lists";
 import type { MediaPart } from "../core/media";
@@ -75,6 +76,7 @@ import {
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { parseShapeElement } from "./shape";
 import { parseChartFrame } from "./chart";
+import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "./meta";
 import {
@@ -226,6 +228,8 @@ interface TextPiece {
   field?: FieldSpec;
   /** Marks this piece as a footnote/endnote reference mark (SPEC-031). */
   note?: NoteRef;
+  /** Marks this piece as an inline/display equation (SPEC-056). */
+  equation?: EquationSpec;
   /** Pending tracked-change state (SPEC-039). */
   changes?: RunTrackedChanges;
 }
@@ -263,6 +267,13 @@ let odtChangedRegions: Map<string, OdtChangedRegion> | null = null;
 // changeId -> the piece index text:change-start recorded it at, so the
 // matching text:change-end can stamp every piece appended in between.
 let odtPendingChangeStarts: Map<string, number> | null = null;
+
+// SPEC-056: the whole package's parts, so an inline as-char draw:frame that
+// references an embedded formula sub-document can be resolved into an
+// equation run while collectInline walks a paragraph (which otherwise has no
+// access to the package). Set by parseOdt around the body walk; null outside
+// it (header/footer parses), where a formula frame stays an opaque inline.
+let odtEmbeddedParts: Map<string, Uint8Array> | null = null;
 
 interface InlineAccumulator {
   pieces: TextPiece[];
@@ -609,6 +620,23 @@ function collectInline(
       continue;
     }
     if (el.namespaceURI !== TEXT_NAMESPACE) {
+      // SPEC-056: an as-char draw:frame referencing an embedded formula
+      // sub-document becomes an inline/display equation run, not an opaque
+      // inline. Resolved against the package parts collected for the body walk.
+      if (
+        el.namespaceURI === DRAW_NAMESPACE &&
+        el.localName === "frame" &&
+        odtEmbeddedParts &&
+        isFormulaFrame(el, odtEmbeddedParts)
+      ) {
+        const equation = parseFormulaFrame(el, odtEmbeddedParts);
+        if (equation) {
+          acc.pieces.push({ text: FIELD_PLACEHOLDER_TEXT, formatting, equation });
+          acc.mergeBarrier = true;
+          acc.lastChar = FIELD_PLACEHOLDER_TEXT;
+          continue;
+        }
+      }
       // Frames, change marks, … — unmodelled inline elements from other
       // namespaces are preserved verbatim, anchored to their position
       // between the runs (SPEC-008).
@@ -948,6 +976,7 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
       ...(piece.styleId ? { styleId: piece.styleId } : {}),
       ...(piece.field ? { field: piece.field } : {}),
       ...(piece.note ? { note: piece.note } : {}),
+      ...(piece.equation ? { equation: piece.equation } : {}),
       ...(piece.changes ? { changes: piece.changes } : {}),
     }));
 
@@ -1228,8 +1257,14 @@ function parseBodyTextBlockOrSplit(
   // A chart frame always becomes a (possibly placeholder) Chart block —
   // unlike image/shape, parseChartFrame never returns null just because the
   // embedded chart's type is outside "Chart catalogue" (see its own doc
-  // comment, mirroring Shape's unsupportedGeometryXml convention).
-  const hasChart = frameChildren.some((frame) => firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined);
+  // comment, mirroring Shape's unsupportedGeometryXml convention). A formula
+  // frame (SPEC-056) also has a draw:object but is NOT a chart — it stays in
+  // the run flow as an inline/display equation (handled by collectInline), so
+  // it must be excluded here or the splitter would misread it as a chart.
+  const hasChart = frameChildren.some(
+    (frame) =>
+      firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined && !isFormulaFrame(frame, ctx.parts),
+  );
   if (!hasImage && !hasShape && !hasChart) {
     return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
   }
@@ -1258,6 +1293,7 @@ function parseBodyTextBlockOrSplit(
         formatting: { ...piece.formatting },
         ...(piece.styleId ? { styleId: piece.styleId } : {}),
         ...(piece.field ? { field: piece.field } : {}),
+        ...(piece.equation ? { equation: piece.equation } : {}),
       }));
     if (
       runs.length === 0 &&
@@ -1310,7 +1346,11 @@ function parseBodyTextBlockOrSplit(
           continue;
         }
       }
-      if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "frame") {
+      if (
+        frameEl.namespaceURI === DRAW_NAMESPACE &&
+        frameEl.localName === "frame" &&
+        !isFormulaFrame(frameEl, ctx.parts)
+      ) {
         const parsedChart = parseChartFrame(frameEl, ctx.parts);
         if (parsedChart) {
           flush();
@@ -2445,6 +2485,9 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   // marks anywhere in the body walk reference (see odtChangedRegions).
   odtChangedRegions = parseTrackedChangesRegions(textRoot, catalog);
   odtPendingChangeStarts = new Map();
+  // SPEC-056: package parts, so collectInline can resolve an inline formula
+  // frame into an equation run (see odtEmbeddedParts).
+  odtEmbeddedParts = parts;
   for (const child of Array.from(textRoot.children)) {
     if (child.namespaceURI === TEXT_NAMESPACE && child.localName === "tracked-changes") {
       continue;
@@ -2551,6 +2594,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
   odtCommentSink = null;
   odtChangedRegions = null;
   odtPendingChangeStarts = null;
+  odtEmbeddedParts = null;
 
   const fallback = createDefaultStyles();
   // The document default page geometry is the master the body actually

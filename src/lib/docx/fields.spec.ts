@@ -84,6 +84,25 @@ describe("docx field round-trip (SPEC-053 AC-47, AC-39, AC-40)", () => {
     const field = (reopened.sections[0].blocks[0] as Paragraph).runs[0].field;
     expect(field).toEqual({ kind: "unsupported", code: "GREETINGLINE \\* MERGEFORMAT", cached: "Dear Sir" });
   });
+
+  // SPEC-056 fidelity guard: a SEQ field carrying switches beyond the caption
+  // subset — the chapter-relative `\s 1` Word's "Include chapter number"
+  // caption emits, the appendix-restart `\r 1` — must round-trip verbatim as
+  // an unsupported field, keeping every switch. Equation numbering must never
+  // reparse these into a lossy {label, format} model that drops them.
+  it("preserves a chapter-relative or reset SEQ field verbatim, switches intact", async () => {
+    const seqFields: FieldSpec[] = [
+      { kind: "unsupported", code: "SEQ Figure \\* ARABIC \\s 1", cached: "2-1" },
+      { kind: "unsupported", code: "SEQ Figure \\r 1 \\* ARABIC", cached: "1" },
+      { kind: "unsupported", code: "SEQ Equation \\* ARABIC", cached: "3" },
+    ];
+    const { bytes } = await writeDocx(modelWithFields(seqFields));
+    const reopened = await parseDocx(bytes);
+    const blocks = reopened.sections[0].blocks as Paragraph[];
+    seqFields.forEach((expected, index) => {
+      expect(blocks[index].runs[0].field).toEqual(expected);
+    });
+  });
 });
 
 describe("docx complex-field reading (SPEC-053 AC-47)", () => {

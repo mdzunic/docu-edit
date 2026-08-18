@@ -456,6 +456,15 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           for (const inline of paragraph.opaqueInlines ?? []) {
             dropped.push(record(nodeKind(inline.xml, "opaqueInline"), `paragraph ${paragraphNumber}`, target));
           }
+          // SPEC-056 Format mapping: an equation carrying an `opaqueMath` node
+          // — a construct outside the closed set, preserved verbatim in its
+          // *source* format's markup (OMML or MathML) — has no expression in
+          // the other format, so a cross-format save drops it and reports it
+          // (AC-32). A fully-modelled equation converts losslessly and reports
+          // nothing.
+          if (paragraph.runs.some((run) => run.equation?.body.some((node) => node.kind === "opaqueMath"))) {
+            dropped.push(record("opaqueInline", `equation at paragraph ${paragraphNumber}`, target));
+          }
           // Run shading preserved beside a highlight (SPEC-013): ODF has one
           // background slot, which the highlight occupies, so a .docx → .odt
           // save loses the shading. One record per paragraph, not per run —
