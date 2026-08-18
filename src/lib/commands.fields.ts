@@ -19,6 +19,7 @@ import {
   isShape,
   isTable,
   isToc,
+  isTof,
   type Block,
   type DocumentModel,
   type FieldSpec,
@@ -36,6 +37,8 @@ import { deleteRange as deleteRangeInPlace } from "./textEditing";
 import { evaluateField, isReadOnlyField, REF_SOURCE_NOT_FOUND, type FieldContext } from "./fields";
 import { updateTocEntirely } from "./toc";
 import type { TocPageNumberLookup } from "./toc";
+import { updateTofEntirely } from "./tof";
+import { renumberCaptions } from "./captions";
 
 /** Inserts a field run at the caret (SPEC-053): a one-character caret atom,
  * exactly like a page-number field or a merge chip. A non-collapsed selection
@@ -256,8 +259,11 @@ export function updateAllFields(
   tocPageNumberFor: TocPageNumberLookup,
 ): UpdateAllFieldsResult {
   const brokenRefs: string[] = [];
-  let next = mapAllFields(model, (field, here) => {
-    const { field: updated, brokenRef } = recomputeField(field, here, model, ctx);
+  // Renumber captions first (SPEC-055 AC-15, AC-27) so a caption cross-reference
+  // recomputes against the caption's fresh number in the same update.
+  const base = renumberCaptions(model);
+  let next = mapAllFields(base, (field, here) => {
+    const { field: updated, brokenRef } = recomputeField(field, here, base, ctx);
     if (brokenRef) {
       brokenRefs.push(brokenRef);
     }
@@ -269,6 +275,15 @@ export function updateAllFields(
     section.blocks.forEach((block, blockIndex) => {
       if (isToc(block)) {
         next = updateTocEntirely(next, selection, sectionIndex, blockIndex, tocPageNumberFor).model;
+      }
+    });
+  });
+  // Every table of figures rebuilds the same way (SPEC-055) — the same anchor
+  // lookup resolves caption anchors too (see links.ts's anchorCaret).
+  next.sections.forEach((section, sectionIndex) => {
+    section.blocks.forEach((block, blockIndex) => {
+      if (isTof(block)) {
+        next = updateTofEntirely(next, selection, sectionIndex, blockIndex, tocPageNumberFor).model;
       }
     });
   });

@@ -1190,9 +1190,17 @@ function fieldContentXml(field: FieldSpec, styles: AutomaticStyles): string {
       styles.registerUserField(field.name);
       return `<text:user-field-get text:name="${escapeXml(field.name)}">${cached}</text:user-field-get>`;
     case "ref":
+      // A caption reference is a `text:sequence-ref` with the matching
+      // reference-format (SPEC-055); a heading/bookmark reference stays a
+      // `text:bookmark-ref` (SPEC-053).
+      if (field.show === "full" || field.show === "labelAndNumber" || field.show === "numberOnly" || field.show === "textOnly") {
+        return `<text:sequence-ref text:reference-format="${REF_FORMAT_ATTR[field.show]}" text:ref-name="${escapeXml(field.target)}">${cached}</text:sequence-ref>`;
+      }
       return `<text:bookmark-ref text:reference-format="${REF_FORMAT_ATTR[field.show]}" text:ref-name="${escapeXml(field.target)}">${cached}</text:bookmark-ref>`;
     case "pageRef":
       return `<text:bookmark-ref text:reference-format="page" text:ref-name="${escapeXml(field.target)}">${cached}</text:bookmark-ref>`;
+    case "seq":
+      return `<text:sequence text:name="${escapeXml(field.label)}"${FIELD_NUM_FORMAT[field.format]} text:formula="ooow:${escapeXml(field.label)}+1">${cached}</text:sequence>`;
     case "unsupported":
       // An unsupported field read from an `.odt` keeps its whole source
       // element as `code`, re-emitted verbatim (SPEC-053 byte-for-byte). One

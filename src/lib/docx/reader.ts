@@ -43,6 +43,9 @@ import type {
   TableOfContents,
   TocEntry,
   TocOptions,
+  TableOfFigures,
+  TofEntry,
+  RefFormat,
   TrackedChangeInfo,
 } from "../documentModel";
 import type { ListDefinition } from "../core/lists";
@@ -981,6 +984,100 @@ function parseTocField(
   return { toc, endIndex };
 }
 
+/** The caption label a `TOC \c "Figure"` field names (SPEC-055), or null when
+ * the paragraph does not begin a table-of-figures field. A `\c` switch is what
+ * distinguishes a table of figures from a table of contents. */
+function tofFieldStartLabel(pEl: Element): string | null {
+  let sawBegin = false;
+  let instr = "";
+  for (const rEl of childElements(pEl, WORD_NAMESPACE, "r")) {
+    const fldType = runFldCharType(rEl);
+    if (fldType === "begin") {
+      sawBegin = true;
+      continue;
+    }
+    if (fldType === "separate" || fldType === "end") {
+      break;
+    }
+    if (sawBegin) {
+      instr += runInstrText(rEl) ?? "";
+    }
+  }
+  if (!sawBegin || !/^\s*TOC\b/i.test(instr)) {
+    return null;
+  }
+  const match = /\\c\s*"([^"]*)"/.exec(instr);
+  return match ? match[1] : null;
+}
+
+/** One table-of-figures entry from a cached field paragraph (SPEC-055): the
+ * caption text as the hyperlink text, its anchor, and the trailing page
+ * number after the tab. Mirrors tocEntryFromParagraph. */
+function tofEntryFromParagraph(pEl: Element): TofEntry | null {
+  const hyperlink = firstChildElement(pEl, WORD_NAMESPACE, "hyperlink");
+  if (!hyperlink) {
+    return null;
+  }
+  const anchor = wordAttr(hyperlink, "anchor") ?? "";
+  let text = "";
+  let pageNumberText = "";
+  let sawTab = false;
+  for (const rEl of childElements(hyperlink, WORD_NAMESPACE, "r")) {
+    for (const child of Array.from(rEl.children)) {
+      if (child.namespaceURI !== WORD_NAMESPACE) {
+        continue;
+      }
+      if (child.localName === "tab") {
+        sawTab = true;
+      } else if (child.localName === "t") {
+        if (sawTab) {
+          pageNumberText += child.textContent ?? "";
+        } else {
+          text += child.textContent ?? "";
+        }
+      }
+    }
+  }
+  const page = /^\d+$/.test(pageNumberText) ? Number(pageNumberText) : null;
+  return { text, page, targetBookmark: anchor };
+}
+
+/** Parses a `TOC \c` field's full paragraph run into one TableOfFigures block
+ * (SPEC-055), mirroring parseTocField. */
+function parseTofField(
+  bodyChildren: Element[],
+  startIndex: number,
+  label: string,
+): { tof: TableOfFigures; endIndex: number } {
+  const entries: TofEntry[] = [];
+  let endIndex = startIndex;
+  let depth = 0;
+  for (let i = startIndex; i < bodyChildren.length; i += 1) {
+    const pEl = bodyChildren[i];
+    if (pEl.namespaceURI !== WORD_NAMESPACE || pEl.localName !== "p") {
+      continue;
+    }
+    const entry = tofEntryFromParagraph(pEl);
+    if (entry) {
+      entries.push(entry);
+    }
+    endIndex = i;
+    const walked = tocFieldDepthWalk(pEl, depth);
+    depth = walked.depth;
+    if (walked.endedHere) {
+      break;
+    }
+  }
+  const hasPageNumbers = entries.some((entry) => entry.page !== null);
+  const tof: TableOfFigures = {
+    type: "tof",
+    label,
+    options: { pageNumbers: hasPageNumbers, dotLeader: true, hyperlinks: hasPageNumbers },
+    entries,
+  };
+  return { tof, endIndex };
+}
+
 /** Parses one body-level `<w:p>` into one or more blocks (SPEC-024, breaks
  * SPEC-028): a paragraph containing a modelled inline/floating picture
  * splits around each image — and one containing a typed `w:br` (page/column)
@@ -1792,6 +1889,38 @@ function mergeFieldInstrText(instr: string): string | null {
  * result byte-for-byte (SPEC-008 at run level). Returns null only for a
  * `MERGEFIELD` whose quoted text isn't valid chip syntax — the caller then
  * preserves the whole element as an opaque inline, unchanged. */
+/** The number format a SEQ/field `\* <switch>` names (SPEC-055): roman →
+ * lowerRoman, alphabetic → lowerAlpha, everything else (ARABIC / absent) →
+ * decimal — the mirror of the writer's SEQ_FORMAT_SWITCH. */
+function numberFormatFromSwitch(switches: string): "decimal" | "lowerRoman" | "lowerAlpha" {
+  if (/\\\*\s*roman\b/i.test(switches)) {
+    return "lowerRoman";
+  }
+  if (/\\\*\s*alphabetic\b/i.test(switches)) {
+    return "lowerAlpha";
+  }
+  return "decimal";
+}
+
+/** The `show` a REF field's switches name (SPEC-053 + SPEC-055): the caption
+ * markers first, then `\p` position, else plain text — the mirror of the
+ * writer's CAPTION_REF_SWITCH. */
+function refShowFromSwitches(switches: string): RefFormat {
+  if (/\\\*\s*fullcaption\b/i.test(switches)) {
+    return "full";
+  }
+  if (/\\\*\s*labelnumber\b/i.test(switches)) {
+    return "labelAndNumber";
+  }
+  if (/\\\*\s*captionnumber\b/i.test(switches)) {
+    return "numberOnly";
+  }
+  if (/\\\*\s*captiontext\b/i.test(switches)) {
+    return "textOnly";
+  }
+  return /\\p\b/i.test(switches) ? "position" : "text";
+}
+
 function fieldSpecFromInstr(instr: string, cached: string): FieldSpec | null {
   const trimmed = instr.trim();
   const mergeText = mergeFieldInstrText(instr);
@@ -1833,8 +1962,11 @@ function fieldSpecFromInstr(instr: string, cached: string): FieldSpec | null {
   if ((m = /^PAGEREF\s+(\S+)/i.exec(trimmed))) {
     return { kind: "pageRef", target: m[1], show: "page", cached };
   }
+  if ((m = /^SEQ\s+(\S+)([\s\S]*)$/i.exec(trimmed))) {
+    return { kind: "seq", label: m[1], format: numberFormatFromSwitch(m[2]), cached };
+  }
   if ((m = /^REF\s+(\S+)([\s\S]*)$/i.exec(trimmed))) {
-    return { kind: "ref", target: m[1], show: /\\p\b/i.test(m[2]) ? "position" : "text", cached };
+    return { kind: "ref", target: m[1], show: refShowFromSwitches(m[2]), cached };
   }
   // Outside the catalogue: preserved verbatim (SPEC-053 unsupported case).
   return { kind: "unsupported", code: instr, cached };
@@ -2419,6 +2551,15 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
       // A TOC field (SPEC-033 AC-19, AC-20): its own paragraphs are the
       // field's cached result, so the whole span becomes one TOC block
       // rather than the ordinary per-paragraph parse below.
+      // A `TOC \c "Figure"` field is a table of figures (SPEC-055), not a
+      // table of contents — detected first since both begin `TOC`.
+      const tofLabel = tofFieldStartLabel(child);
+      if (tofLabel !== null) {
+        const { tof, endIndex } = parseTofField(bodyChildren, bodyIndex, tofLabel);
+        current.blocks.push(tof);
+        bodyIndex = endIndex;
+        continue;
+      }
       const tocOptions = tocFieldStartOptions(child);
       if (tocOptions) {
         const { toc, endIndex } = parseTocField(bodyChildren, bodyIndex, tocOptions);

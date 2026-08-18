@@ -60,7 +60,9 @@ const CATALOGUE: FieldSpec[] = [
   { kind: "ref", target: "_h0_intro", show: "text", cached: "Introduction" },
   { kind: "ref", target: "_h0_intro", show: "position", cached: "above" },
   { kind: "pageRef", target: "_h0_intro", show: "page", cached: "2" },
-  { kind: "unsupported", code: "SEQ Figure \\* ARABIC", cached: "7" },
+  // SPEC-055 adds SEQ to the field catalogue: what SPEC-053 preserved as an
+  // unsupported field now round-trips as a caption `seq` field.
+  { kind: "seq", label: "Figure", format: "decimal", cached: "7" },
 ];
 
 describe("docx field round-trip (SPEC-053 AC-47, AC-39, AC-40)", () => {

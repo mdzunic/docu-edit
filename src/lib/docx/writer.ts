@@ -53,6 +53,7 @@ import type {
   TableOfFigures,
   TofEntry,
   TofOptions,
+  RefFormat,
 } from "../documentModel";
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderLineStyle, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
@@ -294,6 +295,25 @@ const FIELD_FORMAT_SWITCH: Record<PageNumberFormat, string> = {
   lowerAlpha: " \\* alphabetic",
 };
 
+// A SEQ field always writes an explicit numeric format switch (Word's own
+// `SEQ Figure \* ARABIC`), so the reader recovers the format unambiguously.
+const SEQ_FORMAT_SWITCH: Record<PageNumberFormat, string> = {
+  decimal: " \\* ARABIC",
+  lowerRoman: " \\* roman",
+  lowerAlpha: " \\* alphabetic",
+};
+
+// The REF switch each caption reference format writes so a same-format docx
+// round trip recovers the exact `show` (SPEC-055 Reference formats). `text`
+// and `position` keep SPEC-053's own switches; the caption formats add
+// reader-recognised `\* ` markers Word tolerates and ignores.
+const CAPTION_REF_SWITCH: Partial<Record<RefFormat, string>> = {
+  full: " \\* fullcaption",
+  labelAndNumber: " \\* labelnumber",
+  numberOnly: " \\* captionnumber",
+  textOnly: " \\* captiontext",
+};
+
 function fieldInstr(field: FieldSpec): string {
   if (isMergeChipField(field)) {
     // Always quoted (SPEC-046 "Chip serialisation"), so the writer has no
@@ -324,9 +344,11 @@ function fieldInstr(field: FieldSpec): string {
     case "docProperty":
       return `DOCPROPERTY "${field.name}"`;
     case "ref":
-      return `REF ${field.target}${field.show === "position" ? " \\p" : ""} \\h`;
+      return `REF ${field.target}${field.show === "position" ? " \\p" : ""}${CAPTION_REF_SWITCH[field.show] ?? ""} \\h`;
     case "pageRef":
       return `PAGEREF ${field.target} \\h`;
+    case "seq":
+      return `SEQ ${field.label}${SEQ_FORMAT_SWITCH[field.format]}`;
     case "unsupported":
       // The instruction the file was saved with, byte-for-byte (SPEC-053
       // AC "keeps its code byte-for-byte").
