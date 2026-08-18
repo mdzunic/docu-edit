@@ -43,7 +43,14 @@ rejecting SPEC-007 as ambiguous:
    floating object uses — is defined in
    `specs/051-drawing-shapes-and-text-boxes.md`; the drawing **group
    container** that supersedes SPEC-051's flat grouping is defined in
-   `specs/057-group-and-ungroup-drawings.md`. Nothing redefines these.
+   `specs/057-group-and-ungroup-drawings.md`. The **application's** visual
+   vocabulary — design tokens, the icon set and the shared control
+   primitives — is defined in
+   `specs/058-design-system-and-visual-refresh.md`, and is not to be
+   confused with the **document's** theme (colours and fonts saved into the
+   file), defined in `specs/077-document-themes.md`. The shape geometry
+   catalogue that supersedes SPEC-051's fourteen entries is defined in
+   `specs/069-shape-catalogue-expansion.md`. Nothing redefines these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -146,3 +153,83 @@ that `equalSemantic` is specified but not yet implemented; see SPEC-002's
 | SPEC-055 | Captions, caption cross-references and the table of figures |
 | SPEC-056 | Equations |
 | SPEC-057 | Group and ungroup drawings — native containers, nesting and editing in place |
+
+### Phase 9 — Interface modernisation
+The product's feature depth has outgrown its interface. SPEC-058 comes
+first and the rest are written against it: it creates the design tokens,
+icon set and control primitives every other spec in this phase spends.
+SPEC-060 is independently shippable and fixes the product's most visible
+hole — there is no way out of a document.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-058 | Design system — tokens, icons and the visual refresh |
+| SPEC-059 | Dark mode and theme preference |
+| SPEC-060 | Close the document and return to the library |
+| SPEC-061 | Toolbar redesign — icons, grouping, overflow and contextual controls |
+| SPEC-062 | Command palette |
+| SPEC-063 | Zoom and view modes |
+| SPEC-064 | The vertical ruler and measurement units everywhere |
+| SPEC-065 | The unified side panel |
+| SPEC-066 | Preferences |
+| SPEC-067 | The document library — overview redesign |
+| SPEC-068 | Responsive layout, touch and small screens |
+
+### Phase 10 — Drawing depth
+SPEC-051 shipped fourteen shapes; SPEC-057 made groups real. This phase
+closes the distance to what documents actually contain — flowcharts,
+connectors, freeform outlines and styling beyond one flat colour. SPEC-069
+is the prerequisite for the rest; SPEC-072 is the one SPEC-057 names in its
+own out-of-scope list.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-069 | Shape catalogue expansion and adjustment handles |
+| SPEC-070 | Connectors |
+| SPEC-071 | Freeform shapes, curves and edit points |
+| SPEC-072 | Align, distribute, snap and the position dialog |
+| SPEC-073 | Shape styling depth — gradients, effects, arrowheads and presets |
+
+### Phase 11 — Authoring completeness
+Four features earlier specs put out of scope and nothing came back for.
+Each is named in an existing spec's "Out of scope" section, and each is
+something a real document arrives carrying — so all four are fidelity
+fixes before they are features.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-074 | Paragraph and page borders and shading |
+| SPEC-075 | Watermarks and line numbering |
+| SPEC-076 | Table styles, header repeat, sort and text↔table conversion |
+| SPEC-077 | Document themes — colour and font schemes |
+
+---
+
+## Backlog — identified, not yet specced
+Gaps found in the same review that produced Phases 9–11, listed so they are
+not rediscovered from scratch. Each names where it was deferred. None is a
+work order; a business person picking the next spec writes one of these
+first.
+
+| Gap | Deferred by |
+| --- | --- |
+| Find and replace by formatting or style; wildcards; `$1` capture groups in replacements | SPEC-017's out of scope, "noted as a follow-up" |
+| Page-thumbnail navigation pane, and Go to page | SPEC-037's out of scope |
+| User-remappable keyboard shortcuts | SPEC-021's out of scope |
+| Text wrapping around a floating table | SPEC-023's out of scope; SPEC-076 leaves it |
+| Formulas in table cells (`=SUM(ABOVE)`) | SPEC-023's out of scope; SPEC-076 leaves it |
+| Citations, bibliography and an index | SPEC-031/033/055 each touch the edge |
+| Content controls and fillable form fields (`w:sdt`) | SPEC-053 preserves them, models none |
+| Compare and merge two documents | Implied by SPEC-039, never specced |
+| RTF, HTML, plain-text and EPUB import/export | SPEC-050 did Markdown only |
+| Drop caps | Never specced |
+| Automatic hyphenation and justification quality | SPEC-035/036 mention it, neither owns it |
+| AutoText / building blocks / quick parts, and a cover-page gallery | Never specced |
+| Style sets — alternative formatting for the built-in styles | SPEC-019's out of scope; SPEC-077 resolves only theme switching |
+| SmartArt, and Word's drawing canvas (`wpc:wpc`) | SPEC-051 and SPEC-057 both preserve, never create |
+| Boolean shape operations, text on a path, WordArt | SPEC-071/073's out of scope |
+| Glow, reflection, bevel and 3-D shape effects | SPEC-073's out of scope |
+| Marquee / rubber-band multi-select for drawings | SPEC-057's out of scope |
+| Forced-colours / high-contrast mode | SPEC-059's out of scope |
+| Folders or tags in the library | SPEC-067's out of scope |
+| Document protection, read-only enforcement, encryption | Never specced |
