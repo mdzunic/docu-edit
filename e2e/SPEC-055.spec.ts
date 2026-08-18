@@ -1,7 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
 import zlib from "node:zlib";
+import { MOD } from "./keys";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { createDocument as buildDocumentModel, createFieldSpecRun, createNoteRun } from "../src/lib/documentModel";
+import type { Paragraph } from "../src/lib/documentModel";
+import { CAPTION_STYLE_ID } from "../src/lib/styles";
+import { writeDocx } from "../src/lib/docx/writer";
 
 const PNG_1x1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -285,7 +292,7 @@ test("inserting an object renumbers captions; single undo reverts; labels indepe
   await selectLastImage(page);
   await captionSelected(page);
   await expect(content(page).getByText(/Figure\s*3/).first()).toBeVisible();
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect(content(page).getByText(/Figure\s*3/)).toHaveCount(0);
   await expect(content(page).getByText(/Figure\s*2/).first()).toBeVisible();
 });
@@ -455,6 +462,131 @@ test("table of figures: entries, non-editable hint, staleness bar and choices, e
   await page.getByTestId("tof-label").selectOption("Table");
   await page.getByTestId("tof-insert").click();
   await expect(page.getByTestId("tof-block")).toHaveCount(2); // AC-36 two coexist
+});
+
+// --- headers, footers and footnotes are outside the numbering (AC-37..AC-39) --
+
+// AC-37: a caption is constructible inside a header through the same
+// Insert -> Caption dialog (SPEC-029 already puts tables and images in bands),
+// and keeps its cached number. AC-38: the per-label counter never sees it.
+// AC-39: the table of figures never lists it.
+test("a caption built inside the header keeps its number, outside the body sequence and the ToF (AC-37, AC-38, AC-39)", async ({ page }) => {
+  await createDocument(page);
+  // Two body figures: "Figure 1: one" and "Figure 2: two".
+  await figureWithCaption(page, "one");
+  await figureWithCaption(page, "two");
+
+  // Enter the header band and give it a table (SPEC-029 AC-5)...
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("hf-menu-header").click();
+  const header = page.getByTestId("page-header-band").first();
+  await expect(header).toHaveAttribute("data-hf-editable", "1");
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("table-grid-cell-2-2").click();
+  await expect(header.locator("table.doc-table")).toHaveCount(1);
+
+  // ...then caption it through the ordinary dialog (AC-37 constructibility).
+  await page.getByTestId("menu-title-insert").click();
+  await expect(page.getByTestId("insert-caption-button")).toBeEnabled();
+  await page.getByTestId("insert-caption-button").click();
+  await expect(page.getByTestId("caption-dialog")).toBeVisible();
+  await page.getByTestId("caption-insert").click();
+  await expect(page.getByTestId("caption-dialog")).toHaveCount(0);
+  // The band re-renders with the fresh caption and the caret in its text run.
+  await expect(header.getByText(/Figure\s*1/).first()).toBeVisible();
+  await page.keyboard.type("archived header chart");
+
+  // AC-38: the header caption reads "Figure 1" even though the body already
+  // has Figure 1 and Figure 2 — the per-label counter skipped it, and it
+  // consumed no body number (nothing anywhere says Figure 3).
+  await expect(header.getByText(/Figure\s*1:\s*archived header chart/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*1:\s*one/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*2:\s*two/).first()).toBeVisible();
+  await expect(page.getByText(/Figure\s*3/)).toHaveCount(0);
+
+  // AC-37: Update all fields keeps the header caption's cached number — it is
+  // never pulled into the body sequence — and the body numbers are unmoved.
+  await page.getByTestId("menu-title-tools").click();
+  await page.getByTestId("tools-menu-update-all-fields").click();
+  await expect(header.getByText(/Figure\s*1:\s*archived header chart/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*1:\s*one/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*2:\s*two/).first()).toBeVisible();
+  await expect(page.getByText(/Figure\s*3/)).toHaveCount(0);
+
+  // AC-39: a Figure table of figures lists the two body captions only.
+  await page.locator(".page-content").first().dblclick(); // leave the band (SPEC-029 AC-8)
+  await expect(header).not.toHaveAttribute("data-hf-editable", "1");
+  await content(page).click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await openInsert(page);
+  await page.getByTestId("insert-table-of-figures-button").click();
+  await page.getByTestId("tof-label").selectOption("Figure");
+  await page.getByTestId("tof-insert").click();
+  await expect(page.getByTestId("tof-block")).toBeVisible();
+  await expect(page.getByTestId("tof-entry")).toHaveCount(2);
+  await expect(page.getByTestId("tof-block")).not.toContainText("archived header chart");
+});
+
+// The footnote leg of the same criterion. No UI inserts an image or table into
+// a footnote, so — like SPEC-053's header-field tests — the document is
+// Word-authored (built with this project's own writer) and opened through the
+// UI: the footnote caption renders at its saved number, survives Update all
+// fields untouched, and never reaches a table of figures.
+test("a footnote caption keeps its saved number and stays out of the sequence and the ToF (AC-37, AC-38, AC-39)", async ({ page }) => {
+  const captionPara = (label: string, cached: string, text: string): Paragraph => ({
+    type: "paragraph",
+    styleId: CAPTION_STYLE_ID,
+    runs: [
+      { text: `${label} `, formatting: {} },
+      createFieldSpecRun({ kind: "seq", label, format: "decimal", cached }),
+      { text: `: ${text}`, formatting: {} },
+    ],
+  });
+  const model = buildDocumentModel("spec055-footnote-caption");
+  const body: Paragraph = {
+    type: "paragraph",
+    runs: [{ text: "Quarterly numbers", formatting: {} }, createNoteRun("n1", "footnote")],
+  };
+  model.sections = [{ blocks: [body, captionPara("Figure", "1", "one"), captionPara("Figure", "2", "two")] }];
+  // The footnote caption is saved at "Figure 9" — a number the body sequence
+  // could never produce, so any renumbering of it is unmissable.
+  model.notes = [{ noteId: "n1", kind: "footnote", blocks: [captionPara("Figure", "9", "An archival chart")] }];
+  model.title = "spec055-footnote-caption.docx";
+  const bytes = (await writeDocx(model)).bytes;
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "spec055-")), "spec055-footnote-caption.docx");
+  writeFileSync(file, bytes);
+
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(file);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+
+  // AC-37: the footnote caption renders at its SAVED cached number.
+  await expect(page.getByTestId("footnote-area").first()).toContainText("Figure 9: An archival chart");
+  await expect(content(page).getByText(/Figure\s*1:\s*one/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*2:\s*two/).first()).toBeVisible();
+
+  // AC-37/AC-38: Update all fields leaves it cached and out of the counter —
+  // the body still counts 1..2 and the footnote still says 9 (a counted
+  // footnote caption would have read "Figure 3" and shifted nothing else).
+  await page.getByTestId("menu-title-tools").click();
+  await page.getByTestId("tools-menu-update-all-fields").click();
+  await expect(page.getByTestId("footnote-area").first()).toContainText("Figure 9: An archival chart");
+  await expect(content(page).getByText(/Figure\s*1:\s*one/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*2:\s*two/).first()).toBeVisible();
+  await expect(content(page).getByText(/Figure\s*3/)).toHaveCount(0);
+
+  // AC-39: a Figure table of figures lists the two body captions only.
+  await content(page).click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await openInsert(page);
+  await page.getByTestId("insert-table-of-figures-button").click();
+  await page.getByTestId("tof-label").selectOption("Figure");
+  await page.getByTestId("tof-insert").click();
+  await expect(page.getByTestId("tof-block")).toBeVisible();
+  await expect(page.getByTestId("tof-entry")).toHaveCount(2);
+  await expect(page.getByTestId("tof-block")).not.toContainText("archival");
 });
 
 // --- round-trip open (AC-45, AC-47, AC-49, AC-50, AC-51) --------------------

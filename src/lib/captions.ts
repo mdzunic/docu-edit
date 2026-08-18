@@ -304,7 +304,7 @@ function captionRuns(options: CaptionOptions): { runs: Run[]; textOffset: number
     textOffset += labelText.length;
   }
   runs.push(
-    createFieldSpecRun({ kind: "seq", label: options.label, format: options.format, cached: "1" }, {
+    createFieldSpecRun({ kind: "seq", label: options.label, format: options.format, cached: formatOrdinal(options.format, 1) }, {
       ...runFormatting,
     }),
   );
@@ -315,11 +315,14 @@ function captionRuns(options: CaptionOptions): { runs: Run[]; textOffset: number
   return { runs, textOffset };
 }
 
-/** Inserts a caption paragraph for the object at `object`, positioned above or
- * below it per `options` (SPEC-055 AC-3, AC-4), then renumbers every caption
- * so the new one shows its real number. The caret ends up in the editable text
- * run. */
-export function insertCaption(
+/** Inserts a caption into a nested editing surface's synthetic model — the
+ * header/footer band (SPEC-055 AC-37; SPEC-029 already puts images and tables
+ * there): the same paragraph insertCaption builds, but with NO renumber pass.
+ * Captions outside the body are excluded from the per-label sequence
+ * (§Numbering, AC-38) — they keep the cached number they were created with
+ * (the format's first ordinal, seeded by captionRuns), and the body counter
+ * never sees them. The caret ends up in the editable text run. */
+export function insertSurfaceCaption(
   model: DocumentModel,
   object: ParagraphAddress,
   options: CaptionOptions,
@@ -335,11 +338,23 @@ export function insertCaption(
   };
   const at = options.position === "below" ? object.block + 1 : object.block;
   blocks.splice(at, 0, caption);
-  const renumbered = renumberCaptions(next);
   return {
-    model: renumbered,
+    model: next,
     selection: caretSelection({ section: object.section, block: at, offset: textOffset }),
   };
+}
+
+/** Inserts a caption paragraph for the object at `object`, positioned above or
+ * below it per `options` (SPEC-055 AC-3, AC-4), then renumbers every caption
+ * so the new one shows its real number. The caret ends up in the editable text
+ * run. */
+export function insertCaption(
+  model: DocumentModel,
+  object: ParagraphAddress,
+  options: CaptionOptions,
+): CommandResult {
+  const inserted = insertSurfaceCaption(model, object, options);
+  return { model: renumberCaptions(inserted.model), selection: inserted.selection };
 }
 
 /** Resolves an object's model address from a caption's, kept next to

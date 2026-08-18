@@ -5,9 +5,9 @@
 // plus the object-selection refs and the shared anchor/jump helpers, and this
 // owns all caption feature state so DocumentView gains only wiring.
 import { computed, ref, type Ref } from "vue";
-import type { EditorContext } from "./context";
+import type { EditorContext, HeaderFooterBridge } from "./context";
 import type { DocumentModel, TofOptions } from "../../lib/documentModel";
-import { isTof } from "../../lib/documentModel";
+import { isChart, isImage, isTof } from "../../lib/documentModel";
 import type { CellRange } from "../../lib/core/tables";
 import type { ImageLocation } from "../../lib/images";
 import type { ChartLocation } from "../../lib/charts";
@@ -18,6 +18,8 @@ import {
   defaultCaptionOptions,
   deleteObjectWithCaption,
   insertCaption,
+  insertSurfaceCaption,
+  isCaptionableObject,
   listCaptions,
 } from "../../lib/captions";
 import {
@@ -28,7 +30,7 @@ import {
   updateTofEntirely,
   updateTofPageNumbersOnly,
 } from "../../lib/tof";
-import { caretSelection, deleteRange, documentStart } from "../../lib/commands";
+import { caretSelection, deleteRange, documentStart, withHeaderFooterModel } from "../../lib/commands";
 import type { CaretPosition, ParagraphAddress } from "../../lib/textEditing";
 import {
   loadCaptionSettings,
@@ -36,7 +38,9 @@ import {
   type CaptionSettings,
 } from "../../lib/core/captionSettings";
 
-export interface CaptionsDeps extends EditorContext {
+export interface CaptionsDeps extends EditorContext, HeaderFooterBridge {
+  /** The active band's editable root (focus restore after a band insert). */
+  hfRootEl: () => HTMLElement | null;
   /** The currently selected image (SPEC-024), if any. */
   imageSelection: Ref<ImageLocation | null>;
   /** The currently selected chart (SPEC-052), if any. */
@@ -120,9 +124,52 @@ export function useCaptions(deps: CaptionsDeps) {
     return null;
   }
 
+  /** The active header/footer band as its synthetic single-section model
+   * (SPEC-029's editing shape), or null during body editing. Captions are
+   * constructible inside a band (AC-37) because SPEC-029 AC-5/AC-6 already
+   * put tables and images there. */
+  function bandModel(): DocumentModel | null {
+    const active = deps.activeHeaderFooter.value;
+    const model = doc.value;
+    return active && model
+      ? withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind)
+      : null;
+  }
+
+  /** The captionable object at the band's live selection: the table whose
+   * cell the caret sits in, else the image/chart block at or adjacent to the
+   * caret — the band has no click-selection refs, so adjacency stands in for
+   * the body's imageSelection/chartSelection. */
+  function bandSelectedObject(band: DocumentModel): ParagraphAddress | null {
+    const caret = deps.currentHfSelection()?.focus;
+    if (!caret) {
+      return null;
+    }
+    const blocks = band.sections[caret.section]?.blocks ?? [];
+    if (caret.cell && blocks[caret.block]?.type === "table") {
+      return { section: caret.section, block: caret.block };
+    }
+    for (const blockIndex of [caret.block, caret.block - 1, caret.block + 1]) {
+      const block = blocks[blockIndex];
+      if (isImage(block) || isChart(block)) {
+        return { section: caret.section, block: blockIndex };
+      }
+    }
+    return null;
+  }
+
   /** Whether a captionable object is selected — enables the menu item and the
-   * context-menu action (AC-1). */
-  const captionTargetSelected = computed(() => selectedObject() !== null);
+   * context-menu action (AC-1). In a header/footer band the caret is
+   * deliberately not reactive (see useHeadersFooters), so the item enables
+   * whenever the band holds a captionable object and openCaptionDialog
+   * re-resolves the exact target from the live selection at click time. */
+  const captionTargetSelected = computed(() => {
+    const band = bandModel();
+    if (band) {
+      return band.sections[0].blocks.some((block) => isCaptionableObject(block));
+    }
+    return selectedObject() !== null;
+  });
 
   /** The labels the caption dialog offers: the built-ins plus any custom label
    * already used in the document. */
@@ -139,7 +186,8 @@ export function useCaptions(deps: CaptionsDeps) {
     if (!doc.value || !editable.value) {
       return;
     }
-    if (!selectedObject()) {
+    const band = bandModel();
+    if (band ? !bandSelectedObject(band) : !selectedObject()) {
       addToast("Select an image, chart or table first");
       return;
     }
@@ -148,10 +196,27 @@ export function useCaptions(deps: CaptionsDeps) {
 
   function handleCaptionInsert(options: CaptionOptions = defaultCaptionOptions()) {
     captionDialogOpen.value = false;
+    if (!editable.value) {
+      return;
+    }
+    const band = bandModel();
+    if (band) {
+      // A band caption commits through the SPEC-029 synthetic-model path and
+      // is never renumbered (AC-37, AC-38, §Numbering): it keeps the cached
+      // number it is created with, and the body counter skips it.
+      const object = bandSelectedObject(band);
+      if (!object) {
+        return;
+      }
+      const result = insertSurfaceCaption(band, object, options);
+      deps.applyHeaderFooterEdit(result.model, result.selection, "insert caption");
+      deps.hfRootEl()?.focus();
+      return;
+    }
     const model = doc.value;
     const object = selectedObject();
     const root = contentRoot.value as HTMLElement | null;
-    if (!model || !object || !editable.value) {
+    if (!model || !object) {
       return;
     }
     const before = currentSelection(root) ?? caretSelection(getCaret() ?? documentStart());
@@ -187,6 +252,12 @@ export function useCaptions(deps: CaptionsDeps) {
    * left the caret inside the object or just after it, and never
    * double-captions an object that already has one. */
   function autoCaptionNearCaret(objectKind: "image" | "table") {
+    // A band insert (SPEC-029 AC-5/AC-6) is never auto-captioned: the body
+    // caret this scan reads is stale while a band is active, and band
+    // captions sit outside the numbering anyway (§Numbering).
+    if (deps.activeHeaderFooter.value) {
+      return;
+    }
     const model = doc.value;
     const caret = getCaret();
     if (!model || !caret) {

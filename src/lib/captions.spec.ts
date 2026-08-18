@@ -7,6 +7,7 @@ import {
   isCaptionParagraph,
   isValidNewLabel,
   insertCaption,
+  insertSurfaceCaption,
   listCaptions,
   objectForCaption,
   renumberCaptions,
@@ -114,6 +115,53 @@ describe("captions (SPEC-055)", () => {
     };
     const model = modelWith([already]);
     expect(renumberCaptions(model)).toBe(model);
+  });
+
+  // --- header/footer/footnote exclusion (§Numbering, AC-37..AC-38) --------
+
+  const surfaceCaption = (label: string, cached: string): Paragraph => ({
+    type: "paragraph",
+    styleId: CAPTION_STYLE_ID,
+    runs: [
+      { text: `${label} `, formatting: {} },
+      { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
+      { text: ": x", formatting: {} },
+    ],
+  });
+  const cachedOf = (p: Paragraph) => (p.runs[1].field as { cached: string }).cached;
+
+  it("excludes header, footer and footnote captions from the per-label counter (AC-37, AC-38)", () => {
+    const model = modelWith([surfaceCaption("Figure", "5"), surfaceCaption("Figure", "5")]);
+    model.sections[0].headers = { default: { blocks: [surfaceCaption("Figure", "7")] } };
+    model.sections[0].footers = { default: { blocks: [surfaceCaption("Table", "4")] } };
+    model.notes = [{ noteId: "n1", kind: "footnote", blocks: [surfaceCaption("Figure", "9")] }];
+    const next = renumberCaptions(model);
+    // Body captions number 1..2 as if the surface captions did not exist —
+    // a header Figure never consumes a body number.
+    expect((next.sections[0].blocks as Paragraph[]).map(cachedOf)).toEqual(["1", "2"]);
+    // The surface captions keep their cached values, byte for byte.
+    expect(cachedOf(next.sections[0].headers!.default!.blocks[0] as Paragraph)).toBe("7");
+    expect(cachedOf(next.sections[0].footers!.default!.blocks[0] as Paragraph)).toBe("4");
+    expect(cachedOf(next.notes![0].blocks[0] as Paragraph)).toBe("9");
+    // And they are not listed either (§Numbering — the same exclusion the
+    // table of figures inherits, AC-39).
+    expect(listCaptions(next)).toHaveLength(2);
+  });
+
+  it("insertSurfaceCaption never renumbers — a band caption keeps its seeded number (AC-37)", () => {
+    // A band's synthetic single-section model: an existing band caption
+    // (cached "7") and an image about to be captioned.
+    const band = modelWith([surfaceCaption("Figure", "7"), image("m1")]);
+    const out = insertSurfaceCaption(band, { section: 0, block: 1 }, {
+      ...defaultCaptionOptions("Figure"),
+      format: "lowerRoman",
+    });
+    const blocks = out.model.sections[0].blocks as Paragraph[];
+    // The new caption is seeded with its format's first ordinal, not left as
+    // a decimal "1" no renumber pass would ever format.
+    expect(cachedOf(blocks[2])).toBe("i");
+    // The pre-existing band caption is untouched — no renumber ran.
+    expect(cachedOf(blocks[0])).toBe("7");
   });
 
   it("binds a caption to the adjacent object both ways (AC-20, §binding)", () => {

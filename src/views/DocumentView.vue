@@ -2884,7 +2884,7 @@ const {
   clearTofSelection,
 } = useCaptions({
   ...editorContext,
-  imageSelection,
+  activeHeaderFooter, currentHfSelection, applyHeaderFooterEdit, hfRootEl, imageSelection,
   chartSelection,
   cellSelection,
   caretPosition,

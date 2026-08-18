@@ -10,7 +10,8 @@ import {
   updateTofPageNumbersOnly,
 } from "./tof";
 import { insertCaption, defaultCaptionOptions } from "./captions";
-import { isTof, createDocument, type DocumentModel, type Image, type TableOfFigures } from "./documentModel";
+import { CAPTION_STYLE_ID } from "./styles";
+import { isTof, createDocument, type DocumentModel, type Image, type Paragraph, type TableOfFigures } from "./documentModel";
 import { caretSelection } from "./commands";
 
 function image(mediaId: string): Image {
@@ -40,6 +41,32 @@ describe("table of figures (SPEC-055)", () => {
     expect(entries).toHaveLength(3);
     expect(entries.map((e) => e.text)).toEqual(["Figure 1: ", "Figure 2: ", "Figure 3: "]);
     expect(new Set(entries.map((e) => e.targetBookmark)).size).toBe(3);
+  });
+
+  it("excludes header, footer and footnote captions from entries and labels (AC-39)", () => {
+    const surfaceCaption = (label: string, cached: string, text: string): Paragraph => ({
+      type: "paragraph",
+      styleId: CAPTION_STYLE_ID,
+      runs: [
+        { text: `${label} `, formatting: {} },
+        { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
+        { text: `: ${text}`, formatting: {} },
+      ],
+    });
+    const model = withThreeFigures();
+    model.sections[0].headers = { default: { blocks: [surfaceCaption("Figure", "7", "Header chart")] } };
+    model.sections[0].footers = { default: { blocks: [surfaceCaption("Chart", "1", "Footer chart")] } };
+    model.notes = [{ noteId: "n1", kind: "footnote", blocks: [surfaceCaption("Figure", "9", "An archival chart")] }];
+    // Only the three body figures are listed (§Numbering) — never the header
+    // or footnote Figures, whatever their cached numbers say.
+    const entries = tofEntriesFromCaptions(model, "Figure");
+    expect(entries).toHaveLength(3);
+    const texts = entries.map((entry) => entry.text).join("|");
+    expect(texts).not.toContain("Header chart");
+    expect(texts).not.toContain("archival");
+    // The dialog's label list is body-derived too: the footer-only "Chart"
+    // label is not offered.
+    expect(availableTofLabels(model)).toEqual(["Figure"]);
   });
 
   it("offers the document's caption labels (AC-23)", () => {
