@@ -458,3 +458,70 @@ describe("migrateLegacyGroups (SPEC-057 Legacy migration)", () => {
     expect(container.members.map((m) => m.type).sort()).toEqual(["chart", "shape"]);
   });
 });
+
+// --- container-level and member edits added by the interactive layer --------
+import {
+  deleteGroupContainer,
+  duplicateGroupContainer,
+  moveGroupContainer,
+  nudgeGroupContainer,
+  setGroupAltText,
+  setGroupWrap,
+  setMemberAltText,
+} from "./drawingGroups";
+
+describe("container-level edits (the container as one drawing, SPEC-057)", () => {
+  it("moveGroupContainer shifts the container's own offset, leaving members put", () => {
+    const container = pairContainer();
+    const result = moveGroupContainer(doc(container), anySelection, 0, 0, 1.5, -0.5);
+    const moved = result.model.sections[0].blocks[0] as DrawingGroup;
+    expect(moved.offsetXCm).toBeCloseTo(3.5);
+    expect(moved.offsetYCm).toBeCloseTo(1.5);
+    expect(moved.members[0].offsetXCm).toBe(0);
+  });
+
+  it("nudgeGroupContainer moves by the arrow-nudge step", () => {
+    const container = pairContainer({ offsetXCm: 2, offsetYCm: 2 });
+    const before = (doc(container).sections[0].blocks[0] as DrawingGroup).offsetXCm ?? 0;
+    const result = nudgeGroupContainer(doc(container), anySelection, 0, 0, "right", false);
+    const moved = result.model.sections[0].blocks[0] as DrawingGroup;
+    expect(moved.offsetXCm).toBeGreaterThan(before);
+  });
+
+  it("deleteGroupContainer removes the container block", () => {
+    const result = deleteGroupContainer(doc(paragraph("p"), pairContainer()), anySelection, 0, 1);
+    expect(result.model.sections[0].blocks).toHaveLength(1);
+    expect(result.model.sections[0].blocks[0].type).toBe("paragraph");
+  });
+
+  it("duplicateGroupContainer inserts an offset clone right after the source", () => {
+    const result = duplicateGroupContainer(doc(pairContainer()), anySelection, 0, 0);
+    const blocks = result.model.sections[0].blocks;
+    expect(blocks).toHaveLength(2);
+    expect(blocks[1].type).toBe("drawingGroup");
+    const copy = blocks[1] as DrawingGroup;
+    expect(copy.offsetXCm).toBeCloseTo(2.5);
+    // Deep clone — the copy's members are its own arrays.
+    expect(copy.members).not.toBe((blocks[0] as DrawingGroup).members);
+  });
+
+  it("setGroupAltText sets and clears the container's alt text", () => {
+    const set = setGroupAltText(doc(pairContainer()), anySelection, 0, 0, "Diagram");
+    expect((set.model.sections[0].blocks[0] as DrawingGroup).altText).toBe("Diagram");
+    const cleared = setGroupAltText(set.model, anySelection, 0, 0, "");
+    expect((cleared.model.sections[0].blocks[0] as DrawingGroup).altText).toBeUndefined();
+  });
+
+  it("setGroupWrap changes the container's wrap", () => {
+    const result = setGroupWrap(doc(pairContainer()), anySelection, 0, 0, "topAndBottom");
+    expect((result.model.sections[0].blocks[0] as DrawingGroup).wrap).toBe("topAndBottom");
+  });
+
+  it("setMemberAltText edits a member in place and renormalizes", () => {
+    const result = setMemberAltText(doc(pairContainer()), anySelection, { section: 0, block: 0, path: [1] }, "Member");
+    const container = result.model.sections[0].blocks[0] as DrawingGroup;
+    expect(container.members[1].altText).toBe("Member");
+    // The container's box invariants still hold (min offset 0).
+    expect(Math.min(...container.members.map((m) => m.offsetXCm ?? 0))).toBe(0);
+  });
+});
