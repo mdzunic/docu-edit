@@ -97,6 +97,7 @@ import { usePaginationEngine } from "./document/usePaginationEngine";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useCaptions } from "./document/useCaptions";
+import { renumberCaptions } from "../lib/captions";
 import { usePageNavigation } from "./document/usePageNavigation";
 import { useWordCount } from "./document/useWordCount";
 import { useDocumentProperties } from "./document/useDocumentProperties";
@@ -1247,6 +1248,8 @@ function applyEdit(
       selection: result.selection,
     };
   }
+  // SPEC-055 AC-15/16: reordering captioned objects renumbers in the same undo step.
+  result = { model: renumberCaptions(result.model), selection: result.selection };
   if (before) {
     recordHistoryEdit(documentId.value, {
       before: { model: before, selection: beforeSelection },
@@ -2866,12 +2869,10 @@ const {
   deleteCaptionPromptOpen,
   deleteCaptionKind,
   confirmDeleteBoth,
-  confirmKeepCaption,
-  cancelDeletePrompt,
+  confirmKeepCaption, cancelDeletePrompt,
   deleteImageWithCaptionPrompt,
   deleteChartWithCaptionPrompt,
-  insertImageFileWithAutoCaption,
-  insertTableWithAutoCaption,
+  insertImageFileWithAutoCaption, insertTableWithAutoCaption,
   tofDialogOpen,
   tofLabels,
   tofSelection,
