@@ -64,6 +64,7 @@ import {
   type ZOrderCommand,
 } from "../../lib/shapes";
 import {
+  asNudgeDirection,
   DEFAULT_NEW_SHAPE_FILL,
   DEFAULT_NEW_SHAPE_OUTLINE,
   drawGestureBox,
@@ -731,6 +732,37 @@ export function useShapes(deps: ShapesDeps) {
     }
     applyShapeEdit((model, selection) => nudgeShape(model, selection, location, direction, fine), "nudge shape");
     void nextTick().then(remeasureShapeHandles);
+  }
+
+  /** A selected shape's keyboard interactions (SPEC-051 AC-40..43): Delete,
+   * Ctrl/Cmd+D duplicate, and arrow-key nudge. Returns whether it handled the
+   * event; a shape click never places a DOM caret, so this is a dedicated
+   * keydown path (the reason images.ts's own delete path is one). */
+  function handleShapeKeys(event: KeyboardEvent): boolean {
+    if (!shapeSelection.value || editingShapeText.value) {
+      return false;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      handleShapeDelete();
+      return true;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      handleShapeDuplicate();
+      return true;
+    }
+    const direction =
+      event.key === "ArrowUp" ? "up" :
+      event.key === "ArrowDown" ? "down" :
+      event.key === "ArrowLeft" ? "left" :
+      event.key === "ArrowRight" ? "right" : "";
+    if (direction) {
+      event.preventDefault();
+      handleShapeNudge(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
+      return true;
+    }
+    return false;
   }
 
   function handleShapeFill(fill: string | undefined) {
@@ -1440,6 +1472,7 @@ export function useShapes(deps: ShapesDeps) {
     handleShapeDelete,
     handleShapeDuplicate,
     handleShapeNudge,
+    handleShapeKeys,
     handleShapeFill,
     handleShapeOutline,
     handleShapeRotationInput,

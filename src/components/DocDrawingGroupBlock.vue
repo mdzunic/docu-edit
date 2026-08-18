@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { asDrawingGroup, isDrawingGroup, isShape } from "../lib/documentModel";
-import { groupDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { groupDisplayStyle, groupMemberWrapperStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { shapeClipPath } from "../lib/core/shapeGeometry";
 import DocGroupMemberVisual from "./DocGroupMemberVisual.vue";
@@ -45,68 +45,70 @@ const props = defineProps({
 
 const emit = defineEmits(["select", "edit-text"]);
 
+/** The selected path relative to this container (`[]` = container, `null` =
+ * nothing here) as a real array or null — the prop is a plain Object/Array. */
+function relativePath() {
+  const path = props.selectedPath;
+  return Array.isArray(path) ? path : null;
+}
+
 /** The container is entered (its direct members are focusable) when a member
  * of it, or something deeper, is selected. */
-function entered(): boolean {
-  const path = props.selectedPath as number[] | null;
-  return Array.isArray(path) && path.length >= 1;
+function entered() {
+  const path = relativePath();
+  return !!path && path.length >= 1;
 }
 
 /** This container's own proxy is selected when the relative path is empty. */
-function containerSelected(): boolean {
-  const path = props.selectedPath as number[] | null;
-  return Array.isArray(path) && path.length === 0;
+function containerSelected() {
+  const path = relativePath();
+  return !!path && path.length === 0;
 }
 
-function baseTestid(): string {
+function baseTestid() {
   return props.member ? props.testidBase : `drawing-${props.drawingIndex}`;
 }
 
-function memberTestid(index = 0): string {
+function memberTestid(index = 0) {
   return `${baseTestid()}-member-${index}`;
 }
 
 /** The selection path relative to member `index`, or undefined. */
-function childSelectedPath(index = 0): number[] | undefined {
-  const path = props.selectedPath as number[] | null;
-  if (Array.isArray(path) && path.length >= 1 && path[0] === index) {
+function childSelectedPath(index = 0) {
+  const path = relativePath();
+  if (path && path.length >= 1 && path[0] === index) {
     return path.slice(1);
   }
   return undefined;
 }
 
 /** A leaf member is selected when the relative path is exactly `[index]`. */
-function memberSelected(index = 0): boolean {
+function memberSelected(index = 0) {
   const child = childSelectedPath(index);
   return Array.isArray(child) && child.length === 0;
 }
 
 /** Whether THIS container's own proxy is focusable: a top-level container is
  * always tabbable; a nested container follows the member rule. */
-function containerFocusable(): boolean {
+function containerFocusable() {
   return props.member ? props.parentEntered : true;
 }
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 
-function memberWrapperStyle(index = 0): Record<string, string> {
-  const member = asDrawingGroup(props.block).members[index];
-  const rotation = isDrawingGroup(member) ? 0 : (member.rotationDeg ?? 0);
-  return {
-    position: "absolute",
-    left: `${member.offsetXCm ?? 0}cm`,
-    top: `${member.offsetYCm ?? 0}cm`,
-    width: `${member.widthCm}cm`,
-    height: `${Math.max(member.heightCm, 0.05)}cm`,
-    "--member-rotation": `${rotation}deg`,
-  };
+function memberAt(index = 0) {
+  return asDrawingGroup(props.block).members[index];
+}
+
+function memberWrapperStyle(index = 0) {
+  return groupMemberWrapperStyle(memberAt(index));
 }
 
 /** A shape member's proxy clips to its painted region so a click on empty
  * interior falls through to whatever is beneath (SPEC-057, mirroring
  * DocShapeBlock's proxyStyle). Other kinds fill their rectangle. */
-function memberProxyStyle(index = 0): Record<string, string> {
-  const member = asDrawingGroup(props.block).members[index];
+function memberProxyStyle(index = 0) {
+  const member = memberAt(index);
   if (isShape(member)) {
     const clip = shapeClipPath(member.geometry, !!member.fill);
     return clip ? { clipPath: clip } : {};
@@ -114,8 +116,8 @@ function memberProxyStyle(index = 0): Record<string, string> {
   return {};
 }
 
-function memberRole(index = 0): string {
-  const member = asDrawingGroup(props.block).members[index];
+function memberRole(index = 0) {
+  const member = memberAt(index);
   if (isDrawingGroup(member)) {
     return "group";
   }
@@ -125,8 +127,8 @@ function memberRole(index = 0): string {
   return "img";
 }
 
-function memberLabel(index = 0): string {
-  const member = asDrawingGroup(props.block).members[index];
+function memberLabel(index = 0) {
+  const member = memberAt(index);
   if (member.altText) {
     return member.altText;
   }
@@ -136,7 +138,7 @@ function memberLabel(index = 0): string {
   return isShape(member) ? "Shape" : "";
 }
 
-function containerLabel(): string {
+function containerLabel() {
   const group = asDrawingGroup(props.block);
   return group.altText || `Group of ${group.members.length} drawings`;
 }

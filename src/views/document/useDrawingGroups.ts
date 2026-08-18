@@ -378,6 +378,63 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     void nextTick().then(remeasureGroupHandles);
   }
 
+  /** Ctrl/Cmd+G groups the multi-selection; Ctrl/Cmd+Shift+G ungroups the
+   * selected container (SPEC-057). Returns whether it handled the event. */
+  function handleGroupShortcut(event: KeyboardEvent): boolean {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "g") {
+      return false;
+    }
+    event.preventDefault();
+    if (event.shiftKey) {
+      if (groupSelection.value && selectionIsContainer()) {
+        ungroupSelectedContainer();
+      }
+    } else if (canGroup()) {
+      groupSelectedDrawings();
+    }
+    return true;
+  }
+
+  /** A selected container/member's keyboard interactions (SPEC-057): Delete,
+   * Ctrl/Cmd+D duplicate, and arrow-key nudge. Returns whether it handled the
+   * event; the caller only calls it while a group is selected. */
+  function handleGroupKeyDown(event: KeyboardEvent): boolean {
+    if (!groupSelection.value) {
+      return false;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteSelected();
+      return true;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      duplicateSelected();
+      return true;
+    }
+    const direction =
+      event.key === "ArrowUp" ? "up" :
+      event.key === "ArrowDown" ? "down" :
+      event.key === "ArrowLeft" ? "left" :
+      event.key === "ArrowRight" ? "right" : "";
+    if (direction) {
+      event.preventDefault();
+      nudgeSelected(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
+      return true;
+    }
+    return false;
+  }
+
+  /** The single keyboard entry point for DocumentView (SPEC-057): Group /
+   * Ungroup shortcuts, then a selected container/member's Delete / Ctrl+D /
+   * arrow-nudge. Returns whether it handled the event. */
+  function handleGroupKeys(event: KeyboardEvent): boolean {
+    if (handleGroupShortcut(event)) {
+      return true;
+    }
+    return handleGroupKeyDown(event);
+  }
+
   /** The floating toolbar's position for the selected container/member. */
   function groupToolbarStyle() {
     const handles = groupHandles.value;
@@ -416,7 +473,6 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     selectedGroupBlock,
     selectedMember,
     selectionIsContainer,
-    // re-export so DocumentView reads nudge directions without a second import
-    asNudgeDirection,
+    handleGroupKeys,
   };
 }

@@ -67,7 +67,7 @@ onMounted(repaint);
 onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
 
-function imageSrc(): string {
+function imageSrc() {
   const image = asImage(props.block);
   if (!props.model) {
     return "";
@@ -76,11 +76,11 @@ function imageSrc(): string {
   return mediaDataUri(parts.find((part) => part.mediaId === image.mediaId));
 }
 
-function isImageMember(): boolean {
+function isImageMember() {
   return isImage(asBlock(props.block));
 }
 
-function isShapeMember(): boolean {
+function isShapeMember() {
   return isShape(asBlock(props.block));
 }
 

@@ -7,6 +7,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   type Chart,
   type DrawingGroup,
+  type DrawingMember,
   type Image,
   type Paragraph,
   type ParagraphFormatting,
@@ -472,6 +473,23 @@ export function groupDisplayStyle(group: DrawingGroup): Record<string, string> {
     style.zIndex = String(group.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
+}
+
+/** A group member's absolutely-positioned wrapper within its container box
+ * (SPEC-057): member offsets are measured from the container's top-left, and
+ * a non-group member turns about its own centre via `--member-rotation` (a
+ * nested container turns its own content instead). Typed here (not inline in
+ * the `.vue`) so `position` stays a real CSS value. */
+export function groupMemberWrapperStyle(member: DrawingMember): Record<string, string> {
+  const rotation = member.type === "drawingGroup" ? 0 : member.rotationDeg ?? 0;
+  return {
+    position: "absolute",
+    left: `${member.offsetXCm ?? 0}cm`,
+    top: `${member.offsetYCm ?? 0}cm`,
+    width: `${member.widthCm}cm`,
+    height: `${Math.max(member.heightCm, 0.05)}cm`,
+    "--member-rotation": `${rotation}deg`,
+  };
 }
 
 /** A chart's size and position rendering (SPEC-052) — identical logic to
