@@ -250,6 +250,29 @@ test("border settings apply to just the selected cells, leaving the rest of the 
   expect(untouchedTop).not.toBe("rgb(0, 0, 0)");
 });
 
+// Regression (2026-08-18, tracking issue #141): the table context menu grew
+// past the viewport as sections accumulated (fields, lists, SPEC-055's
+// caption entry) and its position:fixed placement had no clamping, so
+// "Table properties…" — the last item — became unreachable on shorter
+// viewports; the factory container's taller font metrics hit it at 720px
+// before macOS did. A deliberately short viewport forces the overflow on
+// every platform: the menu must shift to fit, keeping its last item fully
+// inside the viewport and clickable.
+test("the table context menu clamps into a short viewport, keeping Table properties reachable", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await createDocument(page);
+  await insertViaPicker(page, 2, 2);
+  await cellAt(page, 0, 0).click({ button: "right" });
+  const item = page.getByTestId("context-menu-table-properties");
+  await expect(item).toBeVisible();
+  const box = await item.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(500);
+  await item.click();
+  await expect(page.getByTestId("table-props-apply")).toBeVisible();
+});
+
 test("the dialog sets cell shading, padding and vertical alignment (AC-15..17)", async ({ page }) => {
   await createDocument(page);
   await insertViaPicker(page, 1, 1);

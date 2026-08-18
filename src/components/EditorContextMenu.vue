@@ -5,7 +5,7 @@
 // (SPEC-023 AC-6, AC-8, AC-10..23). Emits the chosen action only — the
 // editor owns the clipboard and table work. Dismissed by a click anywhere
 // outside or Escape.
-import { onBeforeUnmount, onMounted } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import { modifierKeyLabel } from "../lib/core/platform";
 
 const props = defineProps({
@@ -79,8 +79,39 @@ const CELL_ACTIONS = [
 
 const mod = modifierKeyLabel();
 
+// The menu is position:fixed at the click point, so a menu taller than the
+// space under the cursor would otherwise hang past the viewport with no way
+// to scroll it in — the sections above keep growing (fields, lists, caption),
+// and the factory container's taller font metrics overflow before macOS does
+// (SPEC-023 AC-14 broke on main this way, 2026-08-18). Clamp the placement to
+// the viewport after measuring, the way native context menus shift to fit.
+const menuEl = useTemplateRef("menu");
+const placed = ref({ left: props.left, top: props.top });
+
+function place() {
+  const el = menuEl.value;
+  if (!el) {
+    return;
+  }
+  const pad = 8;
+  const rect = el.getBoundingClientRect();
+  placed.value = {
+    left: Math.max(pad, Math.min(props.left, window.innerWidth - rect.width - pad)),
+    top: Math.max(pad, Math.min(props.top, window.innerHeight - rect.height - pad)),
+  };
+}
+
+watch(
+  () => [props.left, props.top],
+  () => {
+    // Re-open at a new point while mounted: measure from the raw spot again.
+    placed.value = { left: props.left, top: props.top };
+    void nextTick().then(place);
+  },
+);
+
 function menuStyle() {
-  return { left: `${props.left}px`, top: `${props.top}px` };
+  return { left: `${placed.value.left}px`, top: `${placed.value.top}px` };
 }
 
 function handleOutsidePointerDown() {
@@ -94,6 +125,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
 }
 
 onMounted(() => {
+  place();
   document.addEventListener("mousedown", handleOutsidePointerDown);
   document.addEventListener("keydown", handleKeyDown);
 });
@@ -106,6 +138,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div
+    ref="menu"
     class="context-menu"
     data-testid="editor-context-menu"
     role="menu"
