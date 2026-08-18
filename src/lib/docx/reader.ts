@@ -1908,6 +1908,16 @@ function mergeFieldInstrText(instr: string): string | null {
 /** The number format a SEQ/field `\* <switch>` names (SPEC-055): roman →
  * lowerRoman, alphabetic → lowerAlpha, everything else (ARABIC / absent) →
  * decimal — the mirror of the writer's SEQ_FORMAT_SWITCH. */
+/** Whether a SEQ instruction's switches (everything after the label) can be
+ * fully represented by a `seq` FieldSpec's {label, format}. True only when the
+ * sole switch is the numeric-format switch (`\* arabic|roman|alphabetic`) or
+ * there are none; any residual switch (chapter `\s`, restart `\r`, repeat `\c`,
+ * `\n`, `\h`, an explicit bookmark, `\* MERGEFORMAT`, …) means the field must be
+ * preserved verbatim instead (SPEC-056 fidelity guard). */
+function seqSwitchesModellable(switches: string): boolean {
+  return switches.replace(/\\\*\s*(arabic|roman|alphabetic)\b/i, " ").trim() === "";
+}
+
 function numberFormatFromSwitch(switches: string): "decimal" | "lowerRoman" | "lowerAlpha" {
   if (/\\\*\s*roman\b/i.test(switches)) {
     return "lowerRoman";
@@ -1979,7 +1989,15 @@ function fieldSpecFromInstr(instr: string, cached: string): FieldSpec | null {
     return { kind: "pageRef", target: m[1], show: "page", cached };
   }
   if ((m = /^SEQ\s+(\S+)([\s\S]*)$/i.exec(trimmed))) {
-    return { kind: "seq", label: m[1], format: numberFormatFromSwitch(m[2]), cached };
+    // A `seq` FieldSpec can only carry {label, format}; a SEQ whose switches go
+    // beyond the numeric-format switch — Word's chapter-relative `\s`, restart
+    // `\r`, repeat `\c`, `\n`/`\h`, an explicit bookmark — cannot be modelled
+    // without dropping them. Preserve those verbatim as an unsupported field
+    // (SPEC-053/SPEC-056 round-trip fidelity) rather than reparsing lossily.
+    if (seqSwitchesModellable(m[2])) {
+      return { kind: "seq", label: m[1], format: numberFormatFromSwitch(m[2]), cached };
+    }
+    return { kind: "unsupported", code: instr, cached };
   }
   if ((m = /^REF\s+(\S+)([\s\S]*)$/i.exec(trimmed))) {
     return { kind: "ref", target: m[1], show: refShowFromSwitches(m[2]), cached };

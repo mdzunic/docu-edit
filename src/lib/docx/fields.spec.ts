@@ -94,7 +94,6 @@ describe("docx field round-trip (SPEC-053 AC-47, AC-39, AC-40)", () => {
     const seqFields: FieldSpec[] = [
       { kind: "unsupported", code: "SEQ Figure \\* ARABIC \\s 1", cached: "2-1" },
       { kind: "unsupported", code: "SEQ Figure \\r 1 \\* ARABIC", cached: "1" },
-      { kind: "unsupported", code: "SEQ Equation \\* ARABIC", cached: "3" },
     ];
     const { bytes } = await writeDocx(modelWithFields(seqFields));
     const reopened = await parseDocx(bytes);
@@ -102,6 +101,18 @@ describe("docx field round-trip (SPEC-053 AC-47, AC-39, AC-40)", () => {
     seqFields.forEach((expected, index) => {
       expect(blocks[index].runs[0].field).toEqual(expected);
     });
+  });
+
+  // The boundary of the guard above: a plain caption-subset SEQ (only the
+  // numeric-format switch) IS representable, so SPEC-055 models it as a `seq`
+  // field — that is the machinery equation numbering (AC-17) reuses.
+  it("models a plain caption-subset SEQ as a seq field", async () => {
+    const { bytes } = await writeDocx(
+      modelWithFields([{ kind: "seq", label: "Equation", format: "decimal", cached: "3" }]),
+    );
+    const reopened = await parseDocx(bytes);
+    const field = (reopened.sections[0].blocks[0] as Paragraph).runs[0].field;
+    expect(field).toEqual({ kind: "seq", label: "Equation", format: "decimal", cached: "3" });
   });
 });
 
