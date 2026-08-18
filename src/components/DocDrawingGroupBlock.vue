@@ -147,7 +147,7 @@ function containerLabel() {
 <template>
   <span
     class="doc-group-outer"
-    :class="{ 'doc-shape-anchor': !member, 'doc-shape-anchor-floating': !member && floatingWrap.includes(block.wrap) }"
+    :class="{ 'doc-group-anchor': !member, 'doc-group-anchor-floating': !member && floatingWrap.includes(block.wrap) }"
     :data-section="!member ? section : undefined"
     :data-block="!member ? blockIndex : undefined"
   >
@@ -219,7 +219,7 @@ function containerLabel() {
   line-height: 0;
 }
 
-.doc-shape-anchor-floating {
+.doc-group-anchor-floating {
   position: relative;
 }
 

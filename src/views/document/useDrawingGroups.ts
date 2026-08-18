@@ -194,7 +194,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
       return null;
     }
     const anchor = root.querySelector(
-      `.doc-shape-anchor[data-section="${section}"][data-block="${block}"], .doc-image-anchor[data-section="${section}"][data-block="${block}"], .doc-chart-anchor[data-section="${section}"][data-block="${block}"]`,
+      `.doc-shape-anchor[data-section="${section}"][data-block="${block}"], .doc-image-anchor[data-section="${section}"][data-block="${block}"], .doc-chart-anchor[data-section="${section}"][data-block="${block}"], .doc-group-anchor[data-section="${section}"][data-block="${block}"]`,
     );
     const inner = anchor?.querySelector(".doc-shape, .doc-image, .doc-chart, .doc-group") ?? anchor;
     if (!inner) {
@@ -219,7 +219,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
       return;
     }
     const el = root.querySelector(
-      `.doc-shape-anchor[data-section="${sel.section}"][data-block="${sel.block}"] .doc-group`,
+      `.doc-group-anchor[data-section="${sel.section}"][data-block="${sel.block}"] .doc-group`,
     );
     groupHandles.value = el ? measureImageGeometry(pageEl, el) : null;
   }
