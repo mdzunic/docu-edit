@@ -412,6 +412,31 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     // The container proxy reflects the alt text as its aria-label.
     await expect(drawingAt(page, 0)).toHaveAttribute("aria-label", "My diagram");
   });
+
+  test("a top-level image carries the drawing-<index> proxy and stays clickable through it (AC-38)", async ({ page }) => {
+    await createDocument(page);
+    // A minimal 1x1 PNG — this test only needs an image block to exist, not
+    // any particular pixel content.
+    const TINY_PNG =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    await page.getByTestId("insert-image-file-input").setInputFiles({
+      name: "photo.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(TINY_PNG, "base64"),
+    });
+
+    const image = page.getByTestId("doc-image").first();
+    await expect(image).toBeVisible();
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "img");
+
+    // The drawing-<index> proxy sits over the image for identity/focus but
+    // must pass pointer events through it: a click on the <img> itself has
+    // to still land and select it (regression: the proxy used to intercept
+    // the click, timing out every image-click test in SPEC-024).
+    await image.click({ timeout: 5000 });
+    await expect(page.locator(".doc-image-selected")).toHaveCount(1);
+    await expect(page.getByTestId("image-toolbar")).toBeVisible();
+  });
 });
 
 // SPEC-057 — the hand-built native-group fixtures (build-spec057-fixtures.mjs).
