@@ -9,7 +9,11 @@
 // member kind (a `draw:frame` image/chart) keeps the drawing on SPEC-008
 // opaque preservation for now.
 import { firstChildElement } from "../core/xml";
+import { svgAttr } from "./xml";
+import { odfLengthToCm } from "./units";
 import { parseShapeElement, type OdfShapeTextContext } from "./shape";
+import { parseDrawFrame } from "./drawing";
+import type { MediaPart } from "../core/media";
 import type { DrawingGroup, DrawingMember, ImageWrapMode } from "../documentModel";
 
 const DRAW_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
@@ -20,12 +24,32 @@ export interface OdfGroupReadContext extends OdfShapeTextContext {
   contentDoc: Document;
   stylesDoc: Document | undefined;
   graphicWrapStyles: Map<string, ImageWrapMode>;
+  /** Package parts + a media sink, so a `draw:frame` picture member resolves
+   * to an Image and its bytes reach `DocumentModel.media` (SPEC-024/-057). */
+  parts?: Map<string, Uint8Array>;
+  collectMedia?: (part: MediaPart) => void;
 }
 
 function memberOf(el: Element, ctx: OdfGroupReadContext): DrawingMember | null {
   if (el.namespaceURI === DRAW_NAMESPACE && (el.localName === "custom-shape" || el.localName === "line")) {
     const parsed = parseShapeElement(el, ctx.contentDoc, ctx.stylesDoc, ctx);
     return parsed?.shape ?? null;
+  }
+  if (el.namespaceURI === DRAW_NAMESPACE && el.localName === "frame") {
+    if (!ctx.parts) {
+      return null;
+    }
+    const parsed = parseDrawFrame(el, ctx.parts, ctx.graphicWrapStyles);
+    if (!parsed) {
+      return null;
+    }
+    ctx.collectMedia?.(parsed.media);
+    // `draw:frame` positions its members by svg:x/svg:y in the anchor frame,
+    // which parseDrawFrame (a standalone-image reader) does not read.
+    const image = { ...parsed.image };
+    image.offsetXCm = odfLengthToCm(svgAttr(el, "x")) ?? 0;
+    image.offsetYCm = odfLengthToCm(svgAttr(el, "y")) ?? 0;
+    return image;
   }
   if (el.namespaceURI === DRAW_NAMESPACE && el.localName === "g") {
     return parseGroupElement(el, ctx);

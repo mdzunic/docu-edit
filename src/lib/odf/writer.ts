@@ -101,7 +101,7 @@ import { definedNumberIndentCm, definedTextIndentCm } from "../core/listDefiniti
 import { zip, type ZipEntryInput } from "../core/zipWriter";
 import { escapeXml, firstChildElement, parseXml, serializeElement } from "../core/xml";
 import { ODT_MIMETYPE } from "./reader";
-import { drawFrameXml, graphicStyleXml } from "./drawing";
+import { drawFrameGroupChildXml, drawFrameXml, graphicStyleXml } from "./drawing";
 import { groupDrawXml } from "./group";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
 import { chartFrameXml } from "./chart";
@@ -1825,6 +1825,7 @@ function shapeParagraphXml(
 function groupParagraphXml(
   group: DrawingGroup,
   styles: AutomaticStyles,
+  mediaPlan: OdtMediaWritePlan,
   includeOpaque: boolean,
   styleOptions?: ParagraphStyleOptions,
 ): string {
@@ -1836,6 +1837,10 @@ function groupParagraphXml(
     paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque),
     shapeStyleNameFor: (shape) => styles.shapeStyleNameFor(shape),
     graphicStyleNameFor: (wrap) => styles.graphicStyleNameFor(wrap),
+    imageMemberXml: (image, xCm, yCm) => {
+      const href = mediaPlan.hrefFor(image.mediaId);
+      return href ? drawFrameGroupChildXml(image, href, xCm, yCm) : "";
+    },
   });
   return `<text:p${wrapperAttr}>${element}</text:p>`;
 }
@@ -2124,7 +2129,7 @@ export function buildContentXml(
         continue;
       }
       if (block.type === "drawingGroup") {
-        blockXml.push(groupParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
+        blockXml.push(groupParagraphXml(block, styles, mediaPlan, includeOpaque, takeStyleOptions()));
         i++;
         continue;
       }

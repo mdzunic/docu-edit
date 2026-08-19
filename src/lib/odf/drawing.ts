@@ -150,3 +150,19 @@ export function drawFrameXml(image: Image, href: string, graphicStyleName: strin
     "</draw:frame>"
   );
 }
+
+/** Serialises an Image **member** of a `draw:g` group (SPEC-057): a
+ * `draw:frame` positioned by `svg:x`/`svg:y` in the anchor frame (the group
+ * defines no coordinate space of its own), rather than the wrap-anchored
+ * standalone form. `xCm`/`yCm` are the member's absolute position. */
+export function drawFrameGroupChildXml(image: Image, href: string, xCm: number, yCm: number): string {
+  const descXml = image.altText ? `<svg:desc>${escapeXmlAttribute(image.altText)}</svg:desc>` : "";
+  return (
+    `<draw:frame${FRAME_XMLNS} text:anchor-type="paragraph"` +
+    ` svg:x="${cmToOdfLength(xCm)}" svg:y="${cmToOdfLength(yCm)}"` +
+    ` svg:width="${cmToOdfLength(image.widthCm)}" svg:height="${cmToOdfLength(image.heightCm)}">` +
+    `<draw:image xlink:href="${escapeXmlAttribute(href)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    descXml +
+    "</draw:frame>"
+  );
+}

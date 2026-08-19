@@ -6,7 +6,7 @@
 // children, and so do we — see drawingGroups.ts's bakeGroupRotationDeep). A
 // sealed container re-emits its preserved `draw:g` subtree verbatim instead.
 // Image and chart members are not yet serialised as group children.
-import { isDrawingGroup, isShape, type DrawingGroup, type DrawingMember, type Shape } from "../documentModel";
+import { isDrawingGroup, isImage, isShape, type DrawingGroup, type DrawingMember, type Image, type Shape } from "../documentModel";
 import { bakeGroupRotationDeep } from "../drawingGroups";
 import { escapeXmlAttribute } from "../core/xml";
 import { shapeElementXml, type OdfShapeTextWriteContext } from "./shape";
@@ -22,6 +22,9 @@ const DRAW_G_XMLNS =
 export interface OdfGroupWriteContext extends OdfShapeTextWriteContext {
   shapeStyleNameFor: (shape: Shape) => string;
   graphicStyleNameFor: (wrap: DrawingGroup["wrap"]) => string | undefined;
+  /** Serialises an image member as a positioned `draw:frame` (SPEC-057);
+   * returns "" when the image's media has no href in the write plan. */
+  imageMemberXml: (image: Image, xCm: number, yCm: number) => string;
 }
 
 /** A shape member shifted to its absolute position in the anchor frame. */
@@ -43,10 +46,13 @@ function membersXml(members: DrawingMember[], baseXCm: number, baseYCm: number, 
         const shifted = shiftedShape(member, baseXCm, baseYCm);
         return shapeElementXml(shifted, ctx.shapeStyleNameFor(shifted), ctx);
       }
+      if (isImage(member)) {
+        return ctx.imageMemberXml(member, baseXCm + (member.offsetXCm ?? 0), baseYCm + (member.offsetYCm ?? 0));
+      }
       if (isDrawingGroup(member)) {
         return groupElementXml(member, baseXCm + (member.offsetXCm ?? 0), baseYCm + (member.offsetYCm ?? 0), ctx);
       }
-      // Image and chart members are not yet serialised as group children.
+      // Chart members are not yet serialised as group children.
       return "";
     })
     .join("");

@@ -1267,7 +1267,7 @@ function parseBodyTextBlockOrSplit(
     (frame) =>
       firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined && !isFormulaFrame(frame, ctx.parts),
   );
-  const groupCtx = { ...shapeTextCtx, contentDoc: ctx.contentDoc, stylesDoc: ctx.stylesDoc, graphicWrapStyles: ctx.graphicWrapStyles };
+  const groupCtx = { ...shapeTextCtx, contentDoc: ctx.contentDoc, stylesDoc: ctx.stylesDoc, graphicWrapStyles: ctx.graphicWrapStyles, parts: ctx.parts };
   const hasGroup = Array.from(el.children).some(
     (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "g" && parseGroupElement(child, groupCtx) !== null,
   );
@@ -1353,10 +1353,12 @@ function parseBodyTextBlockOrSplit(
         }
       }
       if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "g") {
-        const parsedGroup = parseGroupElement(frameEl, groupCtx);
+        const groupMedia: MediaPart[] = [];
+        const parsedGroup = parseGroupElement(frameEl, { ...groupCtx, collectMedia: (part) => groupMedia.push(part) });
         if (parsedGroup) {
           flush();
           blocks.push(parsedGroup);
+          media.push(...groupMedia);
           continue;
         }
       }
