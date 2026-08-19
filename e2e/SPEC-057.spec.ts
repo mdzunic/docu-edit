@@ -161,6 +161,35 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(content(page).locator(containerSel)).toHaveCount(1);
   });
 
+  test("a selected container offers a z-order control that reorders it as one drawing (AC-16)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 350, 230);
+    await insertShapeAt(page, "ellipse", 520, 230);
+    await expect(drawings(page)).toHaveCount(2);
+
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
+    await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height / 2 } });
+    await rightShape.click({ modifiers: ["Shift"], position: { x: rightBox.width / 2, y: rightBox.height * 0.72 } });
+    await page.keyboard.press("ControlOrMeta+g");
+
+    // The container toolbar carries a z-order control (missing last round) — it
+    // reorders the container against its siblings through the shape z-order path.
+    await expect(page.getByTestId("group-toolbar")).toBeVisible();
+    const zorder = page.getByTestId("group-zorder");
+    await expect(zorder).toBeVisible();
+    await zorder.selectOption("back");
+    // The container survives the reorder and stays selected as one drawing.
+    await expect(drawings(page)).toHaveCount(1);
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "group");
+  });
+
   test("a selected floating container shows an anchor marker and re-anchors on a body drag (AC-14)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 350, 220);
