@@ -18,6 +18,7 @@ import {
   createEmptyHeaderFooterContent,
   isBreak,
   isChart,
+  isDrawingGroup,
   isImage,
   isMergeChipField,
   isShape,
@@ -87,9 +88,17 @@ export interface FlatEntry {
   isChart: boolean;
   isToc: boolean;
   isTof: boolean;
+  /** Whether this block is a native drawing-group container (SPEC-057). */
+  isGroup: boolean;
   imageSrc: string;
   imageSelected: boolean;
   shapeSelected: boolean;
+  /** For a container: the selected drawing's path relative to it (SPEC-057) —
+   * `[]` = the container, `[j,...]` = a member, `null` = no selection here. */
+  groupSelectedPath: number[] | null;
+  /** For a container: the member whose text frame is being edited in place
+   * (SPEC-057 AC-25) — `[j,...]` = that member, `null` = none here. */
+  groupEditingPath: number[] | null;
   /** Whether this exact shape is the one in text-editing mode (SPEC-051
    * AC-17, AC-18) — true only when it's also shapeSelected. */
   shapeEditing: boolean;
@@ -164,6 +173,10 @@ export interface PaginationViewDeps extends EditorContext {
   /** The selected chart (SPEC-052), if any — mirrors shapeSelection; no
    * multi-select array (no chart group-selection gesture). */
   chartSelection: Ref<ChartLocation | null>;
+  /** The selected drawing-group container or member (SPEC-057): `path` empty
+   * = the container, non-empty = a member by index path. `editingPath` (AC-25)
+   * carries the member whose text frame is being edited in place, or null. */
+  groupSelection: Ref<{ section: number; block: number; path?: number[]; editingPath?: number[] | null } | null>;
   /** Body headings collapsed in the document body (SPEC-037 AC-16), keyed by
    * their "section:block" address — drives the chevron direction. */
   collapsedHeadings: Ref<ReadonlySet<string>>;
@@ -287,6 +300,33 @@ function renderEntryFor(
       column,
     } as RenderEntry;
   }
+  if (flatEntry.isGroup) {
+    return {
+      key: flatEntry.key,
+      memo: [
+        block,
+        flatEntry.section,
+        flatEntry.blockIndex,
+        flatEntry.marker,
+        flatEntry.groupSelectedPath,
+        flatEntry.groupEditingPath,
+        flatEntry.drawingIndex,
+        column,
+        deps.trackChangesDisplayMode.value,
+      ],
+      kind: "drawingGroup",
+      blockProp: block,
+      sectionProp: flatEntry.section,
+      blockIndexProp: flatEntry.blockIndex,
+      drawingIndex: flatEntry.drawingIndex,
+      groupSelectedPath: flatEntry.groupSelectedPath,
+      groupEditingPath: flatEntry.groupEditingPath,
+      groupModel: model,
+      listDefinitions: model.listDefinitions ?? [],
+      column,
+      trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
+    } as RenderEntry;
+  }
   if (flatEntry.isTable || flatEntry.isImage || flatEntry.isShape || flatEntry.isChart) {
     return {
       key: flatEntry.key,
@@ -314,7 +354,7 @@ function renderEntryFor(
       shapeSelected: flatEntry.isShape ? flatEntry.shapeSelected : undefined,
       shapeEditing: flatEntry.isShape ? flatEntry.shapeEditing : undefined,
       chartSelected: flatEntry.isChart ? flatEntry.chartSelected : undefined,
-      drawingIndex: flatEntry.isShape || flatEntry.isChart ? flatEntry.drawingIndex : undefined,
+      drawingIndex: flatEntry.isShape || flatEntry.isChart || flatEntry.isImage ? flatEntry.drawingIndex : undefined,
       column,
       trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
     } as RenderEntry;
@@ -943,6 +983,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     const multiSelectedShapes = deps.shapeMultiSelection.value;
     const shapeTextEditing = deps.editingShapeText.value;
     const selectedChart = deps.chartSelection.value;
+    const selectedGroup = deps.groupSelection.value;
     let drawingCounter = 0;
     return deps.doc.value.sections.flatMap((section, sectionIndex) =>
       section.blocks.map((block, blockIndex) => {
@@ -952,8 +993,13 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         const image = isImage(block);
         const shape = isShape(block);
         const chart = isChart(block);
+        const group = isDrawingGroup(block);
         const toc = isToc(block);
         const tof = isTof(block);
+        const groupIsSelected =
+          group && selectedGroup && selectedGroup.section === sectionIndex && selectedGroup.block === blockIndex;
+        const groupSelectedPath = groupIsSelected ? selectedGroup.path ?? [] : null;
+        const groupEditingPath = groupIsSelected ? selectedGroup.editingPath ?? null : null;
         const cellSel =
           table && range && range.section === sectionIndex && range.block === blockIndex
             ? `${range.anchor.row}:${range.anchor.col}:${range.focus.row}:${range.focus.col}`
@@ -978,12 +1024,15 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           isChart: chart,
           isToc: toc,
           isTof: tof,
+          isGroup: group,
           imageSrc: image ? mediaSrc(deps.doc.value, block) : "",
           imageSelected: imgSelected,
           shapeSelected,
           shapeEditing: shape && shapeIsPrimarySelection && shapeTextEditing,
           chartSelected,
-          drawingIndex: shape || chart ? drawingCounter++ : -1,
+          groupSelectedPath,
+          groupEditingPath,
+          drawingIndex: shape || chart || group || image ? drawingCounter++ : -1,
           section: sectionIndex,
           blockIndex,
           marker: markers[sectionIndex][blockIndex],

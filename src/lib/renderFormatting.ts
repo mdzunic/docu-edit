@@ -6,6 +6,8 @@
 import {
   HORIZONTAL_RULE_STYLE_ID,
   type Chart,
+  type DrawingGroup,
+  type DrawingMember,
   type Image,
   type Paragraph,
   type ParagraphFormatting,
@@ -451,6 +453,43 @@ export function shapeDisplayStyle(shape: Shape): Record<string, string> {
     style.zIndex = String(shape.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
+}
+
+/** A drawing group's size and position rendering (SPEC-057) — a container is
+ * an ordinary anchored drawing, so this is shapeDisplayStyle's logic over the
+ * container's own `DrawingPlacement` fields (its members are positioned within
+ * the box by DocDrawingGroupBlock.vue). Kept per-kind like the others. */
+export function groupDisplayStyle(group: DrawingGroup): Record<string, string> {
+  const heightCm = Math.max(group.heightCm, 0.05);
+  const style: Record<string, string> = {
+    width: `${group.widthCm}cm`,
+    height: `${heightCm}cm`,
+  };
+  if (group.wrap !== "inline") {
+    style.position = "absolute";
+    style.left = `${group.offsetXCm ?? 0}cm`;
+    style.top = `${group.offsetYCm ?? 0}cm`;
+    const order = group.zOrder ?? 0;
+    style.zIndex = String(group.wrap === "behind" ? order - 100000 : 100000 + order);
+  }
+  return style;
+}
+
+/** A group member's absolutely-positioned wrapper within its container box
+ * (SPEC-057): member offsets are measured from the container's top-left, and
+ * a non-group member turns about its own centre via `--member-rotation` (a
+ * nested container turns its own content instead). Typed here (not inline in
+ * the `.vue`) so `position` stays a real CSS value. */
+export function groupMemberWrapperStyle(member: DrawingMember): Record<string, string> {
+  const rotation = member.type === "drawingGroup" ? 0 : member.rotationDeg ?? 0;
+  return {
+    position: "absolute",
+    left: `${member.offsetXCm ?? 0}cm`,
+    top: `${member.offsetYCm ?? 0}cm`,
+    width: `${member.widthCm}cm`,
+    height: `${Math.max(member.heightCm, 0.05)}cm`,
+    "--member-rotation": `${rotation}deg`,
+  };
 }
 
 /** A chart's size and position rendering (SPEC-052) — identical logic to

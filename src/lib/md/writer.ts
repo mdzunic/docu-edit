@@ -10,6 +10,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   isBreak,
   isChart,
+  isDrawingGroup,
   isImage,
   isShape,
   isTable,
@@ -200,6 +201,12 @@ function renderBlock(
   if (isChart(block)) {
     // Charts have no Markdown representation (SPEC-052 is out of SPEC-050's
     // scope) — dropped the same way a shape is.
+    listCounters.length = 0;
+    return null;
+  }
+  if (isDrawingGroup(block)) {
+    // A drawing group is one drawing (SPEC-057); like the shapes/charts/images
+    // it holds, it has no Markdown representation and is dropped.
     listCounters.length = 0;
     return null;
   }

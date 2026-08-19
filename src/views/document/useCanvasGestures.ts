@@ -54,6 +54,13 @@ export interface CanvasGesturesDeps extends EditorContext {
   shapeAtClientPoint: (clientX: number, clientY: number) => ShapeLocation | null;
   clearShapeSelection: () => void;
   startShapeMove: (event: MouseEvent, location: ShapeLocation) => void;
+  // --- from useDrawingGroups (SPEC-057) -------------------------------------
+  /** Whether a native drawing-group container or member is selected — a
+   * mousedown on its anchor then arms a move of the selected drawing, and a
+   * mousedown outside every drawing clears it. */
+  groupSelectionActive: () => boolean;
+  startGroupMove: (event: MouseEvent) => void;
+  clearGroupSelection: () => void;
   // --- from useCharts (SPEC-052) --------------------------------------------
   handleChartSelect: (section?: number, block?: number) => void;
   handleChartEditData: (section?: number, block?: number) => void;
@@ -100,6 +107,9 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     shapeAtClientPoint,
     clearShapeSelection,
     startShapeMove,
+    groupSelectionActive,
+    startGroupMove,
+    clearGroupSelection,
     handleChartSelect,
     handleChartEditData,
     chartAtClientPoint,
@@ -273,6 +283,16 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
       } else {
         clearChartSelection();
       }
+    }
+    // A native drawing group (SPEC-057): a mousedown on its anchor while it is
+    // already selected arms a move of the selected container/member (the
+    // select click has run on a prior interaction); a mousedown outside every
+    // drawing clears the group selection. Shift is reserved for multi-select.
+    const groupTarget = event.target instanceof Element ? event.target.closest(".doc-group-anchor") : null;
+    if (groupTarget && groupSelectionActive() && !event.shiftKey) {
+      startGroupMove(event);
+    } else if (!groupTarget) {
+      clearGroupSelection();
     }
     // Same for a selected TOC (SPEC-033) — a click on one is handled by
     // DocTocBlock's own @action "select", which fires afterward.

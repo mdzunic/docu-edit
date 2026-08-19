@@ -3,7 +3,7 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type DocumentModel, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
 import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
@@ -64,7 +64,7 @@ export interface RenderEntry {
   key: string;
   /** The v-memo array: every value the entry's DOM depends on. */
   memo: unknown[];
-  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "break" | "toc" | "tof" | "marker";
+  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "drawingGroup" | "break" | "toc" | "tof" | "marker";
   /** Element tag for paragraph/break/marker entries ("p", "h2", "div"). */
   tag?: string;
   className?: string;
@@ -102,6 +102,16 @@ export interface RenderEntry {
    * a chart shares the same document-order `drawingIndex` counter shapes do
    * (SPEC-051's "Rendering and test surface"), never its own. */
   chartSelected?: boolean;
+  /** A drawing-group container's selected path (SPEC-057): `[]` = the
+   * container itself is selected, `[j,...]` = a member, `null`/absent = no
+   * selection in this container. */
+  groupSelectedPath?: number[] | null;
+  /** The path of the member whose text frame is being edited in place
+   * (SPEC-057 AC-25): `[j,...]` = that member, `null`/absent = none here. */
+  groupEditingPath?: number[] | null;
+  /** The document model, passed to a container entry so its image members can
+   * resolve their media parts (SPEC-057). */
+  groupModel?: DocumentModel;
   /** Staleness flags a TOC entry's update control reacts to (SPEC-033
    * AC-10, AC-11). */
   tocStaleHeadings?: boolean;

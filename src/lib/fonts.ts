@@ -1,7 +1,7 @@
 // The font-family catalogue and font-size rules behind SPEC-013's toolbar
 // controls. Framework-free (no Vue imports) per the src/lib convention.
 // The standard catalogue lives in core/fonts.ts (product-neutral).
-import { isBreak, isChart, isImage, isShape, isToc,
+import { isBreak, isChart, isDrawingGroup, isImage, isShape, isToc,
   isTof, type DocumentModel } from "./documentModel";
 
 /** The families the open document actually uses, for the "Fonts in this
@@ -20,7 +20,7 @@ export function documentFontFamilies(model: DocumentModel): string[] {
   add(model.defaultStyles.fontFamily);
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block) || isTof(block)) {
+      if (isImage(block) || isShape(block) || isChart(block) || isDrawingGroup(block) || isBreak(block) || isToc(block) || isTof(block)) {
         continue;
       }
       const paragraphs =

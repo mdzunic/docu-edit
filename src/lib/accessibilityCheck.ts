@@ -13,6 +13,7 @@
 import {
   isBreak,
   isChart,
+  isDrawingGroup,
   isImage,
   isShape,
   isTable,
@@ -20,6 +21,7 @@ import {
   isTof,
   type Chart,
   type DocumentModel,
+  type DrawingGroup,
   type Image,
   type Paragraph,
   type Run,
@@ -309,7 +311,7 @@ function makeIssue(partial: Omit<AccessibilityIssue, "severity">): Accessibility
 
 // --- per-target detections -----------------------------------------------
 
-function checkImageAltText(image: Image | Shape | Chart, address: BlockAddress, issues: AccessibilityIssue[]): void {
+function checkImageAltText(image: Image | Shape | Chart | DrawingGroup, address: BlockAddress, issues: AccessibilityIssue[]): void {
   if (image.altText !== undefined && image.altText.trim().length > 0) {
     return;
   }
@@ -511,7 +513,8 @@ export type AccessibilityScanTarget =
   | { kind: "table"; address: BlockAddress; table: Table }
   | { kind: "image"; address: BlockAddress; image: Image }
   | { kind: "shape"; address: BlockAddress; shape: Shape }
-  | { kind: "chart"; address: BlockAddress; chart: Chart };
+  | { kind: "chart"; address: BlockAddress; chart: Chart }
+  | { kind: "drawingGroup"; address: BlockAddress; drawingGroup: DrawingGroup };
 
 export interface AccessibilityScanState {
   previousHeadingLevel: number | null;
@@ -555,6 +558,11 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
         targets.push({ kind: "shape", address: { section: sectionIndex, block: blockIndex }, shape: block });
       } else if (isChart(block)) {
         targets.push({ kind: "chart", address: { section: sectionIndex, block: blockIndex }, chart: block });
+      } else if (isDrawingGroup(block)) {
+        // A container is one drawing carrying altText in the same field
+        // (SPEC-057 changes to SPEC-043); its members are never separately
+        // flagged.
+        targets.push({ kind: "drawingGroup", address: { section: sectionIndex, block: blockIndex }, drawingGroup: block });
       } else if (isBreak(block) || isToc(block) || isTof(block)) {
         // Nothing to check.
       } else {
@@ -563,7 +571,7 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
           kind: "paragraph",
           address: { section: sectionIndex, block: blockIndex },
           paragraph: block,
-          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isBreak(next) && !isToc(next) && !isTof(next) ? next : undefined,
+          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isDrawingGroup(next) && !isBreak(next) && !isToc(next) && !isTof(next) ? next : undefined,
         });
       }
     });
@@ -596,6 +604,13 @@ export function scanAccessibilityTarget(
     // Same "missing-alt-text" detection as an image/shape — Chart carries
     // altText in the same DrawingPlacement field (SPEC-052).
     checkImageAltText(target.chart, target.address, issues);
+    return;
+  }
+  if (target.kind === "drawingGroup") {
+    state.anyContent = true;
+    // A container is one drawing carrying altText in the same field
+    // (SPEC-057); members are never separately flagged.
+    checkImageAltText(target.drawingGroup, target.address, issues);
     return;
   }
   if (target.kind === "table") {

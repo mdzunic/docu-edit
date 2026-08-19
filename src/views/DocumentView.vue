@@ -23,7 +23,9 @@ import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.v
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
+import GroupToolbar from "../components/GroupToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
+import DrawingGroupHandles from "../components/DrawingGroupHandles.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -88,6 +90,7 @@ import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
+import { useDrawingGroups } from "./document/useDrawingGroups";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useNotes } from "./document/useNotes";
@@ -675,6 +678,7 @@ const {
 // canvas and applyEdit reach them through these returned bindings.
 const {
   imageSelection,
+  handleImageKeys,
   imageHandles,
   imageOptionsOpen,
   imageOptionsInitial,
@@ -730,6 +734,7 @@ const {
   handleShapeDelete,
   handleShapeDuplicate,
   handleShapeNudge,
+  handleShapeKeys,
   handleShapeFill,
   handleShapeOutline,
   handleShapeRotationInput,
@@ -755,6 +760,7 @@ const {
 // — see that composable's header comment).
 const {
   chartSelection,
+  handleChartKeys,
   chartHandles,
   editingChartData,
   editingChartOptions,
@@ -775,6 +781,13 @@ const {
   chartDataSheetInitial,
   chartOptionsInitial,
 } = useCharts({ ...editorContext });
+
+// --- native drawing-group containers (SPEC-057) ------------------------------
+// Container/member selection (click-to-enter), Group/Ungroup, the container
+// and member gestures, the container toolbar and keyboard proxy traversal.
+// clearOtherSelections keeps a group selection exclusive with the per-kind
+// shape/image/chart selections.
+const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); }, getGroupCandidates: () => shapeMultiSelection.value });
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
 // session's editing surface, op dispatch and overlay live in the composable
@@ -1920,6 +1933,11 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
   if (!root || !model || !editable.value) {
     return;
   }
+  if (event.key === "Escape" && drawingGroups.escapeGroupSelection()) {
+    // Step back out one level of group selection first (SPEC-057 AC-24).
+    event.preventDefault();
+    return;
+  }
   if (event.key === "Escape") {
     // Escape dismisses the paste options chip, the context menu, the
     // cell-range selection (SPEC-022) and the format painter (SPEC-020
@@ -1934,52 +1952,21 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     clearShapeSelection();
     disarmShapeDraw();
     clearChartSelection();
+    drawingGroups.clearGroupSelection();
     clearTocSelection();
     clearTofSelection();
     exitHeaderFooterEditing();
     exitNoteEditing();
     return;
   }
-  if (shapeSelection.value && !editingShapeText.value) {
-    // A selected shape's keyboard interactions (SPEC-051 AC-40..43): a
-    // dedicated keydown path, the same reason images.ts's own image-delete
-    // path is one — a shape click never places a DOM caret/selection inside
-    // the contenteditable region.
-    if (event.key === "Delete" || event.key === "Backspace") {
-      event.preventDefault();
-      handleShapeDelete();
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
-      event.preventDefault();
-      handleShapeDuplicate();
-      return;
-    }
-    const direction =
-      event.key === "ArrowUp" ? "up" :
-      event.key === "ArrowDown" ? "down" :
-      event.key === "ArrowLeft" ? "left" :
-      event.key === "ArrowRight" ? "right" : "";
-    if (direction) {
-      event.preventDefault();
-      handleShapeNudge(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
-      return;
-    }
+  if (handleShapeKeys(event)) {
+    return;
   }
-  if (chartSelection.value && !editingChartData.value && !editingChartOptions.value) {
-    // A selected chart's keyboard interactions (SPEC-052) — the same
-    // dedicated keydown path shapes/images use: a chart click never places
-    // a DOM caret/selection inside a contenteditable region.
-    if (event.key === "Delete" || event.key === "Backspace") {
-      event.preventDefault();
-      deleteChartWithCaptionPrompt();
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
-      event.preventDefault();
-      handleChartDuplicate();
-      return;
-    }
+  if (drawingGroups.handleGroupKeys(event)) {
+    return;
+  }
+  if (handleChartKeys(event, deleteChartWithCaptionPrompt)) {
+    return;
   }
   if (tocSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
     // Deleting a selected TOC (SPEC-033 AC-16) is the same dedicated
@@ -1999,13 +1986,7 @@ function handleKeyDown(event = new KeyboardEvent("keydown")) {
     addToast('This table of contents isn’t editable — use "Update table of contents" instead.');
     return;
   }
-  if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
-    // Deleting a selected image (SPEC-024 AC-30) is a dedicated keydown
-    // path, not the native beforeinput deletion flow: an image click never
-    // places a DOM caret/selection inside the contenteditable region for
-    // that flow to act on.
-    event.preventDefault();
-    deleteImageWithCaptionPrompt();
+  if (handleImageKeys(event, deleteImageWithCaptionPrompt)) {
     return;
   }
   if (tofSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
@@ -2345,6 +2326,9 @@ const {
   shapeAtClientPoint,
   clearShapeSelection,
   startShapeMove,
+  groupSelectionActive: () => drawingGroups.groupSelection.value !== null,
+  startGroupMove: drawingGroups.startGroupMove,
+  clearGroupSelection: drawingGroups.clearGroupSelection,
   handleChartSelect,
   handleChartEditData,
   chartAtClientPoint,
@@ -2758,6 +2742,7 @@ const { pagedViews } = usePaginationView({
   shapeMultiSelection,
   editingShapeText,
   chartSelection,
+  groupSelection: drawingGroups.groupRenderSelection,
   collapsedHeadings,
   remount,
   realizedSticky,
@@ -3630,6 +3615,13 @@ function handleMenuCommand(id = "") {
               @mousedown="startShapeRotate($event)"
             />
           </div>
+          <DrawingGroupHandles
+            v-if="drawingGroups.selectedHasHandles()"
+            :handles="drawingGroups.groupHandles.value || undefined"
+            :rotation-deg="drawingGroups.selectedRotationDeg()"
+            @resize-start="(handle, event) => drawingGroups.startGroupResize(event, handle)"
+            @rotate-start="drawingGroups.startGroupRotate"
+          />
           <div
             v-if="shapeAnchorMarker"
             class="shape-anchor-marker print-exclude"
@@ -3654,7 +3646,7 @@ function handleMenuCommand(id = "") {
             aria-multiline="true"
             aria-label="Document content"
             :aria-readonly="editable ? undefined : 'true'"
-            :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText"
+            :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText && !drawingGroups.editingMemberText.value"
             spellcheck="false"
             @beforeinput="handleBeforeInput"
             @keydown="handleKeyDown"
@@ -3701,6 +3693,7 @@ function handleMenuCommand(id = "") {
               @shape-text-compositionend="handleShapeTextCompositionEnd"
               @chart-select="handleChartSelect"
               @chart-edit-data="handleChartEditData"
+              v-on="drawingGroups.groupListeners"
               @toc-action="handleTocAction"
               @tof-action="handleTofAction"
               @dblclick-header="handleDblclickHeader(pageIndex)"
@@ -3914,10 +3907,22 @@ function handleMenuCommand(id = "") {
       @wrap="handleShapeWrap"
       @alt-text="handleShapeAltText"
       @z-order="handleShapeZOrder"
-      @group="handleGroupSelected(currentGroupMembers())"
+      @group="drawingGroups.groupSelectedDrawings()"
       @ungroup="handleUngroupSelected"
       @delete="handleShapeDelete"
       @duplicate="handleShapeDuplicate"
+    />
+    <GroupToolbar
+      v-if="drawingGroups.groupToolbarState()"
+      v-bind="drawingGroups.groupToolbarState()"
+      class="print-exclude"
+      @wrap="drawingGroups.setSelectedWrap"
+      @rotation="drawingGroups.setSelectedRotation"
+      @alt-text="drawingGroups.setSelectedAltText"
+      @reorder="drawingGroups.reorderSelectedMember"
+      @duplicate="drawingGroups.duplicateSelected"
+      @delete="drawingGroups.deleteSelected"
+      @ungroup="drawingGroups.ungroupSelectedContainer"
     />
     <ChartToolbar
       v-if="chartSelection && chartHandles && doc && chartAt(doc, chartSelection)"

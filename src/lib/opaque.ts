@@ -10,6 +10,7 @@ import {
   createDefaultStyles,
   isBreak,
   isChart,
+  isDrawingGroup,
   isImage,
   isShape,
   isTable,
@@ -18,6 +19,8 @@ import {
   mergeRunFormatting,
   type DocumentFormat,
   type DocumentModel,
+  type DrawingGroup,
+  type DrawingMember,
   type Paragraph,
   type Run,
   type RunFormatting,
@@ -105,6 +108,9 @@ export type DropKind =
   // SPEC-051: a shape geometry outside the catalogue that a cross-format
   // save cannot carry into the target format (AC-61).
   | "shapeGeometry"
+  // SPEC-057: a drawing-group container whose every member a cross-format
+  // save had to drop, so the container itself is dropped (AC-75).
+  | "drawingGroup"
   // SPEC-052: a property of an *edited* chart the model has no field for —
   // the one case a same-format save can report a non-empty `dropped` for
   // (see "Rewriting a chart" — an untouched chart still reports nothing).
@@ -164,6 +170,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   svgImage: "SVG image",
   tabStop: "Bar tab stop",
   shapeGeometry: "Shape geometry",
+  drawingGroup: "Drawing group",
   chartFeature: "Chart feature",
   trackedPropertyChange: "Tracked table property change",
   pageSetup: "Page setup",
@@ -285,6 +292,7 @@ const REASONS: Record<DropKind, string> = {
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
   tabStop: "OpenDocument Text has no bar tab stop — the vertical rule it draws is lost",
   shapeGeometry: "this shape's geometry is outside the catalogue and cannot be converted between formats",
+  drawingGroup: "every member of this drawing group is content the target format cannot carry, so the group is dropped",
   // Overridden per call by collectEditedChartDropRecords with the specific
   // lost property; this generic text is the fallback record() would use if
   // anything ever routes a chartFeature drop through it instead.
@@ -318,6 +326,41 @@ function record(kind: DropKind, location: string, target: DocumentFormat): DropR
     location,
     reason: `Not preserved when saving as ${FORMAT_LABELS[target]}: ${REASONS[kind]}`,
   };
+}
+
+/** Every leaf (non-container) member of a drawing group, recursing into
+ * nested containers (SPEC-057). Used by the cross-format drop detection to
+ * decide whether the whole container drops. */
+function flattenGroupLeaves(group: DrawingGroup): DrawingMember[] {
+  const leaves: DrawingMember[] = [];
+  for (const member of group.members) {
+    if (isDrawingGroup(member)) {
+      leaves.push(...flattenGroupLeaves(member));
+    } else {
+      leaves.push(member);
+    }
+  }
+  return leaves;
+}
+
+/** The DropKind a single group member would report on a cross-format save, or
+ * null if it converts losslessly (SPEC-057 "Preserved members and preserved
+ * containers"): a preserved shape geometry / chart cannot travel, an SVG image
+ * cannot enter `.docx`. */
+function crossFormatMemberDropKind(member: DrawingMember, model: DocumentModel, target: DocumentFormat): DropKind | null {
+  if (isShape(member) && member.unsupportedGeometryXml !== undefined) {
+    return "shapeGeometry";
+  }
+  if (isChart(member) && member.unsupportedChartXml !== undefined) {
+    return "chart";
+  }
+  if (isImage(member) && target === "docx") {
+    const media = (model.media ?? []).find((part) => part.mediaId === member.mediaId);
+    if (media?.contentType === "image/svg+xml") {
+      return "svgImage";
+    }
+  }
+  return null;
 }
 
 /** The `.docx`/`.odt` package-level drops (opaque nodes/parts, SVG images,
@@ -413,6 +456,34 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           // collectEditedChartDropRecords for the "edited" exception.
           if (blockAt.unsupportedChartXml && source !== target) {
             dropped.push(record("chart", `paragraph ${paragraphNumber}`, target));
+          }
+          continue;
+        }
+        if (isDrawingGroup(blockAt)) {
+          // A container is one drawing (SPEC-057). Cross-format, its preserved
+          // subtree cannot travel and each member that the target format
+          // cannot carry drops with its existing kind; if every member drops,
+          // the container itself drops as "drawingGroup" (AC-75). Same-format
+          // saves re-emit the subtree verbatim and report nothing.
+          if (source !== target) {
+            const leaves = flattenGroupLeaves(blockAt);
+            let droppedCount = 0;
+            for (const leaf of leaves) {
+              const kind = crossFormatMemberDropKind(leaf, model, target);
+              if (kind) {
+                droppedCount += 1;
+              }
+            }
+            if (leaves.length > 0 && droppedCount === leaves.length) {
+              dropped.push(record("drawingGroup", `paragraph ${paragraphNumber}`, target));
+            } else {
+              for (const leaf of leaves) {
+                const kind = crossFormatMemberDropKind(leaf, model, target);
+                if (kind) {
+                  dropped.push(record(kind, `paragraph ${paragraphNumber}`, target));
+                }
+              }
+            }
           }
           continue;
         }
@@ -687,7 +758,7 @@ function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
         }
         return;
       }
-      if (isImage(block) || isShape(block) || isChart(block) || isBreak(block)) {
+      if (isImage(block) || isShape(block) || isChart(block) || isDrawingGroup(block) || isBreak(block)) {
         return;
       }
       checkParagraph(block, paragraphNumber);
@@ -1021,7 +1092,7 @@ export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): Do
             paragraphs.push(...cell.blocks);
           }
         }
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isDrawingGroup(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
         paragraphs.push(block);
       }
     }

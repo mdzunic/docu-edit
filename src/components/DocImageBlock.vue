@@ -29,6 +29,10 @@ const props = defineProps({
    * looks this up — the block only carries a mediaId). */
   src: { type: String, required: true },
   selected: { type: Boolean, default: false },
+  /** This drawing's 0-based index in document order — images now carry the
+   * `drawing-<n>` proxy alongside shapes/charts/containers (SPEC-057
+   * AC-38). */
+  drawingIndex: { type: Number, default: 0 },
   /** The review pane's display mode (SPEC-039 AC-9) — a tracked-inserted
    * image is hidden in "Original" (as if rejected), a tracked-deleted one
    * hidden in "No markup" (as if accepted). */
@@ -56,8 +60,21 @@ const floatingWrap = ["behind", "infront"];
       :style="imageDisplayStyle(asImage(block))"
       data-testid="doc-image"
       draggable="false"
-      @click.stop="$emit('select')"
     >
+    <!-- The transparent drawing proxy (SPEC-057 AC-38): images join the
+         `drawing-<index>` counter and gain a focusable role="img" surface,
+         mirroring DocShapeBlock/DocChartBlock. Laid over the image with the
+         same display style so it tracks every wrap mode, it also owns the
+         click (carrying shiftKey, so images join the multi-selection). -->
+    <span
+      v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
+      class="doc-image-proxy"
+      :data-testid="`drawing-${drawingIndex}`"
+      role="img"
+      :aria-label="block.altText || 'Image'"
+      tabindex="0"
+      @click.stop="(event) => $emit('select', event.shiftKey)"
+    />
   </span>
 </template>
 
@@ -65,6 +82,7 @@ const floatingWrap = ["behind", "infront"];
 .doc-image-anchor {
   display: inline-block;
   line-height: 0;
+  position: relative;
 }
 
 .doc-image-anchor-floating {
@@ -79,5 +97,14 @@ const floatingWrap = ["behind", "infront"];
 .doc-image-selected {
   outline: 2px solid #1a73e8;
   outline-offset: 1px;
+}
+
+.doc-image-proxy {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
 }
 </style>

@@ -82,6 +82,9 @@ export function collectFontUsage(model: DocumentModel): StyleUsage[] {
           ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
           : [block];
       for (const paragraph of paragraphs) {
+        if (paragraph.type !== "paragraph") {
+          continue;
+        }
         for (const run of paragraph.runs) {
           add(
             run.formatting.fontFamily ?? defaultFamily,

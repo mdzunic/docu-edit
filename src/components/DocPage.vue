@@ -70,6 +70,12 @@ defineEmits([
   "shape-text-compositionend",
   "chart-select",
   "chart-edit-data",
+  "group-select",
+  "group-edit-text",
+  "group-text-beforeinput",
+  "group-text-keydown",
+  "group-text-compositionstart",
+  "group-text-compositionend",
   "toc-action",
   "tof-action",
   "dblclick-header",
@@ -172,7 +178,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               :key="entry.key"
               :entry="entry"
               :cell-range="cellRange"
-              @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
+              @image-select="(section, blockIndex, shiftKey) => $emit('image-select', section, blockIndex, shiftKey)"
               @shape-select="(section, blockIndex, shiftKey) => $emit('shape-select', section, blockIndex, shiftKey)"
               @shape-edit-text="(section, blockIndex) => $emit('shape-edit-text', section, blockIndex)"
               @shape-text-beforeinput="(event) => $emit('shape-text-beforeinput', event)"
@@ -181,6 +187,12 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               @shape-text-compositionend="(event) => $emit('shape-text-compositionend', event)"
               @chart-select="(section, blockIndex, shiftKey) => $emit('chart-select', section, blockIndex, shiftKey)"
               @chart-edit-data="(section, blockIndex) => $emit('chart-edit-data', section, blockIndex)"
+              @group-select="(section, blockIndex, payload) => $emit('group-select', section, blockIndex, payload)"
+              @group-edit-text="(section, blockIndex, payload) => $emit('group-edit-text', section, blockIndex, payload)"
+              @group-text-beforeinput="(event) => $emit('group-text-beforeinput', event)"
+              @group-text-keydown="(event) => $emit('group-text-keydown', event)"
+              @group-text-compositionstart="() => $emit('group-text-compositionstart')"
+              @group-text-compositionend="(event) => $emit('group-text-compositionend', event)"
               @toc-action="(payload) => $emit('toc-action', payload)"
               @tof-action="(payload) => $emit('tof-action', payload)"
               @outline-toggle="(section, blockIndex) => $emit('outline-toggle', section, blockIndex)"
@@ -199,7 +211,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
           <DocBlockEntries
             :entries="entries"
             :cell-range="cellRange"
-            @image-select="(section, block) => $emit('image-select', section, block)"
+            @image-select="(section, block, shiftKey) => $emit('image-select', section, block, shiftKey)"
             @shape-select="(section, block, shiftKey) => $emit('shape-select', section, block, shiftKey)"
             @shape-edit-text="(section, block) => $emit('shape-edit-text', section, block)"
             @shape-text-beforeinput="(event) => $emit('shape-text-beforeinput', event)"
@@ -208,6 +220,12 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
             @shape-text-compositionend="(event) => $emit('shape-text-compositionend', event)"
             @chart-select="(section, block, shiftKey) => $emit('chart-select', section, block, shiftKey)"
             @chart-edit-data="(section, block) => $emit('chart-edit-data', section, block)"
+            @group-select="(section, block, payload) => $emit('group-select', section, block, payload)"
+            @group-edit-text="(section, block, payload) => $emit('group-edit-text', section, block, payload)"
+            @group-text-beforeinput="(event) => $emit('group-text-beforeinput', event)"
+            @group-text-keydown="(event) => $emit('group-text-keydown', event)"
+            @group-text-compositionstart="() => $emit('group-text-compositionstart')"
+            @group-text-compositionend="(event) => $emit('group-text-compositionend', event)"
             @toc-action="(payload) => $emit('toc-action', payload)"
             @tof-action="(payload) => $emit('tof-action', payload)"
             @outline-toggle="(section, block) => $emit('outline-toggle', section, block)"

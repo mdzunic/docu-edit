@@ -14,6 +14,7 @@ import {
   createChipRun,
   isBreak,
   isChart,
+  isDrawingGroup,
   isImage,
   isShape,
   isTable,
@@ -169,7 +170,7 @@ export function insertTable(
     rows: Array.from({ length: rows }, () => emptyRow(cols)),
     columnWidthsCm: tableColumnWidthsCm(next, at.section, cols),
   };
-  if (isTable(target) || isImage(target) || isShape(target) || isChart(target) || isBreak(target) || isToc(target) || isTof(target)) {
+  if (isTable(target) || isImage(target) || isShape(target) || isChart(target) || isDrawingGroup(target) || isBreak(target) || isToc(target) || isTof(target)) {
     return { model: next, selection: caretSelection(at) };
   }
   const length = blockLength(target);

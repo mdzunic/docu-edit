@@ -49,6 +49,7 @@ import type {
   Section,
   SectionColumns,
   Shape,
+  DrawingGroup,
   Table,
   TableCell,
   TableRow,
@@ -101,6 +102,7 @@ import { zip, type ZipEntryInput } from "../core/zipWriter";
 import { escapeXml, firstChildElement, parseXml, serializeElement } from "../core/xml";
 import { ODT_MIMETYPE } from "./reader";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
+import { groupDrawXml } from "./group";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
 import { chartFrameXml } from "./chart";
 import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
@@ -614,6 +616,9 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
             takenNames.add(shapeBlock.styleId);
           }
         }
+        continue;
+      }
+      if (block.type === "drawingGroup") {
         continue;
       }
       if (block.styleId) {
@@ -1814,6 +1819,27 @@ function shapeParagraphXml(
   return `<text:p${wrapperAttr}>${element}</text:p>`;
 }
 
+/** A DrawingGroup block (SPEC-057): one `text:p` holding a `draw:g` (see
+ * group.ts's groupDrawXml). Members carry their own graphic styles, so the
+ * group ctx forwards the AutomaticStyles registration hooks. */
+function groupParagraphXml(
+  group: DrawingGroup,
+  styles: AutomaticStyles,
+  includeOpaque: boolean,
+  styleOptions?: ParagraphStyleOptions,
+): string {
+  const wrapperName = styleOptions
+    ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, styleOptions)
+    : undefined;
+  const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
+  const element = groupDrawXml(group, {
+    paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque),
+    shapeStyleNameFor: (shape) => styles.shapeStyleNameFor(shape),
+    graphicStyleNameFor: (wrap) => styles.graphicStyleNameFor(wrap),
+  });
+  return `<text:p${wrapperAttr}>${element}</text:p>`;
+}
+
 /** A Chart block (SPEC-052): the chart-flavoured sibling of
  * imageParagraphXml/shapeParagraphXml — one `text:p` holding the
  * `draw:frame`/`draw:object` (see chart.ts's chartFrameXml). Returns just
@@ -2094,6 +2120,11 @@ export function buildContentXml(
       }
       if (block.type === "chart") {
         blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
+        i++;
+        continue;
+      }
+      if (block.type === "drawingGroup") {
+        blockXml.push(groupParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
         i++;
         continue;
       }

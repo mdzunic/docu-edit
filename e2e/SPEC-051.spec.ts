@@ -8,13 +8,18 @@ import { fileURLToPath } from "node:url";
 // round-tripped through this project's own writer — and contain, in this
 // fixed document order, every "Shape catalogue" geometry, a grouped pair, a
 // text box and one geometry outside the catalogue:
-//   0  line              7  star5              14 group member A (rect)
-//   1  arrow             8  rightArrow         15 group member B (roundRect)
-//   2  rect              9  leftArrow          16 text box (rect, no fill/outline)
-//   3  roundRect        10  upArrow            17 unsupported geometry ("pentagon")
+//   0  line              7  star5              14 migrated group container
+//   1  arrow             8  rightArrow         15 text box (rect, no fill/outline)
+//   2  rect              9  leftArrow          16 unsupported geometry ("pentagon")
+//   3  roundRect        10  upArrow
 //   4  ellipse          11  downArrow
 //   5  triangle         12  wedgeRectCallout
 //   6  diamond          13  wedgeRoundRectCallout
+//
+// SPEC-057 supersedes SPEC-051's grouping: the `de:group` pair (old 14/15)
+// migrates on open to ONE native DrawingGroup container at index 14, so every
+// index after it shifts down by one, and the container's members nest as
+// drawing-14-member-0/1 rather than appearing as their own top-level drawings.
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const docxShapesFixture = join(fixturesDir, "word-shapes.docx");
@@ -27,7 +32,7 @@ async function openFixture(page: Page, path: string): Promise<void> {
 }
 
 const content = (page: Page) => page.getByTestId("document-content");
-const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]');
+const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]:not([data-testid*="-member-"])');
 const drawingAt = (page: Page, index: number) => content(page).locator(`[data-testid="drawing-${index}"]`);
 
 // The catalogue geometries in the fixed fixture order above, with the alt
@@ -101,9 +106,12 @@ async function canvasHasOpaquePixel(proxy: Locator): Promise<boolean> {
  * duplicating every assertion. */
 function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: string): void {
   test.describe(`SPEC-051 — opening ${formatLabel}'s shape fixture (${acTag})`, () => {
-    test(`renders all 18 shapes, one proxy per drawing, in document order (${acTag})`, async ({ page }) => {
+    test(`renders all top-level drawings, one proxy each, in document order (the de:group pair now one container, ${acTag})`, async ({ page }) => {
       await openFixture(page, fixturePath);
-      await expect(drawings(page)).toHaveCount(18);
+      // 14 catalogue shapes (0..13) + 1 migrated container (14) + text box
+      // (15) + unsupported geometry (16) = 17 top-level drawings; the old
+      // 18th was the group's second member, now nested in the container.
+      await expect(drawings(page)).toHaveCount(17);
     });
 
     test(`renders every catalogue geometry with a focusable, correctly labelled ARIA proxy (${acTag})`, async ({ page }) => {
@@ -127,21 +135,26 @@ function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: s
       expect(pixel.b).toBeCloseTo(0xcc, -1);
     });
 
-    test(`the grouped pair share group behaviour — selecting one member exposes Ungroup (${acTag})`, async ({ page }) => {
+    test(`the migrated de:group pair opens as one native container, selectable and enterable (SPEC-057 AC-65/AC-77, ${acTag})`, async ({ page }) => {
       await openFixture(page, fixturePath);
-      const memberA = drawingAt(page, 14);
-      const memberB = drawingAt(page, 15);
-      await expect(memberA).toHaveAttribute("aria-label", "Group shape A");
-      await expect(memberB).toHaveAttribute("aria-label", "Group shape B");
-
+      const container = drawingAt(page, 14);
+      await expect(container).toHaveAttribute("role", "group");
+      // Its two members nest inside as drawing-14-member-0/1 rather than as
+      // their own top-level drawings.
+      const memberA = page.locator('[data-testid="drawing-14-member-0"]');
+      const memberB = page.locator('[data-testid="drawing-14-member-1"]');
+      await expect(memberA).toHaveCount(1);
+      await expect(memberB).toHaveCount(1);
+      // Clicking a member's painted region selects the OUTERMOST container
+      // (SPEC-057), whose toolbar offers Ungroup.
       await memberA.click();
-      await expect(page.getByTestId("shape-toolbar")).toBeVisible();
-      await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+      await expect(page.getByTestId("group-toolbar")).toBeVisible();
+      await expect(page.getByTestId("group-ungroup-button")).toBeVisible();
     });
 
     test(`the text box renders its own text and role=group (${acTag})`, async ({ page }) => {
       await openFixture(page, fixturePath);
-      const textBox = drawingAt(page, 16);
+      const textBox = drawingAt(page, 15);
       await expect(textBox).toHaveAttribute("role", "group");
       await expect(textBox).toHaveAttribute("aria-label", "Text box");
       const text = textBox.locator('[data-testid="shape-text"]');
@@ -151,7 +164,7 @@ function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: s
 
     test(`the unsupported geometry renders as a selectable placeholder with no fill painted (AC-60, ${acTag})`, async ({ page }) => {
       await openFixture(page, fixturePath);
-      const placeholder = drawingAt(page, 17);
+      const placeholder = drawingAt(page, 16);
       await expect(placeholder).toHaveAttribute("role", "img");
       await expect(placeholder).toHaveAttribute("aria-label", "Unsupported shape");
       // No mapped geometry is ever painted for it — the placeholder is a
@@ -192,59 +205,28 @@ async function insertShapeAt(page: Page, geometry: string, x: number, y: number)
 }
 
 test.describe("SPEC-051 — interactive shape editing", () => {
-  test("shift-clicking two shapes offers Group; grouping exposes Ungroup on either member (AC-34)", async ({
+  test("shift-clicking two shapes offers Group; grouping replaces them with one container (SPEC-057 AC-3/AC-5)", async ({
     page,
   }) => {
     await createDocument(page);
-    // Well clear of the left margin/ruler, so neither shape's proxy ever
-    // lands partly under the page furniture (a click there can hit the
-    // wrong element).
     await insertShapeAt(page, "rect", 400, 250);
     await insertShapeAt(page, "ellipse", 600, 250);
     await expect(page.getByTestId("shape-group-button")).toHaveCount(0);
     await expect(drawings(page)).toHaveCount(2);
-    // A fresh shape lands relative to the caret's own block, an atom like an
-    // image (see shapes.ts's header comment) — inserting the second next to
-    // the first can land it either side, so identify the two by their
-    // left-to-right screen order rather than assume a fixed drawing index.
-    const [first, second] = await drawings(page).all();
-    const firstBox = await first.boundingBox();
-    const secondBox = await second.boundingBox();
-    if (!firstBox || !secondBox) {
-      throw new Error("a drawing has no bounding box");
-    }
-    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
-    const rightBox = firstBox.x <= secondBox.x ? secondBox : firstBox;
-    // A plain click establishes a known single-selection baseline, then
-    // Shift-click the other shape to build a two-member selection. Both
-    // clicks land in the shape's LOWER half: the floating shape toolbar
-    // renders across the page top overlapping the shapes' upper halves, and
-    // under CPU load its mount/positioning races the click's hit-target
-    // check — a centre click can land on the toolbar instead of the shape
-    // (the factory-gate flake). 72% height is still well inside the painted
-    // ellipse. Waiting for the toolbar between the clicks pins its final
-    // position before the second click's hit-testing starts.
-    await leftShape.click({ position: { x: firstBox.width / 2, y: firstBox.height * 0.72 } });
-    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
-    await rightShape.click({
-      modifiers: ["Shift"],
-      position: { x: rightBox.width / 2, y: rightBox.height * 0.72 },
-    });
-    await expect(page.getByTestId("shape-group-button")).toBeVisible();
-    await page.getByTestId("shape-group-button").click();
-    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
-    await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
-    // The other member reports the same group once selected on its own.
-    await leftShape.click();
-    await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+    await groupFirstTwoShapes(page);
+    // Grouping replaces the two shapes with one native container (SPEC-057):
+    // the multi-selection becomes a single drawing whose toolbar offers
+    // Ungroup.
+    await expect(drawings(page)).toHaveCount(1);
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "group");
+    await expect(page.getByTestId("group-toolbar")).toBeVisible();
+    await expect(page.getByTestId("group-ungroup-button")).toBeVisible();
   });
 
-/** Groups the two insert-order-0/1 shapes and returns their locators,
- * left-to-right, with the group selected (leftShape single-selected, per
- * handleGroupSelected's own "leaves the group's first member selected"
- * contract — so leftShape is also what the resize/rotate handles measure
- * against). */
-async function groupFirstTwoShapes(page: Page): Promise<{ leftShape: Locator; rightShape: Locator }> {
+/** Shift-selects the two insert-order-0/1 shapes and Groups them into one
+ * native container (SPEC-057), leaving the container selected. Returns the
+ * container's proxy locator (drawing-0 after the collapse). */
+async function groupFirstTwoShapes(page: Page): Promise<{ container: Locator }> {
   const [first, second] = [drawingAt(page, 0), drawingAt(page, 1)];
   const firstBox = await first.boundingBox();
   const secondBox = await second.boundingBox();
@@ -253,9 +235,9 @@ async function groupFirstTwoShapes(page: Page): Promise<{ leftShape: Locator; ri
   }
   const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
   const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
-  // Lower-half clicks with the toolbar settled in between — see the AC-34
-  // test's own comment: the floating toolbar overlaps the shapes' upper
-  // halves, and under load a centre click can hit it instead of the shape.
+  // Lower-half clicks with the toolbar settled in between: the floating
+  // toolbar overlaps the shapes' upper halves, and under load a centre click
+  // can hit it instead of the shape.
   await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height * 0.72 } });
   await expect(page.getByTestId("shape-toolbar")).toBeVisible();
   await rightShape.click({
@@ -264,100 +246,80 @@ async function groupFirstTwoShapes(page: Page): Promise<{ leftShape: Locator; ri
   });
   await expect(page.getByTestId("shape-group-button")).toBeVisible();
   await page.getByTestId("shape-group-button").click();
-  await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
-  return { leftShape, rightShape };
+  await expect(page.getByTestId("group-toolbar")).toBeVisible();
+  return { container: drawingAt(page, 0) };
 }
 
-test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", () => {
-  test("dragging a grouped member moves every member by the same delta, sizes untouched (AC-36)", async ({ page }) => {
+test.describe("SPEC-057 — a container moves/resizes/rotates as one drawing (AC-10/19/20)", () => {
+  test("dragging the container's body moves it as one drawing (AC-10)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);
     await insertShapeAt(page, "ellipse", 600, 250);
-    const { leftShape, rightShape } = await groupFirstTwoShapes(page);
-
-    const beforeA = await leftShape.boundingBox();
-    const beforeB = await rightShape.boundingBox();
-    if (!beforeA || !beforeB) {
-      throw new Error("a group member has no bounding box");
+    const { container } = await groupFirstTwoShapes(page);
+    const before = await container.boundingBox();
+    if (!before) {
+      throw new Error("the container has no bounding box");
     }
-    await leftShape.hover();
+    // Drag over a member's painted region (the container proxy itself is not a
+    // hit surface); the container is already selected, so the drag moves it.
+    const member = page.locator('[data-testid="drawing-0-member-0"]');
+    const mBox = await member.boundingBox();
+    if (!mBox) {
+      throw new Error("a member has no bounding box");
+    }
+    await page.mouse.move(mBox.x + mBox.width / 2, mBox.y + mBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(beforeA.x + beforeA.width / 2 + 80, beforeA.y + beforeA.height / 2 + 60, { steps: 10 });
+    await page.mouse.move(mBox.x + mBox.width / 2 + 90, mBox.y + mBox.height / 2 + 70, { steps: 10 });
     await page.mouse.up();
-
-    const afterA = await leftShape.boundingBox();
-    const afterB = await rightShape.boundingBox();
-    if (!afterA || !afterB) {
-      throw new Error("a group member has no bounding box after the drag");
+    const after = await container.boundingBox();
+    if (!after) {
+      throw new Error("the container lost its bounding box after the drag");
     }
-    // Both members move by the same on-screen delta — relative positions
-    // and sizes are preserved.
-    expect(afterA.x - beforeA.x).toBeCloseTo(afterB.x - beforeB.x, 0);
-    expect(afterA.y - beforeA.y).toBeCloseTo(afterB.y - beforeB.y, 0);
-    expect(afterA.x).toBeGreaterThan(beforeA.x + 40);
-    expect(afterA.width).toBeCloseTo(beforeA.width, 0);
-    expect(afterB.width).toBeCloseTo(beforeB.width, 0);
+    expect(after.x).toBeGreaterThan(before.x + 40);
+    expect(after.y).toBeGreaterThan(before.y + 30);
   });
 
-  test("dragging a resize handle scales every member about the group's bounding-box centre (AC-37)", async ({ page }) => {
+  test("dragging a resize handle scales the whole container (AC-19)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);
     await insertShapeAt(page, "ellipse", 600, 250);
-    const { leftShape, rightShape } = await groupFirstTwoShapes(page);
-
-    const beforeA = await leftShape.boundingBox();
-    const beforeB = await rightShape.boundingBox();
-    const handle = page.getByTestId("shape-resize-se");
+    const { container } = await groupFirstTwoShapes(page);
+    const before = await container.boundingBox();
+    const handle = page.getByTestId("group-resize-se");
     const handleBox = await handle.boundingBox();
-    if (!beforeA || !beforeB || !handleBox) {
+    if (!before || !handleBox) {
       throw new Error("missing bounding box");
     }
     await handle.hover();
     await page.mouse.down();
-    await page.mouse.move(
-      handleBox.x + handleBox.width / 2 + 60,
-      handleBox.y + handleBox.height / 2 + 40,
-      { steps: 8 },
-    );
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 70, handleBox.y + handleBox.height / 2 + 50, { steps: 8 });
     await page.mouse.up();
-
-    const afterA = await leftShape.boundingBox();
-    const afterB = await rightShape.boundingBox();
-    if (!afterA || !afterB) {
-      throw new Error("a group member has no bounding box after the resize");
+    const after = await container.boundingBox();
+    if (!after) {
+      throw new Error("the container lost its bounding box after the resize");
     }
-    // Both members grow — the resize applies to the whole group, not just
-    // the member whose own handle was dragged.
-    expect(afterA.width).toBeGreaterThan(beforeA.width + 5);
-    expect(afterB.width).toBeGreaterThan(beforeB.width + 5);
+    expect(after.width).toBeGreaterThan(before.width + 5);
+    expect(after.height).toBeGreaterThan(before.height + 5);
   });
 
-  test("dragging the rotation handle rotates every member (AC-38)", async ({ page }) => {
+  test("dragging the rotation handle sets the container's rotation (AC-20)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);
     await insertShapeAt(page, "ellipse", 600, 250);
     await groupFirstTwoShapes(page);
-
-    const handle = page.getByTestId("shape-rotation-handle");
+    const handle = page.getByTestId("group-rotation-handle");
     const handleBox = await handle.boundingBox();
     if (!handleBox) {
       throw new Error("rotation handle has no bounding box");
     }
     await handle.hover();
     await page.mouse.down();
-    // Sweep the handle a quarter-turn around the shape's centre.
     await page.mouse.move(handleBox.x + 80, handleBox.y + 80, { steps: 8 });
     await page.mouse.up();
-
-    // Both members carry a live rotation — read it back off the model via
-    // the shape toolbar's rotation input, which reflects the currently
-    // selected (first) member; the other member's own rotation is asserted
-    // at the unit level (rotateGroup's own tests) since only one member is
-    // ever individually selected at a time in this UI.
-    const rotationInput = page.getByTestId("shape-rotation");
+    // The container's own rotation input (group toolbar) reflects the angle.
+    const rotationInput = page.getByTestId("group-rotation");
     await expect(rotationInput).toBeVisible();
-    const rotation = Number(await rotationInput.inputValue());
-    expect(rotation).not.toBe(0);
+    expect(Number(await rotationInput.inputValue())).not.toBe(0);
   });
 });
 
