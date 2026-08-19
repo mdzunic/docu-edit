@@ -755,7 +755,10 @@ export function reanchorShape(
   oldAnchorTopCm: number,
 ): CommandResult {
   const next = cloneContainers(model);
-  const shape = shapeAt(next, location);
+  // Any drawing kind re-anchors through this one path (SPEC-057 AC-14) — a
+  // group container is a top-level block like a shape, so guard on the
+  // kind-agnostic lookup.
+  const shape = drawingBlockAt(next, location);
   if (!shape) {
     return { model: next, selection };
   }
@@ -772,7 +775,7 @@ export function reanchorShape(
     targetBlock -= 1;
   }
   const deltaCm = nearest.topCm - oldAnchorTopCm;
-  const updated: Shape = {
+  const updated: Shape | Image | Chart | DrawingGroup = {
     ...shape,
     offsetYCm: (shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm) - deltaCm,
   };

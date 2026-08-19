@@ -161,6 +161,50 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(content(page).locator(containerSel)).toHaveCount(1);
   });
 
+  test("a selected floating container shows an anchor marker and re-anchors on a body drag (AC-14)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 350, 220);
+    await insertShapeAt(page, "ellipse", 520, 220);
+    await expect(drawings(page)).toHaveCount(2);
+
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
+    await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height / 2 } });
+    await rightShape.click({ modifiers: ["Shift"], position: { x: rightBox.width / 2, y: rightBox.height * 0.72 } });
+    await page.keyboard.press("ControlOrMeta+g");
+
+    // The container is left selected; being floating (square, from its members)
+    // it shows SPEC-051's anchor marker just as a single shape does (AC-14) —
+    // the exact affordance the prior round was missing for a group.
+    const container = drawingAt(page, 0);
+    await expect(container).toHaveAttribute("role", "group");
+    await expect(page.getByTestId("shape-anchor-marker")).toBeVisible();
+
+    // Dragging the container's body moves it as one drawing through the same
+    // re-anchoring path a single shape uses; the container follows the pointer.
+    const before = await container.boundingBox();
+    if (!before) {
+      throw new Error("container has no bounding box");
+    }
+    await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(before.x + before.width / 2 + 30, before.y + before.height / 2 + 80, { steps: 6 });
+    await page.mouse.up();
+    const after = await container.boundingBox();
+    if (!after) {
+      throw new Error("container lost its bounding box after the drag");
+    }
+    expect(after.y).toBeGreaterThan(before.y + 30);
+    // The anchor marker is still shown for the (still-selected) container.
+    await expect(page.getByTestId("shape-anchor-marker")).toBeVisible();
+  });
+
   test("Group moves no member on screen (AC-4)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);

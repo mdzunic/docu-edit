@@ -67,7 +67,7 @@ import {
   type MemberReorder,
   type RectCm,
 } from "../../lib/drawingGroups";
-import { reorderShapeZ, type ZOrderCommand } from "../../lib/shapes";
+import { reanchorShape, reorderShapeZ, type ParagraphSpan, type ZOrderCommand } from "../../lib/shapes";
 import { type EditorContext } from "./context";
 import { asNudgeDirection, type NudgeDirection } from "../../lib/core/shapes";
 
@@ -100,6 +100,11 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
   const multiSelection = ref<DrawingRef[]>([]);
   /** The container/member handles' measured geometry (page-relative px). */
   const groupHandles = ref<ReturnType<typeof noImageHandleGeometry>>(noImageHandleGeometry());
+  /** The anchor marker for a selected floating container (SPEC-051's
+   * `shape-anchor-marker`, attached to the container exactly as to a single
+   * shape — SPEC-057 AC-14): page-relative px, or null when the container is
+   * inline, a member is selected, or there is no anchor paragraph to mark. */
+  const groupAnchorMarkerPx = ref<{ left: number; top: number } | null>(null);
 
   function beforeSelection(): ModelSelection {
     const root = contentRoot.value as HTMLElement | null;
@@ -563,6 +568,70 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     const pageEl = pageRef.value;
     const el = selectedProxyEl();
     groupHandles.value = pageEl && el ? measureImageGeometry(pageEl, el) : null;
+    const root = contentRoot.value as HTMLElement | null;
+    const sel = groupSelection.value;
+    groupAnchorMarkerPx.value =
+      pageEl && root && sel && selectionIsContainer() ? measureGroupAnchorMarker(sel.section, sel.block, pageEl, root) : null;
+  }
+
+  /** The paragraph a container at (section, block) is anchored to — the block
+   * immediately before it in the block list, else the one after, else null —
+   * mirroring useShapes' anchorParagraphBlockIndex (SPEC-057 AC-14). */
+  function containerAnchorParagraphBlockIndex(section: number, block: number): number | null {
+    const blocks = doc.value?.sections[section]?.blocks;
+    if (!blocks) {
+      return null;
+    }
+    if (blocks[block - 1]?.type === "paragraph") {
+      return block - 1;
+    }
+    if (blocks[block + 1]?.type === "paragraph") {
+      return block + 1;
+    }
+    return null;
+  }
+
+  /** The DOM position of the paragraph a selected container is anchored to
+   * (SPEC-057 AC-14); null when there is none, or it isn't measurable. */
+  function measureGroupAnchorMarker(section: number, block: number, pageEl: Element, root: Element): { left: number; top: number } | null {
+    const anchorBlockIndex = containerAnchorParagraphBlockIndex(section, block);
+    if (anchorBlockIndex === null) {
+      return null;
+    }
+    const el = root.querySelector(`[data-section="${section}"][data-block="${anchorBlockIndex}"]`);
+    if (!el) {
+      return null;
+    }
+    const pageRect = pageEl.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left - pageRect.left, top: rect.top - pageRect.top };
+  }
+
+  /** Every paragraph in the container's section, as re-anchoring candidates
+   * (page-relative cm) — the container is a top-level block, so every paragraph
+   * is a valid candidate, mirroring useShapes' candidateParagraphsFor. */
+  function containerCandidateParagraphs(section: number): ParagraphSpan[] {
+    const model = doc.value;
+    const root = contentRoot.value as HTMLElement | null;
+    const pageEl = pageRef.value;
+    if (!model || !root || !pageEl) {
+      return [];
+    }
+    const pageRect = pageEl.getBoundingClientRect();
+    const blocks = model.sections[section]?.blocks ?? [];
+    const spans: ParagraphSpan[] = [];
+    blocks.forEach((block, index) => {
+      if (block.type !== "paragraph") {
+        return;
+      }
+      const el = root.querySelector(`[data-section="${section}"][data-block="${index}"]`);
+      if (!el) {
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      spans.push({ section, block: index, topCm: (rect.top - pageRect.top) * CM_PER_PX, bottomCm: (rect.bottom - pageRect.top) * CM_PER_PX });
+    });
+    return spans;
   }
 
   // --- container / member resize + rotation drag ----------------------------
@@ -773,7 +842,22 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     const dyCm = (event.clientY - drag.startClientY) * CM_PER_PX;
     const before = beforeSelection();
     if (selectionIsContainer()) {
-      applyEdit(moveGroupContainer(model, before, sel.section, sel.block, dxCm, dyCm), before, "move group");
+      const moved = moveGroupContainer(model, before, sel.section, sel.block, dxCm, dyCm);
+      // Re-anchor across a paragraph boundary on top of the move (SPEC-057
+      // AC-14) — the container is one drawing, so this is SPEC-051's shape
+      // re-anchoring applied to the container's own box.
+      const candidates = containerCandidateParagraphs(sel.section);
+      const anchorBlockIndex = containerAnchorParagraphBlockIndex(sel.section, sel.block);
+      const anchorSpan = anchorBlockIndex === null ? undefined : candidates.find((span) => span.block === anchorBlockIndex);
+      const rect = drawingRectCm(sel.section, sel.block);
+      let result = moved;
+      let nextBlock = sel.block;
+      if (anchorSpan && rect) {
+        result = reanchorShape(moved.model, before, { section: sel.section, block: sel.block }, candidates, rect.yCm + dyCm + rect.heightCm / 2, anchorSpan.topCm);
+        nextBlock = result.selection.focus.block - 1;
+      }
+      applyEdit(result, before, "move group");
+      groupSelection.value = { section: sel.section, block: nextBlock, path: [] };
     } else {
       applyEdit(moveMember(model, before, sel, dxCm, dyCm), before, "edit group member");
     }
@@ -1148,6 +1232,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     nudgeSelected,
     reorderSelectedMember,
     reorderSelectedContainerZ,
+    groupAnchorMarker: () => groupAnchorMarkerPx.value,
     setSelectedRotation,
     setSelectedAltText,
     setSelectedWrap,

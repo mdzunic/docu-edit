@@ -492,7 +492,7 @@ import {
   setGroupWrap,
   setMemberAltText,
 } from "./drawingGroups";
-import { reorderShapeZ } from "./shapes";
+import { reanchorShape, reorderShapeZ } from "./shapes";
 
 describe("container-level edits (the container as one drawing, SPEC-057)", () => {
   it("moveGroupContainer shifts the container's own offset, leaving members put", () => {
@@ -571,6 +571,25 @@ describe("container z-order — the container as one drawing (SPEC-057 AC-16)", 
     const backContainer = back.model.sections[0].blocks[1] as DrawingGroup;
     const minZ = Math.min(...back.model.sections[0].blocks.map((b) => (b as DrawingGroup).zOrder ?? 0));
     expect(backContainer.zOrder).toBe(minZ);
+  });
+});
+
+describe("container re-anchoring — the container as one drawing (SPEC-057 AC-14)", () => {
+  it("reanchorShape relocates a container to the nearest paragraph and folds the anchor delta", () => {
+    // [para0, container@block1, para2]; container anchored to para0 (top 0),
+    // dragged near para2 (top 10).
+    const container = pairContainer({ offsetYCm: 2 });
+    const model = doc(paragraph("a"), container, paragraph("b"));
+    const candidates = [
+      { section: 0, block: 0, topCm: 0, bottomCm: 1 },
+      { section: 0, block: 2, topCm: 10, bottomCm: 11 },
+    ];
+    const result = reanchorShape(model, anySelection, { section: 0, block: 1 }, candidates, 10.5, 0);
+    // The container moved after para2 in the block list.
+    const idx = result.model.sections[0].blocks.findIndex((b) => b.type === "drawingGroup");
+    expect(idx).toBe(2);
+    // Its offsetYCm folded the old→new anchor-top delta (10) so it stays put.
+    expect((result.model.sections[0].blocks[idx] as DrawingGroup).offsetYCm).toBeCloseTo(2 - 10);
   });
 });
 

@@ -3655,6 +3655,12 @@ function handleMenuCommand(id = "") {
             data-testid="shape-anchor-marker"
             :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
           />
+          <div
+            v-if="drawingGroups.groupAnchorMarker()"
+            class="shape-anchor-marker print-exclude"
+            data-testid="shape-anchor-marker"
+            :style="{ left: `${drawingGroups.groupAnchorMarker()?.left ?? 0}px`, top: `${drawingGroups.groupAnchorMarker()?.top ?? 0}px` }"
+          />
           <ShapeDrawPreview
             v-if="drawPreview"
             class="print-exclude"
