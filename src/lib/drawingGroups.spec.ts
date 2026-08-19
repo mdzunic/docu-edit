@@ -595,7 +595,9 @@ describe("member text-frame editing seam (SPEC-057 AC-25)", () => {
     const committed = commitMemberTextModel(model, location, edited.model);
     const container = committed.sections[0].blocks[0] as DrawingGroup;
     const member = container.members[1] as Shape;
-    expect((member.text?.blocks[0] as Paragraph).runs.map((r) => r.text).join("")).toBe("hi!");
+    const memberText = member.text;
+    expect(memberText).toBeDefined();
+    expect((memberText!.blocks[0] as Paragraph).runs.map((r) => r.text).join("")).toBe("hi!");
     // The edit changed only text: the member keeps its box and the container
     // stays normalized (min member offset 0 on each axis).
     expect(member.widthCm).toBe(3);
