@@ -18,6 +18,18 @@ const props = defineProps({
   /** The trigger element: excluded from outside-click, and focus returns to
    * it on close. May be an HTMLElement or a component/ref exposing $el. */
   anchor: { type: null, default: null },
+  /** Set false when the consumer runs its own focus discipline (MenuBar's
+   * roving tab stop): the surface then never moves focus on close, so it
+   * cannot fight the consumer over where focus lands on a pointer
+   * cross-open or an outside click. */
+  returnFocus: { type: Boolean, default: true },
+  /** Keep the closed surface in the DOM (hidden) instead of unmounting it.
+   * MenuBar needs this: its popups' contents are part of the page's stated
+   * contract while closed — SPEC-020 reads the format painter's
+   * aria-checked off a closed Format menu — and slotted widgets keep their
+   * mounted state across open/close. Everything else (listeners, focus
+   * return) still keys off `open`. */
+  keepMounted: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["dismiss"]);
@@ -47,6 +59,16 @@ function onDocPointerDown(event = new PointerEvent("pointerdown")) {
     return;
   }
   if (surface.value instanceof HTMLElement && surface.value.contains(target)) {
+    return;
+  }
+  // A pointerdown inside ANY menu surface leaves this one open. A surface can
+  // spawn a child surface that is a DOM sibling (StylePicker's per-entry
+  // context menu), and dismissing the parent here unmounts the child between
+  // pointerdown and click — the item's click never fires, so the action
+  // silently does nothing (SPEC-019's update/reset-style regressions). Two
+  // unrelated surfaces can never both be open: opening the second one starts
+  // with a pointerdown outside the first, which dismisses it right here.
+  if (target instanceof Element && target.closest(".ui-menu-surface")) {
     return;
   }
   const anchor = anchorEl();
@@ -86,7 +108,7 @@ watch(
     // Return focus to the opener when the surface closes, but only if focus is
     // still inside the surface (or nowhere) — never steal it from a control the
     // user has already deliberately moved to.
-    if (wasOpen) {
+    if (wasOpen && props.returnFocus) {
       const active = document.activeElement;
       const inside =
         surface.value instanceof HTMLElement &&
@@ -104,7 +126,8 @@ onBeforeUnmount(removeListeners);
 
 <template>
   <div
-    v-if="props.open"
+    v-if="props.open || props.keepMounted"
+    v-show="props.open"
     ref="surface"
     class="ui-menu-surface"
     v-bind="$attrs"
