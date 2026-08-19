@@ -11,7 +11,7 @@ import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { writeOdt } from "./writer";
 import { unzip } from "../core/zip";
 import { equalStructural, firstStructuralDifference } from "../equality";
-import { isDrawingGroup, type DocumentModel } from "../documentModel";
+import { createDocument, isChart, isDrawingGroup, type Chart, type DocumentModel, type DrawingGroup, type Shape } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -74,5 +74,57 @@ describe("SPEC-057 legacy migration — lo-shapes.odt (AC-2, AC-63, AC-65)", () 
     const diff = firstStructuralDifference(wrap(openedGroup), wrap(reopenedGroups[0]));
     expect(diff, diff ? JSON.stringify(diff) : "").toBeNull();
     expect(equalStructural(wrap(openedGroup), wrap(reopenedGroups[0]))).toBe(true);
+  });
+});
+
+describe("SPEC-057 native chart member round trip — draw:g / draw:frame (AC-18, AC-62, AC-63)", () => {
+  function chartMemberModel(): DocumentModel {
+    const base = createDocument("chart-member");
+    const chart: Chart = {
+      type: "chart",
+      chartType: "columnClustered",
+      categories: ["A", "B"],
+      series: [{ name: "S", values: [3, 4], color: "#4472c4" }],
+      options: { legend: "none", dataLabels: false, gridlines: true },
+      widthCm: 5,
+      heightCm: 4,
+      wrap: "square",
+      offsetXCm: 6,
+      offsetYCm: 0,
+    };
+    const shape: Shape = { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", offsetXCm: 0, offsetYCm: 0 };
+    const group: DrawingGroup = {
+      type: "drawingGroup",
+      widthCm: 11,
+      heightCm: 4,
+      wrap: "square",
+      offsetXCm: 2,
+      offsetYCm: 2,
+      members: [shape, chart],
+    };
+    return { ...base, format: "odt", sections: [{ blocks: [{ type: "paragraph", runs: [] }, group] }] };
+  }
+
+  it("writes a chart member as a positioned draw:frame/draw:object with its own embedded object (AC-63)", async () => {
+    const { bytes } = await writeOdt(chartMemberModel());
+    const parts = await unzip(bytes);
+    const contentXml = new TextDecoder().decode(parts.get("content.xml")!);
+    expect(contentXml).toContain("<draw:g");
+    expect(contentXml).toContain("draw:object");
+    // An embedded chart object subpackage was minted for the member.
+    const objectPart = [...parts.keys()].find((k) => /^Object \d+\/content\.xml$/.test(k));
+    expect(objectPart).toBeTruthy();
+  });
+
+  it("re-opens the chart member as a first-class Chart member of the container (AC-62)", async () => {
+    const { bytes } = await writeOdt(chartMemberModel());
+    const reopened = await parseOdt(bytes);
+    const groups = reopened.sections.flatMap((s) => s.blocks).filter(isDrawingGroup);
+    expect(groups).toHaveLength(1);
+    const chartMember = groups[0].members.find(isChart);
+    expect(chartMember).toBeDefined();
+    expect(chartMember!.chartType).toBe("columnClustered");
+    expect(chartMember!.offsetXCm).toBeCloseTo(6, 1);
+    expect(groups[0].preservedSubtreeXml).toBeUndefined();
   });
 });

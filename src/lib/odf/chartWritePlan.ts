@@ -6,7 +6,7 @@
 // package shape) plus its META-INF/manifest.xml file-entries. Keyed by a
 // chart's *location* (section/block index), not a stable id — Chart carries
 // no field named `id` (IGNORED_KEYS, see documentModel.ts).
-import { isChart, type DocumentModel } from "../documentModel";
+import { isChart, isDrawingGroup, type Chart, type DocumentModel, type DrawingMember } from "../documentModel";
 import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "./chart";
 import type { OdtManifestEntry } from "./media";
 import type { ZipEntryInput } from "../core/zipWriter";
@@ -23,6 +23,10 @@ export interface OdfChartPlanEntry {
 
 export interface OdfChartWritePlan {
   planFor(section: number, block: number): OdfChartPlanEntry | undefined;
+  /** The plan entry for a Chart member of a container at (section, block),
+   * addressed by its member path (SPEC-057) — the group writer looks up the
+   * embedded object dir it must reference in the member's `draw:frame`. */
+  planForMember(section: number, block: number, path: number[]): OdfChartPlanEntry | undefined;
   /** Manifest file-entries for brand-new embedded objects (both the
    * directory entry and its content.xml entry) — a reused object's entries
    * already exist in the preserved manifest. */
@@ -89,35 +93,50 @@ export function planOdfChartWrite(
     return dir;
   };
 
+  /** Plans one chart's embedded object subpackage and records it under `key`.
+   * Shared by a top-level Chart block and a Chart nested in a DrawingGroup's
+   * members (SPEC-057 AC-62/AC-63). */
+  const planChartAt = (chart: Chart, key: string): void => {
+    if (forceRegenerate && chart.unsupportedChartXml !== undefined) {
+      return;
+    }
+    const sourceDir = !forceRegenerate && chart.sourcePart ? chart.sourcePart.replace(/\/content\.xml$/, "") : undefined;
+    if (sourceDir) {
+      liveObjectDirs.add(sourceDir);
+    }
+    const objectDir = sourceDir ?? freshObjectDir();
+    const needsRegeneration = forceRegenerate || !sourceDir || (chart.edited === true && chart.unsupportedChartXml === undefined);
+    const xml = needsRegeneration ? odfChartContentXml(chart) : null;
+    const partName = `${objectDir}/content.xml`;
+    if (xml !== null) {
+      if (sourceDir) {
+        regeneratedPartXml.set(partName, xml);
+      } else {
+        zipEntries.push({ name: partName, data: new TextEncoder().encode(xml) });
+        manifestEntries.push({ path: `${objectDir}/`, mediaType: CHART_OBJECT_CONTENT_TYPE });
+        manifestEntries.push({ path: partName, mediaType: "text/xml" });
+      }
+    }
+    plans.set(key, { objectDir, xml });
+  };
+
+  const planGroupMembers = (members: DrawingMember[], keyPrefix: string): void => {
+    members.forEach((member, index) => {
+      if (isChart(member)) {
+        planChartAt(member, `${keyPrefix}.m${index}`);
+      } else if (isDrawingGroup(member) && member.preservedSubtreeXml === undefined) {
+        planGroupMembers(member.members, `${keyPrefix}.m${index}`);
+      }
+    });
+  };
+
   model.sections.forEach((section, sectionIndex) => {
     section.blocks.forEach((block, blockIndex) => {
-      if (!isChart(block)) {
-        return;
+      if (isChart(block)) {
+        planChartAt(block, `${sectionIndex}.${blockIndex}`);
+      } else if (isDrawingGroup(block) && block.preservedSubtreeXml === undefined) {
+        planGroupMembers(block.members, `${sectionIndex}.${blockIndex}`);
       }
-      if (forceRegenerate && block.unsupportedChartXml !== undefined) {
-        // Cross-format save of an unsupported chart: nothing to regenerate
-        // from and no bytes to carry across formats — dropped entirely
-        // (already reported via opaque.ts's collectPackageDropRecords).
-        return;
-      }
-      const sourceDir = !forceRegenerate && block.sourcePart ? block.sourcePart.replace(/\/content\.xml$/, "") : undefined;
-      if (sourceDir) {
-        liveObjectDirs.add(sourceDir);
-      }
-      const objectDir = sourceDir ?? freshObjectDir();
-      const needsRegeneration = forceRegenerate || !sourceDir || (block.edited === true && block.unsupportedChartXml === undefined);
-      const xml = needsRegeneration ? odfChartContentXml(block) : null;
-      const partName = `${objectDir}/content.xml`;
-      if (xml !== null) {
-        if (sourceDir) {
-          regeneratedPartXml.set(partName, xml);
-        } else {
-          zipEntries.push({ name: partName, data: new TextEncoder().encode(xml) });
-          manifestEntries.push({ path: `${objectDir}/`, mediaType: CHART_OBJECT_CONTENT_TYPE });
-          manifestEntries.push({ path: partName, mediaType: "text/xml" });
-        }
-      }
-      plans.set(`${sectionIndex}.${blockIndex}`, { objectDir, xml });
     });
   });
 
@@ -134,6 +153,7 @@ export function planOdfChartWrite(
 
   return {
     planFor: (section, block) => plans.get(`${section}.${block}`),
+    planForMember: (section, block, path) => plans.get(`${section}.${block}.${path.map((p) => `m${p}`).join(".")}`),
     manifestEntries,
     zipEntries,
     regeneratedPartXml,

@@ -13,8 +13,9 @@ import { svgAttr } from "./xml";
 import { odfLengthToCm } from "./units";
 import { parseShapeElement, type OdfShapeTextContext } from "./shape";
 import { parseDrawFrame } from "./drawing";
+import { parseChartFrame } from "./chart";
 import type { MediaPart } from "../core/media";
-import type { DrawingGroup, DrawingMember, ImageWrapMode } from "../documentModel";
+import type { Chart, DrawingGroup, DrawingMember, ImageWrapMode } from "../documentModel";
 
 const DRAW_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const SVG_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
@@ -39,13 +40,38 @@ function memberOf(el: Element, ctx: OdfGroupReadContext): DrawingMember | null {
     if (!ctx.parts) {
       return null;
     }
+    // A chart frame (draw:object) models as a first-class Chart member
+    // (SPEC-057 AC-18/AC-62); an image frame (draw:image) as an Image. The
+    // frame positions its member by svg:x/svg:y in the anchor frame, which the
+    // standalone element readers do not read.
+    const chartParsed = parseChartFrame(el, ctx.parts);
+    if (chartParsed) {
+      const chart: Chart = {
+        type: "chart",
+        chartType: chartParsed.chartType,
+        categories: chartParsed.categories,
+        series: chartParsed.series,
+        options: chartParsed.options,
+        widthCm: chartParsed.widthCm,
+        heightCm: chartParsed.heightCm,
+        wrap: "square",
+        offsetXCm: odfLengthToCm(svgAttr(el, "x")) ?? 0,
+        offsetYCm: odfLengthToCm(svgAttr(el, "y")) ?? 0,
+        sourcePart: chartParsed.sourcePart,
+      };
+      if (chartParsed.unsupportedChartXml !== undefined) {
+        chart.unsupportedChartXml = chartParsed.unsupportedChartXml;
+      }
+      if (chartParsed.altText) {
+        chart.altText = chartParsed.altText;
+      }
+      return chart;
+    }
     const parsed = parseDrawFrame(el, ctx.parts, ctx.graphicWrapStyles);
     if (!parsed) {
       return null;
     }
     ctx.collectMedia?.(parsed.media);
-    // `draw:frame` positions its members by svg:x/svg:y in the anchor frame,
-    // which parseDrawFrame (a standalone-image reader) does not read.
     const image = { ...parsed.image };
     image.offsetXCm = odfLengthToCm(svgAttr(el, "x")) ?? 0;
     image.offsetYCm = odfLengthToCm(svgAttr(el, "y")) ?? 0;

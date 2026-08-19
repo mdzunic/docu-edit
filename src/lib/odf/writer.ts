@@ -104,7 +104,7 @@ import { ODT_MIMETYPE } from "./reader";
 import { drawFrameGroupChildXml, drawFrameXml, graphicStyleXml } from "./drawing";
 import { groupDrawXml } from "./group";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
-import { chartFrameXml } from "./chart";
+import { chartFrameXml, chartFrameGroupChildXml } from "./chart";
 import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
 import { formulaFrameXml, formulaObjectDirsInManifest } from "./formula";
 import { formulaFrameAltText, planOdfFormulaWrite, type OdfFormulaWritePlan } from "./formulaWritePlan";
@@ -1826,6 +1826,9 @@ function groupParagraphXml(
   group: DrawingGroup,
   styles: AutomaticStyles,
   mediaPlan: OdtMediaWritePlan,
+  chartPlan: OdfChartWritePlan,
+  section: number,
+  block: number,
   includeOpaque: boolean,
   styleOptions?: ParagraphStyleOptions,
 ): string {
@@ -1840,6 +1843,10 @@ function groupParagraphXml(
     imageMemberXml: (image, xCm, yCm) => {
       const href = mediaPlan.hrefFor(image.mediaId);
       return href ? drawFrameGroupChildXml(image, href, xCm, yCm) : "";
+    },
+    chartMemberXml: (chart, path, xCm, yCm) => {
+      const entry = chartPlan.planForMember(section, block, path);
+      return entry ? chartFrameGroupChildXml(chart, `./${entry.objectDir}`, xCm, yCm) : "";
     },
   });
   return `<text:p${wrapperAttr}>${element}</text:p>`;
@@ -2129,7 +2136,7 @@ export function buildContentXml(
         continue;
       }
       if (block.type === "drawingGroup") {
-        blockXml.push(groupParagraphXml(block, styles, mediaPlan, includeOpaque, takeStyleOptions()));
+        blockXml.push(groupParagraphXml(block, styles, mediaPlan, chartPlan, sectionIndex, i, includeOpaque, takeStyleOptions()));
         i++;
         continue;
       }

@@ -313,6 +313,22 @@ export function chartFrameXml(chart: Chart, objectHref: string): string {
   );
 }
 
+/** A Chart member of a `draw:g` group, as a `draw:frame`/`draw:object`
+ * positioned at absolute `xCm`/`yCm` in the anchor frame (SPEC-057
+ * AC-62/AC-63) — the chart sibling of drawing.ts's `drawFrameGroupChildXml`.
+ * `draw:g` defines no geometry, so members carry their own svg:x/svg:y. */
+export function chartFrameGroupChildXml(chart: Chart, objectHref: string, xCm: number, yCm: number): string {
+  const descXml = chart.altText ? `<svg:desc>${escapeXmlAttribute(chart.altText)}</svg:desc>` : "";
+  return (
+    `<draw:frame${FRAME_XMLNS} text:anchor-type="paragraph"` +
+    ` svg:x="${cmToOdfLength(xCm)}" svg:y="${cmToOdfLength(yCm)}"` +
+    ` svg:width="${cmToOdfLength(chart.widthCm)}" svg:height="${cmToOdfLength(Math.max(0, chart.heightCm))}">` +
+    `<draw:object xlink:href="${escapeXmlAttribute(objectHref)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    descXml +
+    "</draw:frame>"
+  );
+}
+
 function tableColumnLetter(index: number): string {
   return String.fromCharCode(66 + (index % 24));
 }

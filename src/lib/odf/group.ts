@@ -6,7 +6,7 @@
 // children, and so do we — see drawingGroups.ts's bakeGroupRotationDeep). A
 // sealed container re-emits its preserved `draw:g` subtree verbatim instead.
 // Image and chart members are not yet serialised as group children.
-import { isDrawingGroup, isImage, isShape, type DrawingGroup, type DrawingMember, type Image, type Shape } from "../documentModel";
+import { isChart, isDrawingGroup, isImage, isShape, type Chart, type DrawingGroup, type DrawingMember, type Image, type Shape } from "../documentModel";
 import { bakeGroupRotationDeep } from "../drawingGroups";
 import { escapeXmlAttribute } from "../core/xml";
 import { shapeElementXml, type OdfShapeTextWriteContext } from "./shape";
@@ -25,6 +25,10 @@ export interface OdfGroupWriteContext extends OdfShapeTextWriteContext {
   /** Serialises an image member as a positioned `draw:frame` (SPEC-057);
    * returns "" when the image's media has no href in the write plan. */
   imageMemberXml: (image: Image, xCm: number, yCm: number) => string;
+  /** Serialises a chart member as a positioned `draw:frame`/`draw:object`
+   * (SPEC-057) at member path `path`; returns "" when the chart plan has no
+   * entry for it. */
+  chartMemberXml: (chart: Chart, path: number[], xCm: number, yCm: number) => string;
 }
 
 /** A shape member shifted to its absolute position in the anchor frame. */
@@ -39,9 +43,9 @@ function shiftedShape(shape: Shape, baseXCm: number, baseYCm: number): Shape {
 
 /** The child elements of a container (already rotation-baked), positioned
  * absolutely at `baseX/baseY + member offset`. */
-function membersXml(members: DrawingMember[], baseXCm: number, baseYCm: number, ctx: OdfGroupWriteContext): string {
+function membersXml(members: DrawingMember[], baseXCm: number, baseYCm: number, ctx: OdfGroupWriteContext, path: number[]): string {
   return members
-    .map((member) => {
+    .map((member, index) => {
       if (isShape(member)) {
         const shifted = shiftedShape(member, baseXCm, baseYCm);
         return shapeElementXml(shifted, ctx.shapeStyleNameFor(shifted), ctx);
@@ -49,18 +53,22 @@ function membersXml(members: DrawingMember[], baseXCm: number, baseYCm: number, 
       if (isImage(member)) {
         return ctx.imageMemberXml(member, baseXCm + (member.offsetXCm ?? 0), baseYCm + (member.offsetYCm ?? 0));
       }
-      if (isDrawingGroup(member)) {
-        return groupElementXml(member, baseXCm + (member.offsetXCm ?? 0), baseYCm + (member.offsetYCm ?? 0), ctx);
+      if (isChart(member)) {
+        return ctx.chartMemberXml(member, [...path, index], baseXCm + (member.offsetXCm ?? 0), baseYCm + (member.offsetYCm ?? 0));
       }
-      // Chart members are not yet serialised as group children.
+      if (isDrawingGroup(member)) {
+        return groupElementXml(member, baseXCm + (member.offsetXCm ?? 0), baseYCm + (member.offsetYCm ?? 0), ctx, [...path, index]);
+      }
       return "";
     })
     .join("");
 }
 
 /** A `draw:g` element (nested or top-level), with its members positioned at
- * `baseX/baseY`. Assumes rotation is already baked. */
-function groupElementXml(group: DrawingGroup, baseXCm: number, baseYCm: number, ctx: OdfGroupWriteContext): string {
+ * `baseX/baseY`. Assumes rotation is already baked. `path` is the member path
+ * of this container from the top-level block (empty for the top level), so a
+ * chart member resolves to its chart-plan entry. */
+function groupElementXml(group: DrawingGroup, baseXCm: number, baseYCm: number, ctx: OdfGroupWriteContext, path: number[]): string {
   const titleXml = group.altText ? `<svg:title>${escapeXmlAttribute(group.altText)}</svg:title><svg:desc>${escapeXmlAttribute(group.altText)}</svg:desc>` : "";
   const zAttr = group.zOrder !== undefined ? ` draw:z-index="${group.zOrder}"` : "";
   const styleName = ctx.graphicStyleNameFor(group.wrap);
@@ -69,7 +77,7 @@ function groupElementXml(group: DrawingGroup, baseXCm: number, baseYCm: number, 
   return (
     `<draw:g${DRAW_G_XMLNS} text:anchor-type="${anchorType}"${styleAttr}${zAttr}>` +
     titleXml +
-    membersXml(group.members, baseXCm, baseYCm, ctx) +
+    membersXml(group.members, baseXCm, baseYCm, ctx, path) +
     "</draw:g>"
   );
 }
@@ -84,5 +92,5 @@ export function groupDrawXml(group: DrawingGroup, ctx: OdfGroupWriteContext): st
     return group.preservedSubtreeXml;
   }
   const baked = bakeGroupRotationDeep(group);
-  return groupElementXml(baked, baked.offsetXCm ?? 0, baked.offsetYCm ?? 0, ctx);
+  return groupElementXml(baked, baked.offsetXCm ?? 0, baked.offsetYCm ?? 0, ctx, []);
 }
