@@ -232,7 +232,7 @@ describe("spacing/radius/border/shadow/type/motion resolve to tokens (AC-6..13)"
             flag("font-weight not a token");
           } else if (d.prop === "line-height" && /\b\d*\.\d+\b/.test(residue)) {
             flag("line-height not a token");
-          } else if (/^transition/.test(d.prop) && TIME_LITERAL.test(residue)) {
+          } else if (d.prop.startsWith("transition") && TIME_LITERAL.test(residue)) {
             flag("transition duration not a token");
           }
         }
