@@ -234,8 +234,13 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     cellDragOrigin = editable.value ? tableCellAtTarget(event.target) : null;
     // A click outside a selected image deselects it (SPEC-024) — a click on
     // one is handled by DocImageBlock's own @select, which fires afterward.
+    // A Shift-click is an additive cross-kind multi-select gesture (SPEC-057
+    // AC-7): it must preserve every other drawing kind's selection so shapes,
+    // images, charts and containers combine into one Group candidate set. Only
+    // a plain click is exclusive and deselects the other kinds.
+    const additive = event.shiftKey;
     const imageTarget = event.target instanceof Element ? event.target.closest(".doc-image-anchor") : null;
-    if (!imageTarget) {
+    if (!imageTarget && !additive) {
       clearImageSelection();
     }
     // Same for a selected shape (SPEC-051) — a click on one is handled by
@@ -257,7 +262,7 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
       if (recovered) {
         handleShapeSelect(recovered.section, recovered.block, event.shiftKey);
         shapeMouseDownLocation = recovered;
-      } else {
+      } else if (!additive) {
         clearShapeSelection();
       }
     }
@@ -280,7 +285,7 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
       const recoveredChart = chartAtClientPoint(event.clientX, event.clientY);
       if (recoveredChart) {
         handleChartSelect(recoveredChart.section, recoveredChart.block);
-      } else {
+      } else if (!additive) {
         clearChartSelection();
       }
     }
@@ -291,7 +296,7 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     const groupTarget = event.target instanceof Element ? event.target.closest(".doc-group-anchor") : null;
     if (groupTarget && groupSelectionActive() && !event.shiftKey) {
       startGroupMove(event);
-    } else if (!groupTarget) {
+    } else if (!groupTarget && !additive) {
       clearGroupSelection();
     }
     // Same for a selected TOC (SPEC-033) — a click on one is handled by

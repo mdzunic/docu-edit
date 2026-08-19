@@ -130,17 +130,15 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await page.keyboard.press("ControlOrMeta+g");
     await expect(drawings(page)).toHaveCount(2);
 
-    // One container (role=group) and one loose shape remain.
+    // One container (role=group) and one loose shape remain; Group leaves the
+    // new container selected (its toolbar shows).
     const containerSel = '[data-testid^="drawing-"][role="group"]:not([data-testid*="-member-"])';
     const looseSel = '[data-testid^="drawing-"]:not([data-testid*="-member-"]):not([role="group"])';
     await expect(content(page).locator(containerSel)).toHaveCount(1);
-    const containerTestId = await content(page).locator(containerSel).getAttribute("data-testid");
-
-    // Select the container (first click on a member selects the outermost
-    // container), then Shift-click the loose shape — the container and the
-    // shape now form one cross-kind Group selection (AC-7, the fix this round).
-    await page.locator(`[data-testid="${containerTestId}-member-0"]`).click();
     await expect(page.getByTestId("group-toolbar")).toBeVisible();
+
+    // Shift-click the loose shape — the selected container and the shape now
+    // form one cross-kind Group selection (AC-7, the fix this round).
     const loose = content(page).locator(looseSel);
     const looseBox = await loose.boundingBox();
     if (!looseBox) {
@@ -155,8 +153,8 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     // One of the outer container's members is itself a group (nesting).
     await expect(page.locator('[data-testid^="drawing-0-member-"][role="group"]')).toHaveCount(1);
 
-    // Ungroup peels exactly one level: the inner container survives as a sibling.
-    await page.locator('[data-testid="drawing-0-member-0"]').click();
+    // Group leaves the new outer container selected; Ungroup peels exactly one
+    // level, so the inner container survives as a top-level sibling.
     await expect(page.getByTestId("group-toolbar")).toBeVisible();
     await page.keyboard.press("ControlOrMeta+Shift+g");
     await expect(drawings(page)).toHaveCount(2);
