@@ -2,6 +2,15 @@
 import { computed } from "vue";
 import { STANDARD_FONT_FAMILIES } from "../lib/core/fonts";
 
+// A native <select>, deliberately NOT rebuilt on UiMenuSurface (SPEC-058
+// AC-39): the primitive exists so no popup hand-rolls its own dismissal, and
+// a native select hand-rolls nothing — the browser owns its popup, its
+// outside-click and its Escape. Rebuilding it as a custom dropdown would
+// also break the SPEC-013 e2e suite, which drives this control with
+// selectOption() — and AC-61 freezes those suites. (UiSelect is no home for
+// it either: this control needs optgroups and per-option font styling, which
+// UiSelect's flat options list cannot express.)
+//
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
 const props = defineProps({

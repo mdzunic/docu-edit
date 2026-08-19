@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { computed, nextTick, ref, useTemplateRef } from "vue";
 import { asMenuBarMenus } from "../lib/core/menuBar";
+import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // The application menu bar (SPEC-049). This component is deliberately
 // *structural only*: it renders the menu titles and their popups, and owns
 // the menubar's keyboard model, single tab stop, pointer cross-open and
-// open/close state. The contents of each popup come from a slot named after
+// open/close state. Each popup's box and its dismissal (outside pointerdown,
+// Escape — even when a mouse open left focus on the page) are UiMenuSurface's
+// (SPEC-058 AC-39); focus stays this component's, so the surface runs with
+// returnFocus=false. The contents of each popup come from a slot named after
 // the menu id, so the callers author their own role="menuitem" /
 // menuitemcheckbox buttons (with their own shortcut labels, disabled and
 // checked state). This component locates those items by role to drive
@@ -21,6 +25,13 @@ const props = defineProps({
 });
 
 const root = useTemplateRef("root");
+
+// Each popup's UiMenuSurface anchor: the title button that opens it, so a
+// pointerdown on the open menu's own title is left to the click toggle
+// instead of dismiss-then-reopen. Collected per index by a template ref
+// function; Array() (not []) so the array is not inferred as never[] — the
+// same espree-constraint workaround family as UiSelect's Reflect.get.
+const titleRefs = ref(Array());
 
 // The untyped Array prop coerced into the typed list the template renders.
 const menuList = computed(() => asMenuBarMenus(props.menus));
@@ -38,7 +49,8 @@ function titleEls() {
 }
 
 // Only the open popup carries data-menu-popup-open, so item queries never
-// reach the (display:none) closed popups that v-show keeps in the DOM.
+// reach the (display:none) closed popups that keep-mounted surfaces hold in
+// the DOM.
 function itemEls() {
   const popup = root.value ? root.value.querySelector("[data-menu-popup-open]") : null;
   if (!popup) {
@@ -245,21 +257,10 @@ function onTitleEnter(index = 0) {
   }
 }
 
-function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  if (
-    openIndex.value >= 0 &&
-    root.value &&
-    event.target instanceof Node &&
-    !root.value.contains(event.target)
-  ) {
-    closeMenu(false);
-  }
-}
-
-document.addEventListener("mousedown", handleDocumentMousedown);
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", handleDocumentMousedown);
-});
+// Outside-click and Escape dismissal are owned by UiMenuSurface — one per
+// popup — so this component no longer hand-rolls a document mousedown
+// listener, and a mouse-opened menu now closes on Escape even though
+// @mousedown.prevent left focus on the page (SPEC-058 AC-39).
 </script>
 
 <template>
@@ -277,6 +278,7 @@ onBeforeUnmount(() => {
     >
       <button
         :id="`menu-title-${menu.id}`"
+        :ref="(el) => { titleRefs[index] = el }"
         type="button"
         class="menu-title"
         role="menuitem"
@@ -294,19 +296,23 @@ onBeforeUnmount(() => {
       >
         {{ menu.label }}
       </button>
-      <div
-        v-show="openIndex === index"
+      <UiMenuSurface
         :id="`menu-${menu.id}`"
+        :open="openIndex === index"
+        :anchor="titleRefs[index]"
+        :return-focus="false"
+        keep-mounted
         class="menu-popup"
         role="menu"
         :aria-label="menu.label"
         :data-testid="`menu-${menu.id}`"
         :data-menu-popup-open="openIndex === index ? '' : undefined"
+        @dismiss="closeMenu(false)"
         @keydown="onItemKeydown($event)"
         @click="onPopupClick($event)"
       >
         <slot :name="menu.id" />
-      </div>
+      </UiMenuSurface>
     </div>
   </div>
 </template>
@@ -347,8 +353,13 @@ onBeforeUnmount(() => {
 /* Absolutely positioned so an open menu overlays the toolbar/canvas below
    rather than growing the shell. The menu bar is not an overflow-clipped
    container (unlike the toolbar strip), so no fixed-position escape is
-   needed here. */
-.menu-popup {
+   needed here.
+
+   The box is UiMenuSurface's; the bar's own chrome — square top corners
+   against the bar, the heavier shadow, the tighter vertical padding — must
+   outrank the primitive's base box, whose selector has the same single-class
+   specificity, so this one is qualified by the wrapper. */
+.menu-bar-item .menu-popup {
   position: absolute;
   top: 100%;
   left: 0;
