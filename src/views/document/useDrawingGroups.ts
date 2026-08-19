@@ -694,12 +694,15 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
 
   /** Drags the selected container/member's body to move it (SPEC-057
    * AC-10/AC-26); commits once on release. Armed by useCanvasGestures on a
-   * `.doc-group-anchor` mousedown while a group is selected. */
+   * `.doc-group-anchor` mousedown while a group is selected. Not while the
+   * member's text frame is live (editingMemberText) — the frame stops
+   * beforeinput/keydown but not mousedown, and a drag there is text
+   * selection, not a move (startShapeMove's editingShapeText guard). */
   let moveDrag: { startClientX: number; startClientY: number } | null = null;
   let moveMoved = false;
 
   function startGroupMove(event: MouseEvent) {
-    if (!groupSelection.value) {
+    if (!groupSelection.value || editingMemberText.value) {
       return;
     }
     moveMoved = false;

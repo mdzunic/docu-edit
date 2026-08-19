@@ -161,6 +161,67 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(page.getByTestId("member-shape-text")).toContainText("In group");
   });
 
+  test("dragging inside a member's live text frame selects text instead of moving the member (AC-25)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    await expect(drawings(page)).toHaveCount(2);
+
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
+    await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height * 0.72 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await rightShape.click({ modifiers: ["Shift"], position: { x: rightBox.width / 2, y: rightBox.height * 0.72 } });
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "group");
+
+    const member0 = page.locator('[data-testid="drawing-0-member-0"]');
+    await member0.click();
+    await member0.click();
+    await member0.dblclick();
+    const text = page.getByTestId("member-shape-text");
+    await expect(text).toHaveAttribute("contenteditable", "true");
+    await page.keyboard.type("In group");
+
+    const before = await member0.boundingBox();
+    const lineBox = await text.locator(".doc-paragraph").first().boundingBox();
+    if (!before || !lineBox) {
+      throw new Error("the member or its text line has no bounding box");
+    }
+    // Drag across the rendered text line inside the live frame — the SPEC-051
+    // select-text gesture. The mousedown bubbles to the canvas inside
+    // .doc-group-anchor while the member is selected; it must fall through to
+    // native text selection, not arm a member move. Drag on the line itself
+    // (not the frame's empty lower half), inset from the edges so the member's
+    // resize handles — live during editing at top level too — can't catch it.
+    const lineY = lineBox.y + lineBox.height / 2;
+    await page.mouse.move(lineBox.x + lineBox.width * 0.15, lineY);
+    await page.mouse.down();
+    await page.mouse.move(lineBox.x + lineBox.width * 0.85, lineY, { steps: 8 });
+    await page.mouse.up();
+
+    // The drag selected a real run of the member's text (exactly which
+    // characters depends on glyph metrics, so assert containment instead).
+    const selected = await page.evaluate(() => document.getSelection()?.toString() ?? "");
+    expect(selected.length).toBeGreaterThanOrEqual(2);
+    expect("In group").toContain(selected);
+    // …the frame is still live…
+    await expect(text).toHaveAttribute("contenteditable", "true");
+    // …and the member stayed put (no moveMember commit on release).
+    const after = await member0.boundingBox();
+    if (!after) {
+      throw new Error("the member lost its bounding box after the drag");
+    }
+    expect(Math.abs(after.x - before.x)).toBeLessThan(1);
+    expect(Math.abs(after.y - before.y)).toBeLessThan(1);
+  });
+
   test("the container carries editable alt text from its toolbar (AC-49)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);
