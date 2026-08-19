@@ -146,11 +146,20 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     // Selecting any proxy (never a click inside the live text frame, whose
     // proxy goes pointer-events:none) leaves member text editing.
     resetMemberTextEditingState();
-    clearOtherSelections();
     if (shiftKey) {
+      // Shift-click widens the selection to a cross-kind multi-selection
+      // (SPEC-051 gesture, widened by SPEC-057 AC-7) — it must NOT wipe the
+      // sibling shape/image/chart selections, which join this container as
+      // Group candidates. Seed the unified list with the container that was
+      // singly selected so a group can be the first item combined.
+      if (multiSelection.value.length === 0 && groupSelection.value && (groupSelection.value.path?.length ?? 0) === 0) {
+        multiSelection.value = [{ section: groupSelection.value.section, block: groupSelection.value.block }];
+      }
       toggleMultiSelection({ section, block });
       return;
     }
+    // A plain click is exclusive: it clears the sibling drawing selections.
+    clearOtherSelections();
     multiSelection.value = [];
     const sel = groupSelection.value;
     const onThis = !!sel && sel.section === section && sel.block === block;
@@ -425,7 +434,13 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
   function groupCandidates(): DrawingRef[] {
     const seen = new Set<string>();
     const out: DrawingRef[] = [];
-    for (const r of [...getGroupCandidates(), ...multiSelection.value]) {
+    // A singly-selected top-level container (path empty) is itself a Group
+    // candidate (SPEC-057 AC-7) — grouping a selection that includes a group
+    // nests that group as one member.
+    const single = groupSelection.value;
+    const singleContainer: DrawingRef[] =
+      single && (single.path?.length ?? 0) === 0 ? [{ section: single.section, block: single.block }] : [];
+    for (const r of [...getGroupCandidates(), ...multiSelection.value, ...singleContainer]) {
       const key = `${r.section}:${r.block}`;
       if (!seen.has(key)) {
         seen.add(key);

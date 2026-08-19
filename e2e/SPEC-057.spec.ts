@@ -104,6 +104,65 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(drawings(page)).toHaveCount(2);
   });
 
+  test("grouping a selection that includes a group nests it as one member; Ungroup peels one level (AC-7, AC-8)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 300, 250);
+    await insertShapeAt(page, "ellipse", 480, 250);
+    await insertShapeAt(page, "rect", 680, 250);
+    await expect(drawings(page)).toHaveCount(3);
+
+    // Order the three by x so the gesture is deterministic.
+    const all = await drawings(page).all();
+    const boxed = [];
+    for (const d of all) {
+      const box = await d.boundingBox();
+      if (!box) {
+        throw new Error("a drawing has no bounding box");
+      }
+      boxed.push({ d, box });
+    }
+    boxed.sort((a, b) => a.box.x - b.box.x);
+
+    // Group the two leftmost into a container (Shift-click multi-select + Ctrl+G).
+    await boxed[0].d.click({ position: { x: boxed[0].box.width / 2, y: boxed[0].box.height / 2 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await boxed[1].d.click({ modifiers: ["Shift"], position: { x: boxed[1].box.width / 2, y: boxed[1].box.height * 0.72 } });
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(drawings(page)).toHaveCount(2);
+
+    // One container (role=group) and one loose shape remain.
+    const containerSel = '[data-testid^="drawing-"][role="group"]:not([data-testid*="-member-"])';
+    const looseSel = '[data-testid^="drawing-"]:not([data-testid*="-member-"]):not([role="group"])';
+    await expect(content(page).locator(containerSel)).toHaveCount(1);
+    const containerTestId = await content(page).locator(containerSel).getAttribute("data-testid");
+
+    // Select the container (first click on a member selects the outermost
+    // container), then Shift-click the loose shape — the container and the
+    // shape now form one cross-kind Group selection (AC-7, the fix this round).
+    await page.locator(`[data-testid="${containerTestId}-member-0"]`).click();
+    await expect(page.getByTestId("group-toolbar")).toBeVisible();
+    const loose = content(page).locator(looseSel);
+    const looseBox = await loose.boundingBox();
+    if (!looseBox) {
+      throw new Error("loose shape has no bounding box");
+    }
+    await loose.click({ modifiers: ["Shift"], position: { x: looseBox.width / 2, y: looseBox.height / 2 } });
+
+    // Ctrl+G nests the group as one member of a new outer container.
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(drawings(page)).toHaveCount(1);
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "group");
+    // One of the outer container's members is itself a group (nesting).
+    await expect(page.locator('[data-testid^="drawing-0-member-"][role="group"]')).toHaveCount(1);
+
+    // Ungroup peels exactly one level: the inner container survives as a sibling.
+    await page.locator('[data-testid="drawing-0-member-0"]').click();
+    await expect(page.getByTestId("group-toolbar")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+Shift+g");
+    await expect(drawings(page)).toHaveCount(2);
+    await expect(content(page).locator(containerSel)).toHaveCount(1);
+  });
+
   test("Group moves no member on screen (AC-4)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 400, 250);
