@@ -492,6 +492,7 @@ import {
   setGroupWrap,
   setMemberAltText,
 } from "./drawingGroups";
+import { reorderShapeZ } from "./shapes";
 
 describe("container-level edits (the container as one drawing, SPEC-057)", () => {
   it("moveGroupContainer shifts the container's own offset, leaving members put", () => {
@@ -547,6 +548,93 @@ describe("container-level edits (the container as one drawing, SPEC-057)", () =>
     // The container's box invariants still hold (min offset 0).
     expect(Math.min(...container.members.map((m) => m.offsetXCm ?? 0))).toBe(0);
   });
+});
+
+describe("container z-order — the container as one drawing (SPEC-057 AC-16)", () => {
+  it("reorderShapeZ treats a container as one drawing among its siblings", () => {
+    // A shape, the container, then another shape — all at ascending zOrder.
+    const model = doc(
+      shape({ zOrder: 0 }),
+      pairContainer({ zOrder: 1 }),
+      shape({ zOrder: 2 }),
+    );
+    // Send the container to the front: it must end up with the highest zOrder.
+    const front = reorderShapeZ(model, anySelection, { section: 0, block: 1 }, "front");
+    const blocks = front.model.sections[0].blocks;
+    const container = blocks[1] as DrawingGroup;
+    expect(container.type).toBe("drawingGroup");
+    const maxZ = Math.max(...blocks.map((b) => (b as DrawingGroup).zOrder ?? 0));
+    expect(container.zOrder).toBe(maxZ);
+
+    // Send it to the back: lowest zOrder of all three drawings.
+    const back = reorderShapeZ(front.model, anySelection, { section: 0, block: 1 }, "back");
+    const backContainer = back.model.sections[0].blocks[1] as DrawingGroup;
+    const minZ = Math.min(...back.model.sections[0].blocks.map((b) => (b as DrawingGroup).zOrder ?? 0));
+    expect(backContainer.zOrder).toBe(minZ);
+  });
+});
+
+describe("group-as-one-drawing ops with an image or chart member (SPEC-057 AC-17, AC-18)", () => {
+  // A two-member container whose second member is a chart (AC-18) or image
+  // (AC-17); the container ops never inspect member kind, so each op must
+  // treat the container as one drawing and leave the typed member intact.
+  function containerWith(member: Chart | Image): DrawingGroup {
+    return {
+      type: "drawingGroup",
+      widthCm: 9,
+      heightCm: 6,
+      wrap: "square",
+      offsetXCm: 2,
+      offsetYCm: 2,
+      members: [shape({ widthCm: 3, heightCm: 2, offsetXCm: 0, offsetYCm: 0 }), { ...member, offsetXCm: 4, offsetYCm: 3 }],
+    };
+  }
+
+  for (const [kind, member] of [
+    ["chart", chart()],
+    ["image", image()],
+  ] as const) {
+    describe(`container holding a ${kind} member`, () => {
+      it("moves as one drawing", () => {
+        const result = moveGroupContainer(doc(containerWith(member)), anySelection, 0, 0, 1, 1);
+        const moved = result.model.sections[0].blocks[0] as DrawingGroup;
+        expect(moved.offsetXCm).toBeCloseTo(3);
+        expect(moved.members[1].type).toBe(kind);
+        expect(moved.members[1].offsetXCm).toBe(4);
+      });
+
+      it("arrow-nudges as one drawing", () => {
+        const result = nudgeGroupContainer(doc(containerWith(member)), anySelection, 0, 0, "down", false);
+        const moved = result.model.sections[0].blocks[0] as DrawingGroup;
+        expect(moved.offsetYCm).toBeGreaterThan(2);
+        expect(moved.members[1].type).toBe(kind);
+      });
+
+      it("deletes as one drawing", () => {
+        const result = deleteGroupContainer(doc(paragraph("p"), containerWith(member)), anySelection, 0, 1);
+        expect(result.model.sections[0].blocks).toHaveLength(1);
+      });
+
+      it("duplicates as one drawing, cloning the typed member", () => {
+        const result = duplicateGroupContainer(doc(containerWith(member)), anySelection, 0, 0);
+        const copy = result.model.sections[0].blocks[1] as DrawingGroup;
+        expect(copy.members[1].type).toBe(kind);
+      });
+
+      it("wraps as one drawing", () => {
+        const result = setGroupWrap(doc(containerWith(member)), anySelection, 0, 0, "behind");
+        expect((result.model.sections[0].blocks[0] as DrawingGroup).wrap).toBe("behind");
+      });
+
+      it("z-orders as one drawing", () => {
+        const model = doc(shape({ zOrder: 0 }), containerWith(member));
+        const result = reorderShapeZ(model, anySelection, { section: 0, block: 1 }, "back");
+        const container = result.model.sections[0].blocks[1] as DrawingGroup;
+        expect(container.zOrder).toBe(0);
+        expect(container.members[1].type).toBe(kind);
+      });
+    });
+  }
 });
 
 import {

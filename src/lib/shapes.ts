@@ -9,12 +9,14 @@
 import {
   cloneContainers,
   isChart,
+  isDrawingGroup,
   isImage,
   isShape,
   splitParagraphAt,
   type Block,
   type Chart,
   type DocumentModel,
+  type DrawingGroup,
   type DrawingPlacement,
   type Image,
   type ImageWrapMode,
@@ -434,19 +436,30 @@ export function deleteShape(
  * duplicate of it. */
 interface DrawingRef {
   location: ShapeLocation;
-  block: Shape | Image | Chart;
+  block: Shape | Image | Chart | DrawingGroup;
 }
 
 function allDrawings(model: DocumentModel): DrawingRef[] {
   const drawings: DrawingRef[] = [];
   model.sections.forEach((section, sectionIndex) => {
     section.blocks.forEach((block, blockIndex) => {
-      if (isShape(block) || isImage(block) || isChart(block)) {
+      // A DrawingGroup container is one drawing and shares the single z-order
+      // space with sibling shapes/images/charts (SPEC-057 AC-16), so it joins
+      // this enumeration too.
+      if (isShape(block) || isImage(block) || isChart(block) || isDrawingGroup(block)) {
         drawings.push({ location: { section: sectionIndex, block: blockIndex }, block });
       }
     });
   });
   return drawings;
+}
+
+/** The drawing block a location addresses (shape, image, chart or group
+ * container), or null — the kind-agnostic sibling of `shapeAt`, used where an
+ * operation treats every drawing kind alike (e.g. z-order, SPEC-057). */
+function drawingBlockAt(model: DocumentModel, location: ShapeLocation): Shape | Image | Chart | DrawingGroup | null {
+  const target = model.sections[location.section]?.blocks[location.block];
+  return isShape(target) || isImage(target) || isChart(target) || isDrawingGroup(target) ? target : null;
 }
 
 function zOrderOf(block: DrawingPlacement): number {
@@ -499,8 +512,11 @@ export function reorderShapeZ(
   command: ZOrderCommand,
 ): CommandResult {
   const next = cloneContainers(model);
-  const shape = shapeAt(next, location);
-  if (!shape) {
+  // Any drawing kind — shape, image, chart or group container — reorders
+  // through this one path (SPEC-057 AC-16), so guard on the kind-agnostic
+  // lookup rather than shapeAt.
+  const drawing = drawingBlockAt(next, location);
+  if (!drawing) {
     return { model: next, selection };
   }
   const drawings = allDrawings(next).sort((a, b) => zOrderOf(a.block) - zOrderOf(b.block));
@@ -522,7 +538,7 @@ export function reorderShapeZ(
   const [moved] = reordered.splice(index, 1);
   reordered.splice(targetIndex, 0, moved);
   reordered.forEach((d, i) => {
-    const updated: Shape | Image | Chart = { ...d.block };
+    const updated: Shape | Image | Chart | DrawingGroup = { ...d.block };
     updated.zOrder = i;
     next.sections[d.location.section].blocks.splice(d.location.block, 1, updated);
   });
@@ -559,7 +575,7 @@ export function groupShapes(
     if (!isShape(block) && !isImage(block) && !isChart(block)) {
       continue;
     }
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | DrawingGroup = { ...block };
     updated.groupOrdinal = ordinal;
     if (updated.wrap === "inline") {
       updated.wrap = "square";
@@ -585,7 +601,7 @@ export function ungroupShapes(
     if (block.groupOrdinal !== groupOrdinal) {
       continue;
     }
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | DrawingGroup = { ...block };
     delete updated.groupOrdinal;
     next.sections[location.section].blocks.splice(location.block, 1, updated);
   }
@@ -657,7 +673,7 @@ export function resizeGroup(
 ): CommandResult {
   const next = cloneContainers(model);
   for (const { location, block } of groupMembers(next, groupOrdinal)) {
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | DrawingGroup = { ...block };
     updated.widthCm = Math.max(MIN_SHAPE_SIZE_CM, updated.widthCm * sx);
     updated.heightCm = Math.max(0, updated.heightCm * sy);
     updated.offsetXCm = (updated.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm) * sx;
@@ -679,7 +695,7 @@ export function rotateGroup(
 ): CommandResult {
   const next = cloneContainers(model);
   for (const { location, block } of groupMembers(next, groupOrdinal)) {
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | DrawingGroup = { ...block };
     const normalized = normalizeRotationDeg((block.rotationDeg ?? 0) + deltaDeg);
     if (normalized === 0) {
       delete updated.rotationDeg;

@@ -21,7 +21,7 @@ const props = defineProps({
   placement: { type: String, default: "below" },
 });
 
-const emit = defineEmits(["wrap", "rotation", "alt-text", "reorder", "duplicate", "delete", "ungroup"]);
+const emit = defineEmits(["wrap", "z-order", "rotation", "alt-text", "reorder", "duplicate", "delete", "ungroup"]);
 
 const WRAP_MODES = [
   { mode: "inline", label: "In line with text" },
@@ -42,6 +42,14 @@ function onReorderChange(event = new Event("change")) {
   const target = event.target;
   if (target instanceof HTMLSelectElement) {
     emit("reorder", target.value);
+    target.selectedIndex = 0;
+  }
+}
+
+function onZOrderChange(event = new Event("change")) {
+  const target = event.target;
+  if (target instanceof HTMLSelectElement) {
+    emit("z-order", target.value);
     target.selectedIndex = 0;
   }
 }
@@ -101,6 +109,28 @@ function onAltTextInput(event = new Event("input")) {
         v-for="option in WRAP_MODES"
         :key="option.mode"
         :value="option.mode"
+      >
+        {{ option.label }}
+      </option>
+    </select>
+    <select
+      v-if="!member"
+      class="shape-toolbar-select"
+      data-testid="group-zorder"
+      @change="onZOrderChange"
+      @mousedown.stop
+    >
+      <option
+        value=""
+        disabled
+        selected
+      >
+        Order…
+      </option>
+      <option
+        v-for="option in REORDER_COMMANDS"
+        :key="option.command"
+        :value="option.command"
       >
         {{ option.label }}
       </option>

@@ -3915,6 +3915,7 @@ function handleMenuCommand(id = "") {
       v-bind="drawingGroups.groupToolbarState()"
       class="print-exclude"
       @wrap="drawingGroups.setSelectedWrap"
+      @z-order="drawingGroups.reorderSelectedContainerZ"
       @rotation="drawingGroups.setSelectedRotation"
       @alt-text="drawingGroups.setSelectedAltText"
       @reorder="drawingGroups.reorderSelectedMember"

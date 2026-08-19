@@ -67,6 +67,7 @@ import {
   type MemberReorder,
   type RectCm,
 } from "../../lib/drawingGroups";
+import { reorderShapeZ, type ZOrderCommand } from "../../lib/shapes";
 import { type EditorContext } from "./context";
 import { asNudgeDirection, type NudgeDirection } from "../../lib/core/shapes";
 
@@ -926,6 +927,20 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     void nextTick().then(remeasureGroupHandles);
   }
 
+  /** Z-order from the container toolbar (SPEC-057 AC-16) — the container is one
+   * drawing, so it reorders against every sibling drawing through the same
+   * `reorderShapeZ` path a single shape uses, reusing SPEC-051's label. */
+  function reorderSelectedContainerZ(command: string) {
+    const model = doc.value;
+    const sel = groupSelection.value;
+    if (!model || !sel || !selectionIsContainer()) {
+      return;
+    }
+    const before = beforeSelection();
+    applyEdit(reorderShapeZ(model, before, { section: sel.section, block: sel.block }, command as ZOrderCommand), before, "reorder shape");
+    void nextTick().then(remeasureGroupHandles);
+  }
+
   /** Ctrl/Cmd+G groups the multi-selection; Ctrl/Cmd+Shift+G ungroups the
    * selected container (SPEC-057). Returns whether it handled the event. */
   function handleGroupShortcut(event: KeyboardEvent): boolean {
@@ -1117,6 +1132,7 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     duplicateSelected,
     nudgeSelected,
     reorderSelectedMember,
+    reorderSelectedContainerZ,
     setSelectedRotation,
     setSelectedAltText,
     setSelectedWrap,
