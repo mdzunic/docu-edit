@@ -526,6 +526,28 @@ export function chartDrawingXml(chart: Chart, relId: string, docPrId: number): s
   );
 }
 
+const WPG_NAMESPACE = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
+
+/** Serialises a Chart member of a group as a `wpg:graphicFrame` child at its
+ * container-relative offset (SPEC-057 AC-55/AC-59) — the chart-flavoured
+ * sibling of shape.ts's `shapeGroupChildXml` / drawing.ts's
+ * `imageGroupChildXml`. `relId` addresses the chart part the write plan
+ * allocated for this member; ids are minted fresh at write time. */
+export function chartGroupChildXml(chart: Chart, relId: string, docPrId: number, offXEmu: number, offYEmu: number): string {
+  const cx = cmToEmu(chart.widthCm);
+  const cy = cmToEmu(Math.max(0, chart.heightCm));
+  const descrAttr = chart.altText ? ` descr="${escapeXmlAttribute(chart.altText)}"` : "";
+  return (
+    `<wpg:graphicFrame xmlns:wpg="${WPG_NAMESPACE}" xmlns:a="${A_NAMESPACE}" xmlns:r="${R_NAMESPACE}">` +
+    `<wpg:cNvPr id="${docPrId}" name="Chart ${docPrId}"${descrAttr}/><wpg:cNvFrPr/>` +
+    `<wpg:xfrm><a:off x="${offXEmu}" y="${offYEmu}"/><a:ext cx="${cx}" cy="${cy}"/></wpg:xfrm>` +
+    `<a:graphic><a:graphicData uri="${C_NAMESPACE}">` +
+    `<c:chart xmlns:c="${C_NAMESPACE}" r:id="${relId}"/>` +
+    "</a:graphicData></a:graphic>" +
+    "</wpg:graphicFrame>"
+  );
+}
+
 function columnLetterFor(seriesIndex: number): string {
   // 'B'.. — column A is reserved for categories, as every emitted c:f cached
   // formula string below assumes. These formulas are never resolved by a

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
 import { writeDocx } from "./writer";
 import { equalStructural, firstStructuralDifference } from "../equality";
-import { isDrawingGroup, type DocumentModel } from "../documentModel";
+import { createDocument, isChart, isDrawingGroup, type Chart, type DocumentModel, type DrawingGroup, type Shape } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -64,5 +64,60 @@ describe("SPEC-057 legacy migration — word-shapes.docx (AC-2, AC-65)", () => {
     const diff = firstStructuralDifference(opened, reopened);
     expect(diff, diff ? JSON.stringify(diff) : "").toBeNull();
     expect(equalStructural(opened, reopened)).toBe(true);
+  });
+});
+
+describe("SPEC-057 native chart member round trip — wpg:graphicFrame (AC-18, AC-55, AC-59)", () => {
+  function chartMemberModel(): DocumentModel {
+    const base = createDocument("chart-member");
+    const chart: Chart = {
+      type: "chart",
+      chartType: "columnClustered",
+      categories: ["A", "B"],
+      series: [{ name: "S", values: [3, 4], color: "#4472c4" }],
+      options: { legend: "none", dataLabels: false, gridlines: true },
+      widthCm: 5,
+      heightCm: 4,
+      wrap: "square",
+      offsetXCm: 6,
+      offsetYCm: 0,
+    };
+    const shape: Shape = { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", offsetXCm: 0, offsetYCm: 0 };
+    const group: DrawingGroup = {
+      type: "drawingGroup",
+      widthCm: 11,
+      heightCm: 4,
+      wrap: "square",
+      offsetXCm: 2,
+      offsetYCm: 2,
+      members: [shape, chart],
+    };
+    return { ...base, format: "docx", sections: [{ blocks: [{ type: "paragraph", runs: [] }, group] }] };
+  }
+
+  it("writes a chart member as a wpg:graphicFrame with its own chart part (AC-59)", async () => {
+    const { bytes } = await writeDocx(chartMemberModel());
+    const { unzip } = await import("../core/zip");
+    const parts = await unzip(bytes);
+    const documentXml = new TextDecoder().decode(parts.get("word/document.xml")!);
+    expect(documentXml).toContain("wordprocessingGroup");
+    expect(documentXml).toContain("graphicFrame");
+    // A chart part was minted for the member.
+    const chartPart = [...parts.keys()].find((k) => /^word\/charts\/chart\d+\.xml$/.test(k));
+    expect(chartPart).toBeTruthy();
+  });
+
+  it("re-opens the chart member as a first-class Chart member of the container (AC-55)", async () => {
+    const { bytes } = await writeDocx(chartMemberModel());
+    const reopened = await parseDocx(bytes);
+    const groups = reopened.sections.flatMap((s) => s.blocks).filter(isDrawingGroup);
+    expect(groups).toHaveLength(1);
+    const chartMember = groups[0].members.find(isChart);
+    expect(chartMember).toBeDefined();
+    expect(chartMember!.chartType).toBe("columnClustered");
+    expect(chartMember!.categories).toEqual(["A", "B"]);
+    expect(chartMember!.offsetXCm).toBeCloseTo(6, 1);
+    // The container is not sealed — a modelled chart member does not seal it.
+    expect(groups[0].preservedSubtreeXml).toBeUndefined();
   });
 });

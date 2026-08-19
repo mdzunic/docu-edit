@@ -8,6 +8,7 @@
 // serialised here (they need per-member chart-part planning); such a member is
 // skipped, which the group writer logs is a known gap.
 import {
+  isChart,
   isDrawingGroup,
   isImage,
   isShape,
@@ -18,6 +19,8 @@ import { cmToEmu } from "../core/units";
 import { escapeXmlAttribute } from "../core/xml";
 import { shapeGroupChildXml, type ShapeTextWriteContext } from "./shape";
 import { imageGroupChildXml } from "./drawing";
+import { chartGroupChildXml } from "./chart";
+import { EMPTY_CHART_PLAN, type ChartWritePlan } from "./chartWritePlan";
 import type { MediaWritePlan } from "./media";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -34,10 +37,19 @@ export interface DocPrIdAllocator {
   next(): number;
 }
 
+/** Where in the document a container sits, so a Chart member's chart-part
+ * plan entry can be looked up by (section, block, member path). */
+interface GroupLoc {
+  chartPlan: ChartWritePlan;
+  section: number;
+  block: number;
+  path: number[];
+}
+
 /** The members of a container as `wpg:wgp` child elements, in member order. */
-function membersXml(members: DrawingMember[], ctx: ShapeTextWriteContext, mediaPlan: MediaWritePlan, ids: DocPrIdAllocator): string {
+function membersXml(members: DrawingMember[], ctx: ShapeTextWriteContext, mediaPlan: MediaWritePlan, ids: DocPrIdAllocator, loc: GroupLoc): string {
   return members
-    .map((member) => {
+    .map((member, index) => {
       const offX = cmToEmu(member.offsetXCm ?? 0);
       const offY = cmToEmu(member.offsetYCm ?? 0);
       if (isShape(member)) {
@@ -47,10 +59,15 @@ function membersXml(members: DrawingMember[], ctx: ShapeTextWriteContext, mediaP
         const relId = mediaPlan.relIdFor(member.mediaId);
         return relId ? imageGroupChildXml(member, relId, ids.next(), offX, offY) : "";
       }
-      if (isDrawingGroup(member)) {
-        return nestedGroupXml(member, ctx, mediaPlan, ids);
+      if (isChart(member)) {
+        // A chart member (SPEC-057 AC-55/AC-59): the write plan allocated a
+        // chart part + relationship for it, keyed by its member path.
+        const entry = loc.chartPlan.planForMember(loc.section, loc.block, [...loc.path, index]);
+        return entry ? chartGroupChildXml(member, entry.relId, ids.next(), offX, offY) : "";
       }
-      // Chart members are not yet serialised as group children.
+      if (isDrawingGroup(member)) {
+        return nestedGroupXml(member, ctx, mediaPlan, ids, { ...loc, path: [...loc.path, index] });
+      }
       return "";
     })
     .join("");
@@ -70,7 +87,7 @@ function groupXfrmXml(group: DrawingGroup, offXEmu: number, offYEmu: number): st
 }
 
 /** A nested container as a `wpg:grpSp` child. */
-function nestedGroupXml(group: DrawingGroup, ctx: ShapeTextWriteContext, mediaPlan: MediaWritePlan, ids: DocPrIdAllocator): string {
+function nestedGroupXml(group: DrawingGroup, ctx: ShapeTextWriteContext, mediaPlan: MediaWritePlan, ids: DocPrIdAllocator, loc: GroupLoc): string {
   const id = ids.next();
   const descrAttr = group.altText ? ` descr="${escapeXmlAttribute(group.altText)}"` : "";
   const offX = cmToEmu(group.offsetXCm ?? 0);
@@ -79,7 +96,7 @@ function nestedGroupXml(group: DrawingGroup, ctx: ShapeTextWriteContext, mediaPl
     `<wpg:grpSp xmlns:wpg="${WPG_NAMESPACE}" xmlns:a="${A_NAMESPACE}">` +
     `<wpg:cNvPr id="${id}" name="Group ${id}"${descrAttr}/><wpg:cNvGrpSpPr/>` +
     `<wpg:grpSpPr>${groupXfrmXml(group, offX, offY)}</wpg:grpSpPr>` +
-    membersXml(group.members, ctx, mediaPlan, ids) +
+    membersXml(group.members, ctx, mediaPlan, ids, loc) +
     "</wpg:grpSp>"
   );
 }
@@ -103,7 +120,7 @@ function anchorWrap(wrap: DrawingGroup["wrap"]): { behindDoc: string; wrapXml: s
  * caller in `<w:r>` in `<w:p>`), holding one `wpg:wgp` with the members as
  * children (SPEC-057 AC-59). A sealed container re-emits its preserved subtree
  * inside the anchor instead of a fresh identity-space group. */
-export function groupDrawingXml(group: DrawingGroup, ctx: ShapeTextWriteContext, mediaPlan: MediaWritePlan, ids: DocPrIdAllocator): string {
+export function groupDrawingXml(group: DrawingGroup, ctx: ShapeTextWriteContext, mediaPlan: MediaWritePlan, ids: DocPrIdAllocator, chartPlan: ChartWritePlan = EMPTY_CHART_PLAN, section = 0, block = 0): string {
   const cx = cmToEmu(group.widthCm);
   const cy = cmToEmu(group.heightCm);
   const id = ids.next();
@@ -120,7 +137,7 @@ export function groupDrawingXml(group: DrawingGroup, ctx: ShapeTextWriteContext,
       `<wpg:wgp xmlns:wpg="${WPG_NAMESPACE}">` +
       "<wpg:cNvGrpSpPr/>" +
       `<wpg:grpSpPr>${groupXfrmXml(group, 0, 0)}</wpg:grpSpPr>` +
-      membersXml(group.members, ctx, mediaPlan, ids) +
+      membersXml(group.members, ctx, mediaPlan, ids, { chartPlan, section, block, path: [] }) +
       "</wpg:wgp>";
   }
   const graphic =

@@ -7,19 +7,83 @@
 // Shape and nested-group members are modelled; a member kind this reader does
 // not yet model (a picture, a chart frame) seals the container — it is
 // preserved verbatim so it still round-trips, moves and ungroups.
-import { firstChildElement, type Relationship } from "../core/xml";
+import { firstChildElement, resolvePartPath, type Relationship } from "../core/xml";
 import { emuToCm } from "../core/units";
 import type { MediaPart } from "../core/media";
 import { parseGroupMemberWsp } from "./shape";
 import { parseGroupMemberImage } from "./drawing";
-import type { DrawingGroup, DrawingMember, Paragraph } from "../documentModel";
+import { parseChartXml, C_NAMESPACE, CHART_RELATIONSHIP } from "./chart";
+import type { Chart, DrawingGroup, DrawingMember, Paragraph } from "../documentModel";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PIC_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WPS_NAMESPACE = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 const WPG_NAMESPACE = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
+const R_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const GROUP_URI = "wordprocessingGroup";
+
+/** Parses a `graphicFrame` chart member of a group (SPEC-057 AC-55) into a
+ * Chart, or null when it is not a resolvable chart frame (the caller then
+ * seals the container). The frame's own `xfrm` positions it in the parent's
+ * child space (the same transform shapes/images apply); its
+ * `a:graphic/a:graphicData[@uri chart]/c:chart@r:id` resolves to the chart
+ * part, parsed by the shipped standalone reader so a chart member and a
+ * standalone chart model identically. */
+function parseGroupMemberChart(frame: Element, transform: ChildTransform, ctx: GroupShapeTextContext): Chart | null {
+  if (!ctx.mainRels || ctx.mainPartPath === undefined || !ctx.parts) {
+    return null;
+  }
+  const xfrm = Array.from(frame.children).find((el) => el.localName === "xfrm");
+  const off = xfrm ? firstChildElement(xfrm, A_NAMESPACE, "off") : undefined;
+  const ext = xfrm ? firstChildElement(xfrm, A_NAMESPACE, "ext") : undefined;
+  const offX = off ? Number(off.getAttribute("x")) || 0 : 0;
+  const offY = off ? Number(off.getAttribute("y")) || 0 : 0;
+  const extCx = ext ? Number(ext.getAttribute("cx")) : NaN;
+  const extCy = ext ? Number(ext.getAttribute("cy")) : NaN;
+  if (!Number.isFinite(extCx) || !Number.isFinite(extCy)) {
+    return null;
+  }
+  const graphic = firstChildElement(frame, A_NAMESPACE, "graphic");
+  const graphicData = graphic ? firstChildElement(graphic, A_NAMESPACE, "graphicData") : undefined;
+  const chartRef = graphicData ? firstChildElement(graphicData, C_NAMESPACE, "chart") : undefined;
+  const relId = chartRef ? chartRef.getAttributeNS(R_NAMESPACE, "id") : null;
+  if (!relId) {
+    return null;
+  }
+  const rel = ctx.mainRels.get(relId);
+  if (!rel || rel.type !== CHART_RELATIONSHIP) {
+    return null;
+  }
+  const partPath = resolvePartPath(ctx.mainPartPath, rel.target);
+  const bytes = ctx.parts.get(partPath);
+  if (!bytes) {
+    return null;
+  }
+  const parsed = parseChartXml(new TextDecoder("utf-8").decode(bytes));
+  const cNvPr = Array.from(frame.children).find((el) => el.localName === "cNvPr");
+  const altText = cNvPr?.getAttribute("descr") || undefined;
+  const chart: Chart = {
+    type: "chart",
+    chartType: parsed?.chartType ?? "columnClustered",
+    categories: parsed?.categories ?? [],
+    series: parsed?.series ?? [],
+    options: parsed?.options ?? { legend: "none", dataLabels: false, gridlines: false },
+    widthCm: emuToCm(extCx * transform.scaleX),
+    heightCm: emuToCm(extCy * transform.scaleY),
+    wrap: "square",
+    offsetXCm: emuToCm((offX - transform.chOffX) * transform.scaleX),
+    offsetYCm: emuToCm((offY - transform.chOffY) * transform.scaleY),
+    sourcePart: partPath,
+  };
+  if (!parsed) {
+    chart.unsupportedChartXml = new TextDecoder("utf-8").decode(bytes);
+  }
+  if (altText) {
+    chart.altText = altText;
+  }
+  return chart;
+}
 
 export interface GroupShapeTextContext {
   parseParagraph: (pEl: Element) => Paragraph;
@@ -68,6 +132,13 @@ function parseMembers(wgp: Element, transform: ChildTransform, ctx: GroupShapeTe
         return null;
       }
       members.push(nested);
+    } else if (child.localName === "graphicFrame") {
+      // A chart member (SPEC-057 AC-55): a `graphicFrame` holding a `c:chart`.
+      const chart = parseGroupMemberChart(child, transform, ctx);
+      if (!chart) {
+        return null;
+      }
+      members.push(chart);
     } else if (
       (child.namespaceURI === WPG_NAMESPACE && (child.localName === "cNvGrpSpPr" || child.localName === "grpSpPr")) ||
       (child.namespaceURI === WPS_NAMESPACE && child.localName === "cNvGrpSpPr") ||

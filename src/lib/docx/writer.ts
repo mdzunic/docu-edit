@@ -2074,6 +2074,9 @@ function* documentBlockXml(
             { paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, inlineCtx) },
             mediaPlan,
             { next: () => docPrId++ },
+            chartPlan,
+            sectionIndex,
+            i,
           );
           yield `<w:p><w:r>${drawing}</w:r></w:p>`;
         } else if (block.type === "break") {

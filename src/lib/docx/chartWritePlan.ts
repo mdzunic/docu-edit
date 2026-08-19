@@ -8,7 +8,7 @@
 // shape, but keyed by a chart's *location* (section/block index) rather than
 // a stable id: Chart carries no field named `id` (IGNORED_KEYS, see
 // documentModel.ts), and a location is stable for the lifetime of one write.
-import { isChart, type DocumentModel } from "../documentModel";
+import { isChart, isDrawingGroup, type Chart, type DocumentModel, type DrawingMember } from "../documentModel";
 import { chartPartXml, CHART_CONTENT_TYPE, CHART_RELATIONSHIP } from "./chart";
 import { nextFreeRelId } from "./media";
 import type { ZipEntryInput } from "../core/zipWriter";
@@ -24,6 +24,10 @@ export interface ChartPlanEntry {
 
 export interface ChartWritePlan {
   planFor(section: number, block: number): ChartPlanEntry | undefined;
+  /** The plan entry for a Chart member of a container at (section, block),
+   * addressed by its member path (SPEC-057) — the group writer looks up the
+   * relationship id it must reference in the member's `graphicFrame`. */
+  planForMember(section: number, block: number, path: number[]): ChartPlanEntry | undefined;
   /** `<Relationship>` elements to append to word/_rels/document.xml.rels. */
   relationshipsXml: string;
   /** `<Override>` elements for `[Content_Types].xml` — only charts with no
@@ -97,61 +101,69 @@ export function planChartWrite(
     return name;
   };
 
+  /** Plans one chart's package additions and records it under `key`. Shared by
+   * a top-level Chart block and a Chart nested inside a DrawingGroup's members
+   * (SPEC-057 AC-55/AC-59): both mint a part + relationship the same way. */
+  const planChartAt = (chart: Chart, key: string): void => {
+    if (!forceRegenerate && chart.sourcePart) {
+      liveSourceParts.add(chart.sourcePart);
+    }
+    if (forceRegenerate && chart.unsupportedChartXml !== undefined) {
+      return;
+    }
+    const reuseName = !forceRegenerate && !!chart.sourcePart;
+    const partName = reuseName ? chart.sourcePart! : freshPartName();
+    const existingRelId = reuseName ? existingRelIdForPart.get(partName) : undefined;
+    let relId: string;
+    if (existingRelId) {
+      relId = existingRelId;
+      taken.add(relId);
+      relIds.add(relId);
+    } else {
+      relId = nextFreeRelId(taken);
+      taken.add(relId);
+      relIds.add(relId);
+      relParts.push(
+        `<Relationship Id="${relId}" Type="${CHART_RELATIONSHIP}" Target="${partName.replace(/^word\//, "")}"/>`,
+      );
+    }
+    const needsRegeneration =
+      forceRegenerate || !chart.sourcePart || (chart.edited === true && chart.unsupportedChartXml === undefined);
+    const xml = needsRegeneration ? chartPartXml(chart) : null;
+    if (xml !== null) {
+      if (reuseName) {
+        regeneratedPartXml.set(partName, xml);
+      } else {
+        zipEntries.push({ name: partName, data: encoder.encode(xml) });
+      }
+    }
+    if (!reuseName) {
+      overrideParts.push(`<Override PartName="/${partName}" ContentType="${CHART_CONTENT_TYPE}"/>`);
+    }
+    plans.set(key, { relId, partName, xml });
+  };
+
+  /** Recurses into a DrawingGroup's members, planning any Chart member and
+   * keying it by its member path so the group writer can look it up. A sealed
+   * container re-emits its preserved subtree verbatim, so its members are not
+   * re-planned. */
+  const planGroupMembers = (members: DrawingMember[], keyPrefix: string): void => {
+    members.forEach((member, index) => {
+      if (isChart(member)) {
+        planChartAt(member, `${keyPrefix}.m${index}`);
+      } else if (isDrawingGroup(member) && member.preservedSubtreeXml === undefined) {
+        planGroupMembers(member.members, `${keyPrefix}.m${index}`);
+      }
+    });
+  };
+
   model.sections.forEach((section, sectionIndex) => {
     section.blocks.forEach((block, blockIndex) => {
-      if (!isChart(block)) {
-        return;
+      if (isChart(block)) {
+        planChartAt(block, `${sectionIndex}.${blockIndex}`);
+      } else if (isDrawingGroup(block) && block.preservedSubtreeXml === undefined) {
+        planGroupMembers(block.members, `${sectionIndex}.${blockIndex}`);
       }
-      if (!forceRegenerate && block.sourcePart) {
-        liveSourceParts.add(block.sourcePart);
-      }
-      if (forceRegenerate && block.unsupportedChartXml !== undefined) {
-        // Cross-format save of an unsupported chart: nothing to regenerate
-        // from and no bytes to carry across formats — dropped entirely.
-        return;
-      }
-      // A same-format save reuses the source part's own name so the
-      // caller's preserved-parts pass-through naturally keeps re-emitting
-      // it (verbatim when untouched, substituted when edited). A
-      // cross-format save ignores `sourcePart` — it names a part in the
-      // *other* format, meaningless as a target here — and always mints a
-      // fresh name.
-      const reuseName = !forceRegenerate && !!block.sourcePart;
-      const partName = reuseName ? block.sourcePart! : freshPartName();
-      const existingRelId = reuseName ? existingRelIdForPart.get(partName) : undefined;
-      let relId: string;
-      if (existingRelId) {
-        relId = existingRelId;
-        taken.add(relId);
-        relIds.add(relId);
-      } else {
-        relId = nextFreeRelId(taken);
-        taken.add(relId);
-        relIds.add(relId);
-        relParts.push(
-          `<Relationship Id="${relId}" Type="${CHART_RELATIONSHIP}" Target="${partName.replace(/^word\//, "")}"/>`,
-        );
-      }
-      // Regenerate content for: a cross-format save (always), a chart with
-      // no source (freshly created/inserted here), or one the user
-      // actually edited (SPEC-052 "Rewriting a chart"). An unsupported
-      // chart is never edited (AC-30 disables it) and already returned
-      // above for the cross-format case; for a same-format save its
-      // placeholder model fields are stand-ins, never regenerated.
-      const needsRegeneration =
-        forceRegenerate || !block.sourcePart || (block.edited === true && block.unsupportedChartXml === undefined);
-      const xml = needsRegeneration ? chartPartXml(block) : null;
-      if (xml !== null) {
-        if (reuseName) {
-          regeneratedPartXml.set(partName, xml);
-        } else {
-          zipEntries.push({ name: partName, data: encoder.encode(xml) });
-        }
-      }
-      if (!reuseName) {
-        overrideParts.push(`<Override PartName="/${partName}" ContentType="${CHART_CONTENT_TYPE}"/>`);
-      }
-      plans.set(`${sectionIndex}.${blockIndex}`, { relId, partName, xml });
     });
   });
 
@@ -164,6 +176,7 @@ export function planChartWrite(
 
   return {
     planFor: (section, block) => plans.get(`${section}.${block}`),
+    planForMember: (section, block, path) => plans.get(`${section}.${block}.${path.map((p) => `m${p}`).join(".")}`),
     relationshipsXml: relParts.join(""),
     contentTypesXml: overrideParts.join(""),
     zipEntries,
@@ -175,6 +188,7 @@ export function planChartWrite(
 
 export const EMPTY_CHART_PLAN: ChartWritePlan = {
   planFor: () => undefined,
+  planForMember: () => undefined,
   relationshipsXml: "",
   contentTypesXml: "",
   zipEntries: [],
