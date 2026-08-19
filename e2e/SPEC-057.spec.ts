@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const docxShapesFixture = join(fixturesDir, "word-shapes.docx");
 const odtShapesFixture = join(fixturesDir, "lo-shapes.odt");
+const docxGroupsFixture = join(fixturesDir, "word-groups.docx");
+const odtGroupsFixture = join(fixturesDir, "lo-groups.odt");
 
 const content = (page: Page) => page.getByTestId("document-content");
 const drawings = (page: Page) => content(page).locator('[data-testid^="drawing-"]:not([data-testid*="-member-"])');
@@ -245,3 +247,55 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(drawingAt(page, 0)).toHaveAttribute("aria-label", "My diagram");
   });
 });
+
+// SPEC-057 — the hand-built native-group fixtures (build-spec057-fixtures.mjs).
+// Each holds five containers in document order (drawing-0..4): a plain pair, a
+// nested group, a mixed shape/image/text-box group, a rotated container and a
+// preserved-member (sealed) group. AC-77..80, AC-82.
+for (const [label, fixture] of [
+  ["word-groups.docx", docxGroupsFixture],
+  ["lo-groups.odt", odtGroupsFixture],
+] as const) {
+  test.describe(`SPEC-057 — native ${label} renders its groups`, () => {
+    test("all five containers render as selectable, enterable groups; the sealed one does not enter (AC-77..80, AC-82)", async ({ page }) => {
+      await openFixture(page, fixture);
+      await expect(drawings(page)).toHaveCount(5);
+
+      // The four unsealed groups: a first click selects the container (its
+      // toolbar and resize handles show), a second descends into a member
+      // (its proxy becomes focusable), Escape steps back out.
+      for (const index of [0, 1, 2, 3]) {
+        const container = drawingAt(page, index);
+        await expect(container).toHaveAttribute("role", "group");
+        const member = page.locator(`[data-testid="drawing-${index}-member-0"]`);
+        await expect(member).toHaveCount(1);
+
+        await member.click();
+        await expect(page.getByTestId("group-toolbar")).toBeVisible();
+        await expect(page.getByTestId("group-handles")).toBeVisible();
+
+        await member.click();
+        await expect(member).toHaveAttribute("tabindex", "0");
+
+        await page.keyboard.press("Escape");
+        await expect(member).toHaveAttribute("tabindex", "-1");
+        await page.keyboard.press("Escape");
+      }
+
+      // The mixed group (index 2) nests an image member proxy.
+      await expect(page.locator('[data-testid="drawing-2-member-1"]')).toHaveAttribute("role", "img");
+
+      // The preserved-member group (index 4) is sealed: it selects but offers
+      // no resize/rotation handles and does not enter — a second click keeps
+      // the container selected, its members never become focusable.
+      const sealed = drawingAt(page, 4);
+      await expect(sealed).toHaveAttribute("role", "group");
+      const sealedMember = page.locator('[data-testid="drawing-4-member-0"]');
+      await sealedMember.click();
+      await expect(page.getByTestId("group-toolbar")).toBeVisible();
+      await expect(page.getByTestId("group-handles")).toHaveCount(0);
+      await sealedMember.click();
+      await expect(sealedMember).toHaveAttribute("tabindex", "-1");
+    });
+  });
+}

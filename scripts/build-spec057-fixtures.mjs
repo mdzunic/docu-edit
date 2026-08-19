@@ -157,7 +157,7 @@ const PNG_1x1 = Buffer.from(
   // A floating group anchor holding wpg:wgp. `chScale` > 1 makes a non-identity
   // child coordinate space (chExt = chScale × ext); members are then authored
   // in that scaled space.
-  function groupAnchor({ w, h, rot, chScale = 1, altText, members }) {
+  function groupAnchor({ w, h, rot, chScale = 1, altText, members, posX = 3, posY = 0 }) {
     const cx = emu(w);
     const cy = emu(h);
     const rotAttr = rot ? ` rot="${Math.round(rot * 60000)}"` : "";
@@ -168,8 +168,8 @@ const PNG_1x1 = Buffer.from(
       `<w:drawing xmlns:wp="${WP}">` +
       '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">' +
       '<wp:simplePos x="0" y="0"/>' +
-      '<wp:positionH relativeFrom="column"><wp:posOffset>1080000</wp:posOffset></wp:positionH>' +
-      '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+      `<wp:positionH relativeFrom="column"><wp:posOffset>${emu(posX)}</wp:posOffset></wp:positionH>` +
+      `<wp:positionV relativeFrom="paragraph"><wp:posOffset>${emu(posY)}</wp:posOffset></wp:positionV>` +
       `<wp:extent cx="${cx}" cy="${cy}"/>` +
       '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
       '<wp:wrapSquare wrapText="bothSides"/>' +
@@ -190,14 +190,14 @@ const PNG_1x1 = Buffer.from(
   // 0 — plain pair, non-identity child space (chScale 2 → child coords doubled).
   groups.push(
     groupAnchor({
-      w: 5, h: 2, chScale: 2, altText: "Plain pair",
+      w: 5, h: 2, chScale: 2, altText: "Plain pair", posY: 0,
       members: wspMember({ x: 0, y: 0, w: 4, h: 4, fill: "1155CC", altText: "A" }) + wspMember({ prst: "roundRect", x: 6, y: 0, w: 4, h: 4, fill: "22AA55", altText: "B" }),
     }),
   );
   // 1 — nested: a shape + a nested pair (identity space).
   groups.push(
     groupAnchor({
-      w: 7, h: 2, altText: "Nested",
+      w: 7, h: 2, altText: "Nested", posY: 4,
       members:
         wspMember({ prst: "triangle", x: 0, y: 0, w: 2, h: 2, fill: "CC3366", altText: "Solo" }) +
         nestedGroup({ x: 3, y: 0, w: 4, h: 2, members: wspMember({ x: 0, y: 0, w: 2, h: 2, altText: "Nested A" }) + wspMember({ prst: "ellipse", x: 2, y: 0, w: 2, h: 2, fill: "AA5522", altText: "Nested B" }) }),
@@ -206,7 +206,7 @@ const PNG_1x1 = Buffer.from(
   // 2 — mixed: a shape, an image and a text box (identity space).
   groups.push(
     groupAnchor({
-      w: 5, h: 5, altText: "Mixed",
+      w: 5, h: 5, altText: "Mixed", posY: 8,
       members:
         wspMember({ x: 0, y: 0, w: 2, h: 2, fill: "3366CC", altText: "Shape member" }) +
         picMember({ x: 3, y: 0, w: 2, h: 2, altText: "Image member" }) +
@@ -216,14 +216,14 @@ const PNG_1x1 = Buffer.from(
   // 3 — rotated container (@rot 30°).
   groups.push(
     groupAnchor({
-      w: 5, h: 2, rot: 30, altText: "Rotated",
+      w: 5, h: 2, rot: 30, altText: "Rotated", posY: 15,
       members: wspMember({ x: 0, y: 0, w: 2, h: 2, fill: "1155CC", altText: "R-A" }) + wspMember({ prst: "ellipse", x: 3, y: 0, w: 2, h: 2, fill: "22AA55", altText: "R-B" }),
     }),
   );
   // 4 — preserved member (prst outside the catalogue → sealed).
   groups.push(
     groupAnchor({
-      w: 5, h: 2, altText: "Preserved",
+      w: 5, h: 2, altText: "Preserved", posY: 19,
       members: wspMember({ prst: "pentagon", x: 0, y: 0, w: 2, h: 2, fill: "CC6600", altText: "Preserved member" }) + wspMember({ x: 3, y: 0, w: 2, h: 2, fill: "3366CC", altText: "Normal member" }),
     }),
   );
