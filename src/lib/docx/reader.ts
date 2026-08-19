@@ -769,16 +769,23 @@ function groupRunDrawing(
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
   links: LinkReadContext | undefined,
-): DrawingGroup | null {
+  ctx: DrawingContext,
+): { group: DrawingGroup; media: MediaPart[] } | null {
   const contentChildren = Array.from(rEl.children).filter(
     (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
   );
   if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
     return null;
   }
-  return parseGroupDrawing(contentChildren[0], {
+  const media: MediaPart[] = [];
+  const group = parseGroupDrawing(contentChildren[0], {
     parseParagraph: (pEl) => parseParagraph(pEl, styleCatalog, numberingCatalog, links),
+    mainRels: ctx.mainRels,
+    mainPartPath: ctx.mainPartPath,
+    parts: ctx.parts,
+    collectMedia: (part) => media.push(part),
   });
+  return group ? { group, media } : null;
 }
 
 /** A `w:r` whose only content is one `w:drawing` holding a `c:chart`
@@ -1148,7 +1155,7 @@ function parseBodyParagraphBlocks(
   const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
   const hasShapeRun = runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
   const hasChartRun = runElements.some((r) => chartRunDrawing(r, ctx) !== null);
-  const hasGroupRun = runElements.some((r) => groupRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
+  const hasGroupRun = runElements.some((r) => groupRunDrawing(r, styleCatalog, numberingCatalog, links, ctx) !== null);
   // A typed w:br in an otherwise-modelled run splits the paragraph the same
   // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
   // of that run's verbatim XML — splitting an unmodelled run could not
@@ -1203,10 +1210,11 @@ function parseBodyParagraphBlocks(
         blocks.push(chart);
         continue;
       }
-      const group = groupRunDrawing(child, styleCatalog, numberingCatalog, links);
+      const group = groupRunDrawing(child, styleCatalog, numberingCatalog, links, ctx);
       if (group) {
         flush();
-        blocks.push(group);
+        blocks.push(group.group);
+        media.push(...group.media);
         continue;
       }
       if (isCommentReferenceRun(child)) {

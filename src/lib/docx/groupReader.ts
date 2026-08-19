@@ -7,19 +7,30 @@
 // Shape and nested-group members are modelled; a member kind this reader does
 // not yet model (a picture, a chart frame) seals the container — it is
 // preserved verbatim so it still round-trips, moves and ungroups.
-import { firstChildElement } from "../core/xml";
+import { firstChildElement, type Relationship } from "../core/xml";
 import { emuToCm } from "../core/units";
+import type { MediaPart } from "../core/media";
 import { parseGroupMemberWsp } from "./shape";
+import { parseGroupMemberImage } from "./drawing";
 import type { DrawingGroup, DrawingMember, Paragraph } from "../documentModel";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const PIC_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WPS_NAMESPACE = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 const WPG_NAMESPACE = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
 const GROUP_URI = "wordprocessingGroup";
 
 export interface GroupShapeTextContext {
   parseParagraph: (pEl: Element) => Paragraph;
+  /** Media-resolution context for `pic:pic` image members (SPEC-024/-057);
+   * omit when the caller has no media pipeline (image members then seal). */
+  mainRels?: Map<string, Relationship>;
+  mainPartPath?: string;
+  parts?: Map<string, Uint8Array>;
+  /** Sink for the MediaPart of every parsed image member, so parseDocx adds
+   * them to `DocumentModel.media` exactly as it does for standalone images. */
+  collectMedia?: (part: MediaPart) => void;
 }
 
 interface ChildTransform {
@@ -41,6 +52,16 @@ function parseMembers(wgp: Element, transform: ChildTransform, ctx: GroupShapeTe
         return null;
       }
       members.push(shape);
+    } else if (child.namespaceURI === PIC_NAMESPACE && child.localName === "pic") {
+      if (!ctx.mainRels || ctx.mainPartPath === undefined || !ctx.parts) {
+        return null;
+      }
+      const parsed = parseGroupMemberImage(child, transform, ctx.mainRels, ctx.mainPartPath, ctx.parts);
+      if (!parsed) {
+        return null;
+      }
+      ctx.collectMedia?.(parsed.media);
+      members.push(parsed.image);
     } else if (child.namespaceURI === WPG_NAMESPACE && child.localName === "grpSp") {
       const nested = parseNestedGroup(child, transform, ctx);
       if (!nested) {

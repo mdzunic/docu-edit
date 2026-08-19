@@ -185,6 +185,78 @@ export function imageGroupChildXml(image: Image, relId: string, id: number, offX
   );
 }
 
+/** Parses a `pic:pic` **member** of a `wpg:wgp` group (SPEC-057) into an Image
+ * + its MediaPart, applying the group's child coordinate transform to the
+ * member's `a:xfrm` offset/size — the picture sibling of
+ * `parseGroupMemberWsp`. Returns null when the picture's blip does not resolve
+ * to a modelled image part, so the group reader seals the container. */
+export function parseGroupMemberImage(
+  picEl: Element,
+  transform: { scaleX: number; scaleY: number; chOffX: number; chOffY: number },
+  mainRels: Map<string, Relationship>,
+  mainPartPath: string,
+  parts: Map<string, Uint8Array>,
+): ParsedDrawing | null {
+  const blipFill = firstChildElement(picEl, PIC_NAMESPACE, "blipFill");
+  const blip = blipFill ? firstChildElement(blipFill, A_NAMESPACE, "blip") : undefined;
+  const relId = blip ? blip.getAttributeNS(R_NAMESPACE, "embed") : null;
+  if (!relId) {
+    return null;
+  }
+  const rel = mainRels.get(relId);
+  if (!rel || rel.type !== IMAGE_RELATIONSHIP) {
+    return null;
+  }
+  const partPath = resolvePartPath(mainPartPath, rel.target);
+  const bytes = parts.get(partPath);
+  const contentType = contentTypeForPartName(partPath);
+  if (!bytes || !contentType) {
+    return null;
+  }
+
+  const spPr = firstChildElement(picEl, PIC_NAMESPACE, "spPr");
+  const xfrm = spPr ? firstChildElement(spPr, A_NAMESPACE, "xfrm") : undefined;
+  const off = xfrm ? firstChildElement(xfrm, A_NAMESPACE, "off") : undefined;
+  const ext = xfrm ? firstChildElement(xfrm, A_NAMESPACE, "ext") : undefined;
+  const offX = off ? Number(off.getAttribute("x")) || 0 : 0;
+  const offY = off ? Number(off.getAttribute("y")) || 0 : 0;
+  const cx = ext ? Number(ext.getAttribute("cx")) : NaN;
+  const cy = ext ? Number(ext.getAttribute("cy")) : NaN;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+    return null;
+  }
+  const rotAttr = xfrm?.getAttribute("rot");
+  const rotationDeg = rotAttr ? ((Math.round(Number(rotAttr) / 60000) % 360) + 360) % 360 : 0;
+
+  const nvPicPr = firstChildElement(picEl, PIC_NAMESPACE, "nvPicPr");
+  const cNvPr = nvPicPr ? firstChildElement(nvPicPr, PIC_NAMESPACE, "cNvPr") : undefined;
+  const altText = cNvPr?.getAttribute("descr") || undefined;
+
+  const widthCm = emuToCm(cx * transform.scaleX);
+  const heightCm = emuToCm(cy * transform.scaleY);
+  const natural = decodeImageDimensions(bytes, contentType);
+  const image: Image = {
+    type: "image",
+    mediaId: partPath,
+    naturalWidthPx: natural?.widthPx ?? Math.round((widthCm / 2.54) * 96),
+    naturalHeightPx: natural?.heightPx ?? Math.round((heightCm / 2.54) * 96),
+    widthCm,
+    heightCm,
+    wrap: "square",
+    offsetXCm: emuToCm((offX - transform.chOffX) * transform.scaleX),
+    offsetYCm: emuToCm((offY - transform.chOffY) * transform.scaleY),
+  };
+  if (rotationDeg) {
+    image.rotationDeg = rotationDeg;
+  }
+  if (altText) {
+    image.altText = altText;
+  }
+  const media: MediaPart = { mediaId: partPath, contentType, data: "" };
+  pendingMediaBytes.set(media, bytes);
+  return { image, media };
+}
+
 /** Serialises an Image + the relationship id its media was written under
  * into a `w:drawing` element (wrapped by the caller in `<w:r>`, itself
  * wrapped in `<w:p>` — SPEC-024's Image block has no direct OOXML body-level
