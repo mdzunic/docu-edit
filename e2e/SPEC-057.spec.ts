@@ -415,22 +415,23 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
 });
 
 // SPEC-057 — the hand-built native-group fixtures (build-spec057-fixtures.mjs).
-// Each holds five containers in document order (drawing-0..4): a plain pair, a
-// nested group, a mixed shape/image/text-box group, a rotated container and a
-// preserved-member (sealed) group. AC-77..80, AC-82.
+// Each holds six containers in document order (drawing-0..5): a plain pair, a
+// nested group, a mixed shape/image/text-box group, a rotated container, a
+// preserved-member (sealed) group and a chart-member group. AC-77..82.
 for (const [label, fixture] of [
   ["word-groups.docx", docxGroupsFixture],
   ["lo-groups.odt", odtGroupsFixture],
 ] as const) {
   test.describe(`SPEC-057 — native ${label} renders its groups`, () => {
-    test("all five containers render as selectable, enterable groups; the sealed one does not enter (AC-77..80, AC-82)", async ({ page }) => {
+    test("all containers render as selectable, enterable groups; the sealed one does not enter (AC-77..82)", async ({ page }) => {
       await openFixture(page, fixture);
-      await expect(drawings(page)).toHaveCount(5);
+      await expect(drawings(page)).toHaveCount(6);
 
-      // The four unsealed groups: a first click selects the container (its
-      // toolbar and resize handles show), a second descends into a member
-      // (its proxy becomes focusable), Escape steps back out.
-      for (const index of [0, 1, 2, 3]) {
+      // The unsealed groups (including the chart-member group at index 5): a
+      // first click selects the container (its toolbar and resize handles
+      // show), a second descends into a member (its proxy becomes focusable),
+      // Escape steps back out.
+      for (const index of [0, 1, 2, 3, 5]) {
         const container = drawingAt(page, index);
         await expect(container).toHaveAttribute("role", "group");
         const member = page.locator(`[data-testid="drawing-${index}-member-0"]`);
@@ -450,6 +451,10 @@ for (const [label, fixture] of [
 
       // The mixed group (index 2) nests an image member proxy.
       await expect(page.locator('[data-testid="drawing-2-member-1"]')).toHaveAttribute("role", "img");
+
+      // The chart-member group (index 5) renders its chart as a first-class
+      // member proxy (AC-81), enterable like any other member.
+      await expect(page.locator('[data-testid="drawing-5-member-1"]')).toHaveAttribute("role", "img");
 
       // The preserved-member group (index 4) is sealed: it selects but offers
       // no resize/rotation handles and does not enter — a second click keeps

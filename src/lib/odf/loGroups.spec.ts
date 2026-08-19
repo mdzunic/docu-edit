@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseOdt } from "./reader";
-import { isDrawingGroup, isImage, isSealedGroup, isShape, type DrawingGroup } from "../documentModel";
+import { isChart, isDrawingGroup, isImage, isSealedGroup, isShape, type DrawingGroup } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -18,9 +18,9 @@ async function openGroups(): Promise<DrawingGroup[]> {
 }
 
 describe("SPEC-057 — opening lo-groups.odt", () => {
-  it("yields five native containers in document order (AC-60)", async () => {
+  it("yields six native containers in document order (AC-60)", async () => {
     const groups = await openGroups();
-    expect(groups).toHaveLength(5);
+    expect(groups).toHaveLength(6);
     expect(groups.every((g) => g.members.length >= 2)).toBe(true);
   });
 
@@ -48,5 +48,14 @@ describe("SPEC-057 — opening lo-groups.odt", () => {
   it("group 4 holds a preserved member and so is sealed (AC-67)", async () => {
     const preserved = (await openGroups())[4];
     expect(isSealedGroup(preserved)).toBe(true);
+  });
+
+  it("group 5 models a draw:object chart member first-class, not sealed (AC-62)", async () => {
+    const chartGroup = (await openGroups())[5];
+    expect(isSealedGroup(chartGroup)).toBe(false);
+    const chart = chartGroup.members.find(isChart);
+    expect(chart).toBeDefined();
+    expect(chart!.chartType).toBe("columnClustered");
+    expect(chart!.unsupportedChartXml).toBeUndefined();
   });
 });

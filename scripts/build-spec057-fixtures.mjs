@@ -15,8 +15,10 @@
 //   2  mixed group: a shape, an image and a text box (two paragraphs)
 //   3  rotated group (container @rot in .docx; the baked form in .odt)
 //   4  preserved-member group (a member outside the shape catalogue → sealed)
-// A chart-member group (AC-81) is intentionally omitted: charts as native
-// group members are not yet modelled by the readers/writers.
+//   5  chart-member group (a shape + a chart; AC-81) — .docx wpg:graphicFrame
+//      referencing word/charts/chart1.xml, .odt draw:object referencing an
+//      embedded chart subpackage (Object 1). The chart XML below is exactly
+//      what this project's own chart writers emit, so the readers parse it.
 import { deflateRawSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -98,6 +100,15 @@ const PNG_1x1 = Buffer.from(
   "base64",
 );
 
+// The chart-member group's chart content — verbatim what this project's own
+// chart writers emit for a columnClustered chart (categories A/B, one series),
+// so the group readers parse each back to a first-class Chart member.
+const DOCX_CHART_XML =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:autoTitleDeleted val="1"/><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>S</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls><c:gapWidth val="150"/><c:axId val="111111111"/><c:axId val="222222222"/></c:barChart><c:catAx><c:axId val="111111111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222222222"/></c:catAx><c:valAx><c:axId val="222222222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="111111111"/></c:valAx></c:plotArea><c:plotVisOnly val="1"/></c:chart></c:chartSpace>';
+
+const ODT_CHART_XML =
+  '<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2"><office:body><office:chart><chart:chart chart:class="chart:bar" chart:vertical="true" chart:stacked="false" svg:width="5cm" svg:height="4cm"><chart:plot-area><chart:axis chart:dimension="x" chart:name="primary-x"></chart:axis><chart:axis chart:dimension="y" chart:name="primary-y"><chart:grid chart:class="major"/></chart:axis><chart:series chart:class="chart:bar" chart:color="#4472c4" chart:values-cell-range-address="local-table.$B$2:.$B$3" chart:label-cell-address="local-table.$B$1"/></chart:plot-area><table:table table:name="local-table"><table:table-header-columns><table:table-column/></table:table-header-columns><table:table-columns><table:table-column/></table:table-columns><table:table-header-rows><table:table-row><table:table-cell/><table:table-cell office:value-type="string"><text:p>S</text:p></table:table-cell></table:table-row></table:table-header-rows><table:table-rows><table:table-row><table:table-cell office:value-type="string"><text:p>A</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="3"><text:p>3</text:p></table:table-cell></table:table-row><table:table-row><table:table-cell office:value-type="string"><text:p>B</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="4"><text:p>4</text:p></table:table-cell></table:table-row></table:table-rows></table:table></chart:chart></office:chart></office:body></office:document-content>';
+
 // --- .docx fixture -----------------------------------------------------------
 {
   const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -140,6 +151,18 @@ const PNG_1x1 = Buffer.from(
       `<pic:blipFill><a:blip xmlns:r="${R}" r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
       `<pic:spPr><a:xfrm><a:off x="${emu(x)}" y="${emu(y)}"/><a:ext cx="${emu(w)}" cy="${emu(h)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
       "</pic:pic>"
+    );
+  }
+  // A wpg:graphicFrame chart member referencing the chart part via `relId`.
+  function chartMember({ x, y, w, h, relId, altText }) {
+    const descrAttr = altText ? ` descr="${escapeXml(altText)}"` : "";
+    return (
+      `<wpg:graphicFrame xmlns:wpg="${WPG}" xmlns:a="${A}" xmlns:r="${R}">` +
+      `<wpg:cNvPr id="${nextId++}" name="Chart"${descrAttr}/><wpg:cNvFrPr/>` +
+      `<wpg:xfrm><a:off x="${emu(x)}" y="${emu(y)}"/><a:ext cx="${emu(w)}" cy="${emu(h)}"/></wpg:xfrm>` +
+      '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+      `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="${relId}"/>` +
+      "</a:graphicData></a:graphic></wpg:graphicFrame>"
     );
   }
   // A nested wpg:grpSp at parent-space off/ext with an identity child space.
@@ -227,6 +250,13 @@ const PNG_1x1 = Buffer.from(
       members: wspMember({ prst: "pentagon", x: 0, y: 0, w: 2, h: 2, fill: "CC6600", altText: "Preserved member" }) + wspMember({ x: 3, y: 0, w: 2, h: 2, fill: "3366CC", altText: "Normal member" }),
     }),
   );
+  // 5 — chart member (a shape + a wpg:graphicFrame chart → first-class Chart).
+  groups.push(
+    groupAnchor({
+      w: 8, h: 4, altText: "Chart group", posY: 23,
+      members: wspMember({ x: 0, y: 0, w: 2, h: 2, fill: "3366CC", altText: "Chart sibling" }) + chartMember({ x: 3, y: 0, w: 5, h: 4, relId: "rIdChart1", altText: "Chart member" }),
+    }),
+  );
 
   const documentXml =
     `${XML}<w:document xmlns:w="${W}"><w:body>` +
@@ -248,6 +278,7 @@ const PNG_1x1 = Buffer.from(
     '<Default Extension="png" ContentType="image/png"/>' +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
+    '<Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>' +
     "</Types>";
 
   const packageRelsXml =
@@ -259,6 +290,7 @@ const PNG_1x1 = Buffer.from(
     `${XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>' +
     '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    '<Relationship Id="rIdChart1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/>' +
     "</Relationships>";
 
   const bytes = buildZip([
@@ -267,6 +299,7 @@ const PNG_1x1 = Buffer.from(
     { name: "word/document.xml", content: documentXml },
     { name: "word/_rels/document.xml.rels", content: documentRelsXml },
     { name: "word/styles.xml", content: stylesXml },
+    { name: "word/charts/chart1.xml", content: DOCX_CHART_XML },
     { name: "word/media/image1.png", content: PNG_1x1, store: true },
   ]);
   for (const outDir of [path.join(__dirname, "..", "e2e", "fixtures"), path.join(__dirname, "..", "src", "lib", "docx", "fixtures")]) {
@@ -334,6 +367,17 @@ const PNG_1x1 = Buffer.from(
       "</draw:frame>"
     );
   }
+  // A chart member: a draw:frame/draw:object referencing the embedded chart
+  // subpackage "Object 1".
+  function chartMember({ x, y, w, h, altText }) {
+    const descXml = altText ? `<svg:desc>${escapeXml(altText)}</svg:desc>` : "";
+    return (
+      `<draw:frame text:anchor-type="paragraph" svg:x="${cmv(x)}" svg:y="${cmv(y)}" svg:width="${cmv(w)}" svg:height="${cmv(h)}">` +
+      '<draw:object xlink:href="./Object 1" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>' +
+      descXml +
+      "</draw:frame>"
+    );
+  }
   function group({ altText, members }) {
     const titleXml = altText ? `<svg:title>${escapeXml(altText)}</svg:title><svg:desc>${escapeXml(altText)}</svg:desc>` : "";
     return `<text:p><draw:g text:anchor-type="paragraph" draw:style-name="${groupStyleName}">${titleXml}${members}</draw:g></text:p>`;
@@ -353,6 +397,8 @@ const PNG_1x1 = Buffer.from(
   paragraphs.push(group({ altText: "Rotated", members: shapeMember({ x: 10, y: 2, w: 2, h: 2, fill: "#1155cc", altText: "R-A" }) + shapeMember({ drawType: "ellipse", x: 13, y: 2, w: 2, h: 2, fill: "#22aa55", altText: "R-B" }) }));
   // 4 — preserved member (draw:type outside the catalogue → sealed).
   paragraphs.push(group({ altText: "Preserved", members: shapeMember({ drawType: "pentagon", x: 10, y: 8, w: 2, h: 2, fill: "#cc6600", altText: "Preserved member" }) + shapeMember({ x: 13, y: 8, w: 2, h: 2, fill: "#3366cc", altText: "Normal member" }) }));
+  // 5 — chart member (a shape + a draw:object chart → first-class Chart).
+  paragraphs.push(group({ altText: "Chart group", members: shapeMember({ x: 10, y: 13, w: 2, h: 2, fill: "#3366cc", altText: "Chart sibling" }) + chartMember({ x: 13, y: 13, w: 4, h: 3, altText: "Chart member" }) }));
 
   const contentXml =
     `${XML}<office:document-content${NS} office:version="1.2">` +
@@ -386,6 +432,8 @@ const PNG_1x1 = Buffer.from(
     '<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>' +
     '<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>' +
     '<manifest:file-entry manifest:full-path="Pictures/image1.png" manifest:media-type="image/png"/>' +
+    '<manifest:file-entry manifest:full-path="Object 1/" manifest:version="1.2" manifest:media-type="application/vnd.oasis.opendocument.chart"/>' +
+    '<manifest:file-entry manifest:full-path="Object 1/content.xml" manifest:media-type="text/xml"/>' +
     "</manifest:manifest>";
 
   const bytes = buildZip([
@@ -395,6 +443,7 @@ const PNG_1x1 = Buffer.from(
     { name: "meta.xml", content: metaXml },
     { name: "settings.xml", content: settingsXml },
     { name: "Pictures/image1.png", content: PNG_1x1, store: true },
+    { name: "Object 1/content.xml", content: ODT_CHART_XML },
     { name: "META-INF/manifest.xml", content: manifestXml },
   ]);
   for (const outDir of [path.join(__dirname, "..", "e2e", "fixtures"), path.join(__dirname, "..", "src", "lib", "odf", "fixtures")]) {

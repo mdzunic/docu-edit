@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDocx } from "./reader";
-import { isDrawingGroup, isImage, isSealedGroup, isShape, type DrawingGroup } from "../documentModel";
+import { isChart, isDrawingGroup, isImage, isSealedGroup, isShape, type DrawingGroup } from "../documentModel";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -18,9 +18,9 @@ async function openGroups(): Promise<DrawingGroup[]> {
 }
 
 describe("SPEC-057 — opening word-groups.docx", () => {
-  it("yields five native containers in document order (AC-53)", async () => {
+  it("yields six native containers in document order (AC-53)", async () => {
     const groups = await openGroups();
-    expect(groups).toHaveLength(5);
+    expect(groups).toHaveLength(6);
     expect(groups.every((g) => g.members.length >= 2)).toBe(true);
   });
 
@@ -59,5 +59,15 @@ describe("SPEC-057 — opening word-groups.docx", () => {
     const preserved = (await openGroups())[4];
     expect(isSealedGroup(preserved)).toBe(true);
     expect(preserved.members.some((m) => isShape(m) && m.unsupportedGeometryXml !== undefined)).toBe(true);
+  });
+
+  it("group 5 models a wpg:graphicFrame chart member first-class, not sealed (AC-55)", async () => {
+    const chartGroup = (await openGroups())[5];
+    expect(isSealedGroup(chartGroup)).toBe(false);
+    const chart = chartGroup.members.find(isChart);
+    expect(chart).toBeDefined();
+    expect(chart!.chartType).toBe("columnClustered");
+    expect(chart!.categories).toEqual(["A", "B"]);
+    expect(chart!.unsupportedChartXml).toBeUndefined();
   });
 });
