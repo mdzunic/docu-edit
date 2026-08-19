@@ -203,13 +203,13 @@ function onAltTextInput(event = new Event("input")) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: var(--space-2);
+  padding: var(--space-2);
   max-width: 640px;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 .shape-toolbar-above {
@@ -219,9 +219,9 @@ function onAltTextInput(event = new Event("input")) {
 .shape-toolbar-field {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  color: #202124;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -234,28 +234,28 @@ function onAltTextInput(event = new Event("input")) {
 }
 
 .shape-toolbar-select {
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
 }
 
 .shape-toolbar-option {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .shape-toolbar-option:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .shape-toolbar-separator {
   width: 1px;
   align-self: stretch;
-  background: #dadce0;
+  background: var(--border-default);
 }
 </style>

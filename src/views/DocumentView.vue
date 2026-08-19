@@ -785,8 +785,6 @@ const {
 // --- native drawing-group containers (SPEC-057) ------------------------------
 // Container/member selection (click-to-enter), Group/Ungroup, the container
 // and member gestures, the container toolbar and keyboard proxy traversal.
-// clearOtherSelections keeps a group selection exclusive with the per-kind
-// shape/image/chart selections.
 const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); }, getGroupCandidates: () => shapeMultiSelection.value });
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
