@@ -491,10 +491,12 @@ onBeforeUnmount(() => {
 }
 
 .paragraph-button {
+  position: relative;
+  z-index: 1;
   font: inherit;
   font-size: var(--text-md);
   min-width: 1.75rem;
-  height: 1.75rem;
+  height: var(--height-control);
   padding: 0 var(--space-2);
   line-height: 1;
   display: inline-flex;
@@ -504,6 +506,21 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: var(--surface-base);
   cursor: pointer;
+}
+
+/* A transparent out-of-flow hit area lifts each button to the 32×32 minimum
+   (AC-48) without widening its visual box — so the toolbar stays flush within
+   its 1280px budget (AC-60), exactly as FontSizeControl's steppers do. Clicks
+   on the pseudo dispatch on the host <button>, and z-index:1 lifts the narrow
+   list-marker caret's overhang above its sibling toggle. */
+.paragraph-button::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--height-control);
+  height: var(--height-control);
+  transform: translate(-50%, -50%);
 }
 
 .paragraph-button:disabled {

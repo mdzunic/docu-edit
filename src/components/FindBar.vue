@@ -347,9 +347,12 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .find-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
-  min-width: 1.75rem;
-  height: 1.75rem;
+  min-width: var(--height-control);
+  height: var(--height-control);
   padding: 0 var(--space-3);
   border: var(--border-width) solid transparent;
   border-radius: var(--radius-sm);
@@ -374,6 +377,9 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .find-option {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--height-control);
   font: inherit;
   font-size: var(--text-sm);
   padding: var(--space-1) var(--space-3);
@@ -397,6 +403,9 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .find-text-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--height-control);
   font: inherit;
   font-size: var(--text-md);
   padding: var(--space-2) var(--space-4);

@@ -4230,6 +4230,9 @@ function handleMenuCommand(id = "") {
    bar — the toolbar button reads as a toggle chip, the status-bar one
    matches word-count-button's plain-until-hovered look. */
 .track-changes-toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--height-control);
   font: inherit;
   font-size: var(--text-md);
   padding: var(--space-2) var(--space-3);
