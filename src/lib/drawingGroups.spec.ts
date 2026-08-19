@@ -251,6 +251,29 @@ describe("buildContainer (SPEC-057 Creating a group)", () => {
     expect(container.members[1]).toMatchObject({ offsetXCm: 5, offsetYCm: 3 });
   });
 
+  it("stores an anchor-relative offset so no member moves on screen (AC-4)", () => {
+    // The rects are page-relative; the container inherits an anchor sitting at
+    // (1.5, 1) on the page. Its stored offset must subtract that anchor so the
+    // rendered position (anchor + container offset + member offset) equals each
+    // member's original page rect — otherwise Group translates every member by
+    // the anchor's page position.
+    const anchor = { xCm: 1.5, yCm: 1 };
+    const entries = [
+      { block: shape({ widthCm: 3, heightCm: 2 }), rect: { xCm: 2, yCm: 2, widthCm: 3, heightCm: 2 } },
+      { block: shape({ widthCm: 3, heightCm: 2 }), rect: { xCm: 7, yCm: 5, widthCm: 3, heightCm: 2 } },
+    ];
+    const container = buildContainer(entries, anchor);
+    // union origin (2,2) minus the anchor (1.5,1).
+    expect(container.offsetXCm).toBeCloseTo(0.5);
+    expect(container.offsetYCm).toBeCloseTo(1);
+    const rendered = container.members.map((m) => [
+      anchor.xCm + (container.offsetXCm ?? 0) + (m.offsetXCm ?? 0),
+      anchor.yCm + (container.offsetYCm ?? 0) + (m.offsetYCm ?? 0),
+    ]);
+    expect(rendered).toContainEqual([2, 2]);
+    expect(rendered).toContainEqual([7, 5]);
+  });
+
   it("clears member anchor fields and sets the placeholder wrap", () => {
     const entries = [
       { block: shape({ relativeToH: "page", relativeToV: "page", zOrder: 4 }), rect: { xCm: 0, yCm: 0, widthCm: 3, heightCm: 2 } },

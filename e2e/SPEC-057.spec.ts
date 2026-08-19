@@ -104,6 +104,42 @@ test.describe("SPEC-057 — Group and Ungroup gestures", () => {
     await expect(drawings(page)).toHaveCount(2);
   });
 
+  test("Group moves no member on screen (AC-4)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 250);
+    await insertShapeAt(page, "ellipse", 600, 250);
+    await expect(drawings(page)).toHaveCount(2);
+
+    const [first, second] = await drawings(page).all();
+    const firstBox = await first.boundingBox();
+    const secondBox = await second.boundingBox();
+    if (!firstBox || !secondBox) {
+      throw new Error("a drawing has no bounding box");
+    }
+    const [leftShape, rightShape] = firstBox.x <= secondBox.x ? [first, second] : [second, first];
+    const [leftBox, rightBox] = firstBox.x <= secondBox.x ? [firstBox, secondBox] : [secondBox, firstBox];
+    await leftShape.click({ position: { x: leftBox.width / 2, y: leftBox.height * 0.72 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await rightShape.click({ modifiers: ["Shift"], position: { x: rightBox.width / 2, y: rightBox.height * 0.72 } });
+
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(drawingAt(page, 0)).toHaveAttribute("role", "group");
+
+    // The two members must land exactly where they were before Group — the
+    // container's offset is anchor-relative, so grouping is a pure re-parenting
+    // with no visible translation.
+    const member0 = await page.locator('[data-testid="drawing-0-member-0"]').boundingBox();
+    const member1 = await page.locator('[data-testid="drawing-0-member-1"]').boundingBox();
+    if (!member0 || !member1) {
+      throw new Error("a member has no bounding box");
+    }
+    const memberBoxes = [member0, member1];
+    for (const original of [leftBox, rightBox]) {
+      const match = memberBoxes.find((m) => Math.abs(m.x - original.x) < 2 && Math.abs(m.y - original.y) < 2);
+      expect(match, `a member should stay at (${original.x}, ${original.y})`).toBeTruthy();
+    }
+  });
+
   test("a second click selects a member, whose toolbar offers the reorder verbs; Delete dissolves a two-member container (AC-23, AC-31/32, AC-33..36)", async ({ page }) => {
     await openFixture(page, docxShapesFixture);
     const member0 = page.locator('[data-testid="drawing-14-member-0"]');

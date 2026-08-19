@@ -469,6 +469,29 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
     };
   }
 
+  /** The laid-out page position (cm, page-relative) of a top-level drawing's
+   * anchor span — the reference frame `groupDisplayStyle` positions the
+   * container within (`.doc-*-anchor`, made `position: relative` when floating).
+   * The new container inherits the first member's block slot, so its own anchor
+   * lands here; the container's offset is measured against it so Group moves no
+   * member on screen (SPEC-057 AC-4). */
+  function drawingAnchorCm(section: number, block: number): { xCm: number; yCm: number } | null {
+    const pageEl = pageRef.value;
+    const root = contentRoot.value;
+    if (!pageEl || !root) {
+      return null;
+    }
+    const anchor = root.querySelector(
+      `.doc-shape-anchor[data-section="${section}"][data-block="${block}"], .doc-image-anchor[data-section="${section}"][data-block="${block}"], .doc-chart-anchor[data-section="${section}"][data-block="${block}"], .doc-group-anchor[data-section="${section}"][data-block="${block}"]`,
+    );
+    if (!anchor) {
+      return null;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const pageRect = pageEl.getBoundingClientRect();
+    return { xCm: (rect.left - pageRect.left) * CM_PER_PX, yCm: (rect.top - pageRect.top) * CM_PER_PX };
+  }
+
   /** Moves DOM focus to the currently selected container/member proxy so
    * keyboard traversal and screen readers follow the selection (SPEC-057
    * "Rendering and test surface"). The proxy testids are built from the
@@ -759,11 +782,14 @@ export function useDrawingGroups(deps: DrawingGroupsDeps) {
       }
       entries.push({ section: ref.section, block: ref.block, rect });
     }
-    const before = beforeSelection();
-    const result = groupDrawings(model, before, entries);
-    applyEdit(result, before, "group drawings");
     const section = entries[0].section;
     const firstBlock = Math.min(...entries.map((e) => e.block));
+    // The container inherits the first member's block slot; measure that anchor
+    // so its offset comes out anchor-relative and no member jumps (AC-4).
+    const anchor = drawingAnchorCm(section, firstBlock) ?? { xCm: 0, yCm: 0 };
+    const before = beforeSelection();
+    const result = groupDrawings(model, before, entries, anchor);
+    applyEdit(result, before, "group drawings");
     multiSelection.value = [];
     clearOtherSelections();
     groupSelection.value = { section, block: firstBlock, path: [] };

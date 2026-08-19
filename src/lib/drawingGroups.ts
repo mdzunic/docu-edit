@@ -207,9 +207,12 @@ function zOrderOf(block: { zOrder?: number }): number {
  * member (its block position). Member order in the container is paint order —
  * ascending `zOrder`, ties by document order. The container box is the union
  * of the rectangles; member offsets are their rectangle's position within it;
- * the container anchors where the first member did, offsets landing its box on
- * the union origin. */
-export function buildContainer(entries: { block: DrawingMember; rect: RectCm }[]): DrawingGroup {
+ * the container anchors where the first member did, its own offset (union
+ * origin minus the given `anchor`) landing its box on the union origin.
+ * `anchor` is the container's laid-out anchor position (cm, page-relative); it
+ * defaults to a zero origin for callers whose rects are already anchor-relative
+ * (legacy migration, unit tests). */
+export function buildContainer(entries: { block: DrawingMember; rect: RectCm }[], anchor: { xCm: number; yCm: number } = { xCm: 0, yCm: 0 }): DrawingGroup {
   // Paint order: ascending zOrder, ties by current (document) order.
   const ordered = entries
     .map((entry, index) => ({ ...entry, index }))
@@ -239,8 +242,15 @@ export function buildContainer(entries: { block: DrawingMember; rect: RectCm }[]
     wrap: firstWrap,
     relativeToH: first.relativeToH ?? DEFAULT_DRAWING_POSITION.relativeToH,
     relativeToV: first.relativeToV ?? DEFAULT_DRAWING_POSITION.relativeToV,
-    offsetXCm: union.xCm,
-    offsetYCm: union.yCm,
+    // Anchor-relative, exactly like every other drawing's offset: the union
+    // origin is measured page-relative, so subtract the container's own anchor
+    // (its inherited block slot) — otherwise groupDisplayStyle, which renders
+    // `left: offsetXCm` within the anchor span, would translate the box by the
+    // anchor's page position and every member would jump on Group (SPEC-057
+    // AC-4). Defaults to a zero anchor for the legacy-migration/unit-test paths
+    // whose rects are already anchor-relative.
+    offsetXCm: union.xCm - anchor.xCm,
+    offsetYCm: union.yCm - anchor.yCm,
   };
   if (maxZ !== 0) {
     container.zOrder = maxZ;
@@ -259,9 +269,16 @@ export interface GroupEntry {
 
 /** Groups two or more selected drawings into one container at the first
  * member's block position (SPEC-057 AC-3, AC-4). Members must all sit in the
- * same section; the caller (the Group control) enforces that. Leaves the new
- * container selected. */
-export function groupDrawings(model: DocumentModel, selection: ModelSelection, entries: GroupEntry[]): CommandResult {
+ * same section; the caller (the Group control) enforces that. `anchor` is the
+ * container's laid-out anchor position (cm, page-relative) so its offset comes
+ * out anchor-relative and no member moves on screen. Leaves the new container
+ * selected. */
+export function groupDrawings(
+  model: DocumentModel,
+  selection: ModelSelection,
+  entries: GroupEntry[],
+  anchor: { xCm: number; yCm: number } = { xCm: 0, yCm: 0 },
+): CommandResult {
   const next = cloneContainers(model);
   if (entries.length < 2) {
     return { model: next, selection };
@@ -273,7 +290,7 @@ export function groupDrawings(model: DocumentModel, selection: ModelSelection, e
     const block = blocks[entry.block];
     return { block: block as DrawingMember, rect: entry.rect };
   });
-  const container = buildContainer(built);
+  const container = buildContainer(built, anchor);
   const firstBlock = sorted[0].block;
   // Remove the member blocks (highest index first so earlier indices hold).
   const indices = sorted.map((e) => e.block).sort((a, b) => b - a);
