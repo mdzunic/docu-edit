@@ -5,8 +5,25 @@
 </template>
 
 <style>
+/* The design system's tokens (SPEC-058). Imported once here, from the app's
+   only unscoped style block, so :root custom properties are visible to every
+   scoped component style. Must be the first rule — @import is only valid at
+   the top of a stylesheet. */
+@import "./styles/tokens.css";
+
 :root {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-ui);
+}
+
+/* One focus ring for the whole app (SPEC-058 AC-45/46/56): every interactive
+   control shows a 2px --focus-ring outline with a 2px offset. Written with
+   :where() so its specificity is zero — a component's own :focus-visible rule
+   can still refine it, but a control that adds no focus styling of its own
+   (or only a text-decoration) inherits the correct ring instead of the
+   browser's 1px default. --space-1 is 2px. */
+:where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
 }
 
 html,

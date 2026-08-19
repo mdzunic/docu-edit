@@ -8,6 +8,7 @@ import { computed, ref } from "vue";
 import { asStringList } from "../lib/documentModel";
 import { isValidNewLabel } from "../lib/captions";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** Every label the dialog offers: the three built-ins plus any custom
@@ -171,21 +172,20 @@ function insert() {
     </label>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="caption-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="caption-insert"
         @click="insert"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -195,13 +195,13 @@ function insert() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.9375rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-4);
 }
 
 .row-label {
-  color: #5f6368;
+  color: var(--text-secondary);
   min-width: 6rem;
 }
 
@@ -213,7 +213,7 @@ function insert() {
 
 .new-label-controls {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-3);
   align-items: center;
   flex: 1 1 auto;
 }
@@ -226,7 +226,7 @@ function insert() {
   font: inherit;
   background: none;
   border: none;
-  color: #1a73e8;
+  color: var(--text-accent);
   cursor: pointer;
   padding: 0;
 }
@@ -234,27 +234,11 @@ function insert() {
 .checkbox-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
-  margin-bottom: 0.25rem;
+  gap: var(--space-3);
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2);
 }
 
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
-}
-
-.dialog-actions button:disabled,
 .new-label-controls button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

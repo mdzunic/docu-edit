@@ -5,6 +5,7 @@
 // ImageToolbar.vue's own pattern and positioning convention. Runtime
 // prop/emit declarations per the espree constraint (see AppShell.vue).
 import { ref, watch } from "vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   left: { type: Number, required: true },
@@ -154,15 +155,14 @@ function onZOrderChange(event = new Event("change")) {
         @mousedown.stop
       >
     </label>
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="shape-fill-none"
       @mousedown.prevent
       @click="onFillNone"
     >
       No fill
-    </button>
+    </UiButton>
     <span class="shape-toolbar-separator" />
     <label
       class="shape-toolbar-field"
@@ -210,15 +210,14 @@ function onZOrderChange(event = new Event("change")) {
         Dotted
       </option>
     </select>
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="shape-outline-none"
       @mousedown.prevent
       @click="onOutlineNone"
     >
       No outline
-    </button>
+    </UiButton>
     <span class="shape-toolbar-separator" />
     <label
       class="shape-toolbar-field"
@@ -273,26 +272,24 @@ function onZOrderChange(event = new Event("change")) {
         {{ option.label }}
       </option>
     </select>
-    <button
+    <UiButton
       v-if="canGroup"
-      type="button"
-      class="shape-toolbar-option"
+      variant="ghost"
       data-testid="shape-group-button"
       @mousedown.prevent
       @click="emit('group')"
     >
       Group
-    </button>
-    <button
+    </UiButton>
+    <UiButton
       v-if="grouped"
-      type="button"
-      class="shape-toolbar-option"
+      variant="ghost"
       data-testid="shape-ungroup-button"
       @mousedown.prevent
       @click="emit('ungroup')"
     >
       Ungroup
-    </button>
+    </UiButton>
     <span class="shape-toolbar-separator" />
     <label
       class="shape-toolbar-field"
@@ -309,26 +306,24 @@ function onZOrderChange(event = new Event("change")) {
       >
     </label>
     <span class="shape-toolbar-separator" />
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="shape-duplicate-button"
       title="Duplicate"
       @mousedown.prevent
       @click="emit('duplicate')"
     >
       Duplicate
-    </button>
-    <button
-      type="button"
-      class="shape-toolbar-option"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="shape-delete-button"
       title="Delete shape"
       @mousedown.prevent
       @click="emit('delete')"
     >
       Delete
-    </button>
+    </UiButton>
   </div>
 </template>
 
@@ -339,13 +334,13 @@ function onZOrderChange(event = new Event("change")) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: var(--space-2);
+  padding: var(--space-2);
   max-width: 640px;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 /* Placed above the shape, `top` is where the toolbar's bottom edge belongs:
@@ -359,9 +354,9 @@ function onZOrderChange(event = new Event("change")) {
 .shape-toolbar-field {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  color: #202124;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -374,28 +369,12 @@ function onZOrderChange(event = new Event("change")) {
 }
 
 .shape-toolbar-select {
-  font-size: 0.8125rem;
-}
-
-.shape-toolbar-option {
-  font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: #202124;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.shape-toolbar-option:hover {
-  background: #f1f3f4;
+  font-size: var(--text-md);
 }
 
 .shape-toolbar-separator {
   width: 1px;
   align-self: stretch;
-  background: #dadce0;
+  background: var(--border-default);
 }
 </style>

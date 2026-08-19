@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The statistics dialog (SPEC-036 AC-4..12): pages, words, characters (with
 // and without spaces), paragraphs, sentences and a separate CJK character
@@ -71,15 +72,14 @@ function onToggleIncludeNotes(event = new Event("change")) {
       <span>Include footnotes and endnotes</span>
     </label>
     <template #actions>
-      <button
-        type="button"
-        class="primary"
+      <UiButton
+        variant="secondary"
         data-testid="statistics-close"
         autofocus
         @click="emit('close')"
       >
         Close
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -88,42 +88,27 @@ function onToggleIncludeNotes(event = new Event("change")) {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 0.375rem 1rem;
-  margin: 0 0 1rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3) var(--space-5);
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-md);
 }
 
 .stats-grid dt {
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .stats-grid dd {
   margin: 0;
   text-align: right;
-  color: #202124;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  color: #3c4043;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 </style>

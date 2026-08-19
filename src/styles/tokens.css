@@ -1,0 +1,89 @@
+/* SPEC-058 — the design system's single source of colour, spacing, type and
+ * motion. This file is imported once, from App.vue's unscoped <style> block,
+ * and is deliberately the ONLY file in the repo that names a colour literal:
+ * every .vue <style> block reads these tokens through var(), and
+ * src/styles/tokens.spec.ts fails the build on any literal that escapes here.
+ *
+ * The names are the contract SPEC-059..068 are written against; the values
+ * below are one coherent light palette that reconciles the two palettes the
+ * pre-058 shell had drifting against each other (SPEC-001's flat-UI blues and
+ * the Material greys every later dialog copied). Dark mode (SPEC-059)
+ * redefines these values; it does not add new names. */
+:root {
+  /* Surfaces — ascending elevation, not ascending lightness. */
+  --surface-canvas:        #f1f3f4;   /* behind the document pages */
+  --surface-base:          #ffffff;   /* dialogs, panes, menus */
+  --surface-raised:        #f8f9fa;   /* toolbar, status bar */
+  --surface-sunken:        #e8eaed;   /* wells, inactive tabs */
+  --surface-brand:         #1f2b3a;   /* the app bar */
+  --surface-selected:      #e8f0fe;   /* selected row / active toggle */
+  --surface-overlay:       rgb(32 33 36 / 0.45);   /* dialog scrim */
+
+  /* Content — on-surface foregrounds. */
+  --text-primary:          #202124;
+  --text-secondary:        #5f6368;
+  --text-disabled:         #9aa0a6;
+  --text-on-brand:         #ffffff;
+  --text-accent:           #1a73e8;
+  --text-danger:           #b3261e;
+
+  /* Lines. */
+  --border-subtle:         #e8eaed;   /* separators inside a surface */
+  --border-default:        #dadce0;   /* control outlines */
+  --border-strong:         #80868b;   /* emphasised/hovered outlines — ≥3:1 on surfaces */
+
+  /* Accent and status. */
+  --accent:                #1a73e8;
+  --accent-hover:          #1765cc;
+  --accent-subtle:         #d2e3fc;
+  --danger:                #b3261e;
+  --success:               #188038;
+  --warning:               #b06000;
+
+  /* Interaction overlays, composited over any surface. */
+  --state-hover:           rgb(32 33 36 / 0.06);
+  --state-active:          rgb(32 33 36 / 0.12);
+  --focus-ring:            #1a73e8;
+
+  /* Spacing — a 4px scale; nothing between the steps. */
+  --space-1: 2px;  --space-2: 4px;  --space-3: 8px;
+  --space-4: 12px; --space-5: 16px; --space-6: 24px; --space-7: 32px;
+
+  /* Radius, borders, elevation. */
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 999px;
+  --border-width: 1px;
+  --shadow-1: 0 1px 2px rgb(60 64 67 / 0.2);
+  --shadow-2: 0 2px 6px 1px rgb(60 64 67 / 0.15);
+  --shadow-3: 0 4px 12px 3px rgb(60 64 67 / 0.15);
+
+  /* Type — the UI font stack; the document has its own (SPEC-048). */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-xs: 11px; --text-sm: 12px; --text-md: 13px;
+  --text-lg: 15px; --text-xl: 18px;
+  --weight-regular: 400; --weight-medium: 500; --weight-bold: 600;
+  --line-tight: 1.2; --line-normal: 1.45;
+
+  /* Chrome heights — one stated height per region, not content-sized. */
+  --height-app-bar: 48px;
+  --height-menu-bar: 32px;
+  --height-toolbar: 40px;
+  --height-status-bar: 28px;
+  --height-control: 32px;      /* the minimum hit target */
+  --width-pane: 280px;
+
+  /* Motion. */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Respect the user's reduced-motion setting globally: collapsing the two
+ * motion tokens to 0ms means every `transition: … var(--motion-*)` in the
+ * app becomes instantaneous without each component special-casing it. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+  }
+}

@@ -192,8 +192,8 @@ function submitAdd() {
 <style scoped>
 .add-form {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .add-form input[type="text"] {
@@ -205,32 +205,32 @@ function submitAdd() {
 .filters input,
 .filters select {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .add-form button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .error {
-  margin: 0 0 0.5rem;
-  font-size: 0.8125rem;
-  color: #c5221f;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-danger);
 }
 
 .filters {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .filters input {
@@ -238,9 +238,9 @@ function submitAdd() {
 }
 
 .empty {
-  margin: 0.5rem 0;
-  font-size: 0.875rem;
-  color: #5f6368;
+  margin: var(--space-3) 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .entry-list {
@@ -254,8 +254,8 @@ function submitAdd() {
 .entry-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
 }
 
 .entry-word {
@@ -263,34 +263,34 @@ function submitAdd() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
 }
 
 .entry-lang {
-  font-size: 0.75rem;
-  color: #5f6368;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .entry-row button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.625rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .entry-row button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 </style>

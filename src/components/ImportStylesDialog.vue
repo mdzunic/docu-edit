@@ -190,55 +190,55 @@ const canImport = computed(() => props.phase === "plan" && props.fileName.length
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .import-plan {
-  margin-top: 1rem;
-  font-size: 0.8125rem;
+  margin-top: var(--space-5);
+  font-size: var(--text-md);
 }
 
 .conflict-list {
   list-style: none;
-  margin: 0.5rem 0 0;
+  margin: var(--space-3) 0 0;
   padding: 0;
 }
 
 .conflict-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.375rem 0;
-  border-bottom: 1px solid #e8eaed;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: var(--border-width) solid var(--border-subtle);
   flex-wrap: wrap;
 }
 
 .conflict-name {
   flex: 1 0 100%;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .conflict-row label {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

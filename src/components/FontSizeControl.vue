@@ -157,19 +157,35 @@ function step(direction = 1) {
 }
 
 .size-step {
+  position: relative;
+  z-index: 1;
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   width: 1.5rem;
-  height: 1.75rem;
+  height: var(--height-control);
   padding: 0;
   line-height: 1;
-  border: 1px solid #bdbdbd;
-  background: #fff;
+  border: var(--border-width) solid var(--border-strong);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
+/* A transparent out-of-flow hit area lifts each stepper to the 32×32 minimum
+   (AC-48) without widening the 24px visual button — so the toolbar stays
+   within its 1280px budget (AC-60). Clicks on the pseudo dispatch on the host
+   <button>, and z-index:1 lifts the overhang above the sibling input. */
+.size-step::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--height-control);
+  height: var(--height-control);
+  transform: translate(-50%, -50%);
+}
+
 .size-step:first-child {
-  border-radius: 4px 0 0 4px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 
 .size-step:disabled {
@@ -179,12 +195,12 @@ function step(direction = 1) {
 
 .size-input {
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   width: 2.75rem;
-  height: 1.75rem;
-  padding: 0 0.25rem;
+  height: var(--height-control);
+  padding: 0 var(--space-2);
   text-align: center;
-  border: 1px solid #bdbdbd;
+  border: var(--border-width) solid var(--border-strong);
   border-left: none;
   border-right: none;
   box-sizing: border-box;
@@ -196,17 +212,17 @@ function step(direction = 1) {
 
 /* The + button closes the group visually. */
 .font-size-control > .size-step:nth-of-type(2) {
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 /* position/left/top come inline from useFloatingMenu's menuStyle. */
 .clamp-tooltip {
   z-index: 30;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  background: #3c4043;
-  color: #fff;
-  font-size: 0.75rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--text-primary);
+  color: var(--text-on-brand);
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 </style>

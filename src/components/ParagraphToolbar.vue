@@ -2,6 +2,8 @@
 import { onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { shortcutLabel } from "../lib/shortcuts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import AppIcon from "./AppIcon.vue";
+import UiToggleButton from "./ui/UiToggleButton.vue";
 
 // Paragraph geometry controls (SPEC-014): alignment, indent step buttons,
 // the line-spacing menu (presets, the space-before toggle, "Custom
@@ -51,10 +53,10 @@ const emit = defineEmits([
 // Static per mount, like FormatToolbar's FORMATS list. Shortcut text is read
 // from the SPEC-021 registry rather than hardcoded (AC-15, AC-16).
 const ALIGNMENTS = [
-  { key: "left", label: "Align left", shortcut: shortcutLabel("paragraph.alignLeft") },
-  { key: "center", label: "Align centre", shortcut: shortcutLabel("paragraph.alignCenter") },
-  { key: "right", label: "Align right", shortcut: shortcutLabel("paragraph.alignRight") },
-  { key: "justify", label: "Justify", shortcut: shortcutLabel("paragraph.alignJustify") },
+  { key: "left", label: "Align left", shortcut: shortcutLabel("paragraph.alignLeft"), icon: "align-left" },
+  { key: "center", label: "Align centre", shortcut: shortcutLabel("paragraph.alignCenter"), icon: "align-center" },
+  { key: "right", label: "Align right", shortcut: shortcutLabel("paragraph.alignRight"), icon: "align-right" },
+  { key: "justify", label: "Justify", shortcut: shortcutLabel("paragraph.alignJustify"), icon: "align-justify" },
 ];
 
 const decreaseIndentTitle = `Decrease indent (${shortcutLabel("paragraph.outdent")} at the start of a paragraph)`;
@@ -233,25 +235,17 @@ onBeforeUnmount(() => {
     aria-label="Paragraph formatting"
     @keydown="handleKeydown"
   >
-    <button
+    <UiToggleButton
       v-for="entry in ALIGNMENTS"
       :key="entry.key"
-      type="button"
-      class="paragraph-button"
-      :data-testid="`align-${entry.key}`"
+      :icon="entry.icon"
+      :label="`${entry.label} (${entry.shortcut})`"
+      :pressed="alignment === entry.key"
       :disabled="disabled"
-      :title="`${entry.label} (${entry.shortcut})`"
-      :aria-label="`${entry.label} (${entry.shortcut})`"
-      :aria-pressed="alignment === entry.key ? 'true' : 'false'"
+      :data-testid="`align-${entry.key}`"
       @mousedown.prevent
       @click="emit('align', entry.key)"
-    >
-      <span
-        class="align-glyph"
-        :class="`align-glyph-${entry.key}`"
-        aria-hidden="true"
-      />
-    </button>
+    />
     <button
       type="button"
       class="paragraph-button"
@@ -262,7 +256,7 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="emit('indent', -1)"
     >
-      ⇤
+      <AppIcon name="indent-decrease" />
     </button>
     <button
       type="button"
@@ -274,25 +268,22 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="emit('indent', 1)"
     >
-      ⇥
+      <AppIcon name="indent-increase" />
     </button>
     <!-- Bulleted/numbered list toggles (SPEC-018 AC-1, AC-2), each with a
          marker-style dropdown on a separate expander next to the toggle
          (AC-12) so a plain click still just toggles. -->
     <div class="list-cluster">
-      <button
-        type="button"
-        class="paragraph-button list-toggle"
-        data-testid="list-bulleted"
+      <UiToggleButton
+        class="list-toggle"
+        icon="bullet-list"
+        label="Bulleted list"
+        :pressed="bulleted"
         :disabled="disabled"
-        title="Bulleted list"
-        aria-label="Bulleted list"
-        :aria-pressed="bulleted ? 'true' : 'false'"
+        data-testid="list-bulleted"
         @mousedown.prevent
         @click="emit('toggle-list', 'bullet')"
-      >
-        •≡
-      </button>
+      />
       <button
         ref="bulletMenuButton"
         type="button"
@@ -306,7 +297,7 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="toggleBulletMenu"
       >
-        ▾
+        <AppIcon name="chevron-down" />
       </button>
       <div
         v-if="bulletMenuOpen"
@@ -333,19 +324,16 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div class="list-cluster">
-      <button
-        type="button"
-        class="paragraph-button list-toggle"
-        data-testid="list-numbered"
+      <UiToggleButton
+        class="list-toggle"
+        icon="numbered-list"
+        label="Numbered list"
+        :pressed="numbered"
         :disabled="disabled"
-        title="Numbered list"
-        aria-label="Numbered list"
-        :aria-pressed="numbered ? 'true' : 'false'"
+        data-testid="list-numbered"
         @mousedown.prevent
         @click="emit('toggle-list', 'number')"
-      >
-        1≡
-      </button>
+      />
       <button
         ref="numberMenuButton"
         type="button"
@@ -359,7 +347,7 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="toggleNumberMenu"
       >
-        ▾
+        <AppIcon name="chevron-down" />
       </button>
       <div
         v-if="numberMenuOpen"
@@ -411,7 +399,7 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="toggleSpacingMenu"
     >
-      ↕≡
+      <AppIcon name="line-spacing" />
     </button>
     <div
       v-if="spacingOpen"
@@ -499,23 +487,40 @@ onBeforeUnmount(() => {
 <style scoped>
 .paragraph-toolbar {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .paragraph-button {
+  position: relative;
+  z-index: 1;
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   min-width: 1.75rem;
-  height: 1.75rem;
-  padding: 0 0.25rem;
+  height: var(--height-control);
+  padding: 0 var(--space-2);
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
+}
+
+/* A transparent out-of-flow hit area lifts each button to the 32×32 minimum
+   (AC-48) without widening its visual box — so the toolbar stays flush within
+   its 1280px budget (AC-60), exactly as FontSizeControl's steppers do. Clicks
+   on the pseudo dispatch on the host <button>, and z-index:1 lifts the narrow
+   list-marker caret's overhang above its sibling toggle. */
+.paragraph-button::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--height-control);
+  height: var(--height-control);
+  transform: translate(-50%, -50%);
 }
 
 .paragraph-button:disabled {
@@ -524,39 +529,8 @@ onBeforeUnmount(() => {
 }
 
 .paragraph-button[aria-pressed="true"] {
-  background: #d2e3fc;
-  border-color: #8ab4f8;
-}
-
-/* Alignment glyphs: four text lines whose ragged edge shows the alignment.
-   Drawn with gradients so no icon asset or extra dependency is needed. */
-.align-glyph {
-  width: 14px;
-  height: 12px;
-  background-repeat: no-repeat;
-  background-image:
-    linear-gradient(#5f6368, #5f6368),
-    linear-gradient(#5f6368, #5f6368),
-    linear-gradient(#5f6368, #5f6368),
-    linear-gradient(#5f6368, #5f6368);
-  background-size: 100% 2px, 70% 2px, 100% 2px, 70% 2px;
-}
-
-.align-glyph-left {
-  background-position: left 0, left 3.33px, left 6.66px, left 10px;
-}
-
-.align-glyph-center {
-  background-position: center 0, center 3.33px, center 6.66px, center 10px;
-}
-
-.align-glyph-right {
-  background-position: right 0, right 3.33px, right 6.66px, right 10px;
-}
-
-.align-glyph-justify {
-  background-size: 100% 2px, 100% 2px, 100% 2px, 100% 2px;
-  background-position: left 0, left 3.33px, left 6.66px, left 10px;
+  background: var(--accent-subtle);
+  border-color: var(--accent-subtle);
 }
 
 /* position/left/top come inline from useFloatingMenu (fixed, escapes the
@@ -566,33 +540,33 @@ onBeforeUnmount(() => {
   min-width: 14rem;
   display: flex;
   flex-direction: column;
-  padding: 0.25rem 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  padding: var(--space-2) 0;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-2);
 }
 
 .spacing-menu button {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  padding: var(--space-3) var(--space-5);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .spacing-menu button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .spacing-separator {
-  margin: 0.25rem 0;
+  margin: var(--space-2) 0;
   border: none;
-  border-top: 1px solid #e0e0e0;
+  border-top: var(--border-width) solid var(--border-default);
 }
 
 /* A list toggle and its dropdown expander read as one control. */
@@ -608,7 +582,7 @@ onBeforeUnmount(() => {
 .list-cluster .list-menu-button {
   min-width: 1rem;
   padding: 0;
-  font-size: 0.625rem;
+  font-size: var(--text-xs);
   border-inline-start: none;
   border-start-start-radius: 0;
   border-end-start-radius: 0;
@@ -620,30 +594,30 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 4rem;
-  padding: 0.25rem 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  padding: var(--space-2) 0;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-2);
 }
 
 .marker-menu button {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  padding: var(--space-3) var(--space-5);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .marker-menu button:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .marker-menu button.checked {
-  background: #d2e3fc;
+  background: var(--accent-subtle);
 }
 </style>

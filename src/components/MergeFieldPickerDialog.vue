@@ -129,18 +129,18 @@ function insertCustom() {
 
 .field-list {
   list-style: none;
-  margin: 0 0 1rem;
+  margin: 0 0 var(--space-5);
   padding: 0;
   max-height: 14rem;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .field-list-empty {
-  margin: 0 0 1rem;
-  color: #5f6368;
-  font-size: 0.875rem;
+  margin: 0 0 var(--space-5);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 
 .field-option {
@@ -148,12 +148,12 @@ function insertCustom() {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-3) var(--space-4);
   border: none;
-  border-bottom: 1px solid #f0f0f0;
-  background: #fff;
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: var(--surface-base);
   cursor: pointer;
-  color: #202124;
+  color: var(--text-primary);
 }
 
 .field-option:last-child {
@@ -161,43 +161,43 @@ function insertCustom() {
 }
 
 .field-option:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .custom-field-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .dialog-input {
   font: inherit;
   flex: 1;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .dialog-actions button,
 .custom-field-row button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .custom-field-row button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .custom-field-row button:disabled {

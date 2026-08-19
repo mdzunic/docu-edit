@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The "Custom spacing…" dialog (SPEC-014 AC-12..14): a line-spacing mode
 // (multiple / exactly / at least) with its value, plus space before/after
@@ -156,22 +157,21 @@ function apply() {
       {{ error }}
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="spacing-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="spacing-apply"
         :disabled="!!error"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -179,55 +179,35 @@ function apply() {
 <style scoped>
 .field-row {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .field {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 </style>

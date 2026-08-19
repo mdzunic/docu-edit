@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import { asStyleEntries, noStyleEntries } from "../lib/styles";
+import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // The paragraph style picker (SPEC-019): a toolbar dropdown showing the
 // current paragraph's style name (AC-1) whose menu lists the document's
@@ -26,16 +27,16 @@ const emit = defineEmits(["apply", "update-style", "reset-style"]);
 const styleList = computed(() => asStyleEntries(props.entries));
 
 const open = ref(false);
-const root = useTemplateRef("root");
 const button = useTemplateRef("button");
 const menu = useTemplateRef("menu");
 
 // Fixed-position menu escaping the toolbar strip's clipping — the same
-// pattern as ParagraphToolbar's spacing menu.
+// pattern as ParagraphToolbar's spacing menu. The measured element is
+// UiMenuSurface's rendered box ($el).
 const { menuStyle } = useFloatingMenu({
   open: () => open.value,
   anchor: () => button.value,
-  menu: () => menu.value,
+  menu: () => menu.value?.$el ?? null,
 });
 
 // The per-entry context menu (AC-12, AC-14), placed at the pointer.
@@ -79,31 +80,17 @@ function chooseReset() {
   emit("reset-style");
 }
 
-function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  const anyOpen = open.value || entryMenu.value.visible;
-  if (anyOpen && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
-    closeAll();
-  }
+function closeEntryMenu() {
+  entryMenu.value = { ...entryMenu.value, visible: false };
 }
 
-function handleKeydown(event = new KeyboardEvent("keydown")) {
-  if (event.key === "Escape") {
-    closeAll();
-  }
-}
-
-document.addEventListener("mousedown", handleDocumentMousedown);
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", handleDocumentMousedown);
-});
+// Outside-click and Escape dismissal (and focus return) are owned by
+// UiMenuSurface — one instance per popup — so this component no longer
+// hand-rolls a document listener or a root Escape handler.
 </script>
 
 <template>
-  <div
-    ref="root"
-    class="style-picker"
-    @keydown="handleKeydown"
-  >
+  <div class="style-picker">
     <button
       ref="button"
       type="button"
@@ -123,14 +110,16 @@ onBeforeUnmount(() => {
       >{{ currentName }}</span>
       <span aria-hidden="true">▾</span>
     </button>
-    <div
-      v-if="open"
+    <UiMenuSurface
       ref="menu"
+      :open="open"
+      :anchor="button"
       class="style-menu"
       data-testid="style-picker-menu"
       role="menu"
       aria-label="Paragraph styles"
       :style="menuStyle"
+      @dismiss="closeAll"
     >
       <button
         v-for="entry in styleList"
@@ -147,14 +136,15 @@ onBeforeUnmount(() => {
       >
         <span :style="entry.previewStyle">{{ entry.name }}</span>
       </button>
-    </div>
-    <div
-      v-if="entryMenu.visible"
+    </UiMenuSurface>
+    <UiMenuSurface
+      :open="entryMenu.visible"
       class="entry-menu"
       data-testid="style-context-menu"
       role="menu"
       :aria-label="`Style actions for ${entryMenu.name}`"
       :style="{ left: `${entryMenu.left}px`, top: `${entryMenu.top}px` }"
+      @dismiss="closeEntryMenu"
     >
       <button
         type="button"
@@ -174,7 +164,7 @@ onBeforeUnmount(() => {
       >
         Reset style
       </button>
-    </div>
+    </UiMenuSurface>
   </div>
 </template>
 
@@ -186,17 +176,17 @@ onBeforeUnmount(() => {
 
 .picker-button {
   font: inherit;
-  font-size: 0.875rem;
-  height: 1.75rem;
+  font-size: var(--text-md);
+  height: var(--height-control);
   min-width: 6.5rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--space-3);
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.375rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  gap: var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -212,8 +202,7 @@ onBeforeUnmount(() => {
   max-width: 9rem;
 }
 
-/* position/left/top come inline from useFloatingMenu (fixed, escapes the
-   toolbar's vertical clipping), like ParagraphToolbar's menus. */
+/* position/left/top come inline from useFloatingMenu; the box is UiMenuSurface's. */
 .style-menu {
   z-index: 30;
   min-width: 12rem;
@@ -221,59 +210,52 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  padding: 0.25rem 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
 }
 
 .style-option {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .style-option:hover {
-  background: #f1f3f4;
+  background: var(--state-hover);
 }
 
 .style-option.checked {
-  background: #d2e3fc;
+  background: var(--surface-selected);
 }
 
+/* position comes inline (pointer coords); the box is UiMenuSurface's. */
 .entry-menu {
   position: fixed;
   z-index: 40;
   display: flex;
   flex-direction: column;
   min-width: 11rem;
-  padding: 0.25rem 0;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
 }
 
 .entry-menu button {
   font: inherit;
-  font-size: 0.875rem;
-  color: #202124;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   text-align: left;
   background: none;
   border: none;
-  padding: 0.375rem 1rem;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .entry-menu button:hover {
-  background: #f1f3f4;
+  background: var(--state-hover);
 }
 </style>

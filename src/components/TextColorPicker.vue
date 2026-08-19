@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 import { parseColorInput, TEXT_COLOR_PALETTE } from "../lib/core/colors";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -21,18 +22,18 @@ const emit = defineEmits(["select"]);
 const open = ref(false);
 const customDraft = ref("");
 const customInvalid = ref(false);
-const root = useTemplateRef("root");
 const triggerEl = useTemplateRef("triggerEl");
-const menuEl = useTemplateRef("menuEl");
+const menuSurface = useTemplateRef("menuSurface");
 
 const PALETTE = TEXT_COLOR_PALETTE;
 
 // The toolbar clips overflow on its vertical axis, so the menu is rendered
 // position:fixed (escaped below the anchor) instead of at a clipped offset.
+// The measured element is UiMenuSurface's rendered box ($el).
 const { menuStyle } = useFloatingMenu({
   open: () => open.value,
   anchor: () => triggerEl.value,
-  menu: () => menuEl.value,
+  menu: () => menuSurface.value?.$el ?? null,
 });
 
 // The runtime Array prop arrives untyped; String() gives the template the
@@ -89,30 +90,13 @@ function handleCustomKeydown(event = new KeyboardEvent("keydown")) {
   }
 }
 
-function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  if (open.value && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
-    open.value = false;
-  }
-}
-
-function handleKeydown(event = new KeyboardEvent("keydown")) {
-  if (event.key === "Escape") {
-    open.value = false;
-  }
-}
-
-document.addEventListener("mousedown", handleDocumentMousedown);
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", handleDocumentMousedown);
-});
+// Outside-click and Escape dismissal (and focus return to the trigger) are
+// owned by UiMenuSurface — the shared, tested implementation — so this
+// component no longer hand-rolls a document listener or a root Escape handler.
 </script>
 
 <template>
-  <div
-    ref="root"
-    class="color-picker"
-    @keydown="handleKeydown"
-  >
+  <div class="color-picker">
     <button
       ref="triggerEl"
       type="button"
@@ -137,14 +121,16 @@ onBeforeUnmount(() => {
         :data-color="mixed ? 'mixed' : (value || '')"
       />
     </button>
-    <div
-      v-if="open"
-      ref="menuEl"
+    <UiMenuSurface
+      ref="menuSurface"
+      :open="open"
+      :anchor="triggerEl"
       class="picker-menu"
       data-testid="text-color-menu"
       role="dialog"
       aria-label="Text colour"
       :style="menuStyle"
+      @dismiss="open = false"
     >
       <!-- Swatches prevent mousedown so the editor selection stays live;
            the custom input must NOT — it needs focus to be typed into. -->
@@ -217,7 +203,7 @@ onBeforeUnmount(() => {
           Apply
         </button>
       </div>
-    </div>
+    </UiMenuSurface>
   </div>
 </template>
 
@@ -229,17 +215,17 @@ onBeforeUnmount(() => {
 
 .picker-button {
   font: inherit;
-  font-size: 0.875rem;
-  width: 1.75rem;
-  height: 1.75rem;
+  font-size: var(--text-md);
+  width: var(--height-control);
+  height: var(--height-control);
   padding: 0;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -255,73 +241,72 @@ onBeforeUnmount(() => {
 .color-bar {
   width: 1.125rem;
   height: 0.25rem;
-  margin-top: 0.125rem;
-  border-radius: 1px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
 }
 
 .color-bar-mixed {
-  background: repeating-linear-gradient(45deg, #bbb 0 2px, #eee 2px 4px);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--border-strong) 0 2px,
+    var(--surface-sunken) 2px 4px
+  );
 }
 
-/* position/left/top come inline from useFloatingMenu (fixed, escapes the
-   toolbar's vertical clipping). */
+/* position/left/top come inline from useFloatingMenu; the box (border, radius,
+   shadow, padding) is UiMenuSurface's. */
 .picker-menu {
   z-index: 30;
-  padding: 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
 }
 
 .swatch-grid {
   display: grid;
   grid-template-columns: repeat(10, 1.125rem);
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .swatch {
   width: 1.125rem;
   height: 1.125rem;
   padding: 0;
-  border: 1px solid rgb(0 0 0 / 0.25);
-  border-radius: 2px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .swatch.active {
-  outline: 2px solid #1a73e8;
-  outline-offset: 1px;
+  outline: calc(2 * var(--border-width)) solid var(--accent);
+  outline-offset: var(--border-width);
 }
 
 .section-label {
-  margin: 0.5rem 0 0.25rem;
-  font-size: 0.75rem;
-  color: #5f6368;
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .custom-row {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .custom-input {
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
   flex: 1;
   min-width: 0;
-  padding: 0.125rem 0.25rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .custom-apply {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.125rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 </style>

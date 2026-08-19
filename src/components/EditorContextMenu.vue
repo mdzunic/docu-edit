@@ -284,42 +284,47 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 40;
   min-width: 12rem;
-  padding: 0.25rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
+  padding: var(--space-1);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
+/* min-height, not vertical padding, sets the 32px hit target (AC-48): it keeps
+   each row exactly one --height-control tall, so a menu with every section
+   present still clamps inside a short viewport (SPEC-023's Table-properties
+   reachability test) instead of growing past it. */
 .context-menu-item {
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
+  gap: var(--space-6);
   width: 100%;
-  padding: 0.375rem 0.75rem;
+  min-height: var(--height-control);
+  padding: 0 var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .context-menu-item:hover {
-  background: #f1f3f4;
+  background: var(--state-hover);
 }
 
 .context-menu-shortcut {
-  color: #5f6368;
-  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 
 .context-menu-separator {
   height: 1px;
-  margin: 0.25rem 0;
-  background: #e0e0e0;
+  margin: var(--space-1) 0;
+  background: var(--border-subtle);
 }
 </style>

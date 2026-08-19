@@ -14,6 +14,7 @@ import {
   resolveColumnWidthsCm,
 } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** { columns: SectionColumns, contentWidthCm: number, applyTo: string }. */
@@ -272,132 +273,109 @@ function apply() {
     </p>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="columns-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="columns-confirm"
         :disabled="!!error"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
 
 <style scoped>
 .presets {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-4);
 }
 
 .preset-buttons {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .preset-button {
   font: inherit;
   min-width: 2.5rem;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .preset-button.active {
-  border-color: #1a73e8;
-  background: #e8f0fe;
-  color: #1a73e8;
+  border-color: var(--accent);
+  background: var(--surface-selected);
+  color: var(--text-accent);
 }
 
 .field-row {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .field {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .field-input:disabled {
-  background: #f1f3f4;
-  color: #80868b;
+  background: var(--surface-canvas);
+  color: var(--text-disabled);
 }
 
 .widths {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 .width-field {
   flex: 1 1 6rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .checkbox-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.875rem;
-  color: #3c4043;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .dialog-error {
-  margin: 0.25rem 0 0;
-  font-size: 0.8125rem;
-  color: #c5221f;
-}
-
-.dialog-actions button {
-  font: inherit;
-  font-size: 0.875rem;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #1a73e8;
-  border-color: #1a73e8;
-  color: #fff;
-}
-
-.dialog-actions button.primary:disabled {
-  background: #9e9e9e;
-  border-color: #9e9e9e;
-  cursor: default;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-md);
+  color: var(--text-danger);
 }
 </style>

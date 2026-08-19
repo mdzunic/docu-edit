@@ -381,59 +381,59 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.8125rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-md);
 }
 
 .field input,
 .field select {
   font: inherit;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  margin-bottom: 0.5rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-md);
 }
 
 .field-group {
-  border: 1px solid #e8eaed;
-  border-radius: 4px;
-  padding: 0.5rem 0.75rem 0.75rem;
-  margin: 0 0 0.75rem;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  margin: 0 0 var(--space-4);
 }
 
 .field-group legend {
-  font-size: 0.75rem;
-  color: #5f6368;
-  padding: 0 0.25rem;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: 0 var(--space-2);
 }
 
 .dialog-error {
-  margin: -0.5rem 0 0.75rem;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: calc(-1 * var(--space-3)) 0 var(--space-4);
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

@@ -55,22 +55,22 @@ const emit = defineEmits(["delete-both", "keep-caption", "cancel"]);
 <style scoped>
 .dialog-message {
   margin: 0;
-  color: #3c4043;
-  font-size: 0.9375rem;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 </style>

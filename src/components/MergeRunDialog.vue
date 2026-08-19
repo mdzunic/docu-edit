@@ -398,7 +398,7 @@ async function run() {
 
 /* Its header row sat tighter above the first section than the base's 1rem. */
 :deep(.dialog-header) {
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .close-button {
@@ -406,63 +406,63 @@ async function run() {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #5f6368;
-  font-size: 1rem;
-  padding: 0.25rem 0.5rem;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  padding: var(--space-2) var(--space-3);
 }
 
 .merge-section {
-  margin: 1rem 0;
+  margin: var(--space-5) 0;
 }
 
 .section-heading {
-  margin: 0 0 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #5f6368;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
 }
 
 .error-heading {
-  color: #b3261e;
+  color: var(--text-danger);
 }
 
 .error-list {
   margin: 0;
-  padding-left: 1.25rem;
-  color: #b3261e;
-  font-size: 0.875rem;
+  padding-left: var(--space-6);
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .mapping-list {
   margin: 0;
-  padding-left: 1.25rem;
-  font-size: 0.875rem;
+  padding-left: var(--space-6);
+  font-size: var(--text-md);
 }
 
 .mapping-list li[data-mapped="false"] {
-  color: #b3261e;
+  color: var(--text-danger);
 }
 
 .preview-box {
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  padding: 0.5rem 0.75rem;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
   max-height: 10rem;
   overflow-y: auto;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
 }
 
 .preview-box p {
-  margin: 0.25rem 0;
+  margin: var(--space-2) 0;
 }
 
 .option-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin: 0.5rem 0;
-  font-size: 0.875rem;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+  font-size: var(--text-md);
 }
 
 .option-row select {
@@ -470,15 +470,15 @@ async function run() {
 }
 
 .source-file-name {
-  margin-left: 0.5rem;
-  color: #5f6368;
-  font-size: 0.8125rem;
+  margin-left: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 
 .record-count {
-  margin: 0.5rem 0 0;
-  font-size: 0.8125rem;
-  color: #5f6368;
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .visually-hidden {
@@ -486,7 +486,7 @@ async function run() {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--border-width));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -494,24 +494,24 @@ async function run() {
 }
 
 .dialog-error {
-  margin: 0.5rem 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: var(--space-3) 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

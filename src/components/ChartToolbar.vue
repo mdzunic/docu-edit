@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiButton from "./ui/UiButton.vue";
 // The floating chart toolbar (SPEC-052): shown near a selected chart,
 // offering "Edit data" (opens the data sheet, AC-5), "Chart options" (opens
 // the options panel) and delete/duplicate. Mirrors ShapeToolbar.vue's own
@@ -35,46 +36,42 @@ function toolbarStyle(left = 0, top = 0) {
       </span>
     </template>
     <template v-else>
-      <button
-        type="button"
-        class="chart-toolbar-option"
+      <UiButton
+        variant="ghost"
         data-testid="chart-edit-data-button"
         @mousedown.prevent
         @click="$emit('edit-data')"
       >
         Edit data
-      </button>
-      <button
-        type="button"
-        class="chart-toolbar-option"
+      </UiButton>
+      <UiButton
+        variant="ghost"
         data-testid="chart-options-button"
         @mousedown.prevent
         @click="$emit('options')"
       >
         Chart options
-      </button>
+      </UiButton>
     </template>
     <span class="chart-toolbar-separator" />
-    <button
-      type="button"
-      class="chart-toolbar-option"
+    <UiButton
+      variant="ghost"
       data-testid="chart-duplicate-button"
       title="Duplicate"
       @mousedown.prevent
       @click="$emit('duplicate')"
     >
       Duplicate
-    </button>
-    <button
-      type="button"
-      class="chart-toolbar-option"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="chart-delete-button"
       title="Delete chart"
       @mousedown.prevent
       @click="$emit('delete')"
     >
       Delete
-    </button>
+    </UiButton>
   </div>
 </template>
 
@@ -85,40 +82,24 @@ function toolbarStyle(left = 0, top = 0) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: var(--space-2);
+  padding: var(--space-2);
   max-width: 480px;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
 
 .chart-toolbar-notice {
-  font-size: 0.75rem;
-  color: #5f6368;
-  padding: 0.25rem 0.5rem;
-}
-
-.chart-toolbar-option {
-  font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: #202124;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.chart-toolbar-option:hover {
-  background: #f1f3f4;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: var(--space-2) var(--space-3);
 }
 
 .chart-toolbar-separator {
   width: 1px;
   align-self: stretch;
-  background: #dadce0;
+  background: var(--border-default);
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // "Insert table of contents" options (SPEC-033 AC-5..7): which heading
 // levels to include, whether to show page numbers, and whether entries are
@@ -84,21 +85,20 @@ function apply() {
       <span>Use hyperlinks instead of page numbers</span>
     </label>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="toc-options-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="toc-options-apply"
         @click="apply"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -107,15 +107,15 @@ function apply() {
 .field-group {
   border: none;
   padding: 0;
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-4);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.25rem 0.75rem;
+  gap: var(--space-2) var(--space-4);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
   padding: 0;
   grid-column: 1 / -1;
 }
@@ -123,28 +123,13 @@ function apply() {
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  color: #3c4043;
-  margin-bottom: 0.5rem;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
 }
 
 .level-field {
-  margin-bottom: 0.25rem;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  margin-bottom: var(--space-2);
 }
 </style>

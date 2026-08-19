@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiButton from "./ui/UiButton.vue";
 // The selected-field toolbar chip (SPEC-053 AC-14): the same five actions the
 // field context menu offers — Update field, Edit field…, Toggle field codes,
 // Unlink field and Lock/Unlock field — surfaced as a compact chip while the
@@ -23,74 +24,54 @@ const emit = defineEmits(["field-action"]);
     aria-label="Field actions"
     data-testid="field-toolbar"
   >
-    <button
-      type="button"
+    <UiButton
+      variant="ghost"
       data-testid="field-toolbar-update"
       :disabled="props.readOnly"
       @click="emit('field-action', 'update')"
     >
       Update field
-    </button>
-    <button
-      type="button"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="field-toolbar-edit"
       :disabled="props.readOnly"
       @click="emit('field-action', 'edit')"
     >
       Edit field…
-    </button>
-    <button
-      type="button"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="field-toolbar-toggle-codes"
       @click="emit('field-action', 'toggle-codes')"
     >
       Toggle field codes
-    </button>
-    <button
-      type="button"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="field-toolbar-unlink"
       @click="emit('field-action', 'unlink')"
     >
       Unlink field
-    </button>
-    <button
-      type="button"
+    </UiButton>
+    <UiButton
+      variant="ghost"
       data-testid="field-toolbar-lock"
       @click="emit('field-action', props.locked ? 'unlock' : 'lock')"
     >
       {{ props.locked ? "Unlock field" : "Lock field" }}
-    </button>
+    </UiButton>
   </div>
 </template>
 
 <style scoped>
 .field-toolbar {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
   align-items: center;
-  padding: 0.25rem 0.375rem;
-  background: #f1f3f4;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-}
-
-.field-toolbar button {
-  font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.2rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: #202124;
-  cursor: pointer;
-}
-
-.field-toolbar button:hover:not(:disabled) {
-  background: #e0e0e0;
-}
-
-.field-toolbar button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-canvas);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
 }
 </style>

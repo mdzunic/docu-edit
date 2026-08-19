@@ -71,10 +71,17 @@ describe("DownloadMenu", () => {
   });
 
   it("Escape closes the menu without emitting", async () => {
-    const wrapper = mount(DownloadMenu);
+    // Dismissal now lives in UiMenuSurface, which listens on the document (so
+    // a mouse-opened popup still closes on Escape even when focus stayed on the
+    // page — SPEC-058 AC-39). Attach to the document and fire a real Escape
+    // there, the way the browser delivers it.
+    const wrapper = mount(DownloadMenu, { attachTo: document.body });
     await wrapper.get('[data-testid="download-menu"]').trigger("click");
-    await wrapper.get('[data-testid="download-menu"]').trigger("keydown.escape");
+    expect(wrapper.find('[data-testid="download-menu-list"]').exists()).toBe(true);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
     expect(wrapper.find('[data-testid="download-menu-list"]').exists()).toBe(false);
     expect(wrapper.emitted("download")).toBeUndefined();
+    wrapper.unmount();
   });
 });

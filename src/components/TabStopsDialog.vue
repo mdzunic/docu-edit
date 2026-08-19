@@ -8,6 +8,7 @@
 import { computed, ref } from "vue";
 import { asTabStopAlignment, asTabStops } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** The selection's current stops (commands.selectionTabStops). */
@@ -218,30 +219,29 @@ function apply() {
          actions row cannot express. It stays in the body with its own
          scoped .dialog-actions styles. -->
     <div class="dialog-actions">
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="tabs-clear-all"
         :disabled="stops.length === 0"
         @click="clearAll"
       >
         Clear all
-      </button>
+      </UiButton>
       <span class="actions-spacer" />
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="tabs-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="tabs-apply"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </div>
   </BaseDialog>
 </template>
@@ -249,8 +249,8 @@ function apply() {
 <style scoped>
 .field-row {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
   align-items: flex-end;
 }
 
@@ -258,7 +258,7 @@ function apply() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .add-field {
@@ -266,32 +266,32 @@ function apply() {
 }
 
 .default-interval-field {
-  margin-top: 0.75rem;
+  margin-top: var(--space-4);
   max-width: 14rem;
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .add-button,
 .remove-button {
   font: inherit;
-  padding: 0.375rem 0.75rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -306,18 +306,18 @@ function apply() {
   padding: 0;
   max-height: 12rem;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .stop-entry {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 0.375rem 0.75rem;
-  border-bottom: 1px solid #f1f3f4;
-  font-size: 0.875rem;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  font-size: var(--text-md);
 }
 
 .stop-entry:last-child {
@@ -325,15 +325,15 @@ function apply() {
 }
 
 .stop-empty {
-  padding: 0.5rem 0.75rem;
-  color: #5f6368;
-  font-size: 0.875rem;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 /* This dialog's own actions row (see the template comment) — lives in the
@@ -341,31 +341,11 @@ function apply() {
 .dialog-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
 }
 
 .actions-spacer {
   flex: 1;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

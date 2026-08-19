@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // "Header/footer options" (SPEC-029 AC-11, AC-12, AC-22, AC-23): "Different
 // first page" and "Different odd and even pages" toggles, plus "Start
@@ -78,21 +79,20 @@ function apply() {
       Leave unchecked to continue numbering from the previous section.
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="hf-options-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="hf-options-apply"
         @click="apply"
       >
         OK
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -101,44 +101,29 @@ function apply() {
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  color: #3c4043;
-  margin-bottom: 0.5rem;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .start-input {
   width: 6rem;
-  margin-left: 1.75rem;
+  margin-left: var(--space-7);
 }
 
 .hint {
-  margin: 0.5rem 0 0;
-  font-size: 0.75rem;
-  color: #5f6368;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 </style>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { ref, useTemplateRef } from "vue";
 import { HIGHLIGHT_PICKER_ITEMS } from "../lib/core/colors";
 import { HIGHLIGHT_HEX } from "../lib/core/colors";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -19,18 +20,18 @@ const props = defineProps({
 const emit = defineEmits(["select"]);
 
 const open = ref(false);
-const root = useTemplateRef("root");
 const triggerEl = useTemplateRef("triggerEl");
-const menuEl = useTemplateRef("menuEl");
+const menuSurface = useTemplateRef("menuSurface");
 
 const ITEMS = HIGHLIGHT_PICKER_ITEMS;
 
 // The toolbar clips overflow on its vertical axis, so the menu is rendered
 // position:fixed (escaped below the anchor) instead of at a clipped offset.
+// The measured element is UiMenuSurface's rendered box ($el).
 const { menuStyle } = useFloatingMenu({
   open: () => open.value,
   anchor: () => triggerEl.value,
-  menu: () => menuEl.value,
+  menu: () => menuSurface.value?.$el ?? null,
 });
 
 function toggle() {
@@ -65,30 +66,12 @@ function currentHex() {
   return props.value.startsWith("#") ? props.value : (HIGHLIGHT_HEX[props.value] ?? "");
 }
 
-function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
-  if (open.value && root.value && event.target instanceof Node && !root.value.contains(event.target)) {
-    open.value = false;
-  }
-}
-
-function handleKeydown(event = new KeyboardEvent("keydown")) {
-  if (event.key === "Escape") {
-    open.value = false;
-  }
-}
-
-document.addEventListener("mousedown", handleDocumentMousedown);
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", handleDocumentMousedown);
-});
+// Outside-click and Escape dismissal (and focus return) are owned by
+// UiMenuSurface — the shared, tested implementation.
 </script>
 
 <template>
-  <div
-    ref="root"
-    class="highlight-picker"
-    @keydown="handleKeydown"
-  >
+  <div class="highlight-picker">
     <button
       ref="triggerEl"
       type="button"
@@ -111,14 +94,16 @@ onBeforeUnmount(() => {
         :data-color="mixed ? 'mixed' : (currentHex() === '' ? 'none' : String(value))"
       />
     </button>
-    <div
-      v-if="open"
-      ref="menuEl"
+    <UiMenuSurface
+      ref="menuSurface"
+      :open="open"
+      :anchor="triggerEl"
       class="picker-menu"
       data-testid="highlight-menu"
       role="dialog"
       aria-label="Highlight colour"
       :style="menuStyle"
+      @dismiss="open = false"
     >
       <div class="swatch-grid">
         <!-- The 15 Word highlight colours (SPEC-013 AC); white is in the
@@ -148,7 +133,7 @@ onBeforeUnmount(() => {
       >
         No colour
       </button>
-    </div>
+    </UiMenuSurface>
   </div>
 </template>
 
@@ -160,17 +145,17 @@ onBeforeUnmount(() => {
 
 .picker-button {
   font: inherit;
-  font-size: 0.75rem;
-  width: 1.75rem;
-  height: 1.75rem;
+  font-size: var(--text-sm);
+  width: var(--height-control);
+  height: var(--height-control);
   padding: 0;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -186,66 +171,64 @@ onBeforeUnmount(() => {
 .color-bar {
   width: 1.125rem;
   height: 0.25rem;
-  margin-top: 0.125rem;
-  border-radius: 1px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
 }
 
 .color-bar-none {
-  background: #fff;
-  border: 1px solid #bdbdbd;
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
 }
 
 .color-bar-mixed {
-  background: repeating-linear-gradient(45deg, #bbb 0 2px, #eee 2px 4px);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--border-strong) 0 2px,
+    var(--surface-sunken) 2px 4px
+  );
 }
 
-/* position/left/top come inline from useFloatingMenu (fixed, escapes the
-   toolbar's vertical clipping). */
+/* position/left/top come inline from useFloatingMenu; the box is UiMenuSurface's. */
 .picker-menu {
   z-index: 30;
-  padding: 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
 }
 
 .swatch-grid {
   display: grid;
   grid-template-columns: repeat(5, 1.125rem);
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .swatch {
   width: 1.125rem;
   height: 1.125rem;
   padding: 0;
-  border: 1px solid rgb(0 0 0 / 0.25);
-  border-radius: 2px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .swatch.active {
-  outline: 2px solid #1a73e8;
-  outline-offset: 1px;
+  outline: calc(2 * var(--border-width)) solid var(--accent);
+  outline-offset: var(--border-width);
 }
 
 .no-color {
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
   width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.125rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  margin-top: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .no-color.active {
-  background: #d2e3fc;
-  border-color: #8ab4f8;
+  background: var(--accent-subtle);
+  border-color: var(--accent);
 }
 </style>

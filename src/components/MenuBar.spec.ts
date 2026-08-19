@@ -101,6 +101,41 @@ describe("MenuBar (SPEC-049)", () => {
     wrapper.unmount();
   });
 
+  it("Escape closes a mouse-opened menu even when focus stayed on the page (SPEC-058 AC-39)", async () => {
+    const wrapper = mountBar();
+    await wrapper.get('[data-testid="menu-title-file"]').trigger("click");
+    expect(wrapper.get('[data-testid="menu-title-file"]').attributes("aria-expanded")).toBe("true");
+    // The title prevents mousedown focus, so a pointer open leaves focus
+    // wherever it was — only UiMenuSurface's document listener can see this.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-testid="menu-title-file"]').attributes("aria-expanded")).toBe("false");
+    wrapper.unmount();
+  });
+
+  it("a pointerdown outside the bar closes the open menu (SPEC-058 AC-39)", async () => {
+    const wrapper = mountBar();
+    await wrapper.get('[data-testid="menu-title-file"]').trigger("click");
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-testid="menu-title-file"]').attributes("aria-expanded")).toBe("false");
+    wrapper.unmount();
+  });
+
+  it("clicking the open menu's own title closes it — the full pointer sequence, not just click", async () => {
+    // The title is the surface's anchor: its pointerdown must NOT dismiss the
+    // popup, or the click that follows would toggle a menu that is already
+    // closed and reopen it — a menu that cannot be closed from its own title.
+    const wrapper = mountBar();
+    const fileTitle = wrapper.get('[data-testid="menu-title-file"]');
+    await fileTitle.trigger("click");
+    expect(fileTitle.attributes("aria-expanded")).toBe("true");
+    await fileTitle.trigger("pointerdown");
+    await fileTitle.trigger("click");
+    expect(fileTitle.attributes("aria-expanded")).toBe("false");
+    wrapper.unmount();
+  });
+
   it("opens a neighbour on pointer cross once a menu is open (AC-9)", async () => {
     const wrapper = mountBar();
     await wrapper.get('[data-testid="menu-title-file"]').trigger("click");

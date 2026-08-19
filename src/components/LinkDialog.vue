@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { asLinkTargetEntries, isDangerousUrl, sanitizeHref } from "../lib/links";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The link dialog (SPEC-025 AC-1..3, AC-14..16, AC-19..21): display text, a
 // web address, and — as the alternative target — the document's headings and
@@ -188,22 +189,21 @@ function save() {
       </template>
     </div>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="link-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="link-save"
         :disabled="!canSave"
         @click="save"
       >
         Apply
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -211,48 +211,48 @@ function save() {
 <style scoped>
 .dialog-label {
   display: block;
-  margin: 0.5rem 0 0.25rem;
-  font-size: 0.8125rem;
-  color: #5f6368;
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .dialog-input {
   font: inherit;
   width: 100%;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  color: #b3261e;
-  font-size: 0.8125rem;
+  margin: var(--space-3) 0 0;
+  color: var(--text-danger);
+  font-size: var(--text-md);
 }
 
 .target-section {
-  margin-top: 0.75rem;
+  margin-top: var(--space-4);
   max-height: 12rem;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  padding: 0.5rem;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
 }
 
 .target-group {
-  margin: 0.375rem 0 0.125rem;
-  font-size: 0.75rem;
-  font-weight: 600;
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .target-empty {
-  margin: 0.25rem 0;
-  font-size: 0.8125rem;
-  color: #5f6368;
+  margin: var(--space-2) 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .target-option {
@@ -260,13 +260,13 @@ function save() {
   width: 100%;
   text-align: start;
   font: inherit;
-  font-size: 0.875rem;
-  padding: 0.25rem 0.5rem;
-  margin: 0.125rem 0;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-1) 0;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #202124;
+  color: var(--text-primary);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -274,32 +274,12 @@ function save() {
 }
 
 .target-option:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .target-option.selected {
-  background: #e8f0fe;
-  border-color: #aecbfa;
-  color: #174ea6;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  background: var(--surface-selected);
+  border-color: var(--accent-subtle);
+  color: var(--text-accent);
 }
 </style>

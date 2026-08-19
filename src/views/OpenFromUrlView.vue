@@ -119,30 +119,30 @@ async function handleFileChosen() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  color: #3c4043;
+  gap: var(--space-4);
+  color: var(--text-primary);
   text-align: center;
-  padding: 1rem;
+  padding: var(--space-5);
 }
 
 .error-title {
   margin: 0;
-  font-size: 1.125rem;
-  color: #202124;
+  font-size: var(--text-xl);
+  color: var(--text-primary);
 }
 
 .error-reason {
   margin: 0;
-  color: #b3261e;
+  color: var(--text-danger);
   max-width: 32rem;
 }
 
 .status-panel button {
   font: inherit;
-  padding: 0.5rem 1.25rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-6);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
@@ -151,7 +151,7 @@ async function handleFileChosen() {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--border-width));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;

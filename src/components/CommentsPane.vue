@@ -528,10 +528,10 @@ function commitAuthorName() {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  background: #f8f9fa;
-  border-left: 1px solid #dadce0;
+  background: var(--surface-raised);
+  border-left: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
 }
 
 .comments-pane-header {
@@ -539,39 +539,39 @@ function commitAuthorName() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
 }
 
 .comments-pane-title {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .comments-only-toggle {
-  border: 1px solid #dadce0;
-  background: #fff;
-  border-radius: 4px;
-  padding: 0.15rem 0.5rem;
-  font-size: 0.7rem;
+  border: var(--border-width) solid var(--border-default);
+  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
 .comments-only-toggle[aria-pressed="true"] {
-  background: #e8f0fe;
-  color: #1a73e8;
-  border-color: #1a73e8;
+  background: var(--surface-selected);
+  color: var(--text-accent);
+  border-color: var(--accent);
 }
 
 .comments-identity,
 .comments-filters {
   flex: none;
   display: flex;
-  gap: 0.5rem;
-  padding: 0 0.75rem 0.5rem;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -579,24 +579,24 @@ function commitAuthorName() {
 .comments-filters label {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  font-size: 0.7rem;
-  color: #5f6368;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 
 .comments-author-input,
 .comments-filter-select {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.3rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .comments-empty {
   margin: 0;
-  padding: 0.25rem 0.75rem 0.75rem;
+  padding: var(--space-2) var(--space-4) var(--space-4);
   font-style: italic;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .comments-open-list {
@@ -607,37 +607,37 @@ function commitAuthorName() {
 .comments-only-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0 0.5rem 0.5rem;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .comment-composer {
-  margin: 0 0.75rem 0.5rem;
-  padding: 0.5rem;
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
+  margin: 0 var(--space-4) var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
 }
 
 .comment-thread {
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  padding: 0.5rem;
-  margin: 0 0.5rem 0.5rem;
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: 0 var(--space-3) var(--space-3);
   cursor: pointer;
 }
 
 .comments-open-list .comment-thread {
   position: absolute;
-  left: 0.5rem;
-  right: 0.5rem;
-  margin: 0 0 0.5rem;
+  left: var(--space-3);
+  right: var(--space-3);
+  margin: 0 0 var(--space-3);
 }
 
 .comment-thread.is-active {
-  border-color: #1a73e8;
-  box-shadow: 0 0 0 1px #1a73e8;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-1);
 }
 
 .comment-thread.is-resolved {
@@ -645,58 +645,58 @@ function commitAuthorName() {
 }
 
 .comment-message + .comment-message {
-  margin-top: 0.4rem;
-  padding-top: 0.4rem;
-  border-top: 1px solid #f1f3f4;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-width) solid var(--border-subtle);
 }
 
 .comment-message-header {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.7rem;
-  color: #5f6368;
-  margin-bottom: 0.2rem;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
 }
 
 .comment-author {
-  font-weight: 600;
-  color: #202124;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .comment-text {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: #202124;
+  color: var(--text-primary);
 }
 
 .comment-actions {
   display: flex;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .comment-actions button,
 .comment-thread-actions button {
-  border: 1px solid #dadce0;
-  background: #fff;
-  border-radius: 4px;
-  padding: 0.1rem 0.45rem;
-  font-size: 0.7rem;
+  border: var(--border-width) solid var(--border-default);
+  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
 .comment-thread-actions {
   display: flex;
-  gap: 0.4rem;
-  margin-top: 0.5rem;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 .comment-reply {
-  margin-top: 0.5rem;
-  padding-top: 0.4rem;
-  border-top: 1px solid #f1f3f4;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-width) solid var(--border-subtle);
 }
 
 .comment-composer-input,
@@ -707,24 +707,24 @@ function commitAuthorName() {
   resize: vertical;
   min-height: 2.5rem;
   font: inherit;
-  padding: 0.3rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .comments-resolved-section {
   flex: none;
-  margin-top: 0.5rem;
-  border-top: 1px solid #dadce0;
-  padding-top: 0.5rem;
+  margin-top: var(--space-3);
+  border-top: var(--border-width) solid var(--border-default);
+  padding-top: var(--space-3);
 }
 
 .comments-resolved-heading {
-  padding: 0 0.75rem 0.4rem;
-  font-size: 0.7rem;
-  font-weight: 600;
+  padding: 0 var(--space-4) var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 </style>

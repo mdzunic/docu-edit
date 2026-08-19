@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { shortcutLabel } from "../lib/shortcuts";
+import UiIconButton from "./ui/UiIconButton.vue";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits<{...}>()
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -36,55 +37,28 @@ function redoTitle() {
     role="group"
     aria-label="Undo and redo"
   >
-    <button
-      type="button"
-      class="undo-redo-button"
-      data-testid="undo-button"
+    <UiIconButton
+      icon="undo"
+      :label="undoTitle()"
       :disabled="!canUndo"
-      :title="undoTitle()"
-      :aria-label="undoTitle()"
+      data-testid="undo-button"
       @mousedown.prevent
       @click="emit('undo')"
-    >
-      ↶
-    </button>
-    <button
-      type="button"
-      class="undo-redo-button"
-      data-testid="redo-button"
+    />
+    <UiIconButton
+      icon="redo"
+      :label="redoTitle()"
       :disabled="!canRedo"
-      :title="redoTitle()"
-      :aria-label="redoTitle()"
+      data-testid="redo-button"
       @mousedown.prevent
       @click="emit('redo')"
-    >
-      ↷
-    </button>
+    />
   </div>
 </template>
 
 <style scoped>
 .undo-redo {
   display: inline-flex;
-  gap: 0.25rem;
-}
-
-.undo-redo-button {
-  font: inherit;
-  font-size: 1rem;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  line-height: 1;
-  text-align: center;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.undo-redo-button:disabled {
-  opacity: 0.5;
-  cursor: default;
+  gap: var(--space-2);
 }
 </style>

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "../lib/core/tables";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // The "Insert table…" dialog (SPEC-022 AC-2): row/column counts beyond the
 // grid picker's 10×10. OK emits the size for the parent to insert at the
@@ -91,22 +92,21 @@ function apply() {
       {{ error }}
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="insert-table-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="insert-table-confirm"
         :disabled="!!error"
         @click="apply"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -114,57 +114,35 @@ function apply() {
 <style scoped>
 .field-row {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .field {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  color: #3c4043;
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .field-input {
   font: inherit;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
 }
 
 .dialog-error {
-  margin: 0.5rem 0 0;
-  font-size: 0.8125rem;
-  color: #c5221f;
-}
-
-.dialog-actions button {
-  font: inherit;
-  font-size: 0.875rem;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #1a73e8;
-  border-color: #1a73e8;
-  color: #fff;
-}
-
-.dialog-actions button.primary:disabled {
-  background: #9e9e9e;
-  border-color: #9e9e9e;
-  cursor: default;
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-md);
+  color: var(--danger);
 }
 </style>

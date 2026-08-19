@@ -8,6 +8,7 @@
 import { computed, ref } from "vue";
 import { asDateTimePreviews } from "../lib/fields";
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** Each catalogue format already rendered for the preview column, in the
@@ -73,80 +74,59 @@ function insert() {
     </label>
 
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="date-time-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </UiButton>
+      <UiButton
+        variant="primary"
         data-testid="date-time-insert"
         :disabled="!selected"
         @click="insert"
       >
         Insert
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
 
 <style scoped>
 .hint {
-  margin: 0 0 0.5rem;
-  font-size: 0.875rem;
-  color: #5f6368;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .format-list {
   list-style: none;
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-4);
   padding: 0;
   max-height: 16rem;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .format-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3);
   cursor: pointer;
-  font-size: 0.9375rem;
+  font-size: var(--text-lg);
 }
 
 .format-row:hover {
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .auto-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
-}
-
-.dialog-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  gap: var(--space-3);
+  font-size: var(--text-lg);
 }
 </style>

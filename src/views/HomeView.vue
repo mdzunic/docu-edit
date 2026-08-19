@@ -391,76 +391,76 @@ function confirmDelete() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  color: #3c4043;
+  gap: var(--space-5);
+  color: var(--text-primary);
 }
 
 .empty-message {
   margin: 0;
-  font-size: 1.125rem;
+  font-size: var(--text-xl);
 }
 
 .empty-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
 .empty-actions button,
 .new-button {
   font: inherit;
-  padding: 0.5rem 1.25rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-6);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .library {
   max-width: 56rem;
   margin: 0 auto;
-  padding: 2rem 1rem;
+  padding: var(--space-7) var(--space-5);
 }
 
 .library-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .library-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-5);
 }
 
 .library-heading {
   margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #202124;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .library-table {
   width: 100%;
   border-collapse: collapse;
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
 }
 
 .library-table th {
   text-align: left;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #5f6368;
-  padding: 0.625rem 1rem;
-  border-bottom: 1px solid #e0e0e0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--border-width) solid var(--border-default);
 }
 
 .library-table td {
-  padding: 0.625rem 1rem;
-  border-bottom: 1px solid #f0f0f0;
-  color: #202124;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  color: var(--text-primary);
 }
 
 .library-row {
@@ -468,27 +468,27 @@ function confirmDelete() {
 }
 
 .library-row:hover {
-  background: #f8f9fa;
+  background: var(--surface-raised);
 }
 
 .cell-title {
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   overflow-wrap: anywhere;
 }
 
 .cell-modified {
-  color: #5f6368;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .badge {
   display: inline-block;
-  padding: 0.125rem 0.5rem;
-  border-radius: 999px;
-  background: #e8f0fe;
-  color: #1a5276;
-  font-size: 0.75rem;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-selected);
+  color: var(--text-accent);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
 }
 
 .cell-actions {
@@ -499,18 +499,18 @@ function confirmDelete() {
 
 .menu-button {
   font: inherit;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   line-height: 1;
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .menu-button:hover {
-  background: #e8eaed;
+  background: var(--surface-sunken);
 }
 
 .row-menu {
@@ -520,25 +520,25 @@ function confirmDelete() {
   display: flex;
   flex-direction: column;
   min-width: 8rem;
-  background: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
   z-index: 10;
 }
 
 .row-menu button {
   font: inherit;
   text-align: left;
-  padding: 0.5rem 1rem;
+  padding: var(--space-3) var(--space-5);
   border: none;
-  background: #fff;
+  background: var(--surface-base);
   cursor: pointer;
-  color: #202124;
+  color: var(--text-primary);
 }
 
 .row-menu button:hover {
-  background: #f1f3f4;
+  background: var(--surface-sunken);
 }
 
 .visually-hidden {
@@ -546,7 +546,7 @@ function confirmDelete() {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--border-width));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -555,7 +555,7 @@ function confirmDelete() {
 
 .open-error {
   margin: 0;
-  color: #b3261e;
+  color: var(--text-danger);
   max-width: 32rem;
   text-align: center;
   overflow: hidden;

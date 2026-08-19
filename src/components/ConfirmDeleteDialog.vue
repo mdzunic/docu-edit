@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseDialog from "./BaseDialog.vue";
+import UiButton from "./ui/UiButton.vue";
 
 // Confirmation modal for deleting a document; names the document (AC-14) so
 // the user knows exactly what is being removed. Emits confirm/cancel only —
@@ -30,21 +31,20 @@ const emit = defineEmits(["confirm", "cancel"]);
       Delete "{{ documentTitle }}"? This cannot be undone.
     </p>
     <template #actions>
-      <button
-        type="button"
+      <UiButton
+        variant="secondary"
         data-testid="delete-cancel"
         @click="emit('cancel')"
       >
         Cancel
-      </button>
-      <button
-        type="button"
-        class="danger"
+      </UiButton>
+      <UiButton
+        variant="danger"
         data-testid="delete-confirm"
         @click="emit('confirm')"
       >
         Delete
-      </button>
+      </UiButton>
     </template>
   </BaseDialog>
 </template>
@@ -52,23 +52,8 @@ const emit = defineEmits(["confirm", "cancel"]);
 <style scoped>
 .dialog-message {
   margin: 0;
-  color: #3c4043;
-  font-size: 0.9375rem;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
   overflow-wrap: anywhere;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.dialog-actions button.danger {
-  background: #b3261e;
-  border-color: #b3261e;
-  color: #fff;
 }
 </style>

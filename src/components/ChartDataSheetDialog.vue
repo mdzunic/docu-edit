@@ -344,30 +344,30 @@ function apply() {
 }
 
 .dialog-note {
-  margin: 0 0 0.75rem;
-  font-size: 0.8125rem;
-  color: #5f6368;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-md);
+  color: var(--text-secondary);
 }
 
 .toggles {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-5);
+  margin-bottom: var(--space-4);
 }
 
 .field-inline {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3);
+  font-size: var(--text-md);
 }
 
 .grid-scroll {
   overflow: auto;
   max-height: 40vh;
-  border: 1px solid #dadce0;
-  margin-bottom: 0.5rem;
+  border: var(--border-width) solid var(--border-default);
+  margin-bottom: var(--space-3);
 }
 
 .data-grid {
@@ -375,67 +375,67 @@ function apply() {
 }
 
 .data-grid td {
-  border: 1px solid #e0e0e0;
+  border: var(--border-width) solid var(--border-default);
   padding: 0;
 }
 
 .cell-input {
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
   width: 6rem;
-  padding: 0.25rem 0.375rem;
+  padding: var(--space-2) var(--space-3);
   border: none;
   box-sizing: border-box;
 }
 
 .cell-input:focus {
-  outline: 2px solid #1a73e8;
-  outline-offset: -2px;
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--space-1));
 }
 
 .icon-button {
   font: inherit;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #5f6368;
-  padding: 0.125rem 0.375rem;
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
 }
 
 .icon-button:hover {
-  color: #b3261e;
+  color: var(--text-danger);
 }
 
 .grid-add-buttons {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .grid-add-buttons button {
   font: inherit;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.625rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-md);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 
 .dialog-actions button.primary {
-  background: #2c3e50;
-  border-color: #2c3e50;
-  color: #fff;
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .dialog-actions button:disabled {

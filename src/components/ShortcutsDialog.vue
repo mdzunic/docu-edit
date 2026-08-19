@@ -169,85 +169,85 @@ const reservedKeysLabel = RESERVED_BROWSER_KEYS.map((key) => `Ctrl/Cmd+${key.toU
   font: inherit;
   width: 100%;
   box-sizing: border-box;
-  padding: 0.375rem 0.5rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  margin-bottom: 0.75rem;
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
 }
 
 .shortcuts-list {
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  padding: 0.25rem 0;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) 0;
 }
 
 .empty-state {
   margin: 0;
-  padding: 0.75rem;
-  color: #5f6368;
-  font-size: 0.875rem;
+  padding: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 
 .group-title {
-  margin: 0.5rem 0 0.25rem;
-  padding: 0 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 600;
+  margin: var(--space-3) 0 var(--space-2);
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .shortcut-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.875rem;
-  color: #202124;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .shortcut-row.active {
-  background: #e8f0fe;
+  background: var(--surface-selected);
 }
 
 .shortcut-note {
-  color: #5f6368;
-  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 
 .shortcut-keys {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
   flex: none;
 }
 
 .key-chip {
-  font-size: 0.75rem;
-  padding: 0.0625rem 0.375rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  background: #f5f5f5;
-  color: #3c4043;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
 .reserved-note {
-  margin: 0.75rem 0 0;
-  font-size: 0.75rem;
-  color: #5f6368;
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .dialog-actions button {
   font: inherit;
-  padding: 0.375rem 1rem;
-  border: 1px solid #bdbdbd;
-  border-radius: 4px;
-  background: #fff;
+  padding: var(--space-3) var(--space-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   cursor: pointer;
 }
 </style>

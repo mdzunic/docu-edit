@@ -222,10 +222,10 @@ function onAuthorNameChange(event = new Event("change")) {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  background: #f8f9fa;
-  border-left: 1px solid #dadce0;
+  background: var(--surface-raised);
+  border-left: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
-  font-size: 0.8125rem;
+  font-size: var(--text-md);
 }
 
 .track-changes-pane-header {
@@ -233,82 +233,82 @@ function onAuthorNameChange(event = new Event("change")) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
 }
 
 .track-changes-pane-title {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .track-changes-close {
   border: none;
   background: transparent;
-  font-size: 1rem;
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .track-changes-controls {
   flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0 0.75rem 0.5rem;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
   align-items: flex-end;
 }
 
 .track-changes-toggle {
-  border: 1px solid #dadce0;
-  background: #fff;
-  border-radius: 4px;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.7rem;
+  border: var(--border-width) solid var(--border-default);
+  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
 .track-changes-toggle[aria-pressed="true"] {
-  background: #e6f4ea;
-  color: #188038;
-  border-color: #188038;
+  background: var(--surface-sunken);
+  color: var(--success);
+  border-color: var(--success);
 }
 
 .track-changes-field {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  font-size: 0.7rem;
-  color: #5f6368;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 
 .track-changes-select,
 .track-changes-author-input {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.3rem;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .track-changes-nav,
 .track-changes-bulk-actions {
   flex: none;
   display: flex;
-  gap: 0.4rem;
-  padding: 0 0.75rem 0.5rem;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
 }
 
 .track-changes-nav button,
 .track-changes-bulk-actions button {
-  border: 1px solid #dadce0;
-  background: #fff;
-  border-radius: 4px;
-  padding: 0.2rem 0.5rem;
-  font-size: 0.72rem;
+  border: var(--border-width) solid var(--border-default);
+  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -320,67 +320,67 @@ function onAuthorNameChange(event = new Event("change")) {
 
 .track-changes-empty {
   margin: 0;
-  padding: 0.25rem 0.75rem 0.75rem;
+  padding: var(--space-2) var(--space-4) var(--space-4);
   font-style: italic;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 .track-changes-list {
   list-style: none;
   margin: 0;
-  padding: 0 0.5rem 0.5rem;
+  padding: 0 var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .track-change-item {
-  background: #fff;
-  border: 1px solid #dadce0;
-  border-radius: 6px;
-  padding: 0.5rem;
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
   cursor: pointer;
 }
 
 .track-change-header {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.7rem;
-  color: #5f6368;
-  margin-bottom: 0.2rem;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
 }
 
 .track-change-author {
-  font-weight: 600;
-  color: #202124;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .track-change-description {
-  font-weight: 600;
-  color: #202124;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
 .track-change-preview {
-  margin: 0.2rem 0 0;
+  margin: var(--space-2) 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: #5f6368;
+  color: var(--text-secondary);
   font-style: italic;
 }
 
 .track-change-actions {
   display: flex;
-  gap: 0.4rem;
-  margin-top: 0.4rem;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 .track-change-actions button {
-  border: 1px solid #dadce0;
-  background: #fff;
-  border-radius: 4px;
-  padding: 0.1rem 0.45rem;
-  font-size: 0.7rem;
+  border: var(--border-width) solid var(--border-default);
+  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 </style>
