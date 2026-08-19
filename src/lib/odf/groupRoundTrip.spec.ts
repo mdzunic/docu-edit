@@ -128,3 +128,52 @@ describe("SPEC-057 native chart member round trip — draw:g / draw:frame (AC-18
     expect(groups[0].preservedSubtreeXml).toBeUndefined();
   });
 });
+
+describe("SPEC-057 container altText + rotation bake on .odt save (AC-51, AC-64)", () => {
+  function twoShapeContainer(rotationDeg?: number): DrawingGroup {
+    const group: DrawingGroup = {
+      type: "drawingGroup",
+      widthCm: 8,
+      heightCm: 4,
+      wrap: "square",
+      offsetXCm: 2,
+      offsetYCm: 2,
+      members: [
+        { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", offsetXCm: 0, offsetYCm: 0 },
+        { type: "shape", geometry: "ellipse", widthCm: 3, heightCm: 2, wrap: "square", offsetXCm: 5, offsetYCm: 2 },
+      ],
+    };
+    if (rotationDeg !== undefined) {
+      group.rotationDeg = rotationDeg;
+    }
+    return group;
+  }
+  function modelWith(group: DrawingGroup): DocumentModel {
+    return { ...createDocument("odt-group"), format: "odt", sections: [{ blocks: [{ type: "paragraph", runs: [] }, group] }] };
+  }
+
+  it("writes a container's altText as svg:title/svg:desc on draw:g (AC-51)", async () => {
+    const group = twoShapeContainer();
+    group.altText = "Flow chart";
+    const { bytes } = await writeOdt(modelWith(group));
+    const contentXml = new TextDecoder().decode((await unzip(bytes)).get("content.xml")!);
+    expect(contentXml).toContain("<svg:title>Flow chart</svg:title>");
+    expect(contentXml).toContain("<svg:desc>Flow chart</svg:desc>");
+    const reopened = await parseOdt(bytes);
+    expect(reopened.sections.flatMap((s) => s.blocks).filter(isDrawingGroup)[0].altText).toBe("Flow chart");
+  });
+
+  it("bakes a rotated container's rotation into member positions on save (AC-64)", async () => {
+    const { bytes } = await writeOdt(modelWith(twoShapeContainer(90)));
+    const contentXml = new TextDecoder().decode((await unzip(bytes)).get("content.xml")!);
+    // draw:g has no rotation of its own; the bake pushes rotation into the
+    // members' transforms — the model never carried group rotation to ODF.
+    const drawG = contentXml.slice(contentXml.indexOf("<draw:g"), contentXml.indexOf("</draw:g>"));
+    expect(drawG).not.toContain("draw:transform");
+    // The reopened container carries no rotation (it was baked away).
+    const reopened = await parseOdt(bytes);
+    const group = reopened.sections.flatMap((s) => s.blocks).filter(isDrawingGroup)[0];
+    expect(group.rotationDeg ?? 0).toBe(0);
+    expect(group.members.some((m) => (m.rotationDeg ?? 0) !== 0)).toBe(true);
+  });
+});

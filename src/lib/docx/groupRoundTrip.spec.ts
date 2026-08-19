@@ -120,4 +120,16 @@ describe("SPEC-057 native chart member round trip — wpg:graphicFrame (AC-18, A
     // The container is not sealed — a modelled chart member does not seal it.
     expect(groups[0].preservedSubtreeXml).toBeUndefined();
   });
+
+  it("writes and re-reads a container's altText as wp:docPr/@descr (AC-50)", async () => {
+    const model = chartMemberModel();
+    (model.sections[0].blocks[1] as DrawingGroup).altText = "Sales diagram";
+    const { bytes } = await writeDocx(model);
+    const { unzip } = await import("../core/zip");
+    const documentXml = new TextDecoder().decode((await unzip(bytes)).get("word/document.xml")!);
+    expect(documentXml).toContain('descr="Sales diagram"');
+    const reopened = await parseDocx(bytes);
+    const group = reopened.sections.flatMap((s) => s.blocks).filter(isDrawingGroup)[0];
+    expect(group.altText).toBe("Sales diagram");
+  });
 });
