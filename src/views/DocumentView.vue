@@ -784,37 +784,7 @@ const {
 // --- native drawing-group containers (SPEC-057) ------------------------------
 // Container/member selection (click-to-enter), Group/Ungroup, the container
 // and member gestures, the container toolbar and keyboard proxy traversal.
-const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); }, getGroupCandidates: () => {
-  // Every top-level drawing kind joins one Group multi-selection (SPEC-057
-  // "Selection across drawing kinds"): the shape Shift-click list plus any
-  // singly-selected shape, image or chart. The group composable adds its own
-  // container selections and de-duplicates.
-  const out = [...shapeMultiSelection.value];
-  for (const loc of [shapeSelection.value, imageSelection.value, chartSelection.value]) {
-    if (loc) { out.push({ section: loc.section, block: loc.block }); }
-  }
-  return out;
-} });
-
-// Cross-kind drawing selection (SPEC-057 "Selection across drawing kinds"): a
-// plain click on a top-level shape/image/chart is exclusive — it clears any
-// selected group container so the two kinds never both count as Group
-// candidates. A Shift-click is additive and deliberately leaves the sibling
-// selections in place, so shapes, images, charts and containers combine into
-// one Group multi-selection (AC-7). Group-member clicks arrive through
-// group-select, not these, so a top-level click always deselects a group.
-function selectShapeProxy(section = 0, block = 0, shiftKey = false) {
-  if (!shiftKey) { drawingGroups.clearGroupSelection(); }
-  handleShapeSelect(section, block, shiftKey);
-}
-function selectImageProxy(section = 0, block = 0, shiftKey = false) {
-  if (!shiftKey) { drawingGroups.clearGroupSelection(); }
-  handleImageSelect(section, block);
-}
-function selectChartProxy(section = 0, block = 0, shiftKey = false) {
-  if (!shiftKey) { drawingGroups.clearGroupSelection(); }
-  handleChartSelect(section, block);
-}
+const drawingGroups = useDrawingGroups({ ...editorContext, clearOtherSelections: () => { clearShapeSelection(); clearImageSelection(); clearChartSelection(); }, getGroupCandidates: () => [shapeSelection.value, imageSelection.value, chartSelection.value, ...shapeMultiSelection.value].flatMap((l) => (l ? [{ section: l.section, block: l.block }] : [])) }), drawingAnchorMarker = computed(() => shapeAnchorMarker.value || drawingGroups.groupAnchorMarker());
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
 // session's editing surface, op dispatch and overlay live in the composable
@@ -3650,16 +3620,10 @@ function handleMenuCommand(id = "") {
             @rotate-start="drawingGroups.startGroupRotate"
           />
           <div
-            v-if="shapeAnchorMarker"
+            v-if="drawingAnchorMarker"
             class="shape-anchor-marker print-exclude"
             data-testid="shape-anchor-marker"
-            :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
-          />
-          <div
-            v-if="drawingGroups.groupAnchorMarker()"
-            class="shape-anchor-marker print-exclude"
-            data-testid="shape-anchor-marker"
-            :style="{ left: `${drawingGroups.groupAnchorMarker()?.left ?? 0}px`, top: `${drawingGroups.groupAnchorMarker()?.top ?? 0}px` }"
+            :style="{ left: `${drawingAnchorMarker.left}px`, top: `${drawingAnchorMarker.top}px` }"
           />
           <ShapeDrawPreview
             v-if="drawPreview"
@@ -3717,14 +3681,14 @@ function handleMenuCommand(id = "") {
               :footnote-area="pageView.footnoteArea ?? undefined"
               :endnote-area="pageView.endnoteArea ?? undefined"
               :print-hidden="printHiddenPages.has(pageIndex)"
-              @image-select="selectImageProxy"
-              @shape-select="selectShapeProxy"
+              @image-select="handleImageSelect"
+              @shape-select="handleShapeSelect"
               @shape-edit-text="handleShapeEditText"
               @shape-text-beforeinput="handleShapeTextBeforeInput"
               @shape-text-keydown="handleShapeTextKeyDown"
               @shape-text-compositionstart="handleShapeTextCompositionStart"
               @shape-text-compositionend="handleShapeTextCompositionEnd"
-              @chart-select="selectChartProxy"
+              @chart-select="handleChartSelect"
               @chart-edit-data="handleChartEditData"
               v-on="drawingGroups.groupListeners"
               @toc-action="handleTocAction"
