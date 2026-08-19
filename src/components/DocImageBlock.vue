@@ -60,12 +60,18 @@ const floatingWrap = ["behind", "infront"];
       :style="imageDisplayStyle(asImage(block))"
       data-testid="doc-image"
       draggable="false"
+      @click.stop="(event) => $emit('select', event.shiftKey)"
     >
     <!-- The transparent drawing proxy (SPEC-057 AC-38): images join the
          `drawing-<index>` counter and gain a focusable role="img" surface,
-         mirroring DocShapeBlock/DocChartBlock. Laid over the image with the
-         same display style so it tracks every wrap mode, it also owns the
-         click (carrying shiftKey, so images join the multi-selection). -->
+         mirroring DocShapeBlock/DocChartBlock. It is laid over the image but
+         is `pointer-events: none` — the same passthrough the unfilled shape
+         proxy uses (see useCanvasGestures' AC-11 note) — so the `<img>` keeps
+         owning the selection click that SPEC-024's e2e (and the canvas
+         gesture in useCanvasGestures) targets directly; the proxy exists only
+         to carry the `drawing-<index>` identity, `role="img"` and keyboard
+         focus. The Shift-click multi-select gesture is recovered from the
+         `.doc-image-anchor` mousedown target, not this element. -->
     <span
       v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
       class="doc-image-proxy"
@@ -73,7 +79,6 @@ const floatingWrap = ["behind", "infront"];
       role="img"
       :aria-label="block.altText || 'Image'"
       tabindex="0"
-      @click.stop="(event) => $emit('select', event.shiftKey)"
     />
   </span>
 </template>
@@ -106,5 +111,9 @@ const floatingWrap = ["behind", "infront"];
   background: transparent;
   outline: none;
   cursor: pointer;
+  /* Passthrough: the underlying <img> owns the selection click (SPEC-024),
+     while this proxy still supplies the drawing-<index> identity, role and
+     keyboard focus (SPEC-057 AC-38). Mirrors the unfilled-shape proxy. */
+  pointer-events: none;
 }
 </style>
