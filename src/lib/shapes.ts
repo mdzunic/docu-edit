@@ -22,6 +22,12 @@ import {
   type Shape,
 } from "./documentModel";
 import { type ShapeGeometry, type ShapeOutline } from "./core/shapes";
+import {
+  anchoredParagraph,
+  ordinalForParagraph,
+  releaseAnchorOrdinal,
+  resolveAnchorBlockIndex,
+} from "./drawingAnchors";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { LINE_GEOMETRIES } from "./core/shapes";
@@ -171,6 +177,12 @@ export function insertShape(
 
   const replacement: Block[] = [];
   let shapeBlockOffset: number;
+  // The anchor pairing (SPEC-078): the shape pairs with the paragraph whose
+  // top the caller measured its offsets from — the caret paragraph itself,
+  // or the FIRST half when the insert splits it. A non-paragraph target
+  // leaves the shape unpaired (nothing paragraph-shaped to measure from);
+  // resolveAnchorBlockIndex's fallback then applies, as it does for every
+  // pre-SPEC-078 document.
   if (target.type !== "paragraph") {
     if (at.offset === 0) {
       replacement.push(shape, target);
@@ -179,16 +191,20 @@ export function insertShape(
       replacement.push(target, shape, emptyParagraph());
       shapeBlockOffset = 1;
     }
-  } else if (at.offset === 0) {
-    replacement.push(shape, target);
-    shapeBlockOffset = 0;
-  } else if (at.offset >= blockLength(target)) {
-    replacement.push(target, shape, emptyParagraph());
-    shapeBlockOffset = 1;
   } else {
-    const [before, after] = splitParagraphAt(target, at.offset);
-    replacement.push(before, shape, after);
-    shapeBlockOffset = 1;
+    const ordinal = ordinalForParagraph(next, target);
+    shape.anchorOrdinal = ordinal;
+    if (at.offset === 0) {
+      replacement.push(shape, anchoredParagraph(target, ordinal));
+      shapeBlockOffset = 0;
+    } else if (at.offset >= blockLength(target)) {
+      replacement.push(anchoredParagraph(target, ordinal), shape, emptyParagraph());
+      shapeBlockOffset = 1;
+    } else {
+      const [before, after] = splitParagraphAt(target, at.offset);
+      replacement.push(anchoredParagraph(before, ordinal), shape, after);
+      shapeBlockOffset = 1;
+    }
   }
   blocks.splice(at.block, 1, ...replacement);
   const shapeIndex = at.block + shapeBlockOffset;
@@ -372,11 +388,29 @@ export function setShapeWrap(
     delete updated.offsetYCm;
     delete updated.relativeToH;
     delete updated.relativeToV;
-  } else if (updated.offsetXCm === undefined) {
+    // An inline shape has no anchor (SPEC-078): drop the pairing and let
+    // the paragraph's marker go with it when this was the last referrer.
+    delete updated.anchorOrdinal;
+    replaceShape(next, location, updated);
+    releaseAnchorOrdinal(next, shape.anchorOrdinal);
+    return { model: next, selection };
+  }
+  if (updated.offsetXCm === undefined) {
     updated.offsetXCm = DEFAULT_DRAWING_POSITION.offsetXCm;
     updated.offsetYCm = DEFAULT_DRAWING_POSITION.offsetYCm;
     updated.relativeToH = DEFAULT_DRAWING_POSITION.relativeToH;
     updated.relativeToV = DEFAULT_DRAWING_POSITION.relativeToV;
+    // Newly floating (SPEC-078): pair with the paragraph the offsets will
+    // be measured from — the adjacency-resolved one, since an inline shape
+    // carries no ordinal to honour.
+    const blocks = next.sections[location.section].blocks;
+    const anchorIndex = resolveAnchorBlockIndex(blocks, location.block);
+    const anchorBlock = anchorIndex === null ? undefined : blocks[anchorIndex];
+    if (anchorIndex !== null && anchorBlock?.type === "paragraph") {
+      const ordinal = ordinalForParagraph(next, anchorBlock);
+      updated.anchorOrdinal = ordinal;
+      blocks.splice(anchorIndex, 1, anchoredParagraph(anchorBlock, ordinal));
+    }
   }
   replaceShape(next, location, updated);
   return { model: next, selection };
@@ -411,11 +445,16 @@ export function deleteShape(
   location: ShapeLocation,
 ): CommandResult {
   const next = cloneContainers(model);
-  if (!shapeAt(next, location)) {
+  const shape = shapeAt(next, location);
+  if (!shape) {
     return { model: next, selection };
   }
   const blocks = next.sections[location.section].blocks;
   blocks.splice(location.block, 1);
+  // A paragraph carries anchorOrdinal only while it anchors something
+  // (SPEC-078's release rule); the deleted shape may have been the last
+  // referrer.
+  releaseAnchorOrdinal(next, shape.anchorOrdinal);
   if (blocks.length === 0) {
     blocks.push(emptyParagraph());
   }
@@ -455,7 +494,10 @@ function zOrderOf(block: DrawingPlacement): number {
 
 /** Duplicates a shape (AC-43): a copy offset 0.5cm down and right, one
  * z-order step nearer the reader than its source, inserted immediately
- * after the source and left selected. */
+ * after the source and left selected. The copy keeps its source's
+ * `anchorOrdinal` (the spread below carries it): two drawings, one anchor
+ * paragraph, by construction — the arrangement SPEC-078's explicit pairing
+ * exists to keep unambiguous. */
 export const DUPLICATE_OFFSET_CM = 0.5;
 
 export function duplicateShape(
@@ -725,10 +767,15 @@ export function nearestParagraph(cy: number, candidates: ParagraphSpan[]): Parag
 }
 
 /** Re-anchors a shape to the nearest candidate paragraph (AC-28): moves the
- * shape block to sit at the new anchor's position in the block list, and
+ * shape block to sit at the new anchor's position in the block list,
  * adjusts `offsetYCm` by the delta between the old and new anchor's tops so
  * the shape stays exactly where it was dropped (`relativeToH`/`relativeToV`
- * are unchanged). No-ops (keeps the current anchor) when there is no
+ * are unchanged), and re-points the anchor pairing (SPEC-078) — the new
+ * anchor paragraph gets an `anchorOrdinal` if it lacked one, the shape
+ * references it, and the old pairing is released when this shape was its
+ * last referrer. Only the dragged shape's pairing changes: another drawing
+ * anchored to either paragraph keeps its own ordinal, offsets and resolved
+ * anchor untouched. No-ops (keeps the current anchor) when there is no
  * candidate, or the nearest candidate IS the current anchor. */
 export function reanchorShape(
   model: DocumentModel,
@@ -747,6 +794,14 @@ export function reanchorShape(
   if (!nearest || (nearest.section === location.section && nearest.block === location.block)) {
     return { model: next, selection };
   }
+  const anchorPara = next.sections[nearest.section]?.blocks[nearest.block];
+  if (anchorPara?.type !== "paragraph") {
+    // Candidates are paragraph spans measured against the same model; a
+    // non-paragraph here means the caller's spans are stale — keep the
+    // current anchor rather than pairing with the wrong block.
+    return { model: next, selection };
+  }
+  const ordinal = ordinalForParagraph(next, anchorPara);
   const blocks = next.sections[location.section].blocks;
   blocks.splice(location.block, 1);
   // The nearest candidate's index shifts down by one if it followed the
@@ -759,13 +814,21 @@ export function reanchorShape(
   const updated: Shape = {
     ...shape,
     offsetYCm: (shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm) - deltaCm,
+    anchorOrdinal: ordinal,
   };
   const targetBlocks = next.sections[nearest.section].blocks;
+  if (anchorPara.anchorOrdinal !== ordinal) {
+    targetBlocks.splice(targetBlock, 1, anchoredParagraph(anchorPara, ordinal));
+  }
   // Lands immediately after its new anchor paragraph — the shape is a
   // top-level block "at the position it is anchored to", the same
   // convention insertShape/insertImage use for a floating object.
   const insertAt = targetBlock + 1;
   targetBlocks.splice(insertAt, 0, updated);
+  // The updated shape already carries the new ordinal, so releasing the old
+  // one is a no-op unless this shape really was its last referrer (and when
+  // old === new, the shape itself keeps the pairing alive).
+  releaseAnchorOrdinal(next, shape.anchorOrdinal);
   const newLocation: ShapeLocation = { section: nearest.section, block: insertAt };
   return {
     model: next,

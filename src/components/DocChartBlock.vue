@@ -145,9 +145,14 @@ function wrapSpacerStyle() {
   line-height: 0;
 }
 
-/* A zero-height block: lets the wrap spacer's float escape into the text
-   flow AND pins the anchor at the paragraph's top-left, immune to its own
-   float (see DocShapeBlock.vue's identical rule). */
+/* A zero-height in-flow block (SPEC-078's zero-footprint floating anchor):
+   hoistFloatingDrawingEntries renders it immediately before its anchor
+   paragraph, so its top-left IS the paragraph's top-left — the origin the
+   chart's offsets are measured from. A block (not inline-block, not
+   position:absolute) for two reasons: the wrap spacer's float must escape
+   into the page's text flow, and a block box is immune to floats, so the
+   anchor stays pinned even when its own spacer would have pushed an inline
+   anchor sideways (see DocShapeBlock.vue's identical rule). */
 .doc-chart-anchor-floating {
   display: block;
   height: 0;

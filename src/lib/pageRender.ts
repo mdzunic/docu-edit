@@ -3,7 +3,8 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type DocumentModel, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isFloatingDrawing, resolveAnchorBlockIndex } from "./drawingAnchors";
 import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
@@ -160,58 +161,72 @@ export function asPageColumns(value: unknown): PageColumns | null {
   return (value ?? null) as PageColumns | null;
 }
 
-/** Whether an entry is a FLOATING drawing — a SPEC-051 shape or SPEC-052
- * chart with a non-inline wrap, positioned absolutely from its anchor. */
-function isFloatingDrawingEntry(entry: RenderEntry): boolean {
-  if (entry.kind !== "shape" && entry.kind !== "chart") {
-    return false;
-  }
-  const wrap = (entry.blockProp as { wrap?: string } | undefined)?.wrap;
-  return wrap !== undefined && wrap !== "inline";
-}
-
-/** Reorders a page's entries so every floating shape/chart renders BEFORE
- * its anchor paragraph instead of after it. The model keeps a floating
- * drawing "right after its anchor" (insertShape / reanchorShape), but every
- * offset it stores is measured from the anchor paragraph's TOP — the
- * reference finishShapeDraw computes against, reanchorShape re-expresses
- * against, and Word's own `relativeFrom="paragraph"` means. Rendering the
- * anchor span on the line AFTER the paragraph displaced every floating
- * drawing downward by its anchor's height. Hoisting also puts the drawing's
- * wrap spacer ahead of the anchor paragraph's own line boxes, which is what
- * lets square/topAndBottom exclusion clear THAT paragraph's text and not
- * just the text that follows it.
+/** Reorders one page's entries so every floating Shape/Chart entry renders
+ * immediately before its anchor paragraph's first entry on the page
+ * (SPEC-078). The model stores every floating offset measured from the
+ * anchor paragraph's TOP — the reference finishShapeDraw computes against,
+ * reanchorShape re-expresses against, and Word's own
+ * `relativeFrom="paragraph"` means — and the floating anchor element takes
+ * no space in flow (DocShapeBlock/DocChartBlock's `-floating` class), so
+ * rendering it just before the anchor paragraph puts its origin exactly
+ * there. Hoisting also puts the drawing's wrap spacer ahead of the anchor
+ * paragraph's own line boxes, which is what lets square/topAndBottom
+ * exclusion clear THAT paragraph's text and not just the text that follows
+ * it.
  *
- * Only the drawing DIRECTLY after its anchor paragraph hoists — one
- * adjacent swap. The model's other anchoring convention needs no help: a
- * drawing inserted at the very start of its target paragraph lands BEFORE
- * it (anchorParagraphBlockIndex's fallback), where its zero-height anchor
- * already sits at that paragraph's top. The same holds for a drawing whose
- * anchor paragraph is absent from this page (a page-boundary split): it
- * stays put. A sliced paragraph hoists the drawing before its on-page
- * slice, the closest rendered stand-in for the paragraph's top. */
-export function hoistFloatingDrawingEntries(entries: RenderEntry[]): RenderEntry[] {
-  const out = [...entries];
-  for (let i = 1; i < out.length; i += 1) {
-    const drawing = out[i];
-    if (!isFloatingDrawingEntry(drawing)) {
+ * The anchor comes from SPEC-078's shared resolver (explicit anchorOrdinal
+ * first, adjacency fallback), so every drawing that resolves hoists — a
+ * whole run of drawings sharing one anchor keeps its relative block order,
+ * unlike the one-adjacent-swap this replaces, which stranded the second of
+ * two same-anchor drawings. The drawing adopts its anchor's column
+ * (SPEC-030), with the adopted value appended to `memo` so v-memo sees the
+ * change; a split paragraph hoists before its earliest on-page slice, the
+ * closest rendered stand-in for the paragraph's top. A drawing whose anchor
+ * has no entry on this page (a page-boundary split, or nothing resolves)
+ * keeps its own flow slot — SPEC-078's out-of-scope note. Pure: returns a
+ * new array when anything moved, the input array otherwise. */
+export function hoistFloatingDrawingEntries(entries: RenderEntry[], model: DocumentModel): RenderEntry[] {
+  let result: RenderEntry[] | null = null;
+  for (const entry of entries) {
+    if (entry.kind !== "shape" && entry.kind !== "chart") {
       continue;
     }
-    const prev = out[i - 1];
-    if (
-      prev.kind === "paragraph" &&
-      prev.dataBlock !== undefined &&
-      // Drawings address their block via sectionProp/blockIndexProp;
-      // paragraph entries via dataSection/dataBlock.
-      drawing.sectionProp === prev.dataSection &&
-      drawing.blockIndexProp === prev.dataBlock + 1 &&
-      drawing.column === prev.column
-    ) {
-      out[i - 1] = drawing;
-      out[i] = prev;
+    const section = entry.sectionProp;
+    const blockIndex = entry.blockIndexProp;
+    if (section === undefined || blockIndex === undefined || !isFloatingDrawing(entry.blockProp)) {
+      continue;
     }
+    const blocks = model.sections[section]?.blocks;
+    if (!blocks) {
+      continue;
+    }
+    const anchorIndex = resolveAnchorBlockIndex(blocks, blockIndex);
+    if (anchorIndex === null) {
+      continue;
+    }
+    const working: RenderEntry[] = result ?? [...entries];
+    const from = working.indexOf(entry);
+    const target = working.findIndex(
+      (candidate: RenderEntry) => candidate.dataSection === section && candidate.dataBlock === anchorIndex,
+    );
+    if (from < 0 || target < 0) {
+      continue;
+    }
+    const anchorEntry = working[target];
+    const needsMove = target !== from + 1;
+    const needsColumn = anchorEntry.column !== entry.column;
+    if (!needsMove && !needsColumn) {
+      continue;
+    }
+    result = working;
+    const [moved] = working.splice(from, 1);
+    const insertAt = target > from ? target - 1 : target;
+    const hoisted = needsColumn
+      ? { ...moved, column: anchorEntry.column, memo: [...moved.memo, anchorEntry.column] }
+      : moved;
+    working.splice(insertAt, 0, hoisted);
   }
-  return out;
+  return result ?? entries;
 }
 
 /** A shape's text frame rendered as DocBlockEntries entries (SPEC-051

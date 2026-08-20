@@ -237,14 +237,21 @@ function shapeTextEntries() {
   line-height: 0;
 }
 
-/* A zero-height BLOCK, not an inline-block, for two reasons. An
-   inline-block is its own block formatting context, which would trap the
-   wrap spacer's float inside a zero-size box where no text could yield to
-   it — a block lets the float escape into the page's own text flow. And a
-   block box is immune to floats (only line boxes yield to them), so the
-   anchor's top-left stays pinned at the paragraph's top-left even when its
-   own spacer float would have pushed an inline anchor sideways — the
-   absolutely positioned shape below measures its offsets from here. */
+/* SPEC-078's zero-footprint floating anchor: hoistFloatingDrawingEntries
+   renders it immediately before its anchor paragraph, so this box's
+   top-left IS the paragraph's top-left — the origin the .doc-shape child's
+   `left`/`top` (offsetXCm/offsetYCm) measure from, the same origin every
+   command measures (the old inline-block anchor added a baseline's worth
+   of drift — the SPEC-051 "lands ~14px below" bug).
+
+   A zero-height BLOCK, not an inline-block and not position:absolute, for
+   two reasons. An inline-block is its own block formatting context, which
+   would trap the wrap spacer's float inside a zero-size box where no text
+   could yield to it — a block lets the float escape into the page's own
+   text flow. And a block box is immune to floats (only line boxes yield to
+   them), so the anchor's top-left stays pinned at the paragraph's top-left
+   even when its own spacer float would have pushed an inline anchor
+   sideways. */
 .doc-shape-anchor-floating {
   display: block;
   height: 0;

@@ -78,6 +78,7 @@ import {
   rotatedBounds,
   unrotateDelta,
 } from "../../lib/core/shapeGeometry";
+import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
 import { LINE_GEOMETRIES, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
 import type { CaretPosition } from "../../lib/textEditing";
@@ -445,28 +446,16 @@ export function useShapes(deps: ShapesDeps) {
     shapeAnchorMarker.value = measureShapeAnchorMarker(location, pageEl, root);
   }
 
-  /** The paragraph a shape at `location` is anchored to, as a block index in
-   * the same section (AC-27, AC-28) — by convention (reanchorShape,
-   * duplicateShape) that is the block immediately before the shape's own in
-   * the block list, since both always land the shape right after its
-   * anchor. insertShape is the one exception: a shape inserted at the very
-   * start of its target paragraph (caret offset 0) lands BEFORE it instead,
-   * so a shape with nothing paragraph-shaped before it falls back to
-   * checking immediately after. Null when neither neighbour is a paragraph
-   * (e.g. the shape sits directly next to a table on both sides). */
+  /** The paragraph a shape at `location` is anchored to, as a block index
+   * in the same section (AC-27, AC-28) — the shape's explicit
+   * `anchorOrdinal` pairing when it carries one, else the adjacency
+   * fallback, both via the shared SPEC-078 resolver (the ONLY place an
+   * anchor is derived — see lib/drawingAnchors.ts). Null when nothing
+   * resolves (e.g. the shape sits between tables in a paragraph-less
+   * stretch). */
   function anchorParagraphBlockIndex(location: ShapeLocation): number | null {
-    const model = doc.value;
-    const blocks = model?.sections[location.section]?.blocks;
-    if (!blocks) {
-      return null;
-    }
-    if (blocks[location.block - 1]?.type === "paragraph") {
-      return location.block - 1;
-    }
-    if (blocks[location.block + 1]?.type === "paragraph") {
-      return location.block + 1;
-    }
-    return null;
+    const blocks = doc.value?.sections[location.section]?.blocks;
+    return blocks ? resolveAnchorBlockIndex(blocks, location.block) : null;
   }
 
   /** The DOM position of the paragraph a selected shape is anchored to

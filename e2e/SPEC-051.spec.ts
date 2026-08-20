@@ -459,21 +459,18 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     await page.mouse.up();
     await expect(preview).toHaveCount(0);
 
-    // What was dragged out is the size that landed — drawGestureBox is the
-    // single source both the preview and the insertion read.
-    //
-    // Only the size and the horizontal position are asserted: a drawn shape
-    // still lands ~14px BELOW where it was dragged, because draw mode
-    // measures its anchor offset from the caret paragraph's own top while
-    // the renderer positions the shape from the zero-size inline anchor
-    // inside that paragraph's line box, a baseline's worth lower. That
-    // predates the preview (it reproduces with the preview reverted) and is
-    // a bug in the insertion, not in what is previewed — pinning today's
-    // wrong y here would only make it harder to fix.
+    // What was dragged out is the size AND position that landed —
+    // drawGestureBox is the single source both the preview and the
+    // insertion read, and SPEC-078's explicit anchors made the render
+    // origin the anchor paragraph's own top (the same origin draw mode
+    // measures against), so the vertical position is now exact too. This
+    // used to be x-only, with a pinned ~14px vertical sag documented here;
+    // SPEC-078 resolved it.
     const drawn = (await drawingAt(page, 0).boundingBox())!;
     expect(drawn.width).toBeCloseTo(large.width, 0);
     expect(drawn.height).toBeCloseTo(large.height, 0);
     expect(drawn.x).toBeCloseTo(large.x, 0);
+    expect(drawn.y).toBeCloseTo(large.y, 0);
   });
 
   test("a resize drag stretches the shape and its handles live, not just on release (AC-4)", async ({ page }) => {

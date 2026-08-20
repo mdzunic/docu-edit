@@ -203,6 +203,17 @@ fixes before they are features.
 | SPEC-076 | Table styles, header repeat, sort and text↔table conversion |
 | SPEC-077 | Document themes — colour and font schemes |
 
+### Phase 12 — Structural fidelity
+Debt in the drawing model that feature work keeps landing on. SPEC-051
+anchored floating drawings by block-list adjacency; two drawings on one
+paragraph make that inference ambiguous, and the ambiguity surfaces as
+wrong anchor markers, position jumps on re-anchor, and a file format that
+tells Word the wrong anchor paragraph.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-078 | Explicit anchors for floating drawings |
+
 ---
 
 ## Backlog — identified, not yet specced

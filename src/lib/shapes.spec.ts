@@ -47,10 +47,11 @@ import {
   NUDGE_PT_CM,
   normalizeRotationDeg,
 } from "./core/shapes";
-import { caretSelection, commitShapeModel, insertText, withShapeModel, type ModelSelection } from "./commands";
+import { caretSelection, commitShapeModel, deleteRange, insertText, splitBlock, withShapeModel, type ModelSelection } from "./commands";
 import { equalStructural } from "./equality";
+import { resolveAnchorBlockIndex } from "./drawingAnchors";
 import { blockText, type CaretPosition } from "./textEditing";
-import { createDocument, isImage, isShape, type DocumentModel, type Image, type Paragraph, type Shape, type Table } from "./documentModel";
+import { createDocument, isImage, isShape, splitParagraphAt, type DocumentModel, type Image, type Paragraph, type Shape, type Table } from "./documentModel";
 
 function paragraph(text: string): Paragraph {
   return { type: "paragraph", runs: text.length > 0 ? [{ text, formatting: {} }] : [] };
@@ -1110,5 +1111,213 @@ describe("shapesInPaintOrder", () => {
   it("excludes images — Shape-only", () => {
     const model = doc(shape(), image());
     expect(shapesInPaintOrder(model)).toHaveLength(1);
+  });
+});
+
+// --- anchor pairing (SPEC-078) ----------------------------------------------
+
+describe("anchor pairing (SPEC-078)", () => {
+  const shapeIn = (model: DocumentModel, block: number): Shape => {
+    const found = shapeAt(model, { section: 0, block });
+    if (!found) {
+      throw new Error(`no shape at block ${block}`);
+    }
+    return found;
+  };
+  const paragraphIn = (model: DocumentModel, block: number): Paragraph => {
+    const found = model.sections[0].blocks[block];
+    if (found.type !== "paragraph") {
+      throw new Error(`no paragraph at block ${block}`);
+    }
+    return found;
+  };
+
+  it("insertShape pairs the shape with the caret paragraph (end-of-paragraph insert)", () => {
+    const model = doc(paragraph("Anchor me"));
+    const { model: next } = insertShape(model, selectionAt(0, 9), { geometry: "rect", widthCm: 3, heightCm: 2 });
+    const blocks = next.sections[0].blocks;
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "shape", "paragraph"]);
+    const ordinal = paragraphIn(next, 0).anchorOrdinal;
+    expect(ordinal).toBeDefined();
+    expect(shapeIn(next, 1).anchorOrdinal).toBe(ordinal);
+    expect(resolveAnchorBlockIndex(blocks, 1)).toBe(0);
+  });
+
+  it("insertShape at offset 0 pairs with the paragraph it lands before", () => {
+    const model = doc(paragraph("Anchor me"));
+    const { model: next } = insertShape(model, selectionAt(0, 0), { geometry: "rect", widthCm: 3, heightCm: 2 });
+    const blocks = next.sections[0].blocks;
+    expect(blocks.map((b) => b.type)).toEqual(["shape", "paragraph"]);
+    expect(shapeIn(next, 0).anchorOrdinal).toBe(paragraphIn(next, 1).anchorOrdinal);
+    expect(resolveAnchorBlockIndex(blocks, 0)).toBe(1);
+  });
+
+  it("a mid-paragraph insert pairs with the FIRST half — the piece keeping the paragraph's top", () => {
+    const model = doc(paragraph("Split here"));
+    const { model: next } = insertShape(model, selectionAt(0, 5), { geometry: "rect", widthCm: 3, heightCm: 2 });
+    const blocks = next.sections[0].blocks;
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "shape", "paragraph"]);
+    expect(paragraphIn(next, 0).anchorOrdinal).toBeDefined();
+    expect(paragraphIn(next, 2).anchorOrdinal).toBeUndefined();
+    expect(shapeIn(next, 1).anchorOrdinal).toBe(paragraphIn(next, 0).anchorOrdinal);
+  });
+
+  it("two inserts onto one paragraph share a single ordinal", () => {
+    const first = insertShape(doc(paragraph("Anchor")), selectionAt(0, 6), { geometry: "rect", widthCm: 3, heightCm: 2 });
+    // Caret back into the anchor paragraph's end for the second insert.
+    const second = insertShape(first.model, selectionAt(0, 6), { geometry: "ellipse", widthCm: 2, heightCm: 2 });
+    const blocks = second.model.sections[0].blocks;
+    const ordinal = paragraphIn(second.model, 0).anchorOrdinal;
+    const shapes = blocks
+      .map((block, index) => ({ block, index }))
+      .filter(({ block }) => isShape(block));
+    expect(shapes).toHaveLength(2);
+    for (const { block, index } of shapes) {
+      expect((block as Shape).anchorOrdinal).toBe(ordinal);
+      expect(resolveAnchorBlockIndex(blocks, index)).toBe(0);
+    }
+  });
+
+  it("duplicateShape's copy keeps the source's pairing — two drawings, one anchor", () => {
+    const inserted = insertShape(doc(paragraph("Anchor")), selectionAt(0, 6), { geometry: "rect", widthCm: 3, heightCm: 2 });
+    const { model: next } = duplicateShape(inserted.model, selectionAt(2, 0), { section: 0, block: 1 });
+    const ordinal = paragraphIn(next, 0).anchorOrdinal;
+    expect(shapeIn(next, 1).anchorOrdinal).toBe(ordinal);
+    expect(shapeIn(next, 2).anchorOrdinal).toBe(ordinal);
+    expect(resolveAnchorBlockIndex(next.sections[0].blocks, 2)).toBe(0);
+  });
+
+  it("re-anchoring one of two shared-anchor drawings leaves the other's pairing, offsets and resolution untouched", () => {
+    // [P0(1), d1(->1), d2(->1), P1] — drag d2 down to P1.
+    const model = doc(
+      paragraph("P0"),
+      shape({ offsetXCm: 1, offsetYCm: 2 }),
+      shape({ offsetXCm: 4, offsetYCm: 5 }),
+      paragraph("P1"),
+    );
+    paragraphIn(model, 0).anchorOrdinal = 1;
+    shapeIn(model, 1).anchorOrdinal = 1;
+    shapeIn(model, 2).anchorOrdinal = 1;
+    const candidates: ParagraphSpan[] = [
+      { section: 0, block: 0, topCm: 0, bottomCm: 1 },
+      { section: 0, block: 3, topCm: 10, bottomCm: 11 },
+    ];
+    const { model: next } = reanchorShape(model, selectionAt(2, 0), { section: 0, block: 2 }, candidates, 10.5, 0);
+    const blocks = next.sections[0].blocks;
+    // d2 removed from index 2, lands after P1: [P0, d1, P1, d2].
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "shape", "paragraph", "shape"]);
+    // d1 untouched: same pairing, same offsets, still resolving to P0.
+    expect(shapeIn(next, 1).anchorOrdinal).toBe(1);
+    expect(shapeIn(next, 1).offsetYCm).toBe(2);
+    expect(resolveAnchorBlockIndex(blocks, 1)).toBe(0);
+    expect(paragraphIn(next, 0).anchorOrdinal).toBe(1);
+    // d2 re-paired with P1 (fresh ordinal), offset re-expressed from P1's top.
+    const newOrdinal = paragraphIn(next, 2).anchorOrdinal;
+    expect(newOrdinal).toBeDefined();
+    expect(newOrdinal).not.toBe(1);
+    expect(shapeIn(next, 3).anchorOrdinal).toBe(newOrdinal);
+    expect(shapeIn(next, 3).offsetYCm).toBe(5 - 10);
+    expect(resolveAnchorBlockIndex(blocks, 3)).toBe(2);
+  });
+
+  it("re-anchoring the LAST referrer releases the old paragraph's ordinal", () => {
+    const model = doc(paragraph("P0"), shape({ offsetYCm: 0 }), paragraph("P1"));
+    paragraphIn(model, 0).anchorOrdinal = 1;
+    shapeIn(model, 1).anchorOrdinal = 1;
+    const candidates: ParagraphSpan[] = [
+      { section: 0, block: 0, topCm: 0, bottomCm: 1 },
+      { section: 0, block: 2, topCm: 10, bottomCm: 11 },
+    ];
+    const { model: next } = reanchorShape(model, selectionAt(1, 0), { section: 0, block: 1 }, candidates, 10.5, 0);
+    expect(paragraphIn(next, 0).anchorOrdinal).toBeUndefined();
+    expect(paragraphIn(next, 1).anchorOrdinal).toBeDefined();
+  });
+
+  it("a drawing spliced between a shared anchor and its other drawing does not disturb that drawing", () => {
+    // [P0(1), d1(->1), P1(2), d2(->2)] — drag d2 up to P0; it lands right
+    // after P0, BETWEEN P0 and d1 — the exact splice that used to flip d1's
+    // inferred anchor.
+    const model = doc(
+      paragraph("P0"),
+      shape({ offsetYCm: 2 }),
+      paragraph("P1"),
+      shape({ offsetYCm: 3 }),
+    );
+    paragraphIn(model, 0).anchorOrdinal = 1;
+    shapeIn(model, 1).anchorOrdinal = 1;
+    paragraphIn(model, 2).anchorOrdinal = 2;
+    shapeIn(model, 3).anchorOrdinal = 2;
+    const candidates: ParagraphSpan[] = [
+      { section: 0, block: 0, topCm: 0, bottomCm: 1 },
+      { section: 0, block: 2, topCm: 10, bottomCm: 11 },
+    ];
+    const { model: next } = reanchorShape(model, selectionAt(3, 0), { section: 0, block: 3 }, candidates, 0.5, 10);
+    const blocks = next.sections[0].blocks;
+    // d2 lands immediately after P0: [P0, d2, d1, P1].
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "shape", "shape", "paragraph"]);
+    expect(shapeIn(next, 1).offsetYCm).toBe(3 + 10);
+    expect(shapeIn(next, 1).anchorOrdinal).toBe(1);
+    // d1 still resolves to P0 despite the newcomer between them.
+    expect(shapeIn(next, 2).anchorOrdinal).toBe(1);
+    expect(shapeIn(next, 2).offsetYCm).toBe(2);
+    expect(resolveAnchorBlockIndex(blocks, 2)).toBe(0);
+    // P1's ordinal is gone — d2 was its last referrer.
+    expect(paragraphIn(next, 3).anchorOrdinal).toBeUndefined();
+  });
+
+  it("deleteShape releases the pairing only when it was the last referrer", () => {
+    const model = doc(paragraph("P0"), shape(), shape());
+    paragraphIn(model, 0).anchorOrdinal = 1;
+    shapeIn(model, 1).anchorOrdinal = 1;
+    shapeIn(model, 2).anchorOrdinal = 1;
+    const { model: afterFirst } = deleteShape(model, selectionAt(1, 0), { section: 0, block: 1 });
+    expect(paragraphIn(afterFirst, 0).anchorOrdinal).toBe(1);
+    const { model: afterBoth } = deleteShape(afterFirst, selectionAt(1, 0), { section: 0, block: 1 });
+    expect(paragraphIn(afterBoth, 0).anchorOrdinal).toBeUndefined();
+  });
+
+  it("setShapeWrap to inline drops and releases; back to floating re-pairs by adjacency", () => {
+    const model = doc(paragraph("P0"), shape());
+    paragraphIn(model, 0).anchorOrdinal = 1;
+    shapeIn(model, 1).anchorOrdinal = 1;
+    const location: ShapeLocation = { section: 0, block: 1 };
+    const { model: inline } = setShapeWrap(model, selectionAt(1, 0), location, "inline");
+    expect(shapeIn(inline, 1).anchorOrdinal).toBeUndefined();
+    expect(paragraphIn(inline, 0).anchorOrdinal).toBeUndefined();
+    const { model: floating } = setShapeWrap(inline, selectionAt(1, 0), location, "square");
+    const ordinal = paragraphIn(floating, 0).anchorOrdinal;
+    expect(ordinal).toBeDefined();
+    expect(shapeIn(floating, 1).anchorOrdinal).toBe(ordinal);
+  });
+
+  it("deleting the shape atom through deleteRange (the keyboard path) also releases the pairing", () => {
+    const model = doc(paragraph("P0"), shape());
+    paragraphIn(model, 0).anchorOrdinal = 1;
+    shapeIn(model, 1).anchorOrdinal = 1;
+    const { model: next } = deleteRange(model, {
+      anchor: caret(1, 0),
+      focus: caret(1, 1),
+    });
+    expect(next.sections[0].blocks.map((b) => b.type)).toEqual(["paragraph"]);
+    expect(paragraphIn(next, 0).anchorOrdinal).toBeUndefined();
+  });
+
+  it("splitParagraphAt keeps the pairing on the first half only", () => {
+    const source = paragraph("Split me");
+    source.anchorOrdinal = 4;
+    const [before, after] = splitParagraphAt(source, 5);
+    expect(before.anchorOrdinal).toBe(4);
+    expect(after.anchorOrdinal).toBeUndefined();
+  });
+
+  it("the Enter key's splitBlock keeps the pairing on the first half only", () => {
+    const model = doc(paragraph("Split me"), shape());
+    paragraphIn(model, 0).anchorOrdinal = 2;
+    shapeIn(model, 1).anchorOrdinal = 2;
+    const { model: next } = splitBlock(model, selectionAt(0, 5));
+    expect(paragraphIn(next, 0).anchorOrdinal).toBe(2);
+    expect(paragraphIn(next, 1).anchorOrdinal).toBeUndefined();
+    // The shape still resolves to the top half.
+    expect(resolveAnchorBlockIndex(next.sections[0].blocks, 2)).toBe(0);
   });
 });
