@@ -77,7 +77,7 @@ const floatingWrap = ["behind", "infront"];
 }
 
 .doc-image-selected {
-  outline: 2px solid #1a73e8;
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 </style>

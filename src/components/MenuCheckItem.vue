@@ -11,6 +11,9 @@ defineProps({
   checked: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   shortcut: { type: String, default: "" },
+  /** A trailing descriptive note, e.g. "Screen only" (SPEC-059 AC-71) — shown
+   * in the shortcut gutter but styled as plain helper text, not a key. */
+  hint: { type: String, default: "" },
 });
 
 const emit = defineEmits(["select"]);
@@ -34,8 +37,24 @@ const emit = defineEmits(["select"]);
     >{{ checked ? "✓" : "" }}</span>
     <span class="menu-item-label">{{ label }}</span>
     <span
+      v-if="hint"
+      class="menu-hint"
+    >{{ hint }}</span>
+    <span
       v-if="shortcut"
       class="menu-shortcut"
     >{{ shortcut }}</span>
   </button>
 </template>
+
+<style scoped>
+/* The trailing helper note (e.g. "Screen only", AC-71): pushed to the trailing
+   edge like a shortcut but read as secondary descriptive text. */
+.menu-hint {
+  margin-left: auto;
+  padding-left: var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-style: italic;
+}
+</style>

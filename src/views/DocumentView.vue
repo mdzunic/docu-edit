@@ -94,6 +94,7 @@ import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationEngine } from "./document/usePaginationEngine";
+import { useThemeControls } from "./document/useThemeControls";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useCaptions } from "./document/useCaptions";
@@ -3000,7 +3001,8 @@ function handleChartFromTable(chartType = "columnClustered") {
 // rather than an object literal: a string-keyed lookup into an inferred
 // object-literal type needs an index signature, which is TS-only syntax
 // espree cannot parse here — Map's get() is typed without one.
-const editorCommands = new Map([
+const { themeMenu, themeCommands } = useThemeControls({ ...editorContext, invalidate: () => pagination.invalidateAll() });
+const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059 AC-50); wiring in useThemeControls.
   // File
   ["file.print", openPrintPreview],
   ["file.page-setup", openPageSetup],
@@ -3193,6 +3195,7 @@ function handleMenuCommand(id = "") {
         :auto-caption-tables="captionSettings.autoTables"
         :painter-mode="painterMode"
         :field-shading="fieldShadingOn"
+        v-bind="themeMenu"
         @command="handleMenuCommand"
         @insert-table-size="(rows, cols) => insertTableWithAutoCaption({ rows, cols })"
         @insert-break="handleInsertBreak"
@@ -4556,9 +4559,9 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
   width: 8px;
   height: 8px;
-  border: 1px solid #1a73e8;
+  border: 1px solid var(--accent);
   border-radius: 2px;
-  background: #fff;
+  background: var(--surface-base);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
@@ -4583,9 +4586,9 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
   width: 8px;
   height: 8px;
-  border: 1px solid #1a73e8;
+  border: 1px solid var(--accent);
   border-radius: 2px;
-  background: #fff;
+  background: var(--surface-base);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
@@ -4594,9 +4597,9 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
   width: 8px;
   height: 8px;
-  border: 1px solid #1a73e8;
+  border: 1px solid var(--accent);
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface-base);
   cursor: grab;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }

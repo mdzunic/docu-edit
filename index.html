@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>docu-edit</title>
+    <!-- No-flash theme (SPEC-059 AC-5/57/58/59): the ONLY application logic in
+         index.html. Runs before the app bundle and sets data-theme on <html>
+         from the stored preference so the first paint is the right theme. Only
+         an explicit "light"/"dark" is applied; "system" (or absent/unknown)
+         leaves no attribute so the media query alone decides (AC-6). Wrapped
+         so a blocked localStorage (private mode, SPEC-003) never throws. -->
+    <script>
+      try {
+        var t = localStorage.getItem("docu-edit:theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

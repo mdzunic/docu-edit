@@ -40,6 +40,16 @@
   --success:               #188038;
   --warning:               #b06000;
 
+  /* Chart chrome — axis lines, gridlines and tick/label text the chart
+     painter strokes on the chart surface (SPEC-059 AC-27/66). The document
+     page keeps its own colours in every theme (AC-12), so a chart always
+     sits on white paper; these stay readable on white and the dark palette
+     leaves them unchanged. Present on :root so no token lives only in dark
+     (AC-10/69). */
+  --chart-axis:            #444444;
+  --chart-gridline:        #dddddd;
+  --chart-text:            #222222;
+
   /* Interaction overlays, composited over any surface. */
   --state-hover:           rgb(32 33 36 / 0.06);
   --state-active:          rgb(32 33 36 / 0.12);
@@ -86,4 +96,96 @@
     --motion-fast: 0ms;
     --motion-base: 0ms;
   }
+}
+
+/* ---- Dark palette (SPEC-059) ---------------------------------------------
+ * The dark theme redefines the same token *values* — it adds no new names, so
+ * every var() across the app themes for free. Only colour and shadow tokens
+ * flip; spacing/radius/type/motion/heights are theme-independent and keep the
+ * single value declared on :root above (AC-7/10).
+ *
+ * Two declarations, so the explicit choice wins in both directions:
+ *   1. Following the OS — active whenever the media query matches AND the user
+ *      has not pinned light. Guarded as :root:not([data-theme="light"]) so an
+ *      explicit "Light" choice on a dark OS still shows light (AC-8).
+ *   2. The explicit "Dark" choice — data-theme="dark" darkens even on a light
+ *      OS (AC-9).
+ * Print and PDF never carry these: all app chrome is display:none in @media
+ * print and the pages render the model's own (white) colours, so no dark
+ * value reaches a sheet (AC-29..32).
+ *
+ * Contrast: every foreground/background pair asserted for the light palette in
+ * tokens.spec.ts is re-asserted over these values, in the same test (AC-11). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-canvas:        #17181a;
+    --surface-base:          #202124;
+    --surface-raised:        #292a2d;
+    --surface-sunken:        #171717;
+    --surface-brand:         #17181a;
+    --surface-selected:      #2d3b52;
+    --surface-overlay:       rgb(0 0 0 / 0.6);
+
+    --text-primary:          #e8eaed;
+    --text-secondary:        #bdc1c6;
+    --text-disabled:         #80868b;
+    --text-on-brand:         #ffffff;
+    --text-accent:           #8ab4f8;
+    --text-danger:           #f28b82;
+
+    --border-subtle:         #303134;
+    --border-default:        #3c4043;
+    --border-strong:         #9aa0a6;
+
+    --accent:                #1a73e8;
+    --accent-hover:          #4285f4;
+    --accent-subtle:         #2d3b52;
+    --danger:                #f28b82;
+    --success:               #81c995;
+    --warning:               #fdd663;
+
+    --state-hover:           rgb(232 234 237 / 0.08);
+    --state-active:          rgb(232 234 237 / 0.16);
+    --focus-ring:            #8ab4f8;
+
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.6);
+    --shadow-2: 0 2px 6px 1px rgb(0 0 0 / 0.5);
+    --shadow-3: 0 4px 12px 3px rgb(0 0 0 / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --surface-canvas:        #17181a;
+  --surface-base:          #202124;
+  --surface-raised:        #292a2d;
+  --surface-sunken:        #171717;
+  --surface-brand:         #17181a;
+  --surface-selected:      #2d3b52;
+  --surface-overlay:       rgb(0 0 0 / 0.6);
+
+  --text-primary:          #e8eaed;
+  --text-secondary:        #bdc1c6;
+  --text-disabled:         #80868b;
+  --text-on-brand:         #ffffff;
+  --text-accent:           #8ab4f8;
+  --text-danger:           #f28b82;
+
+  --border-subtle:         #303134;
+  --border-default:        #3c4043;
+  --border-strong:         #9aa0a6;
+
+  --accent:                #1a73e8;
+  --accent-hover:          #4285f4;
+  --accent-subtle:         #2d3b52;
+  --danger:                #f28b82;
+  --success:               #81c995;
+  --warning:               #fdd663;
+
+  --state-hover:           rgb(232 234 237 / 0.08);
+  --state-active:          rgb(232 234 237 / 0.16);
+  --focus-ring:            #8ab4f8;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.6);
+  --shadow-2: 0 2px 6px 1px rgb(0 0 0 / 0.5);
+  --shadow-3: 0 4px 12px 3px rgb(0 0 0 / 0.5);
 }

@@ -2,12 +2,17 @@
 import { onMounted, ref, useTemplateRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import { useTheme } from "../composables/useTheme";
 import { openDocumentFile } from "../lib/openDocument";
 import { openDocumentFromUrl } from "../lib/openDocumentFromUrl";
 import { storeDocument } from "../lib/documentStore";
 
 const route = useRoute();
 const router = useRouter();
+
+// No menu bar here either — read the shared composable so this view is themed
+// by the same tokens and follows the OS live (SPEC-059 AC-53).
+useTheme();
 const fileInput = useTemplateRef("fileInput");
 
 // "loading" while the fetch is in flight, "error" once it's failed —

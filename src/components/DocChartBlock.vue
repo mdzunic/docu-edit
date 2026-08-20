@@ -5,6 +5,7 @@ import { chartDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatti
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintChart } from "../lib/core/chartCanvas";
 import { cmToPx } from "../lib/core/units";
+import { resolveThemeColor, useTheme } from "../composables/useTheme";
 
 // One chart block on the page (SPEC-052). Runtime prop declarations, not
 // defineProps<{...}>() generics — see DocImageBlock.vue's comment on the
@@ -52,12 +53,25 @@ function repaint() {
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, widthPx, heightPx);
-  paintChart(ctx, chart, widthPx, heightPx);
+  // The chart's chrome (axis lines, gridlines, tick/label text) reads from the
+  // theme tokens through resolveThemeColor (SPEC-059 AC-27/66/67); the series
+  // colours stay document data and are never themed (AC-65). lib/** cannot
+  // read CSS vars, so the view resolves them here and passes them in (AC-67).
+  paintChart(ctx, chart, widthPx, heightPx, {
+    axis: resolveThemeColor("--chart-axis"),
+    gridline: resolveThemeColor("--chart-gridline"),
+    text: resolveThemeColor("--chart-text"),
+  });
 }
+
+// Reading the shared theme so a switch repaints the canvas with freshly
+// resolved chrome colours (AC-28).
+const { resolvedTheme } = useTheme();
 
 onMounted(repaint);
 onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
+watch(resolvedTheme, repaint);
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 </script>
@@ -126,7 +140,7 @@ const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 }
 
 .doc-chart-selected .doc-chart-proxy {
-  outline: 2px solid #1a73e8;
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 </style>
