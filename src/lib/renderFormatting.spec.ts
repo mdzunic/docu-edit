@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   displayParagraphFormatting,
   displayRunFormatting,
+  drawingWrapSpacerStyle,
   headingTag,
   paragraphHasTrackedChange,
   paragraphStyle,
@@ -20,6 +21,10 @@ import type { Paragraph, Run, Shape, Table, TableCell, TableRow } from "./docume
 
 function paragraph(runs: Run[]): Paragraph {
   return { type: "paragraph", runs };
+}
+
+function testShape(overrides: Partial<Shape> = {}): Shape {
+  return { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides };
 }
 
 describe("headingTag", () => {
@@ -432,23 +437,70 @@ describe("paragraphHasTrackedChange (SPEC-039 AC-5)", () => {
 // no visual effect at all — every shape in the same wrap tier painted at the
 // same fixed z-index regardless of reorderShapeZ's model changes.
 describe("shapeDisplayStyle — z-order (SPEC-051 AC-29..33)", () => {
-  function shape(overrides: Partial<Shape> = {}): Shape {
-    return { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides };
-  }
-
   it("breaks ties between same-tier shapes by zOrder, not a shared constant", () => {
-    const back = shapeDisplayStyle(shape({ zOrder: 0 }));
-    const front = shapeDisplayStyle(shape({ zOrder: 2 }));
+    const back = shapeDisplayStyle(testShape({ zOrder: 0 }));
+    const front = shapeDisplayStyle(testShape({ zOrder: 2 }));
     expect(Number(front.zIndex)).toBeGreaterThan(Number(back.zIndex));
   });
 
   it("keeps a 'behind' shape's z-index below every 'infront'/'square'/'topAndBottom' shape regardless of zOrder", () => {
-    const behind = shapeDisplayStyle(shape({ wrap: "behind", zOrder: 99 }));
-    const inFront = shapeDisplayStyle(shape({ wrap: "infront", zOrder: 0 }));
+    const behind = shapeDisplayStyle(testShape({ wrap: "behind", zOrder: 99 }));
+    const inFront = shapeDisplayStyle(testShape({ wrap: "infront", zOrder: 0 }));
     expect(Number(behind.zIndex)).toBeLessThan(Number(inFront.zIndex));
   });
 
   it("defaults to zOrder 0 when absent, matching zOrderOf's own fallback", () => {
-    expect(shapeDisplayStyle(shape({ wrap: "square" })).zIndex).toBe(shapeDisplayStyle(shape({ wrap: "square", zOrder: 0 })).zIndex);
+    expect(shapeDisplayStyle(testShape({ wrap: "square" })).zIndex).toBe(shapeDisplayStyle(testShape({ wrap: "square", zOrder: 0 })).zIndex);
+  });
+});
+
+describe("drawingWrapSpacerStyle — square/topAndBottom text exclusion", () => {
+  it("returns null for the wrap modes that leave text alone", () => {
+    for (const wrap of ["inline", "behind", "infront"] as const) {
+      expect(drawingWrapSpacerStyle(testShape({ wrap }), 16)).toBeNull();
+    }
+  });
+
+  it("returns null before the column width has been measured", () => {
+    expect(drawingWrapSpacerStyle(testShape(), 0)).toBeNull();
+  });
+
+  it("floats left, spanning to the shape's right edge plus the stand-off, when the right side has more room", () => {
+    const style = drawingWrapSpacerStyle(testShape({ offsetXCm: 1, offsetYCm: 2 }), 16);
+    expect(style).toEqual({
+      float: "left",
+      width: `${1 + 3 + 0.35}cm`,
+      height: `${2 + 2 + 0.35}cm`,
+      shapeOutside: "inset(2cm 0 0 0)",
+    });
+  });
+
+  it("floats right, spanning from the shape's left edge minus the stand-off, when the left side has more room", () => {
+    const style = drawingWrapSpacerStyle(testShape({ offsetXCm: 12 }), 16);
+    expect(style).toEqual({
+      float: "right",
+      width: `${16 - 12 + 0.35}cm`,
+      height: `${2 + 0.35}cm`,
+      shapeOutside: "inset(0cm 0 0 0)",
+    });
+  });
+
+  it("topAndBottom reserves the full column width for the shape's band only", () => {
+    const style = drawingWrapSpacerStyle(testShape({ wrap: "topAndBottom", offsetYCm: 1.5 }), 16);
+    expect(style).toEqual({
+      float: "left",
+      width: "100%",
+      height: `${1.5 + 2 + 0.35}cm`,
+      shapeOutside: "inset(1.5cm 0 0 0)",
+    });
+  });
+
+  it("clamps negative offsets to the anchor edge and the spacer to the column width", () => {
+    const style = drawingWrapSpacerStyle(
+      testShape({ offsetXCm: -2, offsetYCm: -1, widthCm: 30 }),
+      16,
+    );
+    expect(style!.shapeOutside).toBe("inset(0cm 0 0 0)");
+    expect(style!.width).toBe("16cm");
   });
 });

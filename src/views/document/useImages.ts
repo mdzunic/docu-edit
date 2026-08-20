@@ -157,6 +157,9 @@ export function useImages(deps: ImagesDeps) {
       (model, selection) => setImageWrap(model, selection, location, asImageWrapMode(wrap)),
       "wrap image",
     );
+    // A wrap change moves the image between text flow and an absolute
+    // offset; the selection handles must re-find it (same as useShapes).
+    void nextTick().then(remeasureImageHandles);
   }
 
   function handleImageDelete() {

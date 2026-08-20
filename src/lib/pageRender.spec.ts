@@ -2,7 +2,7 @@
 // entries — DocShapeBlock.vue's only source of what a shape's text looks
 // like, so it is worth testing independent of mounting a component.
 import { describe, expect, it } from "vitest";
-import { shapeTextRenderEntries } from "./pageRender";
+import { hoistFloatingDrawingEntries, shapeTextRenderEntries, type RenderEntry } from "./pageRender";
 import type { Paragraph, Shape, Table } from "./documentModel";
 import type { ListDefinition } from "./core/lists";
 
@@ -78,5 +78,63 @@ describe("shapeTextRenderEntries", () => {
     expect(entries[0].kind).toBe("table");
     expect(entries[0].sectionProp).toBe(0);
     expect(entries[0].blockIndexProp).toBe(0);
+  });
+});
+
+function paraEntry(block: number, overrides: Partial<RenderEntry> = {}): RenderEntry {
+  return { key: `p${block}`, memo: [], kind: "paragraph", dataSection: 0, dataBlock: block, ...overrides };
+}
+
+function drawingEntry(
+  block: number,
+  kind: "shape" | "chart" = "shape",
+  wrap = "square",
+  overrides: Partial<RenderEntry> = {},
+): RenderEntry {
+  return {
+    key: `d${block}`,
+    memo: [],
+    kind,
+    blockProp: { type: kind, wrap } as never,
+    sectionProp: 0,
+    blockIndexProp: block,
+    ...overrides,
+  };
+}
+
+describe("hoistFloatingDrawingEntries — floating drawings render before their anchor paragraph", () => {
+  it("moves a floating shape (and a chart) before its anchor paragraph", () => {
+    const out = hoistFloatingDrawingEntries([paraEntry(0), drawingEntry(1), paraEntry(2), drawingEntry(3, "chart")]);
+    expect(out.map((e) => e.key)).toEqual(["d1", "p0", "d3", "p2"]);
+  });
+
+  it("hoists only the drawing directly after the paragraph; a stacked follower keeps its slot", () => {
+    const out = hoistFloatingDrawingEntries([paraEntry(0), drawingEntry(1), drawingEntry(2)]);
+    expect(out.map((e) => e.key)).toEqual(["d1", "p0", "d2"]);
+  });
+
+  it("leaves a lands-before drawing (start-of-paragraph insert) at its anchor's top", () => {
+    const out = hoistFloatingDrawingEntries([paraEntry(0), drawingEntry(2), paraEntry(3)]);
+    expect(out.map((e) => e.key)).toEqual(["p0", "d2", "p3"]);
+  });
+
+  it("leaves inline drawings in the text flow", () => {
+    const out = hoistFloatingDrawingEntries([paraEntry(0), drawingEntry(1, "shape", "inline")]);
+    expect(out.map((e) => e.key)).toEqual(["p0", "d1"]);
+  });
+
+  it("leaves a drawing whose anchor paragraph is not the preceding entry (page split)", () => {
+    const out = hoistFloatingDrawingEntries([drawingEntry(1), paraEntry(2)]);
+    expect(out.map((e) => e.key)).toEqual(["d1", "p2"]);
+  });
+
+  it("does not hoist across non-contiguous blocks or columns", () => {
+    const gap = hoistFloatingDrawingEntries([paraEntry(0), drawingEntry(5)]);
+    expect(gap.map((e) => e.key)).toEqual(["p0", "d5"]);
+    const columns = hoistFloatingDrawingEntries([
+      paraEntry(0, { column: 0 }),
+      drawingEntry(1, "shape", "square", { column: 1 }),
+    ]);
+    expect(columns.map((e) => e.key)).toEqual(["p0", "d1"]);
   });
 });

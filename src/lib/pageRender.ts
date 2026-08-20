@@ -160,6 +160,60 @@ export function asPageColumns(value: unknown): PageColumns | null {
   return (value ?? null) as PageColumns | null;
 }
 
+/** Whether an entry is a FLOATING drawing — a SPEC-051 shape or SPEC-052
+ * chart with a non-inline wrap, positioned absolutely from its anchor. */
+function isFloatingDrawingEntry(entry: RenderEntry): boolean {
+  if (entry.kind !== "shape" && entry.kind !== "chart") {
+    return false;
+  }
+  const wrap = (entry.blockProp as { wrap?: string } | undefined)?.wrap;
+  return wrap !== undefined && wrap !== "inline";
+}
+
+/** Reorders a page's entries so every floating shape/chart renders BEFORE
+ * its anchor paragraph instead of after it. The model keeps a floating
+ * drawing "right after its anchor" (insertShape / reanchorShape), but every
+ * offset it stores is measured from the anchor paragraph's TOP — the
+ * reference finishShapeDraw computes against, reanchorShape re-expresses
+ * against, and Word's own `relativeFrom="paragraph"` means. Rendering the
+ * anchor span on the line AFTER the paragraph displaced every floating
+ * drawing downward by its anchor's height. Hoisting also puts the drawing's
+ * wrap spacer ahead of the anchor paragraph's own line boxes, which is what
+ * lets square/topAndBottom exclusion clear THAT paragraph's text and not
+ * just the text that follows it.
+ *
+ * Only the drawing DIRECTLY after its anchor paragraph hoists — one
+ * adjacent swap. The model's other anchoring convention needs no help: a
+ * drawing inserted at the very start of its target paragraph lands BEFORE
+ * it (anchorParagraphBlockIndex's fallback), where its zero-height anchor
+ * already sits at that paragraph's top. The same holds for a drawing whose
+ * anchor paragraph is absent from this page (a page-boundary split): it
+ * stays put. A sliced paragraph hoists the drawing before its on-page
+ * slice, the closest rendered stand-in for the paragraph's top. */
+export function hoistFloatingDrawingEntries(entries: RenderEntry[]): RenderEntry[] {
+  const out = [...entries];
+  for (let i = 1; i < out.length; i += 1) {
+    const drawing = out[i];
+    if (!isFloatingDrawingEntry(drawing)) {
+      continue;
+    }
+    const prev = out[i - 1];
+    if (
+      prev.kind === "paragraph" &&
+      prev.dataBlock !== undefined &&
+      // Drawings address their block via sectionProp/blockIndexProp;
+      // paragraph entries via dataSection/dataBlock.
+      drawing.sectionProp === prev.dataSection &&
+      drawing.blockIndexProp === prev.dataBlock + 1 &&
+      drawing.column === prev.column
+    ) {
+      out[i - 1] = drawing;
+      out[i] = prev;
+    }
+  }
+  return out;
+}
+
 /** A shape's text frame rendered as DocBlockEntries entries (SPEC-051
  * AC-17..AC-21): paragraphs (each with its own self-contained list
  * numbering — markersForBlocks scoped to just this text frame, not shared

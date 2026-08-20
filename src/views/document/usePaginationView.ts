@@ -41,7 +41,7 @@ import {
 } from "../../lib/pagination";
 import { listMarkers } from "../../lib/lists";
 import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/notesLayout";
-import { noRenderEntries, type RenderEntry, type RenderRun } from "../../lib/pageRender";
+import { hoistFloatingDrawingEntries, noRenderEntries, type RenderEntry, type RenderRun } from "../../lib/pageRender";
 import { noteById } from "../../lib/notes";
 import { headerFooterForPage } from "../../lib/pageNumbering";
 import { fieldDisplayText, isReadOnlyField, UNSUPPORTED_FIELD_MESSAGE, type FieldContext } from "../../lib/fields";
@@ -1106,7 +1106,10 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         contentStyle: {
           padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
         },
-        entries,
+        // Floating drawings render before their anchor paragraph — the
+        // paragraph-top reference their offsets are measured from (see
+        // hoistFloatingDrawingEntries).
+        entries: hoistFloatingDrawingEntries(entries),
         columns: page.columns,
         virtual: false,
         dimmed: !!active,

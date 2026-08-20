@@ -1315,6 +1315,8 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // break pulls it back a whole page — so follow it, the way the break
   // insertion it reverses does.
   void scrollModelCaretIntoView(caret);
+  // A snapshot can move (or remove) a selected drawing; handles re-find it.
+  void nextTick().then(() => { remeasureShapeHandles(); remeasureImageHandles(); remeasureChartHandles(); });
   fireFindRefresh();
 }
 
