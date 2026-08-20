@@ -289,6 +289,123 @@ test("under reduced motion the theme switch is instantaneous; otherwise it may c
   expect(duration.split(",")[0].trim()).toBe("0.2s");
 });
 
+// ---- Regressions -----------------------------------------------------------
+
+test("the Appearance flyout escapes the popup's scroll clipping and is truly clickable", async ({
+  page,
+}) => {
+  // The View popup is a scroll container (overflow-y: auto caps tall menus),
+  // which also clips horizontal overflow: the flyout used to lay out at
+  // left:100% inside it — present in the DOM, invisible to the user, and a
+  // raw click at its reported position landed on the document page. So this
+  // test clicks by coordinates, not by locator: locator clicks auto-scroll
+  // the clipped popup and mask exactly this bug.
+  await createDocument(page);
+  await openAppearance(page);
+
+  // No horizontal overflow: the open flyout must not widen the popup's
+  // scrollable area (466px vs a 240px box was the bug's signature).
+  const popup = page.getByTestId("menu-view");
+  expect(
+    await popup.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+
+  // The flyout sits fully inside the viewport, and hit-testing its centre
+  // reaches into the flyout rather than whatever is painted beneath it.
+  const flyout = page.getByTestId("view-menu-appearance-flyout");
+  const box = (await flyout.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+  expect(
+    await page.evaluate(
+      ({ x, y }) =>
+        !!document
+          .elementFromPoint(x, y)
+          ?.closest('[data-testid="view-menu-appearance-flyout"]'),
+      { x: box.x + box.width / 2, y: box.y + 10 },
+    ),
+  ).toBe(true);
+
+  // And a real user gesture works: a raw mouse click at the Dark item's
+  // coordinates applies the theme.
+  const dark = (await page.getByTestId("appearance-dark").boundingBox())!;
+  await page.mouse.click(dark.x + dark.width / 2, dark.y + dark.height / 2);
+  await expect.poll(() => htmlTheme(page)).toBe("dark");
+});
+
+test("closing or switching the parent menu never leaves a stale open flyout", async ({
+  page,
+}) => {
+  await createDocument(page);
+
+  // Escape closes menu and flyout together; reopening View shows no flyout.
+  await openAppearance(page);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("view-menu-appearance-flyout")).toBeHidden();
+  await openMenu(page, "view");
+  await expect(page.getByTestId("view-menu-appearance-flyout")).toBeHidden();
+
+  // A hover cross-open to a neighbouring menu (no click anywhere) must also
+  // shed the flyout: the fixed-position escape means a stale one would
+  // otherwise reappear on screen the next time View opens.
+  await openAppearance(page);
+  await page.getByTestId("menu-title-insert").hover();
+  await expect(page.getByTestId("menu-title-insert")).toHaveAttribute("aria-expanded", "true");
+  await page.getByTestId("menu-title-view").hover();
+  await expect(page.getByTestId("view-menu-appearance-flyout")).toBeHidden();
+});
+
+test("dark theme: controls that style only their background still read in the palette's text colour", async ({
+  page,
+}) => {
+  // Form controls do not inherit color; every control that set a token
+  // background but no color used to keep UA-black text — unreadable on the
+  // dark palette (the toolbar pickers, paragraph buttons, pane toggles,
+  // dialog fields…). The App.vue inherit rule makes --text-primary the
+  // default; this asserts it end-to-end on the controls the bug named.
+  await page.goto("/");
+  await page.evaluate(() => localStorage.setItem("docu-edit:theme", "dark"));
+  await page.reload();
+
+  const textPrimary = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = getComputedStyle(document.documentElement)
+      .getPropertyValue("--text-primary")
+      .trim();
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  });
+
+  // The library's own buttons first (they had the same gap).
+  await expect(page.getByTestId("new-document").first()).toHaveCSS("color", textPrimary);
+
+  await page.getByTestId("new-document").first().click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await openMenu(page, "view");
+  await page.getByTestId("view-menu-comments-pane").click();
+
+  for (const id of [
+    "style-picker-button", // Paragraph styles
+    "font-family-select", // Font family
+    "indent-decrease", // paragraph-toolbar icon buttons
+    "list-bulleted-menu-button", // numbering/bullet style triggers
+    "comments-only-toggle", // Comments pane header toggle
+  ]) {
+    await expect(page.getByTestId(id), id).toHaveCSS("color", textPrimary);
+  }
+
+  // The UA's own widget chrome (select popups, scrollbars, checkboxes)
+  // follows the palette too.
+  expect(
+    await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme),
+  ).toBe("dark");
+});
+
 test("no keyboard shortcut is claimed for the theme or dim-page commands (AC-51)", async ({
   page,
 }) => {

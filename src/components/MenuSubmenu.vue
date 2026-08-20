@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref, useTemplateRef } from "vue";
+import { nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from "vue";
+import { useFloatingMenu } from "../composables/useFloatingMenu";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // A nested submenu inside a MenuBar popup (SPEC-059): a role="menuitem" that
@@ -24,6 +25,19 @@ const props = defineProps({
 const open = ref(false);
 const trigger = useTemplateRef("trigger");
 const flyout = useTemplateRef("flyout");
+
+// The parent popup caps its height and scrolls (overflow-y: auto), which also
+// clips horizontal overflow — an absolutely-positioned flyout at left:100%
+// lands entirely inside the clipped region and is invisible. The same
+// fixed-position escape the toolbar pickers use frees it; "right" places it
+// beside the trigger, top-aligned, flipping sides at the viewport edge.
+const { menuStyle } = useFloatingMenu({
+  open: () => open.value,
+  anchor: () => trigger.value,
+  menu: () => (flyout.value && flyout.value.$el instanceof HTMLElement ? flyout.value.$el : null),
+  placement: "right",
+  offsetY: 0,
+});
 
 function focusFirstItem() {
   void nextTick(() => {
@@ -52,6 +66,50 @@ function closeMenu(returnFocus = true) {
     trigger.value.focus();
   }
 }
+
+// The parent popup can close without the flyout ever being dismissed: a
+// command elsewhere in it, an Escape, or a hover cross-open to a neighbouring
+// menu all hide the popup (v-show) while this open state stays true — and the
+// flyout, now unclipped, would be back on screen the next time the menu
+// opens. So while open, watch the parent surface's inline style and close the
+// moment it is hidden.
+const root = useTemplateRef("root");
+
+// One observer for the component's life (no TS-only nullable-let syntax — see
+// the espree constraint above); observe/disconnect toggle with the open state.
+const popupObserver =
+  typeof MutationObserver === "undefined"
+    ? null
+    : new MutationObserver((mutations) => {
+        const popup = mutations[0] ? mutations[0].target : null;
+        if (popup instanceof HTMLElement && popup.style.display === "none") {
+          closeMenu(false);
+        }
+      });
+
+function observePopup() {
+  const popup =
+    root.value instanceof HTMLElement ? root.value.closest(".ui-menu-surface") : null;
+  if (popupObserver && popup instanceof HTMLElement) {
+    popupObserver.observe(popup, { attributes: true, attributeFilter: ["style"] });
+  }
+}
+
+function unobservePopup() {
+  if (popupObserver) {
+    popupObserver.disconnect();
+  }
+}
+
+watch(open, (isOpen) => {
+  if (isOpen) {
+    observePopup();
+  } else {
+    unobservePopup();
+  }
+});
+
+onBeforeUnmount(unobservePopup);
 
 function onTriggerKeydown(event = new KeyboardEvent("keydown")) {
   switch (event.key) {
@@ -85,7 +143,10 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
 </script>
 
 <template>
-  <div class="menu-submenu">
+  <div
+    ref="root"
+    class="menu-submenu"
+  >
     <!-- Only the trigger keeps the bar open (opening the flyout must not close
          it); a click on a choice inside the flyout is a real command and closes
          the whole bar, exactly like any other menu command. -->
@@ -117,6 +178,7 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
       ref="flyout"
       :open="open"
       :anchor="trigger"
+      :style="menuStyle"
       class="menu-submenu-flyout"
       role="menu"
       :aria-label="label"
@@ -132,7 +194,6 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
 
 <style scoped>
 .menu-submenu {
-  position: relative;
   display: flex;
 }
 
@@ -147,12 +208,11 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
   font-size: var(--text-sm);
 }
 
-/* The flyout opens to the trailing edge of the trigger, overlapping the parent
-   popup's right border by one step so the two read as one connected surface. */
+/* The flyout opens beside the trigger. Its position is the fixed-position
+   escape useFloatingMenu computes: the parent popup is a scroll container
+   (overflow-y: auto against tall menus), and anything absolutely positioned
+   past its edge — the old left:100% — is clipped invisible. */
 .menu-submenu-flyout {
-  position: absolute;
-  top: 0;
-  left: 100%;
   z-index: 61;
   display: flex;
   flex-direction: column;

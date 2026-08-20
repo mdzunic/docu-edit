@@ -7,6 +7,8 @@ interface FakeRect {
   right: number;
   bottom: number;
   width: number;
+  top?: number;
+  height?: number;
 }
 
 // jsdom's getBoundingClientRect is all zeros, so the tests stub it the way
@@ -18,7 +20,7 @@ function stubRect(el: Element, rect: FakeRect) {
   });
 }
 
-function setup() {
+function setup(options: { placement?: "below" | "above" | "right"; offsetY?: number } = {}) {
   const open = ref(false);
   const anchorEl = ref<HTMLElement | null>(null) as Ref<HTMLElement | null>;
   const menuEl = ref<HTMLElement | null>(null);
@@ -26,6 +28,7 @@ function setup() {
     open: () => open.value,
     anchor: () => anchorEl.value,
     menu: () => menuEl.value,
+    ...options,
   });
   return { open, anchorEl, menuEl, menuStyle };
 }
@@ -62,6 +65,38 @@ describe("useFloatingMenu", () => {
 
     expect(menuStyle.value.left).toBe(`${window.innerWidth - 200 - 8}px`);
     expect(menuStyle.value.position).toBe("fixed");
+  });
+
+  it("places a right-placement flyout beside the trigger, top-aligned (SPEC-059 submenu)", async () => {
+    const { open, anchorEl, menuEl, menuStyle } = setup({ placement: "right", offsetY: 0 });
+    anchorEl.value = document.createElement("button");
+    stubRect(anchorEl.value, { left: 100, right: 340, top: 150, bottom: 178, width: 240 });
+    menuEl.value = document.createElement("div");
+    stubRect(menuEl.value, { left: 0, right: 224, bottom: 118, width: 224, top: 0, height: 118 });
+
+    open.value = true;
+    await nextTick();
+
+    expect(menuStyle.value).toEqual({
+      position: "fixed",
+      left: "340px",
+      top: "150px",
+    });
+  });
+
+  it("flips a right-placement flyout to the trigger's left at the viewport edge", async () => {
+    const { open, anchorEl, menuEl, menuStyle } = setup({ placement: "right", offsetY: 0 });
+    anchorEl.value = document.createElement("button");
+    const right = window.innerWidth - 40;
+    stubRect(anchorEl.value, { left: right - 240, right, top: 60, bottom: 88, width: 240 });
+    menuEl.value = document.createElement("div");
+    stubRect(menuEl.value, { left: 0, right: 224, bottom: 118, width: 224, top: 0, height: 118 });
+
+    open.value = true;
+    await nextTick();
+
+    expect(menuStyle.value.left).toBe(`${right - 240 - 224}px`);
+    expect(menuStyle.value.top).toBe("60px");
   });
 
   it("stays unpositioned while the menu is closed", async () => {

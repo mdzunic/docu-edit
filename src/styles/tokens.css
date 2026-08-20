@@ -10,6 +10,13 @@
  * the Material greys every later dialog copied). Dark mode (SPEC-059)
  * redefines these values; it does not add new names. */
 :root {
+  /* Tells the UA which palette its own widgets render in — scrollbars, native
+     select popups, checkboxes, and the buttontext/Field defaults any control
+     falls back to when a component styles only one side of the pair. Flipped
+     to dark by the same two guards as the palette below, so UA chrome always
+     matches the tokens (SPEC-059). */
+  color-scheme: light;
+
   /* Surfaces — ascending elevation, not ascending lightness. */
   --surface-canvas:        #f1f3f4;   /* behind the document pages */
   --surface-base:          #ffffff;   /* dialogs, panes, menus */
@@ -118,6 +125,8 @@
  * tokens.spec.ts is re-asserted over these values, in the same test (AC-11). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
     --surface-canvas:        #17181a;
     --surface-base:          #202124;
     --surface-raised:        #292a2d;
@@ -155,6 +164,8 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
+
   --surface-canvas:        #17181a;
   --surface-base:          #202124;
   --surface-raised:        #292a2d;

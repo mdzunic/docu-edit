@@ -13,6 +13,27 @@
 
 :root {
   font-family: var(--font-ui);
+  color: var(--text-primary);
+}
+
+/* Form controls do not inherit color — the UA gives them `buttontext`, which
+   stays near-black whatever the tokens say. Every control that sets a token
+   background but no color (dozens of dialog/pane/toolbar rules) was therefore
+   black-on-dark in the dark theme (SPEC-059). Inheriting makes the tokenised
+   text colour the default everywhere; a control that needs a different colour
+   still declares its own. */
+button,
+input,
+select,
+textarea {
+  color: inherit;
+}
+
+/* The document page is paper: it keeps its own light colours in every theme
+   (SPEC-059 AC-12), so UA-rendered widget chrome inside a page must never
+   flip dark with the app. */
+.page {
+  color-scheme: light;
 }
 
 /* One focus ring for the whole app (SPEC-058 AC-45/46/56): every interactive
