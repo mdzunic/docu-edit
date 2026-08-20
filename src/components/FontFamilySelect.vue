@@ -112,7 +112,12 @@ function handleChange(event = new Event("change")) {
   font: inherit;
   font-size: var(--text-md);
   height: var(--height-control);
-  max-width: 11rem;
+  /* Fixed, not content-sized: intrinsic select width follows the widest
+     option's text metrics, which differ per platform (macOS renders wider
+     than the CI container) and per the selected family (the closed control
+     renders in it) — both made the strip's fit at the 1280px budget
+     (SPEC-049 AC-4 / SPEC-058 AC-48) platform- and caret-dependent. */
+  width: 9rem;
   padding: 0 var(--space-2);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
