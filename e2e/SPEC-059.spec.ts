@@ -235,3 +235,69 @@ test("the exported PDF is byte-identical in light and dark theme (AC-16/29..33)"
 
   expect(darkPdf.equals(lightPdf)).toBe(true);
 });
+
+test("system follows the OS live, without a reload (AC-3)", async ({ page }) => {
+  const surfaceCanvas = () =>
+    page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--surface-canvas").trim());
+
+  await page.emulateMedia({ colorScheme: "light" });
+  await createDocument(page);
+  await chooseTheme(page, "system");
+  expect(await htmlTheme(page)).toBeNull();
+  const lightCanvas = await surfaceCanvas();
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(surfaceCanvas).not.toBe(lightCanvas);
+  // Still no explicit attribute even after the live re-theme — the media
+  // query alone decided, exactly as it did before the OS changed (AC-6).
+  expect(await htmlTheme(page)).toBeNull();
+});
+
+test("an inserted image is never filtered or inverted by the theme (AC-36)", async ({ page }) => {
+  await createDocument(page);
+  await chooseTheme(page, "dark");
+
+  // A 1x1 PNG data URL is enough to exercise the paint path — no fixture
+  // decoding needed for a computed-style check.
+  const png1x1 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  await page.getByTestId("insert-image-file-input").setInputFiles({
+    name: "probe.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(png1x1, "base64"),
+  });
+  const img = page.getByTestId("doc-image").first();
+  await expect(img).toBeVisible();
+  expect(await img.evaluate((el) => getComputedStyle(el).filter)).toBe("none");
+});
+
+test("under reduced motion the theme switch is instantaneous; otherwise it may cross-fade over --motion-base (AC-45/46)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await createDocument(page);
+  expect(
+    await page.evaluate(() => getComputedStyle(document.querySelector(".app-bar")!).transitionDuration),
+  ).toBe("0s");
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.reload();
+  await expect(page.getByTestId("app-bar")).toBeVisible();
+  const duration = await page.evaluate(
+    () => getComputedStyle(document.querySelector(".app-bar")!).transitionDuration,
+  );
+  expect(duration.split(",")[0].trim()).toBe("0.2s");
+});
+
+test("no keyboard shortcut is claimed for the theme or dim-page commands (AC-51)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-appearance").click();
+  // A bound command renders a `.menu-shortcut` hint (see e.g. Undo/Redo in
+  // the Edit menu); these four render none.
+  for (const id of ["appearance-system", "appearance-light", "appearance-dark", "appearance-dim-page"]) {
+    await expect(page.getByTestId(id).locator(".menu-shortcut")).toHaveCount(0);
+  }
+});
