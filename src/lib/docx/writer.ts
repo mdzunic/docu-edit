@@ -103,6 +103,7 @@ import {
   type NumberingRef,
 } from "./numbering";
 import { CONTENT_TYPE_BY_EXTENSION } from "../core/media";
+import { planAnchoredDrawings } from "../drawingAnchors";
 import { drawingXml } from "./drawing";
 import { shapeDrawingXml } from "./shape";
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
@@ -803,8 +804,16 @@ function paragraphXml(
   ctx: InlineWriteContext,
   numRef?: NumberingRef,
   sectPr?: string,
+  anchored?: { leading: string; trailing: string },
 ): string {
-  return `<w:p>${paragraphPropertiesXml(paragraph, numRef, sectPr, ctx)}${inlineContentXml(paragraph, includeOpaque, ctx)}</w:p>`;
+  // `anchored` (SPEC-078): the drawing runs of floating shapes/charts
+  // absorbed into this, their anchor paragraph — before the paragraph's own
+  // runs when the drawing precedes its anchor in the block list, after them
+  // otherwise, so the reader's split reproduces the model's block order.
+  return (
+    `<w:p>${paragraphPropertiesXml(paragraph, numRef, sectPr, ctx)}` +
+    `${anchored?.leading ?? ""}${inlineContentXml(paragraph, includeOpaque, ctx)}${anchored?.trailing ?? ""}</w:p>`
+  );
 }
 
 /** An Image block (SPEC-024): OOXML has no body-level picture element, so
@@ -2043,8 +2052,41 @@ function* documentBlockXml(
             section.pageNumberStart,
             section.columns,
           );
-    const lastBlock = section.blocks[section.blocks.length - 1];
-    const embedSectPr = sectPrXml !== undefined && lastBlock?.type === "paragraph";
+    // Containment (SPEC-078): floating shapes/charts with an explicit,
+    // resolvable anchor pairing are emitted inside their anchor paragraph's
+    // w:p — how wp:anchor natively expresses "anchored to this paragraph" —
+    // and skipped at their own block slot. Everything else (no ordinal, a
+    // dangling one) keeps the legacy own-paragraph form byte-for-byte.
+    const anchoredPlan = planAnchoredDrawings(section.blocks);
+    const anchoredRunsFor = (paragraphIndex: number): { leading: string; trailing: string } | undefined => {
+      const entry = anchoredPlan.byParagraph.get(paragraphIndex);
+      if (!entry) {
+        return undefined;
+      }
+      const runXml = (drawingIndex: number): string => {
+        const drawing = section.blocks[drawingIndex];
+        if (drawing.type === "shape") {
+          const drawingContent = shapeDrawingXml(drawing, docPrId++, {
+            paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, inlineCtx),
+          });
+          return `<w:r>${drawingContent}</w:r>`;
+        }
+        if (drawing.type === "chart") {
+          const chartEntry = chartPlan.planFor(sectionIndex, drawingIndex);
+          return chartEntry ? `<w:r>${chartDrawingXml(drawing, chartEntry.relId, docPrId++)}</w:r>` : "";
+        }
+        return "";
+      };
+      return { leading: entry.leading.map(runXml).join(""), trailing: entry.trailing.map(runXml).join("") };
+    };
+    // The section-closing sectPr embeds into the last EMITTED block — with
+    // absorption, a section whose blocks end `[…, para, shape]` genuinely
+    // ends on that paragraph.
+    let lastEmittedIndex = section.blocks.length - 1;
+    while (lastEmittedIndex >= 0 && anchoredPlan.absorbed.has(lastEmittedIndex)) {
+      lastEmittedIndex--;
+    }
+    const embedSectPr = sectPrXml !== undefined && section.blocks[lastEmittedIndex]?.type === "paragraph";
     const opaqueBlocks = includeOpaque
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
       : [];
@@ -2056,7 +2098,9 @@ function* documentBlockXml(
       }
       if (i < section.blocks.length) {
         const block = section.blocks[i];
-        if (block.type === "table") {
+        if (anchoredPlan.absorbed.has(i)) {
+          // Emitted inside its anchor paragraph via anchoredRunsFor.
+        } else if (block.type === "table") {
           yield tableXml(block, includeOpaque, inlineCtx, (row, col, cellBlock) =>
             cellNumberingRefFor(plan, sectionIndex, i, row, col, cellBlock),
           );
@@ -2081,7 +2125,8 @@ function* documentBlockXml(
             includeOpaque,
             inlineCtx,
             numberingRefFor(plan, sectionIndex, i),
-            embedSectPr && i === section.blocks.length - 1 ? sectPrXml : undefined,
+            embedSectPr && i === lastEmittedIndex ? sectPrXml : undefined,
+            anchoredRunsFor(i),
           );
         }
       }

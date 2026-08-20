@@ -201,8 +201,21 @@ function shapeTextEntries() {
   line-height: 0;
 }
 
+/* A floating shape's anchor takes NO space in flow (SPEC-078): absolutely
+   positioned with no offsets, so its static position is exactly where the
+   next in-flow block — its anchor paragraph, which
+   hoistFloatingDrawingEntries renders it immediately before — begins. That
+   makes the .doc-shape child's `left`/`top` (offsetXCm/offsetYCm) measure
+   from the anchor paragraph's own top-left, the same origin every command
+   measures, with no line box or margin interaction in between (the old
+   inline-block anchor added a baseline's worth of drift — the SPEC-051
+   "lands ~14px below" bug). Being positioned, it still contains the
+   absolute .doc-shape. */
 .doc-shape-anchor-floating {
-  position: relative;
+  position: absolute;
+  display: block;
+  width: 0;
+  height: 0;
 }
 
 .doc-shape {

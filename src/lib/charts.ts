@@ -11,6 +11,12 @@ import { cloneContainers, isChart, splitParagraphAt, type Chart, type DocumentMo
 import { type ChartOptions, type ChartSeries, type ChartType } from "./core/charts";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
+import {
+  anchoredParagraph,
+  ordinalForParagraph,
+  releaseAnchorOrdinal,
+  resolveAnchorBlockIndex,
+} from "./drawingAnchors";
 import { DEFAULT_DRAWING_POSITION } from "./shapes";
 import type { Block, Paragraph } from "./documentModel";
 import {
@@ -74,6 +80,10 @@ export function insertChart(model: DocumentModel, selection: ModelSelection, cha
 
   const replacement: Block[] = [];
   let chartBlockOffset: number;
+  // The anchor pairing (SPEC-078) — same rule as shapes.ts's insertShape:
+  // the chart pairs with the paragraph whose top its offsets are measured
+  // from (the first half when the insert splits it); a non-paragraph target
+  // leaves it unpaired, resolved by the adjacency fallback.
   if (target.type !== "paragraph") {
     if (at.offset === 0) {
       replacement.push(chart, target);
@@ -82,16 +92,20 @@ export function insertChart(model: DocumentModel, selection: ModelSelection, cha
       replacement.push(target, chart, emptyParagraph());
       chartBlockOffset = 1;
     }
-  } else if (at.offset === 0) {
-    replacement.push(chart, target);
-    chartBlockOffset = 0;
-  } else if (at.offset >= blockLength(target)) {
-    replacement.push(target, chart, emptyParagraph());
-    chartBlockOffset = 1;
   } else {
-    const [before, after] = splitParagraphAt(target, at.offset);
-    replacement.push(before, chart, after);
-    chartBlockOffset = 1;
+    const ordinal = ordinalForParagraph(next, target);
+    chart.anchorOrdinal = ordinal;
+    if (at.offset === 0) {
+      replacement.push(chart, anchoredParagraph(target, ordinal));
+      chartBlockOffset = 0;
+    } else if (at.offset >= blockLength(target)) {
+      replacement.push(anchoredParagraph(target, ordinal), chart, emptyParagraph());
+      chartBlockOffset = 1;
+    } else {
+      const [before, after] = splitParagraphAt(target, at.offset);
+      replacement.push(anchoredParagraph(before, ordinal), chart, after);
+      chartBlockOffset = 1;
+    }
   }
   blocks.splice(at.block, 1, ...replacement);
   const chartIndex = at.block + chartBlockOffset;
@@ -124,7 +138,18 @@ export function insertChartFromTable(
     offsetYCm: DEFAULT_DRAWING_POSITION.offsetYCm,
   };
   const insertAt = tableLocation.block + 1;
-  next.sections[tableLocation.section].blocks.splice(insertAt, 0, chart);
+  const blocks = next.sections[tableLocation.section].blocks;
+  blocks.splice(insertAt, 0, chart);
+  // Pair with the adjacency-resolved paragraph (SPEC-078): the chart lands
+  // directly after a table, so this walks forward to the paragraph that
+  // follows — a section with none leaves the chart unpaired.
+  const anchorIndex = resolveAnchorBlockIndex(blocks, insertAt);
+  const anchorBlock = anchorIndex === null ? undefined : blocks[anchorIndex];
+  if (anchorIndex !== null && anchorBlock?.type === "paragraph") {
+    const ordinal = ordinalForParagraph(next, anchorBlock);
+    chart.anchorOrdinal = ordinal;
+    blocks.splice(anchorIndex, 1, anchoredParagraph(anchorBlock, ordinal));
+  }
   return {
     model: next,
     selection: caretSelection({ section: tableLocation.section, block: insertAt + 1, offset: 0 }),
@@ -251,11 +276,28 @@ export function setChartWrap(
     delete updated.offsetYCm;
     delete updated.relativeToH;
     delete updated.relativeToV;
-  } else if (chart.wrap === "inline") {
+    // An inline chart has no anchor (SPEC-078) — same rule as
+    // shapes.ts's setShapeWrap.
+    delete updated.anchorOrdinal;
+    replaceChart(next, location, updated);
+    releaseAnchorOrdinal(next, chart.anchorOrdinal);
+    return { model: next, selection };
+  }
+  if (chart.wrap === "inline") {
     updated.relativeToH = DEFAULT_DRAWING_POSITION.relativeToH;
     updated.relativeToV = DEFAULT_DRAWING_POSITION.relativeToV;
     updated.offsetXCm = DEFAULT_DRAWING_POSITION.offsetXCm;
     updated.offsetYCm = DEFAULT_DRAWING_POSITION.offsetYCm;
+    // Newly floating (SPEC-078): pair with the adjacency-resolved
+    // paragraph, same rule as shapes.ts's setShapeWrap.
+    const blocks = next.sections[location.section].blocks;
+    const anchorIndex = resolveAnchorBlockIndex(blocks, location.block);
+    const anchorBlock = anchorIndex === null ? undefined : blocks[anchorIndex];
+    if (anchorIndex !== null && anchorBlock?.type === "paragraph") {
+      const ordinal = ordinalForParagraph(next, anchorBlock);
+      updated.anchorOrdinal = ordinal;
+      blocks.splice(anchorIndex, 1, anchoredParagraph(anchorBlock, ordinal));
+    }
   }
   replaceChart(next, location, updated);
   return { model: next, selection };
@@ -294,5 +336,8 @@ export function deleteChart(model: DocumentModel, selection: ModelSelection, loc
     return { model: next, selection };
   }
   next.sections[location.section].blocks.splice(location.block, 1);
+  // Release the anchor pairing when this chart was its last referrer
+  // (SPEC-078) — same rule as shapes.ts's deleteShape.
+  releaseAnchorOrdinal(next, chart.anchorOrdinal);
   return { model: next, selection: caretSelection({ section: location.section, block: Math.max(0, location.block - 1), offset: 0 }) };
 }

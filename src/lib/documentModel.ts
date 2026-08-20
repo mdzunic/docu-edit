@@ -860,6 +860,15 @@ export interface Paragraph {
   /** Pending tracked-change state for this paragraph's own mark/formatting
    * (SPEC-039); see ParagraphTrackedChanges. */
   changes?: ParagraphTrackedChanges;
+  /** Pairs this paragraph with the floating drawings anchored to it
+   * (SPEC-078): present only while at least one Shape/Chart block's own
+   * `anchorOrdinal` references it. Unique per paragraph document-wide;
+   * maintained by lib/drawingAnchors.ts and the shape/chart commands, never
+   * serialized (both file formats carry the pairing by containment).
+   * Deliberately not named `id` — see IGNORED_KEYS in lib/equality.ts; a
+   * pairing hidden from equalStructural would let a broken anchor
+   * round-trip green, the same trap `groupOrdinal`'s name guards against. */
+  anchorOrdinal?: number;
 }
 
 // --- images (SPEC-024) -------------------------------------------------------
@@ -899,6 +908,12 @@ export interface DrawingPlacement {
    * IGNORED_KEYS in lib/equality.ts, the same trap `NoteRef.noteId` is named
    * around. */
   groupOrdinal?: number;
+  /** The `anchorOrdinal` of this drawing's anchor paragraph (SPEC-078).
+   * Only ever set on floating (non-`inline`) Shape/Chart blocks; absent
+   * means "resolve by adjacency" — every pre-SPEC-078 document (see
+   * lib/drawingAnchors.ts's resolveAnchorBlockIndex). Never set on Image,
+   * which has no anchor-relative offsets to measure. */
+  anchorOrdinal?: number;
 }
 
 /** An image block (SPEC-024): a block-level object addressed by `CaretPosition`
@@ -2076,6 +2091,10 @@ export function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragra
     runs: [],
     formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
   };
+  // The first half keeps the paragraph's top edge, which is what a floating
+  // drawing's offsets are measured from — so it alone keeps the anchor
+  // pairing (SPEC-078); ordinals are unique per paragraph document-wide.
+  delete after.anchorOrdinal;
   const beforeRuns = [];
   const afterRuns = [];
   for (const run of paragraph.runs) {

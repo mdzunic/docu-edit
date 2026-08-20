@@ -29,6 +29,7 @@ import {
   type Table,
 } from "./documentModel";
 import { nextGraphemeBoundary, previousGraphemeBoundary } from "./core/grapheme";
+import { releaseAnchorOrdinal } from "./drawingAnchors";
 
 /** The path from a table block down to one of its cell's paragraphs
  * (SPEC-022): the cell's row/column plus the paragraph index within the
@@ -615,6 +616,10 @@ export function splitParagraph(
     runs: after,
     formatting: block.formatting ? { ...block.formatting } : undefined,
   };
+  // A floating drawing's anchor pairing stays with the half that keeps the
+  // paragraph's top edge (SPEC-078) — never duplicated onto both, same as
+  // bookmarks below; ordinals are unique per paragraph document-wide.
+  delete second.anchorOrdinal;
   if (block.list) {
     second.list = { ...block.list };
   }
@@ -805,6 +810,12 @@ export function deleteRange(
       // lands where the atom was (SPEC-022 AC-23, SPEC-024 AC-30).
       const blocks = model.sections[start.section].blocks;
       blocks.splice(start.block, 1);
+      // A deleted floating drawing releases its anchor pairing when it was
+      // the last referrer (SPEC-078) — same rule as shapes.ts's deleteShape,
+      // which is the toolbar path to the same removal.
+      if (isShape(startBlock) || isChart(startBlock)) {
+        releaseAnchorOrdinal(model, startBlock.anchorOrdinal);
+      }
       if (blocks.length === 0) {
         blocks.push({ type: "paragraph", runs: [] });
       }
@@ -832,6 +843,22 @@ export function deleteRange(
   // Cross-block: a boundary paragraph contributes its kept half; a boundary
   // table/image/break (always fully covered after resolveTableEdges)
   // contributes nothing and is removed whole.
+  //
+  // Floating drawings inside the removed span release their anchor pairing
+  // (SPEC-078, deleteShape's rule) — collected before the splice below
+  // rearranges the lists, released after it so the referrer scan sees the
+  // post-delete document.
+  const removedSpan: Block[] =
+    start.section === end.section
+      ? model.sections[start.section].blocks.slice(start.block, end.block + 1)
+      : [
+          ...model.sections[start.section].blocks.slice(start.block),
+          ...model.sections.slice(start.section + 1, end.section).flatMap((section) => section.blocks),
+          ...model.sections[end.section].blocks.slice(0, end.block + 1),
+        ];
+  const releasedOrdinals = removedSpan.flatMap((block) =>
+    (isShape(block) || isChart(block)) && block.anchorOrdinal !== undefined ? [block.anchorOrdinal] : [],
+  );
   const head =
     isTable(startBlock) || isImage(startBlock) || isShape(startBlock) || isChart(startBlock) || isBreak(startBlock) || isToc(startBlock) || isTof(startBlock)
       ? null
@@ -876,6 +903,9 @@ export function deleteRange(
   if (start.section === end.section) {
     const blocks = model.sections[start.section].blocks;
     blocks.splice(start.block, end.block - start.block + 1, ...inserted);
+    for (const ordinal of releasedOrdinals) {
+      releaseAnchorOrdinal(model, ordinal);
+    }
     if (blocks.length === 0) {
       blocks.push({ type: "paragraph", runs: [] });
     }
@@ -892,10 +922,13 @@ export function deleteRange(
     ...inserted,
     ...endSection.blocks.slice(end.block + 1),
   ];
+  model.sections.splice(start.section + 1, end.section - start.section);
+  for (const ordinal of releasedOrdinals) {
+    releaseAnchorOrdinal(model, ordinal);
+  }
   if (startSection.blocks.length === 0) {
     startSection.blocks.push({ type: "paragraph", runs: [] });
   }
-  model.sections.splice(start.section + 1, end.section - start.section);
   return {
     section: start.section,
     block: Math.min(start.block, startSection.blocks.length - 1),

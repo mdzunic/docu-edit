@@ -277,3 +277,79 @@ describe("insertChartFromTable (AC-21)", () => {
     expect(chart.series[0].values).toEqual([10, 20]);
   });
 });
+
+// --- anchor pairing (SPEC-078) ----------------------------------------------
+
+describe("chart anchor pairing (SPEC-078)", () => {
+  const chartIn = (model: DocumentModel, block: number): Chart => {
+    const found = chartAt(model, { section: 0, block });
+    if (!found) {
+      throw new Error(`no chart at block ${block}`);
+    }
+    return found;
+  };
+  const paragraphIn = (model: DocumentModel, block: number): Paragraph => {
+    const found = model.sections[0].blocks[block];
+    if (found.type !== "paragraph") {
+      throw new Error(`no paragraph at block ${block}`);
+    }
+    return found;
+  };
+
+  it("insertChart pairs the chart with the caret paragraph", () => {
+    const { model } = insertChart(doc(paragraph("Anchor")), selectionAt(0, 6), "columnClustered");
+    expect(model.sections[0].blocks.map((b) => b.type)).toEqual(["paragraph", "chart", "paragraph"]);
+    const ordinal = paragraphIn(model, 0).anchorOrdinal;
+    expect(ordinal).toBeDefined();
+    expect(chartIn(model, 1).anchorOrdinal).toBe(ordinal);
+  });
+
+  it("insertChartFromTable pairs with the paragraph following the table when there is one", () => {
+    const table: Table = {
+      type: "table",
+      rows: [{ cells: [{ blocks: [paragraph("A")] }, { blocks: [paragraph("1")] }] }],
+      columnWidthsCm: [5, 5],
+    };
+    const model = doc(table, paragraph("After"));
+    const data = { categories: ["A"], series: [{ name: "S", values: [1], color: "#4e79a7" }], unparsable: [] };
+    const { model: next } = insertChartFromTable(model, selectionAt(1, 0), { section: 0, block: 0 }, "barClustered", data);
+    expect(next.sections[0].blocks.map((b) => b.type)).toEqual(["table", "chart", "paragraph"]);
+    const ordinal = paragraphIn(next, 2).anchorOrdinal;
+    expect(ordinal).toBeDefined();
+    expect(chartIn(next, 1).anchorOrdinal).toBe(ordinal);
+  });
+
+  it("insertChartFromTable stays unpaired when nothing paragraph-shaped follows", () => {
+    const table: Table = {
+      type: "table",
+      rows: [{ cells: [{ blocks: [paragraph("A")] }] }],
+      columnWidthsCm: [5],
+    };
+    const { model: next } = insertChartFromTable(
+      doc(table),
+      selectionAt(0, 0),
+      { section: 0, block: 0 },
+      "barClustered",
+      { categories: ["A"], series: [{ name: "S", values: [1], color: "#4e79a7" }], unparsable: [] },
+    );
+    expect(chartIn(next, 1).anchorOrdinal).toBeUndefined();
+  });
+
+  it("deleteChart releases the pairing when it was the last referrer", () => {
+    const { model } = insertChart(doc(paragraph("Anchor")), selectionAt(0, 6), "columnClustered");
+    const { model: next } = deleteChart(model, selectionAt(1, 0), { section: 0, block: 1 });
+    expect(paragraphIn(next, 0).anchorOrdinal).toBeUndefined();
+  });
+
+  it("setChartWrap to inline drops and releases; back to floating re-pairs", () => {
+    const { model } = insertChart(doc(paragraph("Anchor")), selectionAt(0, 6), "columnClustered");
+    const location: ChartLocation = { section: 0, block: 1 };
+    const { model: inline } = setChartWrap(model, selectionAt(1, 0), location, "inline");
+    expect(chartIn(inline, 1).anchorOrdinal).toBeUndefined();
+    expect(paragraphIn(inline, 0).anchorOrdinal).toBeUndefined();
+    const { model: floating } = setChartWrap(inline, selectionAt(1, 0), location, "square");
+    const ordinal = paragraphIn(floating, 0).anchorOrdinal;
+    expect(ordinal).toBeDefined();
+    expect(chartIn(floating, 1).anchorOrdinal).toBe(ordinal);
+  });
+});

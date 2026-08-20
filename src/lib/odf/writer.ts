@@ -100,6 +100,7 @@ import { definedNumberIndentCm, definedTextIndentCm } from "../core/listDefiniti
 import { zip, type ZipEntryInput } from "../core/zipWriter";
 import { escapeXml, firstChildElement, parseXml, serializeElement } from "../core/xml";
 import { ODT_MIMETYPE } from "./reader";
+import { planAnchoredDrawings } from "../drawingAnchors";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
 import { chartFrameXml } from "./chart";
@@ -1737,7 +1738,13 @@ function paragraphXml(
   includeOpaque: boolean,
   styleOptions?: ParagraphStyleOptions,
   leadingXml = "",
+  trailingXml = "",
 ): string {
+  // `trailingXml` (SPEC-078): draw elements of floating shapes/charts
+  // absorbed into this, their anchor paragraph — after the paragraph's own
+  // content when the drawing follows its anchor in the block list (the
+  // leading side rides in via `leadingXml`), so the reader's split
+  // reproduces the model's block order.
   const styleName = styles.paragraphNameFor(paragraph, styleOptions);
   const tag = paragraph.headingLevel !== undefined ? "text:h" : "text:p";
   let attrs = styleName !== undefined ? ` text:style-name="${escapeXml(styleName)}"` : "";
@@ -1747,7 +1754,8 @@ function paragraphXml(
   if (paragraph.runs.some((run) => linkTargetOf(run.formatting) !== null)) {
     attrs += LINK_XMLNS;
   }
-  const content = leadingXml + inlineContentXml(paragraph, styles, includeOpaque) + paragraphMarkChangeXml(paragraph);
+  const content =
+    leadingXml + inlineContentXml(paragraph, styles, includeOpaque) + paragraphMarkChangeXml(paragraph) + trailingXml;
   return content.length > 0 ? `<${tag}${attrs}>${content}</${tag}>` : `<${tag}${attrs}/>`;
 }
 
@@ -2058,6 +2066,37 @@ export function buildContentXml(
       ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
       : [];
     const blocks = section.blocks;
+    // Containment (SPEC-078): floating shapes/charts with an explicit,
+    // resolvable anchor pairing are emitted inside their anchor paragraph's
+    // text:p — how text:anchor-type="paragraph" natively expresses the
+    // anchor — and skipped at their own block slot; same plan as the .docx
+    // writer. ODT's carve-out: a drawing anchored to a LIST paragraph keeps
+    // the legacy own-paragraph form, since its paragraph is emitted inside
+    // a text:list run with no seam for a foreign element (SPEC-078's out of
+    // scope; the pairing is re-derived by adjacency on open).
+    const anchoredPlan = planAnchoredDrawings(blocks);
+    for (const [paragraphIndex, entry] of anchoredPlan.byParagraph) {
+      const anchorBlock = blocks[paragraphIndex];
+      if (anchorBlock.type === "paragraph" && anchorBlock.list) {
+        for (const drawingIndex of [...entry.leading, ...entry.trailing]) {
+          anchoredPlan.absorbed.delete(drawingIndex);
+        }
+        anchoredPlan.byParagraph.delete(paragraphIndex);
+      }
+    }
+    const anchoredElementXml = (drawingIndex: number): string => {
+      const drawing = blocks[drawingIndex];
+      if (drawing.type === "shape") {
+        return shapeElementXml(drawing, styles.shapeStyleNameFor(drawing), {
+          paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque),
+        });
+      }
+      if (drawing.type === "chart") {
+        const chartEntry = chartPlan.planFor(sectionIndex, drawingIndex);
+        return chartEntry ? chartFrameXml(drawing, `./${chartEntry.objectDir}`) : "";
+      }
+      return "";
+    };
     const anchorsAt = (index: number): typeof opaqueBlocks =>
       opaqueBlocks.filter((node) => Math.min(node.blockIndex, blocks.length) === index);
     let i = 0;
@@ -2088,12 +2127,19 @@ export function buildContentXml(
         continue;
       }
       if (block.type === "shape") {
-        blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
+        // An absorbed drawing (SPEC-078) is emitted inside its anchor
+        // paragraph via anchoredElementXml; a pending break/master rides on
+        // to the next emitted paragraph untaken.
+        if (!anchoredPlan.absorbed.has(i)) {
+          blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
+        }
         i++;
         continue;
       }
       if (block.type === "chart") {
-        blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
+        if (!anchoredPlan.absorbed.has(i)) {
+          blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
+        }
         i++;
         continue;
       }
@@ -2125,7 +2171,17 @@ export function buildContentXml(
         continue;
       }
       if (!block.list) {
-        blockXml.push(paragraphXml(block, styles, includeOpaque, takeStyleOptions()));
+        const anchoredEntry = anchoredPlan.byParagraph.get(i);
+        blockXml.push(
+          paragraphXml(
+            block,
+            styles,
+            includeOpaque,
+            takeStyleOptions(),
+            anchoredEntry ? anchoredEntry.leading.map(anchoredElementXml).join("") : "",
+            anchoredEntry ? anchoredEntry.trailing.map(anchoredElementXml).join("") : "",
+          ),
+        );
         i++;
         continue;
       }

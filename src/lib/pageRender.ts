@@ -3,7 +3,8 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type DocumentModel, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isFloatingDrawing, resolveAnchorBlockIndex } from "./drawingAnchors";
 import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
@@ -158,6 +159,62 @@ export function asRenderEntry(value: unknown): RenderEntry {
  * single-column page. */
 export function asPageColumns(value: unknown): PageColumns | null {
   return (value ?? null) as PageColumns | null;
+}
+
+/** Reorders one page's entries so every floating Shape/Chart entry renders
+ * immediately before its anchor paragraph's first entry on the page
+ * (SPEC-078). The floating anchor element takes no space in flow
+ * (DocShapeBlock/DocChartBlock's `-floating` class), so rendering it just
+ * before the anchor paragraph puts its static position at that paragraph's
+ * top-left — the exact origin `offsetXCm`/`offsetYCm` are measured from by
+ * every command. The drawing adopts its anchor's column (SPEC-030), with
+ * the adopted value appended to `memo` so v-memo sees the change; drawings
+ * sharing an anchor keep their relative block order. A drawing whose anchor
+ * has no entry on this page (pagination split them, or nothing resolves)
+ * keeps its own flow slot — SPEC-078's out-of-scope note. Pure: returns a
+ * new array when anything moved, the input array otherwise. */
+export function hoistFloatingDrawingEntries(entries: RenderEntry[], model: DocumentModel): RenderEntry[] {
+  let result: RenderEntry[] | null = null;
+  for (const entry of entries) {
+    if (entry.kind !== "shape" && entry.kind !== "chart") {
+      continue;
+    }
+    const section = entry.sectionProp;
+    const blockIndex = entry.blockIndexProp;
+    if (section === undefined || blockIndex === undefined || !isFloatingDrawing(entry.blockProp)) {
+      continue;
+    }
+    const blocks = model.sections[section]?.blocks;
+    if (!blocks) {
+      continue;
+    }
+    const anchorIndex = resolveAnchorBlockIndex(blocks, blockIndex);
+    if (anchorIndex === null) {
+      continue;
+    }
+    const working: RenderEntry[] = result ?? [...entries];
+    const from = working.indexOf(entry);
+    const target = working.findIndex(
+      (candidate: RenderEntry) => candidate.dataSection === section && candidate.dataBlock === anchorIndex,
+    );
+    if (from < 0 || target < 0) {
+      continue;
+    }
+    const anchorEntry = working[target];
+    const needsMove = target !== from + 1;
+    const needsColumn = anchorEntry.column !== entry.column;
+    if (!needsMove && !needsColumn) {
+      continue;
+    }
+    result = working;
+    const [moved] = working.splice(from, 1);
+    const insertAt = target > from ? target - 1 : target;
+    const hoisted = needsColumn
+      ? { ...moved, column: anchorEntry.column, memo: [...moved.memo, anchorEntry.column] }
+      : moved;
+    working.splice(insertAt, 0, hoisted);
+  }
+  return result ?? entries;
 }
 
 /** A shape's text frame rendered as DocBlockEntries entries (SPEC-051

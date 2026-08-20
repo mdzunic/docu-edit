@@ -90,6 +90,7 @@ import {
   XmlParseError,
   type Relationship,
 } from "../core/xml";
+import { isFloatingDrawing } from "../drawingAnchors";
 import { fillPendingMediaData, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
 import { parseChartDrawing } from "./chart";
@@ -717,6 +718,13 @@ export interface DrawingContext {
   mainRels: Map<string, Relationship>;
   mainPartPath: string;
   parts: Map<string, Uint8Array>;
+  /** SPEC-078: the running anchor-ordinal counter for this parse. A source
+   * paragraph containing floating shape/chart drawings mints the next value
+   * onto its first split-off piece and those drawings — containment IS the
+   * wire pairing, and minting in document order is what keeps
+   * read → write → read structurally equal. Absent on contexts that never
+   * reach parseBodyParagraphBlocks (headers/footers, the comments part). */
+  anchorOrdinals?: { next: number };
 }
 
 /** A `w:r` whose only content (besides `w:rPr`) is one `w:drawing` that
@@ -1261,6 +1269,24 @@ function parseBodyParagraphBlocks(
     }
   }
   flush();
+  // SPEC-078: floating shapes/charts found INSIDE this source paragraph are
+  // anchored to it — containment is the wire pairing. Mint one canonical
+  // ordinal onto the paragraph's first split-off piece (the piece that
+  // keeps the paragraph's top edge) and every such drawing. A drawing-only
+  // paragraph — every pre-SPEC-078 save — yields no paragraph piece and
+  // stays unpaired, resolved by the adjacency fallback exactly as before.
+  // Image never pairs (no anchor-relative offsets — SPEC-078 out of scope).
+  if (ctx.anchorOrdinals) {
+    const firstPiece = blocks.find((block) => block.type === "paragraph");
+    const floating = blocks.filter(isFloatingDrawing);
+    if (firstPiece?.type === "paragraph" && floating.length > 0) {
+      const ordinal = ctx.anchorOrdinals.next++;
+      firstPiece.anchorOrdinal = ordinal;
+      for (const drawing of floating) {
+        drawing.anchorOrdinal = ordinal;
+      }
+    }
+  }
   return { blocks, media };
 }
 
@@ -2541,7 +2567,7 @@ export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedD
     }
   }
   const styleCatalog = parseStylesCatalog(stylesDoc);
-  const drawingCtx: DrawingContext = { mainRels, mainPartPath, parts };
+  const drawingCtx: DrawingContext = { mainRels, mainPartPath, parts, anchorOrdinals: { next: 1 } };
   const linkContext: LinkReadContext = {
     hrefForRelId: (relId) => {
       const rel = mainRels.get(relId);

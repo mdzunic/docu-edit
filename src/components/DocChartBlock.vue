@@ -113,8 +113,14 @@ const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
   line-height: 0;
 }
 
+/* Zero-footprint floating anchor (SPEC-078) — see DocShapeBlock.vue's
+   .doc-shape-anchor-floating for the full rationale; the chart anchor is
+   its exact twin. */
 .doc-chart-anchor-floating {
-  position: relative;
+  position: absolute;
+  display: block;
+  width: 0;
+  height: 0;
 }
 
 .doc-chart {

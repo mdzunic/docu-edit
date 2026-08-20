@@ -57,6 +57,7 @@ import {
   FIELD_PLACEHOLDER_TEXT,
   NOTE_PLACEHOLDER_TEXT,
 } from "../documentModel";
+import { isFloatingDrawing } from "../drawingAnchors";
 import { bytesToBase64 } from "../opaque";
 import { ZipError, unzip } from "../core/zip";
 import { cmToTwips } from "../core/units";
@@ -1035,6 +1036,10 @@ export interface OdfDrawingContext {
   graphicWrapStyles: Map<string, ImageWrapMode>;
   contentDoc: Document;
   stylesDoc: Document | undefined;
+  /** SPEC-078: the running anchor-ordinal counter for this parse — see
+   * docx/reader.ts's DrawingContext.anchorOrdinals, this is its exact
+   * twin: containment is the wire pairing, minted in document order. */
+  anchorOrdinals?: { next: number };
 }
 
 /** collectInline run over a detached clone of `nodes` — reused so a
@@ -1383,6 +1388,23 @@ function parseBodyTextBlockOrSplit(
     segment.push(node);
   }
   flush();
+  // SPEC-078: floating shapes/charts found INSIDE this source paragraph are
+  // anchored to it — containment is the wire pairing; mint one canonical
+  // ordinal onto the first split-off piece and every such drawing. A
+  // drawing-only paragraph (every pre-SPEC-078 save) yields no piece and
+  // stays unpaired — the adjacency fallback resolves it as before. Exact
+  // twin of docx/reader.ts's parseBodyParagraphBlocks minting.
+  if (ctx.anchorOrdinals) {
+    const firstPiece = blocks.find((block) => block.type === "paragraph");
+    const floating = blocks.filter(isFloatingDrawing);
+    if (firstPiece?.type === "paragraph" && floating.length > 0) {
+      const ordinal = ctx.anchorOrdinals.next++;
+      firstPiece.anchorOrdinal = ordinal;
+      for (const drawing of floating) {
+        drawing.anchorOrdinal = ordinal;
+      }
+    }
+  }
   return { blocks, media };
 }
 
@@ -2425,6 +2447,7 @@ export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOd
     graphicWrapStyles: collectGraphicWrapStyles(contentDoc, stylesDoc),
     contentDoc,
     stylesDoc,
+    anchorOrdinals: { next: 1 },
   };
   const mediaById = new Map<string, MediaPart>();
   const sections: Section[] = [];
