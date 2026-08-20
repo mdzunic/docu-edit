@@ -235,7 +235,12 @@ test("without IndexedDB the app works in-memory and shows the banner (AC-21, AC-
   // the in-memory store, which is exactly what "not saved" means here.
   await createDocument(page, "Ephemeral");
   await expect(page.getByTestId("storage-warning")).toBeVisible();
+  // Browser Back out of a document that can't be saved (storage unavailable)
+  // is a guarded exit (SPEC-060 AC-40/41): it warns before losing the
+  // in-memory changes, so confirm "Close anyway" to return to the library.
   await page.goBack();
+  await expect(page.getByTestId("close-without-saving-dialog")).toBeVisible();
+  await page.getByTestId("close-without-saving-confirm").click();
   await expect(rowByTitle(page, "Ephemeral")).toBeVisible();
   await expect(page.getByTestId("storage-warning")).toBeVisible();
 });
@@ -258,8 +263,12 @@ test("when writes fail (quota exceeded) the app works in-memory and shows the ba
   );
 
   // The document remains fully usable in-memory (goBack stays in the SPA;
-  // a full reload would wipe the unpersisted store).
+  // a full reload would wipe the unpersisted store). Because it can't be
+  // saved, browser Back warns first (SPEC-060 AC-40/41) — "Close anyway"
+  // returns to the library, where the in-memory record is still listed.
   await page.goBack();
+  await expect(page.getByTestId("close-without-saving-dialog")).toBeVisible();
+  await page.getByTestId("close-without-saving-confirm").click();
   await rowByTitle(page, "Over quota").click();
   await expect(page).toHaveURL(new RegExp(`/doc/${id}$`));
   await expect(page.getByTestId("document-title")).toHaveText("Over quota");
