@@ -281,16 +281,34 @@ describe("focus is never silently removed (AC-45/46/47)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WCAG AA contrast, computed from tokens.css itself (AC-21/22/23).
-function tokenMap(): Record<string, string> {
-  const css = readFileSync(join(SRC, "styles/tokens.css"), "utf8");
+// WCAG AA contrast, computed from tokens.css itself (AC-21/22/23), over BOTH
+// the light and the dark palette (SPEC-059 AC-11 — the same pairs, the same
+// thresholds, in the same test). The two palettes are parsed by block so the
+// dark redefinitions don't leak into the light map: the light palette is the
+// base `:root { … }` declaration; the dark palette is that base overlaid with
+// the `:root[data-theme="dark"] { … }` redefinitions.
+function declsInBlock(css: string, header: string): Record<string, string> {
+  const at = css.indexOf(header);
+  if (at < 0) {
+    return {};
+  }
+  const open = css.indexOf("{", at);
+  const close = css.indexOf("}", open);
+  const body = css.slice(open + 1, close);
   const map: Record<string, string> = {};
   const re = /(--[\w-]+):\s*([^;]+);/g;
   let m;
-  while ((m = re.exec(css)) !== null) {
+  while ((m = re.exec(body)) !== null) {
     map[m[1]] = m[2].trim();
   }
   return map;
+}
+
+function palettes(): Record<string, Record<string, string>> {
+  const css = readFileSync(join(SRC, "styles/tokens.css"), "utf8");
+  const light = declsInBlock(css, ":root {");
+  const dark = { ...light, ...declsInBlock(css, ':root[data-theme="dark"] {') };
+  return { light, dark };
 }
 
 function toRgb(value = ""): number[] {
@@ -324,47 +342,50 @@ function contrast(a = "", b = ""): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-describe("token palette meets WCAG AA contrast (AC-21/22/23)", () => {
-  const t = tokenMap();
-  const ratio = (fg: string, bg: string) => contrast(t[fg], t[bg]);
+// Body text — 4.5:1.
+const BODY_PAIRS = [
+  ["--text-primary", "--surface-base"],
+  ["--text-primary", "--surface-raised"],
+  ["--text-primary", "--surface-canvas"],
+  ["--text-primary", "--surface-sunken"],
+  ["--text-primary", "--surface-selected"],
+  ["--text-secondary", "--surface-base"],
+  ["--text-secondary", "--surface-raised"],
+  ["--text-secondary", "--surface-canvas"],
+  ["--text-secondary", "--surface-sunken"],
+  ["--text-on-brand", "--surface-brand"],
+  ["--text-on-brand", "--accent"],
+  ["--text-danger", "--surface-base"],
+];
 
-  // Body text — 4.5:1.
-  const body = [
-    ["--text-primary", "--surface-base"],
-    ["--text-primary", "--surface-raised"],
-    ["--text-primary", "--surface-canvas"],
-    ["--text-primary", "--surface-sunken"],
-    ["--text-primary", "--surface-selected"],
-    ["--text-secondary", "--surface-base"],
-    ["--text-secondary", "--surface-raised"],
-    ["--text-secondary", "--surface-canvas"],
-    ["--text-secondary", "--surface-sunken"],
-    ["--text-on-brand", "--surface-brand"],
-    ["--text-on-brand", "--accent"],
-    ["--text-danger", "--surface-base"],
-  ];
-  for (const [fg, bg] of body) {
-    it(`${fg} on ${bg} ≥ 4.5:1`, () => {
-      expect(ratio(fg, bg)).toBeGreaterThanOrEqual(4.5);
-    });
-  }
+// Large text / UI-component boundaries — 3:1. --border-subtle and
+// --border-default are decorative separators inside a surface (WCAG 1.4.11
+// exempts non-essential boundaries); --border-strong is the emphasised
+// outline that must stay distinguishable, so it is the one asserted.
+const LARGE_PAIRS = [
+  ["--text-accent", "--surface-base"],
+  ["--text-accent", "--surface-raised"],
+  ["--text-accent", "--surface-selected"],
+  ["--accent", "--surface-base"],
+  ["--border-strong", "--surface-base"],
+  ["--success", "--surface-base"],
+  ["--warning", "--surface-base"],
+];
 
-  // Large text / UI-component boundaries — 3:1. --border-subtle and
-  // --border-default are decorative separators inside a surface (WCAG 1.4.11
-  // exempts non-essential boundaries); --border-strong is the emphasised
-  // outline that must stay distinguishable, so it is the one asserted.
-  const large = [
-    ["--text-accent", "--surface-base"],
-    ["--text-accent", "--surface-raised"],
-    ["--text-accent", "--surface-selected"],
-    ["--accent", "--surface-base"],
-    ["--border-strong", "--surface-base"],
-    ["--success", "--surface-base"],
-    ["--warning", "--surface-base"],
-  ];
-  for (const [fg, bg] of large) {
-    it(`${fg} on ${bg} ≥ 3:1`, () => {
-      expect(ratio(fg, bg)).toBeGreaterThanOrEqual(3);
-    });
-  }
-});
+// The same pairs and thresholds over BOTH palettes (SPEC-059 AC-11): the
+// light palette is SPEC-058's AC-21/22/23; the dark palette is SPEC-059's.
+for (const [name, t] of Object.entries(palettes())) {
+  describe(`${name} palette meets WCAG AA contrast (AC-21/22/23; SPEC-059 AC-11)`, () => {
+    const ratio = (fg: string, bg: string) => contrast(t[fg], t[bg]);
+    for (const [fg, bg] of BODY_PAIRS) {
+      it(`${fg} on ${bg} ≥ 4.5:1`, () => {
+        expect(ratio(fg, bg)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+    for (const [fg, bg] of LARGE_PAIRS) {
+      it(`${fg} on ${bg} ≥ 3:1`, () => {
+        expect(ratio(fg, bg)).toBeGreaterThanOrEqual(3);
+      });
+    }
+  });
+}

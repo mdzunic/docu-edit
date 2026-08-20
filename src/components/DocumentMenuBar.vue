@@ -20,6 +20,8 @@ import { ref, useTemplateRef } from "vue";
 import MenuBar from "./MenuBar.vue";
 import MenuItem from "./MenuItem.vue";
 import MenuCheckItem from "./MenuCheckItem.vue";
+import MenuRadioItem from "./MenuRadioItem.vue";
+import MenuSubmenu from "./MenuSubmenu.vue";
 import ShapeGallery from "./ShapeGallery.vue";
 import ChartGallery from "./ChartGallery.vue";
 import { GALLERY_PRESETS as MULTILEVEL_PRESETS } from "../lib/core/listDefinitions";
@@ -47,6 +49,13 @@ const props = defineProps({
   canConvertLiteralChips: { type: Boolean, default: false },
   /** "View → Field shading" checked state (SPEC-053 AC-11). */
   fieldShading: { type: Boolean, default: false },
+  /** The appearance preference: "system" | "light" | "dark" (SPEC-059). */
+  theme: { type: String, default: "system" },
+  /** The theme actually in effect: "light" | "dark" (SPEC-059) — gates the
+   * dim-page item, which is dark-only. */
+  resolvedTheme: { type: String, default: "light" },
+  /** Whether the dim-page opt-in is on (SPEC-059 AC-13/14). */
+  dimPage: { type: Boolean, default: false },
   /** Whether "Insert -> Chart from table" applies (a table holds the active
    * cell-range selection) — computed by the view, which owns the model. */
   tableSelectedForChart: { type: Boolean, default: false },
@@ -282,6 +291,39 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :checked="fieldShading"
         @select="emit('command', 'view.field-shading')"
       />
+      <hr class="menu-separator">
+      <MenuSubmenu
+        label="Appearance"
+        testid="view-menu-appearance"
+      >
+        <MenuRadioItem
+          label="System"
+          testid="appearance-system"
+          :checked="theme === 'system'"
+          @select="emit('command', 'view.theme-system')"
+        />
+        <MenuRadioItem
+          label="Light"
+          testid="appearance-light"
+          :checked="theme === 'light'"
+          @select="emit('command', 'view.theme-light')"
+        />
+        <MenuRadioItem
+          label="Dark"
+          testid="appearance-dark"
+          :checked="theme === 'dark'"
+          @select="emit('command', 'view.theme-dark')"
+        />
+        <hr class="menu-separator">
+        <MenuCheckItem
+          label="Dim page in dark theme"
+          testid="appearance-dim-page"
+          hint="Screen only"
+          :checked="dimPage"
+          :disabled="resolvedTheme !== 'dark'"
+          @select="emit('command', 'view.dim-page')"
+        />
+      </MenuSubmenu>
       <hr class="menu-separator">
       <MenuCheckItem
         label="Track changes"

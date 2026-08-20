@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
+import { useTheme } from "../composables/useTheme";
 import AppShell from "../components/AppShell.vue";
 import { openDocumentFile } from "../lib/openDocument";
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
@@ -21,6 +22,11 @@ import { createDocument } from "../lib/documentModel";
 import { formatBadgeLabel, formatRelativeTime } from "../lib/format";
 
 const router = useRouter();
+
+// The library has no menu bar, so it reads the shared theme composable to keep
+// the OS-appearance listener alive and be themed by the same tokens (SPEC-059
+// AC-52). The preference is set from the editor's View menu.
+useTheme();
 const fileInput = useTemplateRef("fileInput");
 const openError = ref("");
 

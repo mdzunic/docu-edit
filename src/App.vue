@@ -33,6 +33,40 @@ body,
   margin: 0;
 }
 
+/* Theme cross-fade (SPEC-059 AC-46): when motion is allowed, the top-level
+   chrome surfaces ease their colours over --motion-base as the theme flips.
+   Under prefers-reduced-motion the whole rule is dropped, so the switch is
+   instantaneous (AC-45) — belt-and-braces with tokens.css already collapsing
+   --motion-base to 0ms there. Scoped to shell surfaces so it never animates a
+   component's own hover/active state. */
+@media (prefers-reduced-motion: no-preference) {
+  .app-bar,
+  .toolbar,
+  .menu-bar,
+  .status-bar,
+  .canvas {
+    transition:
+      background-color var(--motion-base) var(--easing),
+      color var(--motion-base) var(--easing),
+      border-color var(--motion-base) var(--easing);
+  }
+}
+
+/* ---- Dim page for on-screen reading in dark theme (SPEC-059 AC-13) --------
+   A container-level luminance reduction on the page boxes, applied only when
+   the resolved theme is dark AND the opt-in is on. It touches no model value
+   and is not persisted into the document (AC-15). It is screen-only: the
+   print stylesheet and print preview reset it (AC-16/32/73), so print, print
+   preview and PDF export never dim — the same on-screen-only exclusion the
+   view already uses for its chrome. */
+:root[data-theme="dark"][data-dim-page="1"] .page {
+  filter: brightness(0.82);
+}
+
+body.is-print-preview .page {
+  filter: none !important;
+}
+
 /* ---- Print & print preview (SPEC-034) ------------------------------------
    Screen-only affordances carry the `print-exclude` class on their real
    rendered root elements (ruler, find bar, table/image handles, the TOC
@@ -122,6 +156,12 @@ body.is-print-preview .doc-field-shaded {
 
   .page-margin {
     outline: none !important;
+  }
+
+  /* The dim-page treatment is on-screen only: a sheet always prints at full
+     luminance regardless of the theme or the dim opt-in (SPEC-059 AC-16/32). */
+  .page {
+    filter: none !important;
   }
 }
 </style>
