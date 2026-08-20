@@ -178,6 +178,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :disabled="!editable"
         @select="emit('command', 'file.delete')"
       />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Close"
+        testid="file-menu-close"
+        @select="emit('command', 'file.close')"
+      />
     </template>
 
     <template #edit>

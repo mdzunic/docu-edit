@@ -11,6 +11,9 @@ const props = defineProps({
   /** Accessible name + tooltip. Required — an icon-only button must be named. */
   label: { type: String, required: true },
   disabled: { type: Boolean, default: false },
+  /** In-flight state: dims the control, marks it aria-busy and blocks a second
+   * activation while the action it triggered runs (SPEC-060's close flush). */
+  busy: { type: Boolean, default: false },
 });
 </script>
 
@@ -18,9 +21,11 @@ const props = defineProps({
   <button
     type="button"
     class="ui-icon-button"
+    :class="{ 'is-busy': props.busy }"
     :aria-label="props.label"
     :title="props.label"
-    :disabled="props.disabled"
+    :aria-busy="props.busy || undefined"
+    :disabled="props.disabled || props.busy"
   >
     <AppIcon :name="props.icon" />
   </button>
@@ -60,5 +65,22 @@ const props = defineProps({
 .ui-icon-button:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+/* The busy state pulses so the disabled control still reads as "working",
+   not merely inert; stilled under reduced-motion (--motion-base is 0 there). */
+.ui-icon-button.is-busy {
+  cursor: progress;
+  animation: ui-icon-busy-pulse calc(4 * var(--motion-base)) var(--easing) infinite;
+}
+
+@keyframes ui-icon-busy-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.85;
+  }
 }
 </style>

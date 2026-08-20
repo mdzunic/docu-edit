@@ -64,6 +64,14 @@ function cancelTitleEdit() {
 // being dragged anywhere over the window" correctly.
 const router = useRouter();
 const { addToast } = useToasts();
+
+// The product-name home link (SPEC-060). Client-side navigation so the
+// editor's route guard runs its autosave flush before leaving; `router?`
+// because AppShell mounts without a router in some unit tests.
+function goHome() {
+  router?.push("/");
+}
+
 const dragDepth = ref(0);
 const showDropOverlay = computed(() => dragDepth.value > 0);
 const dropError = ref("");
@@ -178,10 +186,22 @@ onUnmounted(() => {
       class="app-bar"
       data-testid="app-bar"
     >
-      <span
+      <!-- The leading control slot (SPEC-060): the editor fills it with the
+           Close control, left of the product name. Empty in views with no
+           open document, so their bar is unchanged. -->
+      <slot name="app-bar-leading" />
+      <!-- The product name is the app's home affordance (SPEC-060): a real
+           link to the library in every view, so it reads as a link to
+           assistive technology. In the editor the route guard flushes any
+           pending autosave before this navigation lands, exactly as the Close
+           control does — @click.prevent keeps it a client-side navigation so
+           that guard runs (a full document load would bypass it). -->
+      <a
         class="product-name"
         data-testid="product-name"
-      >docu-edit</span>
+        href="/"
+        @click.prevent="goHome"
+      >docu-edit</a>
       <h1
         v-if="!isEditingTitle"
         class="document-title"
@@ -290,6 +310,18 @@ onUnmounted(() => {
 
 .product-name {
   font-weight: var(--weight-bold);
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.product-name:hover {
+  text-decoration: underline;
+}
+
+.product-name:focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
 }
 
 .document-title {

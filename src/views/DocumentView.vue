@@ -5,6 +5,7 @@ import AppShell from "../components/AppShell.vue";
 import DocumentMenuBar from "../components/DocumentMenuBar.vue";
 import BookmarkDialog from "../components/BookmarkDialog.vue";
 import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
+import CloseWithoutSavingDialog from "../components/CloseWithoutSavingDialog.vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import ConversionReportDialog from "../components/ConversionReportDialog.vue";
 import CustomSpacingDialog from "../components/CustomSpacingDialog.vue";
@@ -13,8 +14,8 @@ import DocImageBlock from "../components/DocImageBlock.vue";
 import DocPage from "../components/DocPage.vue";
 import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
-import DownloadMenu from "../components/DownloadMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
+import EditorSaveStatus from "../components/EditorSaveStatus.vue";
 import SpellContextMenu from "../components/SpellContextMenu.vue";
 import LanguageStatusControl from "../components/LanguageStatusControl.vue";
 import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
@@ -70,6 +71,7 @@ import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
 import TextColorPicker from "../components/TextColorPicker.vue";
 import UndoRedoControls from "../components/UndoRedoControls.vue";
+import UiIconButton from "../components/ui/UiIconButton.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
 import { noApplyEditOptions } from "./document/context";
@@ -2583,15 +2585,20 @@ const {
   conversionReportSameFormat,
   confirmingDelete,
   savingAsTemplate,
+  closing,
+  storageWarningOpen,
   handleTitleUpdate,
   handleDownload,
   closeConversionReport,
   saveCurrentAsTemplate,
   deleteOpenDocument,
+  closeOpenDocument,
+  confirmCloseAnyway,
 } = useFileActions({
   ...editorContext,
   exportPdf,
   commitNow: () => autosave.commitNow(),
+  flushForClose: () => autosave.flushForClose(),
   noteVersionHistoryCommitPoint,
 });
 
@@ -3011,6 +3018,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["file.save-as-template", () => { savingAsTemplate.value = true; }],
   ["file.mail-merge", () => { mergeRunDialogOpen.value = true; }],
   ["file.delete", () => { confirmingDelete.value = true; }],
+  // Return to the library (SPEC-060); the route guard flushes autosave first.
+  ["file.close", closeOpenDocument],
   // Edit
   // Ctrl/Cmd+Z (SPEC-015 AC-1).
   ["edit.undo", performUndo],
@@ -3158,22 +3167,22 @@ function handleMenuCommand(id = "") {
     :format-badge="formatBadge"
     @update:document-title="handleTitleUpdate"
   >
+    <template #app-bar-leading>
+      <UiIconButton
+        icon="close"
+        label="Close document"
+        data-testid="close-document"
+        :busy="closing"
+        @click="closeOpenDocument"
+      />
+    </template>
     <template #app-bar-actions>
-      <div class="app-bar-cluster">
-        <span
-          class="save-state"
-          data-testid="save-state"
-          :data-save-state="saveState"
-        >{{ saveStateText }}</span>
-        <a
-          v-if="saveState === 'error'"
-          class="save-state-download"
-          data-testid="save-state-download"
-          href="#"
-          @click.prevent="handleDownload(downloadFormat)"
-        >Download a copy</a>
-        <DownloadMenu @download="handleDownload" />
-      </div>
+      <EditorSaveStatus
+        :save-state="saveState"
+        :save-state-text="saveStateText"
+        :download-format="downloadFormat"
+        @download="handleDownload"
+      />
     </template>
     <template #menubar>
       <DocumentMenuBar
@@ -3823,6 +3832,12 @@ function handleMenuCommand(id = "") {
       @confirm="deleteOpenDocument"
       @cancel="confirmingDelete = false"
     />
+    <CloseWithoutSavingDialog
+      v-if="storageWarningOpen"
+      @download="handleDownload(downloadFormat)"
+      @confirm="confirmCloseAnyway"
+      @cancel="storageWarningOpen = false"
+    />
     <RenameDialog
       v-if="savingAsTemplate && doc"
       :current-title="doc.title"
@@ -4203,12 +4218,6 @@ function handleMenuCommand(id = "") {
   border-color: var(--accent);
 }
 
-.app-bar-cluster {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
 /* Sits in the status bar next to the page indicator (SPEC-036 AC-1, AC-4):
    a plain-looking button (no border/background of its own) so it reads as
    status text until focused/hovered, while still being a real <button> —
@@ -4264,17 +4273,6 @@ function handleMenuCommand(id = "") {
 .track-changes-status-indicator[aria-pressed="true"] {
   text-decoration: underline;
   font-weight: var(--weight-bold);
-}
-
-.save-state {
-  font-size: var(--text-md);
-  color: var(--text-on-brand);
-  white-space: nowrap;
-}
-
-.save-state-download {
-  font-size: var(--text-md);
-  color: var(--text-on-brand);
 }
 
 /* Sticky so the conflict/recovery notice stays visible while the canvas
