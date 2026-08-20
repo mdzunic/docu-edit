@@ -419,16 +419,94 @@ export function imageDisplayStyle(image: Image): Record<string, string> {
   return style;
 }
 
+/** The text stand-off a wrapped drawing keeps to the text beside/below it —
+ * the same 0.35cm gap SPEC-024's image float already uses. */
+const WRAP_TEXT_GAP_CM = 0.35;
+
+/** The invisible in-flow float that makes `square` and `topAndBottom` wrap
+ * REAL (SPEC-024 AC-18's "rendering matching the chosen mode"; SPEC-051
+ * computes wrap "against the object's bounding box"): the drawing itself
+ * stays an absolutely positioned overlay, and this spacer — rendered by the
+ * drawing's component at its anchor, in the text flow — is what the
+ * surrounding lines actually yield to. Without it the three above-text wrap
+ * modes were indistinguishable: text ran straight under the box.
+ *
+ * `square` excludes one side, chosen as the side with LESS room, so the
+ * text flows along the larger side (Word's "largest side only" — a CSS
+ * float cannot put text on both sides of a box). `topAndBottom` excludes
+ * the full column width for the drawing's height. Both use the UNROTATED
+ * bounding box — predictable, per SPEC-051's "bounding box, not geometry" —
+ * and clamp negative offsets to the anchor edge (a float can never push
+ * text that precedes its anchor). Returns null for the modes that leave
+ * text alone: `inline` sits in the flow itself; `behind`/`infront` overlap
+ * by design. `columnWidthCm` is the anchor's own measured text-column
+ * width, so a shape in a SPEC-030 column wraps within that column. */
+export function drawingWrapSpacerStyle(
+  drawing: {
+    wrap: string;
+    widthCm: number;
+    heightCm: number;
+    offsetXCm?: number;
+    offsetYCm?: number;
+  },
+  columnWidthCm: number,
+): Record<string, string> | null {
+  if (drawing.wrap !== "square" && drawing.wrap !== "topAndBottom") {
+    return null;
+  }
+  if (!(columnWidthCm > 0)) {
+    return null;
+  }
+  // The float's BOX runs from the anchor (the paragraph's top) down to the
+  // drawing's bottom edge; `shape-outside` then excludes only the drawing's
+  // own band, so the lines above it flow at full width. (A margin-top drop
+  // would not do: a float's whole margin box excludes line boxes, so the
+  // band above the drawing would be carved out too.)
+  const offsetY = Math.max(0, drawing.offsetYCm ?? 0);
+  const height = offsetY + Math.max(drawing.heightCm, 0.05) + WRAP_TEXT_GAP_CM;
+  const band = `inset(${offsetY}cm 0 0 0)`;
+  if (drawing.wrap === "topAndBottom") {
+    return {
+      float: "left",
+      width: "100%",
+      height: `${height}cm`,
+      shapeOutside: band,
+    };
+  }
+  const offsetX = Math.max(0, drawing.offsetXCm ?? 0);
+  const roomLeft = offsetX;
+  const roomRight = columnWidthCm - offsetX - drawing.widthCm;
+  if (roomRight >= roomLeft) {
+    // Text keeps to the right: the spacer fills from the column's left edge
+    // to the drawing's right edge plus the stand-off.
+    const width = Math.min(columnWidthCm, offsetX + drawing.widthCm + WRAP_TEXT_GAP_CM);
+    return {
+      float: "left",
+      width: `${width}cm`,
+      height: `${height}cm`,
+      shapeOutside: band,
+    };
+  }
+  // Text keeps to the left: the spacer fills from the drawing's left edge
+  // minus the stand-off to the column's right edge.
+  const width = Math.min(columnWidthCm, Math.max(0, columnWidthCm - offsetX + WRAP_TEXT_GAP_CM));
+  return {
+    float: "right",
+    width: `${width}cm`,
+    height: `${height}cm`,
+    shapeOutside: band,
+  };
+}
+
 /** A shape's size and position rendering (SPEC-051): unlike Image, a Shape
  * carries a real `offsetXCm`/`offsetYCm`, so every non-`inline` wrap mode
  * positions absolutely at that offset from its anchor (see the anchor
  * span's own `position: relative`, DocShapeBlock.vue) — `"square"`/
- * `"topAndBottom"` do not reflow surrounding text around the box (the
- * "honest, predictable" simplification SPEC-024's own "square" float
- * already makes for a left-edge case; a shape's offset can be anywhere on
- * the page, where a CSS float cannot follow it). `"behind"` paints under
- * the text layer, the other three float above it. `"inline"` ignores the
- * offset entirely, per "Default position — when offsets are absent". */
+ * `"topAndBottom"` reserve their text room via drawingWrapSpacerStyle's
+ * in-flow float (the drawing element itself stays an absolute overlay).
+ * `"behind"` paints under the text layer, the other three float above it.
+ * `"inline"` ignores the offset entirely, per "Default position — when
+ * offsets are absent". */
 export function shapeDisplayStyle(shape: Shape): Record<string, string> {
   const heightCm = Math.max(shape.heightCm, 0.05);
   const style: Record<string, string> = {

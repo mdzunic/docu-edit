@@ -175,13 +175,18 @@ called by `usePaginationView` on each realized page's assembled entries:
   scope note above).
 
 The floating anchor element (`.doc-shape-anchor-floating`, and the chart
-equivalent) becomes `position: absolute` with no offsets: its static
-position is the anchor paragraph's flow slot, and it contributes no line
-box, no height and no margin interaction — so `left: offsetXCm / top:
-offsetYCm` on the drawing measure from the anchor paragraph's top-left, the
-same origin every command measures. This closes the SPEC-051 e2e's
-documented "lands ~14px below" insertion bug, and that test's weakened
-assertion is strengthened to pin x *and* y.
+equivalent) becomes a zero-height in-flow **block** (`display: block;
+height: 0; position: relative`): hoisted before its anchor paragraph it
+contributes no line box and no height, so its top-left is the anchor
+paragraph's own top-left and `left: offsetXCm / top: offsetYCm` on the
+drawing measure from the same origin every command measures. A block — not
+an inline-block (whose line box added the baseline's worth of drift) and
+not `position: absolute` — because the wrap-spacer float the anchor hosts
+for `square`/`topAndBottom` text exclusion must escape into the page's text
+flow, and a block box is itself immune to floats, so the origin stays
+pinned. This closes the SPEC-051 e2e's documented "lands ~14px below"
+insertion bug, and that test's weakened assertion is strengthened to pin x
+*and* y.
 
 ### Wire formats — anchoring by containment
 The native encodings both express "anchored to paragraph P" by *containment*,

@@ -200,6 +200,9 @@ export function useCharts(deps: ChartsDeps) {
 
   function handleChartWrap(wrap: string) {
     applyChartMutate((model, selection, location) => setChartWrap(model, selection, location, wrap as ImageWrapMode), "set chart wrap");
+    // A wrap change moves the chart between text flow and an absolute
+    // offset; the selection handles must re-find it (same as useShapes).
+    void nextTick().then(remeasureChartHandles);
   }
 
   function handleChartAltText(altText: string) {

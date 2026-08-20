@@ -1106,8 +1106,9 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         contentStyle: {
           padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
         },
-        // Floating drawings render just before their anchor paragraph
-        // (SPEC-078) so their offset origin is the anchor's own top-left.
+        // Floating drawings render just before their anchor paragraph —
+        // the paragraph-top reference their offsets are measured from
+        // (SPEC-078, hoistFloatingDrawingEntries).
         entries: hoistFloatingDrawingEntries(entries, model),
         columns: page.columns,
         virtual: false,

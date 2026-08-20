@@ -753,6 +753,9 @@ export function useShapes(deps: ShapesDeps) {
       return;
     }
     applyShapeEdit((model, selection) => setShapeWrap(model, selection, location, asImageWrapMode(wrap)), "shape wrap");
+    // A wrap change moves the shape more than any other edit — between text
+    // flow and an absolute offset — so the handles/toolbar must re-find it.
+    void nextTick().then(remeasureShapeHandles);
   }
 
   function handleShapeAltText(altText: string) {

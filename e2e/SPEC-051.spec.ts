@@ -735,6 +735,118 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     await expect(proxy).toHaveAttribute("role", "group");
   });
 
+  test("In line with text keeps the painted canvas, the handles and undo in step (regression)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rightArrow", 400, 250);
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    const proxy = drawingAt(page, 0);
+    const canvas = proxy.locator("xpath=preceding-sibling::canvas[1]");
+
+    // Switching a floating shape into the text flow used to break twice
+    // over: .doc-shape lost its positioned ancestor in inline mode, so the
+    // absolutely positioned canvas resolved against the page and painted the
+    // geometry at the page's top-left corner — while the proxy (and the
+    // selection handles measured from it) sat correctly in the line; and the
+    // wrap change never re-measured the handles at all, leaving them at the
+    // shape's old floating position.
+    await page.getByTestId("shape-wrap").selectOption("inline");
+    await expect(page.getByTestId("shape-wrap")).toHaveValue("inline");
+
+    const proxyBox = (await proxy.boundingBox())!;
+    const canvasBox = (await canvas.boundingBox())!;
+    expect(Math.abs(canvasBox.x - proxyBox.x)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(canvasBox.y - proxyBox.y)).toBeLessThanOrEqual(1.5);
+    const se = (await page.getByTestId("shape-resize-se").boundingBox())!;
+    expect(Math.abs(se.x + se.width / 2 - (proxyBox.x + proxyBox.width))).toBeLessThanOrEqual(6);
+    expect(Math.abs(se.y + se.height / 2 - (proxyBox.y + proxyBox.height))).toBeLessThanOrEqual(6);
+
+    // Undo moves the shape back to its floating spot — the handles and the
+    // canvas must follow there too (the history-restore path used to skip
+    // the re-measure, stranding the handles at the inline position).
+    await page.getByTestId("undo-button").click();
+    await expect(page.getByTestId("shape-wrap")).toHaveValue("square");
+    const proxyAfter = (await proxy.boundingBox())!;
+    const canvasAfter = (await canvas.boundingBox())!;
+    expect(Math.abs(canvasAfter.x - proxyAfter.x)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(canvasAfter.y - proxyAfter.y)).toBeLessThanOrEqual(1.5);
+    const seAfter = (await page.getByTestId("shape-resize-se").boundingBox())!;
+    expect(Math.abs(seAfter.x + seAfter.width / 2 - (proxyAfter.x + proxyAfter.width))).toBeLessThanOrEqual(6);
+    expect(Math.abs(seAfter.y + seAfter.height / 2 - (proxyAfter.y + proxyAfter.height))).toBeLessThanOrEqual(6);
+  });
+
+  test("square and topAndBottom wrap actually keep text clear of the shape; infront overlaps (regression)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type(
+      "The quick brown fox jumps over the lazy dog while the calm river flows past the old stone bridge. " +
+        "Every morning the village bakery fills the narrow street with the warm smell of fresh bread and coffee. " +
+        "Children hurry along the cobblestones on their way to school, greeting the shopkeepers who sweep their doorsteps. " +
+        "Travellers who pass through often stop to rest under the plane trees and watch the light change on the hills.",
+    );
+    // Draw the shape ONTO the paragraph. The caret sits at the text's end,
+    // in the same paragraph, so the drawn offsets and the rendered anchor
+    // must agree — the shape lands at the pointer (this used to be
+    // displaced by the anchor paragraph's height: offsets were measured
+    // from the paragraph's top but rendered from the line after it).
+    const paraBox = (await content(page).locator(".doc-paragraph").first().boundingBox())!;
+    const drawX = paraBox.x + 150;
+    const drawY = paraBox.y + 30;
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-rect").click();
+    await page.mouse.click(drawX, drawY);
+    const proxy = drawingAt(page, 0);
+    const box = (await proxy.boundingBox())!;
+    // A single click places the default-size box with its top-left corner at
+    // the pointer (drawGestureBox's click behaviour).
+    expect(Math.abs(box.x - drawX)).toBeLessThanOrEqual(8);
+    expect(Math.abs(box.y - drawY)).toBeLessThanOrEqual(8);
+
+    /** The paragraph's line boxes that intersect the shape's own box. */
+    async function overlappingLines(): Promise<number> {
+      const shapeBox = (await drawingAt(page, 0).boundingBox())!;
+      return page.evaluate((sb) => {
+        const para = document.querySelector('[data-testid="document-content"] .doc-paragraph');
+        if (!para) {
+          return -1;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(para);
+        let count = 0;
+        for (const rect of range.getClientRects()) {
+          if (rect.width < 2 || rect.height < 2) {
+            continue;
+          }
+          const vertical = rect.bottom > sb.y + 2 && rect.top < sb.y + sb.height - 2;
+          const horizontal = rect.right > sb.x + 2 && rect.left < sb.x + sb.width - 2;
+          if (vertical && horizontal) {
+            count += 1;
+          }
+        }
+        return count;
+      }, shapeBox);
+    }
+
+    // Square (the drawn default): the wrap spacer exists and no line box
+    // runs under the shape.
+    await expect(page.getByTestId("shape-wrap-spacer")).toHaveCount(1);
+    expect(await overlappingLines()).toBe(0);
+
+    // Top and bottom: the full band is clear too.
+    await page.getByTestId("shape-wrap").selectOption("topAndBottom");
+    await expect(page.getByTestId("shape-wrap")).toHaveValue("topAndBottom");
+    expect(await overlappingLines()).toBe(0);
+
+    // In front of text: no spacer, text overlaps by design — proving the
+    // wrap modes actually render differently from one another.
+    await page.getByTestId("shape-wrap").selectOption("infront");
+    await expect(page.getByTestId("shape-wrap-spacer")).toHaveCount(0);
+    expect(await overlappingLines()).toBeGreaterThan(0);
+  });
+
   test("removing a Line's outline stops it painting (AC-15)", async ({ page }) => {
     await createDocument(page);
     await content(page).click({ position: { x: 20, y: 20 } });

@@ -163,14 +163,26 @@ export function asPageColumns(value: unknown): PageColumns | null {
 
 /** Reorders one page's entries so every floating Shape/Chart entry renders
  * immediately before its anchor paragraph's first entry on the page
- * (SPEC-078). The floating anchor element takes no space in flow
- * (DocShapeBlock/DocChartBlock's `-floating` class), so rendering it just
- * before the anchor paragraph puts its static position at that paragraph's
- * top-left — the exact origin `offsetXCm`/`offsetYCm` are measured from by
- * every command. The drawing adopts its anchor's column (SPEC-030), with
- * the adopted value appended to `memo` so v-memo sees the change; drawings
- * sharing an anchor keep their relative block order. A drawing whose anchor
- * has no entry on this page (pagination split them, or nothing resolves)
+ * (SPEC-078). The model stores every floating offset measured from the
+ * anchor paragraph's TOP — the reference finishShapeDraw computes against,
+ * reanchorShape re-expresses against, and Word's own
+ * `relativeFrom="paragraph"` means — and the floating anchor element takes
+ * no space in flow (DocShapeBlock/DocChartBlock's `-floating` class), so
+ * rendering it just before the anchor paragraph puts its origin exactly
+ * there. Hoisting also puts the drawing's wrap spacer ahead of the anchor
+ * paragraph's own line boxes, which is what lets square/topAndBottom
+ * exclusion clear THAT paragraph's text and not just the text that follows
+ * it.
+ *
+ * The anchor comes from SPEC-078's shared resolver (explicit anchorOrdinal
+ * first, adjacency fallback), so every drawing that resolves hoists — a
+ * whole run of drawings sharing one anchor keeps its relative block order,
+ * unlike the one-adjacent-swap this replaces, which stranded the second of
+ * two same-anchor drawings. The drawing adopts its anchor's column
+ * (SPEC-030), with the adopted value appended to `memo` so v-memo sees the
+ * change; a split paragraph hoists before its earliest on-page slice, the
+ * closest rendered stand-in for the paragraph's top. A drawing whose anchor
+ * has no entry on this page (a page-boundary split, or nothing resolves)
  * keeps its own flow slot — SPEC-078's out-of-scope note. Pure: returns a
  * new array when anything moved, the input array otherwise. */
 export function hoistFloatingDrawingEntries(entries: RenderEntry[], model: DocumentModel): RenderEntry[] {

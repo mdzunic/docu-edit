@@ -184,3 +184,72 @@ describe("hoistFloatingDrawingEntries", () => {
     expect(hoistFloatingDrawingEntries(entries, m)).toBe(entries);
   });
 });
+
+// Main's original hoist suite (ed41260) ported to the SPEC-078 resolver
+// signature. Two of its pinned outcomes changed with the explicit pairing —
+// each notes the old expectation it supersedes.
+describe("hoistFloatingDrawingEntries — ported adjacency-era cases", () => {
+  it("moves a floating shape (and a chart) before its anchor paragraph", () => {
+    const p0: Paragraph = { type: "paragraph", runs: [] };
+    const d1 = floating();
+    const p2: Paragraph = { type: "paragraph", runs: [] };
+    const chart = { type: "chart", chartType: "columnClustered", categories: [], series: [], options: {}, widthCm: 12, heightCm: 7.5, wrap: "square" } as unknown as Block;
+    const m = model(p0, d1, p2, chart);
+    const chartEntry: RenderEntry = { key: "c:3", memo: [], kind: "chart", sectionProp: 0, blockIndexProp: 3, blockProp: chart };
+    const out = hoistFloatingDrawingEntries([paragraphEntry(0), shapeEntry(1, d1), paragraphEntry(2), chartEntry], m);
+    expect(out.map((e) => e.key)).toEqual(["s:1", "p:0", "c:3", "p:2"]);
+  });
+
+  it("a stacked follower with NO explicit pairing hoists too — the fallback walks over its sibling (SPEC-078; the adjacency-only hoist stranded it after the paragraph)", () => {
+    const p0: Paragraph = { type: "paragraph", runs: [] };
+    const d1 = floating();
+    const d2 = floating();
+    const m = model(p0, d1, d2);
+    const out = hoistFloatingDrawingEntries([paragraphEntry(0), shapeEntry(1, d1), shapeEntry(2, d2)], m);
+    expect(out.map((e) => e.key)).toEqual(["s:1", "s:2", "p:0"]);
+  });
+
+  it("leaves a lands-before drawing (paired with the FOLLOWING paragraph) at its anchor's top", () => {
+    const p0: Paragraph = { type: "paragraph", runs: [] };
+    const p1: Paragraph = { type: "paragraph", runs: [] };
+    const d2 = floating(1);
+    const p3: Paragraph = { type: "paragraph", runs: [], anchorOrdinal: 1 };
+    const m = model(p0, p1, d2, p3);
+    const entries = [paragraphEntry(0), shapeEntry(2, d2), paragraphEntry(3)];
+    expect(hoistFloatingDrawingEntries(entries, m)).toBe(entries);
+  });
+
+  it("leaves a drawing whose anchor paragraph's entry is missing from the page (a page-boundary split)", () => {
+    const p0: Paragraph = { type: "paragraph", runs: [] };
+    const d1 = floating();
+    const p2: Paragraph = { type: "paragraph", runs: [] };
+    const m = model(p0, d1, p2);
+    const entries = [shapeEntry(1, d1), paragraphEntry(2)];
+    expect(hoistFloatingDrawingEntries(entries, m)).toBe(entries);
+  });
+
+  it("a drawing separated from its resolved anchor by off-page paragraphs stays put", () => {
+    const blocks: Block[] = [
+      { type: "paragraph", runs: [] },
+      { type: "paragraph", runs: [] },
+      { type: "paragraph", runs: [] },
+      { type: "paragraph", runs: [] },
+      { type: "paragraph", runs: [] },
+      floating(),
+    ];
+    const m = model(...blocks);
+    // Fallback resolves block 5's anchor to block 4, which has no entry
+    // here — only block 0 does.
+    const entries = [paragraphEntry(0), shapeEntry(5, blocks[5] as Shape)];
+    expect(hoistFloatingDrawingEntries(entries, m)).toBe(entries);
+  });
+
+  it("hoists across a column boundary by adopting the anchor's column (SPEC-078; the adjacency-only hoist refused cross-column moves)", () => {
+    const p0: Paragraph = { type: "paragraph", runs: [] };
+    const d1 = floating();
+    const m = model(p0, d1);
+    const out = hoistFloatingDrawingEntries([paragraphEntry(0, 0), shapeEntry(1, d1, 1)], m);
+    expect(out.map((e) => e.key)).toEqual(["s:1", "p:0"]);
+    expect(out[0].column).toBe(0);
+  });
+});

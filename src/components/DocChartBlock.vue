@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUpdated, useTemplateRef, watch } from "vue";
+import { onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asChart } from "../lib/documentModel";
-import { chartDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { chartDisplayStyle, drawingWrapSpacerStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintChart } from "../lib/core/chartCanvas";
-import { cmToPx } from "../lib/core/units";
+import { cmToPx, pxToCm } from "../lib/core/units";
 import { resolveThemeColor, useTheme } from "../composables/useTheme";
 
 // One chart block on the page (SPEC-052). Runtime prop declarations, not
@@ -74,15 +74,47 @@ watch(() => props.block, repaint, { deep: true });
 watch(resolvedTheme, repaint);
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
+
+// The text-column width the wrap spacer needs — same measured-in-component
+// pattern as DocShapeBlock.vue.
+const anchorEl = useTemplateRef("anchorEl");
+const columnWidthCm = ref(0);
+
+function measureColumnWidth() {
+  const parent = anchorEl.value instanceof HTMLElement ? anchorEl.value.parentElement : null;
+  const cm = parent ? pxToCm(parent.clientWidth) : 0;
+  if (Math.abs(cm - columnWidthCm.value) > 0.01) {
+    columnWidthCm.value = cm;
+  }
+}
+
+onMounted(measureColumnWidth);
+onUpdated(measureColumnWidth);
+
+/** The in-flow float that reserves this chart's text room (square /
+ * topAndBottom) — null for every other wrap mode. */
+function wrapSpacerStyle() {
+  return drawingWrapSpacerStyle(asChart(props.block), columnWidthCm.value);
+}
 </script>
 
 <template>
   <span
+    ref="anchorEl"
     class="doc-chart-anchor"
     :class="{ 'doc-chart-anchor-floating': floatingWrap.includes(block.wrap) }"
     :data-section="section"
     :data-block="blockIndex"
   >
+    <!-- The wrap spacer — see DocShapeBlock.vue: the float the surrounding
+         text yields to, making square/topAndBottom real. -->
+    <span
+      v-if="wrapSpacerStyle() && !trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
+      class="doc-chart-wrap-spacer"
+      data-testid="chart-wrap-spacer"
+      aria-hidden="true"
+      :style="wrapSpacerStyle()"
+    />
     <span
       v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
       class="doc-chart"
@@ -113,18 +145,30 @@ const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
   line-height: 0;
 }
 
-/* Zero-footprint floating anchor (SPEC-078) — see DocShapeBlock.vue's
-   .doc-shape-anchor-floating for the full rationale; the chart anchor is
-   its exact twin. */
+/* A zero-height in-flow block (SPEC-078's zero-footprint floating anchor):
+   hoistFloatingDrawingEntries renders it immediately before its anchor
+   paragraph, so its top-left IS the paragraph's top-left — the origin the
+   chart's offsets are measured from. A block (not inline-block, not
+   position:absolute) for two reasons: the wrap spacer's float must escape
+   into the page's text flow, and a block box is immune to floats, so the
+   anchor stays pinned even when its own spacer would have pushed an inline
+   anchor sideways (see DocShapeBlock.vue's identical rule). */
 .doc-chart-anchor-floating {
-  position: absolute;
   display: block;
-  width: 0;
   height: 0;
+  position: relative;
+}
+
+.doc-chart-wrap-spacer {
+  pointer-events: none;
 }
 
 .doc-chart {
   display: block;
+  /* The canvas below is position:absolute; this box must contain it in every
+     wrap mode — same fix as DocShapeBlock: an in-line-with-text chart's
+     canvas otherwise escapes to the page's top-left corner. */
+  position: relative;
   cursor: pointer;
 }
 

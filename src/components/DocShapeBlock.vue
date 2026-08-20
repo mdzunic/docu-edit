@@ -2,13 +2,13 @@
 import { nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asShape } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
-import { shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { drawingWrapSpacerStyle, shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintShapeIntoCanvas } from "../lib/core/shapeCanvas";
 import { shapeClipPath } from "../lib/core/shapeGeometry";
 import { shapeHasVisibleText } from "../lib/shapes";
 import { shapeTextRenderEntries } from "../lib/pageRender";
-import { cmToPx } from "../lib/core/units";
+import { cmToPx, pxToCm } from "../lib/core/units";
 import DocBlockEntries from "./DocBlockEntries.vue";
 
 // One shape/text-box block on the page (SPEC-051). Runtime prop
@@ -86,6 +86,30 @@ watch(
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 
+// The text-column width the wrap spacer needs (drawingWrapSpacerStyle):
+// measured off the anchor's own block container, so a shape inside a
+// SPEC-030 column wraps within that column — the same measure-in-component
+// pattern as measureOverflow above.
+const anchorEl = useTemplateRef("anchorEl");
+const columnWidthCm = ref(0);
+
+function measureColumnWidth() {
+  const parent = anchorEl.value instanceof HTMLElement ? anchorEl.value.parentElement : null;
+  const cm = parent ? pxToCm(parent.clientWidth) : 0;
+  if (Math.abs(cm - columnWidthCm.value) > 0.01) {
+    columnWidthCm.value = cm;
+  }
+}
+
+onMounted(measureColumnWidth);
+onUpdated(measureColumnWidth);
+
+/** The in-flow float that reserves this shape's text room (square /
+ * topAndBottom) — null for every other wrap mode. */
+function wrapSpacerStyle() {
+  return drawingWrapSpacerStyle(asShape(props.block), columnWidthCm.value);
+}
+
 /** Restricts the proxy's own hit-testing to the shape's painted region
  * ("Selection and hit testing", AC-11) so a click never selects by bounding
  * box: a filled shape clips to its geometry (a click outside the clip falls
@@ -136,11 +160,23 @@ function shapeTextEntries() {
 
 <template>
   <span
+    ref="anchorEl"
     class="doc-shape-anchor"
     :class="{ 'doc-shape-anchor-floating': floatingWrap.includes(block.wrap) }"
     :data-section="section"
     :data-block="blockIndex"
   >
+    <!-- The wrap spacer: an invisible float in the TEXT flow that the
+         surrounding lines yield to (square / topAndBottom). The shape span
+         below stays an absolute overlay; this is what makes its wrap mode
+         real rather than decorative. -->
+    <span
+      v-if="wrapSpacerStyle() && !trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
+      class="doc-shape-wrap-spacer"
+      data-testid="shape-wrap-spacer"
+      aria-hidden="true"
+      :style="wrapSpacerStyle()"
+    />
     <span
       v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
       class="doc-shape"
@@ -201,25 +237,40 @@ function shapeTextEntries() {
   line-height: 0;
 }
 
-/* A floating shape's anchor takes NO space in flow (SPEC-078): absolutely
-   positioned with no offsets, so its static position is exactly where the
-   next in-flow block — its anchor paragraph, which
-   hoistFloatingDrawingEntries renders it immediately before — begins. That
-   makes the .doc-shape child's `left`/`top` (offsetXCm/offsetYCm) measure
-   from the anchor paragraph's own top-left, the same origin every command
-   measures, with no line box or margin interaction in between (the old
-   inline-block anchor added a baseline's worth of drift — the SPEC-051
-   "lands ~14px below" bug). Being positioned, it still contains the
-   absolute .doc-shape. */
+/* SPEC-078's zero-footprint floating anchor: hoistFloatingDrawingEntries
+   renders it immediately before its anchor paragraph, so this box's
+   top-left IS the paragraph's top-left — the origin the .doc-shape child's
+   `left`/`top` (offsetXCm/offsetYCm) measure from, the same origin every
+   command measures (the old inline-block anchor added a baseline's worth
+   of drift — the SPEC-051 "lands ~14px below" bug).
+
+   A zero-height BLOCK, not an inline-block and not position:absolute, for
+   two reasons. An inline-block is its own block formatting context, which
+   would trap the wrap spacer's float inside a zero-size box where no text
+   could yield to it — a block lets the float escape into the page's own
+   text flow. And a block box is immune to floats (only line boxes yield to
+   them), so the anchor's top-left stays pinned at the paragraph's top-left
+   even when its own spacer float would have pushed an inline anchor
+   sideways. */
 .doc-shape-anchor-floating {
-  position: absolute;
   display: block;
-  width: 0;
   height: 0;
+  position: relative;
+}
+
+.doc-shape-wrap-spacer {
+  pointer-events: none;
 }
 
 .doc-shape {
   display: block;
+  /* The containing block for the absolutely positioned canvas below in EVERY
+     wrap mode. Floating wraps override this with an inline position:absolute
+     (shapeDisplayStyle) — same containment; but an inline-with-text shape
+     used to leave this box static, so the canvas escaped to the nearest
+     positioned ancestor and painted the geometry at the page's top-left
+     corner, nowhere near the proxy the handles are drawn from. */
+  position: relative;
   cursor: pointer;
 }
 
