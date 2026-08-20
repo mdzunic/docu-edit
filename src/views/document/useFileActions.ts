@@ -7,9 +7,10 @@
 // version-history commit point (SPEC-040 AC-2), then reports content the
 // save could not preserve (SPEC-008, widened by SPEC-052).
 import { computed, ref, triggerRef } from "vue";
-import { useRouter } from "vue-router";
+import { onBeforeRouteLeave, useRouter } from "vue-router";
+import { STORAGE_FULL_REASON } from "../../composables/useAutosave";
 import { DEFAULT_TITLE } from "../../lib/documentModel";
-import { deleteDocument, touchDocument } from "../../lib/documentStore";
+import { deleteDocument, isStorageAvailable, touchDocument } from "../../lib/documentStore";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../../lib/docx/writer";
 import { MD_MIME_TYPE, mdFileName, writeMd } from "../../lib/md/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../../lib/odf/writer";
@@ -27,6 +28,11 @@ export interface FileActionsDeps extends EditorContext {
   /** useVersionHistory's noteCommitPoint — the download is SPEC-040 AC-2's
    * other commit-point version-history trigger. */
   noteVersionHistoryCommitPoint: () => void;
+  /** useAutosave's flushForClose — closing a document is a commit boundary
+   * (SPEC-060): cancel the pending autosave debounce, await its write, and
+   * only navigate when it resolves. Returns false on a write failure so the
+   * close stays put. */
+  flushForClose: () => Promise<boolean>;
 }
 
 export function useFileActions(deps: FileActionsDeps) {
@@ -147,6 +153,88 @@ export function useFileActions(deps: FileActionsDeps) {
     addToast(`Saved template "${record.title}"`);
   }
 
+  // Closing the document (SPEC-060). Every exit from the editor — the app-bar
+  // Close control, File → Close, the product-name home link and the browser
+  // Back button — is the same commit boundary, and it runs through ONE flush
+  // implementation: flushAndDecide. The control and the menu command call it
+  // then navigate; the route guard calls it for the exits that navigate on
+  // their own (Back, the home link), so the deliberate exit and the accidental
+  // one are equally safe.
+  const closing = ref(false);
+  const storageWarningOpen = ref(false);
+  // Set just before a navigation that has already been decided: the Close
+  // control (which flushed before pushing), deletion (record already removed)
+  // and "Close anyway" (loss deliberately accepted) all skip the guard's flush.
+  let bypassCloseGuard = false;
+
+  /** The single flush gate: cancels the pending autosave debounce, awaits its
+   * committed write and reports whether it is safe to leave. Storage being
+   * unavailable is the one case that cannot flush — it raises the confirmation
+   * dialog and refuses instead (AC-16/17). A write failure keeps the document
+   * open with an error toast and the save indicator's download escape hatch
+   * (AC-12..15). While in flight the Close control is busy (AC-9). */
+  async function flushAndDecide(): Promise<boolean> {
+    if (!doc.value) {
+      return true;
+    }
+    if (!isStorageAvailable()) {
+      storageWarningOpen.value = true;
+      return false;
+    }
+    closing.value = true;
+    try {
+      const flushed = await deps.flushForClose();
+      if (!flushed) {
+        addToast(
+          `Couldn't close "${doc.value.title}" — ${STORAGE_FULL_REASON}. ` +
+            "Your document is still open; retry, or download a copy.",
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      closing.value = false;
+    }
+  }
+
+  // The route guard: navigations that leave /doc/:id on their own — browser
+  // Back and the product-name home link — take the same flush path. Returning
+  // false cancels the navigation. Navigations already decided upstream (the
+  // Close control, deletion, "Close anyway") set the bypass and skip it.
+  onBeforeRouteLeave(() => {
+    if (bypassCloseGuard) {
+      bypassCloseGuard = false;
+      return true;
+    }
+    return flushAndDecide();
+  });
+
+  /** The Close control and File → Close: flush first, and only on success
+   * return to the library — carrying the closed id in router state (not the
+   * URL, where a document id would be a needless privacy leak) so the library
+   * can scroll to and highlight the row. */
+  async function closeOpenDocument(): Promise<void> {
+    if (!doc.value || closing.value) {
+      return;
+    }
+    const id = doc.value.id;
+    if (!(await flushAndDecide())) {
+      return;
+    }
+    // Already flushed; the guard need not repeat it for this navigation.
+    bypassCloseGuard = true;
+    router.push({ path: "/", state: { closedDocId: id } });
+  }
+
+  /** The storage-unavailable dialog's "Close anyway": leave despite the loss,
+   * skipping the flush that cannot succeed. */
+  function confirmCloseAnyway() {
+    const id = doc.value?.id;
+    storageWarningOpen.value = false;
+    bypassCloseGuard = true;
+    router.push(id ? { path: "/", state: { closedDocId: id } } : "/");
+  }
+
   function deleteOpenDocument() {
     if (!doc.value) {
       return;
@@ -155,10 +243,16 @@ export function useFileActions(deps: FileActionsDeps) {
     confirmingDelete.value = false;
     deleteDocument(id);
     addToast(`Deleted ${title}`);
+    // Deletion already removed the record; its navigation skips the flush.
+    bypassCloseGuard = true;
     router.push("/");
   }
 
   return {
+    closing,
+    storageWarningOpen,
+    closeOpenDocument,
+    confirmCloseAnyway,
     formatBadge,
     downloadFormat,
     conversionReport,
