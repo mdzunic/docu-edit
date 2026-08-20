@@ -85,16 +85,17 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
 </script>
 
 <template>
-  <div
-    class="menu-submenu"
-    data-menu-keep-open
-  >
+  <div class="menu-submenu">
+    <!-- Only the trigger keeps the bar open (opening the flyout must not close
+         it); a click on a choice inside the flyout is a real command and closes
+         the whole bar, exactly like any other menu command. -->
     <button
       ref="trigger"
       type="button"
       role="menuitem"
       class="menu-item menu-submenu-trigger"
       :data-testid="testid || undefined"
+      data-menu-keep-open
       aria-haspopup="menu"
       :aria-expanded="open ? 'true' : 'false'"
       tabindex="-1"
@@ -122,6 +123,7 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
       :data-testid="testid ? `${testid}-flyout` : undefined"
       @dismiss="closeMenu(false)"
       @keydown="onFlyoutKeydown"
+      @click="open = false"
     >
       <slot />
     </UiMenuSurface>

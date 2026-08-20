@@ -1,4 +1,4 @@
-import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
+import { computed, ref, type ComputedRef, type Ref } from "vue";
 import {
   loadDimPage,
   loadThemePreference,
@@ -63,8 +63,13 @@ function install(): void {
   }
   installed = true;
 
-  // matchMedia is present in every browser the app targets; guard only so the
-  // unit-test environment (which omits it) still installs the watchers below.
+  // The OS-appearance listener is a raw DOM listener, not a Vue effect, so it
+  // is NOT tied to whichever component first called useTheme — the singleton
+  // outlives every view. (The persistence + data-theme application run in the
+  // setters below for the same reason: a watch created here would be disposed
+  // when its owning component unmounts, e.g. the library on navigation.)
+  // matchMedia is guarded only so the unit-test environment (which omits it)
+  // still installs cleanly.
   if (typeof window.matchMedia === "function") {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     systemDark.value = mq.matches;
@@ -73,38 +78,34 @@ function install(): void {
     });
   }
 
-  watch(theme, () => {
-    saveThemePreference(theme.value);
-    applyDataTheme();
-  });
-  watch(dimPage, () => {
-    saveDimPage(dimPage.value);
-    applyDimPage();
-  });
-
   applyDataTheme();
   applyDimPage();
 }
 
 /** The shared theme state and setters. Calling it installs the singleton on
- * first use, so any top-level view that mounts it keeps the OS listener and
- * the persistence watchers alive (AC-52/53). */
+ * first use, so any top-level view that mounts it keeps the OS listener alive
+ * and is themed by the same tokens (AC-52/53). The setters own persistence and
+ * DOM application directly (not through a component-scoped watch) so the Vue
+ * app remains the single owner of every theme change (AC-60). */
+function setTheme(next: ThemePreference): void {
+  theme.value = next;
+  saveThemePreference(next);
+  applyDataTheme();
+}
+
+function setDimPage(on: boolean): void {
+  dimPage.value = on;
+  saveDimPage(on);
+  applyDimPage();
+}
+
+function toggleDimPage(): void {
+  setDimPage(!dimPage.value);
+}
+
 export function useTheme() {
   install();
-  return {
-    theme,
-    resolvedTheme,
-    dimPage,
-    setTheme(next: ThemePreference) {
-      theme.value = next;
-    },
-    setDimPage(on: boolean) {
-      dimPage.value = on;
-    },
-    toggleDimPage() {
-      dimPage.value = !dimPage.value;
-    },
-  };
+  return { theme, resolvedTheme, dimPage, setTheme, setDimPage, toggleDimPage };
 }
 
 /** Resolves a design token to its computed value on the current theme, for
