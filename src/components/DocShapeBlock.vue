@@ -240,7 +240,7 @@ function shapeTextEntries() {
   content: "";
   position: absolute;
   inset: -3px;
-  border: 2px solid #1a73e8;
+  border: 2px solid var(--accent);
   transform: rotate(var(--shape-rotation, 0deg));
   pointer-events: none;
 }
@@ -293,8 +293,8 @@ function shapeTextEntries() {
   position: absolute;
   right: 2px;
   bottom: 0;
-  background: #d93025;
-  color: #fff;
+  background: var(--danger);
+  color: var(--text-on-brand);
   font-size: 10px;
   line-height: 1;
   padding: 1px 3px;

@@ -13,9 +13,34 @@ import {
   type ChartVisual,
 } from "./charts";
 
-const AXIS_COLOR = "#444444";
-const GRIDLINE_COLOR = "#dddddd";
-const TEXT_COLOR = "#222222";
+/** The chart's chrome colours — axis lines, gridlines and tick/label text.
+ * These are NOT document data (series colours are, SPEC-052); they are the
+ * frame the chart is drawn in. The view resolves them from theme tokens and
+ * passes them to paintChart (SPEC-059 AC-27/66/67); core keeps only
+ * product-neutral defaults and no theme awareness of its own (AC-68). */
+export interface ChartChrome {
+  axis: string;
+  gridline: string;
+  text: string;
+}
+
+/** The default chrome — the values in use before SPEC-059, kept so callers
+ * that pass nothing (the PDF/print extractor's light output) render exactly
+ * as before. */
+export const DEFAULT_CHART_CHROME: ChartChrome = {
+  axis: "#444444",
+  gridline: "#dddddd",
+  text: "#222222",
+};
+
+// The active chrome for the current paint. paintChart resets these from its
+// `chrome` argument on every call, so painting stays deterministic and the
+// helpers below need no signature churn. Safe because a chart is painted
+// synchronously, one at a time, on the main thread.
+let axisColor = DEFAULT_CHART_CHROME.axis;
+let gridlineColor = DEFAULT_CHART_CHROME.gridline;
+let textColor = DEFAULT_CHART_CHROME.text;
+
 const LABEL_FONT = "10px sans-serif";
 const TITLE_FONT = "bold 13px sans-serif";
 const AXIS_TITLE_FONT = "11px sans-serif";
@@ -121,7 +146,7 @@ function paintLegend(
     for (const s of series) {
       ctx.fillStyle = s.color;
       ctx.fillRect(x, y, swatch, swatch);
-      ctx.fillStyle = TEXT_COLOR;
+      ctx.fillStyle = textColor;
       ctx.fillText(s.name, x + swatch + gap, y + swatch);
       y += 16;
     }
@@ -137,7 +162,7 @@ function paintLegend(
     for (const s of series) {
       ctx.fillStyle = s.color;
       ctx.fillRect(x, y - swatch, swatch, swatch);
-      ctx.fillStyle = TEXT_COLOR;
+      ctx.fillStyle = textColor;
       ctx.fillText(s.name, x + swatch + gap, y);
       x += ctx.measureText(s.name).width + swatch + gap * 3;
     }
@@ -219,7 +244,7 @@ function paintAxes(
   max: number,
 ): void {
   const { plotX, plotY, plotW, plotH } = layout;
-  ctx.strokeStyle = AXIS_COLOR;
+  ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(plotX, plotY);
@@ -236,7 +261,7 @@ function paintAxes(
   }
 
   if (chart.options.gridlines) {
-    ctx.strokeStyle = GRIDLINE_COLOR;
+    ctx.strokeStyle = gridlineColor;
     const steps = 4;
     for (let i = 1; i <= steps; i++) {
       const y = plotY + (plotH / steps) * i;
@@ -247,7 +272,7 @@ function paintAxes(
     }
   }
 
-  ctx.fillStyle = TEXT_COLOR;
+  ctx.fillStyle = textColor;
   ctx.font = LABEL_FONT;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -291,7 +316,7 @@ function truncateLabel(text: string, max: number): string {
 }
 
 function paintDataLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number): void {
-  ctx.fillStyle = TEXT_COLOR;
+  ctx.fillStyle = textColor;
   ctx.font = LABEL_FONT;
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
@@ -352,7 +377,7 @@ function paintBarLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series:
           ctx.save();
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
-          ctx.fillStyle = TEXT_COLOR;
+          ctx.fillStyle = textColor;
           ctx.font = LABEL_FONT;
           ctx.fillText(formatAxisNumber(v), startX + w + 2, barY + barSlice / 2);
           ctx.restore();
@@ -536,7 +561,19 @@ function paintPieLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series:
  * (`unsupportedChartXml` set) paints as a dashed placeholder rectangle at
  * the chart's true bounds instead, exactly like an unsupported shape
  * geometry. */
-export function paintChart(ctx: CanvasRenderingContext2D, chart: ChartVisual, widthPx: number, heightPx: number): void {
+export function paintChart(
+  ctx: CanvasRenderingContext2D,
+  chart: ChartVisual,
+  widthPx: number,
+  heightPx: number,
+  chrome: ChartChrome = DEFAULT_CHART_CHROME,
+): void {
+  // Reset the active chrome for this paint from the caller's values, each
+  // falling back to the product-neutral default if the caller passed an empty
+  // string (an unknown token, resolveThemeColor's "" result — AC-62).
+  axisColor = chrome.axis || DEFAULT_CHART_CHROME.axis;
+  gridlineColor = chrome.gridline || DEFAULT_CHART_CHROME.gridline;
+  textColor = chrome.text || DEFAULT_CHART_CHROME.text;
   ctx.save();
   ctx.clearRect(0, 0, widthPx, heightPx);
 
@@ -561,7 +598,7 @@ export function paintChart(ctx: CanvasRenderingContext2D, chart: ChartVisual, wi
   // paintLegend's own "top" branch, which takes this same titleH.
   let titleH = 0;
   if (chart.options.title) {
-    ctx.fillStyle = TEXT_COLOR;
+    ctx.fillStyle = textColor;
     ctx.font = TITLE_FONT;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";

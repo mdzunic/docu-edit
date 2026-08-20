@@ -464,8 +464,8 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   position: relative;
   height: 1.5rem;
   margin: 0 auto 0.25rem;
-  background: #fff;
-  border: 1px solid #d0d0d0;
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
   border-radius: 2px;
   box-sizing: border-box;
   user-select: none;
@@ -475,7 +475,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: #f1f3f4;
+  background: var(--surface-canvas);
 }
 
 .tick {
@@ -483,7 +483,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   bottom: 0;
   width: 1px;
   height: 0.375rem;
-  background: #9aa0a6;
+  background: var(--border-strong);
 }
 
 .tick-label {
@@ -492,7 +492,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   left: 0;
   transform: translateX(-50%);
   font-size: 0.5625rem;
-  color: #5f6368;
+  color: var(--text-secondary);
 }
 
 /* Every marker is a small draggable handle centred on its position. The
@@ -505,7 +505,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   height: 0.625rem;
   padding: 0;
   border: none;
-  background: #1a73e8;
+  background: var(--accent);
   transform: translateX(-50%);
   cursor: ew-resize;
   touch-action: none;
@@ -533,7 +533,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   bottom: 0;
   height: auto;
   width: 0.25rem;
-  background: #80868b;
+  background: var(--border-strong);
   opacity: 0.7;
 }
 
@@ -557,10 +557,10 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   padding: 0;
   font-size: 0.5625rem;
   line-height: 1;
-  border: 1px solid #9aa0a6;
+  border: 1px solid var(--border-strong);
   border-radius: 2px;
-  background: #fff;
-  color: #3c4043;
+  background: var(--surface-base);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -574,7 +574,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   padding: 0;
   border: none;
   background: transparent;
-  color: #1a73e8;
+  color: var(--accent);
   font-size: 0.5625rem;
   font-weight: 700;
   line-height: 1;
@@ -603,7 +603,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   bottom: 0;
   height: auto;
   width: 0.3125rem;
-  background: #34a853;
+  background: var(--success);
   border-radius: 2px;
 }
 </style>

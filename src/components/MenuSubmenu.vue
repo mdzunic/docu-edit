@@ -27,11 +27,15 @@ const flyout = useTemplateRef("flyout");
 
 function focusFirstItem() {
   void nextTick(() => {
-    const root = flyout.value?.$el instanceof HTMLElement ? flyout.value.$el : null;
-    const first = root?.querySelector<HTMLElement>(
-      '[role="menuitemradio"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled]),[role="menuitem"]:not([disabled])',
-    );
-    first?.focus();
+    const root = flyout.value && flyout.value.$el instanceof HTMLElement ? flyout.value.$el : null;
+    const first = root
+      ? root.querySelector(
+          '[role="menuitemradio"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled]),[role="menuitem"]:not([disabled])',
+        )
+      : null;
+    if (first instanceof HTMLElement) {
+      first.focus();
+    }
   });
 }
 
@@ -49,7 +53,7 @@ function closeMenu(returnFocus = true) {
   }
 }
 
-function onTriggerKeydown(event: KeyboardEvent) {
+function onTriggerKeydown(event = new KeyboardEvent("keydown")) {
   switch (event.key) {
     case "ArrowRight":
     case "Enter":
@@ -71,7 +75,7 @@ function onTriggerKeydown(event: KeyboardEvent) {
   }
 }
 
-function onFlyoutKeydown(event: KeyboardEvent) {
+function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
   if (event.key === "ArrowLeft" || event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();

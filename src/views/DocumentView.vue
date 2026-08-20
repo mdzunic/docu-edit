@@ -4559,9 +4559,9 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
   width: 8px;
   height: 8px;
-  border: 1px solid #1a73e8;
+  border: 1px solid var(--accent);
   border-radius: 2px;
-  background: #fff;
+  background: var(--surface-base);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
@@ -4586,9 +4586,9 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
   width: 8px;
   height: 8px;
-  border: 1px solid #1a73e8;
+  border: 1px solid var(--accent);
   border-radius: 2px;
-  background: #fff;
+  background: var(--surface-base);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
@@ -4597,9 +4597,9 @@ function handleMenuCommand(id = "") {
   pointer-events: auto;
   width: 8px;
   height: 8px;
-  border: 1px solid #1a73e8;
+  border: 1px solid var(--accent);
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface-base);
   cursor: grab;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }

@@ -346,8 +346,8 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
   position: relative;
   z-index: 0;
   margin: 0 auto 12px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+  background: #fff; /* the page is always white paper — model colours, never inverted (SPEC-059 AC-12) */
+  box-shadow: var(--shadow-2); /* the drop shadow follows the theme (SPEC-059 AC-17) */
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -405,7 +405,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 
 .page-header-band[data-hf-editable],
 .page-footer-band[data-hf-editable] {
-  outline: 1px dashed #1a73e8;
+  outline: 1px dashed var(--accent);
   outline-offset: 2px;
 }
 
@@ -415,7 +415,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 .page-margin {
   box-sizing: border-box;
   height: 100%;
-  outline: 1px dashed #c8c8c8;
+  outline: 1px dashed var(--border-default); /* margin guides follow the theme (SPEC-059 AC-18) */
   outline-offset: -1px;
 }
 
@@ -612,7 +612,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
   font: inherit;
   font-size: 0.85em;
   vertical-align: super;
-  color: #1a73e8;
+  color: var(--accent);
   cursor: pointer;
 }
 
@@ -626,7 +626,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 }
 
 .note-body[data-note-editable] {
-  outline: 1px dashed #1a73e8;
+  outline: 1px dashed var(--accent);
   outline-offset: 2px;
 }
 

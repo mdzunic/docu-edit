@@ -141,26 +141,26 @@ const emit = defineEmits(["handle", "column-resize", "row-resize"]);
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 1px solid #bdbdbd;
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
-  background: #fff;
-  color: #3c4043;
+  background: var(--surface-base);
+  color: var(--text-primary);
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  box-shadow: var(--shadow-1);
 }
 
 .table-handle.insert:hover {
-  background: #d2e3fc;
-  border-color: #1a73e8;
-  color: #1a73e8;
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .table-handle.delete:hover {
   background: #fce8e6;
-  border-color: #c5221f;
-  color: #c5221f;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* Column/row resize strips (SPEC-023 AC-1..5): thin transparent bands
@@ -183,6 +183,6 @@ const emit = defineEmits(["handle", "column-resize", "row-resize"]);
 }
 
 .table-resize-handle:hover {
-  background: rgb(26 115 232 / 0.35);
+  background: var(--accent-subtle);
 }
 </style>
