@@ -2,7 +2,7 @@
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import { openDocumentFile } from "../lib/openDocument";
-import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import TemplateGalleryDialog from "../components/TemplateGalleryDialog.vue";
@@ -73,6 +73,56 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener("click", closeMenu);
   clearInterval(clockTimer);
+});
+
+// Returning from a closed document (SPEC-060): closeOpenDocument navigates
+// here with the closed id in router state (kept out of the URL). Scroll its
+// row into view and flash it for one --motion-base interval so a user sees
+// where they came from — the flash is suppressed under prefers-reduced-motion.
+const highlightId = ref("");
+
+function prefersReducedMotion() {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/** The --motion-base design token in milliseconds — the highlight's lifetime,
+ * read from the CSS so it tracks the one source of truth (and collapses to 0
+ * under reduced motion, where the token itself is 0ms). */
+function motionBaseMs() {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue("--motion-base")
+    .trim();
+  const value = parseFloat(raw);
+  if (!Number.isFinite(value)) {
+    return 200;
+  }
+  return raw.endsWith("ms") ? value : value * 1000;
+}
+
+onMounted(async () => {
+  const closedId = window.history.state?.closedDocId;
+  if (typeof closedId !== "string" || closedId.length === 0) {
+    return;
+  }
+  await nextTick();
+  const row = Array.from(document.querySelectorAll("[data-doc-id]")).find(
+    (el) => el.getAttribute("data-doc-id") === closedId,
+  );
+  if (row && typeof row.scrollIntoView === "function") {
+    row.scrollIntoView({ block: "center" });
+  }
+  if (prefersReducedMotion()) {
+    return;
+  }
+  highlightId.value = closedId;
+  setTimeout(() => {
+    if (highlightId.value === closedId) {
+      highlightId.value = "";
+    }
+  }, motionBaseMs());
 });
 
 const showGallery = ref(false);
@@ -271,7 +321,9 @@ function confirmDelete() {
             v-for="entry in docs"
             :key="entry.id"
             class="library-row"
+            :class="{ 'row-highlight': entry.id === highlightId }"
             data-testid="library-row"
+            :data-doc-id="entry.id"
             @click="openDocument(entry.id)"
           >
             <td
@@ -469,6 +521,30 @@ function confirmDelete() {
 
 .library-row:hover {
   background: var(--surface-raised);
+}
+
+/* The just-closed row flashes once on return (SPEC-060 AC-22): a single
+   fade from the selected surface back to transparent over one --motion-base
+   interval. Purely an animation, so it leaves no lingering background; under
+   prefers-reduced-motion the class is never applied (and the animation is
+   stilled here too, defensively). */
+.row-highlight {
+  animation: row-flash var(--motion-base) var(--easing);
+}
+
+@keyframes row-flash {
+  from {
+    background: var(--surface-selected);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-highlight {
+    animation: none;
+  }
 }
 
 .cell-title {

@@ -260,4 +260,32 @@ describe("HomeView library list", () => {
     expect(store.getDocument("doc-del")?.title).toBe("Survivor");
     expect(wrapper.get('[data-testid="row-title"]').text()).toBe("Survivor");
   });
+
+  // SPEC-060: returning from a closed document carries its id in router state;
+  // the library flashes that row so a user sees where they came from (AC-22).
+  it("highlights the just-closed row on return, tagging every row with its id (AC-21, AC-22)", async () => {
+    const { store, mountHome } = await loadModules();
+    seed(store, "doc-a", "Alpha", 2000);
+    seed(store, "doc-b", "Bravo", 1000);
+    window.history.replaceState({ closedDocId: "doc-b" }, "");
+    try {
+      const { wrapper } = await mountHome();
+      await flushPromises();
+      const rows = wrapper.findAll("[data-doc-id]");
+      // Every row is addressable by its document id (AC-21's scroll target).
+      expect(rows.map((row) => row.attributes("data-doc-id"))).toEqual([
+        "doc-a",
+        "doc-b",
+      ]);
+      // Only the closed row is flashed.
+      expect(wrapper.get('[data-doc-id="doc-b"]').classes()).toContain(
+        "row-highlight",
+      );
+      expect(wrapper.get('[data-doc-id="doc-a"]').classes()).not.toContain(
+        "row-highlight",
+      );
+    } finally {
+      window.history.replaceState(null, "");
+    }
+  });
 });
