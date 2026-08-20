@@ -78,6 +78,14 @@ export function useAutosave(options: UseAutosaveOptions) {
   let editCount = 0;
   let scheduler: AutosaveScheduler | null = null;
 
+  function makeScheduler(): AutosaveScheduler {
+    return createAutosaveScheduler({
+      flush: () => {
+        void performSave();
+      },
+    });
+  }
+
   async function performSave(): Promise<void> {
     const id = docId;
     if (!id || !options.isActive()) {
@@ -139,11 +147,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     recovery.value = null;
     committedStash = null;
     scheduler?.dispose();
-    scheduler = createAutosaveScheduler({
-      flush: () => {
-        void performSave();
-      },
-    });
+    scheduler = makeScheduler();
     const record = await refreshDocumentFromStorage(id);
     if (docId !== id || !record) {
       return;
@@ -226,6 +230,48 @@ export function useAutosave(options: UseAutosaveOptions) {
       }
       saveState.value = "error";
       scheduler?.notifySaveResult(false);
+    }
+  }
+
+  /** The close path's flush (SPEC-060): cancels the pending debounce and
+   * runs — awaited — the committed write it was deferring, so the library
+   * reads the just-saved content, never a stale row. Returns whether it is
+   * safe to leave: true on a clean commit (or when there is nothing to
+   * flush), false on a write failure so the caller can stay and toast. The
+   * recovery bar is the one case that leaves without committing: keeping the
+   * draft so reopening still offers recovery (AC-26). While in flight the
+   * save indicator reads "Saving…" (AC-10). */
+  async function flushForClose(): Promise<boolean> {
+    const id = docId;
+    if (!id || !options.isActive()) {
+      return true;
+    }
+    if (recovery.value !== null) {
+      return true;
+    }
+    const editsAtStart = editCount;
+    saveState.value = "saving";
+    // Cancel the pending debounce; a fresh scheduler stands ready in case the
+    // write fails and the session stays open (its edits must still autosave).
+    scheduler?.dispose();
+    scheduler = makeScheduler();
+    try {
+      await commitDocument(id, options.getCaret(), options.getScroll());
+      if (docId !== id) {
+        return true;
+      }
+      if (editCount === editsAtStart) {
+        dirty = false;
+        saveState.value = "saved";
+      }
+      return true;
+    } catch {
+      if (docId !== id) {
+        return false;
+      }
+      saveState.value = "error";
+      scheduler?.notifySaveResult(false);
+      return false;
     }
   }
 
@@ -331,6 +377,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     beginSession,
     endSession,
     commitNow,
+    flushForClose,
     keepRecovered,
     discardRecovered,
   };
