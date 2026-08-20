@@ -151,16 +151,20 @@ const emit = defineEmits(["handle", "column-resize", "row-resize"]);
   box-shadow: var(--shadow-1);
 }
 
+/* Hover pairings from the tokens' own on-surface contracts, so both palettes
+   stay legible: --text-accent is the accent designed for --accent-subtle
+   (bare --accent on it is ~2:1 in dark), and the delete chip keeps its
+   surface with the danger pair rather than the old hardcoded light pink. */
 .table-handle.insert:hover {
   background: var(--accent-subtle);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--text-accent);
 }
 
 .table-handle.delete:hover {
-  background: #fce8e6;
+  background: var(--surface-base);
   border-color: var(--danger);
-  color: var(--danger);
+  color: var(--text-danger);
 }
 
 /* Column/row resize strips (SPEC-023 AC-1..5): thin transparent bands

@@ -340,6 +340,38 @@ test("hover handles insert rows and columns without opening a menu (AC-20)", asy
   await expect(table(page).locator("tr")).toHaveCount(3);
 });
 
+test("hover handles survive the pointer's travel across the gap that separates them from the table (AC-20 regression)", async ({ page }) => {
+  await createDocument(page);
+  await insertViaPicker(page, 3, 3);
+  await cellParagraph(page, 0, 0).hover();
+  await expect(page.getByTestId("table-handles")).toBeVisible();
+
+  // The buttons float 20px outside the table, so a real pointer crosses bare
+  // page on its way to one; the old code hid the overlay on that first
+  // crossing, unmounting the button before the pointer arrived. (A locator
+  // click teleports in a single step and never samples the gap — which is
+  // why the tests above always passed while a human could not click.) Walk
+  // the pointer explicitly: first into the gap just above the table's top
+  // edge, then onto the leading insert-column button.
+  const tableBox = (await table(page).boundingBox())!;
+  await page.mouse.move(tableBox.x + 40, tableBox.y - 2, { steps: 8 });
+  const target = page.getByTestId("table-handle-insert-col-0");
+  await expect(target).toBeVisible();
+  const box = (await target.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(table(page).locator("tr").first().locator("td")).toHaveCount(4);
+
+  // Moving well clear of the handle band still hides them — the page's left
+  // margin is a different element past the band's edge, so its mouseover
+  // re-evaluates the position. (Straight down instead would stay inside the
+  // one big content element entered while still in the band: mouseover fires
+  // only on element transitions, the granularity this feature always had.)
+  await page.mouse.move(tableBox.x - 60, tableBox.y + tableBox.height / 2, { steps: 10 });
+  await expect(page.getByTestId("table-handles")).toBeHidden();
+});
+
 test("hover handles delete rows and columns; deleting every row deletes the table and the caret lands where it was (AC-21..AC-23)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();

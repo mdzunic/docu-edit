@@ -411,7 +411,13 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
 
   /** Mouseover anywhere on the page: hovering a table measures its geometry
    * for the insert/delete handles (AC-20, AC-21); hovering the handles keeps
-   * them; anything else hides them. */
+   * them; anything else hides them — unless the pointer is still inside the
+   * handle band around the measured table. The buttons float up to 20px
+   * outside the table's box, so a real mouse must cross bare page on its way
+   * to them; hiding on that first crossing unmounted the button before the
+   * pointer could arrive, making the handles unclickable by hand. (A
+   * synthetic pointer that teleports straight onto a button never samples
+   * the gap, which is why e2e clicks always landed.) */
   function handlePageMouseOver(event = new MouseEvent("mouseover")) {
     if (!editable.value || !(event.target instanceof Element)) {
       return;
@@ -422,12 +428,36 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     const table = event.target.closest("table.doc-table");
     const pageEl = pageRef.value;
     if (!table || !pageEl) {
-      if (tableHover.value) {
+      if (tableHover.value && !withinHandleBand(event, pageEl)) {
         tableHover.value = null;
       }
       return;
     }
     tableHover.value = measureTableHandles(pageEl, table);
+  }
+
+  // The farthest handle face sits 20px outside the table (buttons occupy
+  // -20..-4); the resize strips reach 3px past the right/bottom edges. The
+  // extra slack keeps a wobbly approach path inside the band.
+  const HANDLE_BAND_PX = 28;
+
+  /** True while the pointer is within the handle band: the hovered table's
+   * box grown by the handles' overhang, in the same page-relative frame
+   * measureTableHandles records. */
+  function withinHandleBand(event: MouseEvent, pageEl: Element | null): boolean {
+    const hover = tableHover.value;
+    if (!hover || !pageEl) {
+      return false;
+    }
+    const rect = pageEl.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    return (
+      x >= hover.left - HANDLE_BAND_PX &&
+      x <= hover.left + hover.width + HANDLE_BAND_PX &&
+      y >= hover.top - HANDLE_BAND_PX &&
+      y <= hover.top + hover.height + HANDLE_BAND_PX
+    );
   }
 
   /** Clicking anywhere on the page canvas outside the text (margins, empty
