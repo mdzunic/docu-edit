@@ -41,10 +41,7 @@ import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
 import TocOptionsDialog from "../components/TocOptionsDialog.vue";
 import FindBar from "../components/FindBar.vue";
-import FontFamilySelect from "../components/FontFamilySelect.vue";
-import FontSizeControl from "../components/FontSizeControl.vue";
-import FormatToolbar from "../components/FormatToolbar.vue";
-import HighlightPicker from "../components/HighlightPicker.vue";
+import DocumentToolbar from "../components/DocumentToolbar.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
 import FieldDialog from "../components/FieldDialog.vue";
@@ -56,7 +53,6 @@ import DeleteCaptionPrompt from "../components/DeleteCaptionPrompt.vue";
 import FieldToolbar from "../components/FieldToolbar.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
-import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
 import MergeFieldPickerDialog from "../components/MergeFieldPickerDialog.vue";
@@ -65,12 +61,9 @@ import PropertiesDialog from "../components/PropertiesDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
-import StylePicker from "../components/StylePicker.vue";
 import TableHandlesOverlay from "../components/TableHandlesOverlay.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
-import TextColorPicker from "../components/TextColorPicker.vue";
-import UndoRedoControls from "../components/UndoRedoControls.vue";
 import UiIconButton from "../components/ui/UiIconButton.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
@@ -366,7 +359,7 @@ import {
   undo as undoDocument,
   undoLabel as undoDocumentLabel,
 } from "../lib/undoHistory";
-import { findShortcut, isOutsideDocumentInput, shortcutLabel } from "../lib/shortcuts";
+import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 import { applyTrackChanges } from "../lib/trackChangesDiff";
 import { isMacPlatform } from "../lib/core/platform";
 
@@ -2707,6 +2700,38 @@ const effectiveTrackChangesDisplayMode = computed(() =>
   versionHistoryPreviewActive.value ? asTrackChangesDisplayMode("all") : trackChangesDisplayMode.value,
 );
 
+// Width (px) the open side panes claim on the toolbar's trailing edge, so the
+// strip collapses its bands exactly as narrowing the window would (SPEC-061
+// AC-15). Only the right-docked panes crowd the strip's controls; the
+// left-docked outline (default-open) does not, so it is excluded — otherwise a
+// fresh load would over-collapse and hide the paragraph band at 1024px
+// (AC-36). Panes are near-exclusive in practice, but the widths sum so any
+// combination reserves the right room.
+const toolbarReservedRight = computed(() => {
+  let reserved = 0;
+  if (stylesPaneOpen.value) reserved += 288; // 18rem
+  if (commentsPaneOpen.value) reserved += 288;
+  if (trackChangesPaneOpen.value) reserved += 288;
+  if (versionHistoryPaneOpen.value) reserved += 320; // 20rem
+  if (accessibilityPaneOpen.value) reserved += 320;
+  if (fontsPaneOpen.value) reserved += 320;
+  return reserved;
+});
+
+// The field toolbar leaves the strip (SPEC-061): it is contextual, shown only
+// while the caret is on a field, floating just above the field's rect. A
+// fixed popup escaping the canvas scroll, like the object toolbars.
+function fieldToolbarStyle() {
+  const selection = typeof window !== "undefined" ? window.getSelection() : null;
+  if (!selection || selection.rangeCount === 0) {
+    return { position: "fixed", left: "0px", top: "0px", visibility: "hidden" };
+  }
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  const top = rect.top - 44 < 8 ? rect.bottom + 8 : rect.top - 44;
+  const left = Math.max(8, rect.left);
+  return { position: "fixed", left: `${left}px`, top: `${top}px`, zIndex: "30" };
+}
+
 const {
   statusBarLanguageLabel,
   currentLanguageTag,
@@ -2944,15 +2969,14 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 // one deliberate toolbar+menu exception. The menu entries open the real
 // toolbar pickers through these refs instead of duplicating the swatch popups
 // (which would collide on their fixed data-testids).
-const textColorPickerRef = useTemplateRef("textColorPickerRef");
-const highlightPickerRef = useTemplateRef("highlightPickerRef");
+const documentToolbarRef = useTemplateRef("documentToolbarRef");
 
 function openTextColorMenu() {
-  textColorPickerRef.value?.openMenu();
+  documentToolbarRef.value?.openTextColorMenu();
 }
 
 function openHighlightMenu() {
-  highlightPickerRef.value?.openMenu();
+  documentToolbarRef.value?.openHighlightMenu();
 }
 
 /** "Insert -> Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
@@ -3221,57 +3245,30 @@ function handleMenuCommand(id = "") {
       />
     </template>
     <template #toolbar>
-      <UndoRedoControls
+      <DocumentToolbar
         v-if="editable"
-        :can-undo="undoRedoState.canUndo"
-        :undo-label="undoRedoState.undoLabel"
-        :can-redo="undoRedoState.canRedo"
-        :redo-label="undoRedoState.redoLabel"
+        ref="documentToolbarRef"
+        :reserved-right="toolbarReservedRight"
+        :undo-redo="undoRedoState"
+        :style-entries="styleEntries"
+        :style-state="styleState"
+        :format-values="formatValues"
+        :document-fonts="documentFonts"
+        :recent-colors="recentColors"
+        :format-states="formatStates"
+        :paragraph-state="paragraphState"
+        :list-state="listState"
+        :paragraph-pagination="paragraphPagination"
         @undo="performUndo"
         @redo="performRedo"
-      />
-      <StylePicker
-        v-if="editable"
-        :entries="styleEntries"
-        :current-id="styleState.id"
-        :current-name="styleState.name"
-        @apply="handleApplyStyle"
+        @apply-style="handleApplyStyle"
         @update-style="handleUpdateStyle"
         @reset-style="handleResetStyle"
-      />
-      <FontFamilySelect
-        v-if="editable"
-        :value="formatValues.fontFamily"
-        :document-fonts="documentFonts"
-        @select="handleFontFamilySelect"
-      />
-      <!-- ?? undefined: the mixed state's null must reach the control as
-           "prop absent" so its own null default (= blank) applies. -->
-      <FontSizeControl
-        v-if="editable"
-        :value="formatValues.fontSizePt ?? undefined"
-        @change="handleFontSizeChange"
-      />
-      <FormatToolbar
-        v-if="editable"
-        :states="formatStates"
-        @toggle="toggleCharacterFormat"
-      />
-      <FieldToolbar
-        v-if="editable && selectedField"
-        :locked="isFieldLocked(selectedField)"
-        :read-only="isReadOnlyField(selectedField)"
-        @field-action="handleFieldAction"
-      />
-      <ParagraphToolbar
-        v-if="editable"
-        :alignment="paragraphState.alignment"
-        :space-before="paragraphState.spaceBefore"
-        :direction="paragraphState.direction"
-        :bulleted="listState.bulleted"
-        :numbered="listState.numbered"
-        :list-marker="listState.marker"
-        :pagination="paragraphPagination"
+        @font-family-select="handleFontFamilySelect"
+        @font-size-change="handleFontSizeChange"
+        @toggle-character-format="toggleCharacterFormat"
+        @text-color-select="handleTextColorSelect"
+        @highlight-select="handleHighlightSelect"
         @align="handleAlign"
         @indent="handleIndent"
         @spacing-preset="handleSpacingPreset"
@@ -3282,32 +3279,6 @@ function handleMenuCommand(id = "") {
         @list-marker="handleListMarker"
         @toggle-pagination="handleTogglePagination"
       />
-      <TextColorPicker
-        v-if="editable"
-        ref="textColorPickerRef"
-        :value="formatValues.color"
-        :mixed="formatValues.colorMixed"
-        :recent="recentColors"
-        @select="handleTextColorSelect"
-      />
-      <HighlightPicker
-        v-if="editable"
-        ref="highlightPickerRef"
-        :value="formatValues.highlight"
-        :mixed="formatValues.highlightMixed"
-        @select="handleHighlightSelect"
-      />
-      <button
-        v-if="editable"
-        type="button"
-        class="track-changes-toolbar-toggle"
-        data-testid="toolbar-track-changes-toggle"
-        :aria-pressed="trackChangesRecording"
-        :title="shortcutLabel('edit.toggleTrackChanges')"
-        @click="toggleTrackChangesRecording"
-      >
-        Track changes: {{ trackChangesRecording ? "On" : "Off" }}
-      </button>
     </template>
     <div
       v-if="lockState === 'busy'"
@@ -3903,6 +3874,14 @@ function handleMenuCommand(id = "") {
       @select="handlePasteOption"
       @dismiss="dismissPasteChip"
     />
+    <FieldToolbar
+      v-if="editable && selectedField"
+      class="print-exclude floating-contextual"
+      :style="fieldToolbarStyle()"
+      :locked="isFieldLocked(selectedField)"
+      :read-only="isReadOnlyField(selectedField)"
+      @field-action="handleFieldAction"
+    />
     <ImageToolbar
       v-if="imageSelection && imageHandles"
       class="print-exclude"
@@ -4240,28 +4219,9 @@ function handleMenuCommand(id = "") {
   text-decoration: underline;
 }
 
-/* SPEC-039 AC-1: a clear on/off state in both the toolbar and the status
-   bar — the toolbar button reads as a toggle chip, the status-bar one
-   matches word-count-button's plain-until-hovered look. */
-.track-changes-toolbar-toggle {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--height-control);
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  background: none;
-  cursor: pointer;
-}
-
-.track-changes-toolbar-toggle[aria-pressed="true"] {
-  background: var(--surface-sunken);
-  color: var(--success);
-  border-color: var(--success);
-}
-
+/* SPEC-039 AC-1 / SPEC-061 AC-19: the duplicate toolbar track-changes button
+   is removed; the status-bar control is the single one, matching
+   word-count-button's plain-until-hovered look. */
 .track-changes-status-indicator {
   font: inherit;
   font-size: var(--text-sm);

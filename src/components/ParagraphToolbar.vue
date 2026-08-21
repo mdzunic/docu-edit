@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { computed, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { shortcutLabel } from "../lib/shortcuts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import AppIcon from "./AppIcon.vue";
@@ -36,6 +36,12 @@ const props = defineProps({
     default: () => ({ keepNext: false, keepLines: false, pageBreakBefore: false, widowControl: true }),
   },
   disabled: { type: Boolean, default: false },
+  /** Which slice of the paragraph controls to render, so DocumentView can
+   * place them in the fixed SPEC-061 bands: "align" (band 6: alignment + line
+   * spacing), "lists" (band 7: indents + list toggles), "extras" (band 8:
+   * direction + pagination) or "all" (every control, the default the unit
+   * tests mount). */
+  section: { type: String, default: "all" },
 });
 
 const emit = defineEmits([
@@ -93,6 +99,12 @@ const PAGINATION_OPTIONS = [
   { key: "pageBreakBefore", label: "Page break before" },
   { key: "widowControl", label: "Widow/orphan control" },
 ];
+
+// Which band slice this instance renders (SPEC-061). "all" keeps the original
+// single-group layout the unit tests mount.
+const showAlign = computed(() => props.section === "all" || props.section === "align");
+const showLists = computed(() => props.section === "all" || props.section === "lists");
+const showExtras = computed(() => props.section === "all" || props.section === "extras");
 
 const spacingOpen = ref(false);
 const root = useTemplateRef("root");
@@ -235,18 +247,21 @@ onBeforeUnmount(() => {
     aria-label="Paragraph formatting"
     @keydown="handleKeydown"
   >
-    <UiToggleButton
-      v-for="entry in ALIGNMENTS"
-      :key="entry.key"
-      :icon="entry.icon"
-      :label="`${entry.label} (${entry.shortcut})`"
-      :pressed="alignment === entry.key"
-      :disabled="disabled"
-      :data-testid="`align-${entry.key}`"
-      @mousedown.prevent
-      @click="emit('align', entry.key)"
-    />
+    <template v-if="showAlign">
+      <UiToggleButton
+        v-for="entry in ALIGNMENTS"
+        :key="entry.key"
+        :icon="entry.icon"
+        :label="`${entry.label} (${entry.shortcut})`"
+        :pressed="alignment === entry.key"
+        :disabled="disabled"
+        :data-testid="`align-${entry.key}`"
+        @mousedown.prevent
+        @click="emit('align', entry.key)"
+      />
+    </template>
     <button
+      v-if="showLists"
       type="button"
       class="paragraph-button"
       data-testid="indent-decrease"
@@ -259,6 +274,7 @@ onBeforeUnmount(() => {
       <AppIcon name="indent-decrease" />
     </button>
     <button
+      v-if="showLists"
       type="button"
       class="paragraph-button"
       data-testid="indent-increase"
@@ -273,7 +289,10 @@ onBeforeUnmount(() => {
     <!-- Bulleted/numbered list toggles (SPEC-018 AC-1, AC-2), each with a
          marker-style dropdown on a separate expander next to the toggle
          (AC-12) so a plain click still just toggles. -->
-    <div class="list-cluster">
+    <div
+      v-if="showLists"
+      class="list-cluster"
+    >
       <UiToggleButton
         class="list-toggle"
         icon="bullet-list"
@@ -323,7 +342,10 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </div>
-    <div class="list-cluster">
+    <div
+      v-if="showLists"
+      class="list-cluster"
+    >
       <UiToggleButton
         class="list-toggle"
         icon="numbered-list"
@@ -374,6 +396,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <button
+      v-if="showExtras"
       type="button"
       class="paragraph-button"
       data-testid="paragraph-direction"
@@ -387,6 +410,7 @@ onBeforeUnmount(() => {
       <AppIcon name="paragraph-direction" />
     </button>
     <button
+      v-if="showAlign"
       ref="spacingButton"
       type="button"
       class="paragraph-button spacing-button"
@@ -444,6 +468,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <button
+      v-if="showExtras"
       ref="paginationButton"
       type="button"
       class="paragraph-button pagination-button"
