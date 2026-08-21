@@ -53,12 +53,14 @@ describe("SHORTCUTS registry (SPEC-021 AC-1, AC-5, AC-11)", () => {
     expect(palette?.category).toBe("View");
     expect(palette?.label).toBe("Search commands");
     // It appears in the reference dialog because groupShortcuts renders every
-    // registry entry; a real binding gives it a key there. SPEC-025 owns
-    // Ctrl/Cmd+K, so the palette takes the closest free key, Ctrl/Cmd+Shift+K.
-    expect(shortcutLabel("app.commandPalette", false)).toBe("Ctrl+Shift+K");
-    expect(findShortcut(keydown({ key: "k", ctrlKey: true, shiftKey: true }), false)?.id).toBe("app.commandPalette");
-    // ...and does not disturb the shipped Ctrl/Cmd+K = insert link binding.
-    expect(findShortcut(keydown({ key: "k", ctrlKey: true }), false)?.id).toBe("insert.link");
+    // registry entry; a real binding gives it a key there. SPEC-062 AC-1 puts
+    // the palette on Ctrl/Cmd+K.
+    expect(shortcutLabel("app.commandPalette", false)).toBe("Ctrl+K");
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true }), false)?.id).toBe("app.commandPalette");
+    // SPEC-025's Insert link accelerator moved to Ctrl/Cmd+Alt+K to make room,
+    // so both bindings coexist and neither collides.
+    expect(shortcutLabel("insert.link", false)).toBe("Ctrl+Alt+K");
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true, altKey: true }), false)?.id).toBe("insert.link");
   });
 
   it("marks exactly the five deliberately-overridden browser shortcuts", () => {

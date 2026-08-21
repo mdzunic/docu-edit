@@ -3026,7 +3026,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["format.auto-caption-images", toggleAutoImages],
   ["format.auto-caption-tables", toggleAutoTables],
   ["insert.special-character", openSpecialCharacters],
-  // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
+  // Ctrl/Cmd+Alt+K opens the link dialog (SPEC-025; moved off Ctrl/Cmd+K by SPEC-062).
   ["insert.link", openLinkDialog],
   ["insert.bookmark", openBookmarkDialog],
   ["insert.bookmark-list", () => { bookmarkManagerOpen.value = true; }],

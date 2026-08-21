@@ -92,7 +92,12 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   },
   { id: "edit.selectAll", label: "Select all", category: "Editing", bindings: [{ key: "a", mod: true }] },
   { id: "edit.pastePlain", label: "Paste without formatting", category: "Editing", bindings: [{ key: "v", mod: true, shift: true }] },
-  { id: "insert.link", label: "Insert link", category: "Editing", bindings: [{ key: "k", mod: true }] },
+  // SPEC-025 first bound Insert link to Ctrl/Cmd+K. SPEC-062 reclaims that key
+  // for the command palette (its AC-1), so the link accelerator moves to
+  // Ctrl/Cmd+Alt+K — joining the insert.* Alt family (footnote ⌥F, endnote ⌥D,
+  // comment ⌥M). Only the accelerator changes; the command, handler and dialog
+  // are untouched.
+  { id: "insert.link", label: "Insert link", category: "Editing", bindings: [{ key: "k", mod: true, alt: true }] },
 
   // SPEC-053: F9 updates the field at the caret.
   { id: "field.update", label: "Update field", category: "Editing", bindings: [{ key: "F9" }] },
@@ -172,10 +177,12 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },
 
   // View
-  // SPEC-062 wanted Ctrl/Cmd+K here, but SPEC-025 (shipped) already binds that
-  // to insert.link and its behaviour is out of scope to change; Ctrl/Cmd+Shift+K
-  // is the closest free key (no existing binding, not a RESERVED_BROWSER_KEY).
-  { id: "app.commandPalette", label: "Search commands", category: "View", bindings: [{ key: "k", mod: true, shift: true }] },
+  // SPEC-062 AC-1/AC-2: Ctrl/Cmd+K opens the command palette from anywhere in
+  // the editor, handled at the document level alongside find/print. The earlier
+  // Ctrl/Cmd+K = insert.link binding (SPEC-025) moves to Ctrl/Cmd+Alt+K to make
+  // room, so the no-duplicate-binding invariant still holds. `k` is not a
+  // RESERVED_BROWSER_KEY.
+  { id: "app.commandPalette", label: "Search commands", category: "View", bindings: [{ key: "k", mod: true }] },
   { id: "view.shortcuts", label: "Keyboard shortcuts", category: "View", bindings: [{ key: "/", mod: true }] },
   {
     id: "view.formattingMarks",
