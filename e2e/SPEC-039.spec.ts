@@ -112,7 +112,7 @@ async function openTrackChangesPane(page: Page): Promise<void> {
 }
 
 async function toggleRecording(page: Page): Promise<void> {
-  await page.getByTestId("toolbar-track-changes-toggle").click();
+  await page.getByTestId("status-bar-track-changes").click();
 }
 
 async function downloadFile(page: Page, format: "docx" | "odt"): Promise<Buffer> {
@@ -127,18 +127,18 @@ test("the toggle is off for a new blank document, and toolbar/status bar show a 
   page,
 }) => {
   await createDocument(page);
-  await expect(page.getByTestId("toolbar-track-changes-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByTestId("status-bar-track-changes")).toContainText("Off");
 
   await toggleRecording(page);
-  await expect(page.getByTestId("toolbar-track-changes-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("status-bar-track-changes")).toContainText("On");
 
   // The shortcut toggles it back off.
   await content(page).click();
   await page.keyboard.press(`${MOD}+Shift+e`);
-  await expect(page.getByTestId("toolbar-track-changes-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("with tracking on, inserted text underlines and deleted text stays struck through instead of disappearing (AC-4)", async ({
@@ -306,14 +306,14 @@ test("opening a document that already contains tracked changes leaves the toggle
   await content(page).click();
   await page.keyboard.press(LINE_START);
   await page.keyboard.type("XYZ");
-  await expect(page.getByTestId("toolbar-track-changes-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "true");
 
   // Navigate away and back (a fresh "open") — the toggle must reset to off
   // even though the document still has a tracked change in it.
   await page.goto("/");
   await page.goBack();
   await expect(content(page)).toContainText("XYZ");
-  await expect(page.getByTestId("toolbar-track-changes-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("the persisted recording-enabled flag round-trips through docx unchanged without turning the toggle on (AC-3)", async ({ page }) => {
@@ -370,7 +370,7 @@ test("the persisted recording-enabled flag round-trips through docx unchanged wi
   await expect(content(page)).toContainText("XYZ");
   const insertedSpan = content(page).locator("span", { hasText: "XYZ" }).first();
   await expect(insertedSpan).toHaveCSS("text-decoration-line", /underline/);
-  await expect(page.getByTestId("toolbar-track-changes-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("status-bar-track-changes")).toHaveAttribute("aria-pressed", "false");
 
   const resaved = unzipParts(await downloadFile(page, "docx"));
   expect(resaved.get("word/settings.xml")!.toString("utf8")).toContain("w:trackChanges");
