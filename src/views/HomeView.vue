@@ -7,6 +7,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from 
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import TemplateGalleryDialog from "../components/TemplateGalleryDialog.vue";
+import CommandPalette from "../components/CommandPalette.vue";
+import { COMMANDS, loadRecentCommands, pushRecentCommand } from "../lib/commandCatalogue";
 import {
   deleteDocument,
   duplicateDocument,
@@ -80,6 +82,36 @@ onUnmounted(() => {
   document.removeEventListener("click", closeMenu);
   clearInterval(clockTimer);
 });
+
+// Command palette (SPEC-062 AC-33/34): the library offers its own command
+// source — new document, new from template, open — in the same dialog the
+// editor uses. Ctrl/Cmd+K opens it; the key is free here (the editor's link
+// shortcut does not exist on this view).
+const libraryCommands = COMMANDS.filter((command) => command.scope === "library");
+const libraryCommandIds = libraryCommands.map((command) => command.id);
+const commandPaletteOpen = ref(false);
+const paletteRecentIds = ref(loadRecentCommands());
+
+function handleLibraryPaletteKey(event = new KeyboardEvent("keydown")) {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    commandPaletteOpen.value = true;
+  }
+}
+onMounted(() => document.addEventListener("keydown", handleLibraryPaletteKey));
+onUnmounted(() => document.removeEventListener("keydown", handleLibraryPaletteKey));
+
+function runLibraryCommand(id = "") {
+  paletteRecentIds.value = pushRecentCommand(id, paletteRecentIds.value);
+  commandPaletteOpen.value = false;
+  if (id === "library.new-document") {
+    createNewDocument();
+  } else if (id === "library.new-from-template") {
+    openTemplateGallery();
+  } else if (id === "library.open") {
+    pickFile();
+  }
+}
 
 // Returning from a closed document (SPEC-060): closeOpenDocument navigates
 // here with the closed id in router state (kept out of the URL). Scroll its
@@ -438,6 +470,14 @@ function confirmDelete() {
       @choose-user="chooseUserTemplate"
       @choose-file="chooseTemplateFile"
       @close="showGallery = false"
+    />
+    <CommandPalette
+      v-if="commandPaletteOpen"
+      :commands="libraryCommands"
+      :common-ids="libraryCommandIds"
+      :recent-ids="paletteRecentIds"
+      @run="runLibraryCommand"
+      @dismiss="commandPaletteOpen = false"
     />
   </AppShell>
 </template>
