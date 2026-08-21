@@ -18,12 +18,17 @@ const props = defineProps({
   /** Desired top edge in viewport px (the anchor's own top when placement is
    * "above"; the bar is lifted above it after measuring its height). */
   top: { type: Number, default: 0 },
-  /** "free": place exactly at left/top (object toolbars already resolve this).
-   * "above": sit above the anchor top, flipping below when it would clip. */
+  /** "free": place exactly at left/top (object toolbars already resolve this),
+   * clamped horizontally to the viewport. "above": centre horizontally on
+   * left, sit above the anchor top, flip below when it would clip. */
   placement: { type: String, default: "free" },
   /** When placement is "above", the anchor's bottom edge — where the bar flips
    * to when there is no room above. */
   anchorBottom: { type: Number, default: 0 },
+  /** Lift the bar by its own height (translateY(-100%)) so `top` marks its
+   * BOTTOM edge — how the shape toolbar clears a shape it sits above without
+   * the caller knowing the wrapped bar's height (see useShapes). */
+  lift: { type: Boolean, default: false },
   /** aria-label for the role="toolbar" container. */
   label: { type: String, required: true },
   /** data-testid mirrored onto the root, so a migrated object toolbar keeps
@@ -50,6 +55,7 @@ function reposition() {
   const rect = el.getBoundingClientRect();
   let left = props.left;
   let top = props.top;
+  const maxLeft = Math.max(MARGIN, window.innerWidth - rect.width - MARGIN);
   if (props.placement === "above") {
     // Centre horizontally on the anchor point and lift above it; flip below
     // when the bar would run off the top of the viewport.
@@ -58,11 +64,12 @@ function reposition() {
     if (top < MARGIN) {
       top = props.anchorBottom + MARGIN;
     }
+    const maxTop = Math.max(MARGIN, window.innerHeight - rect.height - MARGIN);
+    top = Math.max(MARGIN, Math.min(top, maxTop));
   }
-  const maxLeft = window.innerWidth - rect.width - MARGIN;
-  const maxTop = window.innerHeight - rect.height - MARGIN;
-  left = Math.max(MARGIN, Math.min(left, Math.max(MARGIN, maxLeft)));
-  top = Math.max(MARGIN, Math.min(top, Math.max(MARGIN, maxTop)));
+  // Horizontal clamp keeps every bar on-screen; vertical clamp only for the
+  // centred "above" mode (a "free"/lifted caller has resolved its own top).
+  left = Math.max(MARGIN, Math.min(left, maxLeft));
   style.value = {
     left: `${left}px`,
     top: `${top}px`,
@@ -102,7 +109,7 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="contextual-toolbar"
-    :class="{ ready }"
+    :class="{ ready, 'is-lifted': lift }"
     role="toolbar"
     :aria-label="label"
     :data-testid="testid || undefined"
@@ -133,5 +140,10 @@ onBeforeUnmount(() => {
 
 .contextual-toolbar.ready {
   visibility: visible;
+}
+
+/* `top` marks the bottom edge; the bar pulls itself up by its own height. */
+.contextual-toolbar.is-lifted {
+  transform: translateY(-100%);
 }
 </style>
