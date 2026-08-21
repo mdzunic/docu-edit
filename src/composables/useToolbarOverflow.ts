@@ -87,9 +87,15 @@ export function useToolbarOverflow({
   const timers: number[] = [];
 
   onMounted(() => {
-    void measure();
     const el = strip();
-    if (el && typeof ResizeObserver !== "undefined") {
+    // No layout (jsdom / unit tests): skip the observer, settle timers and
+    // font hook entirely — there is nothing to measure and the churn slows the
+    // suite. measure() itself also bails on a zero-width strip.
+    if (!el || el.clientWidth === 0) {
+      return;
+    }
+    void measure();
+    if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(() => plan());
       observer.observe(el);
     }
