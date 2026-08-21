@@ -2720,17 +2720,16 @@ const toolbarReservedRight = computed(() => {
 });
 
 // The field toolbar leaves the strip (SPEC-061): it is contextual, shown only
-// while the caret is on a field, floating just above the field's rect. A
-// fixed popup escaping the canvas scroll, like the object toolbars.
-function fieldToolbarStyle() {
+// while the caret is on a field, floating above the field's rect on the shared
+// ContextualToolbar chrome. Returns the anchor point (centre-x/top/bottom of
+// the field's rect) the chrome positions itself against.
+function fieldToolbarAnchor() {
   const selection = typeof window !== "undefined" ? window.getSelection() : null;
   if (!selection || selection.rangeCount === 0) {
-    return { position: "fixed", left: "0px", top: "0px", visibility: "hidden" };
+    return { left: 0, top: 0, bottom: 0 };
   }
   const rect = selection.getRangeAt(0).getBoundingClientRect();
-  const top = rect.top - 44 < 8 ? rect.bottom + 8 : rect.top - 44;
-  const left = Math.max(8, rect.left);
-  return { position: "fixed", left: `${left}px`, top: `${top}px`, zIndex: "30" };
+  return { left: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom };
 }
 
 const {
@@ -3875,14 +3874,22 @@ function handleMenuCommand(id = "") {
       @select="handlePasteOption"
       @dismiss="dismissPasteChip"
     />
-    <FieldToolbar
+    <ContextualToolbar
       v-if="editable && selectedField"
-      class="print-exclude floating-contextual"
-      :style="fieldToolbarStyle()"
-      :locked="isFieldLocked(selectedField)"
-      :read-only="isReadOnlyField(selectedField)"
-      @field-action="handleFieldAction"
-    />
+      class="print-exclude"
+      testid="field-toolbar"
+      label="Field actions"
+      placement="above"
+      :left="fieldToolbarAnchor().left"
+      :top="fieldToolbarAnchor().top"
+      :anchor-bottom="fieldToolbarAnchor().bottom"
+    >
+      <FieldToolbar
+        :locked="isFieldLocked(selectedField)"
+        :read-only="isReadOnlyField(selectedField)"
+        @field-action="handleFieldAction"
+      />
+    </ContextualToolbar>
     <ContextualToolbar
       v-if="imageSelection && imageHandles"
       class="print-exclude"
@@ -3924,17 +3931,22 @@ function handleMenuCommand(id = "") {
       @delete="handleShapeDelete"
       @duplicate="handleShapeDuplicate"
     />
-    <ChartToolbar
+    <ContextualToolbar
       v-if="chartSelection && chartHandles && doc && chartAt(doc, chartSelection)"
       class="print-exclude"
+      testid="chart-toolbar"
+      label="Chart formatting"
       :left="chartToolbarStyle().left"
       :top="chartToolbarStyle().top"
-      :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
-      @edit-data="handleChartEditData(chartSelection.section, chartSelection.block)"
-      @options="openChartOptions"
-      @delete="deleteChartWithCaptionPrompt"
-      @duplicate="handleChartDuplicate"
-    />
+    >
+      <ChartToolbar
+        :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
+        @edit-data="handleChartEditData(chartSelection.section, chartSelection.block)"
+        @options="openChartOptions"
+        @delete="deleteChartWithCaptionPrompt"
+        @duplicate="handleChartDuplicate"
+      />
+    </ContextualToolbar>
     <EditorContextMenu
       v-if="contextMenu.visible"
       class="print-exclude"

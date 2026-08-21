@@ -117,6 +117,8 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 30;
   display: flex;
+  flex-wrap: wrap;
+  max-width: min(90vw, 640px);
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2);
