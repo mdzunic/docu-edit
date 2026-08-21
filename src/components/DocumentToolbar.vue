@@ -129,6 +129,14 @@ watch(collapsedCount, (count) => {
   void updateRoving();
 });
 
+// The font-size steppers start disabled (no size known at mount) and enable
+// once a size resolves. Re-normalize tabindex when that happens so a freshly
+// enabled stepper does not keep a default (0) tab stop (AC-32).
+watch(
+  () => props.formatValues.fontSizePt,
+  () => void updateRoving(),
+);
+
 function toggleMenu() {
   menuOpen.value = !menuOpen.value;
 }
@@ -188,10 +196,11 @@ function stripControls() {
     if (control.closest(".ui-menu-surface") || control.closest("[role='menu']")) {
       return false;
     }
-    return (
-      control === overflowButton.value ||
-      (control instanceof HTMLElement && control.offsetParent !== null)
-    );
+    // offsetParent is null for a v-show="display:none" control — the hidden
+    // overflow button (collapsedCount === 0) and any collapsed band's controls
+    // fall out here, so End lands on the last *visible* control and, when the
+    // overflow button is shown, on it (AC-33, AC-34).
+    return control instanceof HTMLElement && control.offsetParent !== null;
   });
 }
 
@@ -204,17 +213,34 @@ function clearMenuTabindex() {
   }
 }
 
-// Make exactly `active` the tab stop (tabindex 0); every other strip control
-// gets -1. Inlined at each call site rather than a helper, so the array param
-// avoids the never[] the espree-safe (annotation-free) style would infer.
+// Every focusable-in-principle strip control, whether or not it is currently
+// enabled or visible — the set updateRoving() drives to -1 so a control that
+// is disabled now (e.g. the font-size steppers before a size is known) does not
+// resurface as a second tabindex=0 tab stop the moment it enables (AC-32).
+function allStripControls() {
+  const el = strip.value;
+  if (!el) {
+    return [];
+  }
+  return Array.from(el.querySelectorAll("button, input, select, [role='button']")).filter(
+    (control) => !control.closest(".ui-menu-surface") && !control.closest("[role='menu']"),
+  );
+}
+
+// Make exactly one control the tab stop (tabindex 0) and force every other
+// strip control — including disabled/hidden ones — to -1, so the strip is a
+// single tab stop (AC-32). The active stop is the currently-focused control if
+// focus is already inside the strip; otherwise the first reachable control.
 async function updateRoving() {
   await nextTick();
-  const controls = stripControls();
-  if (controls.length === 0) {
+  const reachable = stripControls();
+  if (reachable.length === 0) {
     return;
   }
-  const active = controls[0];
-  for (const control of controls) {
+  const focused = document.activeElement;
+  const active =
+    focused instanceof HTMLElement && reachable.includes(focused) ? focused : reachable[0];
+  for (const control of allStripControls()) {
     if (control instanceof HTMLElement) {
       control.tabIndex = control === active ? 0 : -1;
     }
@@ -242,14 +268,24 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
     return;
   }
   const active = document.activeElement;
-  if (
-    active instanceof HTMLElement &&
-    (active.tagName === "INPUT" ||
-      active.tagName === "SELECT" ||
-      active.isContentEditable ||
-      active.closest("[role='menu']"))
-  ) {
+  // An open popup (the common-sizes dropdown, a colour swatch grid) owns its own
+  // arrow handling — never rove out from inside one.
+  if (active instanceof HTMLElement && active.closest("[role='menu']")) {
     return;
+  }
+  // The font-size field is the one strip control that owns Left/Right for its
+  // own caret. Roving still has to pass through it (AC-31/AC-32), so an arrow
+  // only leaves the field once the caret sits at the boundary in the travel
+  // direction — the APG toolbar text-field convention. Home/End always jump to
+  // the strip ends regardless.
+  if ((key === "ArrowLeft" || key === "ArrowRight") && active instanceof HTMLInputElement) {
+    const start = active.selectionStart ?? 0;
+    const end = active.selectionEnd ?? 0;
+    const atStart = start === 0 && end === 0;
+    const atEnd = start === active.value.length && end === active.value.length;
+    if ((key === "ArrowLeft" && !atStart) || (key === "ArrowRight" && !atEnd)) {
+      return;
+    }
   }
   const controls = stripControls();
   if (controls.length === 0) {
@@ -275,6 +311,13 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
       }
     }
     target.focus();
+    // Entering the font-size field, drop the caret at the edge we arrived from
+    // so a further arrow in the same direction ejects in one press rather than
+    // first collapsing a browser select-all.
+    if (target instanceof HTMLInputElement && (key === "ArrowLeft" || key === "ArrowRight")) {
+      const caret = key === "ArrowLeft" ? 0 : target.value.length;
+      target.setSelectionRange(caret, caret);
+    }
   }
 }
 
@@ -524,7 +567,7 @@ onBeforeUnmount(() => {
       </Teleport>
     </div>
     <button
-      v-show="collapsedCount > 0"
+      v-show="collapsedCount > 0 || measuring"
       ref="overflowButton"
       type="button"
       class="overflow-button"

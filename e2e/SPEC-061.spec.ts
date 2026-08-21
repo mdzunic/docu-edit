@@ -48,6 +48,22 @@ test("at 1024px the character and paragraph bands show without overflow (AC-36)"
   expect(clipped).toBe(false);
 });
 
+test("narrowing to 1024px keeps the paragraph band without over-collapsing (AC-36)", async ({ page }) => {
+  // Start wide (nothing overflows, so the overflow button is display:none and
+  // its width is not measured inline), then narrow to 1024px. The resize path
+  // must re-plan against the real overflow-button width, not a stale default,
+  // or band 6 collapses even though it fits.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newDoc(page);
+  await page.waitForTimeout(1600);
+  await expect(overflowButton(page)).toBeHidden();
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expect(strip(page).locator('.band[data-band="4"]')).toBeVisible(); // Character
+  await expect(strip(page).locator('.band[data-band="6"]')).toBeVisible(); // Paragraph
+  const clipped = await strip(page).evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+  expect(clipped).toBe(false);
+});
+
 test("narrow width collapses low-priority bands into the overflow menu (AC-12, AC-38)", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 800 });
   await newDoc(page);
@@ -81,6 +97,60 @@ test("the strip is one roving tab stop ending on the overflow button (AC-32, AC-
   await page.keyboard.press("End");
   const onOverflow = await overflowButton(page).evaluate((el) => el === document.activeElement);
   expect(onOverflow).toBe(true);
+});
+
+test("exactly one strip control is a tab stop, even after the size steppers enable (AC-32)", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await newDoc(page);
+  // A caret resolves a font size, enabling the −/+ steppers that mount disabled.
+  await page.getByTestId("document-content").click();
+  await expect(page.getByTestId("font-size-decrease")).toBeEnabled();
+  const tabStops = await strip(page).evaluate(
+    (el) => el.querySelectorAll('[tabindex="0"]').length,
+  );
+  expect(tabStops).toBe(1);
+});
+
+test("arrow roving reaches the font-size − stepper between the select and the field (AC-31)", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await newDoc(page);
+  await page.getByTestId("document-content").click();
+  await expect(page.getByTestId("font-size-decrease")).toBeEnabled();
+  await page.getByTestId("style-picker-button").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("font-family-select")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("font-size-decrease")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("font-size-input")).toBeFocused();
+  // The field owns Left/Right for its caret only until the boundary; entering it
+  // rightward drops the caret at the end so one more ArrowRight ejects it.
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("font-size-increase")).toBeFocused();
+});
+
+test("End reaches the last visible control when nothing overflows (AC-33)", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newDoc(page);
+  await page.waitForTimeout(1600);
+  await expect(overflowButton(page)).toBeHidden();
+  await page.getByTestId("style-picker-button").focus();
+  await page.keyboard.press("End");
+  // Focus lands on a real, visible strip control — not the display:none overflow
+  // button and not stuck on the first control.
+  const landed = await strip(page).evaluate((el) => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || !el.contains(active)) {
+      return { ok: false, testid: null as string | null };
+    }
+    return {
+      ok: active.offsetParent !== null,
+      testid: active.getAttribute("data-testid"),
+    };
+  });
+  expect(landed.ok).toBe(true);
+  expect(landed.testid).not.toBe("style-picker-button");
+  expect(landed.testid).not.toBe("toolbar-overflow-button");
 });
 
 test("the duplicate track-changes toolbar button is gone; the status-bar one remains (AC-19, AC-20)", async ({ page }) => {
