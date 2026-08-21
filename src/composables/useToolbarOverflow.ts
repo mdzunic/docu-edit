@@ -33,7 +33,7 @@ export function useToolbarOverflow({
   let gap = 0;
   let overflowWidth = 44;
 
-  function plan() {
+  function plan(fresh = false) {
     const el = strip();
     if (!el) {
       return;
@@ -45,7 +45,11 @@ export function useToolbarOverflow({
       gap,
       available,
       overflowWidth,
-      previousCollapsed: collapsedCount.value,
+      // A fresh plan follows a re-measure (widths changed, not the available
+      // width), so it takes the exact minimal fit — hysteresis exists to damp
+      // resize flapping, and applying it here would lock in a pre-font
+      // over-collapse that later measurements should undo (AC-36).
+      previousCollapsed: fresh ? 0 : collapsedCount.value,
       hysteresis,
     });
   }
@@ -68,11 +72,15 @@ export function useToolbarOverflow({
     }
     const overflowEl = el.querySelector('[data-testid="toolbar-overflow-button"]');
     if (overflowEl instanceof HTMLElement && overflowEl.offsetWidth > 0) {
-      overflowWidth = overflowEl.offsetWidth + gap;
+      const ovfStyles = getComputedStyle(overflowEl);
+      const margins =
+        (Number.parseFloat(ovfStyles.marginInlineStart) || 0) +
+        (Number.parseFloat(ovfStyles.marginInlineEnd) || 0);
+      overflowWidth = overflowEl.offsetWidth + margins + gap;
     }
     measuring.value = false;
     await nextTick();
-    plan();
+    plan(true);
   }
 
   let observer: ResizeObserver | null = null;
