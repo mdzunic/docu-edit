@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="emit('toggle-direction')"
     >
-      ¶⇄
+      <AppIcon name="paragraph-direction" />
     </button>
     <button
       ref="spacingButton"
@@ -456,7 +456,7 @@ onBeforeUnmount(() => {
       @mousedown.prevent
       @click="togglePaginationMenu"
     >
-      ¶⇟
+      <AppIcon name="paragraph-pagination" />
     </button>
     <div
       v-if="paginationOpen"

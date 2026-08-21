@@ -43,6 +43,13 @@ export function documentFontFamilies(model: DocumentModel): string[] {
 export const MIN_FONT_SIZE_PT = 1;
 export const MAX_FONT_SIZE_PT = 409;
 
+/** The common point sizes offered in the font-size control's dropdown
+ * (SPEC-061 AC-21). The field stays free-typed for anything off this list;
+ * these are just the quick picks a word processor conventionally shows. */
+export const COMMON_FONT_SIZES = [
+  8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72,
+];
+
 /** Shown when out-of-range input is clamped (SPEC-013 AC). */
 export const FONT_SIZE_RANGE_MESSAGE =
   `Font size must be between ${MIN_FONT_SIZE_PT} and ${MAX_FONT_SIZE_PT} pt`;
