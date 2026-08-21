@@ -42,6 +42,7 @@ import LinkDialog from "../components/LinkDialog.vue";
 import TocOptionsDialog from "../components/TocOptionsDialog.vue";
 import FindBar from "../components/FindBar.vue";
 import DocumentToolbar from "../components/DocumentToolbar.vue";
+import ContextualToolbar from "../components/ContextualToolbar.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
 import FieldDialog from "../components/FieldDialog.vue";
@@ -3882,16 +3883,21 @@ function handleMenuCommand(id = "") {
       :read-only="isReadOnlyField(selectedField)"
       @field-action="handleFieldAction"
     />
-    <ImageToolbar
+    <ContextualToolbar
       v-if="imageSelection && imageHandles"
       class="print-exclude"
+      testid="image-toolbar"
+      label="Image formatting"
       :left="imageToolbarStyle().left"
       :top="imageToolbarStyle().top"
-      :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
-      @wrap="handleImageWrap"
-      @options="openImageOptions"
-      @delete="deleteImageWithCaptionPrompt"
-    />
+    >
+      <ImageToolbar
+        :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
+        @wrap="handleImageWrap"
+        @options="openImageOptions"
+        @delete="deleteImageWithCaptionPrompt"
+      />
+    </ContextualToolbar>
     <ShapeToolbar
       v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection) && !movingShape"
       class="print-exclude"
