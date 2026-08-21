@@ -321,8 +321,8 @@ function handleInputKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .palette-input:focus {
-  outline: var(--border-width-thick, 2px) solid var(--accent);
-  outline-offset: -1px;
+  outline: var(--border-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--border-width));
 }
 
 .palette-list {
@@ -402,7 +402,7 @@ function handleInputKeydown(event = new KeyboardEvent("keydown")) {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--border-width));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
