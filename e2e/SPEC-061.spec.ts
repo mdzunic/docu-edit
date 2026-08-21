@@ -111,7 +111,11 @@ test("exactly one strip control is a tab stop, even after the size steppers enab
   expect(tabStops).toBe(1);
 });
 
-test("arrow roving reaches the font-size − stepper between the select and the field (AC-31)", async ({ page }) => {
+test("arrow roving reaches the font-size − stepper stranded between the select and the field (AC-31)", async ({ page }) => {
+  // The QA-reported gap: the − stepper sat between the native font-family
+  // <select> (arrow changed the font and refocused the doc) and the native
+  // size field (arrow moved the caret), reachable from neither side. The select
+  // now roves rather than mutating, so the − stepper is reachable rightward.
   await page.setViewportSize({ width: 1400, height: 900 });
   await newDoc(page);
   await page.getByTestId("document-content").click();
@@ -123,10 +127,28 @@ test("arrow roving reaches the font-size − stepper between the select and the 
   await expect(page.getByTestId("font-size-decrease")).toBeFocused();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByTestId("font-size-input")).toBeFocused();
-  // The field owns Left/Right for its caret only until the boundary; entering it
-  // rightward drops the caret at the end so one more ArrowRight ejects it.
-  await page.keyboard.press("ArrowRight");
-  await expect(page.getByTestId("font-size-increase")).toBeFocused();
+});
+
+test("the + stepper and size dropdown are reachable by roving from the End (AC-31)", async ({ page }) => {
+  // Controls to the right of the size field are reached leftward from End; the
+  // field's commit-on-blur returns focus to the document (by design), so this
+  // right-hand cluster is reached before, not through, the field.
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await newDoc(page);
+  await page.getByTestId("document-content").click();
+  await expect(page.getByTestId("font-size-increase")).toBeEnabled();
+  await page.getByTestId("style-picker-button").focus();
+  await page.keyboard.press("End");
+  // Walk left until the + stepper takes focus (it lies just right of the field).
+  let reachedIncrease = false;
+  for (let i = 0; i < 30; i++) {
+    if (await page.getByTestId("font-size-increase").evaluate((el) => el === document.activeElement)) {
+      reachedIncrease = true;
+      break;
+    }
+    await page.keyboard.press("ArrowLeft");
+  }
+  expect(reachedIncrease).toBe(true);
 });
 
 test("End reaches the last visible control when nothing overflows (AC-33)", async ({ page }) => {
