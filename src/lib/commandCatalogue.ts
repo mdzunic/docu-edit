@@ -142,6 +142,24 @@ export const COMMANDS: CommandMeta[] = [
   { id: "library.open", label: "Open document", path: ["Library"], scope: "library" },
 ];
 
+// Typed pass-throughs for CommandPalette.vue's untyped Array/Object props: a
+// `.vue` script cannot annotate (espree bars TS syntax), so it casts through
+// these — the same idiom as styles.ts's asStyleEntries.
+export function asCommandMetas(value: unknown[]): CommandMeta[] {
+  return value as CommandMeta[];
+}
+export function asIdList(value: unknown[]): string[] {
+  return value as string[];
+}
+export function asReasonMap(value: object): Record<string, string> {
+  return value as Record<string, string>;
+}
+/** Typed empty seed for the `.vue` script's highlight-ranges default param
+ * (espree bars the annotation — same idiom as noStyleEntries). */
+export function noRanges(): [number, number][] {
+  return [];
+}
+
 // --- search & ranking --------------------------------------------------------
 
 /** One matched command with its ranking and the label character ranges to
