@@ -270,11 +270,12 @@ test("Download → PDF exports searchable text with embedded fonts, outline, lin
   await page.keyboard.type("Chapter One");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Searchable body text with a link here");
-  // Select the word "link": Ctrl/Cmd+K applies to the selection.
+  // Select the word "link": Ctrl/Cmd+Alt+K (SPEC-062 moved the link
+  // accelerator off Ctrl/Cmd+K) applies to the selection.
   await page.keyboard.press(WORD_LEFT);
   await page.keyboard.press(WORD_LEFT);
   await page.keyboard.press(extend(WORD_RIGHT));
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await page.getByTestId("link-url-input").fill("https://example.com/spec034");
   await page.getByTestId("link-save").click();
   await waitForPagination(page);

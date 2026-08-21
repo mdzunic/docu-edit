@@ -707,6 +707,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
 
     <template #tools>
       <MenuItem
+        label="Search commands"
+        testid="tools-menu-command-palette"
+        @select="emit('command', 'app.commandPalette')"
+      />
+      <hr class="menu-separator">
+      <MenuItem
         label="Word count"
         testid="tools-menu-word-count"
         @select="emit('command', 'tools.word-count')"

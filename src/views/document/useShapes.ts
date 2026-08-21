@@ -80,7 +80,7 @@ import {
 } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
-import { LINE_GEOMETRIES, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
+import { LINE_GEOMETRIES, asShapeGeometry, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
 import type { EditorContext } from "./context";
@@ -1194,6 +1194,12 @@ export function useShapes(deps: ShapesDeps) {
     drawGeometry.value = geometry;
   }
 
+  /** "Insert → Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
+   * next drag/click on the canvas draws the chosen geometry. */
+  function handleShapePick(geometry = "rect") {
+    armShapeDraw(asShapeGeometry(geometry));
+  }
+
   function disarmShapeDraw() {
     drawGeometry.value = null;
     drawPreview.value = null;
@@ -1449,6 +1455,7 @@ export function useShapes(deps: ShapesDeps) {
     handleShapeRotateMove,
     finishShapeRotate,
     armShapeDraw,
+    handleShapePick,
     disarmShapeDraw,
     startShapeDraw,
     finishShapeDraw,
