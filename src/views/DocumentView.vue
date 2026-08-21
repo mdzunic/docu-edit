@@ -2907,9 +2907,8 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   if (!doc.value || !findAndPrintEnabled.value || event.altKey) {
     return;
   }
-  // Escape disarms the format painter regardless of where focus is (AC-17)
-  // — handleKeyDown below also disarms it when Escape is pressed with the
-  // canvas focused, so this is deliberately unguarded by isOutsideDocumentInput.
+  // Escape disarms the format painter regardless of focus (AC-17) — deliberately
+  // unguarded by isOutsideDocumentInput; handleKeyDown also disarms it in-canvas.
   if (event.key === "Escape") {
     disarmPainter();
     if (printPreviewOpen.value) {
@@ -2920,16 +2919,18 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     return;
   }
   const shortcut = findShortcut(event);
-  if (shortcut?.id === "find.open") {
+  if (shortcut?.id === "app.commandPalette") {
+    event.preventDefault(); // SPEC-062: opens alongside find/print, canvas focus or not.
+    openCommandPalette();
+  } else if (shortcut?.id === "find.open") {
     event.preventDefault();
     openFind(false);
   } else if (shortcut?.id === "find.openReplace") {
     event.preventDefault();
     openFind(true);
   } else if (shortcut?.id === "file.print") {
-    // SPEC-034 AC-1 (superseding SPEC-021's immediate window.print()):
-    // Ctrl/Cmd+P opens the in-app print preview; the native dialog opens
-    // from its Print button.
+    // SPEC-034 AC-1 (superseding SPEC-021's immediate window.print()): Ctrl/Cmd+P
+    // opens the in-app print preview; the native dialog opens from its Print button.
     event.preventDefault();
     openPrintPreview();
   }

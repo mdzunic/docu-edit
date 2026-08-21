@@ -4,7 +4,7 @@ import { MOD } from "./keys";
 // SPEC-062 — command palette. A keyboard-first search over every registered
 // command (and the open document's styles), in one accessible combobox/listbox
 // dialog shared by the editor and the library. Opened from Tools → Search
-// commands in the editor and Ctrl/Cmd+K in the library.
+// commands or Ctrl/Cmd+Shift+K in the editor, and Ctrl/Cmd+K in the library.
 
 async function createDocument(page: Page): Promise<void> {
   await page.goto("/");
@@ -35,6 +35,17 @@ test.describe("SPEC-062 command palette", () => {
     // Enter runs the highlighted command — identical to the menu item.
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("statistics-dialog")).toBeVisible();
+  });
+
+  test("opens in the editor from the registered app.commandPalette shortcut (AC-2, AC-35)", async ({ page }) => {
+    // SPEC-025 owns Ctrl/Cmd+K (insert link); app.commandPalette registers on
+    // Ctrl/Cmd+Shift+K, the closest free key, so opening stays keyboard-only.
+    await createDocument(page);
+    await page.getByTestId("document-content").click();
+
+    await page.keyboard.press(`${MOD}+Shift+k`);
+    await expect(page.getByTestId("command-palette")).toBeVisible();
+    await expect(page.getByTestId("command-palette-input")).toBeFocused();
   });
 
   test("Up/Down move the highlight and Escape closes (AC-13, AC-14)", async ({ page }) => {

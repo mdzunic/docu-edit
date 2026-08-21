@@ -172,6 +172,10 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },
 
   // View
+  // SPEC-062 wanted Ctrl/Cmd+K here, but SPEC-025 (shipped) already binds that
+  // to insert.link and its behaviour is out of scope to change; Ctrl/Cmd+Shift+K
+  // is the closest free key (no existing binding, not a RESERVED_BROWSER_KEY).
+  { id: "app.commandPalette", label: "Search commands", category: "View", bindings: [{ key: "k", mod: true, shift: true }] },
   { id: "view.shortcuts", label: "Keyboard shortcuts", category: "View", bindings: [{ key: "/", mod: true }] },
   {
     id: "view.formattingMarks",

@@ -47,6 +47,20 @@ describe("SHORTCUTS registry (SPEC-021 AC-1, AC-5, AC-11)", () => {
     }
   });
 
+  it("registers app.commandPalette under the View category (SPEC-062 AC-2, AC-3)", () => {
+    const palette = SHORTCUTS.find((definition) => definition.id === "app.commandPalette");
+    expect(palette).toBeDefined();
+    expect(palette?.category).toBe("View");
+    expect(palette?.label).toBe("Search commands");
+    // It appears in the reference dialog because groupShortcuts renders every
+    // registry entry; a real binding gives it a key there. SPEC-025 owns
+    // Ctrl/Cmd+K, so the palette takes the closest free key, Ctrl/Cmd+Shift+K.
+    expect(shortcutLabel("app.commandPalette", false)).toBe("Ctrl+Shift+K");
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true, shiftKey: true }), false)?.id).toBe("app.commandPalette");
+    // ...and does not disturb the shipped Ctrl/Cmd+K = insert link binding.
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true }), false)?.id).toBe("insert.link");
+  });
+
   it("marks exactly the five deliberately-overridden browser shortcuts", () => {
     const overridden = SHORTCUTS.filter((definition) => definition.overridesBrowser).map((definition) => definition.id);
     expect(overridden.sort()).toEqual(

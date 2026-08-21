@@ -85,15 +85,16 @@ onUnmounted(() => {
 
 // Command palette (SPEC-062 AC-33/34): the library offers its own command
 // source — new document, new from template, open — in the same dialog the
-// editor uses. Ctrl/Cmd+K opens it; the key is free here (the editor's link
-// shortcut does not exist on this view).
+// editor uses. The registered app.commandPalette shortcut (Ctrl/Cmd+Shift+K)
+// opens it here as it does in the editor; Ctrl/Cmd+K also opens it since that
+// key is free on this view (the editor's link shortcut does not exist here).
 const libraryCommands = COMMANDS.filter((command) => command.scope === "library");
 const libraryCommandIds = libraryCommands.map((command) => command.id);
 const commandPaletteOpen = ref(false);
 const paletteRecentIds = ref(loadRecentCommands());
 
 function handleLibraryPaletteKey(event = new KeyboardEvent("keydown")) {
-  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k") {
     event.preventDefault();
     commandPaletteOpen.value = true;
   }
