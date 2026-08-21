@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
-import UiMenuSurface from "./ui/UiMenuSurface.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
 import StylePicker from "./StylePicker.vue";
 import FontFamilySelect from "./FontFamilySelect.vue";
@@ -106,13 +105,20 @@ const { collapsedCount, measuring, isCollapsed } = useToolbarOverflow({
 // Teleport is disabled and they render in place in the strip. The target is a
 // selector string so no element ref plumbing is needed.
 function teleportDisabled(band = 0) {
-  return measuring.value || !isCollapsed(band);
+  // Guard on the target actually existing: a disabled Teleport renders inline,
+  // so we never enable one whose destination is not yet in the DOM (the
+  // insertBefore-of-null crash). Re-evaluated every render via the reactive
+  // measuring/collapsedCount reads above.
+  if (measuring.value || !isCollapsed(band)) {
+    return true;
+  }
+  return !document.getElementById(`overflow-band-${band}`);
 }
 
 const { menuStyle } = useFloatingMenu({
   open: () => menuOpen.value,
   anchor: () => overflowButton.value,
-  menu: () => overflowMenu.value?.$el ?? null,
+  menu: () => overflowMenu.value,
   align: "start",
 });
 
@@ -125,6 +131,32 @@ watch(collapsedCount, (count) => {
 
 function toggleMenu() {
   menuOpen.value = !menuOpen.value;
+}
+
+// Dismiss the overflow menu on Escape or an outside pointerdown (the strip's
+// own popup dismissal — the overflow menu is a plain fixed div, not a
+// UiMenuSurface, so it never becomes a Teleport destination that could crash
+// the patch when a band collapses into it).
+function onDocPointerDown(event = new PointerEvent("pointerdown")) {
+  if (!menuOpen.value) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+  const menu = overflowMenu.value;
+  const button = overflowButton.value;
+  if ((menu instanceof HTMLElement && menu.contains(target)) || (button && button.contains(target))) {
+    return;
+  }
+  menuOpen.value = false;
+}
+
+function onDocKeydown(event = new KeyboardEvent("keydown")) {
+  if (event.key === "Escape" && menuOpen.value) {
+    menuOpen.value = false;
+  }
 }
 
 // The Format menu opens the toolbar's own colour/highlight popups through
@@ -164,7 +196,7 @@ function stripControls() {
 }
 
 function clearMenuTabindex() {
-  const el = overflowMenu.value?.$el;
+  const el = overflowMenu.value;
   if (el instanceof HTMLElement) {
     for (const control of Array.from(el.querySelectorAll("button, input, select"))) {
       control.removeAttribute("tabindex");
@@ -248,6 +280,13 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
 
 onMounted(() => {
   void updateRoving();
+  document.addEventListener("pointerdown", onDocPointerDown, true);
+  document.addEventListener("keydown", onDocKeydown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onDocPointerDown, true);
+  document.removeEventListener("keydown", onDocKeydown);
 });
 </script>
 
@@ -259,6 +298,40 @@ onMounted(() => {
     @keydown="onKeydown"
     @focusin="onFocusin"
   >
+    <!-- The overflow menu is teleported to <body>, OUT of this strip's own
+         subtree. A collapsing band then teleports its controls into a target
+         (#overflow-band-N) that lives in <body>, never a sibling subtree of
+         the same component — teleporting within one component's own root
+         crashes Vue's patch (insertBefore of null). The menu is position:fixed
+         and hidden via `visibility` (not display:none, which also breaks the
+         inbound Teleport) so its targets stay laid out while it is closed. -->
+    <Teleport to="body">
+      <div
+        ref="overflowMenu"
+        class="overflow-menu ui-menu-surface"
+        :class="{ 'is-open': menuOpen }"
+        role="menu"
+        aria-label="More formatting"
+        data-testid="toolbar-overflow-menu"
+        :style="menuStyle"
+      >
+        <div
+          v-for="band in [5, 6, 7, 8]"
+          v-show="isCollapsed(band)"
+          :key="band"
+          class="overflow-section"
+          :data-overflow-band="band"
+        >
+          <p class="overflow-heading">
+            {{ BAND_NAMES[band] }}
+          </p>
+          <div
+            :id="`overflow-band-${band}`"
+            class="overflow-band-target"
+          />
+        </div>
+      </div>
+    </Teleport>
     <!-- Band 1 — History -->
     <div
       v-show="!isCollapsed(1) || measuring"
@@ -465,35 +538,6 @@ onMounted(() => {
     >
       <AppIcon name="more-horizontal" />
     </button>
-    <UiMenuSurface
-      ref="overflowMenu"
-      :open="menuOpen"
-      keep-mounted
-      :anchor="overflowButton"
-      :return-focus="false"
-      class="overflow-menu"
-      role="menu"
-      aria-label="More formatting"
-      data-testid="toolbar-overflow-menu"
-      :style="menuStyle"
-      @dismiss="menuOpen = false"
-    >
-      <div
-        v-for="band in [5, 6, 7, 8]"
-        v-show="isCollapsed(band)"
-        :key="band"
-        class="overflow-section"
-        :data-overflow-band="band"
-      >
-        <p class="overflow-heading">
-          {{ BAND_NAMES[band] }}
-        </p>
-        <div
-          :id="`overflow-band-${band}`"
-          class="overflow-band-target"
-        />
-      </div>
-    </UiMenuSurface>
   </div>
 </template>
 
@@ -562,6 +606,19 @@ onMounted(() => {
   min-width: 14rem;
   max-height: min(28rem, 80vh);
   overflow-y: auto;
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-2);
+  /* Closed: hidden but still laid out (see the template note on Teleport). */
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.overflow-menu.is-open {
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .overflow-section + .overflow-section {
