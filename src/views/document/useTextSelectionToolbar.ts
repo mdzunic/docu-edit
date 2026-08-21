@@ -74,7 +74,9 @@ export function useTextSelectionToolbar({ contentRoot, suppressed }: UseTextSele
       visible.value = false;
       return;
     }
-    if (overlayOpen()) {
+    if (overlayOpen() || typeof range.getBoundingClientRect !== "function") {
+      // No geometry to anchor against (jsdom has no Range layout), so there is
+      // nothing to show — matches the strip's own no-layout guard.
       visible.value = false;
       return;
     }
