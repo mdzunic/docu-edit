@@ -43,6 +43,7 @@ import TocOptionsDialog from "../components/TocOptionsDialog.vue";
 import FindBar from "../components/FindBar.vue";
 import DocumentToolbar from "../components/DocumentToolbar.vue";
 import ContextualToolbar from "../components/ContextualToolbar.vue";
+import TextSelectionToolbar from "../components/TextSelectionToolbar.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
 import FieldDialog from "../components/FieldDialog.vue";
@@ -86,6 +87,7 @@ import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
+import { useTextSelectionToolbar } from "./document/useTextSelectionToolbar";
 import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
@@ -2701,36 +2703,37 @@ const effectiveTrackChangesDisplayMode = computed(() =>
   versionHistoryPreviewActive.value ? asTrackChangesDisplayMode("all") : trackChangesDisplayMode.value,
 );
 
-// Width (px) the open side panes claim on the toolbar's trailing edge, so the
-// strip collapses its bands exactly as narrowing the window would (SPEC-061
-// AC-15). Only the right-docked panes crowd the strip's controls; the
-// left-docked outline (default-open) does not, so it is excluded — otherwise a
-// fresh load would over-collapse and hide the paragraph band at 1024px
-// (AC-36). Panes are near-exclusive in practice, but the widths sum so any
-// combination reserves the right room.
-const toolbarReservedRight = computed(() => {
-  let reserved = 0;
-  if (stylesPaneOpen.value) reserved += 288; // 18rem
-  if (commentsPaneOpen.value) reserved += 288;
-  if (trackChangesPaneOpen.value) reserved += 288;
-  if (versionHistoryPaneOpen.value) reserved += 320; // 20rem
-  if (accessibilityPaneOpen.value) reserved += 320;
-  if (fontsPaneOpen.value) reserved += 320;
-  return reserved;
-});
+// Width (px) the open right-docked panes claim on the toolbar's trailing edge,
+// so the strip collapses its bands like narrowing the window would (AC-15); the
+// left-docked (default-open) outline is excluded to keep 1024px fits (AC-36).
+const toolbarReservedRight = computed(
+  () =>
+    (stylesPaneOpen.value ? 288 : 0) +
+    (commentsPaneOpen.value ? 288 : 0) +
+    (trackChangesPaneOpen.value ? 288 : 0) +
+    (versionHistoryPaneOpen.value ? 320 : 0) +
+    (accessibilityPaneOpen.value ? 320 : 0) +
+    (fontsPaneOpen.value ? 320 : 0),
+);
 
-// The field toolbar leaves the strip (SPEC-061): it is contextual, shown only
-// while the caret is on a field, floating above the field's rect on the shared
-// ContextualToolbar chrome. Returns the anchor point (centre-x/top/bottom of
-// the field's rect) the chrome positions itself against.
+// The anchor point (centre-x/top/bottom of the current selection rect) the
+// shared ContextualToolbar positions the contextual field toolbar against.
 function fieldToolbarAnchor() {
   const selection = typeof window !== "undefined" ? window.getSelection() : null;
-  if (!selection || selection.rangeCount === 0) {
-    return { left: 0, top: 0, bottom: 0 };
-  }
-  const rect = selection.getRangeAt(0).getBoundingClientRect();
-  return { left: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom };
+  const rect = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).getBoundingClientRect() : null;
+  return rect ? { left: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom } : { left: 0, top: 0, bottom: 0 };
 }
+
+// The contextual text-selection toolbar (SPEC-061 AC-24..30): raised over a
+// non-empty body selection, suppressed while read-only, an object toolbar is
+// showing, shape text is being edited, or a track-changes preview is on.
+const { visible: textSelectionToolbarVisible, anchor: textSelectionAnchor, hide: hideTextSelectionToolbar } =
+  useTextSelectionToolbar({
+    contentRoot: () => contentRoot.value,
+    suppressed: () =>
+      !editable.value || !!shapeSelection.value || !!imageSelection.value || !!chartSelection.value ||
+      !!selectedField.value || editingShapeText.value || versionHistoryPreviewActive.value,
+  });
 
 const {
   statusBarLanguageLabel,
@@ -2964,20 +2967,14 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 // the image file, the painter's click pair) have dedicated events bound in
 // the template.
 
-// Text colour and highlight stay in the toolbar (continuous-use) but are also
-// listed in the Format menu, so the menus remain a complete map — the spec's
-// one deliberate toolbar+menu exception. The menu entries open the real
-// toolbar pickers through these refs instead of duplicating the swatch popups
-// (which would collide on their fixed data-testids).
+// Text colour and highlight stay in the toolbar but are also listed in the
+// Format menu; those menu entries open the real toolbar pickers through these
+// refs (via DocumentToolbar) instead of duplicating the swatch popups (which
+// would collide on their fixed data-testids).
 const documentToolbarRef = useTemplateRef("documentToolbarRef");
 
-function openTextColorMenu() {
-  documentToolbarRef.value?.openTextColorMenu();
-}
-
-function openHighlightMenu() {
-  documentToolbarRef.value?.openHighlightMenu();
-}
+function openTextColorMenu() { documentToolbarRef.value?.openTextColorMenu(); }
+function openHighlightMenu() { documentToolbarRef.value?.openHighlightMenu(); }
 
 /** "Insert -> Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
  * next drag/click on the canvas draws the chosen geometry. */
@@ -3874,6 +3871,26 @@ function handleMenuCommand(id = "") {
       @select="handlePasteOption"
       @dismiss="dismissPasteChip"
     />
+    <ContextualToolbar
+      v-if="textSelectionToolbarVisible"
+      class="print-exclude"
+      testid="text-selection-toolbar"
+      label="Text selection actions"
+      placement="above"
+      :left="textSelectionAnchor.left"
+      :top="textSelectionAnchor.top"
+      :anchor-bottom="textSelectionAnchor.bottom"
+      @dismiss="hideTextSelectionToolbar"
+    >
+      <TextSelectionToolbar
+        :states="formatStates"
+        @toggle="toggleCharacterFormat"
+        @text-color="openTextColorMenu"
+        @highlight="openHighlightMenu"
+        @link="openLinkDialog"
+        @comment="openCommentComposer"
+      />
+    </ContextualToolbar>
     <ContextualToolbar
       v-if="editable && selectedField"
       class="print-exclude"
