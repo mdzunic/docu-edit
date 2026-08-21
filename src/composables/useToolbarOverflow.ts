@@ -52,7 +52,10 @@ export function useToolbarOverflow({
 
   async function measure() {
     const el = strip();
-    if (!el) {
+    // Nothing to measure without a laid-out strip: in jsdom (unit tests) every
+    // offsetWidth is 0, so skip the measuring re-render churn and the timers
+    // entirely rather than flapping the `measuring` flag on every mount.
+    if (!el || el.clientWidth === 0) {
       return;
     }
     measuring.value = true;
