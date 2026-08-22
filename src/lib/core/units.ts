@@ -90,7 +90,12 @@ const LENGTH_SUFFIXES: Record<string, MeasurementUnit> = {
  * parsed, so a field can reject it and signal an error rather than commit a
  * NaN (AC-11b). Negative values pass through: indents and hanging first lines
  * are legitimately negative. */
-export function parseLengthToCm(input: string, unit: MeasurementUnit): number | null {
+export function parseLengthToCm(input: string | number, unit: MeasurementUnit): number | null {
+  // A numeric input (e.g. from a `<input type="number">` v-model, which binds a
+  // number, not a string) is a bare value in the current display unit.
+  if (typeof input === "number") {
+    return Number.isFinite(input) ? toCm(input, unit) : null;
+  }
   if (typeof input !== "string") {
     return null;
   }

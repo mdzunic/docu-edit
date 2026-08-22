@@ -118,6 +118,12 @@ describe("parseLengthToCm (SPEC-064 AC-11, AC-17)", () => {
     expect(parseLengthToCm("-1.5cm", "cm")).toBeCloseTo(-1.5, 10);
   });
 
+  it("accepts a numeric input as a bare number in the current unit (type=number v-model)", () => {
+    expect(parseLengthToCm(2, "cm")).toBeCloseTo(2, 10);
+    expect(parseLengthToCm(1, "in")).toBeCloseTo(2.54, 10);
+    expect(parseLengthToCm(Number.NaN, "cm")).toBeNull();
+  });
+
   it("rejects unparseable input (AC-11b)", () => {
     expect(parseLengthToCm("", "cm")).toBeNull();
     expect(parseLengthToCm("   ", "cm")).toBeNull();
