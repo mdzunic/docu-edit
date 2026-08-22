@@ -10,7 +10,7 @@ import { computed, ref, triggerRef } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { STORAGE_FULL_REASON } from "../../composables/useAutosave";
 import { DEFAULT_TITLE } from "../../lib/documentModel";
-import { deleteDocument, isStorageAvailable, touchDocument } from "../../lib/documentStore";
+import { isStorageAvailable, touchDocument, trashDocument } from "../../lib/documentStore";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../../lib/docx/writer";
 import { MD_MIME_TYPE, mdFileName, writeMd } from "../../lib/md/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../../lib/odf/writer";
@@ -241,9 +241,13 @@ export function useFileActions(deps: FileActionsDeps) {
     }
     const { id, title } = doc.value;
     confirmingDelete.value = false;
-    deleteDocument(id);
+    // SPEC-067: the library's delete moves to the trash rather than erasing;
+    // File → Delete follows suit, keeping its toast and its navigation. The
+    // record is kept intact (id, model, version history) so Trash can restore
+    // it; only "Delete permanently" and "Empty trash" call deleteDocument.
+    trashDocument(id);
     addToast(`Deleted ${title}`);
-    // Deletion already removed the record; its navigation skips the flush.
+    // The record is trashed, not saved; skip the leave-guard's autosave flush.
     bypassCloseGuard = true;
     router.push("/");
   }

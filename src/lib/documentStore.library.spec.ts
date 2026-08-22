@@ -70,6 +70,7 @@ describe("initLibrary", () => {
         title: "From storage",
         format: "new",
         lastModified: 1000,
+        starred: false,
       },
     ]);
     expect(store.isStorageAvailable()).toBe(true);
@@ -212,6 +213,7 @@ describe("listDocuments", () => {
         title: "My report",
         format: "new",
         lastModified: 42_000,
+        starred: false,
       },
     ]);
   });
@@ -343,5 +345,121 @@ describe("deleteDocument", () => {
     store.deleteDocument("never-existed");
     await flushMicrotasks();
     expect(idb.deleteRecord).not.toHaveBeenCalled();
+  });
+});
+
+describe("trashDocument / restoreDocument (SPEC-067)", () => {
+  it("hides a trashed document from the library but keeps it retrievable", async () => {
+    const { store } = await loadStore();
+    store.getOrCreateDocument("doc-a");
+    store.getOrCreateDocument("doc-b");
+
+    store.trashDocument("doc-a");
+
+    expect(store.listDocuments().map((entry) => entry.id)).toEqual(["doc-b"]);
+    // Kept intact — id, model and everything else survive (AC-43).
+    expect(store.getDocument("doc-a")?.id).toBe("doc-a");
+    expect(store.getStoredRecord("doc-a")?.trashedAt).toBeTypeOf("number");
+  });
+
+  it("lists trashed documents only, most recently trashed first", async () => {
+    const { store } = await loadStore();
+    store.getOrCreateDocument("first");
+    store.getOrCreateDocument("second");
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    store.trashDocument("first");
+    vi.spyOn(Date, "now").mockReturnValue(2000);
+    store.trashDocument("second");
+
+    expect(store.listTrashedDocuments().map((entry) => entry.id)).toEqual([
+      "second",
+      "first",
+    ]);
+    expect(store.listTrashedDocuments()[0]?.trashedAt).toBe(2000);
+  });
+
+  it("does not permanently delete or bump lastModified when trashing", async () => {
+    const { store, idb } = await loadStore();
+    vi.spyOn(Date, "now").mockReturnValue(500);
+    store.getOrCreateDocument("keep");
+    store.trashDocument("keep");
+    await flushMicrotasks();
+
+    // trashDocument is the reversible delete: it must never call deleteRecord.
+    expect(idb.deleteRecord).not.toHaveBeenCalled();
+    // Trashing is not an edit, so a restored doc sorts back where it was.
+    expect(store.getStoredRecord("keep")?.lastModified).toBe(500);
+  });
+
+  it("restore returns a trashed document to the library", async () => {
+    const { store } = await loadStore();
+    store.getOrCreateDocument("comeback");
+    store.trashDocument("comeback");
+    store.restoreDocument("comeback");
+
+    expect(store.listDocuments().map((entry) => entry.id)).toEqual(["comeback"]);
+    expect(store.listTrashedDocuments()).toEqual([]);
+    expect(store.getStoredRecord("comeback")?.trashedAt).toBeUndefined();
+  });
+
+  it("deleteDocument permanently removes a trashed document", async () => {
+    const { store, idb } = await loadStore();
+    store.getOrCreateDocument("gone");
+    store.trashDocument("gone");
+    store.deleteDocument("gone");
+    await flushMicrotasks();
+
+    expect(store.getDocument("gone")).toBeUndefined();
+    expect(store.listTrashedDocuments()).toEqual([]);
+    expect(idb.deleteRecord).toHaveBeenCalledWith("gone");
+  });
+});
+
+describe("setStarred (SPEC-067)", () => {
+  it("stars and unstars a document, reflected in its library entry", async () => {
+    const { store } = await loadStore();
+    store.getOrCreateDocument("star-me");
+
+    expect(store.listDocuments()[0]?.starred).toBe(false);
+    store.setStarred("star-me", true);
+    expect(store.listDocuments()[0]?.starred).toBe(true);
+    expect(store.getStoredRecord("star-me")?.starred).toBe(true);
+
+    store.setStarred("star-me", false);
+    expect(store.listDocuments()[0]?.starred).toBe(false);
+    // Absent means not starred (record additions comment).
+    expect(store.getStoredRecord("star-me")?.starred).toBeUndefined();
+  });
+});
+
+describe("libraryStorageUsage (SPEC-067)", () => {
+  it("reports total and per-document byte sizes, largest first", async () => {
+    const { store } = await loadStore();
+    store.getOrCreateDocument("small");
+    const big = store.getOrCreateDocument("big");
+    big.sections[0].blocks[0] = {
+      type: "paragraph",
+      runs: [{ text: "x".repeat(5000), formatting: {} }],
+    } as never;
+
+    const usage = store.libraryStorageUsage();
+    expect(usage.byDocument[0]?.id).toBe("big");
+    expect(usage.byDocument[0]!.bytes).toBeGreaterThan(
+      usage.byDocument[1]!.bytes,
+    );
+    expect(usage.totalBytes).toBe(
+      usage.byDocument.reduce((sum, entry) => sum + entry.bytes, 0),
+    );
+    expect(usage.byDocument.map((entry) => entry.id)).toContain("small");
+  });
+
+  it("includes trashed documents, since they still cost space", async () => {
+    const { store } = await loadStore();
+    store.getOrCreateDocument("in-trash");
+    store.trashDocument("in-trash");
+
+    expect(
+      store.libraryStorageUsage().byDocument.map((entry) => entry.id),
+    ).toContain("in-trash");
   });
 });

@@ -171,31 +171,52 @@ test("Duplicate creates '<title> (copy)' that opens as a separate document (AC-1
   );
 });
 
-test("Delete confirms naming the document and removes it from storage (AC-14, AC-15)", async ({
+// SPEC-067 amends SPEC-003's delete AC: deleting from the library moves the
+// document to the trash (with an Undo toast), and permanent deletion is a
+// separate, explicit step from the Trash view that confirms once.
+test("Delete moves to trash; permanent deletion is a separate confirmed step (AC-33, AC-36..39, AC-44)", async ({
   page,
 }) => {
   await createDocument(page, "Doomed");
   await createDocument(page, "Survivor");
   await page.goto("/");
 
-  // Cancelling keeps the document.
+  // Delete moves to trash — no confirm dialog, an Undo toast instead.
   await rowByTitle(page, "Doomed").getByTestId("row-menu").click();
   await page.getByTestId("menu-delete").click();
-  await expect(page.getByTestId("delete-message")).toContainText("Doomed");
-  await page.getByTestId("delete-cancel").click();
-  await expect(rowByTitle(page, "Doomed")).toBeVisible();
-
-  // Confirming removes it — also from storage, so it stays gone on reload.
-  await rowByTitle(page, "Doomed").getByTestId("row-menu").click();
-  await page.getByTestId("menu-delete").click();
-  await page.getByTestId("delete-confirm").click();
   await expect(rowByTitle(page, "Doomed")).toBeHidden();
+  await expect(page.getByTestId("toast")).toContainText("Doomed");
+
+  // Trash lists it with Restore and Delete permanently.
+  await page.getByTestId("trash-link").click();
+  await expect(page.getByTestId("trash-view")).toContainText("Doomed");
+  await page.getByTestId("row-menu").click();
+  await page.getByTestId("menu-delete-permanently").click();
+  await expect(page.getByTestId("delete-message")).toContainText("Doomed");
+  await page.getByTestId("delete-confirm").click();
+  await expect(page.getByTestId("trash-view")).not.toContainText("Doomed");
+
+  // Survivor is untouched and stays after a reload.
+  await page.getByTestId("back-to-library").click();
   await settleWrites(page);
   await page.reload();
   await expect(page.getByTestId("row-title")).toHaveText("Survivor");
 });
 
-test("deleting the open document returns to / with a toast (AC-19, AC-20)", async ({
+test("the delete toast's Undo restores the document (AC-34, AC-35)", async ({
+  page,
+}) => {
+  await createDocument(page, "Bring me back");
+  await page.goto("/");
+
+  await rowByTitle(page, "Bring me back").getByTestId("row-menu").click();
+  await page.getByTestId("menu-delete").click();
+  await expect(rowByTitle(page, "Bring me back")).toBeHidden();
+  await page.getByTestId("toast-action").click();
+  await expect(rowByTitle(page, "Bring me back")).toBeVisible();
+});
+
+test("deleting the open document moves it to trash, returns to / with a toast (AC-33, AC-19, AC-20)", async ({
   page,
 }) => {
   await createDocument(page, "Open and doomed");
@@ -211,8 +232,10 @@ test("deleting the open document returns to / with a toast (AC-19, AC-20)", asyn
   await expect(page.getByTestId("toast")).toHaveText(
     "Deleted Open and doomed",
   );
-  // It was the only document, so the empty state is back.
-  await expect(page.getByTestId("empty-state")).toBeVisible();
+  // It was the only document; it is now in the trash, not erased.
+  await expect(page.getByTestId("library-empty")).toBeVisible();
+  await page.getByTestId("trash-link").click();
+  await expect(page.getByTestId("trash-view")).toContainText("Open and doomed");
 });
 
 test("without IndexedDB the app works in-memory and shows the banner (AC-21, AC-23)", async ({

@@ -19,19 +19,24 @@ describe("HomeView", () => {
     );
   });
 
-  it("shows the 'No document open' empty state in the canvas", () => {
+  // SPEC-067 AC-51..53: the empty state is a first-run screen describing what
+  // the product does, the three ways to start, and a note that documents are
+  // stored in this browser.
+  it("shows a first-run empty state describing the product and storage", () => {
     const { wrapper } = mountHome();
-    expect(wrapper.get('[data-testid="canvas"]').text()).toContain(
-      "No document open",
-    );
+    const canvas = wrapper.get('[data-testid="canvas"]').text();
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
+    expect(canvas).toContain("docu-edit");
+    expect(canvas).toContain("stored in this browser");
   });
 
-  it("shows the 'New document' and 'Open document' buttons", () => {
+  it("shows the three ways to start a document (AC-52)", () => {
     const { wrapper } = mountHome();
     const newButton = wrapper.get('[data-testid="new-document"]');
+    const templateButton = wrapper.get('[data-testid="new-from-template"]');
     const openButton = wrapper.get('[data-testid="open-document"]');
     expect(newButton.text()).toBe("New document");
-    expect(openButton.text()).toBe("Open document");
+    expect(templateButton.isVisible()).toBe(true);
     expect(newButton.isVisible()).toBe(true);
     expect(openButton.isVisible()).toBe(true);
   });
