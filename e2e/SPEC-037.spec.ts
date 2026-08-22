@@ -118,7 +118,9 @@ test("the pane is keyboard navigable — arrows move, Enter jumps (AC-18, AC-19)
   await createDocument(page);
   await seedHeadings(page);
   await tree(page).focus();
-  // From the first row, one ArrowDown selects "Section A"; Enter jumps to it.
+  // Home lands on the first row (AC-19a); one ArrowDown then selects
+  // "Section A" and Enter jumps to it.
+  await page.keyboard.press("Home");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(paneItem(page, "Section A")).toHaveClass(/is-active/);

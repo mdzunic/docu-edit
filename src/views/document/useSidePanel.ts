@@ -89,10 +89,13 @@ export function asSidePanelTabs(value: unknown): SidePanelTab[] {
 export function useSidePanel(deps: SidePanelDeps) {
   const initial = loadSidePanelState();
 
-  // Accessibility cannot restore its scan across a reload, so a persisted-open
-  // accessibility tab would show an empty pane. Force it closed on load; the
-  // menu reopens it (and rescans) on demand.
-  const restoredOpen: PaneId[] = initial.openPanes.filter((id) => id !== "accessibility");
+  // Only the panes that persisted their open state before SPEC-065 (outline,
+  // comments, version history) are restored open; the rest were session-only
+  // (styles/trackChanges/fonts reset each session, accessibility can't restore
+  // its scan), so they start closed — keeping "behaviours unchanged". The full
+  // openPanes set is still persisted (AC-11); this is only the restore policy.
+  const RESTORABLE_ON_LOAD: PaneId[] = ["outline", "comments", "versionHistory"];
+  const restoredOpen: PaneId[] = initial.openPanes.filter((id) => RESTORABLE_ON_LOAD.includes(id));
   const restoredActive =
     initial.activePane !== null && restoredOpen.includes(initial.activePane)
       ? initial.activePane
