@@ -7,12 +7,19 @@
 // Focus mode hides the menu bar, toolbar and open panes purely with a root
 // CSS class — it never closes a pane's own state, so the exact set of open
 // panes is restored on exit for free (AC-47).
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, nextTick, ref, watch, type Ref, type ShallowRef } from "vue";
+import { cmToPx } from "../../lib/core/units";
+import { type DocumentModel, sectionContentWidthCm } from "../../lib/documentModel";
 
 export type ViewMode = "print" | "web";
 
 export interface ViewModesDeps {
   documentId: Readonly<Ref<string>>;
+  /** The open model — Web layout reads the first section's content width. */
+  doc: ShallowRef<DocumentModel | null>;
+  /** Run after a Print/Web/Focus change has settled in the DOM: the presenter
+   * re-tiles the page grid and re-fits an active fit mode (SPEC-063 AC-36). */
+  onLayoutSettled?: () => void;
 }
 
 /** The per-document persistence key for the print/web view mode (AC-49). */
@@ -43,7 +50,7 @@ function writeStoredViewMode(documentId: string, mode: ViewMode): void {
 }
 
 export function useViewModes(deps: ViewModesDeps) {
-  const { documentId } = deps;
+  const { documentId, doc } = deps;
 
   const viewMode = ref<ViewMode>("print");
   // Focus is deliberately NOT loaded from or written to storage (AC-48, 50).
@@ -78,6 +85,28 @@ export function useViewModes(deps: ViewModesDeps) {
   // underlying print/web mode intact so exiting returns to it.
   const isWebLayout = computed(() => viewMode.value === "web" && !focusMode.value);
 
+  // SPEC-063 AC-40: Web layout constrains the column to the FIRST section's
+  // content width (its page width minus its left/right margins), exposed as a
+  // CSS var the .is-web-layout rules read. No sections → the page's own width
+  // (`auto`); Print layout ignores the var entirely.
+  const webContentWidthCss = computed(() => {
+    const model = doc.value;
+    if (!model || model.sections.length === 0) {
+      return "auto";
+    }
+    return `${cmToPx(sectionContentWidthCm(model, 0))}px`;
+  });
+
+  // Toggling Print/Web (or Focus, which is Print) changes grid eligibility and
+  // the available width, so re-tile/re-fit once the layout has settled (AC-36).
+  watch(
+    [viewMode, focusMode],
+    () => {
+      void nextTick().then(() => deps.onLayoutSettled?.());
+    },
+    { flush: "post" },
+  );
+
   /** The class list for the editor root (SPEC-063). */
   const rootClass = computed(() => ({
     "is-web-layout": isWebLayout.value,
@@ -94,6 +123,8 @@ export function useViewModes(deps: ViewModesDeps) {
     viewMode: viewMode as Readonly<Ref<ViewMode>>,
     focusMode: focusMode as Readonly<Ref<boolean>>,
     isWebLayout,
+    /** The `--web-content-width` value for the editor root (AC-40). */
+    webContentWidthCss,
     rootClass,
     setViewMode,
     toggleFocus,

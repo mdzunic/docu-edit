@@ -229,6 +229,25 @@ body.is-print-preview .doc-field-shaded {
   display: none;
 }
 
+/* SPEC-063 AC-36: when the zoom leaves room, the paginated pages tile side by
+   side in a centred grid of `--page-grid-cols` columns (set on .document-content
+   by DocumentView). The grid lives inside the scaled `.pages`, so the 24px
+   screen gap is written in unscaled units (÷ zoom) and each cell is one page
+   wide (max-content). Only engaged above one column — a single column keeps the
+   untouched normal-flow centring. The page's own auto/12px margins are
+   neutralised so the grid gap alone spaces them (overlays measure live off
+   `.pages`, so they follow either way). */
+.document-content.is-page-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--page-grid-cols, 1), max-content);
+  justify-content: center;
+  gap: calc(24px / var(--zoom, 1));
+}
+
+.document-content.is-page-grid .page {
+  margin: 0;
+}
+
 /* SPEC-063 AC-52: print, print preview and PDF export always render at 100%
    Print layout, regardless of the on-screen zoom or view mode. The zoom scale
    transform is neutralised and its sizing wrapper reset to natural, and Web

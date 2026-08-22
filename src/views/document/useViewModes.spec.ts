@@ -1,13 +1,16 @@
-import { effectScope, ref, type Ref } from "vue";
+import { effectScope, ref, shallowRef, type Ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useViewModes, viewModeStorageKey } from "./useViewModes";
+import type { DocumentModel } from "../../lib/documentModel";
+import { cmToPx } from "../../lib/core/units";
 
 function mount(id = "doc-1"): { view: ReturnType<typeof useViewModes>; documentId: Ref<string>; stop: () => void } {
   const documentId = ref(id);
+  const doc = shallowRef<DocumentModel | null>(null);
   const scope = effectScope();
   let view!: ReturnType<typeof useViewModes>;
   scope.run(() => {
-    view = useViewModes({ documentId });
+    view = useViewModes({ documentId, doc });
   });
   return { view, documentId, stop: () => scope.stop() };
 }
@@ -75,5 +78,29 @@ describe("useViewModes", () => {
     map.get("view.focus")?.();
     expect(h.view.focusMode.value).toBe(true);
     h.stop();
+  });
+
+  describe("Web-layout content width (AC-40)", () => {
+    it("is the first section's content width in px", () => {
+      const documentId = ref("doc-1");
+      // Page 21cm wide, 2cm + 3cm margins → 16cm content width.
+      const model = {
+        sections: [{ blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 }, margins: { leftCm: 2, rightCm: 3, topCm: 2, bottomCm: 2 } }],
+      } as unknown as DocumentModel;
+      const doc = shallowRef<DocumentModel | null>(model);
+      const scope = effectScope();
+      let view!: ReturnType<typeof useViewModes>;
+      scope.run(() => {
+        view = useViewModes({ documentId, doc });
+      });
+      expect(view.webContentWidthCss.value).toBe(`${cmToPx(16)}px`);
+      scope.stop();
+    });
+
+    it("falls back to auto with no sections", () => {
+      const h = mount();
+      expect(h.view.webContentWidthCss.value).toBe("auto");
+      h.stop();
+    });
   });
 });

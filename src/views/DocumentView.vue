@@ -115,6 +115,7 @@ import { useViewportVirtualization } from "./document/useViewportVirtualization"
 import { useCanvasGestures } from "./document/useCanvasGestures";
 import { useZoomView } from "./document/useZoomView";
 import { useViewModes } from "./document/useViewModes";
+import { useCaretScroll } from "./document/useCaretScroll";
 import { documentExists } from "../lib/documents";
 import {
   getOrCreateDocument,
@@ -151,7 +152,6 @@ import {
   noActiveNote,
   noBlocks,
   noNoteContent,
-  sectionContentWidthCm,
 } from "../lib/documentModel";
 import { CHART_CATALOGUE } from "../lib/core/charts";
 import {
@@ -243,13 +243,10 @@ import {
   noHighlightRects,
   noMatches,
 } from "../lib/findReplace";
-import {
-  caretClientRect,
-  noTableHandleGeometry,
-} from "../lib/caretGeometry";
+import { noTableHandleGeometry } from "../lib/caretGeometry";
 import { findTableElement, noColumnResizeDrag, noRowResizeDrag } from "../lib/tableResize";
 import { previewColumnWidths, previewRowHeight, tableRowElement } from "../lib/core/tables";
-import { cmToPx, CM_PER_PX } from "../lib/core/units";
+import { CM_PER_PX } from "../lib/core/units";
 import {
   blockLength,
   blockText,
@@ -589,45 +586,23 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
-const viewModes = useViewModes({ documentId }); // SPEC-063 Print/Web + transient Focus (AC-32..51).
-const { viewMode, focusMode, rootClass: viewRootClass, exitFocus } = viewModes;
+// SPEC-063 Print/Web + Focus (AC-32..51); also owns the Web-layout content
+// width (AC-40) and re-tiles/re-fits the presenter once the layout settles
+// (AC-36 — onLayoutSettled runs past setup, when zoomView exists).
+const viewModes = useViewModes({ documentId, doc, onLayoutSettled: () => { zoomView.recomputeGrid(); zoomView.recomputeFit(); } });
+const { viewMode, focusMode, rootClass: viewRootClass, exitFocus, webContentWidthCss } = viewModes;
 
 // Zoom (SPEC-063): created before the shared context — its scale fraction and coordinate helpers are part of it (AC-21, AC-22).
-// The side-by-side page grid only tiles in Print layout, so its eligibility is gated on the (already-created) view mode (AC-36).
-const zoomView = useZoomView({
-  documentId,
-  pageRef,
-  getScrollContainer: () => scrollContainer,
-  onUnmount,
-  isGridEligible: () => !viewModes.isWebLayout.value,
-});
+// The page grid only tiles in Print layout, so its eligibility is gated on the view mode (AC-36).
+const zoomView = useZoomView({ documentId, pageRef, getScrollContainer: () => scrollContainer, onUnmount, isGridEligible: () => !viewModes.isWebLayout.value });
 const { zoom, zoomPercent, fitMode: zoomFitMode, scaled: pagesScaled, viewportStyle: pagesViewportStyle } = zoomView;
 
-// Toggling Print/Web (or Focus, which is Print) changes grid eligibility and
-// the available width, so re-tile the page grid and re-fit after the layout
-// settles (AC-36). flush:post so the DOM (and page geometry) has updated.
-watch(
-  [viewMode, focusMode],
-  () => {
-    void nextTick().then(() => {
-      zoomView.recomputeGrid();
-      zoomView.recomputeFit();
-    });
-  },
-  { flush: "post" },
-);
-
-// SPEC-063 AC-40: Web layout constrains the content column to the FIRST
-// section's content width (its page width minus its left/right margins),
-// exposed as a CSS var the .is-web-layout rules read. A document with no
-// sections falls back to the page's own width (`auto`); Print layout ignores
-// the var entirely.
-const webContentWidthCss = computed(() => {
-  const model = doc.value;
-  if (!model || model.sections.length === 0) {
-    return "auto";
-  }
-  return `${cmToPx(sectionContentWidthCm(model, 0))}px`;
+// Keeping the model caret on screen (SPEC-011/025) — reads live caret geometry
+// and nudges the scroll container; part of EditorContext, so created ahead of it.
+const { scrollModelCaretIntoView, keepCaretVisible } = useCaretScroll({
+  contentRoot,
+  getCaret: () => caret,
+  getScrollContainer: () => scrollContainer,
 });
 
 // The one object satisfying EditorContext (document/context.ts): the
@@ -836,9 +811,8 @@ const equations = useEquations({ ...editorContext });
 // SPEC-056: an equation clicked in the document opens the editor. Provided to
 // the paint components (DocPageBlock/DocBlockEntries) which own the click.
 provide("activateEquation", equations.activateEquation);
-// SPEC-063 AC-20: the live zoom fraction for canvas-painted content (shapes,
-// charts) deep in the page tree — they multiply their backing store by
-// devicePixelRatio * zoom so the .pages transform scales them without blur.
+// SPEC-063 AC-20: the live zoom for canvas-painted content (shapes, charts)
+// deep in the tree — they size their backing store by devicePixelRatio * zoom.
 provide("documentZoom", zoom);
 
 // SPEC-056: route a character-picker glyph into an open equation (AC-14/15);
@@ -1636,59 +1610,6 @@ async function verifyCanvasAfterRender() {
 
 
 // --- hyperlinks and bookmarks (SPEC-025) -----------------------------------
-
-/** Brings a model position into view and settles it a third of the way down
- * the canvas — a deliberate move to somewhere else in the document (a
- * bookmark jump, the page a break just started), where landing on the
- * viewport's very edge would show the destination without its context.
- * `always` skips the "only when it is off-screen" test, for callers that
- * know the caret changed page and want that page framed either way. */
-async function scrollModelCaretIntoView(position = noCaret(), always = false) {
-  await nextTick();
-  const root = contentRoot.value;
-  if (!root || !position || !scrollContainer) {
-    return;
-  }
-  const rect = caretClientRect(root, position);
-  if (!rect) {
-    return;
-  }
-  const containerRect = scrollContainer.getBoundingClientRect();
-  if (always || rect.top < containerRect.top || rect.bottom > containerRect.bottom) {
-    scrollContainer.scrollTop += rect.top - containerRect.top - containerRect.height / 3;
-  }
-  // In the Print-layout page grid a caret can move to a page in another
-  // column, so bring it into view horizontally too (SPEC-063 AC-37). The
-  // vertical path above already frames off-screen jumps; this mirrors it on x.
-  if (always || rect.left < containerRect.left || rect.right > containerRect.right) {
-    scrollContainer.scrollLeft += rect.left - containerRect.left - containerRect.width / 3;
-  }
-}
-
-/** Keeps the caret on screen after an edit, moving the view as little as
- * possible. An edit must never leave the user typing somewhere they cannot
- * see — filling a page pushes the caret past the fold, and until this ran
- * the canvas simply stayed put — but scrolling further than the line just
- * written would lose their place in its own way, so this nudges rather than
- * reframes (contrast scrollModelCaretIntoView above). */
-async function keepCaretVisible() {
-  await nextTick();
-  const root = contentRoot.value;
-  if (!root || !caret || !scrollContainer) {
-    return;
-  }
-  const rect = caretClientRect(root, caret);
-  if (!rect) {
-    return;
-  }
-  const view = scrollContainer.getBoundingClientRect();
-  const pad = 24;
-  if (rect.top < view.top + pad) {
-    scrollContainer.scrollTop -= view.top + pad - rect.top;
-  } else if (rect.bottom > view.bottom - pad) {
-    scrollContainer.scrollTop += rect.bottom - (view.bottom - pad);
-  }
-}
 
 // Clicks on rendered hyperlinks and note reference marks are handled by
 // useCanvasGestures' handleContentClick, wired below.
@@ -4582,24 +4503,6 @@ function handleMenuCommand(id = "") {
 .document-content {
   color: #202124;
   outline: none;
-}
-
-/* SPEC-063 AC-36: when the zoom leaves room, the paginated pages tile side by
-   side in a centred grid of `--page-grid-cols` columns. The grid lives inside
-   the scaled `.pages`, so the 24px screen gap is written in unscaled units
-   (÷ zoom) and each cell is one page wide (max-content). Only engaged above
-   one column — a single column keeps the untouched normal-flow centring. The
-   page's own auto/12px margins are neutralised so the grid gap alone spaces
-   them (overlays are measured live off `.pages`, so they follow either way). */
-.document-content.is-page-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--page-grid-cols, 1), max-content);
-  justify-content: center;
-  gap: calc(24px / var(--zoom, 1));
-}
-
-.document-content.is-page-grid :deep(.page) {
-  margin: 0;
 }
 
 /* The format painter's armed cursor (SPEC-020 AC-11) — a generic keyword

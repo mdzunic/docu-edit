@@ -92,11 +92,11 @@ describe("paintShape — the two callouts are painted differently", () => {
 // canvas without blurring. jsdom reports devicePixelRatio == 1, isolating the
 // zoom factor. (width/height/style are set before getContext, which jsdom
 // returns null for, so the sizing is observable without a real 2d context.)
-describe("paintShapeIntoCanvas — zoom-scaled backing store (AC-20)", () => {
-  function rectShape(): Shape {
-    return { type: "shape", geometry: "rect", widthCm: 4, heightCm: 3, wrap: "inline" };
-  }
+function rectShape(): Shape {
+  return { type: "shape", geometry: "rect", widthCm: 4, heightCm: 3, wrap: "inline" };
+}
 
+describe("paintShapeIntoCanvas — zoom-scaled backing store (AC-20)", () => {
   it("keeps the CSS size but multiplies the backing store by the zoom", () => {
     const at100 = document.createElement("canvas");
     paintShapeIntoCanvas(at100, rectShape(), 200, 100, 1);
