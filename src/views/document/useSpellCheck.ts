@@ -113,7 +113,7 @@ function occurrenceKey(section: number, block: number, start: number, word: stri
 export type SpellCheckDeps = EditorContext;
 
 export function useSpellCheck(deps: SpellCheckDeps) {
-  const { doc, contentRoot, pageRef, getScrollContainer, onScroll, onSessionClose, onUnmount } = deps;
+  const { doc, contentRoot, pageRef, getScrollContainer, onScroll, onSessionClose, onUnmount, zoom } = deps;
 
   const spellUnderlineRects = shallowRef<SpellUnderlineRect[]>([]);
   // The custom dictionary's live entries (SPEC-035 AC-8.1, AC-8.2), for the
@@ -312,15 +312,20 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     pageRect: DOMRect,
     issue: SpellCheckIssue,
   ): void {
+    // The underline layer paints INSIDE the scaled `.pages` container, so the
+    // rects carry unscaled, .pages-relative px — the CSS transform re-applies
+    // the zoom, keeping each underline registered with its word (SPEC-063
+    // AC-25). Dividing by the scale undoes what getBoundingClientRect folded in.
+    const z = zoom.value || 1;
     for (const rect of issueClientRects(root, issue)) {
       if (rect.width <= 0 || rect.height <= 0) {
         continue;
       }
       rects.push({
-        left: rect.left - pageRect.left,
-        top: rect.top - pageRect.top,
-        width: rect.width,
-        height: rect.height,
+        left: (rect.left - pageRect.left) / z,
+        top: (rect.top - pageRect.top) / z,
+        width: rect.width / z,
+        height: rect.height / z,
         section: issue.section,
         block: issue.block,
         start: issue.start,

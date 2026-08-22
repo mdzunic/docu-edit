@@ -42,7 +42,19 @@ export interface ChartsDeps extends EditorContext {
 }
 
 export function useCharts(deps: ChartsDeps) {
-  const { doc, contentRoot, pageRef, editable, currentSelection, applyEdit, clearCellSelection, getCaret, addToast } = deps;
+  const {
+    doc,
+    contentRoot,
+    pageRef,
+    editable,
+    currentSelection,
+    applyEdit,
+    clearCellSelection,
+    getCaret,
+    addToast,
+    zoom,
+    contentPxToClient,
+  } = deps;
 
   const chartSelection = ref<ChartLocation | null>(null);
   const chartHandles = ref<ReturnType<typeof noImageHandleGeometry>>(noImageHandleGeometry());
@@ -69,7 +81,7 @@ export function useCharts(deps: ChartsDeps) {
     const el = root.querySelector(
       `.doc-chart-anchor[data-section="${location.section}"][data-block="${location.block}"] .doc-chart`,
     );
-    chartHandles.value = el ? measureImageGeometry(pageEl, el) : null;
+    chartHandles.value = el ? measureImageGeometry(pageEl, el, zoom.value) : null;
   }
 
   /** A plain click selects just this chart (no shift-multi-select gesture,
@@ -314,12 +326,16 @@ export function useCharts(deps: ChartsDeps) {
     if (!geometry || !pageEl) {
       return { left: 0, top: 0 };
     }
-    const pageRect = pageEl.getBoundingClientRect();
-    const viewportTop = pageRect.top + geometry.top;
-    const above = viewportTop - 44;
+    // The toolbar is position:fixed outside the scale transform, so its anchor
+    // is the chart's unscaled model geometry mapped back into client space
+    // through the zoom-aware helper (SPEC-063 AC-57). The 44/8 px offsets are
+    // screen constants and stay unscaled.
+    const anchor = contentPxToClient(geometry.left, geometry.top);
+    const above = anchor.y - 44;
+    const below = contentPxToClient(geometry.left, geometry.top + geometry.height);
     return {
-      left: pageRect.left + geometry.left,
-      top: above >= 0 ? above : pageRect.top + geometry.top + geometry.height + 8,
+      left: anchor.x,
+      top: above >= 0 ? above : below.y + 8,
     };
   }
 

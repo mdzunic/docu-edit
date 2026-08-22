@@ -143,6 +143,8 @@ export function useTables(deps: TablesDeps) {
     getContextMenuTableCell,
     requestObjectDelete,
     onUnmount,
+    zoom,
+    clientToContentPx,
   } = deps;
 
   // Live column/row resize drag state — internal to this composable (nothing
@@ -266,7 +268,9 @@ export function useTables(deps: TablesDeps) {
     if (!drag) {
       return;
     }
-    const deltaCm = (event.clientX - drag.startX) * CM_PER_PX;
+    // The boundary must track the pointer 1:1 at any zoom: the drag delta is
+    // in unscaled content px, not raw (scaled) screen px (SPEC-063 AC-24).
+    const deltaCm = (clientToContentPx(event.clientX, 0).x - clientToContentPx(drag.startX, 0).x) * CM_PER_PX;
     const widths = [...drag.startWidthsCm];
     const i = drag.colIndex;
     if (i < widths.length - 1) {
@@ -326,7 +330,9 @@ export function useTables(deps: TablesDeps) {
     }
     event.preventDefault();
     const row = table.rows[rowIndex];
-    const startHeightCm = row.minHeightCm ?? trEl.getBoundingClientRect().height * CM_PER_PX;
+    // The measured row height is scaled by the zoom transform; divide it back
+    // out so the model cm is zoom-independent (SPEC-063 AC-22).
+    const startHeightCm = row.minHeightCm ?? (trEl.getBoundingClientRect().height / zoom.value) * CM_PER_PX;
     rowResizeDrag = {
       section: hover.section,
       block: hover.block,
@@ -345,7 +351,9 @@ export function useTables(deps: TablesDeps) {
     if (!drag) {
       return;
     }
-    const deltaCm = (event.clientY - drag.startY) * CM_PER_PX;
+    // Unscaled content-px delta so the row tracks the pointer at any zoom
+    // (SPEC-063 AC-24).
+    const deltaCm = (clientToContentPx(0, event.clientY).y - clientToContentPx(0, drag.startY).y) * CM_PER_PX;
     const heightCm = Math.max(MIN_ROW_HEIGHT_CM, drag.startHeightCm + deltaCm);
     drag.liveHeightCm = heightCm;
     previewRowHeight(drag.trEl, heightCm);

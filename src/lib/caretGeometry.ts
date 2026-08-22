@@ -165,6 +165,7 @@ export function noTableHandleGeometry(): TableHandleGeometry | null {
 export function measureTableHandles(
   pageEl: Element,
   table: Element,
+  zoomFraction = 1,
 ): TableHandleGeometry | null {
   const paragraph = table.querySelector("[data-section][data-block]");
   if (!paragraph) {
@@ -175,26 +176,32 @@ export function measureTableHandles(
   if (!Number.isInteger(section) || !Number.isInteger(block)) {
     return null;
   }
+  // The handle overlay lives INSIDE the scaled `.pages` container, so the CSS
+  // transform re-applies the zoom; the geometry must therefore be the
+  // unscaled, page-relative px the model paints at (SPEC-063 AC-25). Dividing
+  // every measured rect by the scale undoes what getBoundingClientRect folded
+  // in. `zoom` defaults to 1 (identity) so non-zoom callers are unaffected.
+  const z = zoomFraction || 1;
   const pageRect = pageEl.getBoundingClientRect();
   const tableRect = table.getBoundingClientRect();
   const firstRow = table.querySelector("tr");
   const cols = firstRow
     ? Array.from(firstRow.children).map((td) => {
         const rect = td.getBoundingClientRect();
-        return { left: rect.left - pageRect.left, width: rect.width };
+        return { left: (rect.left - pageRect.left) / z, width: rect.width / z };
       })
     : [];
   const rows = Array.from(table.querySelectorAll("tr")).map((tr) => {
     const rect = tr.getBoundingClientRect();
-    return { top: rect.top - pageRect.top, height: rect.height };
+    return { top: (rect.top - pageRect.top) / z, height: rect.height / z };
   });
   return {
     section,
     block,
-    left: tableRect.left - pageRect.left,
-    top: tableRect.top - pageRect.top,
-    width: tableRect.width,
-    height: tableRect.height,
+    left: (tableRect.left - pageRect.left) / z,
+    top: (tableRect.top - pageRect.top) / z,
+    width: tableRect.width / z,
+    height: tableRect.height / z,
     cols,
     rows,
   };
@@ -221,21 +228,29 @@ export function noImageHandleGeometry(): ImageHandleGeometry | null {
 /** Measures a canvas image element for the resize handles/floating toolbar.
  * Null when the element carries no section/block address (never the case
  * for a rendered model image). */
-export function measureImageGeometry(pageEl: Element, imageEl: Element): ImageHandleGeometry | null {
+export function measureImageGeometry(
+  pageEl: Element,
+  imageEl: Element,
+  zoomFraction = 1,
+): ImageHandleGeometry | null {
   const section = Number(imageEl.getAttribute("data-section"));
   const block = Number(imageEl.getAttribute("data-block"));
   if (!Number.isInteger(section) || !Number.isInteger(block)) {
     return null;
   }
+  // Handles/anchor markers paint INSIDE the scaled `.pages` container, so the
+  // geometry must be unscaled page-relative px — the CSS transform re-applies
+  // the zoom (SPEC-063 AC-25). `zoom` defaults to 1 for non-zoom callers.
+  const z = zoomFraction || 1;
   const pageRect = pageEl.getBoundingClientRect();
   const rect = imageEl.getBoundingClientRect();
   return {
     section,
     block,
-    left: rect.left - pageRect.left,
-    top: rect.top - pageRect.top,
-    width: rect.width,
-    height: rect.height,
+    left: (rect.left - pageRect.left) / z,
+    top: (rect.top - pageRect.top) / z,
+    width: rect.width / z,
+    height: rect.height / z,
   };
 }
 
