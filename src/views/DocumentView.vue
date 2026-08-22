@@ -48,6 +48,7 @@ import FormatToolbar from "../components/FormatToolbar.vue";
 import HighlightPicker from "../components/HighlightPicker.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
+import SidePanel from "../components/SidePanel.vue";
 import FieldDialog from "../components/FieldDialog.vue";
 import DateTimeDialog from "../components/DateTimeDialog.vue";
 import CrossReferenceDialog from "../components/CrossReferenceDialog.vue";
@@ -114,6 +115,7 @@ import { useContextMenus } from "./document/useContextMenus";
 import { useFileActions } from "./document/useFileActions";
 import { usePageSetupDialogs } from "./document/usePageSetupDialogs";
 import { useOutlinePane } from "./document/useOutlinePane";
+import { useSidePanel } from "./document/useSidePanel";
 import { useMergeFields } from "./document/useMergeFields";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
@@ -1861,8 +1863,6 @@ const {
   handleApplyStyle,
   handleUpdateStyle,
   handleResetStyle,
-  toggleStylesPane,
-  closeStylesPane,
   openNewStyle,
   openModifyStyle,
   closeStyleEditor,
@@ -2194,7 +2194,6 @@ const {
   outlineTree,
   activeOutlineAnchor,
   hiddenBodyBlocks,
-  toggleOutlinePane,
   handleOutlineNavigate,
   handleOutlineToggleCollapse,
   handleOutlineMove,
@@ -2513,7 +2512,6 @@ const {
 // --- comments (SPEC-038) -----------------------------------------------------
 const {
   commentsPaneOpen,
-  toggleCommentsPane,
   commentsOnlyView,
   toggleCommentsOnlyView,
   commentFilter,
@@ -2550,7 +2548,6 @@ const {
   trackChangesDisplayMode,
   setTrackChangesDisplayMode,
   trackChangesPaneOpen,
-  toggleTrackChangesPane,
   changes: trackedChanges,
   acceptChange,
   rejectChange,
@@ -2563,7 +2560,6 @@ const {
 
 const {
   versionHistoryPaneOpen,
-  toggleVersionHistoryPane,
   versions: versionHistoryEntries,
   pausedMessage: versionHistoryPausedMessage,
   namedOnlyFilter: versionHistoryNamedOnlyFilter,
@@ -2614,11 +2610,10 @@ const {
   accessibilityPaneOpen,
   accessibilityIssues,
   accessibilityScanning,
-  openAccessibilityPane,
-  closeAccessibilityPane,
   goToAccessibilityIssue,
   applyAccessibilityFix,
   rescanAccessibility,
+  cancelAccessibilityScan,
 } = useAccessibilityCheck({
   ...editorContext,
   imageSelection,
@@ -2638,9 +2633,63 @@ function handleImageOptionsApplyAndRescan(payload = { altText: "", widthCm: 0, h
 
 // --- font fallback & embedding (SPEC-048): bundled+embedded @font-face, the
 // Fonts panel, embed-on-save; relayout re-measures when a face arrives.
-const { fontsPaneOpen, fontsReady, fontReport, documentFonts, embedControls, openFontsPane, closeFontsPane } = useFonts({
+const { fontsPaneOpen, fontsReady, fontReport, documentFonts, embedControls } = useFonts({
   ...editorContext,
   relayout: () => pagination.invalidateAll(),
+});
+
+// --- consolidated side panel (SPEC-065) --------------------------------------
+// The seven auxiliary panes above each keep their own data + open ref; this
+// wiring hands those open refs to useSidePanel, which owns the single docked,
+// tabbed region (side/width/collapse/openPanes/activePane, persisted under one
+// key) and the open/activate/close/toggle semantics. Badge counts are the live
+// lengths of the relevant lists (AC-6b); the accessibility pane rescans when
+// the panel opens it and cancels the scan when it closes it.
+const commentBadgeCount = computed(() => openCommentThreads.value.length + resolvedCommentThreads.value.length);
+const unresolvedChangeCount = computed(() => trackedChanges.value.length);
+const accessibilityIssueCount = computed(() => accessibilityIssues.value.length);
+const {
+  side: sidePanelSide,
+  widthPx: sidePanelWidth,
+  collapsed: sidePanelCollapsed,
+  activePane: sidePanelActivePane,
+  tabs: sidePanelTabs,
+  panelOpen: sidePanelOpen,
+  togglePane: toggleSidePane,
+  activatePane: activateSidePane,
+  closePane: closeSidePane,
+  closePanel: closeSidePanel,
+  toggleSide: toggleSidePanelSide,
+  toggleCollapsed: toggleSidePanelCollapsed,
+  setWidth: setSidePanelWidth,
+  commitWidth: commitSidePanelWidth,
+  nudgeWidth: nudgeSidePanelWidth,
+} = useSidePanel({
+  ...editorContext,
+  paneOpenRefs: {
+    outline: outlinePaneOpen,
+    styles: stylesPaneOpen,
+    comments: commentsPaneOpen,
+    trackChanges: trackChangesPaneOpen,
+    versionHistory: versionHistoryPaneOpen,
+    accessibility: accessibilityPaneOpen,
+    fonts: fontsPaneOpen,
+  },
+  badges: {
+    comments: commentBadgeCount,
+    trackChanges: unresolvedChangeCount,
+    accessibility: accessibilityIssueCount,
+  },
+  onPaneOpen: (id) => {
+    if (id === "accessibility") {
+      rescanAccessibility();
+    }
+  },
+  onPaneClose: (id) => {
+    if (id === "accessibility") {
+      cancelAccessibilityScan();
+    }
+  },
 });
 
 // --- document properties and metadata (SPEC-041) ---------------------------
@@ -2976,7 +3025,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["file.print", openPrintPreview],
   ["file.page-setup", openPageSetup],
   ["file.properties", openProperties],
-  ["file.version-history", toggleVersionHistoryPane],
+  ["file.version-history", () => toggleSidePane("versionHistory")],
   ["file.save-as-template", () => { savingAsTemplate.value = true; }],
   ["file.mail-merge", () => { mergeRunDialogOpen.value = true; }],
   ["file.delete", () => { confirmingDelete.value = true; }],
@@ -2999,13 +3048,15 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["edit.autocorrect-dashes", toggleAutocorrectDashes],
   // View
   ["view.ruler", toggleRuler],
-  ["view.outline-pane", toggleOutlinePane],
-  ["view.styles-pane", toggleStylesPane],
-  ["view.comments-pane", toggleCommentsPane],
+  ["view.outline-pane", () => toggleSidePane("outline")],
+  ["view.styles-pane", () => toggleSidePane("styles")],
+  ["view.comments-pane", () => toggleSidePane("comments")],
+  // Flip the dock between left and right (SPEC-065 AC-2).
+  ["view.panel-side", toggleSidePanelSide],
   ["view.comments-only", toggleCommentsOnlyView],
   // Ctrl/Cmd+Shift+E (SPEC-039 AC-1).
   ["edit.toggleTrackChanges", toggleTrackChangesRecording],
-  ["view.track-changes-pane", toggleTrackChangesPane],
+  ["view.track-changes-pane", () => toggleSidePane("trackChanges")],
   // Insert
   ["insert.table-dialog", () => { insertTableDialogOpen.value = true; }],
   ["insert.textbox", insertTextBoxAction],
@@ -3033,7 +3084,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   // Ctrl/Cmd+Alt+M (SPEC-038 AC-1).
   ["insert.comment", openCommentComposer],
   // Format
-  ["format.styles-pane", toggleStylesPane],
+  ["format.styles-pane", () => toggleSidePane("styles")],
   ["format.import-styles", openImportDialog],
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
@@ -3045,8 +3096,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   // Tools
   ["tools.word-count", openStatistics],
   ["tools.dictionary", openCustomDictionaryDialog],
-  ["tools.accessibility", openAccessibilityPane],
-  ["tools.fonts", openFontsPane],
+  ["tools.accessibility", () => toggleSidePane("accessibility")],
+  ["tools.fonts", () => toggleSidePane("fonts")],
   ["tools.convert-merge-fields", convertLiteralChips],
   // SPEC-053 field update paths and View toggle.
   ["tools.update-all-fields", handleUpdateAllFields],
@@ -3340,136 +3391,6 @@ function handleMenuCommand(id = "") {
       </button>
     </div>
     <div class="editor-layout">
-      <div
-        v-if="outlinePaneOpen"
-        class="outline-dock"
-      >
-        <OutlinePane
-          :outline="outlineTree"
-          :collapsed="outlinePaneCollapsed"
-          :active-anchor="activeOutlineAnchor ?? undefined"
-          @navigate="handleOutlineNavigate"
-          @toggle="handleOutlineToggleCollapse"
-          @move="handleOutlineMove"
-        />
-      </div>
-      <div
-        v-if="stylesPaneOpen"
-        class="styles-dock print-exclude"
-      >
-        <StylesPane
-          :entries="stylesPaneEntriesList"
-          :caret-paragraph-style-id="styleState.id"
-          :caret-paragraph-style-name="styleState.name"
-          :caret-character-style-id="characterStyleState.id"
-          :caret-character-style-name="characterStyleState.name"
-          @close="closeStylesPane"
-          @new-style="openNewStyle"
-          @modify-style="openModifyStyle"
-          @delete-style="openDeleteStyle"
-          @apply-style="applyStyleFromPane"
-        />
-      </div>
-      <div
-        v-if="commentsPaneOpen"
-        ref="commentsDockRef"
-        class="comments-dock print-exclude"
-      >
-        <CommentsPane
-          :open-threads="openCommentThreads"
-          :resolved-threads="resolvedCommentThreads"
-          :filtered-threads="filteredCommentThreads"
-          :comments-only-view="commentsOnlyView"
-          :thread-tops="commentThreadTops"
-          :active-thread-id="activeCommentThreadId ?? undefined"
-          :author-name="commentAuthorName"
-          :comment-filter="commentFilter"
-          :comment-author-filter="commentAuthorFilter"
-          :authors="commentAuthors"
-          :composer-open="commentComposerOpen"
-          :editable="editable"
-          @close="toggleCommentsPane"
-          @toggle-comments-only="toggleCommentsOnlyView"
-          @update:comment-filter="commentFilter = asCommentFilter($event)"
-          @update:author-filter="commentAuthorFilter = $event"
-          @update:author-name="commentAuthorName = $event"
-          @submit-comment="submitComment"
-          @cancel-composer="cancelCommentComposer"
-          @focus-thread="focusCommentThread"
-          @submit-reply="submitCommentReply"
-          @save-edit="saveEditedCommentMessage"
-          @delete-message="deleteCommentMessage"
-          @resolve="resolveCommentThread"
-          @reopen="reopenCommentThread"
-          @delete-thread="deleteCommentThread"
-        />
-      </div>
-      <div
-        v-if="trackChangesPaneOpen"
-        class="track-changes-dock print-exclude"
-      >
-        <TrackChangesPane
-          :changes="trackedChanges"
-          :display-mode="trackChangesDisplayMode"
-          :recording="trackChangesRecording"
-          :author-name="trackChangesAuthorName"
-          :editable="editable"
-          @close="toggleTrackChangesPane"
-          @toggle-recording="toggleTrackChangesRecording"
-          @update:display-mode="setTrackChangesDisplayMode"
-          @update:author-name="trackChangesAuthorName = $event"
-          @accept="acceptChange"
-          @reject="rejectChange"
-          @accept-all="acceptAllChanges"
-          @reject-all="rejectAllChanges"
-          @next="goToNextChange"
-          @previous="goToPreviousChange"
-          @focus-change="goToChangeById"
-        />
-      </div>
-      <div
-        v-if="versionHistoryPaneOpen"
-        class="version-history-dock print-exclude"
-      >
-        <VersionHistoryPane
-          :versions="versionHistoryEntries"
-          :paused-message="versionHistoryPausedMessage ?? ''"
-          :named-only-filter="versionHistoryNamedOnlyFilter"
-          :preview-version-id="versionHistoryPreviewVersionId ?? ''"
-          :editable="documentActionsEnabled && !pastSupportedCeiling"
-          @close="toggleVersionHistoryPane"
-          @update:named-only-filter="versionHistoryNamedOnlyFilter = $event"
-          @select="selectVersionHistoryVersion"
-          @exit-preview="exitVersionHistoryPreview"
-          @restore="restoreVersionRespectingCeiling"
-          @name="nameVersionHistoryVersion"
-          @remove-name="removeVersionHistoryName"
-          @delete="deleteVersionHistoryVersion"
-          @download="downloadVersionHistoryVersion"
-        />
-      </div>
-      <div
-        v-if="accessibilityPaneOpen"
-        class="accessibility-dock print-exclude"
-      >
-        <AccessibilityPane
-          :issues="accessibilityIssues"
-          :scanning="accessibilityScanning"
-          @close="closeAccessibilityPane"
-          @select="goToAccessibilityIssue"
-          @fix="applyAccessibilityFix"
-        />
-      </div>
-      <div
-        v-if="fontsPaneOpen"
-        class="fonts-dock print-exclude"
-      >
-        <FontsPane
-          :entries="fontReport"
-          :controls="embedControls"
-          @close="closeFontsPane"
-        />
-      </div>
       <div class="page-wrap">
         <FontLoadingSkeleton v-if="!fontsReady" />
         <div
@@ -3741,6 +3662,134 @@ function handleMenuCommand(id = "") {
           {{ wordCountAnnouncement }}
         </div>
       </div>
+      <SidePanel
+        v-if="sidePanelOpen"
+        :side="sidePanelSide"
+        :width-px="sidePanelWidth"
+        :collapsed="sidePanelCollapsed"
+        :tabs="sidePanelTabs"
+        :active-pane="sidePanelActivePane ?? ''"
+        @activate="activateSidePane"
+        @close="closeSidePanel"
+        @toggle-side="toggleSidePanelSide"
+        @toggle-collapse="toggleSidePanelCollapsed"
+        @update:width-px="setSidePanelWidth"
+        @commit-width="commitSidePanelWidth"
+        @nudge-width="nudgeSidePanelWidth"
+      >
+        <OutlinePane
+          v-if="outlinePaneOpen"
+          v-show="sidePanelActivePane === 'outline'"
+          :outline="outlineTree"
+          :collapsed="outlinePaneCollapsed"
+          :active-anchor="activeOutlineAnchor ?? undefined"
+          @navigate="handleOutlineNavigate"
+          @toggle="handleOutlineToggleCollapse"
+          @move="handleOutlineMove"
+        />
+        <StylesPane
+          v-if="stylesPaneOpen"
+          v-show="sidePanelActivePane === 'styles'"
+          :entries="stylesPaneEntriesList"
+          :caret-paragraph-style-id="styleState.id"
+          :caret-paragraph-style-name="styleState.name"
+          :caret-character-style-id="characterStyleState.id"
+          :caret-character-style-name="characterStyleState.name"
+          @close="closeSidePane('styles')"
+          @new-style="openNewStyle"
+          @modify-style="openModifyStyle"
+          @delete-style="openDeleteStyle"
+          @apply-style="applyStyleFromPane"
+        />
+        <div
+          v-if="commentsPaneOpen"
+          v-show="sidePanelActivePane === 'comments'"
+          ref="commentsDockRef"
+        >
+          <CommentsPane
+            :open-threads="openCommentThreads"
+            :resolved-threads="resolvedCommentThreads"
+            :filtered-threads="filteredCommentThreads"
+            :comments-only-view="commentsOnlyView"
+            :thread-tops="commentThreadTops"
+            :active-thread-id="activeCommentThreadId ?? undefined"
+            :author-name="commentAuthorName"
+            :comment-filter="commentFilter"
+            :comment-author-filter="commentAuthorFilter"
+            :authors="commentAuthors"
+            :composer-open="commentComposerOpen"
+            :editable="editable"
+            @close="closeSidePane('comments')"
+            @toggle-comments-only="toggleCommentsOnlyView"
+            @update:comment-filter="commentFilter = asCommentFilter($event)"
+            @update:author-filter="commentAuthorFilter = $event"
+            @update:author-name="commentAuthorName = $event"
+            @submit-comment="submitComment"
+            @cancel-composer="cancelCommentComposer"
+            @focus-thread="focusCommentThread"
+            @submit-reply="submitCommentReply"
+            @save-edit="saveEditedCommentMessage"
+            @delete-message="deleteCommentMessage"
+            @resolve="resolveCommentThread"
+            @reopen="reopenCommentThread"
+            @delete-thread="deleteCommentThread"
+          />
+        </div>
+        <TrackChangesPane
+          v-if="trackChangesPaneOpen"
+          v-show="sidePanelActivePane === 'trackChanges'"
+          :changes="trackedChanges"
+          :display-mode="trackChangesDisplayMode"
+          :recording="trackChangesRecording"
+          :author-name="trackChangesAuthorName"
+          :editable="editable"
+          @close="closeSidePane('trackChanges')"
+          @toggle-recording="toggleTrackChangesRecording"
+          @update:display-mode="setTrackChangesDisplayMode"
+          @update:author-name="trackChangesAuthorName = $event"
+          @accept="acceptChange"
+          @reject="rejectChange"
+          @accept-all="acceptAllChanges"
+          @reject-all="rejectAllChanges"
+          @next="goToNextChange"
+          @previous="goToPreviousChange"
+          @focus-change="goToChangeById"
+        />
+        <VersionHistoryPane
+          v-if="versionHistoryPaneOpen"
+          v-show="sidePanelActivePane === 'versionHistory'"
+          :versions="versionHistoryEntries"
+          :paused-message="versionHistoryPausedMessage ?? ''"
+          :named-only-filter="versionHistoryNamedOnlyFilter"
+          :preview-version-id="versionHistoryPreviewVersionId ?? ''"
+          :editable="documentActionsEnabled && !pastSupportedCeiling"
+          @close="closeSidePane('versionHistory')"
+          @update:named-only-filter="versionHistoryNamedOnlyFilter = $event"
+          @select="selectVersionHistoryVersion"
+          @exit-preview="exitVersionHistoryPreview"
+          @restore="restoreVersionRespectingCeiling"
+          @name="nameVersionHistoryVersion"
+          @remove-name="removeVersionHistoryName"
+          @delete="deleteVersionHistoryVersion"
+          @download="downloadVersionHistoryVersion"
+        />
+        <AccessibilityPane
+          v-if="accessibilityPaneOpen"
+          v-show="sidePanelActivePane === 'accessibility'"
+          :issues="accessibilityIssues"
+          :scanning="accessibilityScanning"
+          @close="closeSidePane('accessibility')"
+          @select="goToAccessibilityIssue"
+          @fix="applyAccessibilityFix"
+        />
+        <FontsPane
+          v-if="fontsPaneOpen"
+          v-show="sidePanelActivePane === 'fonts'"
+          :entries="fontReport"
+          :controls="embedControls"
+          @close="closeSidePane('fonts')"
+        />
+      </SidePanel>
     </div>
     <template #status-bar>
       <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
@@ -4304,129 +4353,29 @@ function handleMenuCommand(id = "") {
   cursor: pointer;
 }
 
-/* The outline pane (SPEC-037) is a left sidebar that OVERLAYS the canvas
-   rather than reflowing it: the pane sits in an absolutely-positioned dock on
-   the left edge, while page-wrap spans the full width beneath. Keeping the
-   page column full-width (and so its page centred within the whole canvas)
-   preserves the SPEC-002 invariant that a blank document's page is centred in
-   the editor viewport even while the sidebar is open. The pane itself stays
-   position:sticky (see OutlinePane.vue) so it stays visible while the pages
-   scroll; the dock stretches to the content height to give it a stick range. */
+/* Since SPEC-065 the seven auxiliary panes share one docked, tabbed region
+   (SidePanel.vue) instead of seven absolutely-positioned overlay docks. The
+   editor is a flex row: the document column and, at ≥900px, the side panel,
+   which displaces the document (below 900px the panel overlays it — SidePanel
+   owns that responsive behaviour). page-wrap stays first in the DOM so focus
+   runs document -> panel (AC-21); a left dock only reorders the panel
+   visually. */
 .editor-layout {
   position: relative;
   min-height: 100%;
+  display: flex;
+  align-items: flex-start;
 }
 
-/* Full-width page column; the absolute dock sits over its left edge. */
+/* The document column flexes to fill the space the panel leaves (AC-8d); its
+   page stays centred within it (the SPEC-002 invariant now holds within the
+   narrowed column rather than the whole canvas). */
 .page-wrap {
   position: relative;
-  width: 100%;
+  flex: 1;
   min-width: 0;
   box-sizing: border-box;
   padding: 2rem 1rem;
-}
-
-/* The sticky rail hosting the pane. absolute so it never reflows the page
-   column; top:0/bottom:0 make it as tall as the content so its sticky child
-   (OutlinePane) stays pinned for the whole scroll. */
-.outline-dock {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 16rem;
-  z-index: 20;
-  /* The dock floats over the full-width, fully-centred page column. It must
-     not swallow pointer events over the page (typing/caret, the ruler's
-     left-edge tab selector, right-click) — only the outline tree itself is
-     interactive; the rest passes through to the page beneath. */
-  pointer-events: none;
-}
-
-.outline-dock :deep(.outline-tree) {
-  pointer-events: auto;
-}
-
-/* The comments pane's own dock (SPEC-038) — the outline-dock's mirror on
-   the right edge of the page column. */
-.comments-dock {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 18rem;
-  z-index: 20;
-  pointer-events: none;
-}
-
-.comments-dock :deep(.comments-pane) {
-  pointer-events: auto;
-}
-
-/* The Styles pane's own dock (SPEC-042) — same shape as comments-dock, on
-   the same edge (the panes are not normally opened together). */
-.styles-dock {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 18rem;
-  z-index: 20;
-}
-
-/* The track-changes review pane's own dock (SPEC-039) — same shape as
-   comments-dock, on the same edge (the two panes are not normally opened
-   together). */
-.track-changes-dock {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 18rem;
-  z-index: 20;
-  pointer-events: none;
-}
-
-.track-changes-dock :deep(.track-changes-pane) {
-  pointer-events: auto;
-}
-
-/* The version history pane's own dock (SPEC-040) — same shape as the other
-   two, on the same edge (not normally opened together with them). */
-.version-history-dock {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 20rem;
-  z-index: 20;
-  pointer-events: none;
-}
-
-.version-history-dock :deep(.version-history-pane) {
-  pointer-events: auto;
-}
-
-/* The accessibility checker's own dock (SPEC-043), and the Fonts panel's
-   (SPEC-048) — same shape as the other docked panes, on the same edge (not
-   normally opened together with them). */
-.accessibility-dock,
-.fonts-dock {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 20rem;
-  z-index: 20;
-  pointer-events: none;
-}
-
-.accessibility-dock :deep(.accessibility-pane) {
-  pointer-events: auto;
-}
-
-.fonts-dock :deep(.fonts-pane) {
-  pointer-events: auto;
 }
 
 /* A zero-height sticky rail pinned to the top of the scrolling canvas; the

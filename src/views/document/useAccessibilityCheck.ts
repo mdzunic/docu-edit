@@ -224,6 +224,7 @@ export function useAccessibilityCheck(deps: AccessibilityCheckDeps) {
     goToAccessibilityIssue,
     applyAccessibilityFix,
     rescanAccessibility: rescan,
+    cancelAccessibilityScan: cancelScan,
   };
 }
 
