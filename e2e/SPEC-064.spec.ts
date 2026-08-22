@@ -136,6 +136,24 @@ test("dragging the top-margin marker moves the first line and the section margin
   expect(Number(fieldValue)).toBeCloseTo(Number(inchesTrimmed), 2);
 });
 
+test("a length field accepts an explicit unit suffix and converts it (AC-11)", async ({ page }) => {
+  const id = await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Suffixed margins");
+  await waitForSaved(page);
+
+  // The display unit is centimetres, but the user types inches with a suffix.
+  await openPageSetup(page);
+  const topField = page.getByTestId("page-setup-margin-top");
+  await topField.fill("0.5in");
+  await applyPageSetup(page);
+  await waitForSaved(page);
+
+  // 0.5in = 1.27cm reached the model despite the cm display unit (AC-11).
+  const after = await readModel(page, id);
+  expect(topMarginCm(after)).toBeCloseTo(1.27, 2);
+});
+
 test("View → Ruler toggles both rulers together with one control (AC-7)", async ({ page }) => {
   await createDocument(page);
   await expect(page.getByTestId("document-ruler")).toBeVisible();

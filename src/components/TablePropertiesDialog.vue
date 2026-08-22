@@ -227,10 +227,8 @@ function apply() {
             v-model="paddingText"
             class="field-input"
             data-testid="table-props-padding"
-            type="number"
-            min="0"
-            max="5"
-            step="0.05"
+            type="text"
+            inputmode="decimal"
           >
         </label>
         <label class="field">

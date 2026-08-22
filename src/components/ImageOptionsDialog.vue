@@ -144,10 +144,8 @@ function apply() {
           v-model="widthCm"
           class="field-input"
           data-testid="image-options-width"
-          type="number"
-          min="0.1"
-          :max="formatLength(500, measurementUnit)"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
           @input="handleWidthInput"
         >
       </label>
@@ -157,10 +155,8 @@ function apply() {
           v-model="heightCm"
           class="field-input"
           data-testid="image-options-height"
-          type="number"
-          min="0.1"
-          :max="formatLength(500, measurementUnit)"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
           @input="handleHeightInput"
         >
       </label>

@@ -143,9 +143,8 @@ function apply() {
           v-model="position"
           class="field-input"
           data-testid="tab-position-input"
-          type="number"
-          min="0"
-          step="0.25"
+          type="text"
+          inputmode="decimal"
           @keydown.enter="addStop"
         >
       </label>
@@ -230,9 +229,8 @@ function apply() {
         v-model="defaultInterval"
         class="field-input"
         data-testid="tab-default-interval-input"
-        type="number"
-        min="0"
-        step="0.25"
+        type="text"
+        inputmode="decimal"
       >
     </label>
     <p

@@ -233,9 +233,8 @@ function apply() {
           v-model="gapDraft"
           class="field-input"
           data-testid="columns-spacing"
-          type="number"
-          min="0"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
           :disabled="count <= 1"
         >
       </label>
@@ -275,7 +274,7 @@ function apply() {
           v-if="equalWidth"
           class="field-input"
           :data-testid="`columns-width-${index}`"
-          type="number"
+          type="text"
           :value="width"
           disabled
         >
@@ -284,9 +283,8 @@ function apply() {
           v-model="widthDrafts[index]"
           class="field-input"
           :data-testid="`columns-width-${index}`"
-          type="number"
-          :min="MIN_SECTION_COLUMN_WIDTH_CM"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
         >
       </label>
     </div>
