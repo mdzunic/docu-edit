@@ -280,6 +280,28 @@ export function useSidePanel(deps: SidePanelDeps) {
   const activeTitle = computed(() => (activePane.value !== null ? PANE_TITLES[activePane.value] : ""));
   const panelOpen = computed(() => openPanes.value.length > 0);
 
+  // When the panel closes entirely — the header close button, closing the last
+  // tab, Escape or the responsive scrim all empty openPanes — return focus to
+  // the document (AC-21a). The canvas keeps its DOM selection, so focusing it
+  // lands the caret back where it was. Only while focus is neutral (the removed
+  // control's focus has fallen to <body>, or is already inside the canvas),
+  // never stealing it from a control the user has since moved to. `flush:
+  // "post"` runs after the panel unmounts, so this refocus is the last write.
+  watch(
+    panelOpen,
+    (open, wasOpen) => {
+      if (!wasOpen || open) {
+        return;
+      }
+      const root = deps.contentRoot.value as HTMLElement | null;
+      const active = document.activeElement;
+      if (root && (!active || active === document.body || root.contains(active))) {
+        root.focus();
+      }
+    },
+    { flush: "post" },
+  );
+
   return {
     side,
     widthPx,

@@ -6,6 +6,7 @@ import { useSidePanel, type SidePanelDeps } from "./useSidePanel";
 
 afterEach(() => {
   localStorage.clear();
+  document.body.innerHTML = "";
 });
 
 function makePaneRefs(): Record<PaneId, Ref<boolean>> {
@@ -28,8 +29,15 @@ function setup(extra: Partial<SidePanelDeps> = {}) {
   }
   const paneOpenRefs = makePaneRefs();
   const events = { opened: [] as PaneId[], closed: [] as PaneId[], resized: 0 };
+  // A real, focusable contenteditable stands in for the document canvas so the
+  // panel-close focus-return (AC-21a) can be observed via document.activeElement.
+  const contentEl = document.createElement("div");
+  contentEl.setAttribute("contenteditable", "true");
+  contentEl.tabIndex = -1;
+  document.body.appendChild(contentEl);
   const deps = {
     paneOpenRefs,
+    contentRoot: ref<Element | null>(contentEl),
     badges: extra.badges ?? {},
     onPaneOpen: (id: PaneId) => events.opened.push(id),
     onPaneClose: (id: PaneId) => events.closed.push(id),
@@ -38,7 +46,7 @@ function setup(extra: Partial<SidePanelDeps> = {}) {
     },
   } as unknown as SidePanelDeps;
   const panel = useSidePanel(deps);
-  return { panel, paneOpenRefs, events };
+  return { panel, paneOpenRefs, events, contentEl };
 }
 
 describe("useSidePanel open/activate/close/toggle (AC-15, AC-24)", () => {
@@ -94,6 +102,57 @@ describe("useSidePanel open/activate/close/toggle (AC-15, AC-24)", () => {
     panel.closePane("comments"); // a background tab
     expect(panel.openPanes.value).toEqual(["outline", "styles"]);
     expect(panel.activePane.value).toBe("styles");
+  });
+});
+
+describe("useSidePanel returns focus to the document when the panel closes (AC-21a)", () => {
+  it("focuses the document when the close button empties the panel", async () => {
+    const { panel, contentEl } = setup();
+    panel.togglePane("outline");
+    panel.togglePane("comments");
+    await nextTick();
+    expect(document.activeElement).not.toBe(contentEl);
+
+    panel.closePanel();
+    await nextTick();
+    expect(document.activeElement).toBe(contentEl);
+  });
+
+  it("focuses the document when closing the last tab closes the panel", async () => {
+    const { panel, contentEl } = setup();
+    panel.togglePane("outline");
+    await nextTick();
+
+    panel.closePane("outline");
+    await nextTick();
+    expect(document.activeElement).toBe(contentEl);
+  });
+
+  it("does not touch document focus while other tabs remain open", async () => {
+    const { panel, contentEl } = setup();
+    panel.togglePane("outline");
+    panel.togglePane("comments");
+    await nextTick();
+
+    panel.closePane("comments"); // a background tab; panel stays open
+    await nextTick();
+    expect(document.activeElement).not.toBe(contentEl);
+  });
+
+  it("does not steal focus from a control the user moved to after closing", async () => {
+    const { panel, contentEl } = setup();
+    panel.togglePane("outline");
+    await nextTick();
+
+    // A control outside the canvas holds focus when the panel is torn down.
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+
+    panel.closePanel();
+    await nextTick();
+    expect(document.activeElement).toBe(button);
+    expect(document.activeElement).not.toBe(contentEl);
   });
 });
 
