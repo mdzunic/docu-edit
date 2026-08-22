@@ -5,8 +5,9 @@
 // setTabStops command normalises and applies it. BaseDialog owns the shell
 // and Escape; @dismiss maps onto cancel. Runtime prop/emit declarations —
 // this script is parsed by espree.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { asTabStopAlignment, asTabStops } from "../lib/documentModel";
+import { asMeasurementUnit, formatLength, parseLengthToCm } from "../lib/core/units";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 
@@ -16,9 +17,16 @@ const props = defineProps({
   /** The document's default tab interval in cm (SPEC-054 AC-10, AC-13/14) —
    * commands.documentDefaultTabStopCm, 1.27 when the document sets none. */
   defaultIntervalCm: { type: Number, default: 1.27 },
+  /** The document's measurement-unit preference (SPEC-064) — the field text
+   * displays and parses in this unit; the model stays in centimetres. */
+  unit: { type: String, default: "cm" },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
+
+// The unit fields display/parse in; the stored positions stay centimetres.
+const measurementUnit = computed(() => asMeasurementUnit(props.unit));
+const unitLabel = computed(() => props.unit);
 
 const stops = ref(
   asTabStops(props.initial).map((stop) => ({
@@ -31,13 +39,14 @@ const stops = ref(
 const position = ref("");
 const alignment = ref("left");
 const leader = ref("");
-// SPEC-054 AC-10: the per-document default tab interval, editable here.
-const defaultInterval = ref(String(props.defaultIntervalCm));
+// SPEC-054 AC-10: the per-document default tab interval, editable here. Held
+// as display text in the current unit; the underlying cm values stay canonical.
+const defaultInterval = ref(formatLength(props.defaultIntervalCm, measurementUnit.value));
 
 const defaultIntervalError = computed(() => {
-  const parsed = Number(defaultInterval.value);
-  if (defaultInterval.value === "" || !Number.isFinite(parsed) || parsed <= 0) {
-    return "Default interval must be a positive centimetre value";
+  const parsed = parseLengthToCm(defaultInterval.value, measurementUnit.value);
+  if (defaultInterval.value === "" || parsed === null || parsed <= 0) {
+    return `Default interval must be a positive ${unitLabel.value} value`;
   }
   return "";
 });
@@ -46,16 +55,34 @@ const positionError = computed(() => {
   if (position.value === "") {
     return "";
   }
-  const parsed = Number(position.value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return "Position must be a non-negative centimetre value";
+  const parsed = parseLengthToCm(position.value, measurementUnit.value);
+  if (parsed === null || parsed < 0) {
+    return `Position must be a non-negative ${unitLabel.value} value`;
   }
   return "";
 });
 
+// Reformat the visible field text when the unit changes, re-deriving each from
+// its underlying cm value so centimetres stay the source of truth (SPEC-064).
+watch(
+  () => props.unit,
+  (next = "cm", previous = "cm") => {
+    const previousUnit = asMeasurementUnit(previous);
+    const nextUnit = asMeasurementUnit(next);
+    const intervalCm = parseLengthToCm(defaultInterval.value, previousUnit);
+    if (intervalCm !== null) {
+      defaultInterval.value = formatLength(intervalCm, nextUnit);
+    }
+    const positionCm = parseLengthToCm(position.value, previousUnit);
+    if (positionCm !== null) {
+      position.value = formatLength(positionCm, nextUnit);
+    }
+  },
+);
+
 function describe(stop = { positionCm: 0, alignment: "left", leader: "" }) {
   const parts = [
-    `${Math.round(stop.positionCm * 100) / 100} cm`,
+    `${formatLength(stop.positionCm, measurementUnit.value)} ${unitLabel.value}`,
     stop.alignment === "center" ? "centre" : stop.alignment,
   ];
   if (stop.leader !== "") {
@@ -65,8 +92,8 @@ function describe(stop = { positionCm: 0, alignment: "left", leader: "" }) {
 }
 
 function addStop() {
-  const parsed = Number(position.value);
-  if (position.value === "" || !Number.isFinite(parsed) || parsed < 0) {
+  const parsed = parseLengthToCm(position.value, measurementUnit.value);
+  if (position.value === "" || parsed === null || parsed < 0) {
     return;
   }
   stops.value = stops.value
@@ -87,7 +114,7 @@ function clearAll() {
 }
 
 function apply() {
-  const parsedInterval = Number(defaultInterval.value);
+  const parsedInterval = parseLengthToCm(defaultInterval.value, measurementUnit.value);
   emit("apply", {
     stops: stops.value.map((stop) => ({
       positionCm: stop.positionCm,
@@ -95,7 +122,9 @@ function apply() {
       ...(stop.leader !== "" ? { leader: stop.leader } : {}),
     })),
     defaultIntervalCm:
-      defaultIntervalError.value === "" ? parsedInterval : props.defaultIntervalCm,
+      defaultIntervalError.value === "" && parsedInterval !== null
+        ? parsedInterval
+        : props.defaultIntervalCm,
   });
 }
 </script>
@@ -109,7 +138,7 @@ function apply() {
   >
     <div class="field-row">
       <label class="field">
-        <span class="field-label">Position (cm)</span>
+        <span class="field-label">Position ({{ unitLabel }})</span>
         <input
           v-model="position"
           class="field-input"
@@ -182,7 +211,7 @@ function apply() {
           type="button"
           class="remove-button"
           :data-testid="`tab-remove-${index}`"
-          :aria-label="`Remove tab stop at ${stop.positionCm} cm`"
+          :aria-label="`Remove tab stop at ${formatLength(stop.positionCm, measurementUnit)} ${unitLabel}`"
           @click="removeStop(index)"
         >
           Remove
@@ -196,7 +225,7 @@ function apply() {
       </li>
     </ul>
     <label class="field default-interval-field">
-      <span class="field-label">Default tab interval (cm)</span>
+      <span class="field-label">Default tab interval ({{ unitLabel }})</span>
       <input
         v-model="defaultInterval"
         class="field-input"

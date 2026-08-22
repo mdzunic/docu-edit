@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { asMeasurementUnit, formatLength, parseLengthToCm } from "../lib/core/units";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 
@@ -18,9 +19,16 @@ const props = defineProps({
    * ("the whole table" / "2 selected cells") shown next to the border/
    * shading/padding/alignment fields (AC-13, AC-14). */
   initial: { type: Object, required: true },
+  /** The document's measurement-unit preference (SPEC-064) — the length
+   * fields display and parse in this unit; the model stays in centimetres. */
+  unit: { type: String, default: "cm" },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
+
+// The unit the length fields display/parse in; the stored padding stays cm.
+const measurementUnit = computed(() => asMeasurementUnit(props.unit));
+const unitLabel = computed(() => props.unit);
 
 const borderStyle = ref(String(props.initial.borderStyle || "single"));
 const borderWidthPt = ref(String(props.initial.borderWidthPt || 1));
@@ -30,12 +38,25 @@ const pendingPreset = ref("");
 const shadingEnabled = ref(!!props.initial.shadingFill);
 const shadingFill = ref(String(props.initial.shadingFill || "#ffff00"));
 
-const paddingCm = ref(String(props.initial.paddingCm ?? 0.19));
+// Held as display text in the current unit; the underlying cm stays canonical.
+const paddingText = ref(formatLength(props.initial.paddingCm ?? 0.19, measurementUnit.value));
 const verticalAlign = ref(String(props.initial.verticalAlign || "top"));
 
 const alignment = ref(String(props.initial.alignment || "left"));
 const widthMode = ref(String(props.initial.widthMode || "fixed"));
 const widthPercent = ref(String(props.initial.widthPercent || 100));
+
+// Reformat the visible padding text when the unit changes, re-deriving it from
+// its underlying cm value so centimetres stay the source of truth (SPEC-064).
+watch(
+  () => props.unit,
+  (next = "cm", previous = "cm") => {
+    const paddingCm = parseLengthToCm(paddingText.value, asMeasurementUnit(previous));
+    if (paddingCm !== null) {
+      paddingText.value = formatLength(paddingCm, asMeasurementUnit(next));
+    }
+  },
+);
 
 const BORDER_PRESETS = [
   { key: "all", label: "All borders" },
@@ -54,8 +75,10 @@ function widthError() {
 }
 
 function paddingError() {
-  const value = Number(paddingCm.value);
-  return Number.isFinite(value) && value >= 0 && value <= 5 ? "" : "Padding must be between 0 and 5cm";
+  const value = parseLengthToCm(paddingText.value, measurementUnit.value);
+  return value !== null && value >= 0 && value <= 5
+    ? ""
+    : `Padding must be between ${formatLength(0, measurementUnit.value)} and ${formatLength(5, measurementUnit.value)}${unitLabel.value}`;
 }
 
 function percentError() {
@@ -80,7 +103,7 @@ function apply() {
     borderWidthPt: Number(borderWidthPt.value),
     borderColor: borderColor.value,
     shadingFill: shadingEnabled.value ? shadingFill.value : "",
-    paddingCm: Number(paddingCm.value),
+    paddingCm: parseLengthToCm(paddingText.value, measurementUnit.value) ?? 0,
     verticalAlign: verticalAlign.value,
     alignment: alignment.value,
     widthMode: widthMode.value,
@@ -199,9 +222,9 @@ function apply() {
       </h3>
       <div class="field-row">
         <label class="field">
-          <span class="field-label">Padding (cm)</span>
+          <span class="field-label">Padding ({{ unitLabel }})</span>
           <input
-            v-model="paddingCm"
+            v-model="paddingText"
             class="field-input"
             data-testid="table-props-padding"
             type="number"
