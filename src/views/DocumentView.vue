@@ -3409,6 +3409,7 @@ function handleMenuCommand(id = "") {
             :formatting="paragraphFormatting"
             :columns="rulerColumns"
             :tab-stops="paragraphFormatting.tabStops || []"
+            :unit="doc.measurementUnit || 'cm'"
             :disabled="!editable"
             @update="handleRulerUpdate"
             @open-tabs-dialog="openTabsDialog"

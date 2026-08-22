@@ -69,8 +69,7 @@ function clamp(value: number, min: number, max: number): number {
  * (SPEC-058's third exemption). Below 50 % only majors draw; between 50 % and
  * 150 % the minor step draws; above 150 % the next (finer) subdivision draws.
  * Inches additionally coarsen to quarter-inch minors below 75 % zoom. */
-export function verticalTickScheme(unit: MeasurementUnit, zoom = 1): { majorCm: number; minorCm: number } {
-  // Major step and the two finer steps per unit, all in centimetres.
+export function rulerTickScheme(unit: MeasurementUnit, zoom = 1): { majorCm: number; minorCm: number } {
   // Major / minor / next-subdivision / coarse-minor steps per unit, in cm.
   const scheme =
     unit === "cm"
@@ -103,28 +102,32 @@ export function verticalTickScheme(unit: MeasurementUnit, zoom = 1): { majorCm: 
   return { majorCm: scheme.majorCm, minorCm: scheme.minorCm };
 }
 
-/** The ruler's ticks, positioned from the page top and labelled outward from
- * the text-area top (the numbering origin, AC-4a). The origin tick is labelled
- * `"0"`; every major tick above or below it counts the absolute distance into
- * the page, so a reader sees how far a boundary sits from the printable top. */
-export function verticalRulerTicks(
-  pageHeightCm: number,
-  marginTopCm: number,
+/** A ruler's ticks along a strip of `lengthCm`, labelled outward from
+ * `originCm` — the numbering origin (AC-4a). Shared by both rulers: the
+ * vertical ruler passes the page height and the top margin (so the text-area
+ * top reads `"0"` and boundaries above/below count outward); the horizontal
+ * ruler passes the page width and `0` (so it counts from the page's left edge).
+ * Every major tick is labelled with its absolute distance from the origin in
+ * `unit`, minor ticks are unlabelled, and the density follows rulerTickScheme
+ * (AC-4). */
+export function rulerTicks(
+  lengthCm: number,
+  originCm: number,
   unit: MeasurementUnit,
   zoom = 1,
 ): VerticalTick[] {
-  const { majorCm, minorCm } = verticalTickScheme(unit, zoom);
-  if (!(pageHeightCm > 0) || !(minorCm > 0)) {
+  const { majorCm, minorCm } = rulerTickScheme(unit, zoom);
+  if (!(lengthCm > 0) || !(minorCm > 0)) {
     return [];
   }
   const ticks: VerticalTick[] = [];
-  // Ticks are laid on a grid anchored at the origin (marginTopCm), so a
-  // labelled major lands an exact unit from the text-area top.
-  const firstN = Math.ceil((0 - marginTopCm) / minorCm - 1e-6);
-  const lastN = Math.floor((pageHeightCm - marginTopCm) / minorCm + 1e-6);
+  // Ticks are laid on a grid anchored at the origin, so a labelled major lands
+  // an exact unit from it.
+  const firstN = Math.ceil((0 - originCm) / minorCm - 1e-6);
+  const lastN = Math.floor((lengthCm - originCm) / minorCm + 1e-6);
   for (let n = firstN; n <= lastN; n += 1) {
     const distanceFromOrigin = n * minorCm;
-    const cm = marginTopCm + distanceFromOrigin;
+    const cm = originCm + distanceFromOrigin;
     const ratio = distanceFromOrigin / majorCm;
     const major = Math.abs(ratio - Math.round(ratio)) < 1e-6;
     ticks.push({

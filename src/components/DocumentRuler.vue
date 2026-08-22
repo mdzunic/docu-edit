@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef } from "vue";
 import { markerPositions, valueFromMarkerPosition } from "../lib/ruler";
+import { rulerTicks, rulerTickScheme } from "../lib/verticalRuler";
+import { asMeasurementUnit, formatLength, fromCm, roundForDisplay } from "../lib/core/units";
 import { asTabStops } from "../lib/documentModel";
 
 // The horizontal ruler above the page (SPEC-014 AC-22, AC-23): cm ticks
@@ -24,6 +26,9 @@ const props = defineProps({
   /** The first touched paragraph's custom tab stops (SPEC-032 AC-24),
    * positions measured from the text area's start. */
   tabStops: { type: Array, default: () => [] },
+  /** The document's measurement-unit preference (SPEC-064 AC-9): tick labels
+   * and the markers' spoken values honour it. */
+  unit: { type: String, default: "cm" },
   disabled: { type: Boolean, default: false },
   /** SPEC-063 zoom scale fraction (1 == 100 %). The ruler scales with the
    * document so a ruler centimetre equals a document centimetre at every zoom
@@ -65,14 +70,12 @@ const context = computed(() => ({
 
 const positions = computed(() => markerPositions(context.value, props.formatting));
 
-/** Whole-centimetre tick positions, skipping 0 and the page edge. */
-const ticks = computed(() => {
-  const marks = [];
-  for (let cm = 1; cm < props.pageWidthCm; cm++) {
-    marks.push(cm);
-  }
-  return marks;
-});
+const measurementUnit = computed(() => asMeasurementUnit(props.unit));
+
+/** Tick marks across the page width, labelled in the current unit from the
+ * page's left edge, with major/minor divisions per the Tick scheme (SPEC-064
+ * AC-9). */
+const ticks = computed(() => rulerTicks(props.pageWidthCm, 0, measurementUnit.value, props.zoom));
 
 const MARKERS = [
   { kind: "margin-left", position: "marginLeft", label: "Left margin" },
@@ -97,6 +100,71 @@ function positionOf(marker = MARKERS[0]) {
     return values.firstLine;
   }
   return values.end;
+}
+
+/** The logical value a marker represents (SPEC-064 AC-14a): the page margin or
+ * the paragraph indent it edits, for the slider's spoken read-out. */
+function valueCmOf(marker = MARKERS[0]) {
+  if (marker.position === "marginLeft") {
+    return props.marginLeftCm;
+  }
+  if (marker.position === "marginRight") {
+    return props.marginRightCm;
+  }
+  if (marker.position === "start") {
+    return props.formatting?.indentStartCm ?? 0;
+  }
+  if (marker.position === "firstLine") {
+    return props.formatting?.indentFirstLineCm ?? 0;
+  }
+  return props.formatting?.indentEndCm ?? 0;
+}
+
+const UNIT_NAMES = { cm: "centimetres", mm: "millimetres", in: "inches", pt: "points" };
+
+function unitName() {
+  const unit = measurementUnit.value;
+  return unit === "mm" ? UNIT_NAMES.mm : unit === "in" ? UNIT_NAMES.in : unit === "pt" ? UNIT_NAMES.pt : UNIT_NAMES.cm;
+}
+
+/** The numeric value a slider announces via aria-valuenow, in the display unit
+ * and rounded per roundForDisplay (SPEC-064 AC-14a). */
+function displayValue(valueCm = 0) {
+  return roundForDisplay(fromCm(valueCm, measurementUnit.value), measurementUnit.value);
+}
+
+/** The spoken value, e.g. "Left margin, 2.5 centimetres" (SPEC-064 AC-14a). */
+function valueText(label = "", valueCm = 0) {
+  return `${label}, ${formatLength(valueCm, measurementUnit.value)} ${unitName()}`;
+}
+
+/** Keyboard operation (SPEC-064 AC-13): Left/Down nudge a focused marker one
+ * minor division toward the page's start, Right/Up one toward its end;
+ * Shift+arrow steps by a major division. The nudge moves the marker's physical
+ * position and emits the same update a drag there would. */
+function onMarkerKey(marker = MARKERS[0], event = new KeyboardEvent("keydown")) {
+  if (props.disabled) {
+    return;
+  }
+  const scheme = rulerTickScheme(measurementUnit.value, props.zoom);
+  const magnitude = event.shiftKey ? scheme.majorCm : scheme.minorCm;
+  let delta = 0;
+  if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+    delta = -magnitude;
+  } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+    delta = magnitude;
+  } else {
+    return;
+  }
+  event.preventDefault();
+  const kind =
+    marker.kind === "start" ||
+    marker.kind === "first-line" ||
+    marker.kind === "end" ||
+    marker.kind === "margin-left"
+      ? marker.kind
+      : "margin-right";
+  emit("update", valueFromMarkerPosition(kind, positionOf(marker) + delta, context.value, props.formatting));
 }
 
 function positionCmFromEvent(event = new PointerEvent("pointermove")) {
@@ -380,12 +448,16 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       :style="{ right: 0, width: `${marginRightCm}cm` }"
     />
     <div
-      v-for="cm in ticks"
-      :key="cm"
+      v-for="(tick, index) in ticks"
+      :key="index"
       class="tick"
-      :style="{ left: `${cm}cm` }"
+      :class="{ major: tick.major }"
+      :style="{ left: `${tick.cm}cm` }"
     >
-      <span class="tick-label">{{ cm }}</span>
+      <span
+        v-if="tick.major"
+        class="tick-label"
+      >{{ tick.label }}</span>
     </div>
     <!-- Custom tab stops (SPEC-032 AC-24): the free lane lays a stop of the
          armed type on click; clicking a laid handle removes it; the corner
@@ -435,6 +507,10 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       class="marker"
       :class="`marker-${marker.kind}`"
       :data-testid="`ruler-marker-${marker.kind}`"
+      role="slider"
+      aria-orientation="horizontal"
+      :aria-valuenow="displayValue(valueCmOf(marker))"
+      :aria-valuetext="valueText(marker.label, valueCmOf(marker))"
       :style="{ left: `${positionOf(marker)}cm` }"
       :title="marker.label"
       :aria-label="marker.label"
@@ -443,6 +519,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       @pointermove="moveDrag(marker.kind, $event)"
       @pointerup="endDrag(marker.kind, $event)"
       @pointercancel="endDrag(marker.kind, $event)"
+      @keydown="onMarkerKey(marker, $event)"
     />
     <!-- Column boundary handles (SPEC-030 AC-14): one per gutter of a
          multi-column section; dragging resizes the two adjacent columns. -->
@@ -487,8 +564,13 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
   position: absolute;
   bottom: 0;
   width: 1px;
-  height: 0.375rem;
+  height: 0.25rem;
   background: var(--border-strong);
+}
+
+/* Labelled major ticks reach higher than the unlabelled minor divisions. */
+.tick.major {
+  height: 0.4375rem;
 }
 
 .tick-label {

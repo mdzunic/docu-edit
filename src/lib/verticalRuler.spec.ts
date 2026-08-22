@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   valueFromVerticalPosition,
   verticalMarkerPositionCm,
-  verticalRulerTicks,
-  verticalTickScheme,
+  rulerTicks,
+  rulerTickScheme,
   type VerticalRulerContext,
 } from "./verticalRuler";
 import { toCm } from "./core/units";
@@ -20,36 +20,36 @@ function ctx(overrides: Partial<VerticalRulerContext> = {}): VerticalRulerContex
   };
 }
 
-describe("verticalTickScheme (SPEC-064 Tick scheme)", () => {
+describe("rulerTickScheme (SPEC-064 Tick scheme)", () => {
   it("labels 1cm majors and draws 0.5cm minors for cm at 100%", () => {
-    expect(verticalTickScheme("cm", 1)).toEqual({ majorCm: 1, minorCm: 0.5 });
+    expect(rulerTickScheme("cm", 1)).toEqual({ majorCm: 1, minorCm: 0.5 });
   });
 
   it("draws only major ticks below 50% zoom", () => {
-    expect(verticalTickScheme("cm", 0.4)).toEqual({ majorCm: 1, minorCm: 1 });
-    expect(verticalTickScheme("in", 0.4).minorCm).toBeCloseTo(toCm(1, "in"), 10);
+    expect(rulerTickScheme("cm", 0.4)).toEqual({ majorCm: 1, minorCm: 1 });
+    expect(rulerTickScheme("in", 0.4).minorCm).toBeCloseTo(toCm(1, "in"), 10);
   });
 
   it("adds the next subdivision above 150% zoom", () => {
-    expect(verticalTickScheme("cm", 2).minorCm).toBeCloseTo(0.25, 10);
-    expect(verticalTickScheme("in", 2).minorCm).toBeCloseTo(toCm(1 / 16, "in"), 10);
+    expect(rulerTickScheme("cm", 2).minorCm).toBeCloseTo(0.25, 10);
+    expect(rulerTickScheme("in", 2).minorCm).toBeCloseTo(toCm(1 / 16, "in"), 10);
   });
 
   it("coarsens inches to quarter-inch minors below 75% zoom", () => {
-    expect(verticalTickScheme("in", 0.6).minorCm).toBeCloseTo(toCm(1 / 4, "in"), 10);
-    expect(verticalTickScheme("in", 1).minorCm).toBeCloseTo(toCm(1 / 8, "in"), 10);
+    expect(rulerTickScheme("in", 0.6).minorCm).toBeCloseTo(toCm(1 / 4, "in"), 10);
+    expect(rulerTickScheme("in", 1).minorCm).toBeCloseTo(toCm(1 / 8, "in"), 10);
   });
 
   it("labels 72pt (one inch) majors and 36pt minors for pt", () => {
-    const scheme = verticalTickScheme("pt", 1);
+    const scheme = rulerTickScheme("pt", 1);
     expect(scheme.majorCm).toBeCloseTo(toCm(72, "pt"), 10);
     expect(scheme.minorCm).toBeCloseTo(toCm(36, "pt"), 10);
   });
 });
 
-describe("verticalRulerTicks (SPEC-064 AC-4, AC-4a)", () => {
+describe("rulerTicks (SPEC-064 AC-4, AC-4a)", () => {
   it("numbers outward from the top of the text area, labelling the origin 0", () => {
-    const ticks = verticalRulerTicks(29.7, 2.54, "cm", 1);
+    const ticks = rulerTicks(29.7, 2.54, "cm", 1);
     const origin = ticks.find((t) => Math.abs(t.cm - 2.54) < 1e-6);
     expect(origin?.major).toBe(true);
     expect(origin?.label).toBe("0");
@@ -62,14 +62,14 @@ describe("verticalRulerTicks (SPEC-064 AC-4, AC-4a)", () => {
   });
 
   it("marks half-centimetre minors unlabelled at 100%", () => {
-    const ticks = verticalRulerTicks(29.7, 2.54, "cm", 1);
+    const ticks = rulerTicks(29.7, 2.54, "cm", 1);
     const half = ticks.find((t) => Math.abs(t.cm - (2.54 + 0.5)) < 1e-6);
     expect(half?.major).toBe(false);
     expect(half?.label).toBe("");
   });
 
   it("keeps every tick inside the page", () => {
-    const ticks = verticalRulerTicks(29.7, 2.54, "cm", 1);
+    const ticks = rulerTicks(29.7, 2.54, "cm", 1);
     for (const tick of ticks) {
       expect(tick.cm).toBeGreaterThanOrEqual(-1e-6);
       expect(tick.cm).toBeLessThanOrEqual(29.7 + 1e-6);
@@ -77,12 +77,12 @@ describe("verticalRulerTicks (SPEC-064 AC-4, AC-4a)", () => {
   });
 
   it("draws fewer ticks below 50% zoom (majors only)", () => {
-    const majorsOnly = verticalRulerTicks(29.7, 2.54, "cm", 0.4);
+    const majorsOnly = rulerTicks(29.7, 2.54, "cm", 0.4);
     expect(majorsOnly.every((t) => t.major)).toBe(true);
   });
 
   it("returns nothing for a non-positive page height", () => {
-    expect(verticalRulerTicks(0, 0, "cm", 1)).toEqual([]);
+    expect(rulerTicks(0, 0, "cm", 1)).toEqual([]);
   });
 });
 

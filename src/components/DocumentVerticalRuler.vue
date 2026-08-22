@@ -4,8 +4,8 @@ import {
   asRowBoundaries,
   valueFromVerticalPosition,
   verticalMarkerPositionCm,
-  verticalRulerTicks,
-  verticalTickScheme,
+  rulerTicks,
+  rulerTickScheme,
 } from "../lib/verticalRuler";
 import { asMeasurementUnit, CM_PER_PX, formatLength, fromCm, roundForDisplay } from "../lib/core/units";
 
@@ -68,7 +68,7 @@ const context = computed(() => ({
 }));
 
 const ticks = computed(() =>
-  verticalRulerTicks(props.pageHeightCm, props.marginTopCm, measurementUnit.value, props.zoom),
+  rulerTicks(props.pageHeightCm, props.marginTopCm, measurementUnit.value, props.zoom),
 );
 
 // The four band-boundary markers, each carrying the model value it edits (for
@@ -210,7 +210,7 @@ function endRowDrag(index = 0, event = new PointerEvent("pointerup")) {
 // page top, Down toward the bottom, matching the on-screen direction.
 
 function nudgeStep(event = new KeyboardEvent("keydown")) {
-  const scheme = verticalTickScheme(measurementUnit.value, props.zoom);
+  const scheme = rulerTickScheme(measurementUnit.value, props.zoom);
   const magnitude = event.shiftKey ? scheme.majorCm : scheme.minorCm;
   if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
     return -magnitude;
