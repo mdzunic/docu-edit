@@ -185,4 +185,35 @@ body.is-print-preview .doc-field-shaded {
     filter: none !important;
   }
 }
+
+/* SPEC-063 Focus mode: Print layout with the menu bar, toolbar and every open
+   pane hidden purely by CSS — the panes' own state is untouched, so the exact
+   set open on entry returns on exit (AC-44, AC-47). The status bar (page
+   indicator + zoom control) stays visible (AC-45, AC-56). Global, not scoped,
+   because it spans AppShell's chrome and DocumentView's pane docks. */
+.is-focus-mode .menubar-region,
+.is-focus-mode .toolbar,
+.is-focus-mode .outline-dock,
+.is-focus-mode .styles-dock,
+.is-focus-mode .comments-dock,
+.is-focus-mode .track-changes-dock,
+.is-focus-mode .version-history-dock,
+.is-focus-mode .accessibility-dock,
+.is-focus-mode .fonts-dock {
+  display: none;
+}
+
+/* SPEC-063 Web layout: the same paginated model rendered as one continuous
+   column — page frames, gaps, headers, footers and page numbers hidden
+   (AC-38, AC-39). The model and section properties are untouched (AC-42). */
+.is-web-layout .page {
+  box-shadow: none;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.is-web-layout .page-header-band,
+.is-web-layout .page-footer-band {
+  display: none;
+}
 </style>

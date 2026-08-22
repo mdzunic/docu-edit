@@ -114,6 +114,7 @@ import { useMergeFields } from "./document/useMergeFields";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
 import { useZoomView } from "./document/useZoomView";
+import { useViewModes } from "./document/useViewModes";
 import { documentExists } from "../lib/documents";
 import {
   getOrCreateDocument,
@@ -587,10 +588,12 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
-// Zoom (SPEC-063): created before the shared context because its scale
-// fraction and coordinate helpers are part of that contract (AC-21, AC-22).
+// Zoom (SPEC-063): created before the shared context — its scale fraction and coordinate helpers are part of it (AC-21, AC-22).
 const zoomView = useZoomView({ documentId, pageRef, getScrollContainer: () => scrollContainer, onUnmount });
 const { zoom, zoomPercent, fitMode: zoomFitMode, scaled: pagesScaled, viewportStyle: pagesViewportStyle } = zoomView;
+
+const viewModes = useViewModes({ documentId }); // SPEC-063 Print/Web + transient Focus (AC-32..51).
+const { viewMode, focusMode, rootClass: viewRootClass, exitFocus } = viewModes;
 
 // The one object satisfying EditorContext (document/context.ts): the
 // universal dependencies every feature composable may rely on. Each use*()
@@ -2951,6 +2954,7 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     if (printPreviewOpen.value) {
       closePrintPreview();
     }
+    exitFocus(); // Escape leaves Focus mode (SPEC-063 AC-46); a no-op when off.
   }
   if (isOutsideDocumentInput(event.target)) {
     return;
@@ -3002,6 +3006,7 @@ function openHighlightMenu() { documentToolbarRef.value?.openHighlightMenu(); }
 // espree cannot parse here — Map's get() is typed without one.
 const { themeMenu, themeCommands } = useThemeControls({ ...editorContext, invalidate: () => pagination.invalidateAll() });
 const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059 AC-50); wiring in useThemeControls.
+  ...zoomView.commands, ...viewModes.commands, // SPEC-063 zoom + view-mode command ids (AC-11, AC-33, AC-34).
   // File
   ["file.print", openPrintPreview],
   ["file.page-setup", openPageSetup],
@@ -3184,6 +3189,7 @@ function handleMenuCommand(id = "") {
 <template>
   <AppShell
     v-if="doc"
+    :class="viewRootClass"
     :document-title="doc.title"
     :title-editable="editable"
     :format-badge="formatBadge"
@@ -3226,6 +3232,10 @@ function handleMenuCommand(id = "") {
         :auto-caption-tables="captionSettings.autoTables"
         :painter-mode="painterMode"
         :field-shading="fieldShadingOn"
+        :view-mode="viewMode"
+        :focus-mode="focusMode"
+        :zoom-percent="zoomPercent"
+        :zoom-fit-mode="zoomFitMode"
         v-bind="themeMenu"
         @command="handleMenuCommand"
         @insert-table-size="(rows, cols) => insertTableWithAutoCaption({ rows, cols })"
@@ -3480,6 +3490,7 @@ function handleMenuCommand(id = "") {
         </div>
         <DocumentRuler
           v-if="doc.showRuler !== false"
+          :zoom="zoom"
           :page-width-cm="rulerPageWidthCm"
           :margin-left-cm="rulerMarginLeftCm"
           :margin-right-cm="rulerMarginRightCm"
@@ -4500,13 +4511,10 @@ function handleMenuCommand(id = "") {
   position: relative;
 }
 
-/* SPEC-063 zoom. The viewport is sized to the SCALED page footprint so the
-   scroll container's scrollbars reflect the zoomed content (AC-17), and
-   centred with margin:0 auto. `.pages` is absolutely positioned and centred
-   inside it (left:50% offset back by half its own unscaled width) so the
-   `transform: scale()` with `transform-origin: top center` (AC-16) pivots on
-   the viewport's centre — the fix for the prior off-centre pivot that shoved
-   scaled content outside the wrapper at zoom < 100 %. */
+/* SPEC-063 zoom: the viewport is sized to the SCALED footprint so scrollbars
+   reflect the zoom (AC-17); `.pages` is centred inside it (left:50% offset by
+   half its own unscaled width) so the top-center scale pivot (AC-16) lands on
+   the viewport centre — the fix for the prior off-centre pivot. */
 .pages-viewport {
   position: relative;
 }

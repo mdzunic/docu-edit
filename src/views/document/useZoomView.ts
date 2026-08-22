@@ -21,6 +21,7 @@ import {
   type Point,
   stepZoomDown,
   stepZoomUp,
+  ZOOM_PRESETS,
 } from "../../lib/zoom";
 
 export type FitMode = "none" | "fit-width" | "fit-page";
@@ -261,7 +262,24 @@ export function useZoomView(deps: ZoomViewDeps) {
     }
   });
 
+  // The editorCommands entries the menu bar and keyboard shortcuts dispatch
+  // through (AC-33, AC-34). Both id spellings are registered: the camelCase
+  // shortcut ids (view.zoomIn/Out/Reset, AC-11) and the hyphenated menu ids
+  // (view.zoom-in/out/reset/fit-width/fit-page and view.zoom-<n>, AC-34).
+  const commands: Array<[string, () => void]> = [
+    ["view.zoomIn", zoomIn],
+    ["view.zoomOut", zoomOut],
+    ["view.zoomReset", zoomReset],
+    ["view.zoom-in", zoomIn],
+    ["view.zoom-out", zoomOut],
+    ["view.zoom-reset", zoomReset],
+    ["view.zoom-fit-width", setFitWidth],
+    ["view.zoom-fit-page", setFitPage],
+    ...ZOOM_PRESETS.map((preset): [string, () => void] => [`view.zoom-${preset}`, () => setZoomPercent(preset)]),
+  ];
+
   return {
+    commands,
     zoom: zoom as Readonly<Ref<number>>,
     zoomPercent: zoomPercent as Readonly<Ref<number>>,
     fitMode: fitMode as Readonly<Ref<FitMode>>,
