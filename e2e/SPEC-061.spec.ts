@@ -226,3 +226,84 @@ test("the text-selection toolbar is suppressed while a menu is open (AC-28)", as
   await page.getByTestId("menu-title-insert").click();
   await expect(page.getByTestId("text-selection-toolbar")).toBeHidden();
 });
+
+// The round-1 QA failure was that the font-size − stepper sat unreachable
+// between the native select and the native field. Reachability is only truly
+// proven by walking the *whole* strip: the union of a Home→Right sweep and an
+// End→Left sweep must land on every enabled, visible control at least once.
+// The font-size field commits-on-blur back to the document, so neither single
+// sweep crosses it — but each cluster is covered from its own end.
+async function sweep(page: Page, startKey: string, stepKey: string): Promise<string[]> {
+  await page.getByTestId("style-picker-button").focus();
+  await page.keyboard.press(startKey);
+  const seen: string[] = [];
+  for (let i = 0; i < 60; i++) {
+    const id = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+    const inStrip = await page.evaluate(() => {
+      const a = document.activeElement;
+      const s = document.querySelector('[data-testid="doc-toolbar-strip"]');
+      return !!(a && s && s.contains(a));
+    });
+    if (!inStrip) break;
+    if (id) seen.push(id);
+    await page.keyboard.press(stepKey);
+    const next = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+    if (next === id) break; // focus stopped moving (hit the strip end)
+  }
+  return seen;
+}
+
+test("every enabled strip control is reachable by keyboard (AC-31)", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await newDoc(page);
+  // A caret resolves a font size so the −/+ steppers enable and join the strip.
+  await page.getByTestId("document-content").click();
+  await expect(page.getByTestId("font-size-decrease")).toBeEnabled();
+
+  const enabled: string[] = await strip(page).evaluate((el) =>
+    Array.from(
+      el.querySelectorAll(
+        "button:not([disabled]), input:not([disabled]), select:not([disabled])",
+      ),
+    )
+      .filter((c) => c instanceof HTMLElement && c.offsetParent !== null && c.getAttribute("data-testid"))
+      .map((c) => c.getAttribute("data-testid") as string),
+  );
+
+  const reached = new Set([
+    ...(await sweep(page, "Home", "ArrowRight")),
+    ...(await sweep(page, "End", "ArrowLeft")),
+  ]);
+  const unreached = enabled.filter((id) => !reached.has(id));
+  expect(unreached).toEqual([]);
+  // The specific round-1 casualties, called out explicitly.
+  expect(reached.has("font-size-decrease")).toBe(true);
+  expect(reached.has("font-size-increase")).toBe(true);
+});
+
+test("Home and End land on the first and last enabled controls (AC-33)", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newDoc(page);
+  await page.waitForTimeout(1600);
+  await expect(overflowButton(page)).toBeHidden(); // nothing overflows at 1440px
+
+  const enabled: string[] = await strip(page).evaluate((el) =>
+    Array.from(
+      el.querySelectorAll(
+        "button:not([disabled]), input:not([disabled]), select:not([disabled])",
+      ),
+    )
+      .filter((c) => c instanceof HTMLElement && c.offsetParent !== null && c.getAttribute("data-testid"))
+      .map((c) => c.getAttribute("data-testid") as string),
+  );
+
+  await page.getByTestId("format-bold").focus();
+  await page.keyboard.press("Home");
+  const home = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+  await page.getByTestId("format-bold").focus();
+  await page.keyboard.press("End");
+  const end = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+
+  expect(home).toBe(enabled[0]);
+  expect(end).toBe(enabled[enabled.length - 1]);
+});
