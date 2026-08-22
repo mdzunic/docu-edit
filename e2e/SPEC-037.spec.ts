@@ -40,14 +40,22 @@ async function typeHeadingThenBody(
   await page.keyboard.press("Enter");
 }
 
+// Since SPEC-065 the outline is a tab in the consolidated side panel and is
+// closed by default; open it from the View menu (its command id is unchanged).
+async function openOutline(page: Page): Promise<void> {
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-outline").click();
+}
+
 async function seedHeadings(page: Page): Promise<void> {
   await content(page).click();
   await typeHeadingThenBody(page, "Chapter One", 1, "Body under chapter one.");
   await typeHeadingThenBody(page, "Section A", 2, "Body under section A.");
   await typeHeadingThenBody(page, "Chapter Two", 1, "Body under chapter two.");
+  await openOutline(page);
 }
 
-test("the pane is a nav landmark with a tree, open by default, listing headings indented by level (AC-1, AC-2, AC-15, AC-20)", async ({
+test("the pane is a nav landmark with a tree, opened from the View menu, listing headings indented by level (AC-1, AC-2, AC-15, AC-20)", async ({
   page,
 }) => {
   await createDocument(page);
@@ -67,6 +75,7 @@ test("a document with no headings shows the empty-state message (AC-12)", async 
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("Just a plain paragraph.");
+  await openOutline(page);
   await expect(page.getByTestId("outline-empty")).toHaveText("Headings you add will appear here");
 });
 

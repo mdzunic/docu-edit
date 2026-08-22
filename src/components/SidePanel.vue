@@ -330,7 +330,7 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .side-panel-resize:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--space-1) solid var(--focus-ring);
   outline-offset: -1px;
 }
 
@@ -346,7 +346,7 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
   flex: 1;
   min-width: 0;
   font-size: var(--text-md);
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;

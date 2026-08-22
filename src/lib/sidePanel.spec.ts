@@ -18,6 +18,8 @@ afterEach(() => {
 
 describe("side panel persistence", () => {
   it("defaults to a closed, right-docked panel for a new user", () => {
+    // No legacy keys -> nothing seeded (AC-12a): the panel starts closed so the
+    // document keeps its full width until the user opens a pane.
     const state = loadSidePanelState();
     expect(state).toEqual({
       side: "right",
@@ -98,16 +100,18 @@ describe("side panel legacy migration (AC-12)", () => {
     expect(state.activePane).toBeNull();
   });
 
-  it("deletes the legacy keys and runs exactly once (AC-12c/d)", () => {
-    localStorage.setItem(OUTLINE_PANE_STORAGE_KEY, JSON.stringify({ open: true }));
+  it("persists on migration, deletes the legacy keys and runs exactly once (AC-12c/d)", () => {
+    localStorage.setItem(COMMENTS_PANE_STORAGE_KEY, JSON.stringify({ open: true }));
 
-    loadSidePanelState();
-    expect(localStorage.getItem(OUTLINE_PANE_STORAGE_KEY)).toBeNull();
+    const first = loadSidePanelState();
+    expect(first.openPanes).toEqual(["comments"]);
+    // The new key now exists and the legacy keys are gone.
+    expect(localStorage.getItem(SIDE_PANEL_STORAGE_KEY)).not.toBeNull();
+    expect(localStorage.getItem(COMMENTS_PANE_STORAGE_KEY)).toBeNull();
 
-    // A second read (still no new key) does not re-seed from the now-deleted
-    // legacy key.
+    // A second read comes from the persisted new key, not a re-migration.
     const second = loadSidePanelState();
-    expect(second.openPanes).toEqual([]);
+    expect(second.openPanes).toEqual(["comments"]);
   });
 
   it("does not migrate once the new key exists", () => {

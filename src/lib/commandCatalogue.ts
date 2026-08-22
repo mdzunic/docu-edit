@@ -58,6 +58,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: "view.outline-pane", label: "Outline pane", path: ["View"], scope: "document", aliases: ["navigation"] },
   { id: "view.styles-pane", label: "Styles pane", path: ["View"], scope: "document" },
   { id: "view.comments-pane", label: "Comments pane", path: ["View"], scope: "document" },
+  { id: "view.panel-side", label: "Move side panel left/right", path: ["View"], scope: "document" },
   { id: "view.comments-only", label: "Comments-only view", path: ["View"], scope: "document" },
   { id: "view.field-shading", label: "Field shading", path: ["View"], scope: "document" },
   { id: "view.theme-system", label: "System", path: ["View", "Appearance"], scope: "document", aliases: ["theme"] },

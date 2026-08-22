@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
 import type { Ref } from "vue";
-import { loadSidePanelState, saveSidePanelState, type PaneId } from "../../lib/sidePanel";
+import { SIDE_PANEL_STORAGE_KEY, loadSidePanelState, saveSidePanelState, type PaneId } from "../../lib/sidePanel";
 import { useSidePanel, type SidePanelDeps } from "./useSidePanel";
 
 afterEach(() => {
@@ -21,6 +21,11 @@ function makePaneRefs(): Record<PaneId, Ref<boolean>> {
 }
 
 function setup(extra: Partial<SidePanelDeps> = {}) {
+  // Unless a test has already written a state to restore, start from an
+  // explicitly empty panel (a truly fresh store would migrate the outline open).
+  if (localStorage.getItem(SIDE_PANEL_STORAGE_KEY) === null) {
+    saveSidePanelState({ side: "right", widthPx: 320, collapsed: false, openPanes: [], activePane: null });
+  }
   const paneOpenRefs = makePaneRefs();
   const events = { opened: [] as PaneId[], closed: [] as PaneId[], resized: 0 };
   const deps = {

@@ -7,8 +7,8 @@
 // and deletes them, so the migration runs exactly once. Pure load/save/validate
 // in the SPEC-003 try/catch idiom — no Vue, no model access.
 
-import { OUTLINE_PANE_STORAGE_KEY } from "./outlinePane";
 import { COMMENTS_PANE_STORAGE_KEY } from "./commentsPane";
+import { OUTLINE_PANE_STORAGE_KEY } from "./outlinePane";
 import { VERSION_HISTORY_PANE_STORAGE_KEY } from "./versionHistoryPane";
 
 /** Every pane the region can host, exactly (SPEC-065 AC-29). */
@@ -99,7 +99,12 @@ export function loadSidePanelState(): SidePanelState {
       return defaultSidePanelState();
     }
   }
-  return migrateLegacyState();
+  // First read: seed from the legacy keys, then persist so the new key exists
+  // and this migration runs exactly once (AC-12d) — even before the composable
+  // writes any further state.
+  const migrated = migrateLegacyState();
+  saveSidePanelState(migrated);
+  return migrated;
 }
 
 /** Persist the state; best-effort — if storage is blocked the in-memory state
@@ -167,9 +172,11 @@ function migrateLegacyState(): SidePanelState {
   return state;
 }
 
-/** A legacy pane counts as "open" when its stored value is truthy (AC-12a).
- * The real legacy shape is `{ open: boolean }`, so an object's `.open` decides;
- * any other truthy scalar is also treated as open. */
+/** A legacy pane counts as "open" only when its stored value is truthy
+ * (AC-12a); an absent key seeds nothing, so a brand-new user starts with a
+ * closed panel and a full-width document. The real legacy shape is
+ * `{ open: boolean }`, so an object's `.open` decides; any other truthy scalar
+ * is also treated as open. */
 function readLegacyOpen(key: string): boolean {
   try {
     const raw = localStorage.getItem(key);
