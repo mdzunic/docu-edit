@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { LINE_START, MOD } from "./keys";
 
-// SPEC-025 — hyperlinks and bookmarks: the Ctrl/Cmd+K link dialog, autolink
+// SPEC-025 — hyperlinks and bookmarks: the Ctrl/Cmd+Alt+K link dialog, autolink
 // on space/Enter with single-step undo, the link chip (open/edit/copy/
 // remove), dangerous-scheme rejection, heading/bookmark link targets, the
 // bookmark manager, and .docx/.odt round-trips through download+reopen.
@@ -62,7 +62,7 @@ async function linkWholeText(page: Page, text: string, url: string): Promise<voi
   await content(page).click();
   await page.keyboard.type(text);
   await page.keyboard.press(`${MOD}+a`);
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await expect(linkDialog(page)).toBeVisible();
   await page.getByTestId("link-url-input").fill(url);
   await page.getByTestId("link-save").click();
@@ -71,24 +71,24 @@ async function linkWholeText(page: Page, text: string, url: string): Promise<voi
 
 // --- the dialog (AC-1..4) ----------------------------------------------------
 
-test("Ctrl/Cmd+K with a selection opens the dialog prefilled with the selected text and an empty URL (AC-1)", async ({
+test("Ctrl/Cmd+Alt+K with a selection opens the dialog prefilled with the selected text and an empty URL (AC-1)", async ({
   page,
 }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("linkme");
   await page.keyboard.press(`${MOD}+a`);
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await expect(linkDialog(page)).toBeVisible();
   await expect(page.getByTestId("link-text-input")).toHaveValue("linkme");
   await expect(page.getByTestId("link-url-input")).toHaveValue("");
 });
 
-test("Ctrl/Cmd+K with no selection opens with both fields empty (AC-2)", async ({ page }) => {
+test("Ctrl/Cmd+Alt+K with no selection opens with both fields empty (AC-2)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
   await page.keyboard.type("hello");
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await expect(linkDialog(page)).toBeVisible();
   await expect(page.getByTestId("link-text-input")).toHaveValue("");
   await expect(page.getByTestId("link-url-input")).toHaveValue("");
@@ -101,7 +101,7 @@ test("saving wraps the text in a hyperlink rendered underlined in the link colou
   await content(page).click();
   await page.keyboard.type("Visit example now");
   await selectRange(page, 6, 13);
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await page.getByTestId("link-url-input").fill("https://example.com/");
   await page.getByTestId("link-save").click();
 
@@ -204,7 +204,7 @@ test("Remove link leaves the text and its other formatting intact (AC-11, AC-33,
   await page.keyboard.type("boldlink");
   await page.keyboard.press(`${MOD}+a`);
   await page.keyboard.press(`${MOD}+b`);
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await page.getByTestId("link-url-input").fill("https://example.com/");
   await page.getByTestId("link-save").click();
   await expect(links(page)).toHaveCount(1);
@@ -266,7 +266,7 @@ test("javascript:, data: and vbscript: URLs are rejected on entry (AC-14..16, AC
   await content(page).click();
   await page.keyboard.type("target");
   await page.keyboard.press(`${MOD}+a`);
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await expect(linkDialog(page)).toBeVisible();
 
   for (const url of ["javascript:alert(1)", "data:text/html,x", "vbscript:msgbox(1)"]) {
@@ -308,7 +308,7 @@ test("the dialog lists headings and bookmarks, and a heading link jumps to the h
   await page.getByTestId("bookmark-name-input").fill("notes");
   await page.getByTestId("bookmark-save").click();
 
-  await page.keyboard.press(`${MOD}+k`);
+  await page.keyboard.press(`${MOD}+Alt+k`);
   await expect(linkDialog(page)).toBeVisible();
   const targetList = page.getByTestId("link-target-list");
   await expect(targetList).toContainText("Headings");

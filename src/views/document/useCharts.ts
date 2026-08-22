@@ -26,18 +26,23 @@ import {
 } from "../../lib/charts";
 import { chartDataFromTableCells, SINGLE_SERIES_CHART_TYPES, type ChartFromTableResult } from "../../lib/core/charts";
 import { isChart, type DocumentModel, type ImageWrapMode } from "../../lib/documentModel";
-import { type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
-import type { CaretPosition } from "../../lib/textEditing";
+import { asChartType, type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
+import { type CellRange } from "../../lib/core/tables";
+import { blockText, type CaretPosition } from "../../lib/textEditing";
 import type { EditorContext } from "./context";
 
 function sameChartLocation(a: ChartLocation, b: ChartLocation): boolean {
   return a.section === b.section && a.block === b.block;
 }
 
-export type ChartsDeps = EditorContext;
+export interface ChartsDeps extends EditorContext {
+  /** The active cell-range selection, read live for the "Chart from table"
+   * commands (SPEC-052 AC-21). */
+  getCellSelection: () => CellRange | null;
+}
 
 export function useCharts(deps: ChartsDeps) {
-  const { doc, contentRoot, pageRef, editable, currentSelection, applyEdit, clearCellSelection, getCaret } = deps;
+  const { doc, contentRoot, pageRef, editable, currentSelection, applyEdit, clearCellSelection, getCaret, addToast } = deps;
 
   const chartSelection = ref<ChartLocation | null>(null);
   const chartHandles = ref<ReturnType<typeof noImageHandleGeometry>>(noImageHandleGeometry());
@@ -165,6 +170,45 @@ export function useCharts(deps: ChartsDeps) {
       void nextTick().then(remeasureChartHandles);
     }
     return data;
+  }
+
+  /** "Insert → Chart" gallery pick (SPEC-052 AC-2, AC-3): inserts at the caret
+   * immediately, sample data and all — a chart has no draw-mode gesture. */
+  function handleChartPick(chartType = "columnClustered") {
+    insertChartAction(asChartType(chartType));
+  }
+
+  /** Whether a table is selected for "Insert → Chart from table" (AC-21) — a
+   * table block is the target of the active cell-range selection. */
+  const tableSelectedForChart = computed(() => {
+    const model = doc.value;
+    const range = deps.getCellSelection();
+    if (!model || !range) {
+      return false;
+    }
+    const block = model.sections[range.section]?.blocks[range.block];
+    return !!block && block.type === "table";
+  });
+
+  /** "Insert → Chart from table" (AC-21, AC-22): reads the selected table's
+   * cells (every row/column — a whole-table source is the simplest, most
+   * predictable default), reporting any cell that could not be read as a
+   * number. */
+  function handleChartFromTable(chartType = "columnClustered") {
+    const model = doc.value;
+    const range = deps.getCellSelection();
+    if (!model || !range) {
+      return;
+    }
+    const table = model.sections[range.section]?.blocks[range.block];
+    if (!table || table.type !== "table") {
+      return;
+    }
+    const cellText = table.rows.map((row) => row.cells.map((cell) => cell.blocks.map((paragraph) => blockText(paragraph)).join(" ")));
+    const result = insertChartFromTableAction({ section: range.section, block: range.block }, asChartType(chartType), cellText);
+    if (result.unparsable.length > 0) {
+      addToast(`Chart from table: ${result.unparsable.length} cell(s) could not be read as a number and were left blank.`);
+    }
   }
 
   function applyChartMutate(mutate: (model: DocumentModel, selection: ModelSelection, location: ChartLocation) => CommandResult, label: string) {
@@ -363,6 +407,9 @@ export function useCharts(deps: ChartsDeps) {
     openChartOptions,
     insertChartAction,
     insertChartFromTableAction,
+    handleChartPick,
+    tableSelectedForChart,
+    handleChartFromTable,
     applyChartData,
     applyChartOptions,
     applyChartSeriesColor,

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRe
 import { useRoute } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import DocumentMenuBar from "../components/DocumentMenuBar.vue";
+import CommandPalette from "../components/CommandPalette.vue";
 import BookmarkDialog from "../components/BookmarkDialog.vue";
 import BookmarkManagerDialog from "../components/BookmarkManagerDialog.vue";
 import CloseWithoutSavingDialog from "../components/CloseWithoutSavingDialog.vue";
@@ -93,6 +94,7 @@ import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
 import { usePaginationEngine } from "./document/usePaginationEngine";
 import { useThemeControls } from "./document/useThemeControls";
+import { useCommandPalette } from "./document/useCommandPalette";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useCaptions } from "./document/useCaptions";
@@ -148,8 +150,7 @@ import {
   noBlocks,
   noNoteContent,
 } from "../lib/documentModel";
-import { asChartType, CHART_CATALOGUE } from "../lib/core/charts";
-import { asShapeGeometry } from "../lib/core/shapes";
+import { CHART_CATALOGUE } from "../lib/core/charts";
 import {
   asBorderLineStyle,
   asCellVerticalAlign,
@@ -742,6 +743,7 @@ const {
   startShapeMove,
   startShapeRotate,
   armShapeDraw,
+  handleShapePick,
   disarmShapeDraw,
   startShapeDraw,
   insertTextBoxAction,
@@ -764,6 +766,9 @@ const {
   openChartOptions,
   insertChartAction,
   insertChartFromTableAction,
+  handleChartPick,
+  tableSelectedForChart,
+  handleChartFromTable,
   applyChartData,
   applyChartOptions,
   applyChartSeriesColor,
@@ -773,7 +778,7 @@ const {
   chartAtClientPoint,
   chartDataSheetInitial,
   chartOptionsInitial,
-} = useCharts({ ...editorContext });
+} = useCharts({ ...editorContext, getCellSelection: () => cellSelection.value });
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
 // session's editing surface, op dispatch and overlay live in the composable
@@ -2930,9 +2935,8 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
   if (!doc.value || !findAndPrintEnabled.value || event.altKey) {
     return;
   }
-  // Escape disarms the format painter regardless of where focus is (AC-17)
-  // — handleKeyDown below also disarms it when Escape is pressed with the
-  // canvas focused, so this is deliberately unguarded by isOutsideDocumentInput.
+  // Escape disarms the format painter regardless of focus (AC-17) — deliberately
+  // unguarded by isOutsideDocumentInput; handleKeyDown also disarms it in-canvas.
   if (event.key === "Escape") {
     disarmPainter();
     if (printPreviewOpen.value) {
@@ -2943,16 +2947,18 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
     return;
   }
   const shortcut = findShortcut(event);
-  if (shortcut?.id === "find.open") {
+  if (shortcut?.id === "app.commandPalette") {
+    event.preventDefault(); // SPEC-062: opens alongside find/print, canvas focus or not.
+    openCommandPalette();
+  } else if (shortcut?.id === "find.open") {
     event.preventDefault();
     openFind(false);
   } else if (shortcut?.id === "find.openReplace") {
     event.preventDefault();
     openFind(true);
   } else if (shortcut?.id === "file.print") {
-    // SPEC-034 AC-1 (superseding SPEC-021's immediate window.print()):
-    // Ctrl/Cmd+P opens the in-app print preview; the native dialog opens
-    // from its Print button.
+    // SPEC-034 AC-1 (superseding SPEC-021's immediate window.print()): Ctrl/Cmd+P
+    // opens the in-app print preview; the native dialog opens from its Print button.
     event.preventDefault();
     openPrintPreview();
   }
@@ -2975,52 +2981,6 @@ const documentToolbarRef = useTemplateRef("documentToolbarRef");
 
 function openTextColorMenu() { documentToolbarRef.value?.openTextColorMenu(); }
 function openHighlightMenu() { documentToolbarRef.value?.openHighlightMenu(); }
-
-/** "Insert -> Shape" gallery pick (SPEC-051 AC-3): arms draw mode so the
- * next drag/click on the canvas draws the chosen geometry. */
-function handleShapePick(geometry = "rect") {
-  armShapeDraw(asShapeGeometry(geometry));
-}
-
-/** "Insert -> Chart" gallery pick (SPEC-052 AC-2, AC-3): inserts at the
- * caret immediately, sample data and all — a chart has no draw-mode gesture
- * (unlike a shape's drag-to-size). */
-function handleChartPick(chartType = "columnClustered") {
-  insertChartAction(asChartType(chartType));
-}
-
-/** Whether a table is selected for "Insert -> Chart from table" (AC-21) —
- * a table block is the target of the active cell-range selection. */
-const tableSelectedForChart = computed(() => {
-  const model = doc.value;
-  const range = cellSelection.value;
-  if (!model || !range) {
-    return false;
-  }
-  const block = model.sections[range.section]?.blocks[range.block];
-  return !!block && block.type === "table";
-});
-
-/** "Insert -> Chart from table" (AC-21, AC-22): reads the selected table's
- * cells (every row/column, not just the range selection — a whole-table
- * source is the simplest, most predictable default), reports any cell that
- * could not be read as a number. */
-function handleChartFromTable(chartType = "columnClustered") {
-  const model = doc.value;
-  const range = cellSelection.value;
-  if (!model || !range) {
-    return;
-  }
-  const table = model.sections[range.section]?.blocks[range.block];
-  if (!table || table.type !== "table") {
-    return;
-  }
-  const cellText = table.rows.map((row) => row.cells.map((cell) => cell.blocks.map((paragraph) => blockText(paragraph)).join(" ")));
-  const result = insertChartFromTableAction({ section: range.section, block: range.block }, asChartType(chartType), cellText);
-  if (result.unparsable.length > 0) {
-    addToast(`Chart from table: ${result.unparsable.length} cell(s) could not be read as a number and were left blank.`);
-  }
-}
 
 // Every nullary editor command, keyed by id — the ONE registry both the
 // menubar (handleMenuCommand) and the keyboard shortcut path (handleKeyDown's
@@ -3087,7 +3047,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["format.auto-caption-images", toggleAutoImages],
   ["format.auto-caption-tables", toggleAutoTables],
   ["insert.special-character", openSpecialCharacters],
-  // Ctrl/Cmd+K opens the link dialog (SPEC-025 AC-1, AC-2).
+  // Ctrl/Cmd+Alt+K opens the link dialog (SPEC-025; moved off Ctrl/Cmd+K by SPEC-062).
   ["insert.link", openLinkDialog],
   ["insert.bookmark", openBookmarkDialog],
   ["insert.bookmark-list", () => { bookmarkManagerOpen.value = true; }],
@@ -3176,7 +3136,37 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["style.heading6", () => { handleApplyStyle(headingStyleId(6)); }],
 ]);
 
+// Command palette (SPEC-062): wired after editorCommands so its dispatcher
+// reuses that exact table — a palette run is the same call the menu makes.
+const {
+  commandPaletteOpen,
+  paletteCommands,
+  paletteStyleRows,
+  paletteAvailability,
+  paletteRecentIds,
+  paletteCommonIds,
+  openCommandPalette,
+  closeCommandPalette,
+  runCommandFromPalette,
+} = useCommandPalette({
+  ...editorContext,
+  editable,
+  undoRedo: undoRedoState,
+  canConvertLiteralChips,
+  tableSelectedForChart,
+  captionTargetSelected,
+  resolvedTheme: () => themeMenu.value.resolvedTheme,
+  dispatch: (id) => { editorCommands.get(id)?.(); },
+  applyStyle: (styleId) => { handleApplyStyle(styleId); },
+});
+
 function handleMenuCommand(id = "") {
+  // "Tools → Search commands" opens the palette (AC-4); not an editorCommands
+  // entry, so the catalogue completeness test stays exact.
+  if (id === "app.commandPalette") {
+    openCommandPalette();
+    return;
+  }
   editorCommands.get(id)?.();
 }
 
@@ -4112,6 +4102,16 @@ function handleMenuCommand(id = "") {
       :include-notes="statisticsIncludeNotes"
       @update-include-notes="statisticsIncludeNotes = $event"
       @close="closeStatistics"
+    />
+    <CommandPalette
+      v-if="commandPaletteOpen"
+      :commands="paletteCommands"
+      :extra-rows="paletteStyleRows"
+      :availability="paletteAvailability"
+      :recent-ids="paletteRecentIds"
+      :common-ids="paletteCommonIds"
+      @run="runCommandFromPalette"
+      @dismiss="closeCommandPalette"
     />
     <PropertiesDialog
       v-if="propertiesOpen"
