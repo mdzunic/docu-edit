@@ -33,6 +33,7 @@ const EXEMPT_FILES = new Set([
   "components/EquationEditor.vue",
   "components/MathBox.vue",
   "components/DocumentRuler.vue",
+  "components/DocumentVerticalRuler.vue",
   "components/TableHandlesOverlay.vue",
   "components/ShapeDrawPreview.vue",
   "components/LinkChip.vue",
