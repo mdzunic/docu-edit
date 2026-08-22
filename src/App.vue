@@ -207,9 +207,12 @@ body.is-print-preview .doc-field-shaded {
    column — page frames, gaps, headers, footers and page numbers hidden
    (AC-38, AC-39). The model and section properties are untouched (AC-42). */
 .is-web-layout .page {
-  box-shadow: none;
-  margin-top: 0;
-  margin-bottom: 0;
+  /* !important throughout: DocPage.vue's scoped `.page` rule ties on
+     specificity (0,2,0) and, being later in source order, would otherwise win —
+     leaving the drop shadow and 12 px page gap visible in Web layout (AC-39). */
+  box-shadow: none !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
   /* AC-40: the column is the first section's content width, not the full page
      width; --web-content-width is set on the editor root (DocumentView).
      !important overrides the per-page inline `width: <pageWidth>cm`. */
@@ -226,7 +229,10 @@ body.is-print-preview .doc-field-shaded {
 
 .is-web-layout .page-header-band,
 .is-web-layout .page-footer-band {
-  display: none;
+  /* !important for the same specificity tie as `.page` above: DocPage.vue's
+     scoped band rule sets `display: flex` and would otherwise win on source
+     order, leaving the header/footer bands visible in Web layout (AC-39). */
+  display: none !important;
 }
 
 /* SPEC-063 AC-36: when the zoom leaves room, the paginated pages tile side by
@@ -271,7 +277,10 @@ body.is-print-preview .page-header-band,
 body.is-print-preview .page-footer-band,
 body.is-exporting-pdf .page-header-band,
 body.is-exporting-pdf .page-footer-band {
-  display: revert;
+  /* !important to beat `.is-web-layout .page-header-band { display: none
+     !important }` above, so print, print preview and PDF export always restore
+     the header/footer bands even when Web layout is on (AC-52). */
+  display: revert !important;
 }
 
 @media print {
