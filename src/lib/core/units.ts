@@ -72,6 +72,54 @@ export function roundForDisplay(value: number, unit: MeasurementUnit): number {
   return Math.round(value * factor) / factor;
 }
 
+/** Every suffix a length field accepts, matched case- and space-insensitively
+ * against a user's typed value. Each maps to the MeasurementUnit its number is
+ * expressed in — the four display units the selector offers. */
+const LENGTH_SUFFIXES: Record<string, MeasurementUnit> = {
+  cm: "cm",
+  mm: "mm",
+  in: "in",
+  pt: "pt",
+};
+
+/** Parses a user-typed length into centimetres, the model's own unit
+ * (SPEC-064 AC-11/AC-17). Accepts a bare number, read in `unit` (the current
+ * display unit), or a number with an explicit suffix — `"2cm"`, `"0.5in"`,
+ * `"12pt"`, `"10mm"` — matched case- and space-insensitively (`"0.5 IN"`
+ * parses the same as `"0.5in"`). Returns `null` when the input cannot be
+ * parsed, so a field can reject it and signal an error rather than commit a
+ * NaN (AC-11b). Negative values pass through: indents and hanging first lines
+ * are legitimately negative. */
+export function parseLengthToCm(input: string, unit: MeasurementUnit): number | null {
+  if (typeof input !== "string") {
+    return null;
+  }
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed === "") {
+    return null;
+  }
+  const match = trimmed.match(/^([+-]?\d*\.?\d+)\s*(cm|mm|in|pt)?$/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const suffix = match[2] ? LENGTH_SUFFIXES[match[2]] : unit;
+  return toCm(value, suffix);
+}
+
+/** Formats centimetres for a length field or a ruler label in `unit`
+ * (SPEC-064 AC-17a). The value is converted out of centimetres and rounded per
+ * roundForDisplay, with NO unit suffix — the field or label names the unit
+ * itself. The round-trip `parseLengthToCm(formatLength(x, u), u)` returns `x`
+ * to within roundForDisplay's precision for every unit (asserted in the
+ * spec). */
+export function formatLength(cm: number, unit: MeasurementUnit): string {
+  return String(roundForDisplay(fromCm(cm, unit), unit));
+}
+
 // --- OOXML integer units ----------------------------------------------------
 // OOXML stores layout in fixed integer units. The conversions are shared
 // with any OOXML-family package (.docx today, .pptx for a Slides product).
