@@ -31,6 +31,7 @@ import { HIGHLIGHT_HEX } from "./core/colors";
 // when the original is unavailable. Measurement (textMetrics) routes the same
 // family through the same helper, so measure and paint agree.
 import { fontStack } from "./fonts/substitution";
+import { resolvedShapeAdjustments, shapeDefinition } from "./core/shapeCatalogue";
 
 /** The HTML tag a paragraph should render as: h1-h6 for a resolved heading
  * level (clamped to h6), otherwise a plain paragraph. */
@@ -529,6 +530,32 @@ export function shapeDisplayStyle(shape: Shape): Record<string, string> {
     style.zIndex = String(shape.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
+}
+
+/** The inset a shape's text frame lays out within (SPEC-069 AC-11): its
+ * geometry's declared text rectangle, as percentages of the box, so text in
+ * a cylinder/chevron/callout stays inside the painted region rather than
+ * filling the bounding box. Returns null for a geometry that fills its box
+ * (the default) or a preserved shape (no catalogue geometry to consult), so
+ * the component's own `inset: 0` applies unchanged. */
+export function shapeTextRectStyle(shape: Shape): Record<string, string> | null {
+  if (shape.unsupportedGeometryXml !== undefined) {
+    return null;
+  }
+  const def = shapeDefinition(shape.geometry);
+  if (!def?.textRect) {
+    return null;
+  }
+  const rect = def.textRect(resolvedShapeAdjustments(shape.geometry, shape.adjustments));
+  const pct = (n: number) => `${(n * 100).toFixed(3)}%`;
+  return {
+    left: pct(rect.x),
+    top: pct(rect.y),
+    width: pct(rect.w),
+    height: pct(rect.h),
+    right: "auto",
+    bottom: "auto",
+  };
 }
 
 /** A chart's size and position rendering (SPEC-052) — identical logic to

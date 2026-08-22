@@ -2,7 +2,7 @@
 import { inject, nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asShape } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
-import { drawingWrapSpacerStyle, shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { drawingWrapSpacerStyle, shapeDisplayStyle, shapeTextRectStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintShapeIntoCanvas } from "../lib/core/shapeCanvas";
 import { shapeClipPath } from "../lib/core/shapeGeometry";
@@ -164,6 +164,13 @@ function shapeTextEntries() {
   }
   return shapeTextRenderEntries(shape, asListDefinitions(props.listDefinitions));
 }
+
+/** The geometry's own text rectangle (AC-11), or an empty object when the
+ * geometry fills its box — the scoped `.doc-shape-text { inset: 0 }` then
+ * applies unchanged. */
+function textRectStyle() {
+  return shapeTextRectStyle(asShape(props.block)) ?? {};
+}
 </script>
 
 <template>
@@ -216,6 +223,7 @@ function shapeTextEntries() {
           ref="textFrameEl"
           class="doc-shape-text"
           data-canvas-ignore="1"
+          :style="textRectStyle()"
           :class="`doc-shape-valign-${block.text.vAlign}`"
           data-testid="shape-text"
           :data-shape-text-editable="editingText ? '1' : undefined"
