@@ -7,6 +7,7 @@
 import type { Block, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
+import { SHAPE_DEFINITIONS } from "../core/shapeCatalogue";
 import { escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
@@ -37,39 +38,14 @@ function ooxmlRotToDeg(rot: number): number {
   return Math.round(rot / 60000);
 }
 
-const PRST_TO_GEOMETRY: Record<string, ShapeGeometry> = {
-  line: "line",
-  straightConnector1: "arrow",
-  rect: "rect",
-  roundRect: "roundRect",
-  ellipse: "ellipse",
-  triangle: "triangle",
-  diamond: "diamond",
-  star5: "star5",
-  rightArrow: "rightArrow",
-  leftArrow: "leftArrow",
-  upArrow: "upArrow",
-  downArrow: "downArrow",
-  wedgeRectCallout: "wedgeRectCallout",
-  wedgeRoundRectCallout: "wedgeRoundRectCallout",
-};
-
-const GEOMETRY_TO_PRST: Record<ShapeGeometry, string> = {
-  line: "line",
-  arrow: "straightConnector1",
-  rect: "rect",
-  roundRect: "roundRect",
-  ellipse: "ellipse",
-  triangle: "triangle",
-  diamond: "diamond",
-  star5: "star5",
-  rightArrow: "rightArrow",
-  leftArrow: "leftArrow",
-  upArrow: "upArrow",
-  downArrow: "downArrow",
-  wedgeRectCallout: "wedgeRectCallout",
-  wedgeRoundRectCallout: "wedgeRoundRectCallout",
-};
+// The OOXML preset-name maps, both derived from the single SHAPE_DEFINITIONS
+// table (SPEC-069 AC-15a) rather than maintained here beside it.
+const GEOMETRY_TO_PRST: Record<string, string> = Object.fromEntries(
+  SHAPE_DEFINITIONS.map((def) => [def.geometry, def.prst]),
+);
+const PRST_TO_GEOMETRY: Record<string, ShapeGeometry> = Object.fromEntries(
+  SHAPE_DEFINITIONS.map((def) => [def.prst, def.geometry]),
+);
 
 /** Everything needed to parse a `wps:txbx`'s `w:txbxContent` into
  * `Shape.text.blocks` — injected by the caller (reader.ts) so this module

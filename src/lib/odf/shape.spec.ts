@@ -107,14 +107,14 @@ describe("parseShapeElement — draw:custom-shape geometry mapping", () => {
   it("an unrecognised draw:type falls back to 'rect' and captures the enhanced-geometry element verbatim (AC-60)", () => {
     const contentDoc = wrapDoc(
       `<draw:custom-shape text:anchor-type="as-char" svg:width="5cm" svg:height="3cm">` +
-        `<draw:enhanced-geometry draw:type="pentagon"/>` +
+        `<draw:enhanced-geometry draw:type="gear"/>` +
         `</draw:custom-shape>`,
     );
     const el = contentDoc.documentElement.firstElementChild!;
     const result = parseShapeElement(el, contentDoc, undefined, readCtx);
     expect(result).not.toBeNull();
     expect(result!.shape.geometry).toBe("rect");
-    expect(result!.shape.unsupportedGeometryXml).toContain('draw:type="pentagon"');
+    expect(result!.shape.unsupportedGeometryXml).toContain('draw:type="gear"');
   });
 
   it("a custom-shape with no enhanced-geometry child at all is unsupported with an empty capture", () => {
@@ -404,11 +404,11 @@ describe("shapeElementXml round-trips through parseShapeElement", () => {
   });
 
   it("round-trips an unsupported geometry's XML verbatim, marking the geometry field as the rect stand-in (AC-60, AC-61)", () => {
-    const unsupportedXml = `<draw:enhanced-geometry xmlns:draw="${DRAW_NAMESPACE}" draw:type="pentagon"/>`;
+    const unsupportedXml = `<draw:enhanced-geometry xmlns:draw="${DRAW_NAMESPACE}" draw:type="gear"/>`;
     const source = baseShape({ geometry: "rect", unsupportedGeometryXml: unsupportedXml });
     const xml = shapeElementXml(source, "gr1", writeCtx);
     expect(xml).not.toContain('draw:type="rectangle"');
-    expect(xml).toContain('draw:type="pentagon"');
+    expect(xml).toContain('draw:type="gear"');
 
     const contentDoc = wrapDoc(shapeGraphicStyleXml("gr1", source) + xml);
     const shapeEl = contentDoc.documentElement.lastElementChild!;

@@ -157,13 +157,13 @@ describe("parseShapeDrawing — geometry mapping", () => {
       `<w:drawing xmlns:wp="${WP_NS}"><wp:inline><wp:extent cx="1800000" cy="900000"/><wp:docPr id="1" name="Shape 1"/>` +
       `<a:graphic xmlns:a="${A_NS}"><a:graphicData uri="x">` +
       `<wps:wsp xmlns:wps="${WPS_NS}"><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1800000" cy="900000"/></a:xfrm>` +
-      `<a:prstGeom prst="cube"><a:avLst/></a:prstGeom></wps:spPr></wps:wsp>` +
+      `<a:prstGeom prst="gear9"><a:avLst/></a:prstGeom></wps:spPr></wps:wsp>` +
       `</a:graphicData></a:graphic></wp:inline></w:drawing>`;
     const result = parseShapeDrawing(drawingElement(xml), readCtx);
     expect(result).not.toBeNull();
     expect(result!.shape.geometry).toBe("rect");
     expect(result!.shape.unsupportedGeometryXml).toBeDefined();
-    expect(result!.shape.unsupportedGeometryXml).toContain('prst="cube"');
+    expect(result!.shape.unsupportedGeometryXml).toContain('prst="gear9"');
   });
 });
 
@@ -419,13 +419,13 @@ describe("shapeDrawingXml round-trips through parseShapeDrawing", () => {
   });
 
   it("round-trips an unsupported geometry's XML verbatim, marking the geometry field as the rect stand-in (AC-60, AC-61)", () => {
-    const unsupportedXml = `<a:prstGeom xmlns:a="${A_NS}" prst="cube"><a:avLst/></a:prstGeom>`;
+    const unsupportedXml = `<a:prstGeom xmlns:a="${A_NS}" prst="gear9"><a:avLst/></a:prstGeom>`;
     const source = baseShape({ geometry: "rect", unsupportedGeometryXml: unsupportedXml });
     const xml = shapeDrawingXml(source, 1, writeCtx);
     // The writer never computes a normal prstGeom for the shape's own
     // `geometry` field once unsupportedGeometryXml is set.
     expect(xml).not.toContain('prst="rect"');
-    expect(xml).toContain('prst="cube"');
+    expect(xml).toContain('prst="gear9"');
 
     const parsed = parseShapeDrawing(drawingElement(xml), readCtx)!;
     expect(parsed.shape.geometry).toBe("rect");

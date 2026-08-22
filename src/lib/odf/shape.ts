@@ -6,6 +6,7 @@
 import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
+import { SHAPE_DEFINITIONS } from "../core/shapeCatalogue";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import {
@@ -34,37 +35,17 @@ const DE_NAMESPACE = "urn:docu-edit:shape";
 // draw:custom-shape/draw:line element itself (svg:width/height/x/y, etc).
 const SHAPE_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}"`;
 
-const DRAW_TYPE_TO_GEOMETRY_TABLE: Record<string, ShapeGeometry> = {
-  rectangle: "rect",
-  "round-rectangle": "roundRect",
-  ellipse: "ellipse",
-  "isosceles-triangle": "triangle",
-  diamond: "diamond",
-  star5: "star5",
-  "right-arrow": "rightArrow",
-  "left-arrow": "leftArrow",
-  "up-arrow": "upArrow",
-  "down-arrow": "downArrow",
-  "rectangular-callout": "wedgeRectCallout",
-  "round-rectangular-callout": "wedgeRoundRectCallout",
-};
-
-const GEOMETRY_TO_DRAW_TYPE: Record<ShapeGeometry, string> = {
-  line: "line",
-  arrow: "line",
-  rect: "rectangle",
-  roundRect: "round-rectangle",
-  ellipse: "ellipse",
-  triangle: "isosceles-triangle",
-  diamond: "diamond",
-  star5: "star5",
-  rightArrow: "right-arrow",
-  leftArrow: "left-arrow",
-  upArrow: "up-arrow",
-  downArrow: "down-arrow",
-  wedgeRectCallout: "rectangular-callout",
-  wedgeRoundRectCallout: "round-rectangular-callout",
-};
+// The ODF draw:type maps, both derived from the single SHAPE_DEFINITIONS
+// table (SPEC-069 AC-15a). The forward map carries every geometry (line and
+// arrow both serialise as draw:line, so both map to "line"); the reverse map
+// is built only from area geometries (draw:custom-shape), since a draw:line
+// is recognised structurally, not by draw:type.
+const GEOMETRY_TO_DRAW_TYPE: Record<string, string> = Object.fromEntries(
+  SHAPE_DEFINITIONS.map((def) => [def.geometry, def.drawType]),
+);
+const DRAW_TYPE_TO_GEOMETRY_TABLE: Record<string, ShapeGeometry> = Object.fromEntries(
+  SHAPE_DEFINITIONS.filter((def) => !def.isLine).map((def) => [def.drawType, def.geometry]),
+);
 
 /** Everything needed to parse a shape's text:p children into
  * `Shape.text.blocks` — injected by the caller (reader.ts) so this module
