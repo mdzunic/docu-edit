@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 export interface UseTextSelectionToolbarOptions {
   /** The document editing surface; the selection must live inside it. */
@@ -7,6 +7,11 @@ export interface UseTextSelectionToolbarOptions {
    * document is read-only, an object is selected, shape text is being edited,
    * or a track-changes preview is showing (SPEC-061 AC-29). */
   suppressed: () => boolean;
+  /** The live zoom fraction (SPEC-063). A zoom change moves the selection in
+   * client space without firing selectionchange/scroll/resize, so the toolbar
+   * re-measures its anchor whenever this changes to stay registered with the
+   * selection under zoom (AC-57). Omit where there is no zoom. */
+  zoom?: () => number;
 }
 
 /** A selection's anchor point for the contextual toolbar: horizontal centre
@@ -45,7 +50,7 @@ function overlayOpen(): boolean {
  * progress — it appears on pointer-up (AC-27), while a dialog/menu/find bar is
  * open (AC-28), while an object is selected or the document is otherwise
  * suppressed (AC-29). Escape hides it without touching the selection (AC-30). */
-export function useTextSelectionToolbar({ contentRoot, suppressed }: UseTextSelectionToolbarOptions) {
+export function useTextSelectionToolbar({ contentRoot, suppressed, zoom }: UseTextSelectionToolbarOptions) {
   const visible = ref(false);
   const anchor = ref<SelectionAnchor>({ left: 0, top: 0, bottom: 0 });
 
@@ -141,6 +146,17 @@ export function useTextSelectionToolbar({ contentRoot, suppressed }: UseTextSele
     document.removeEventListener("scroll", onScroll, true);
     window.removeEventListener("resize", onScroll);
   });
+
+  // Re-measure the anchor when the zoom changes (SPEC-063 AC-57): the selection
+  // moves in client space but fires none of the events above. flush:"post" runs
+  // after the scale transform has been applied so the new rect is read.
+  if (zoom) {
+    watch(zoom, () => {
+      if (visible.value) {
+        evaluate();
+      }
+    }, { flush: "post" });
+  }
 
   return { visible, anchor, hide };
 }

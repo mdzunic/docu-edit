@@ -2713,6 +2713,11 @@ function fieldToolbarAnchor() {
 const { visible: textSelectionToolbarVisible, anchor: textSelectionAnchor, hide: hideTextSelectionToolbar } =
   useTextSelectionToolbar({
     contentRoot: () => contentRoot.value,
+    // A zoom change moves the selection in client space without firing any
+    // event the toolbar listens for, so the composable re-measures its anchor
+    // when this changes — keeping the fixed-position toolbar (outside the scale
+    // transform) registered with the selection under zoom (SPEC-063 AC-57).
+    zoom: () => zoom.value,
     suppressed: () =>
       !editable.value || !!activeHeaderFooter.value || !!shapeSelection.value || !!imageSelection.value ||
       !!chartSelection.value || !!selectedField.value || editingShapeText.value || versionHistoryPreviewActive.value,
@@ -3455,19 +3460,25 @@ function handleMenuCommand(id = "") {
             @close="closeFind(true)"
           />
         </div>
-        <DocumentRuler
+        <div
           v-if="doc.showRuler !== false"
-          :zoom="zoom"
-          :page-width-cm="rulerPageWidthCm"
-          :margin-left-cm="rulerMarginLeftCm"
-          :margin-right-cm="rulerMarginRightCm"
-          :formatting="paragraphFormatting"
-          :columns="rulerColumns"
-          :tab-stops="paragraphFormatting.tabStops || []"
-          :disabled="!editable"
-          @update="handleRulerUpdate"
-          @open-tabs-dialog="openTabsDialog"
-        />
+          class="ruler-sizer"
+          :class="{ 'ruler-sizer--scaled': pagesScaled }"
+          :style="zoomView.rulerSizerStyle.value"
+        >
+          <DocumentRuler
+            :zoom="zoom"
+            :page-width-cm="rulerPageWidthCm"
+            :margin-left-cm="rulerMarginLeftCm"
+            :margin-right-cm="rulerMarginRightCm"
+            :formatting="paragraphFormatting"
+            :columns="rulerColumns"
+            :tab-stops="paragraphFormatting.tabStops || []"
+            :disabled="!editable"
+            @update="handleRulerUpdate"
+            @open-tabs-dialog="openTabsDialog"
+          />
+        </div>
         <div
           class="pages-viewport"
           :class="{ 'pages-viewport--scaled': pagesScaled }"
@@ -4498,6 +4509,27 @@ function handleMenuCommand(id = "") {
   margin-left: calc(var(--pages-natural-w, 0px) / -2);
   transform: scale(var(--zoom, 1));
   transform-origin: top center;
+}
+
+/* SPEC-063 AC-53/AC-54: the ruler shares `.pages`' scaled footprint so it
+   centres (and left-aligns/scrolls when the footprint overflows the column)
+   exactly as the page does, keeping a ruler centimetre over the document
+   centimetre it measures. When scaled it takes the footprint width and centres
+   the ruler on the footprint centre (its scoped `margin: 0 auto` neutralised)
+   so the scaleX pivot lands there too; at 100 % it is a plain passthrough. */
+.ruler-sizer--scaled {
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+}
+
+.ruler-sizer--scaled :deep(.ruler) {
+  margin-left: 0;
+  margin-right: 0;
+  /* Keep the ruler's natural (unscaled) layout width so its centimetre ticks
+     stay correct and only the scaleX transform sizes it — never let the flex
+     box shrink it to the (smaller) footprint at zoom < 100 %. */
+  flex-shrink: 0;
 }
 
 .document-content {

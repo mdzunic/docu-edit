@@ -5,16 +5,19 @@ import { useZoomView, zoomStorageKey } from "./useZoomView";
 // A minimal HTMLElement stand-in whose geometry the composable reads. jsdom
 // reports 0 for offsetWidth/getBoundingClientRect, so the page and container
 // sizes are defined explicitly.
-function makePages(pageWidth: number, pageHeight: number, rectLeft = 100, rectTop = 40): HTMLElement {
+function makePages(pageWidth: number, pageHeight: number, rectLeft = 100, rectTop = 40, pageCount = 1): HTMLElement {
   const pages = document.createElement("div");
-  const page = document.createElement("div");
-  // Match the real DocPage root: class `page`, test id `document-page` — the
-  // id firstPageEl() selects on (SPEC-063).
-  page.className = "page";
-  page.setAttribute("data-testid", "document-page");
-  Object.defineProperty(page, "offsetWidth", { value: pageWidth, configurable: true });
-  Object.defineProperty(page, "offsetHeight", { value: pageHeight, configurable: true });
-  pages.appendChild(page);
+  // Match the real DocPage roots: class `page`, test id `document-page` — the
+  // id firstPageEl() selects on, and the count recomputeGrid caps columns to
+  // (SPEC-063 AC-36/AC-54).
+  for (let i = 0; i < Math.max(1, pageCount); i++) {
+    const page = document.createElement("div");
+    page.className = "page";
+    page.setAttribute("data-testid", "document-page");
+    Object.defineProperty(page, "offsetWidth", { value: pageWidth, configurable: true });
+    Object.defineProperty(page, "offsetHeight", { value: pageHeight, configurable: true });
+    pages.appendChild(page);
+  }
   Object.defineProperty(pages, "offsetWidth", { value: pageWidth, configurable: true });
   Object.defineProperty(pages, "offsetHeight", { value: pageHeight, configurable: true });
   pages.getBoundingClientRect = () =>
@@ -229,18 +232,59 @@ describe("useZoomView", () => {
     h.unmount();
   });
 
+  it("sizes the ruler wrapper to the scaled footprint, empty at 100% (AC-53, AC-54)", async () => {
+    const pages = makePages(800, 1100);
+    const h = mountZoom({ pages });
+    await nextTick();
+    // Measure the natural page size (ResizeObserver is absent in jsdom, so the
+    // window-resize path stands in for it).
+    window.dispatchEvent(new Event("resize"));
+    await nextTick();
+    // At 100% the ruler centres itself normally — no sizing wrapper.
+    expect(h.view.rulerSizerStyle.value).toEqual({});
+    h.view.setZoomPercent(50);
+    await nextTick();
+    // The wrapper takes the scaled footprint (800 * 0.5) so it shares `.pages`'
+    // centring/overflow and the ruler tracks the page at every zoom.
+    expect(h.view.rulerSizerStyle.value).toEqual({ width: "400px" });
+    h.view.setZoomPercent(200);
+    await nextTick();
+    expect(h.view.rulerSizerStyle.value).toEqual({ width: "1600px" });
+    h.unmount();
+  });
+
   describe("side-by-side page grid (AC-36)", () => {
     it("tiles multiple columns when the zoom leaves room", async () => {
-      const pages = makePages(800, 1100);
+      const pages = makePages(800, 1100, 100, 40, 4);
       const container = makeContainer(1400, 900);
       const h = mountZoom({ pages, container });
       await nextTick();
-      // 1400 / (800*0.5 + 24) = 3.30 → 3 columns at 50%.
+      // 1400 / (800*0.5 + 24) = 3.30 → 3 columns at 50% (4 pages available).
       h.view.setZoomPercent(50);
       h.view.recomputeGrid();
       expect(h.view.pageColumns.value).toBe(3);
       expect(h.view.pageGrid.value).toBe(true);
       expect(h.view.gridStyle.value).toEqual({ "--page-grid-cols": "3" });
+      h.unmount();
+    });
+
+    it("never reserves more columns than there are pages (AC-54)", async () => {
+      // The zoom leaves room for 3 columns, but a single-page document must
+      // stay in one centred column so the page keeps `.pages`' centre —
+      // otherwise the ruler and fixed overlays drift off it.
+      const pages = makePages(800, 1100, 100, 40, 1);
+      const container = makeContainer(1400, 900);
+      const h = mountZoom({ pages, container });
+      await nextTick();
+      h.view.setZoomPercent(50);
+      h.view.recomputeGrid();
+      expect(h.view.pageColumns.value).toBe(1);
+      expect(h.view.pageGrid.value).toBe(false);
+      expect(h.view.gridStyle.value).toEqual({});
+      // Two pages cap the 3-column fit to two.
+      h.pageRef.value = makePages(800, 1100, 100, 40, 2);
+      h.view.recomputeGrid();
+      expect(h.view.pageColumns.value).toBe(2);
       h.unmount();
     });
 

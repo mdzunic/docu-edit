@@ -124,6 +124,20 @@ export function useZoomView(deps: ZoomViewDeps) {
     };
   });
 
+  // The ruler sits above `.pages` as a sibling. It scales its centimetre ticks
+  // with a `scaleX` transform, so its own *layout* box never grows and it stays
+  // centred in the page column — but `.pages` reserves its full scaled footprint
+  // and so left-aligns (and scrolls) once that footprint overflows the column.
+  // Giving the ruler the SAME scaled-footprint layout width makes it share that
+  // overflow behaviour, so ruler and page track together at every zoom
+  // (AC-53/AC-54); the ruler itself is centred within this box (CSS) so the
+  // scaleX pivot still lands on the footprint centre.
+  const rulerSizerStyle = computed(() =>
+    scaled.value
+      ? ({ width: `${naturalWidth.value * zoom.value}px` } as Record<string, string>)
+      : ({} as Record<string, string>),
+  );
+
   function measureNatural(): void {
     const el = pageRef.value;
     if (el instanceof HTMLElement) {
@@ -143,7 +157,18 @@ export function useZoomView(deps: ZoomViewDeps) {
       pageColumns.value = 1;
       return;
     }
-    pageColumns.value = gridColumns(container.clientWidth, page.offsetWidth, zoom.value);
+    // Never reserve more columns than there are pages: a grid wider than its
+    // content parks the pages in the leading columns and leaves the trailing
+    // ones empty, which pulls the (only) page off `.pages`' centre and breaks
+    // the ruler/overlay registration (AC-54/AC-57). A single page therefore
+    // always stays in one centred column.
+    const pageCount = pageRef.value instanceof HTMLElement
+      ? pageRef.value.querySelectorAll('[data-testid="document-page"]').length
+      : 1;
+    pageColumns.value = Math.min(
+      gridColumns(container.clientWidth, page.offsetWidth, zoom.value),
+      Math.max(1, pageCount),
+    );
   }
 
   /** True when the pages should tile in a multi-column grid (AC-36) — a
@@ -327,6 +352,10 @@ export function useZoomView(deps: ZoomViewDeps) {
      * width/height); pair with the `.pages-viewport--scaled` / `.pages--scaled`
      * classes gated on `scaled`. */
     viewportStyle,
+    /** Inline width for the ruler's sizing wrapper so it shares `.pages`'
+     * scaled footprint and overflow/centring behaviour (AC-53/AC-54); empty
+     * at 100 %. Pair with the `.ruler-sizer` class. */
+    rulerSizerStyle,
     /** True when the pages tile in a multi-column grid (AC-36). */
     pageGrid,
     /** How many columns the grid tiles into (AC-36). */
