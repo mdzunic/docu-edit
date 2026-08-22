@@ -22,7 +22,6 @@ import {
   type VisibleCommentThread,
 } from "../../lib/comments";
 import { loadCommentAuthor, saveCommentAuthor } from "../../lib/core/commentIdentity";
-import { loadCommentsPaneOpen, saveCommentsPaneOpen } from "../../lib/commentsPane";
 import { isCollapsed, type ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommentMessage } from "../../lib/documentModel";
@@ -116,8 +115,10 @@ export function useComments(deps: CommentsDeps) {
 
   // --- pane / view state (per-user, not part of the model) -----------------
 
-  const commentsPaneOpen = ref(loadCommentsPaneOpen());
-  watch(commentsPaneOpen, (open) => saveCommentsPaneOpen(open));
+  // Open/closed state. Since SPEC-065 this is a tab in the consolidated side
+  // panel, which owns the persistence (one key, migrated from the legacy
+  // docu-edit:comments-pane key) and drives this ref through useSidePanel.
+  const commentsPaneOpen = ref(false);
   function toggleCommentsPane(): void {
     commentsPaneOpen.value = !commentsPaneOpen.value;
   }

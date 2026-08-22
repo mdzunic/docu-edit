@@ -7,7 +7,7 @@
 // the watch(hiddenBodyBlocks) that re-schedules pagination — the controller
 // is created after this composable is wired, precisely because its layout
 // closure reads the hiddenBodyBlocks returned here.
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import {
   activeHeadingAnchor,
   blockKey,
@@ -16,7 +16,6 @@ import {
   hiddenBlockAddresses,
   moveHeading,
 } from "../../lib/outline";
-import { loadOutlinePaneOpen, saveOutlinePaneOpen } from "../../lib/outlinePane";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { EditorContext } from "./context";
 
@@ -44,10 +43,10 @@ export function useOutlinePane(deps: OutlinePaneDeps) {
     jumpToAnchor,
   } = deps;
 
-  // Per-user open/closed state, persisted to localStorage (AC-14) and open by
-  // default for a new user (AC-15).
-  const outlinePaneOpen = ref(loadOutlinePaneOpen());
-  watch(outlinePaneOpen, (open) => saveOutlinePaneOpen(open));
+  // Open/closed state. Since SPEC-065 this is a tab in the consolidated side
+  // panel, which owns the persistence (one key, migrated from the legacy
+  // docu-edit:outline-pane key) and drives this ref through useSidePanel.
+  const outlinePaneOpen = ref(false);
   // Transient view state, never part of the model: which pane tree nodes are
   // collapsed (AC-7, AC-8), and which body headings are collapsed in the
   // document body (AC-16), keyed by "section:block". Body collapse hides blocks

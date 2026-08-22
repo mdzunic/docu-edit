@@ -110,6 +110,9 @@ test("a multi-section report with page breaks and a table of contents opens with
 
   await openFile(page, path);
 
+  // Since SPEC-065 the outline is a side-panel tab, closed by default; open it.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-outline").click();
   await expect(page.getByTestId("outline-pane").getByText("Chapter One")).toBeVisible();
   await expect(page.getByTestId("outline-pane").getByText("Chapter Two")).toBeVisible();
   const content = page.getByTestId("document-content");

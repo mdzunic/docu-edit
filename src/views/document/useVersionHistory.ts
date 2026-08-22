@@ -3,7 +3,7 @@
 // diff highlighting, restore, name/unname, delete, download). The storage
 // and diff/patch logic lives in lib/versionHistory.ts; this composable is
 // the Vue-facing session state, following useTrackChanges.ts's shape.
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import {
   deleteVersion as deleteVersionRecord,
   loadIndex,
@@ -18,7 +18,6 @@ import {
   type VersionsIndexRecord,
 } from "../../lib/versionHistory";
 import { createVersionCadenceTimer, type VersionCadenceTimer } from "../../lib/core/versionCadenceScheduler";
-import { loadVersionHistoryPaneOpen, saveVersionHistoryPaneOpen } from "../../lib/versionHistoryPane";
 import { loadCommentAuthor } from "../../lib/core/commentIdentity";
 import { applyTrackChanges } from "../../lib/trackChangesDiff";
 import { caretSelection } from "../../lib/commands";
@@ -41,8 +40,10 @@ export function useVersionHistory(deps: UseVersionHistoryDeps) {
 
   // --- pane open state (per-user, like the other docks) -------------------
 
-  const versionHistoryPaneOpen = ref(loadVersionHistoryPaneOpen());
-  watch(versionHistoryPaneOpen, (open) => saveVersionHistoryPaneOpen(open));
+  // Open/closed state. Since SPEC-065 this is a tab in the consolidated side
+  // panel, which owns the persistence (one key, migrated from the legacy
+  // docu-edit:version-history-pane key) and drives this ref through useSidePanel.
+  const versionHistoryPaneOpen = ref(false);
   function toggleVersionHistoryPane(): void {
     versionHistoryPaneOpen.value = !versionHistoryPaneOpen.value;
   }
