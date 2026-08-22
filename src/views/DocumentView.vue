@@ -151,6 +151,7 @@ import {
   noActiveNote,
   noBlocks,
   noNoteContent,
+  sectionContentWidthCm,
 } from "../lib/documentModel";
 import { CHART_CATALOGUE } from "../lib/core/charts";
 import {
@@ -248,7 +249,7 @@ import {
 } from "../lib/caretGeometry";
 import { findTableElement, noColumnResizeDrag, noRowResizeDrag } from "../lib/tableResize";
 import { previewColumnWidths, previewRowHeight, tableRowElement } from "../lib/core/tables";
-import { CM_PER_PX } from "../lib/core/units";
+import { cmToPx, CM_PER_PX } from "../lib/core/units";
 import {
   blockLength,
   blockText,
@@ -588,12 +589,46 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
-// Zoom (SPEC-063): created before the shared context — its scale fraction and coordinate helpers are part of it (AC-21, AC-22).
-const zoomView = useZoomView({ documentId, pageRef, getScrollContainer: () => scrollContainer, onUnmount });
-const { zoom, zoomPercent, fitMode: zoomFitMode, scaled: pagesScaled, viewportStyle: pagesViewportStyle } = zoomView;
-
 const viewModes = useViewModes({ documentId }); // SPEC-063 Print/Web + transient Focus (AC-32..51).
 const { viewMode, focusMode, rootClass: viewRootClass, exitFocus } = viewModes;
+
+// Zoom (SPEC-063): created before the shared context — its scale fraction and coordinate helpers are part of it (AC-21, AC-22).
+// The side-by-side page grid only tiles in Print layout, so its eligibility is gated on the (already-created) view mode (AC-36).
+const zoomView = useZoomView({
+  documentId,
+  pageRef,
+  getScrollContainer: () => scrollContainer,
+  onUnmount,
+  isGridEligible: () => !viewModes.isWebLayout.value,
+});
+const { zoom, zoomPercent, fitMode: zoomFitMode, scaled: pagesScaled, viewportStyle: pagesViewportStyle } = zoomView;
+
+// Toggling Print/Web (or Focus, which is Print) changes grid eligibility and
+// the available width, so re-tile the page grid and re-fit after the layout
+// settles (AC-36). flush:post so the DOM (and page geometry) has updated.
+watch(
+  [viewMode, focusMode],
+  () => {
+    void nextTick().then(() => {
+      zoomView.recomputeGrid();
+      zoomView.recomputeFit();
+    });
+  },
+  { flush: "post" },
+);
+
+// SPEC-063 AC-40: Web layout constrains the content column to the FIRST
+// section's content width (its page width minus its left/right margins),
+// exposed as a CSS var the .is-web-layout rules read. A document with no
+// sections falls back to the page's own width (`auto`); Print layout ignores
+// the var entirely.
+const webContentWidthCss = computed(() => {
+  const model = doc.value;
+  if (!model || model.sections.length === 0) {
+    return "auto";
+  }
+  return `${cmToPx(sectionContentWidthCm(model, 0))}px`;
+});
 
 // The one object satisfying EditorContext (document/context.ts): the
 // universal dependencies every feature composable may rely on. Each use*()
@@ -801,6 +836,10 @@ const equations = useEquations({ ...editorContext });
 // SPEC-056: an equation clicked in the document opens the editor. Provided to
 // the paint components (DocPageBlock/DocBlockEntries) which own the click.
 provide("activateEquation", equations.activateEquation);
+// SPEC-063 AC-20: the live zoom fraction for canvas-painted content (shapes,
+// charts) deep in the page tree — they multiply their backing store by
+// devicePixelRatio * zoom so the .pages transform scales them without blur.
+provide("documentZoom", zoom);
 
 // SPEC-056: route a character-picker glyph into an open equation (AC-14/15);
 // otherwise it inserts into the document as before.
@@ -1617,6 +1656,12 @@ async function scrollModelCaretIntoView(position = noCaret(), always = false) {
   const containerRect = scrollContainer.getBoundingClientRect();
   if (always || rect.top < containerRect.top || rect.bottom > containerRect.bottom) {
     scrollContainer.scrollTop += rect.top - containerRect.top - containerRect.height / 3;
+  }
+  // In the Print-layout page grid a caret can move to a page in another
+  // column, so bring it into view horizontally too (SPEC-063 AC-37). The
+  // vertical path above already frames off-screen jumps; this mirrors it on x.
+  if (always || rect.left < containerRect.left || rect.right > containerRect.right) {
+    scrollContainer.scrollLeft += rect.left - containerRect.left - containerRect.width / 3;
   }
 }
 
@@ -3190,6 +3235,7 @@ function handleMenuCommand(id = "") {
   <AppShell
     v-if="doc"
     :class="viewRootClass"
+    :style="{ '--web-content-width': webContentWidthCss }"
     :document-title="doc.title"
     :title-editable="editable"
     :format-badge="formatBadge"
@@ -3647,7 +3693,8 @@ function handleMenuCommand(id = "") {
             <div
               ref="contentRoot"
               class="document-content"
-              :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
+              :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible, 'is-page-grid': zoomView.pageGrid.value }"
+              :style="zoomView.gridStyle.value"
               data-testid="document-content"
               role="textbox"
               aria-multiline="true"
@@ -4535,6 +4582,24 @@ function handleMenuCommand(id = "") {
 .document-content {
   color: #202124;
   outline: none;
+}
+
+/* SPEC-063 AC-36: when the zoom leaves room, the paginated pages tile side by
+   side in a centred grid of `--page-grid-cols` columns. The grid lives inside
+   the scaled `.pages`, so the 24px screen gap is written in unscaled units
+   (÷ zoom) and each cell is one page wide (max-content). Only engaged above
+   one column — a single column keeps the untouched normal-flow centring. The
+   page's own auto/12px margins are neutralised so the grid gap alone spaces
+   them (overlays are measured live off `.pages`, so they follow either way). */
+.document-content.is-page-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--page-grid-cols, 1), max-content);
+  justify-content: center;
+  gap: calc(24px / var(--zoom, 1));
+}
+
+.document-content.is-page-grid :deep(.page) {
+  margin: 0;
 }
 
 /* The format painter's armed cursor (SPEC-020 AC-11) — a generic keyword

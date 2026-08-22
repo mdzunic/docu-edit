@@ -17,6 +17,7 @@ import {
   DEFAULT_ZOOM,
   fitPageZoom,
   fitWidthZoom,
+  gridColumns,
   parseZoomInput,
   type Point,
   stepZoomDown,
@@ -35,6 +36,10 @@ export interface ZoomViewDeps {
   getScrollContainer: () => Element | null;
   /** Registers a view-unmount cleanup callback. */
   onUnmount: (cb: () => void) => void;
+  /** True when the side-by-side page grid may engage — Print layout (incl.
+   * Focus), not Web layout, whose single continuous column never tiles
+   * (SPEC-063 AC-36). Defaults to always-eligible when omitted. */
+  isGridEligible?: () => boolean;
 }
 
 /** The per-document persistence key for zoom (AC-29). */
@@ -71,16 +76,18 @@ function writeStoredZoom(documentId: string, percent: number): void {
 
 /** The first laid-out page element inside `.pages`, whose own offset
  * geometry is the 100 %-scale page size (offsetWidth/Height are unaffected
- * by an ancestor's CSS transform). */
+ * by an ancestor's CSS transform). Selected by the page's stable test id —
+ * DocPage's root carries `data-testid="document-page"`. */
 function firstPageEl(pages: Element | null): HTMLElement | null {
   if (!(pages instanceof HTMLElement)) {
     return null;
   }
-  return pages.querySelector<HTMLElement>(".doc-page");
+  return pages.querySelector<HTMLElement>('[data-testid="document-page"]');
 }
 
 export function useZoomView(deps: ZoomViewDeps) {
   const { documentId, pageRef, getScrollContainer, onUnmount } = deps;
+  const isGridEligible = deps.isGridEligible ?? (() => true);
 
   // The source of truth is the integer percentage; the scale fraction the
   // template and helpers use is derived from it (AC-21: EditorContext.zoom
@@ -124,6 +131,30 @@ export function useZoomView(deps: ZoomViewDeps) {
       naturalHeight.value = el.offsetHeight;
     }
   }
+
+  // How many pages tile side by side at the current zoom (AC-36):
+  // floor(availableWidth / (pageWidth * zoom + 24)), min one. Only Print
+  // layout tiles; Web layout's single column keeps this at one.
+  const pageColumns = ref(1);
+  function recomputeGrid(): void {
+    const container = getScrollContainer();
+    const page = firstPageEl(pageRef.value);
+    if (!isGridEligible() || !page || !(container instanceof HTMLElement)) {
+      pageColumns.value = 1;
+      return;
+    }
+    pageColumns.value = gridColumns(container.clientWidth, page.offsetWidth, zoom.value);
+  }
+
+  /** True when the pages should tile in a multi-column grid (AC-36) — a
+   * single column keeps today's untouched normal-flow centring. */
+  const pageGrid = computed(() => pageColumns.value > 1);
+
+  /** The style bound onto the page container so the grid CSS reads the column
+   * count; empty (no grid) when a single column fits. */
+  const gridStyle = computed(() =>
+    pageGrid.value ? ({ "--page-grid-cols": String(pageColumns.value) } as Record<string, string>) : {},
+  );
 
   // Load the stored zoom whenever the document changes; a document with no
   // stored value opens at 100 % (AC-30, AC-31).
@@ -235,7 +266,11 @@ export function useZoomView(deps: ZoomViewDeps) {
       : new ResizeObserver(() => {
           measureNatural();
           recomputeFit();
+          recomputeGrid();
         });
+  // Zoom changes re-tile the grid (more columns fit as you zoom out); the
+  // natural width then follows via measureNatural on the next observed frame.
+  watch(zoom, () => recomputeGrid());
   watch(
     pageRef,
     (el) => {
@@ -250,6 +285,7 @@ export function useZoomView(deps: ZoomViewDeps) {
   function onWindowResize(): void {
     measureNatural();
     recomputeFit();
+    recomputeGrid();
   }
   if (typeof window !== "undefined") {
     window.addEventListener("resize", onWindowResize);
@@ -291,6 +327,16 @@ export function useZoomView(deps: ZoomViewDeps) {
      * width/height); pair with the `.pages-viewport--scaled` / `.pages--scaled`
      * classes gated on `scaled`. */
     viewportStyle,
+    /** True when the pages tile in a multi-column grid (AC-36). */
+    pageGrid,
+    /** How many columns the grid tiles into (AC-36). */
+    pageColumns: pageColumns as Readonly<Ref<number>>,
+    /** Style carrying `--page-grid-cols` for the grid container; empty at one
+     * column. */
+    gridStyle,
+    /** Recompute the column count — call when the view mode toggles between
+     * Print and Web layout (grid eligibility changes). */
+    recomputeGrid,
     setZoomPercent,
     applyZoomInput,
     zoomIn,

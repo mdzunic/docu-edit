@@ -10,7 +10,7 @@
 // never swallow the mouseup that ends the very gesture drawing it.
 //
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
-import { onMounted, onUpdated, useTemplateRef } from "vue";
+import { inject, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asShape } from "../lib/documentModel";
 import { paintShapeIntoCanvas } from "../lib/core/shapeCanvas";
 
@@ -25,6 +25,8 @@ const props = defineProps({
 });
 
 const canvasEl = useTemplateRef("canvasEl");
+// SPEC-063 AC-20: same zoom-aware backing store as DocShapeBlock.
+const documentZoom = inject("documentZoom", ref(1));
 
 function repaint() {
   const canvas = canvasEl.value;
@@ -35,11 +37,12 @@ function repaint() {
   // still has somewhere to land (DocShapeBlock clamps the same way).
   const widthPx = Math.max(1, Math.round(props.width));
   const heightPx = Math.max(1, Math.round(props.height));
-  paintShapeIntoCanvas(canvas, asShape(props.shape), widthPx, heightPx);
+  paintShapeIntoCanvas(canvas, asShape(props.shape), widthPx, heightPx, documentZoom.value);
 }
 
 onMounted(repaint);
 onUpdated(repaint);
+watch(documentZoom, repaint);
 
 function boxStyle() {
   return {

@@ -210,6 +210,18 @@ body.is-print-preview .doc-field-shaded {
   box-shadow: none;
   margin-top: 0;
   margin-bottom: 0;
+  /* AC-40: the column is the first section's content width, not the full page
+     width; --web-content-width is set on the editor root (DocumentView).
+     !important overrides the per-page inline `width: <pageWidth>cm`. */
+  width: var(--web-content-width, auto) !important;
+}
+
+/* The page margins are inline padding on .page-content; drop the horizontal
+   pair in Web layout so the text fills the content-width column exactly (the
+   vertical padding stays as the inter-page rhythm). */
+.is-web-layout .page-content {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
 }
 
 .is-web-layout .page-header-band,
