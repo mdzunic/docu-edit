@@ -2736,8 +2736,8 @@ const { visible: textSelectionToolbarVisible, anchor: textSelectionAnchor, hide:
   useTextSelectionToolbar({
     contentRoot: () => contentRoot.value,
     suppressed: () =>
-      !editable.value || !!shapeSelection.value || !!imageSelection.value || !!chartSelection.value ||
-      !!selectedField.value || editingShapeText.value || versionHistoryPreviewActive.value,
+      !editable.value || !!activeHeaderFooter.value || !!shapeSelection.value || !!imageSelection.value ||
+      !!chartSelection.value || !!selectedField.value || editingShapeText.value || versionHistoryPreviewActive.value,
   });
 
 const {
