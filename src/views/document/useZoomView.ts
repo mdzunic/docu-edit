@@ -118,7 +118,6 @@ export function useZoomView(deps: ZoomViewDeps) {
     // wrapper centre.
     return {
       "--zoom": String(scale),
-      "--pages-natural-w": `${naturalWidth.value}px`,
       width: `${naturalWidth.value * scale}px`,
       height: `${naturalHeight.value * scale}px`,
     };
