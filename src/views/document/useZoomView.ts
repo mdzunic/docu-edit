@@ -1,0 +1,288 @@
+// The document editor's zoom state (SPEC-063). Zoom is a presentation-layer
+// scale on the `.pages` container only — the model, pagination and stored
+// geometry stay in centimetres at 96 dpi (AC-16, AC-19). This composable
+// owns the live zoom percentage, the transient fit mode, per-document
+// persistence, and the client<->content coordinate helpers every overlay
+// and pointer path routes through so it lands where the pointer is at any
+// zoom (AC-21, AC-22).
+//
+// The pure arithmetic lives in lib/zoom.ts; this file is the DOM/reactive
+// shell around it: it measures the live page geometry for fit modes and the
+// scaled-size wrapper, and reads the live `.pages` rect for the helpers.
+import { computed, ref, watch, type Ref } from "vue";
+import {
+  clampZoom,
+  clientToContentPx as clientToContentPxPure,
+  contentPxToClient as contentPxToClientPure,
+  DEFAULT_ZOOM,
+  fitPageZoom,
+  fitWidthZoom,
+  parseZoomInput,
+  type Point,
+  stepZoomDown,
+  stepZoomUp,
+} from "../../lib/zoom";
+
+export type FitMode = "none" | "fit-width" | "fit-page";
+
+export interface ZoomViewDeps {
+  /** The open document's id — the persistence key's suffix. */
+  documentId: Readonly<Ref<string>>;
+  /** The `.pages` container; its live rect drives the coordinate helpers. */
+  pageRef: Ref<Element | null>;
+  /** The scrollable `<main>` ancestor — the fit-mode measurement box. */
+  getScrollContainer: () => Element | null;
+  /** Registers a view-unmount cleanup callback. */
+  onUnmount: (cb: () => void) => void;
+}
+
+/** The per-document persistence key for zoom (AC-29). */
+export function zoomStorageKey(documentId: string): string {
+  return `docu-edit:zoom:${documentId}`;
+}
+
+function readStoredZoom(documentId: string): number | null {
+  if (!documentId) {
+    return null;
+  }
+  try {
+    const raw = localStorage.getItem(zoomStorageKey(documentId));
+    if (raw === null) {
+      return null;
+    }
+    const value = Number.parseInt(raw, 10);
+    return Number.isNaN(value) ? null : clampZoom(value);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredZoom(documentId: string, percent: number): void {
+  if (!documentId) {
+    return;
+  }
+  try {
+    localStorage.setItem(zoomStorageKey(documentId), String(Math.round(percent)));
+  } catch {
+    // A private-mode / quota failure must never break editing.
+  }
+}
+
+/** The first laid-out page element inside `.pages`, whose own offset
+ * geometry is the 100 %-scale page size (offsetWidth/Height are unaffected
+ * by an ancestor's CSS transform). */
+function firstPageEl(pages: Element | null): HTMLElement | null {
+  if (!(pages instanceof HTMLElement)) {
+    return null;
+  }
+  return pages.querySelector<HTMLElement>(".doc-page");
+}
+
+export function useZoomView(deps: ZoomViewDeps) {
+  const { documentId, pageRef, getScrollContainer, onUnmount } = deps;
+
+  // The source of truth is the integer percentage; the scale fraction the
+  // template and helpers use is derived from it (AC-21: EditorContext.zoom
+  // is the fraction — getComputedStyle(.pages).transform reads matrix(z,…)).
+  const zoomPercent = ref<number>(DEFAULT_ZOOM);
+  const fitMode = ref<FitMode>("none");
+  const zoom = computed(() => zoomPercent.value / 100);
+
+  // The unscaled laid-out size of `.pages`, measured live; the sizing
+  // wrapper multiplies it by the scale so scrollbars reflect the scaled
+  // content (AC-17).
+  const naturalWidth = ref(0);
+  const naturalHeight = ref(0);
+
+  // The scaled layout only engages when actually zoomed AND the natural page
+  // size has been measured; at 100 % (the default) `.pages` keeps its
+  // ordinary normal-flow centring, so nothing regresses and there is no
+  // first-paint flash before the measurement lands (AC-16, AC-17).
+  const scaled = computed(() => zoomPercent.value !== 100 && naturalWidth.value > 0);
+  const viewportStyle = computed(() => {
+    const scale = zoom.value;
+    if (!scaled.value) {
+      return { "--zoom": String(scale) } as Record<string, string>;
+    }
+    // The wrapper takes the SCALED dimensions so the scroll container's
+    // scrollbars reflect the zoomed footprint (AC-17); `.pages` is then
+    // centred inside it so the transform-origin:top center pivot lands on the
+    // wrapper centre.
+    return {
+      "--zoom": String(scale),
+      "--pages-natural-w": `${naturalWidth.value}px`,
+      width: `${naturalWidth.value * scale}px`,
+      height: `${naturalHeight.value * scale}px`,
+    };
+  });
+
+  function measureNatural(): void {
+    const el = pageRef.value;
+    if (el instanceof HTMLElement) {
+      naturalWidth.value = el.offsetWidth;
+      naturalHeight.value = el.offsetHeight;
+    }
+  }
+
+  // Load the stored zoom whenever the document changes; a document with no
+  // stored value opens at 100 % (AC-30, AC-31).
+  watch(
+    documentId,
+    (id) => {
+      const stored = readStoredZoom(id);
+      zoomPercent.value = stored ?? DEFAULT_ZOOM;
+      fitMode.value = "none";
+    },
+    { immediate: true },
+  );
+
+  function persist(): void {
+    writeStoredZoom(documentId.value, zoomPercent.value);
+  }
+
+  /** Set an explicit percentage, clearing any fit mode (AC-8, AC-9). */
+  function setZoomPercent(percent: number, mode: FitMode = "none"): void {
+    zoomPercent.value = clampZoom(percent);
+    fitMode.value = mode;
+    persist();
+  }
+
+  /** Apply the editable field's raw text; revert (no-op) on invalid input
+   * so the caller's displayed value snaps back to the current zoom (AC-10). */
+  function applyZoomInput(raw: string): void {
+    const parsed = parseZoomInput(raw);
+    if (parsed === null) {
+      return;
+    }
+    setZoomPercent(parsed);
+  }
+
+  function zoomIn(): void {
+    setZoomPercent(stepZoomUp(zoomPercent.value));
+  }
+
+  function zoomOut(): void {
+    setZoomPercent(stepZoomDown(zoomPercent.value));
+  }
+
+  function zoomReset(): void {
+    setZoomPercent(DEFAULT_ZOOM);
+  }
+
+  /** Recompute a fit mode against the live geometry (AC-27): called on
+   * window resize and when a side pane opens or closes. A no-op unless a fit
+   * mode is active. */
+  function recomputeFit(): void {
+    if (fitMode.value === "none") {
+      return;
+    }
+    const page = firstPageEl(pageRef.value);
+    const container = getScrollContainer();
+    if (!page || !(container instanceof HTMLElement)) {
+      return;
+    }
+    const next =
+      fitMode.value === "fit-width"
+        ? fitWidthZoom(container.clientWidth, page.offsetWidth)
+        : fitPageZoom(container.clientHeight, page.offsetHeight);
+    zoomPercent.value = next;
+    persist();
+  }
+
+  function setFitWidth(): void {
+    fitMode.value = "fit-width";
+    recomputeFit();
+  }
+
+  function setFitPage(): void {
+    fitMode.value = "fit-page";
+    recomputeFit();
+  }
+
+  /** Ctrl/Cmd + wheel and trackpad pinch (which the browser also reports as
+   * a wheel event with ctrlKey) zoom the document (AC-13). preventDefault
+   * stops the browser's own page zoom (AC-14). */
+  function onWheel(event: WheelEvent): void {
+    if (!event.ctrlKey && !event.metaKey) {
+      return;
+    }
+    event.preventDefault();
+    if (event.deltaY < 0) {
+      zoomIn();
+    } else if (event.deltaY > 0) {
+      zoomOut();
+    }
+  }
+
+  function clientToContentPx(clientX: number, clientY: number): Point {
+    const el = pageRef.value;
+    const rect = el instanceof Element ? el.getBoundingClientRect() : { left: 0, top: 0 };
+    return clientToContentPxPure(clientX, clientY, rect, zoom.value);
+  }
+
+  function contentPxToClient(contentX: number, contentY: number): Point {
+    const el = pageRef.value;
+    const rect = el instanceof Element ? el.getBoundingClientRect() : { left: 0, top: 0 };
+    return contentPxToClientPure(contentX, contentY, rect, zoom.value);
+  }
+
+  // Track the laid-out page size (content edits, pagination) and the
+  // available width (window resize, pane toggles → recompute fit; AC-27).
+  const resizeObserver =
+    typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => {
+          measureNatural();
+          recomputeFit();
+        });
+  watch(
+    pageRef,
+    (el) => {
+      if (resizeObserver && el instanceof Element) {
+        resizeObserver.observe(el);
+        measureNatural();
+      }
+    },
+    { immediate: true },
+  );
+
+  function onWindowResize(): void {
+    measureNatural();
+    recomputeFit();
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", onWindowResize);
+  }
+
+  onUnmount(() => {
+    resizeObserver?.disconnect();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("resize", onWindowResize);
+    }
+  });
+
+  return {
+    zoom: zoom as Readonly<Ref<number>>,
+    zoomPercent: zoomPercent as Readonly<Ref<number>>,
+    fitMode: fitMode as Readonly<Ref<FitMode>>,
+    naturalWidth: naturalWidth as Readonly<Ref<number>>,
+    naturalHeight: naturalHeight as Readonly<Ref<number>>,
+    /** True when the scaled (absolute + sized-wrapper) layout is engaged. */
+    scaled,
+    /** Inline style for the `.pages-viewport` wrapper (CSS vars + scaled
+     * width/height); pair with the `.pages-viewport--scaled` / `.pages--scaled`
+     * classes gated on `scaled`. */
+    viewportStyle,
+    setZoomPercent,
+    applyZoomInput,
+    zoomIn,
+    zoomOut,
+    zoomReset,
+    setFitWidth,
+    setFitPage,
+    recomputeFit,
+    onWheel,
+    clientToContentPx,
+    contentPxToClient,
+  };
+}

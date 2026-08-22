@@ -18,7 +18,7 @@ import DocumentRuler from "../components/DocumentRuler.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
 import EditorSaveStatus from "../components/EditorSaveStatus.vue";
 import SpellContextMenu from "../components/SpellContextMenu.vue";
-import LanguageStatusControl from "../components/LanguageStatusControl.vue";
+import DocumentStatusBar from "../components/DocumentStatusBar.vue";
 import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
 import { SUPPORTED_LANGUAGES } from "../lib/core/language";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
@@ -113,6 +113,7 @@ import { useOutlinePane } from "./document/useOutlinePane";
 import { useMergeFields } from "./document/useMergeFields";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
+import { useZoomView } from "./document/useZoomView";
 import { documentExists } from "../lib/documents";
 import {
   getOrCreateDocument,
@@ -586,6 +587,11 @@ const remount = ref({ key: "", count: 0, epoch: 0 });
 const contentRoot = useTemplateRef("contentRoot");
 const pageRef = useTemplateRef("pageRef");
 
+// Zoom (SPEC-063): created before the shared context because its scale
+// fraction and coordinate helpers are part of that contract (AC-21, AC-22).
+const zoomView = useZoomView({ documentId, pageRef, getScrollContainer: () => scrollContainer, onUnmount });
+const { zoom, zoomPercent, fitMode: zoomFitMode, scaled: pagesScaled, viewportStyle: pagesViewportStyle } = zoomView;
+
 // The one object satisfying EditorContext (document/context.ts): the
 // universal dependencies every feature composable may rely on. Each use*()
 // call below spreads this and adds only its feature-specific extras, so
@@ -615,6 +621,9 @@ const editorContext = {
   onSessionClose,
   onUnmount,
   onScroll,
+  zoom,
+  clientToContentPx: zoomView.clientToContentPx,
+  contentPxToClient: zoomView.contentPxToClient,
 };
 
 // The format painter (SPEC-020) lives in useFormatPainter; handleSelectionChange
@@ -3482,214 +3491,222 @@ function handleMenuCommand(id = "") {
           @open-tabs-dialog="openTabsDialog"
         />
         <div
-          ref="pageRef"
-          class="pages"
-          data-testid="document-pages"
-          :data-pagination-state="paginationState"
-          @mousedown="handlePageMouseDown"
-          @mouseover="handlePageMouseOver"
+          class="pages-viewport"
+          :class="{ 'pages-viewport--scaled': pagesScaled }"
+          :style="pagesViewportStyle"
+          @wheel="zoomView.onWheel"
         >
           <div
-            v-if="findVisible"
-            class="find-highlight-layer print-exclude"
-            data-testid="find-highlights"
-            aria-hidden="true"
+            ref="pageRef"
+            class="pages"
+            :class="{ 'pages--scaled': pagesScaled }"
+            data-testid="document-pages"
+            :data-pagination-state="paginationState"
+            @mousedown="handlePageMouseDown"
+            @mouseover="handlePageMouseOver"
           >
             <div
-              v-for="(rect, index) in findHighlightRects"
-              :key="index"
-              class="find-highlight"
-              :class="{ current: rect.current }"
-              :data-current="rect.current ? 'true' : 'false'"
-              :style="{
-                left: `${rect.left}px`,
-                top: `${rect.top}px`,
-                width: `${rect.width}px`,
-                height: `${rect.height}px`,
-              }"
-            />
-          </div>
-          <div
-            v-if="commentHighlightRects.length > 0"
-            class="comment-highlight-layer print-exclude"
-            data-testid="comment-highlights"
-          >
+              v-if="findVisible"
+              class="find-highlight-layer print-exclude"
+              data-testid="find-highlights"
+              aria-hidden="true"
+            >
+              <div
+                v-for="(rect, index) in findHighlightRects"
+                :key="index"
+                class="find-highlight"
+                :class="{ current: rect.current }"
+                :data-current="rect.current ? 'true' : 'false'"
+                :style="{
+                  left: `${rect.left}px`,
+                  top: `${rect.top}px`,
+                  width: `${rect.width}px`,
+                  height: `${rect.height}px`,
+                }"
+              />
+            </div>
             <div
-              v-for="(rect, index) in commentHighlightRects"
-              :key="index"
-              class="comment-highlight"
-              :class="{ active: rect.active }"
-              :data-testid="`comment-highlight-${rect.threadId}`"
-              :style="{
-                left: `${rect.left}px`,
-                top: `${rect.top}px`,
-                width: `${rect.width}px`,
-                height: `${rect.height}px`,
-              }"
-              @click="focusThreadFromHighlight(rect.threadId)"
-            />
-          </div>
-          <!-- The rects address a paragraph offset range, but they are NOT
+              v-if="commentHighlightRects.length > 0"
+              class="comment-highlight-layer print-exclude"
+              data-testid="comment-highlights"
+            >
+              <div
+                v-for="(rect, index) in commentHighlightRects"
+                :key="index"
+                class="comment-highlight"
+                :class="{ active: rect.active }"
+                :data-testid="`comment-highlight-${rect.threadId}`"
+                :style="{
+                  left: `${rect.left}px`,
+                  top: `${rect.top}px`,
+                  width: `${rect.width}px`,
+                  height: `${rect.height}px`,
+                }"
+                @click="focusThreadFromHighlight(rect.threadId)"
+              />
+            </div>
+            <!-- The rects address a paragraph offset range, but they are NOT
                blocks: the address is spelled data-spell-* rather than
                data-section/data-block because that exact pair is
                BLOCK_SELECTOR (lib/domCaret.ts), the selector caret mapping,
                pagination and page navigation use to enumerate real block
                elements. Naming them the same way makes every flagged word
                masquerade as an extra slice of its own paragraph. -->
-          <div
-            v-if="spellUnderlineRects.length > 0"
-            class="spell-underline-layer print-exclude"
-            data-testid="spell-underlines"
-            aria-hidden="true"
-          >
             <div
-              v-for="(rect, index) in spellUnderlineRects"
-              :key="index"
-              class="spell-underline"
-              data-testid="spell-underline"
-              :data-spell-section="rect.section"
-              :data-spell-block="rect.block"
-              :data-spell-start="rect.start"
-              :data-spell-end="rect.end"
-              :data-word="rect.word"
-              :data-lang="rect.lang"
-              :style="{
-                left: `${rect.left}px`,
-                top: `${rect.top}px`,
-                width: `${rect.width}px`,
-                height: `${rect.height}px`,
-              }"
-            />
-          </div>
-          <TableHandlesOverlay
-            v-if="tableHover"
-            :geometry="tableHover"
-            @handle="handleTableHandle"
-            @column-resize="startColumnResize"
-            @row-resize="startRowResize"
-          />
-          <div
-            v-if="imageHandles"
-            class="image-handles print-exclude"
-            data-testid="image-handles"
-          >
-            <div
-              v-for="handle in IMAGE_HANDLES"
-              :key="handle"
-              class="image-resize-handle"
-              :data-testid="`image-resize-${handle}`"
-              :style="imageHandleStyle(handle)"
-              @mousedown="startImageResize($event, handle)"
-            />
-          </div>
-          <div
-            v-if="shapeHandles"
-            class="shape-handles print-exclude"
-            data-testid="shape-handles"
-          >
-            <div
-              v-for="handle in IMAGE_HANDLES"
-              :key="handle"
-              class="shape-resize-handle"
-              :data-testid="`shape-resize-${handle}`"
-              :style="shapeHandleStyle(handle)"
-              @mousedown="startShapeResize($event, handle)"
+              v-if="spellUnderlineRects.length > 0"
+              class="spell-underline-layer print-exclude"
+              data-testid="spell-underlines"
+              aria-hidden="true"
+            >
+              <div
+                v-for="(rect, index) in spellUnderlineRects"
+                :key="index"
+                class="spell-underline"
+                data-testid="spell-underline"
+                :data-spell-section="rect.section"
+                :data-spell-block="rect.block"
+                :data-spell-start="rect.start"
+                :data-spell-end="rect.end"
+                :data-word="rect.word"
+                :data-lang="rect.lang"
+                :style="{
+                  left: `${rect.left}px`,
+                  top: `${rect.top}px`,
+                  width: `${rect.width}px`,
+                  height: `${rect.height}px`,
+                }"
+              />
+            </div>
+            <TableHandlesOverlay
+              v-if="tableHover"
+              :geometry="tableHover"
+              @handle="handleTableHandle"
+              @column-resize="startColumnResize"
+              @row-resize="startRowResize"
             />
             <div
-              class="shape-rotation-handle"
-              data-testid="shape-rotation-handle"
-              :style="rotationHandleStyle()"
-              @mousedown="startShapeRotate($event)"
+              v-if="imageHandles"
+              class="image-handles print-exclude"
+              data-testid="image-handles"
+            >
+              <div
+                v-for="handle in IMAGE_HANDLES"
+                :key="handle"
+                class="image-resize-handle"
+                :data-testid="`image-resize-${handle}`"
+                :style="imageHandleStyle(handle)"
+                @mousedown="startImageResize($event, handle)"
+              />
+            </div>
+            <div
+              v-if="shapeHandles"
+              class="shape-handles print-exclude"
+              data-testid="shape-handles"
+            >
+              <div
+                v-for="handle in IMAGE_HANDLES"
+                :key="handle"
+                class="shape-resize-handle"
+                :data-testid="`shape-resize-${handle}`"
+                :style="shapeHandleStyle(handle)"
+                @mousedown="startShapeResize($event, handle)"
+              />
+              <div
+                class="shape-rotation-handle"
+                data-testid="shape-rotation-handle"
+                :style="rotationHandleStyle()"
+                @mousedown="startShapeRotate($event)"
+              />
+            </div>
+            <div
+              v-if="shapeAnchorMarker"
+              class="shape-anchor-marker print-exclude"
+              data-testid="shape-anchor-marker"
+              :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
             />
-          </div>
-          <div
-            v-if="shapeAnchorMarker"
-            class="shape-anchor-marker print-exclude"
-            data-testid="shape-anchor-marker"
-            :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
-          />
-          <ShapeDrawPreview
-            v-if="drawPreview"
-            class="print-exclude"
-            :shape="drawPreview.shape"
-            :left="drawPreview.left"
-            :top="drawPreview.top"
-            :width="drawPreview.width"
-            :height="drawPreview.height"
-          />
-          <div
-            ref="contentRoot"
-            class="document-content"
-            :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
-            data-testid="document-content"
-            role="textbox"
-            aria-multiline="true"
-            aria-label="Document content"
-            :aria-readonly="editable ? undefined : 'true'"
-            :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText"
-            spellcheck="false"
-            @beforeinput="handleBeforeInput"
-            @keydown="handleKeyDown"
-            @compositionstart="handleCompositionStart"
-            @compositionend="handleCompositionEnd"
-            @copy="handleCopy"
-            @cut="handleCut"
-            @paste="handlePaste"
-            @contextmenu="onContextMenu"
-            @mousedown="handleCanvasMouseDown"
-            @mousemove="handleCanvasMouseMove"
-            @mouseup="handleCanvasMouseUp"
-            @click="handleContentClick"
-            @dblclick="handleCanvasDblClick"
-            @dragenter="handleCanvasDragEnter"
-            @dragover="handleCanvasDragOver"
-            @drop="handleCanvasDrop"
-          >
-            <DocPage
-              v-for="(pageView, pageIndex) in pagedViews"
-              :key="pageIndex"
-              :page-style="pageView.pageStyle"
-              :content-style="pageView.contentStyle"
-              :entries="pageView.entries"
-              :columns="pageView.columns"
-              :virtual="pageView.virtual"
-              :cell-range="cellSelection || undefined"
-              :dimmed="pageView.dimmed"
-              :header-style="pageView.headerStyle ?? undefined"
-              :footer-style="pageView.footerStyle ?? undefined"
-              :header-entries="pageView.headerEntries"
-              :footer-entries="pageView.footerEntries"
-              :header-editable="pageView.headerEditable"
-              :footer-editable="pageView.footerEditable"
-              :footnote-area="pageView.footnoteArea ?? undefined"
-              :endnote-area="pageView.endnoteArea ?? undefined"
-              :print-hidden="printHiddenPages.has(pageIndex)"
-              @image-select="handleImageSelect"
-              @shape-select="handleShapeSelect"
-              @shape-edit-text="handleShapeEditText"
-              @shape-text-beforeinput="handleShapeTextBeforeInput"
-              @shape-text-keydown="handleShapeTextKeyDown"
-              @shape-text-compositionstart="handleShapeTextCompositionStart"
-              @shape-text-compositionend="handleShapeTextCompositionEnd"
-              @chart-select="handleChartSelect"
-              @chart-edit-data="handleChartEditData"
-              @toc-action="handleTocAction"
-              @tof-action="handleTofAction"
-              @dblclick-header="handleDblclickHeader(pageIndex)"
-              @dblclick-footer="handleDblclickFooter(pageIndex)"
-              @dblclick-body="handleDblclickBody"
-              @hf-beforeinput="handleHfBeforeInput"
-              @hf-keydown="handleHfKeyDown"
-              @hf-compositionstart="handleHfCompositionStart"
-              @hf-compositionend="handleHfCompositionEnd"
-              @note-activate="handleNoteActivate"
-              @note-number-click="handleNoteNumberClick"
-              @note-beforeinput="handleNoteBeforeInput"
-              @note-keydown="handleNoteKeyDown"
-              @note-compositionstart="handleNoteCompositionStart"
-              @note-compositionend="handleNoteCompositionEnd"
-              @outline-toggle="handleBodyHeadingToggle"
+            <ShapeDrawPreview
+              v-if="drawPreview"
+              class="print-exclude"
+              :shape="drawPreview.shape"
+              :left="drawPreview.left"
+              :top="drawPreview.top"
+              :width="drawPreview.width"
+              :height="drawPreview.height"
             />
+            <div
+              ref="contentRoot"
+              class="document-content"
+              :class="{ 'painter-armed': painterMode !== '', 'marks-on': marksVisible }"
+              data-testid="document-content"
+              role="textbox"
+              aria-multiline="true"
+              aria-label="Document content"
+              :aria-readonly="editable ? undefined : 'true'"
+              :contenteditable="editable && !activeHeaderFooter && !activeNote && !editingShapeText"
+              spellcheck="false"
+              @beforeinput="handleBeforeInput"
+              @keydown="handleKeyDown"
+              @compositionstart="handleCompositionStart"
+              @compositionend="handleCompositionEnd"
+              @copy="handleCopy"
+              @cut="handleCut"
+              @paste="handlePaste"
+              @contextmenu="onContextMenu"
+              @mousedown="handleCanvasMouseDown"
+              @mousemove="handleCanvasMouseMove"
+              @mouseup="handleCanvasMouseUp"
+              @click="handleContentClick"
+              @dblclick="handleCanvasDblClick"
+              @dragenter="handleCanvasDragEnter"
+              @dragover="handleCanvasDragOver"
+              @drop="handleCanvasDrop"
+            >
+              <DocPage
+                v-for="(pageView, pageIndex) in pagedViews"
+                :key="pageIndex"
+                :page-style="pageView.pageStyle"
+                :content-style="pageView.contentStyle"
+                :entries="pageView.entries"
+                :columns="pageView.columns"
+                :virtual="pageView.virtual"
+                :cell-range="cellSelection || undefined"
+                :dimmed="pageView.dimmed"
+                :header-style="pageView.headerStyle ?? undefined"
+                :footer-style="pageView.footerStyle ?? undefined"
+                :header-entries="pageView.headerEntries"
+                :footer-entries="pageView.footerEntries"
+                :header-editable="pageView.headerEditable"
+                :footer-editable="pageView.footerEditable"
+                :footnote-area="pageView.footnoteArea ?? undefined"
+                :endnote-area="pageView.endnoteArea ?? undefined"
+                :print-hidden="printHiddenPages.has(pageIndex)"
+                @image-select="handleImageSelect"
+                @shape-select="handleShapeSelect"
+                @shape-edit-text="handleShapeEditText"
+                @shape-text-beforeinput="handleShapeTextBeforeInput"
+                @shape-text-keydown="handleShapeTextKeyDown"
+                @shape-text-compositionstart="handleShapeTextCompositionStart"
+                @shape-text-compositionend="handleShapeTextCompositionEnd"
+                @chart-select="handleChartSelect"
+                @chart-edit-data="handleChartEditData"
+                @toc-action="handleTocAction"
+                @tof-action="handleTofAction"
+                @dblclick-header="handleDblclickHeader(pageIndex)"
+                @dblclick-footer="handleDblclickFooter(pageIndex)"
+                @dblclick-body="handleDblclickBody"
+                @hf-beforeinput="handleHfBeforeInput"
+                @hf-keydown="handleHfKeyDown"
+                @hf-compositionstart="handleHfCompositionStart"
+                @hf-compositionend="handleHfCompositionEnd"
+                @note-activate="handleNoteActivate"
+                @note-number-click="handleNoteNumberClick"
+                @note-beforeinput="handleNoteBeforeInput"
+                @note-keydown="handleNoteKeyDown"
+                @note-compositionstart="handleNoteCompositionStart"
+                @note-compositionend="handleNoteCompositionEnd"
+                @outline-toggle="handleBodyHeadingToggle"
+              />
+            </div>
           </div>
         </div>
         <div
@@ -3711,44 +3728,33 @@ function handleMenuCommand(id = "") {
       </div>
     </div>
     <template #status-bar>
-      <span data-testid="page-indicator">Page {{ caretPage }} of {{ pageCount }}</span>
-      <span
-        v-if="documentOpening"
-        role="status"
-        data-testid="document-opening"
-      >Opening…</span>
-      <span
-        v-if="paginationBusy"
-        data-testid="pagination-busy"
-      >Paginating…</span>
-      <button
-        type="button"
-        class="word-count-button"
-        data-testid="word-count-button"
-        @click="openStatistics"
-      >
-        {{ wordCountStatusText }}
-      </button>
-      <LanguageStatusControl
+      <DocumentStatusBar
+        :caret-page="caretPage"
+        :page-count="pageCount"
+        :document-opening="documentOpening"
+        :pagination-busy="paginationBusy"
+        :word-count-text="wordCountStatusText"
+        :zoom-percent="zoomPercent"
+        :zoom-fit-mode="zoomFitMode"
         :current-language-tag="currentLanguageTag"
         :current-language-label="statusBarLanguageLabel"
         :language-options="SUPPORTED_LANGUAGES"
-        :selection-active="languageSelectionActive"
+        :language-selection-active="languageSelectionActive"
         :selection-no-proof="selectionNoProof"
-        @select="setLanguage"
+        :editable="editable"
+        :track-changes-recording="trackChangesRecording"
+        @open-statistics="openStatistics"
+        @set-language="setLanguage"
         @manage-dictionary="openCustomDictionaryDialog"
         @toggle-no-proof="setNoProof"
+        @toggle-track-changes="toggleTrackChangesRecording"
+        @zoom-in="zoomView.zoomIn"
+        @zoom-out="zoomView.zoomOut"
+        @zoom-apply-input="zoomView.applyZoomInput"
+        @zoom-set-preset="zoomView.setZoomPercent"
+        @zoom-fit-width="zoomView.setFitWidth"
+        @zoom-fit-page="zoomView.setFitPage"
       />
-      <button
-        v-if="editable"
-        type="button"
-        class="track-changes-status-indicator"
-        data-testid="status-bar-track-changes"
-        :aria-pressed="trackChangesRecording"
-        @click="toggleTrackChangesRecording"
-      >
-        Track changes: {{ trackChangesRecording ? "On" : "Off" }}
-      </button>
     </template>
     <LinkChip
       v-if="linkChip.visible"
@@ -4239,44 +4245,6 @@ function handleMenuCommand(id = "") {
   border-color: var(--accent);
 }
 
-/* Sits in the status bar next to the page indicator (SPEC-036 AC-1, AC-4):
-   a plain-looking button (no border/background of its own) so it reads as
-   status text until focused/hovered, while still being a real <button> —
-   keyboard-reachable by Tab and activatable with Enter/Space with no extra
-   keydown handling (AC-27). */
-.word-count-button {
-  font: inherit;
-  font-size: var(--text-sm);
-  color: inherit;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-}
-
-.word-count-button:hover,
-.word-count-button:focus-visible {
-  text-decoration: underline;
-}
-
-/* SPEC-039 AC-1 / SPEC-061 AC-19: the duplicate toolbar track-changes button
-   is removed; the status-bar control is the single one, matching
-   word-count-button's plain-until-hovered look. */
-.track-changes-status-indicator {
-  font: inherit;
-  font-size: var(--text-sm);
-  color: inherit;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-}
-
-.track-changes-status-indicator[aria-pressed="true"] {
-  text-decoration: underline;
-  font-weight: var(--weight-bold);
-}
-
 /* Sticky so the conflict/recovery notice stays visible while the canvas
    scrolls; they are mutually exclusive, so a single top slot suffices. */
 .notice-bar {
@@ -4530,6 +4498,30 @@ function handleMenuCommand(id = "") {
    surfaces themselves live in DocPage.vue. */
 .pages {
   position: relative;
+}
+
+/* SPEC-063 zoom. The viewport is sized to the SCALED page footprint so the
+   scroll container's scrollbars reflect the zoomed content (AC-17), and
+   centred with margin:0 auto. `.pages` is absolutely positioned and centred
+   inside it (left:50% offset back by half its own unscaled width) so the
+   `transform: scale()` with `transform-origin: top center` (AC-16) pivots on
+   the viewport's centre — the fix for the prior off-centre pivot that shoved
+   scaled content outside the wrapper at zoom < 100 %. */
+.pages-viewport {
+  position: relative;
+}
+
+.pages-viewport--scaled {
+  margin: 0 auto;
+}
+
+.pages--scaled {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  margin-left: calc(var(--pages-natural-w, 0px) / -2);
+  transform: scale(var(--zoom, 1));
+  transform-origin: top center;
 }
 
 .document-content {
