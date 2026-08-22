@@ -18,60 +18,41 @@ const emit = defineEmits(["field-action"]);
 </script>
 
 <template>
-  <div
-    class="field-toolbar"
-    role="toolbar"
-    aria-label="Field actions"
-    data-testid="field-toolbar"
+  <UiButton
+    variant="ghost"
+    data-testid="field-toolbar-update"
+    :disabled="props.readOnly"
+    @click="emit('field-action', 'update')"
   >
-    <UiButton
-      variant="ghost"
-      data-testid="field-toolbar-update"
-      :disabled="props.readOnly"
-      @click="emit('field-action', 'update')"
-    >
-      Update field
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      data-testid="field-toolbar-edit"
-      :disabled="props.readOnly"
-      @click="emit('field-action', 'edit')"
-    >
-      Edit field…
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      data-testid="field-toolbar-toggle-codes"
-      @click="emit('field-action', 'toggle-codes')"
-    >
-      Toggle field codes
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      data-testid="field-toolbar-unlink"
-      @click="emit('field-action', 'unlink')"
-    >
-      Unlink field
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      data-testid="field-toolbar-lock"
-      @click="emit('field-action', props.locked ? 'unlock' : 'lock')"
-    >
-      {{ props.locked ? "Unlock field" : "Lock field" }}
-    </UiButton>
-  </div>
+    Update field
+  </UiButton>
+  <UiButton
+    variant="ghost"
+    data-testid="field-toolbar-edit"
+    :disabled="props.readOnly"
+    @click="emit('field-action', 'edit')"
+  >
+    Edit field…
+  </UiButton>
+  <UiButton
+    variant="ghost"
+    data-testid="field-toolbar-toggle-codes"
+    @click="emit('field-action', 'toggle-codes')"
+  >
+    Toggle field codes
+  </UiButton>
+  <UiButton
+    variant="ghost"
+    data-testid="field-toolbar-unlink"
+    @click="emit('field-action', 'unlink')"
+  >
+    Unlink field
+  </UiButton>
+  <UiButton
+    variant="ghost"
+    data-testid="field-toolbar-lock"
+    @click="emit('field-action', props.locked ? 'unlock' : 'lock')"
+  >
+    {{ props.locked ? "Unlock field" : "Lock field" }}
+  </UiButton>
 </template>
-
-<style scoped>
-.field-toolbar {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-canvas);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-md);
-}
-</style>

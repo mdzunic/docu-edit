@@ -69,17 +69,15 @@ test("the paragraph toolbar controls each meet the 32×32 hit target at 1280px (
   expect(overflow, "toolbar overflow at 1280px").toBe(false);
 });
 
-test("the track-changes toggle and the find bar buttons meet the 32×32 hit target (AC-48)", async ({
+test("the find bar buttons meet the 32×32 hit target (AC-48)", async ({
   page,
 }) => {
+  // SPEC-061 removed the duplicate toolbar track-changes toggle; the surviving
+  // control is the status-bar one, a plain status-bar text control (like
+  // word-count-button), not a 32×32 toolbar target — so it is no longer part
+  // of this hit-target sweep.
   await page.setViewportSize({ width: 1280, height: 900 });
   await createDocument(page);
-
-  const track = page.getByTestId("toolbar-track-changes-toggle");
-  await expect(track).toBeVisible();
-  const trackHit = await hitTarget(track);
-  expect(trackHit.width, "track-changes width").toBeGreaterThanOrEqual(MIN);
-  expect(trackHit.height, "track-changes height").toBeGreaterThanOrEqual(MIN);
 
   await page.getByTestId("document-content").click();
   await page.keyboard.press(`${MOD}+f`);

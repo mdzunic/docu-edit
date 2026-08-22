@@ -41,6 +41,12 @@ export const ICON_PATHS: Record<string, string[]> = {
   "indent-increase": ["M4 5h12", "M9 9h7", "M9 13h7", "M4 17h12", "M4 8v6l3-3z"],
   "indent-decrease": ["M4 5h12", "M9 9h7", "M9 13h7", "M4 17h12", "M7 8v6l-3-3z"],
   "line-spacing": ["M9 6h8", "M9 10h8", "M9 14h8", "M4 5v10", "M4 5l-1.5 1.5", "M4 5l1.5 1.5", "M4 15l-1.5-1.5", "M4 15l1.5 1.5"],
+  // Paragraph direction (RTL): a paragraph mark with a left-pointing flow
+  // arrow beneath, drawn on the grid rather than typed as "¶⇄".
+  "paragraph-direction": ["M11 5v10", "M8 5v10", "M8 5a3 3 0 0 0 0 6h3", "M13 5h-5", "M9 17H4", "M4 17l2-2", "M4 17l2 2"],
+  // Paragraph pagination (keep-together / break control): a page outline with
+  // a paragraph mark inside, drawn rather than typed as "¶⇟".
+  "paragraph-pagination": ["M5 4h8l2 2v10H5z", "M13 4v2h2", "M11 8H8.5a1.5 1.5 0 0 0 0 3H11", "M11 8v6", "M9.5 8v6"],
 
   // ---- Colour / painter ----------------------------------------------------
   "text-color": ["M5 14l3.5-9h1L13 14", "M6.5 11h5", "M4 17h12"],
