@@ -3,6 +3,7 @@ import {
   caretAtClientPoint,
   caretClientRect,
   caretNearClientPoint,
+  measureImageGeometry,
 } from "./caretGeometry";
 
 // jsdom has no layout: every rect is zero and caret-from-point hit testing
@@ -187,5 +188,36 @@ describe("caretClientRect", () => {
   it("returns null for a paragraph that is not rendered", () => {
     const root = buildStubbedContent();
     expect(caretClientRect(root, { section: 0, block: 9, offset: 0 })).toBeNull();
+  });
+});
+
+// SPEC-063 AC-25: handle overlays paint INSIDE the scaled `.pages`, so the
+// measured geometry must be the unscaled, page-relative px the model draws at
+// — measureImageGeometry divides the (scaled) client rect by the zoom.
+describe("measureImageGeometry — zoom (AC-25)", () => {
+  function stubbedImage(): { pages: HTMLElement; image: HTMLElement } {
+    const pages = document.createElement("div");
+    const image = document.createElement("div");
+    image.setAttribute("data-section", "0");
+    image.setAttribute("data-block", "1");
+    pages.appendChild(image);
+    // `.pages` at (100, 40); at 200% zoom the image's on-screen rect is the
+    // model box (left 60, top 30, 240x120) scaled about the pages origin.
+    stubRect(pages, { left: 100, top: 40, right: 900, bottom: 1200 });
+    stubRect(image, { left: 100 + 60 * 2, top: 40 + 30 * 2, right: 100 + 60 * 2 + 240 * 2, bottom: 40 + 30 * 2 + 120 * 2 });
+    return { pages, image };
+  }
+
+  it("recovers the unscaled model box at 200% zoom", () => {
+    const { pages, image } = stubbedImage();
+    const geometry = measureImageGeometry(pages, image, 2);
+    expect(geometry).toEqual({ section: 0, block: 1, left: 60, top: 30, width: 240, height: 120 });
+  });
+
+  it("defaults to the raw (1:1) rect when no zoom is given", () => {
+    const { pages, image } = stubbedImage();
+    const geometry = measureImageGeometry(pages, image);
+    // At the default scale of 1 the scaled rect is taken verbatim.
+    expect(geometry).toEqual({ section: 0, block: 1, left: 120, top: 60, width: 480, height: 240 });
   });
 });

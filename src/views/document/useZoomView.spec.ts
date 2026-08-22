@@ -8,7 +8,10 @@ import { useZoomView, zoomStorageKey } from "./useZoomView";
 function makePages(pageWidth: number, pageHeight: number, rectLeft = 100, rectTop = 40): HTMLElement {
   const pages = document.createElement("div");
   const page = document.createElement("div");
-  page.className = "doc-page";
+  // Match the real DocPage root: class `page`, test id `document-page` — the
+  // id firstPageEl() selects on (SPEC-063).
+  page.className = "page";
+  page.setAttribute("data-testid", "document-page");
   Object.defineProperty(page, "offsetWidth", { value: pageWidth, configurable: true });
   Object.defineProperty(page, "offsetHeight", { value: pageHeight, configurable: true });
   pages.appendChild(page);
@@ -33,7 +36,14 @@ interface Harness {
   unmount: () => void;
 }
 
-function mountZoom(opts: { id?: string; pages?: HTMLElement | null; container?: HTMLElement | null } = {}): Harness {
+function mountZoom(
+  opts: {
+    id?: string;
+    pages?: HTMLElement | null;
+    container?: HTMLElement | null;
+    isGridEligible?: () => boolean;
+  } = {},
+): Harness {
   const documentId = ref(opts.id ?? "doc-1");
   const pageRef = ref<Element | null>(opts.pages ?? null);
   const unmountHooks: Array<() => void> = [];
@@ -45,6 +55,7 @@ function mountZoom(opts: { id?: string; pages?: HTMLElement | null; container?: 
       pageRef,
       getScrollContainer: () => opts.container ?? null,
       onUnmount: (cb) => unmountHooks.push(cb),
+      isGridEligible: opts.isGridEligible,
     });
   });
   return {
@@ -216,5 +227,45 @@ describe("useZoomView", () => {
     h.view.recomputeFit();
     expect(h.view.zoomPercent.value).toBe(100);
     h.unmount();
+  });
+
+  describe("side-by-side page grid (AC-36)", () => {
+    it("tiles multiple columns when the zoom leaves room", async () => {
+      const pages = makePages(800, 1100);
+      const container = makeContainer(1400, 900);
+      const h = mountZoom({ pages, container });
+      await nextTick();
+      // 1400 / (800*0.5 + 24) = 3.30 → 3 columns at 50%.
+      h.view.setZoomPercent(50);
+      h.view.recomputeGrid();
+      expect(h.view.pageColumns.value).toBe(3);
+      expect(h.view.pageGrid.value).toBe(true);
+      expect(h.view.gridStyle.value).toEqual({ "--page-grid-cols": "3" });
+      h.unmount();
+    });
+
+    it("stays a single column at 100% and exposes no grid style", async () => {
+      const pages = makePages(800, 1100);
+      const container = makeContainer(1400, 900);
+      const h = mountZoom({ pages, container });
+      await nextTick();
+      h.view.recomputeGrid();
+      expect(h.view.pageColumns.value).toBe(1);
+      expect(h.view.pageGrid.value).toBe(false);
+      expect(h.view.gridStyle.value).toEqual({});
+      h.unmount();
+    });
+
+    it("never tiles when the layout is ineligible (Web layout)", async () => {
+      const pages = makePages(800, 1100);
+      const container = makeContainer(1400, 900);
+      const h = mountZoom({ pages, container, isGridEligible: () => false });
+      await nextTick();
+      h.view.setZoomPercent(50);
+      h.view.recomputeGrid();
+      expect(h.view.pageColumns.value).toBe(1);
+      expect(h.view.pageGrid.value).toBe(false);
+      h.unmount();
+    });
   });
 });
