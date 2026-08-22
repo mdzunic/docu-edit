@@ -49,6 +49,14 @@ export interface ApplyEditOptions {
    * write would otherwise implicitly refocus the contenteditable root and
    * steal the keystrokes the user means for the equation. */
   skipCaretRestore?: boolean;
+  /** Skips the keepCaretVisible() scroll nudge after this edit (SPEC-064): a
+   * vertical-ruler drag fires one edit per pointermove while the user has
+   * scrolled the caret off-screen to reach a bottom-margin/footer/row marker.
+   * Nudging the caret back into view mid-drag would jump the viewport and
+   * desync the fixed on-screen pointer from clientToContentPx's page-rect
+   * mapping, so every following pointermove reads a wildly wrong value. The
+   * caret has not moved — the user chose this scroll position — so leave it. */
+  skipCaretScroll?: boolean;
 }
 
 /** Typed empty-options seed for the `.vue` script's applyEdit default

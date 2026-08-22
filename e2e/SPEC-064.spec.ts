@@ -23,8 +23,8 @@ const content = (page: Page) => page.getByTestId("document-content");
 const firstParagraph = (page: Page) => content(page).locator(".doc-paragraph").first();
 
 interface ModelShape {
-  sections: Array<{ blocks: unknown[]; margins?: { topCm: number } }>;
-  defaultStyles: { margins: { topCm: number } };
+  sections: Array<{ blocks: unknown[]; margins?: { topCm: number; bottomCm: number } }>;
+  defaultStyles: { margins: { topCm: number; bottomCm: number } };
   measurementUnit?: string;
 }
 
@@ -65,6 +65,11 @@ async function readPersisted(page: Page, id: string): Promise<ModelShape | null>
  * document default (what setPageMargins edits on a blank document). */
 function topMarginCm(model: ModelShape): number {
   return model.sections[0].margins?.topCm ?? model.defaultStyles.margins.topCm;
+}
+
+/** The document's effective bottom margin in cm, same fall-through as above. */
+function bottomMarginCm(model: ModelShape): number {
+  return model.sections[0].margins?.bottomCm ?? model.defaultStyles.margins.bottomCm;
 }
 
 async function openPageSetup(page: Page): Promise<void> {
@@ -134,6 +139,42 @@ test("dragging the top-margin marker moves the first line and the section margin
   await expect(page.getByTestId("page-setup-unit")).toHaveValue("in");
   const fieldValue = await page.getByTestId("page-setup-margin-top").inputValue();
   expect(Number(fieldValue)).toBeCloseTo(Number(inchesTrimmed), 2);
+});
+
+test("dragging the bottom-margin marker after scrolling it into view moves the margin by the drag distance, not a scroll-jump (AC-2a)", async ({
+  page,
+}) => {
+  const id = await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Bottom-edge marker");
+  await waitForSaved(page);
+
+  // The bottom-margin marker sits near the page's bottom edge — below the fold
+  // on a normal viewport — so it must be scrolled into view to be grabbed. This
+  // is the case the shipped top-margin test never exercised: an edit fired per
+  // pointermove must not snap the viewport back to the caret (still at the top)
+  // and desync the pointer→content mapping (SPEC-064 AC-2a scroll-jump fix).
+  const bottomMarker = page.getByTestId("vertical-ruler-marker-margin-bottom");
+  await bottomMarker.scrollIntoViewIfNeeded();
+  await expect(bottomMarker).toBeInViewport();
+
+  const beforeBottomCm = bottomMarginCm(await readModel(page, id));
+
+  // Drag the marker up by ~2cm (76px). Up moves the bottom-margin boundary
+  // toward the page bottom, growing the margin.
+  const grab = await markerCentre(bottomMarker);
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x, grab.y - 76, { steps: 8 });
+  await page.mouse.up();
+  await waitForSaved(page);
+
+  // The margin grew by roughly the 2cm the pointer travelled — a small, sane
+  // change. Before the fix a few-pixel move jumped it past 13cm because the
+  // viewport snapped back to the caret mid-drag; assert it stayed in-page.
+  const afterBottomCm = bottomMarginCm(await readModel(page, id));
+  expect(afterBottomCm).toBeGreaterThan(beforeBottomCm + 1);
+  expect(afterBottomCm).toBeLessThan(beforeBottomCm + 4);
 });
 
 test("a length field accepts an explicit unit suffix and converts it (AC-11)", async ({ page }) => {

@@ -1288,7 +1288,9 @@ function applyEdit(
   if (!options.skipCaretRestore) {
     void restoreCaretAfterRender();
   }
-  void keepCaretVisible();
+  if (!options.skipCaretScroll) {
+    void keepCaretVisible();
+  }
   void refreshLinkChip();
   if (
     priorImageSelection &&

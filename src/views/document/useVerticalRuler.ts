@@ -158,14 +158,20 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
       return;
     }
     const selection = paragraphSelection(root);
+    // Every branch passes skipCaretScroll: a drag fires one edit per pointermove
+    // and the marker being dragged may be a full page below the caret, so the
+    // user has scrolled it into view. keepCaretVisible would snap the viewport
+    // back to the caret mid-drag and desync the pointer→content mapping
+    // (SPEC-064 AC-2a/3b) — see ApplyEditOptions.skipCaretScroll.
+    const dragOptions = { skipCaretScroll: true };
     if (update.kind === "marginTopCm") {
-      applyEdit(setPageMargins(model, selection, { topCm: update.valueCm }), selection, "margins");
+      applyEdit(setPageMargins(model, selection, { topCm: update.valueCm }), selection, "margins", dragOptions);
     } else if (update.kind === "marginBottomCm") {
-      applyEdit(setPageMargins(model, selection, { bottomCm: update.valueCm }), selection, "margins");
+      applyEdit(setPageMargins(model, selection, { bottomCm: update.valueCm }), selection, "margins", dragOptions);
     } else if (update.kind === "headerDistanceCm") {
-      applyEdit(setHeaderFooterDistance(model, selection, { headerDistanceCm: update.valueCm }), selection, "header distance");
+      applyEdit(setHeaderFooterDistance(model, selection, { headerDistanceCm: update.valueCm }), selection, "header distance", dragOptions);
     } else if (update.kind === "footerDistanceCm") {
-      applyEdit(setHeaderFooterDistance(model, selection, { footerDistanceCm: update.valueCm }), selection, "footer distance");
+      applyEdit(setHeaderFooterDistance(model, selection, { footerDistanceCm: update.valueCm }), selection, "footer distance", dragOptions);
     } else if (update.kind === "table-row") {
       const caret = getCaret();
       if (!caret || !caret.cell) {
@@ -175,7 +181,7 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
       const rowSelection =
         currentSelection(root) ??
         caretSelection({ section: caret.section, block: caret.block, offset: 0, cell: { row: update.row, col: 0, block: 0 } });
-      applyEdit(setRowMinHeight(model, rowSelection, location, update.row, update.minHeightCm), rowSelection, "resize row");
+      applyEdit(setRowMinHeight(model, rowSelection, location, update.row, update.minHeightCm), rowSelection, "resize row", dragOptions);
     }
   }
 
