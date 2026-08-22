@@ -7,6 +7,7 @@
 import type { Block, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
+import { SHAPE_DEFINITIONS, adjustmentGuideName, adjustmentToGuideValue, guideValueToAdjustment } from "../core/shapeCatalogue";
 import { escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
@@ -37,39 +38,14 @@ function ooxmlRotToDeg(rot: number): number {
   return Math.round(rot / 60000);
 }
 
-const PRST_TO_GEOMETRY: Record<string, ShapeGeometry> = {
-  line: "line",
-  straightConnector1: "arrow",
-  rect: "rect",
-  roundRect: "roundRect",
-  ellipse: "ellipse",
-  triangle: "triangle",
-  diamond: "diamond",
-  star5: "star5",
-  rightArrow: "rightArrow",
-  leftArrow: "leftArrow",
-  upArrow: "upArrow",
-  downArrow: "downArrow",
-  wedgeRectCallout: "wedgeRectCallout",
-  wedgeRoundRectCallout: "wedgeRoundRectCallout",
-};
-
-const GEOMETRY_TO_PRST: Record<ShapeGeometry, string> = {
-  line: "line",
-  arrow: "straightConnector1",
-  rect: "rect",
-  roundRect: "roundRect",
-  ellipse: "ellipse",
-  triangle: "triangle",
-  diamond: "diamond",
-  star5: "star5",
-  rightArrow: "rightArrow",
-  leftArrow: "leftArrow",
-  upArrow: "upArrow",
-  downArrow: "downArrow",
-  wedgeRectCallout: "wedgeRectCallout",
-  wedgeRoundRectCallout: "wedgeRoundRectCallout",
-};
+// The OOXML preset-name maps, both derived from the single SHAPE_DEFINITIONS
+// table (SPEC-069 AC-15a) rather than maintained here beside it.
+const GEOMETRY_TO_PRST: Record<string, string> = Object.fromEntries(
+  SHAPE_DEFINITIONS.map((def) => [def.geometry, def.prst]),
+);
+const PRST_TO_GEOMETRY: Record<string, ShapeGeometry> = Object.fromEntries(
+  SHAPE_DEFINITIONS.map((def) => [def.prst, def.geometry]),
+);
 
 /** Everything needed to parse a `wps:txbx`'s `w:txbxContent` into
  * `Shape.text.blocks` — injected by the caller (reader.ts) so this module
@@ -137,6 +113,42 @@ function parseOutline(spPr: Element): ShapeOutline | undefined {
     dash = "dot";
   }
   return { color, widthPt, dash };
+}
+
+/** The adjustment fractions carried by a `a:prstGeom/a:avLst`: every
+ * `a:gd@fmla="val N"` in document order, normalised from the guide value to
+ * a fraction (SPEC-069 AC-6a). Guides with any other formula are ignored (we
+ * only model literal adjust values). */
+function parseAdjustments(prstGeom: Element): number[] {
+  const avLst = firstChildElement(prstGeom, A_NAMESPACE, "avLst");
+  if (!avLst) {
+    return [];
+  }
+  const adjustments: number[] = [];
+  for (const gd of Array.from(avLst.children)) {
+    if (gd.namespaceURI !== A_NAMESPACE || gd.localName !== "gd") {
+      continue;
+    }
+    const fmla = gd.getAttribute("fmla") ?? "";
+    const match = /^val\s+(-?\d+)$/.exec(fmla.trim());
+    if (match) {
+      adjustments.push(guideValueToAdjustment(Number(match[1])));
+    }
+  }
+  return adjustments;
+}
+
+/** The `a:avLst` a shape's adjustments serialise to (SPEC-069 AC-6a) —
+ * empty when the shape carries none, so a plain shape is byte-unchanged. */
+function avLstXml(shape: Shape): string {
+  const adjustments = shape.adjustments;
+  if (!adjustments || adjustments.length === 0) {
+    return "<a:avLst/>";
+  }
+  const gds = adjustments
+    .map((fraction, i) => `<a:gd name="${adjustmentGuideName(i, adjustments.length)}" fmla="val ${adjustmentToGuideValue(fraction)}"/>`)
+    .join("");
+  return `<a:avLst>${gds}</a:avLst>`;
 }
 
 function parseFill(spPr: Element): string | undefined {
@@ -240,6 +252,11 @@ export function parseShapeDrawing(
   };
   if (!geometry) {
     shape.unsupportedGeometryXml = serializeElement(prstGeom ?? spPr);
+  } else if (prstGeom) {
+    const adjustments = parseAdjustments(prstGeom);
+    if (adjustments.length > 0) {
+      shape.adjustments = adjustments;
+    }
   }
   if (rotationDeg) {
     shape.rotationDeg = rotationDeg;
@@ -356,7 +373,7 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
     "/>";
 
   const prst = shape.unsupportedGeometryXml ? undefined : GEOMETRY_TO_PRST[shape.geometry];
-  const geomXml = shape.unsupportedGeometryXml ?? `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>`;
+  const geomXml = shape.unsupportedGeometryXml ?? `<a:prstGeom prst="${prst}">${avLstXml(shape)}</a:prstGeom>`;
   const rotAttr = shape.rotationDeg ? ` rot="${degToOoxmlRot(shape.rotationDeg)}"` : "";
   const isLine = LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml;
 

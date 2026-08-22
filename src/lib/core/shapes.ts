@@ -5,26 +5,111 @@
 // instead of anchoring them to a paragraph. The document-specific half
 // (anchoring, wrap, z-order, grouping, the editing commands) stays in
 // lib/shapes.ts and lib/documentModel.ts.
+import { SHAPE_DEFINITIONS } from "./shapeCatalogue";
 
 /** The closed set of geometries the editor draws, resizes and round-trips
- * natively — see "Shape catalogue" in specs/051-drawing-shapes-and-text-boxes.md.
- * Anything else arriving from a file is preserved per SPEC-008, not
- * approximated into one of these. */
+ * natively — the "expanded catalogue" of specs/069-shape-catalogue-expansion.md,
+ * superseding SPEC-051's fourteen. Anything still outside this set arriving
+ * from a file is preserved per SPEC-008, not approximated into one of these.
+ *
+ * The single source of truth for each geometry's group, label, names,
+ * outline, adjustments and text rect is `SHAPE_DEFINITIONS` in
+ * shapeCatalogue.ts (SPEC-069 AC-15a); this union is only the closed set of
+ * keys those definitions may use. */
 export type ShapeGeometry =
+  // Lines
   | "line"
   | "arrow"
+  // Basic shapes
   | "rect"
   | "roundRect"
   | "ellipse"
   | "triangle"
   | "diamond"
   | "star5"
+  | "parallelogram"
+  | "trapezoid"
+  | "pentagon"
+  | "hexagon"
+  | "octagon"
+  | "plus"
+  | "can"
+  | "cube"
+  | "heart"
+  | "cloud"
+  | "donut"
+  | "chord"
+  | "plaque"
+  | "frame"
+  // Block arrows
   | "rightArrow"
   | "leftArrow"
   | "upArrow"
   | "downArrow"
+  | "leftRightArrow"
+  | "upDownArrow"
+  | "quadArrow"
+  | "homePlate"
+  | "chevron"
+  | "notchedRightArrow"
+  | "stripedRightArrow"
+  // Flowchart
+  | "flowChartProcess"
+  | "flowChartAlternateProcess"
+  | "flowChartDecision"
+  | "flowChartInputOutput"
+  | "flowChartPredefinedProcess"
+  | "flowChartInternalStorage"
+  | "flowChartDocument"
+  | "flowChartMultidocument"
+  | "flowChartTerminator"
+  | "flowChartPreparation"
+  | "flowChartManualInput"
+  | "flowChartManualOperation"
+  | "flowChartConnector"
+  | "flowChartOffpageConnector"
+  | "flowChartPunchedCard"
+  | "flowChartMagneticDisk"
+  | "flowChartDelay"
+  | "flowChartExtract"
+  | "flowChartMerge"
+  | "flowChartSort"
+  // Stars and banners
+  | "star4"
+  | "star6"
+  | "star8"
+  | "star10"
+  | "star12"
+  | "star16"
+  | "star24"
+  | "star32"
+  | "irregularSeal1"
+  | "irregularSeal2"
+  | "ribbon"
+  | "ribbon2"
+  | "verticalScroll"
+  | "horizontalScroll"
+  | "wave"
+  | "doubleWave"
+  // Callouts
   | "wedgeRectCallout"
-  | "wedgeRoundRectCallout";
+  | "wedgeRoundRectCallout"
+  | "wedgeEllipseCallout"
+  | "cloudCallout"
+  | "borderCallout1"
+  | "borderCallout2"
+  | "borderCallout3"
+  | "accentCallout1";
+
+/** The catalogue's groups, in gallery order (SPEC-069 "The expanded
+ * catalogue"). */
+export type ShapeGroup =
+  | "Lines"
+  | "Basic shapes"
+  | "Block arrows"
+  | "Flowchart"
+  | "Stars and banners"
+  | "Callouts";
 
 /** A shape's outline (border) — colour, width in points and dash style. */
 export interface ShapeOutline {
@@ -39,28 +124,21 @@ export function asShapeGeometry(value: string): ShapeGeometry {
   return value as ShapeGeometry;
 }
 
-/** The closed catalogue geometries, in "Shape catalogue" order — the gallery
- * (AC-1) and the docx/odf readers' geometry lookup both walk this list. */
-export const SHAPE_CATALOGUE: { geometry: ShapeGeometry; group: "Lines" | "Basic shapes" | "Arrows" | "Callouts"; label: string }[] = [
-  { geometry: "line", group: "Lines", label: "Line" },
-  { geometry: "arrow", group: "Lines", label: "Arrow" },
-  { geometry: "rect", group: "Basic shapes", label: "Rectangle" },
-  { geometry: "roundRect", group: "Basic shapes", label: "Rounded rectangle" },
-  { geometry: "ellipse", group: "Basic shapes", label: "Ellipse" },
-  { geometry: "triangle", group: "Basic shapes", label: "Triangle" },
-  { geometry: "diamond", group: "Basic shapes", label: "Diamond" },
-  { geometry: "star5", group: "Basic shapes", label: "Star (5-point)" },
-  { geometry: "rightArrow", group: "Arrows", label: "Right arrow" },
-  { geometry: "leftArrow", group: "Arrows", label: "Left arrow" },
-  { geometry: "upArrow", group: "Arrows", label: "Up arrow" },
-  { geometry: "downArrow", group: "Arrows", label: "Down arrow" },
-  { geometry: "wedgeRectCallout", group: "Callouts", label: "Rectangular callout" },
-  { geometry: "wedgeRoundRectCallout", group: "Callouts", label: "Rounded callout" },
-];
+/** The closed catalogue geometries, in "The expanded catalogue" order — the
+ * gallery (AC-2) and the docx/odf readers' geometry lookup both walk this
+ * list. SPEC-069 AC-15a: derived from the one `SHAPE_DEFINITIONS` table
+ * rather than maintained beside it, so a new geometry is a single entry
+ * there. The projected shape (geometry/group/label) is unchanged, so every
+ * existing importer and the shipped shape tests keep working. */
+export const SHAPE_CATALOGUE: { geometry: ShapeGeometry; group: ShapeGroup; label: string }[] =
+  SHAPE_DEFINITIONS.map((def) => ({ geometry: def.geometry, group: def.group, label: def.label }));
 
 /** Geometries with zero area, drawn as a segment rather than a filled/outlined
- * region (SPEC-051 AC-6, AC-8, "Selection and hit testing"). */
-export const LINE_GEOMETRIES: ReadonlySet<ShapeGeometry> = new Set(["line", "arrow"]);
+ * region (SPEC-051 AC-6, AC-8, "Selection and hit testing"). Derived from
+ * the `isLine` flag on `SHAPE_DEFINITIONS` (SPEC-069 AC-15a). */
+export const LINE_GEOMETRIES: ReadonlySet<ShapeGeometry> = new Set(
+  SHAPE_DEFINITIONS.filter((def) => def.isLine).map((def) => def.geometry),
+);
 
 /** What painting a shape needs — the visual subset of the document model's
  * `Shape` block (which extends this with anchoring/wrap/text). Any host
@@ -73,6 +151,11 @@ export interface ShapeVisual {
   outline?: ShapeOutline;
   /** Whole degrees clockwise, 0-359; absent means 0. */
   rotationDeg?: number;
+  /** Geometry adjustment values (SPEC-069), each a 0..1-style fraction in
+   * the order this geometry's `ShapeDefinition` declares them. Absent means
+   * every adjustment is at its default. Consumed by the definition's
+   * `outline`/`textRect` and clamped for rendering (AC-7a). */
+  adjustments?: readonly number[];
   /** Present when the source geometry was outside the catalogue (SPEC-008
    * preservation, AC-60): the shape paints as a dashed placeholder at its
    * true bounds instead of `geometry`. */

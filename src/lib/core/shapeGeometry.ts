@@ -4,6 +4,7 @@
 // testing"). Framework-free and canvas-API-free (jsdom's test environment
 // has no 2D context) so it is unit-testable like every other lib module.
 import { LINE_GEOMETRIES, type ShapeGeometry } from "./shapes";
+import { shapeAdjustmentDefaults, shapeDefinition } from "./shapeCatalogue";
 
 export interface Point {
   x: number;
@@ -14,136 +15,34 @@ export interface Point {
  * space — the caller rotates a hit-test point into this space first. */
 export type LocalPoint = Point;
 
-const TAU = Math.PI * 2;
-
-function star5Points(): Point[] {
-  // Outer point on top, five points, standard prstGeom star5 proportions:
-  // inner radius ~0.382x the outer (golden-ratio-ish, matches Word's default
-  // adjustment) measured against a bounding circle inscribed in the box.
-  const points: Point[] = [];
-  const cx = 0.5;
-  const cy = 0.5;
-  const outerR = 0.5;
-  const innerR = outerR * 0.382;
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 === 0 ? outerR : innerR;
-    const angle = -Math.PI / 2 + (i * TAU) / 10;
-    points.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
-  }
-  return points;
-}
-
 /** How much of a callout's box its body occupies — the bottom quarter is
- * where the tail hangs. */
+ * where the tail hangs. Kept here (mirrored from shapeCatalogue.ts's own
+ * copy) because roundedCalloutOutline/Radius below are pinned by SPEC-051
+ * tests and predate the SPEC-069 table. */
 const CALLOUT_BODY_FRACTION = 0.75;
 
-/** Where a callout's tail leaves the body's bottom edge and where it points,
- * as fractions of the width. Both callouts use the same tail; the rounded
- * one's simply sits further in, so its arced bottom-left corner has room to
- * curve — a tail hard against that corner leaves nothing to round (see
- * roundedCalloutRadius). */
-const WEDGE_CALLOUT_TAIL = { left: 0.05, tip: 0.15, right: 0.35 };
+/** Where the rounded callout's tail leaves the body's bottom edge, as
+ * fractions of the width — the rounded corner needs the tail set in so it
+ * has room to curve (see roundedCalloutRadius). */
 const ROUND_CALLOUT_TAIL = { left: 0.25, tip: 0.35, right: 0.55 };
-
-type CalloutTail = { left: number; tip: number; right: number };
-
-/** A callout's seven vertices: the body rectangle, its bottom edge
- * interrupted by the tail. */
-function calloutPolygon(tail: CalloutTail): Point[] {
-  const bottom = CALLOUT_BODY_FRACTION;
-  return [
-    { x: 0, y: 0 },
-    { x: 1, y: 0 },
-    { x: 1, y: bottom },
-    { x: tail.right, y: bottom },
-    { x: tail.tip, y: 1 },
-    { x: tail.left, y: bottom },
-    { x: 0, y: bottom },
-  ];
-}
 
 /** The closed polygon for a catalogue geometry, in unit-square fractions
  * (0..1 of width, 0..1 of height) — multiply by widthCm/heightCm (or a pixel
- * equivalent) to get real coordinates. Returns null for `"ellipse"`, which
- * has no polygon representation (see ellipseHit below), and for the two
- * line geometries, which are a segment rather than a closed region (see
+ * equivalent) to get real coordinates. Derived from the single
+ * `SHAPE_DEFINITIONS` table (SPEC-069 AC-15a): the geometry's own outline at
+ * its default adjustments. Returns null for `"ellipse"`, which has no
+ * polygon representation (see pointInEllipse below), and for the two line
+ * geometries, which are a segment rather than a closed region (see
  * lineSegment below). */
 export function shapePolygon(geometry: ShapeGeometry): Point[] | null {
-  switch (geometry) {
-    case "ellipse":
-    case "line":
-    case "arrow":
-      return null;
-    case "rect":
-    case "roundRect":
-      return [
-        { x: 0, y: 0 },
-        { x: 1, y: 0 },
-        { x: 1, y: 1 },
-        { x: 0, y: 1 },
-      ];
-    case "triangle":
-      return [
-        { x: 0.5, y: 0 },
-        { x: 1, y: 1 },
-        { x: 0, y: 1 },
-      ];
-    case "diamond":
-      return [
-        { x: 0.5, y: 0 },
-        { x: 1, y: 0.5 },
-        { x: 0.5, y: 1 },
-        { x: 0, y: 0.5 },
-      ];
-    case "star5":
-      return star5Points();
-    case "rightArrow":
-      return [
-        { x: 0, y: 0.3 },
-        { x: 0.6, y: 0.3 },
-        { x: 0.6, y: 0 },
-        { x: 1, y: 0.5 },
-        { x: 0.6, y: 1 },
-        { x: 0.6, y: 0.7 },
-        { x: 0, y: 0.7 },
-      ];
-    case "leftArrow":
-      return [
-        { x: 1, y: 0.3 },
-        { x: 0.4, y: 0.3 },
-        { x: 0.4, y: 0 },
-        { x: 0, y: 0.5 },
-        { x: 0.4, y: 1 },
-        { x: 0.4, y: 0.7 },
-        { x: 1, y: 0.7 },
-      ];
-    case "upArrow":
-      return [
-        { x: 0.3, y: 1 },
-        { x: 0.3, y: 0.4 },
-        { x: 0, y: 0.4 },
-        { x: 0.5, y: 0 },
-        { x: 1, y: 0.4 },
-        { x: 0.7, y: 0.4 },
-        { x: 0.7, y: 1 },
-      ];
-    case "downArrow":
-      return [
-        { x: 0.3, y: 0 },
-        { x: 0.7, y: 0 },
-        { x: 0.7, y: 0.6 },
-        { x: 1, y: 0.6 },
-        { x: 0.5, y: 1 },
-        { x: 0, y: 0.6 },
-        { x: 0.3, y: 0.6 },
-      ];
-    case "wedgeRectCallout":
-      return calloutPolygon(WEDGE_CALLOUT_TAIL);
-    case "wedgeRoundRectCallout":
-      return calloutPolygon(ROUND_CALLOUT_TAIL);
-    default:
-      return null;
+  if (geometry === "ellipse") {
+    return null;
   }
+  const def = shapeDefinition(geometry);
+  if (!def || def.isLine) {
+    return null;
+  }
+  return def.outline(shapeAdjustmentDefaults(def));
 }
 
 /** The rounded-rectangle corner radius, in the same units as `width`/`height`

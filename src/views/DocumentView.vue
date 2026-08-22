@@ -26,6 +26,7 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
+import ShapeAdjustHandles from "../components/ShapeAdjustHandles.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -749,6 +750,9 @@ const {
   canGroupSelection,
   shapeHandleStyle,
   rotationHandleStyle,
+  adjustmentHandleList,
+  startShapeAdjust,
+  handleAdjustmentKeydown,
   shapeToolbarStyle,
   remeasureShapeHandles,
   handleShapeDelete,
@@ -3527,6 +3531,11 @@ function handleMenuCommand(id = "") {
                 :style="rotationHandleStyle()"
                 @mousedown="startShapeRotate($event)"
               />
+              <ShapeAdjustHandles
+                :handles="adjustmentHandleList()"
+                @adjust-start="startShapeAdjust"
+                @adjust-keydown="handleAdjustmentKeydown"
+              />
             </div>
             <div
               v-if="shapeAnchorMarker"
@@ -4519,18 +4528,16 @@ function handleMenuCommand(id = "") {
 .shape-handles {
   position: absolute;
   inset: 0;
-  /* Above .shape-toolbar (z-index: 30, ShapeToolbar.vue). shapeToolbarStyle
-     now clears the rotation handle by design, but the toolbar is still a
-     wrapping box positioned against a single edge of the shape: any overlap
-     it does land in (a shape near the viewport top, where the toolbar flips
-     below) must leave the handles clickable, not merely visible — a covered
-     rotation handle never receives the drag that starts a rotation (AC-16,
-     AC-38). */
+  /* Above .shape-toolbar (z-index: 30): any overlap the wrapping toolbar
+     lands in (a shape near the viewport top, where it flips below) must
+     leave the handles clickable, not merely visible — a covered rotation
+     handle never receives its drag (AC-16, AC-38). */
   z-index: 31;
   pointer-events: none;
 }
 
-.shape-resize-handle {
+.shape-resize-handle,
+.shape-rotation-handle {
   position: absolute;
   pointer-events: auto;
   width: 8px;
@@ -4542,15 +4549,8 @@ function handleMenuCommand(id = "") {
 }
 
 .shape-rotation-handle {
-  position: absolute;
-  pointer-events: auto;
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--accent);
   border-radius: 50%;
-  background: var(--surface-base);
   cursor: grab;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
 /* The anchor marker (SPEC-051 AC-27): a small flag at the start of the
