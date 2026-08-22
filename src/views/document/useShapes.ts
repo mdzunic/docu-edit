@@ -49,6 +49,7 @@ import {
   reorderShapeZ,
   resizeGroup,
   rotateGroup,
+  setShapeAdjustments,
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
@@ -77,7 +78,9 @@ import {
   rotatedResizeCursor,
   rotatedBounds,
   unrotateDelta,
+  unrotatePoint,
 } from "../../lib/core/shapeGeometry";
+import { adjustmentHandles, adjustmentValueFromPoint, nudgedAdjustments } from "../../lib/shapeAdjustHandles";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
 import { LINE_GEOMETRIES, asShapeGeometry, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
@@ -656,6 +659,178 @@ export function useShapes(deps: ShapesDeps) {
       left: `${geometry.left + point.x - HANDLE_SIZE / 2}px`,
       top: `${geometry.top + point.y - HANDLE_SIZE / 2}px`,
     };
+  }
+
+  // --- adjustment handles (SPEC-069 AC-5) ---------------------------------
+
+  /** The in-progress adjustment vector during a drag/keyboard nudge, so the
+   * handle positions and canvas preview reflect the uncommitted value; null
+   * when not adjusting. */
+  const adjustPreview = ref<{ location: ShapeLocation; adjustments: number[] } | null>(null);
+  let adjustDrag: { location: ShapeLocation; index: number; el: HTMLElement; rotationDeg: number; moved: boolean } | null = null;
+
+  /** Whether the selected shape's container is sealed (SPEC-057): it holds a
+   * preserved member, so it offers no adjustment (nor resize/rotation)
+   * handles. Flat groupOrdinal model — a preserved member anywhere in the
+   * group seals it. */
+  function isSelectionSealed(shape: Shape): boolean {
+    const model = doc.value;
+    if (!model || shape.groupOrdinal === undefined) {
+      return false;
+    }
+    return groupMembers(model, shape.groupOrdinal).some(
+      (m) => m.block.type === "shape" && m.block.unsupportedGeometryXml !== undefined,
+    );
+  }
+
+  /** The selected shape's adjustment handles (AC-5a), each with its pixel
+   * style — empty for a preserved shape (its geometry is the rect stand-in,
+   * nothing to write to) or a member of a sealed container. Uses the live
+   * preview value mid-drag so the handle tracks the pointer. */
+  function adjustmentHandleList(): { index: number; label: string; value: number; style: Record<string, string> }[] {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    const geometry = shapeHandles.value;
+    if (!model || !location || !geometry) {
+      return [];
+    }
+    const shape = shapeAt(model, location);
+    if (!shape || shape.unsupportedGeometryXml !== undefined || isSelectionSealed(shape)) {
+      return [];
+    }
+    const stored =
+      adjustPreview.value && sameShapeLocation(adjustPreview.value.location, location)
+        ? adjustPreview.value.adjustments
+        : shape.adjustments;
+    const rotationDeg = selectedShapeRotationDeg();
+    return adjustmentHandles(shape.geometry, stored).map((handle) => {
+      const point = rotatePoint(
+        { x: geometry.width * handle.xFrac, y: geometry.height * handle.yFrac },
+        geometry.width,
+        geometry.height,
+        rotationDeg,
+      );
+      return {
+        index: handle.index,
+        label: handle.label,
+        value: handle.value,
+        style: {
+          left: `${geometry.left + point.x - HANDLE_SIZE / 2}px`,
+          top: `${geometry.top + point.y - HANDLE_SIZE / 2}px`,
+        },
+      };
+    });
+  }
+
+  /** The unit-square fraction (in the shape's own unrotated frame) a client
+   * point maps to, for the adjustment drag/mapping. */
+  function pointerAdjustFraction(clientX: number, clientY: number): { x: number; y: number } | null {
+    const geometry = shapeHandles.value;
+    if (!geometry || geometry.width <= 0 || geometry.height <= 0) {
+      return null;
+    }
+    const pointer = clientToContentPx(clientX, clientY);
+    const local = unrotatePoint(
+      { x: pointer.x - geometry.left, y: pointer.y - geometry.top },
+      geometry.width,
+      geometry.height,
+      selectedShapeRotationDeg(),
+    );
+    return { x: local.x / geometry.width, y: local.y / geometry.height };
+  }
+
+  function startShapeAdjust(event: MouseEvent, index = 0) {
+    const location = shapeSelection.value;
+    const model = doc.value;
+    const root = contentRoot.value;
+    if (!location || !model || !root || !editable.value) {
+      return;
+    }
+    const shape = shapeAt(model, location);
+    const el = root.querySelector(
+      `.doc-shape-anchor[data-section="${location.section}"][data-block="${location.block}"] .doc-shape`,
+    );
+    if (!shape || !(el instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    adjustDrag = { location, index, el, rotationDeg: shape.rotationDeg ?? 0, moved: false };
+    window.addEventListener("mousemove", handleShapeAdjustMove);
+    window.addEventListener("mouseup", finishShapeAdjust);
+  }
+
+  function handleShapeAdjustMove(event: MouseEvent) {
+    const drag = adjustDrag;
+    const model = doc.value;
+    if (!drag || !model) {
+      return;
+    }
+    const shape = shapeAt(model, drag.location);
+    if (!shape) {
+      return;
+    }
+    const frac = pointerAdjustFraction(event.clientX, event.clientY);
+    if (!frac) {
+      return;
+    }
+    const value = adjustmentValueFromPoint(shape.geometry, drag.index, frac.x, frac.y);
+    if (value === null) {
+      return;
+    }
+    drag.moved = true;
+    const next = adjustmentHandles(shape.geometry, shape.adjustments).map((h) => h.value);
+    next[drag.index] = value;
+    adjustPreview.value = { location: drag.location, adjustments: next };
+    // Live preview: repaint the shape's own canvas at the new adjustment
+    // without touching the model (committed once on release, AC-5d/AC-5e).
+    previewShapeCanvas(drag.el, { ...shape, adjustments: next }, shape.widthCm, shape.heightCm);
+  }
+
+  function finishShapeAdjust() {
+    window.removeEventListener("mousemove", handleShapeAdjustMove);
+    window.removeEventListener("mouseup", finishShapeAdjust);
+    const drag = adjustDrag;
+    adjustDrag = null;
+    const preview = adjustPreview.value;
+    adjustPreview.value = null;
+    if (!drag || !drag.moved || !preview) {
+      remeasureShapeHandles();
+      return;
+    }
+    applyShapeEdit(
+      (model, selection) => setShapeAdjustments(model, selection, drag.location, preview.adjustments),
+      "adjust shape",
+    );
+    void nextTick().then(remeasureShapeHandles);
+  }
+
+  /** Keyboard adjustment (AC "Adjustment handles"): arrows nudge the focused
+   * handle by 1% of its range, Shift by 5%; each keystroke commits one
+   * "adjust shape" undo entry. */
+  function handleAdjustmentKeydown(event: KeyboardEvent, index = 0) {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    if (!model || !location) {
+      return;
+    }
+    const shape = shapeAt(model, location);
+    if (!shape) {
+      return;
+    }
+    let steps = 0;
+    if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      steps = 1;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      steps = -1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const next = nudgedAdjustments(shape.geometry, shape.adjustments, index, steps, event.shiftKey);
+    applyShapeEdit((m, selection) => setShapeAdjustments(m, selection, location, next), "adjust shape");
+    void nextTick().then(remeasureShapeHandles);
   }
 
   /** Where the floating toolbar sits relative to the selected shape (AC-12).
@@ -1471,6 +1646,9 @@ export function useShapes(deps: ShapesDeps) {
     canGroupSelection,
     shapeHandleStyle,
     rotationHandleStyle,
+    adjustmentHandleList,
+    startShapeAdjust,
+    handleAdjustmentKeydown,
     shapeToolbarStyle,
     remeasureShapeHandles,
     handleShapeDelete,
