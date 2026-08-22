@@ -1,0 +1,137 @@
+import { test, expect, type Locator, type Page } from "@playwright/test";
+
+// SPEC-064 — the vertical ruler and app-wide measurement units. AC-16 drives
+// the top-margin marker end to end (the page's first line moves and the
+// section margin changes), then switches the unit to inches and asserts the
+// ruler's read-out and the Page setup dialog agree. Helpers mirror
+// e2e/SPEC-027.spec.ts (page setup) and e2e/SPEC-014.spec.ts (model reads).
+
+async function createDocument(page: Page): Promise<string> {
+  await page.goto("/");
+  await page.getByTestId("new-document").click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  const url = page.url();
+  return url.slice(url.lastIndexOf("/") + 1);
+}
+
+const SAVED = "All changes saved";
+async function waitForSaved(page: Page): Promise<void> {
+  await expect(page.getByTestId("save-state")).toHaveText(SAVED);
+}
+
+const content = (page: Page) => page.getByTestId("document-content");
+const firstParagraph = (page: Page) => content(page).locator(".doc-paragraph").first();
+
+interface ModelShape {
+  sections: Array<{ blocks: unknown[]; margins?: { topCm: number } }>;
+  defaultStyles: { margins: { topCm: number } };
+  measurementUnit?: string;
+}
+
+async function readModel(page: Page, id: string): Promise<ModelShape> {
+  await expect.poll(async () => (await readPersisted(page, id)) !== null).toBe(true);
+  const model = await readPersisted(page, id);
+  if (!model) {
+    throw new Error(`no persisted model for ${id}`);
+  }
+  return model;
+}
+
+async function readPersisted(page: Page, id: string): Promise<ModelShape | null> {
+  return page.evaluate(async (docId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("docu-edit");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const get = (key: string) =>
+      new Promise<{ lastModified?: number; savedAt?: number; model: unknown } | undefined>((resolve, reject) => {
+        const tx = db.transaction("documents", "readonly");
+        const rq = tx.objectStore("documents").get(key);
+        rq.onsuccess = () => resolve(rq.result);
+        rq.onerror = () => reject(rq.error);
+      });
+    const committed = await get(docId);
+    const draft = await get("draft:" + docId);
+    db.close();
+    if (draft && (!committed || (draft.savedAt ?? 0) > (committed.lastModified ?? 0))) {
+      return draft.model;
+    }
+    return committed?.model ?? null;
+  }, id) as Promise<ModelShape | null>;
+}
+
+/** The document's effective top margin in cm — the section's own, else the
+ * document default (what setPageMargins edits on a blank document). */
+function topMarginCm(model: ModelShape): number {
+  return model.sections[0].margins?.topCm ?? model.defaultStyles.margins.topCm;
+}
+
+async function openPageSetup(page: Page): Promise<void> {
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("page-setup-button").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeVisible();
+}
+
+async function applyPageSetup(page: Page): Promise<void> {
+  await page.getByTestId("page-setup-apply").click();
+  await expect(page.getByTestId("page-setup-dialog")).toHaveCount(0);
+}
+
+const marker = (page: Page) => page.getByTestId("vertical-ruler-marker-margin-top");
+
+async function markerCentre(locator: Locator): Promise<{ x: number; y: number }> {
+  const box = (await locator.boundingBox())!;
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+test("dragging the top-margin marker moves the first line and the section margin, and the unit switches to inches (AC-16, AC-16a)", async ({
+  page,
+}) => {
+  const id = await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Vertically ruled");
+  await waitForSaved(page);
+
+  // The vertical ruler is present in print layout, aligned to the page (AC-1).
+  await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
+
+  const before = await readModel(page, id);
+  const beforeTopCm = topMarginCm(before);
+  const beforeLineTop = (await firstParagraph(page).boundingBox())!.y;
+
+  // Drag the top-margin marker down by ~2cm (96px/inch → ~76px for 2cm).
+  const grab = await markerCentre(marker(page));
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x, grab.y + 76, { steps: 8 });
+  await page.mouse.up();
+  await waitForSaved(page);
+
+  // The section's top margin grew, and the first line moved down with it.
+  const after = await readModel(page, id);
+  expect(topMarginCm(after)).toBeGreaterThan(beforeTopCm + 1);
+  const afterLineTop = (await firstParagraph(page).boundingBox())!.y;
+  expect(afterLineTop).toBeGreaterThan(beforeLineTop);
+
+  // Switch the unit to inches through the Page setup dialog (AC-16a).
+  await openPageSetup(page);
+  await page.getByTestId("page-setup-unit").selectOption("in");
+  await applyPageSetup(page);
+
+  const inches = (topMarginCm(after) / 2.54).toFixed(2);
+  const inchesTrimmed = String(Number(inches));
+
+  // The ruler's read-out reports the top margin in inches...
+  await expect(marker(page)).toHaveAttribute("aria-valuetext", new RegExp(`${inchesTrimmed}\\s+inches`));
+  // ...and the ruler now draws unit labels (the origin "0" among them).
+  await expect(
+    page.getByTestId("document-vertical-ruler").locator(".v-tick-label", { hasText: /^0$/ }).first(),
+  ).toBeVisible();
+
+  // ...and the Page setup dialog agrees: unit "in", margin field in inches.
+  await openPageSetup(page);
+  await expect(page.getByTestId("page-setup-unit")).toHaveValue("in");
+  const fieldValue = await page.getByTestId("page-setup-margin-top").inputValue();
+  expect(Number(fieldValue)).toBeCloseTo(Number(inchesTrimmed), 2);
+});

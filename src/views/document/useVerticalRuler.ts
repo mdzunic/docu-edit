@@ -70,6 +70,7 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
     return model ? Math.min(getCaretSectionIndex(), model.sections.length - 1) : 0;
   });
 
+  const pageWidthCm = computed(() => (doc.value ? sectionPageSize(doc.value, sectionIndex.value).widthCm : 21));
   const pageHeightCm = computed(() => (doc.value ? sectionPageSize(doc.value, sectionIndex.value).heightCm : 29.7));
   const marginTopCm = computed(() => (doc.value ? sectionMargins(doc.value, sectionIndex.value).topCm : 2.54));
   const marginBottomCm = computed(() => (doc.value ? sectionMargins(doc.value, sectionIndex.value).bottomCm : 2.54));
@@ -133,6 +134,7 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
 
   const verticalRulerProps = computed(() => ({
     pageHeightCm: pageHeightCm.value,
+    pageWidthCm: pageWidthCm.value,
     marginTopCm: marginTopCm.value,
     marginBottomCm: marginBottomCm.value,
     headerDistanceCm: headerDistanceCm.value,

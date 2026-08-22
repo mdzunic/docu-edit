@@ -20,6 +20,10 @@ import { asMeasurementUnit, CM_PER_PX, formatLength, fromCm, roundForDisplay } f
 // (AC-1, AC-15) without the component doing any scaling of its own.
 const props = defineProps({
   pageHeightCm: { type: Number, required: true },
+  /** The page width, used only to sit the ruler just left of the page: the
+   * `.pages` container is the full column with the page centred in it, so the
+   * ruler centres on the page too (AC-1). */
+  pageWidthCm: { type: Number, required: true },
   marginTopCm: { type: Number, required: true },
   marginBottomCm: { type: Number, required: true },
   /** Header band distance from the page's top edge (SPEC-029). */
@@ -49,6 +53,10 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["update"]);
+
+/** The strip's fixed width in cm; kept in sync with the `.vertical-ruler`
+ * width rule so the inline left offset seats its right edge on the page. */
+const STRIP_WIDTH_CM = 0.9;
 
 const root = useTemplateRef("root");
 
@@ -255,7 +263,10 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
     role="group"
     aria-label="Vertical ruler"
     :data-active-band="activeBand"
-    :style="{ height: `${pageHeightCm}cm` }"
+    :style="{
+      height: `${pageHeightCm}cm`,
+      marginLeft: `calc(-${pageWidthCm / 2}cm - ${STRIP_WIDTH_CM}cm)`,
+    }"
     @mousedown.stop
   >
     <!-- Margin zones shaded so the printable region reads at a glance. -->
@@ -343,13 +354,16 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
 </template>
 
 <style scoped>
-/* A fixed-width strip pinned to the page's left edge. It lives inside the
-   scaled `.pages` subtree, so its cm-sized geometry scales with the document
-   (a ruler cm == a document cm at every zoom) and it scrolls with the page. */
+/* A fixed-width strip pinned just left of the page. It lives inside the scaled
+   `.pages` subtree, so its cm-sized geometry scales with the document (a ruler
+   cm == a document cm at every zoom) and it scrolls with the page. `.pages` is
+   the full column with the page centred in it, so the strip anchors at 50 %
+   and shifts left by half the page width plus its own width (inline style) to
+   sit against the page's left edge. */
 .vertical-ruler {
   position: absolute;
   top: 0;
-  left: -0.9cm;
+  left: 50%;
   width: 0.9cm;
   background: var(--surface-base);
   border: 1px solid var(--border-default);
