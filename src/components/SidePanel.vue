@@ -278,6 +278,12 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .side-panel {
+  /* A positioning context so the absolutely-positioned resize handle pins to
+     the panel's own inner edge (AC-8). Without it the handle resolves against
+     .editor-layout and lands ~half the viewport away, over the document, so
+     neither drag-resize (AC-8) nor double-click-collapse (AC-10) is reachable.
+     Overlay mode (<900px) overrides this with position: fixed. */
+  position: relative;
   display: flex;
   box-sizing: border-box;
   background: var(--surface-base);
