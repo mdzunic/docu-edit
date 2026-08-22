@@ -3852,6 +3852,7 @@ function handleMenuCommand(id = "") {
     <CustomSpacingDialog
       v-if="customSpacingOpen"
       :initial="customSpacingInitial"
+      :unit="doc?.measurementUnit || 'cm'"
       @apply="handleCustomSpacingApply"
       @cancel="customSpacingOpen = false"
     />
@@ -3864,6 +3865,7 @@ function handleMenuCommand(id = "") {
     <TabStopsDialog
       v-if="tabsDialogOpen"
       :initial="tabsDialogInitial"
+      :unit="doc?.measurementUnit || 'cm'"
       :default-interval-cm="tabsDialogDefaultInterval"
       @apply="handleTabsApply"
       @cancel="tabsDialogOpen = false"
@@ -3938,6 +3940,7 @@ function handleMenuCommand(id = "") {
       :lift="shapeToolbarStyle().placement === 'above'"
     >
       <ShapeToolbar
+        :unit="doc?.measurementUnit || 'cm'"
         :fill="shapeAt(doc, shapeSelection)?.fill || ''"
         :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
         :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
@@ -4034,6 +4037,7 @@ function handleMenuCommand(id = "") {
     <TablePropertiesDialog
       v-if="tablePropertiesOpen"
       :initial="tablePropertiesInitial"
+      :unit="doc?.measurementUnit || 'cm'"
       @apply="handleTablePropertiesApply"
       @cancel="tablePropertiesOpen = false"
     />
@@ -4046,6 +4050,7 @@ function handleMenuCommand(id = "") {
     <ColumnsDialog
       v-if="columnsDialogOpen"
       :initial="columnsDialogInitial"
+      :unit="doc?.measurementUnit || 'cm'"
       @apply="handleColumnsApply"
       @cancel="columnsDialogOpen = false"
     />
@@ -4111,6 +4116,7 @@ function handleMenuCommand(id = "") {
     <HeaderFooterOptionsDialog
       v-if="headerFooterOptionsOpen"
       :initial="headerFooterOptionsInitial"
+      :unit="doc?.measurementUnit || 'cm'"
       @apply="handleHeaderFooterOptionsApply"
       @cancel="handleHeaderFooterOptionsCancel"
     />
@@ -4189,6 +4195,7 @@ function handleMenuCommand(id = "") {
     <ImageOptionsDialog
       v-if="imageOptionsOpen"
       :initial="imageOptionsInitial"
+      :unit="doc?.measurementUnit || 'cm'"
       @apply="handleImageOptionsApplyAndRescan"
       @cancel="imageOptionsOpen = false"
     />
