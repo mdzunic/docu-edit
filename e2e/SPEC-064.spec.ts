@@ -90,6 +90,15 @@ async function markerCentre(locator: Locator): Promise<{ x: number; y: number }>
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+/** A slider marker's current value in the display unit (its `aria-valuenow`). */
+async function markerValue(locator: Locator): Promise<number> {
+  return Number(await locator.getAttribute("aria-valuenow"));
+}
+
+/** The print-canvas scroll offset — the axis a mid-drag scroll-jump moves. */
+const canvasScrollTop = (page: Page): Promise<number> =>
+  page.getByTestId("canvas").evaluate((el) => el.scrollTop);
+
 test("dragging the top-margin marker moves the first line and the section margin, and the unit switches to inches (AC-16, AC-16a)", async ({
   page,
 }) => {
@@ -175,6 +184,77 @@ test("dragging the bottom-margin marker after scrolling it into view moves the m
   const afterBottomCm = bottomMarginCm(await readModel(page, id));
   expect(afterBottomCm).toBeGreaterThan(beforeBottomCm + 1);
   expect(afterBottomCm).toBeLessThan(beforeBottomCm + 4);
+});
+
+test("dragging the footer marker after scrolling it into view moves it by the drag distance, not a scroll-jump (AC-3b)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Footer band marker");
+  await waitForSaved(page);
+
+  // The footer boundary sits near the page's bottom edge — below the fold, like
+  // the bottom margin — so reaching it means scrolling the caret off-screen. A
+  // per-pointermove edit must not snap the viewport back to the caret and
+  // desync the pointer→content mapping (SPEC-064 AC-3b scroll-jump fix).
+  const footer = page.getByTestId("vertical-ruler-marker-footer");
+  await footer.scrollIntoViewIfNeeded();
+  await expect(footer).toBeInViewport();
+
+  const beforeScroll = await canvasScrollTop(page);
+  const beforeCm = await markerValue(footer);
+
+  const grab = await markerCentre(footer);
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x, grab.y - 30, { steps: 8 }); // ~0.8cm up
+  await page.mouse.up();
+  await waitForSaved(page);
+
+  // The viewport did not snap back to the caret mid-drag...
+  expect(Math.abs((await canvasScrollTop(page)) - beforeScroll)).toBeLessThan(50);
+  // ...and the value changed by the small amount the pointer travelled. Before
+  // the fix a few-pixel move jumped the footer distance past 13cm.
+  const afterCm = await markerValue(footer);
+  expect(afterCm).toBeGreaterThan(beforeCm);
+  expect(afterCm).toBeLessThan(beforeCm + 2);
+});
+
+test("dragging a below-the-fold table-row boundary sets the row height without a scroll-jump (AC-5, AC-5a)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+
+  // Insert a tall table so its lower row boundaries fall below the fold, then
+  // place the caret inside it — that is when the ruler shows the row markers.
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("table-grid-cell-10-2").click();
+  await content(page).locator("table td, table th").first().click();
+  await waitForSaved(page);
+
+  // A lower row boundary requires scrolling into view (AC-5 shows all rows).
+  const rowMarker = page.getByTestId("vertical-ruler-row-8");
+  await rowMarker.scrollIntoViewIfNeeded();
+  await expect(rowMarker).toBeInViewport();
+
+  const beforeScroll = await canvasScrollTop(page);
+  const beforeCm = await markerValue(rowMarker);
+
+  const grab = await markerCentre(rowMarker);
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x, grab.y + 40, { steps: 8 }); // grow the row ~1cm
+  await page.mouse.up();
+  await waitForSaved(page);
+
+  // No mid-drag snap-back, and the row height grew by the sane drag distance
+  // (a scroll-jump would have thrown the height wildly off).
+  expect(Math.abs((await canvasScrollTop(page)) - beforeScroll)).toBeLessThan(50);
+  const afterCm = await markerValue(rowMarker);
+  expect(afterCm).toBeGreaterThan(beforeCm);
+  expect(afterCm).toBeLessThan(beforeCm + 3);
 });
 
 test("a length field accepts an explicit unit suffix and converts it (AC-11)", async ({ page }) => {
