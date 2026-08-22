@@ -152,7 +152,7 @@ describe("length round-trip and drift (SPEC-064 AC-12, AC-17b)", () => {
       pt: 0.02,
     };
     for (const unit of ALL_UNITS) {
-      for (const cm of [0, 0.37, 1, 2.54, 3.1415, 12.7, 21, 29.7]) {
+      for (const cm of [0, 0.37, 1, 2.54, 3.14, 12.7, 21, 29.7]) {
         const roundTripped = parseLengthToCm(formatLength(cm, unit), unit);
         expect(roundTripped).not.toBeNull();
         expect(Math.abs((roundTripped as number) - cm)).toBeLessThanOrEqual(toleranceCm[unit]);

@@ -40,6 +40,21 @@ export interface VerticalTick {
   label: string;
 }
 
+/** A caret-table row boundary the ruler can drag, measured from the page's top
+ * edge: the row's top and bottom, plus its index (AC-5). */
+export interface VerticalRowBoundary {
+  row: number;
+  topCm: number;
+  bottomCm: number;
+}
+
+/** Typed pass-through for a VerticalRowBoundary[] coming from the ruler's
+ * `unknown[]` prop (espree bars the annotation in `.vue` scripts — same idiom
+ * as documentModel.asTabStops). */
+export function asRowBoundaries(value: unknown): VerticalRowBoundary[] {
+  return value as VerticalRowBoundary[];
+}
+
 function snapStep(cm: number): number {
   return Math.round(cm / RULER_DRAG_STEP_CM) * RULER_DRAG_STEP_CM;
 }
