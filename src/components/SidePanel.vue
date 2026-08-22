@@ -175,19 +175,6 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
       :aria-label="activeTitle || 'Side panel'"
       data-testid="side-panel"
     >
-      <div
-        class="side-panel-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize panel"
-        tabindex="0"
-        data-testid="side-panel-resize"
-        @pointerdown="onHandlePointerdown"
-        @pointermove="onHandlePointermove"
-        @pointerup="onHandlePointerup"
-        @dblclick="emit('toggle-collapse')"
-        @keydown="onHandleKeydown"
-      />
       <div class="side-panel-inner">
         <header class="side-panel-header">
           <button
@@ -256,6 +243,22 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
           <slot />
         </div>
       </div>
+      <!-- Last in the DOM so focus runs document -> tab rail -> pane contents
+           (AC-21) before reaching this chrome; absolutely positioned, so its
+           document order does not affect layout. -->
+      <div
+        class="side-panel-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        tabindex="0"
+        data-testid="side-panel-resize"
+        @pointerdown="onHandlePointerdown"
+        @pointermove="onHandlePointermove"
+        @pointerup="onHandlePointerup"
+        @dblclick="emit('toggle-collapse')"
+        @keydown="onHandleKeydown"
+      />
     </aside>
   </div>
 </template>
