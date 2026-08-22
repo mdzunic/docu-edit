@@ -1576,6 +1576,17 @@ export interface Section {
   headers?: Partial<Record<HeaderFooterKind, HeaderFooterContent>>;
   /** This section's footer content, by kind (SPEC-029). */
   footers?: Partial<Record<HeaderFooterKind, HeaderFooterContent>>;
+  /** The header band's distance from the page's top edge, in centimetres
+   * (SPEC-029), exposed for direct manipulation by the vertical ruler
+   * (SPEC-064 AC-3a). Absent means the product default,
+   * DEFAULT_HEADER_FOOTER_DISTANCE_CM (0.5 in). A display/layout preference
+   * on the section — like the other unmodelled band metrics it is not mapped
+   * back to a `.docx`/`.odt` distance by this spec. */
+  headerDistanceCm?: number;
+  /** The footer band's distance from the page's bottom edge, in centimetres
+   * (SPEC-029, SPEC-064 AC-3b). Absent means
+   * DEFAULT_HEADER_FOOTER_DISTANCE_CM. */
+  footerDistanceCm?: number;
   /** "Different first page" (SPEC-029 AC-11, AC-13): when set, the
    * section's first page uses `headers.first`/`footers.first` instead of
    * `headers.default`/`footers.default`. Round-trips as `w:titlePg`
@@ -1624,6 +1635,11 @@ export interface DefaultStyles {
 /** The default tab interval when a document sets none (SPEC-054): 1.27 cm =
  * 0.5 in = 720 twips, Word's own default. */
 export const DEFAULT_TAB_STOP_CM = 1.27;
+
+/** The default header/footer band distance from the page edge (SPEC-029,
+ * SPEC-064): 1.27 cm = 0.5 in = 720 twips, Word's own default. Used when a
+ * section carries no explicit `headerDistanceCm`/`footerDistanceCm`. */
+export const DEFAULT_HEADER_FOOTER_DISTANCE_CM = 1.27;
 
 /** The source format a document was opened from, if any — drives the format
  * badge in the app bar. Undefined for documents created blank (SPEC-002).
@@ -1814,8 +1830,9 @@ export interface DocumentModel {
   /** The Page setup dialog's measurement-unit preference (SPEC-027 AC-6,
    * AC-7); absent means "cm", the product default. */
   measurementUnit?: MeasurementUnit;
-  /** Whether the horizontal ruler is shown (SPEC-027 AC-14); absent means
-   * shown — the ruler predates this toggle (SPEC-014) and was always
+  /** Whether the rulers are shown (SPEC-027 AC-14, SPEC-064 AC-7): one flag
+   * governs both the horizontal ruler and the vertical ruler together. Absent
+   * means shown — the ruler predates this toggle (SPEC-014) and was always
    * visible, so an unset field must keep reading as visible. */
   showRuler?: boolean;
   /** Whether formatting marks (¶, spaces, tabs, break markers) are shown
