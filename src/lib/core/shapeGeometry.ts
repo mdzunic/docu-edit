@@ -15,8 +15,6 @@ export interface Point {
  * space — the caller rotates a hit-test point into this space first. */
 export type LocalPoint = Point;
 
-const TAU = Math.PI * 2;
-
 /** How much of a callout's box its body occupies — the bottom quarter is
  * where the tail hangs. Kept here (mirrored from shapeCatalogue.ts's own
  * copy) because roundedCalloutOutline/Radius below are pinned by SPEC-051
