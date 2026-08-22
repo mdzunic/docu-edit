@@ -970,6 +970,13 @@ export interface Shape extends DrawingPlacement {
   /** Text inside the shape. Absent for a shape that holds none, e.g. a line
    * or arrow. */
   text?: ShapeTextFrame;
+  /** Geometry adjustment values (SPEC-069), in the order the geometry's
+   * `ShapeDefinition` declares them, each a fraction in that adjustment's
+   * declared range. Absent means every adjustment is at its default.
+   * Round-trips as `a:avLst/a:gd` (.docx) and `draw:modifiers` (.odt); a
+   * value outside our declared range is clamped only for rendering and
+   * preserved verbatim on a same-format save (AC-7). */
+  adjustments?: number[];
   /** Pending tracked insertion/deletion of this shape block (SPEC-039). */
   changes?: BlockTrackedChanges;
   /** Present when the source file's geometry was outside "Shape catalogue"

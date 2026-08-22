@@ -371,6 +371,30 @@ export function setShapeRotation(
   return { model: next, selection };
 }
 
+/** Sets a shape's geometry adjustment values (SPEC-069 AC-5) — the model
+ * stores the raw fractions (rendering clamps them); an empty/absent array
+ * clears the field back to the geometry's defaults. */
+export function setShapeAdjustments(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+  adjustments: number[],
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape) {
+    return { model: next, selection };
+  }
+  const updated: Shape = { ...shape };
+  if (adjustments.length > 0) {
+    updated.adjustments = [...adjustments];
+  } else {
+    delete updated.adjustments;
+  }
+  replaceShape(next, location, updated);
+  return { model: next, selection };
+}
+
 export function setShapeWrap(
   model: DocumentModel,
   selection: ModelSelection,

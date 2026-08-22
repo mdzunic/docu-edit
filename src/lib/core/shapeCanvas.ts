@@ -20,6 +20,7 @@ import {
   shapePolygon,
   type Point,
 } from "./shapeGeometry";
+import { resolvedShapeAdjustments, shapeDefinition } from "./shapeCatalogue";
 
 function applyOutline(ctx: CanvasRenderingContext2D, outline: ShapeOutline | undefined, widthPxPerPt: number): void {
   if (!outline) {
@@ -36,8 +37,9 @@ function polygonPath(ctx: CanvasRenderingContext2D, points: Point[]): void {
   ctx.closePath();
 }
 
-function roundRectPath(ctx: CanvasRenderingContext2D, widthPx: number, heightPx: number): void {
-  const r = Math.min(roundRectRadius(widthPx, heightPx), widthPx / 2, heightPx / 2);
+function roundRectPath(ctx: CanvasRenderingContext2D, widthPx: number, heightPx: number, radiusFraction?: number): void {
+  const base = radiusFraction === undefined ? roundRectRadius(widthPx, heightPx) : Math.min(widthPx, heightPx) * radiusFraction;
+  const r = Math.min(base, widthPx / 2, heightPx / 2);
   ctx.beginPath();
   ctx.moveTo(r, 0);
   ctx.lineTo(widthPx - r, 0);
@@ -169,13 +171,20 @@ export function paintShape(ctx: CanvasRenderingContext2D, shape: ShapeVisual, wi
     return;
   }
 
+  const def = shapeDefinition(shape.geometry);
+  const adjustments = resolvedShapeAdjustments(shape.geometry, shape.adjustments);
+  let holePaths: Point[][] = [];
+
   if (shape.geometry === "ellipse") {
     ctx.beginPath();
     ctx.ellipse(cx, cy, Math.max(0, widthPx / 2), Math.max(0, heightPx / 2), 0, 0, Math.PI * 2);
-  } else if (shape.geometry === "roundRect") {
-    roundRectPath(ctx, widthPx, heightPx);
+  } else if (shape.geometry === "roundRect" || shape.geometry === "flowChartAlternateProcess") {
+    roundRectPath(ctx, widthPx, heightPx, adjustments[0]);
   } else if (shape.geometry === "wedgeRoundRectCallout") {
     roundedCalloutPath(ctx, widthPx, heightPx);
+  } else if (def) {
+    polygonPath(ctx, scalePolygon(def.outline(adjustments), widthPx, heightPx));
+    holePaths = (def.holes?.(adjustments) ?? []).map((hole) => scalePolygon(hole, widthPx, heightPx));
   } else {
     const unit = shapePolygon(shape.geometry);
     polygonPath(ctx, scalePolygon(unit ?? [], widthPx, heightPx));
@@ -183,11 +192,33 @@ export function paintShape(ctx: CanvasRenderingContext2D, shape: ShapeVisual, wi
 
   if (shape.fill) {
     ctx.fillStyle = shape.fill;
-    ctx.fill();
+    if (holePaths.length > 0) {
+      // Punch the holes (donut, frame) out of the fill with the even-odd
+      // rule — the outline path is already open in `ctx`.
+      for (const hole of holePaths) {
+        ctx.moveTo(hole[0].x, hole[0].y);
+        for (let i = 1; i < hole.length; i++) {
+          ctx.lineTo(hole[i].x, hole[i].y);
+        }
+        ctx.closePath();
+      }
+      ctx.fill("evenodd");
+    } else {
+      ctx.fill();
+    }
   }
   if (shape.outline) {
     applyOutline(ctx, shape.outline, PX_PER_PT);
     ctx.stroke();
+    for (const hole of holePaths) {
+      ctx.beginPath();
+      ctx.moveTo(hole[0].x, hole[0].y);
+      for (let i = 1; i < hole.length; i++) {
+        ctx.lineTo(hole[i].x, hole[i].y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
   }
   ctx.restore();
 }

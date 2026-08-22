@@ -141,6 +141,18 @@ describe("collectDropRecords", () => {
     ];
     expect(collectDropRecords(model, "odt")).toEqual([]);
   });
+
+  it("reports a catalogue geometry with no clean target-format equivalent as dropped (SPEC-069 AC-9)", () => {
+    const model = { ...createDocument("id-shape-4"), format: "docx" as const };
+    // borderCallout1 is marked approximateIn: ["odt"] — a docx->odt save
+    // writes the closest ODF preset AND reports the drop; a same-format save
+    // and the reverse direction report nothing.
+    model.sections[0].blocks = [
+      { type: "shape", geometry: "borderCallout1", widthCm: 3, heightCm: 2, wrap: "square" },
+    ];
+    expect(collectDropRecords(model, "odt").map((d) => d.kind)).toEqual(["shapeGeometry"]);
+    expect(collectDropRecords(model, "docx")).toEqual([]);
+  });
 });
 
 describe("noConversionReport", () => {

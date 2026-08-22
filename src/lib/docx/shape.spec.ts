@@ -61,6 +61,42 @@ function roundTrip(shape: Shape, docPrId = 7) {
   return parseShapeDrawing(drawingElement(xml), readCtx);
 }
 
+// --- adjustments (SPEC-069 AC-6a, AC-7b) ---------------------------------------
+
+describe("shape adjustments round-trip through a:avLst/a:gd", () => {
+  // One geometry per adjustment-bearing group (AC-6c).
+  const cases: { geometry: Shape["geometry"]; adjustments: number[] }[] = [
+    { geometry: "roundRect", adjustments: [0.25] }, // Basic shapes
+    { geometry: "rightArrow", adjustments: [0.5, 0.3] }, // Block arrows
+    { geometry: "star6", adjustments: [0.4] }, // Stars and banners
+    { geometry: "wedgeRectCallout", adjustments: [0.2, 0.9] }, // Callouts
+  ];
+
+  for (const { geometry, adjustments } of cases) {
+    it(`writes a:gd@fmla and reads it back for ${geometry}`, () => {
+      const xml = shapeDrawingXml(baseShape({ geometry, adjustments }), 1, writeCtx);
+      expect(xml).toContain('<a:gd name="');
+      expect(xml).toContain('fmla="val ');
+      const parsed = roundTrip(baseShape({ geometry, adjustments }));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.shape.adjustments).toBeDefined();
+      parsed!.shape.adjustments!.forEach((value, i) => expect(value).toBeCloseTo(adjustments[i], 4));
+    });
+  }
+
+  it("writes an empty a:avLst for a shape with no adjustments (byte-unchanged)", () => {
+    const xml = shapeDrawingXml(baseShape({ geometry: "roundRect" }), 1, writeCtx);
+    expect(xml).toContain("<a:avLst/>");
+    expect(roundTrip(baseShape({ geometry: "roundRect" }))!.shape.adjustments).toBeUndefined();
+  });
+
+  it("preserves an out-of-range adjustment value verbatim on a same-format save (AC-7b)", () => {
+    // 2.0 is well outside roundRect's 0..0.5 range; it must survive unchanged.
+    const parsed = roundTrip(baseShape({ geometry: "roundRect", adjustments: [2] }));
+    expect(parsed!.shape.adjustments![0]).toBeCloseTo(2, 4);
+  });
+});
+
 // --- parseShapeDrawing — null cases (SPEC-008 opaque fallback) -----------------
 
 describe("parseShapeDrawing — null cases", () => {
@@ -157,13 +193,13 @@ describe("parseShapeDrawing — geometry mapping", () => {
       `<w:drawing xmlns:wp="${WP_NS}"><wp:inline><wp:extent cx="1800000" cy="900000"/><wp:docPr id="1" name="Shape 1"/>` +
       `<a:graphic xmlns:a="${A_NS}"><a:graphicData uri="x">` +
       `<wps:wsp xmlns:wps="${WPS_NS}"><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1800000" cy="900000"/></a:xfrm>` +
-      `<a:prstGeom prst="cube"><a:avLst/></a:prstGeom></wps:spPr></wps:wsp>` +
+      `<a:prstGeom prst="gear9"><a:avLst/></a:prstGeom></wps:spPr></wps:wsp>` +
       `</a:graphicData></a:graphic></wp:inline></w:drawing>`;
     const result = parseShapeDrawing(drawingElement(xml), readCtx);
     expect(result).not.toBeNull();
     expect(result!.shape.geometry).toBe("rect");
     expect(result!.shape.unsupportedGeometryXml).toBeDefined();
-    expect(result!.shape.unsupportedGeometryXml).toContain('prst="cube"');
+    expect(result!.shape.unsupportedGeometryXml).toContain('prst="gear9"');
   });
 });
 
@@ -419,17 +455,33 @@ describe("shapeDrawingXml round-trips through parseShapeDrawing", () => {
   });
 
   it("round-trips an unsupported geometry's XML verbatim, marking the geometry field as the rect stand-in (AC-60, AC-61)", () => {
-    const unsupportedXml = `<a:prstGeom xmlns:a="${A_NS}" prst="cube"><a:avLst/></a:prstGeom>`;
+    const unsupportedXml = `<a:prstGeom xmlns:a="${A_NS}" prst="gear9"><a:avLst/></a:prstGeom>`;
     const source = baseShape({ geometry: "rect", unsupportedGeometryXml: unsupportedXml });
     const xml = shapeDrawingXml(source, 1, writeCtx);
     // The writer never computes a normal prstGeom for the shape's own
     // `geometry` field once unsupportedGeometryXml is set.
     expect(xml).not.toContain('prst="rect"');
-    expect(xml).toContain('prst="cube"');
+    expect(xml).toContain('prst="gear9"');
 
     const parsed = parseShapeDrawing(drawingElement(xml), readCtx)!;
     expect(parsed.shape.geometry).toBe("rect");
     expect(parsed.shape.unsupportedGeometryXml).toBeDefined();
     expect(canonicalizeXml(parsed.shape.unsupportedGeometryXml!)).toBe(canonicalizeXml(unsupportedXml));
+  });
+
+  it("does not retroactively reinterpret a preserved geometry now in the catalogue on save (AC-10)", () => {
+    // 'cube' joined the catalogue in SPEC-069, but a stored shape that still
+    // carries its verbatim prstGeom in unsupportedGeometryXml (from an
+    // earlier app version) is not upgraded: a same-format save re-emits the
+    // preserved bytes exactly and never computes a fresh cube prstGeom from
+    // the geometry field. (Re-opening the source file is what would pick up
+    // the catalogue — that is a new read, not this stored model.)
+    const unsupportedXml = `<a:prstGeom xmlns:a="${A_NS}" prst="cube"><a:avLst/></a:prstGeom>`;
+    const source = baseShape({ geometry: "rect", unsupportedGeometryXml: unsupportedXml });
+    const xml = shapeDrawingXml(source, 1, writeCtx);
+    // Exactly one prstGeom, and it is the preserved one — no second, upgraded
+    // <a:prstGeom> derived from the catalogue.
+    expect(xml.match(/<a:prstGeom/g)).toHaveLength(1);
+    expect(xml).toContain('prst="cube"');
   });
 });

@@ -9,6 +9,7 @@ import {
   runKey,
   runStyle,
   shapeDisplayStyle,
+  shapeTextRectStyle,
   tableCellStyle,
   tableColumnWidth,
   tableRowStyle,
@@ -451,6 +452,31 @@ describe("shapeDisplayStyle — z-order (SPEC-051 AC-29..33)", () => {
 
   it("defaults to zOrder 0 when absent, matching zOrderOf's own fallback", () => {
     expect(shapeDisplayStyle(testShape({ wrap: "square" })).zIndex).toBe(shapeDisplayStyle(testShape({ wrap: "square", zOrder: 0 })).zIndex);
+  });
+});
+
+describe("shapeTextRectStyle — per-geometry text rectangle (SPEC-069 AC-11)", () => {
+  it("returns null for a geometry that fills its box (default)", () => {
+    expect(shapeTextRectStyle(testShape({ geometry: "rect" }))).toBeNull();
+  });
+
+  it("returns null for a preserved (unsupported) geometry", () => {
+    expect(
+      shapeTextRectStyle(testShape({ geometry: "rect", unsupportedGeometryXml: "<x/>" })),
+    ).toBeNull();
+  });
+
+  it("insets text to the declared rectangle for a geometry that has one", () => {
+    // The rounded callout lays text in its body (top three-quarters), not the
+    // tail — width/height as percentages of the box, right/bottom released.
+    const style = shapeTextRectStyle(testShape({ geometry: "wedgeRectCallout" }))!;
+    expect(style).not.toBeNull();
+    expect(style.left).toBe("0.000%");
+    expect(style.top).toBe("0.000%");
+    expect(style.width).toBe("100.000%");
+    expect(parseFloat(style.height)).toBeCloseTo(75, 3);
+    expect(style.right).toBe("auto");
+    expect(style.bottom).toBe("auto");
   });
 });
 

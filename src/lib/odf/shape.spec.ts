@@ -75,6 +75,40 @@ function roundTrip(shape: Shape, styleName = "gr1") {
   return parseShapeElement(shapeEl, contentDoc, undefined, readCtx);
 }
 
+// --- adjustments (SPEC-069 AC-6b, AC-7b) ----------------------------------------
+
+describe("shape adjustments round-trip through draw:modifiers", () => {
+  // One geometry per adjustment-bearing group (AC-6c).
+  const cases: { geometry: Shape["geometry"]; adjustments: number[] }[] = [
+    { geometry: "roundRect", adjustments: [0.25] }, // Basic shapes
+    { geometry: "rightArrow", adjustments: [0.5, 0.3] }, // Block arrows
+    { geometry: "star6", adjustments: [0.4] }, // Stars and banners
+    { geometry: "wedgeRectCallout", adjustments: [0.2, 0.9] }, // Callouts
+  ];
+
+  for (const { geometry, adjustments } of cases) {
+    it(`writes draw:modifiers and reads it back for ${geometry}`, () => {
+      const shapeXml = shapeElementXml(baseShape({ geometry, adjustments }), "gr1", writeCtx);
+      expect(shapeXml).toContain("draw:modifiers=");
+      const parsed = roundTrip(baseShape({ geometry, adjustments }));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.shape.adjustments).toBeDefined();
+      parsed!.shape.adjustments!.forEach((value, i) => expect(value).toBeCloseTo(adjustments[i], 4));
+    });
+  }
+
+  it("omits draw:modifiers for a shape with no adjustments", () => {
+    const shapeXml = shapeElementXml(baseShape({ geometry: "roundRect" }), "gr1", writeCtx);
+    expect(shapeXml).not.toContain("draw:modifiers=");
+    expect(roundTrip(baseShape({ geometry: "roundRect" }))!.shape.adjustments).toBeUndefined();
+  });
+
+  it("preserves an out-of-range adjustment value verbatim on a same-format save (AC-7b)", () => {
+    const parsed = roundTrip(baseShape({ geometry: "roundRect", adjustments: [2] }));
+    expect(parsed!.shape.adjustments![0]).toBeCloseTo(2, 4);
+  });
+});
+
 // --- parseShapeElement — null cases ---------------------------------------------
 
 describe("parseShapeElement — null cases", () => {
@@ -107,14 +141,14 @@ describe("parseShapeElement — draw:custom-shape geometry mapping", () => {
   it("an unrecognised draw:type falls back to 'rect' and captures the enhanced-geometry element verbatim (AC-60)", () => {
     const contentDoc = wrapDoc(
       `<draw:custom-shape text:anchor-type="as-char" svg:width="5cm" svg:height="3cm">` +
-        `<draw:enhanced-geometry draw:type="pentagon"/>` +
+        `<draw:enhanced-geometry draw:type="gear"/>` +
         `</draw:custom-shape>`,
     );
     const el = contentDoc.documentElement.firstElementChild!;
     const result = parseShapeElement(el, contentDoc, undefined, readCtx);
     expect(result).not.toBeNull();
     expect(result!.shape.geometry).toBe("rect");
-    expect(result!.shape.unsupportedGeometryXml).toContain('draw:type="pentagon"');
+    expect(result!.shape.unsupportedGeometryXml).toContain('draw:type="gear"');
   });
 
   it("a custom-shape with no enhanced-geometry child at all is unsupported with an empty capture", () => {
@@ -404,11 +438,11 @@ describe("shapeElementXml round-trips through parseShapeElement", () => {
   });
 
   it("round-trips an unsupported geometry's XML verbatim, marking the geometry field as the rect stand-in (AC-60, AC-61)", () => {
-    const unsupportedXml = `<draw:enhanced-geometry xmlns:draw="${DRAW_NAMESPACE}" draw:type="pentagon"/>`;
+    const unsupportedXml = `<draw:enhanced-geometry xmlns:draw="${DRAW_NAMESPACE}" draw:type="gear"/>`;
     const source = baseShape({ geometry: "rect", unsupportedGeometryXml: unsupportedXml });
     const xml = shapeElementXml(source, "gr1", writeCtx);
     expect(xml).not.toContain('draw:type="rectangle"');
-    expect(xml).toContain('draw:type="pentagon"');
+    expect(xml).toContain('draw:type="gear"');
 
     const contentDoc = wrapDoc(shapeGraphicStyleXml("gr1", source) + xml);
     const shapeEl = contentDoc.documentElement.lastElementChild!;
