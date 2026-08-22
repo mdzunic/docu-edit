@@ -17,6 +17,7 @@ import DocTableBlock from "../components/DocTableBlock.vue";
 import DocumentRuler from "../components/DocumentRuler.vue";
 import DocumentVerticalRuler from "../components/DocumentVerticalRuler.vue";
 import PageMarkupOverlays from "../components/PageMarkupOverlays.vue";
+import RulerUnitMenu from "../components/RulerUnitMenu.vue";
 import EditorContextMenu from "../components/EditorContextMenu.vue";
 import EditorSaveStatus from "../components/EditorSaveStatus.vue";
 import SpellContextMenu from "../components/SpellContextMenu.vue";
@@ -1880,6 +1881,7 @@ const {
   openColumnsDialog,
   handleColumnsApply,
   toggleRuler,
+  setMeasurementUnit,
   rulerPageWidthCm,
   rulerMarginLeftCm,
   rulerMarginRightCm,
@@ -1900,6 +1902,18 @@ const { showVerticalRuler, verticalRulerProps, handleVerticalRulerUpdate } = use
   viewMode,
   caretPosition,
 });
+
+// Right-clicking either ruler opens the measurement-unit picker (SPEC-064
+// AC-10a); choosing a unit writes the same preference the Page setup dialog
+// does (AC-10b).
+const rulerUnitMenu = ref({ open: false, left: 0, top: 0 });
+function openRulerUnitMenu(event = new MouseEvent("contextmenu")) {
+  rulerUnitMenu.value = { open: true, left: event.clientX, top: event.clientY };
+}
+function selectRulerUnit(unit = "cm") {
+  setMeasurementUnit(unit);
+  rulerUnitMenu.value = { ...rulerUnitMenu.value, open: false };
+}
 
 // Every key this handler acts on is looked up in the SPEC-021 registry
 // (AC-2) rather than compared against literal key/modifier checks — the
@@ -3413,6 +3427,7 @@ function handleMenuCommand(id = "") {
             :disabled="!editable"
             @update="handleRulerUpdate"
             @open-tabs-dialog="openTabsDialog"
+            @contextmenu.prevent="openRulerUnitMenu"
           />
         </div>
         <div
@@ -3441,6 +3456,7 @@ function handleMenuCommand(id = "") {
               v-if="showVerticalRuler"
               v-bind="verticalRulerProps"
               @update="handleVerticalRulerUpdate"
+              @contextmenu.prevent="openRulerUnitMenu"
             />
             <TableHandlesOverlay
               v-if="tableHover"
@@ -3959,6 +3975,15 @@ function handleMenuCommand(id = "") {
         @duplicate="handleChartDuplicate"
       />
     </ContextualToolbar>
+    <RulerUnitMenu
+      v-if="rulerUnitMenu.open"
+      class="print-exclude"
+      :left="rulerUnitMenu.left"
+      :top="rulerUnitMenu.top"
+      :unit="doc?.measurementUnit || 'cm'"
+      @select="selectRulerUnit"
+      @dismiss="rulerUnitMenu = { ...rulerUnitMenu, open: false }"
+    />
     <EditorContextMenu
       v-if="contextMenu.visible"
       class="print-exclude"

@@ -165,6 +165,21 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
     touchDocument(model.id);
   }
 
+  /** Sets the document's measurement-unit preference from a ruler right-click
+   * (SPEC-064 AC-10a). Writes the same `measurementUnit` field the Page setup
+   * dialog writes (AC-10b); like the ruler toggle it is a persisted app
+   * preference, not an undoable content edit, so it uses the same direct
+   * mutation + triggerRef + touchDocument path. */
+  function setMeasurementUnit(unit = "cm") {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    model.measurementUnit = asMeasurementUnit(unit);
+    triggerRef(doc);
+    touchDocument(model.id);
+  }
+
   // The ruler and the Page setup dialog follow the caret's section (AC-17..21)
   // so a per-section page setup is edited where the caret sits.
   const rulerSectionIndex = computed(() => {
@@ -213,6 +228,7 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
     openColumnsDialog,
     handleColumnsApply,
     toggleRuler,
+    setMeasurementUnit,
     rulerSectionIndex,
     rulerPageWidthCm,
     rulerMarginLeftCm,

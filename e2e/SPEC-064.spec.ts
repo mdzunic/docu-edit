@@ -135,3 +135,62 @@ test("dragging the top-margin marker moves the first line and the section margin
   const fieldValue = await page.getByTestId("page-setup-margin-top").inputValue();
   expect(Number(fieldValue)).toBeCloseTo(Number(inchesTrimmed), 2);
 });
+
+test("View → Ruler toggles both rulers together with one control (AC-7)", async ({ page }) => {
+  await createDocument(page);
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
+
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("toggle-ruler-button").click();
+  await expect(page.getByTestId("document-ruler")).toHaveCount(0);
+  await expect(page.getByTestId("document-vertical-ruler")).toHaveCount(0);
+
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("toggle-ruler-button").click();
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
+});
+
+test("the vertical ruler is hidden in web layout, the horizontal ruler stays (AC-8)", async ({ page }) => {
+  await createDocument(page);
+  await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
+
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-layout").click();
+  await page.getByTestId("layout-web").click();
+  await expect(page.locator(".is-web-layout")).toHaveCount(1);
+
+  await expect(page.getByTestId("document-vertical-ruler")).toHaveCount(0);
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+});
+
+test("right-clicking the vertical ruler sets the unit, the same value Page setup shows (AC-10a, AC-10b)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  const ruler = page.getByTestId("document-vertical-ruler");
+  await ruler.click({ button: "right" });
+  await expect(page.getByTestId("ruler-unit-menu")).toBeVisible();
+  await page.getByTestId("ruler-unit-mm").click();
+  await expect(page.getByTestId("ruler-unit-menu")).toHaveCount(0);
+
+  await openPageSetup(page);
+  await expect(page.getByTestId("page-setup-unit")).toHaveValue("mm");
+});
+
+test("the top-margin marker is keyboard-operable and announces its value (AC-13, AC-14)", async ({ page }) => {
+  const id = await createDocument(page);
+  const m = marker(page);
+  await expect(m).toHaveAttribute("role", "slider");
+  await m.focus();
+
+  const before = topMarginCm(await readModel(page, id));
+  await page.keyboard.press("ArrowDown"); // one minor division toward the page bottom
+  await waitForSaved(page);
+  const afterMinor = topMarginCm(await readModel(page, id));
+  expect(afterMinor).toBeGreaterThan(before);
+
+  // aria-valuetext reads the marker name and its value in the display unit.
+  await expect(m).toHaveAttribute("aria-valuetext", /Top margin, .* centimetres/);
+});
