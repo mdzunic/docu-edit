@@ -58,6 +58,9 @@ export function useImages(deps: ImagesDeps) {
     currentHfSelection,
     applyHeaderFooterEdit,
     getCaret,
+    zoom,
+    contentPxToClient,
+    clientToContentPx,
   } = deps;
 
   const imageSelection = ref<ImageLocation | null>(null);
@@ -93,7 +96,7 @@ export function useImages(deps: ImagesDeps) {
     const imageEl = root.querySelector(
       `.doc-image-anchor[data-section="${location.section}"][data-block="${location.block}"]`,
     );
-    imageHandles.value = imageEl ? measureImageGeometry(pageEl, imageEl) : null;
+    imageHandles.value = imageEl ? measureImageGeometry(pageEl, imageEl, zoom.value) : null;
   }
 
   function handleImageSelect(section = 0, block = 0) {
@@ -125,12 +128,16 @@ export function useImages(deps: ImagesDeps) {
     if (!geometry || !pageEl) {
       return { left: 0, top: 0 };
     }
-    const pageRect = pageEl.getBoundingClientRect();
-    const viewportTop = pageRect.top + geometry.top;
-    const above = viewportTop - 40;
+    // The toolbar is position:fixed outside the scale transform, so its anchor
+    // is the image's unscaled model geometry mapped back into client space
+    // through the zoom-aware helper (SPEC-063 AC-57). The 40/8 px offsets are
+    // screen constants and stay unscaled.
+    const anchor = contentPxToClient(geometry.left, geometry.top);
+    const above = anchor.y - 40;
+    const below = contentPxToClient(geometry.left, geometry.top + geometry.height);
     return {
-      left: pageRect.left + geometry.left,
-      top: above >= 0 ? above : pageRect.top + geometry.top + geometry.height + 8,
+      left: anchor.x,
+      top: above >= 0 ? above : below.y + 8,
     };
   }
 
@@ -284,8 +291,13 @@ export function useImages(deps: ImagesDeps) {
       return;
     }
     imageDragMoved = true;
-    const deltaXCm = (event.clientX - drag.startClientX) * CM_PER_PX;
-    const deltaYCm = (event.clientY - drag.startClientY) * CM_PER_PX;
+    // The pointer delta is measured in unscaled content px (both endpoints
+    // through the zoom-aware helper) so a resize tracks the pointer 1:1 at any
+    // zoom (SPEC-063 AC-24).
+    const start = clientToContentPx(drag.startClientX, drag.startClientY);
+    const now = clientToContentPx(event.clientX, event.clientY);
+    const deltaXCm = (now.x - start.x) * CM_PER_PX;
+    const deltaYCm = (now.y - start.y) * CM_PER_PX;
     const size = resizedImageSize(drag.start, drag.handle, deltaXCm, deltaYCm, event.shiftKey);
     previewImageSize(drag.imageEl, size.widthCm, size.heightCm);
   }

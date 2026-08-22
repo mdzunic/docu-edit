@@ -136,6 +136,7 @@ export function useContextMenus(deps: ContextMenusDeps) {
     setCaret,
     updateCaretStatus,
     setPendingFormat,
+    clientToContentPx,
   } = deps;
 
   const contextMenu = ref({ visible: false, left: 0, top: 0 });
@@ -203,9 +204,13 @@ export function useContextMenus(deps: ContextMenusDeps) {
     if (!pageEl) {
       return null;
     }
-    const pageRect = pageEl.getBoundingClientRect();
-    const x = clientX - pageRect.left;
-    const y = clientY - pageRect.top;
+    // spellUnderlineRects are unscaled, .pages-relative px (useSpellCheck
+    // measures them in the frame the transform re-scales), so the pointer must
+    // be taken into that same frame through the zoom-aware helper (SPEC-063
+    // AC-22/AC-25).
+    const point = clientToContentPx(clientX, clientY);
+    const x = point.x;
+    const y = point.y;
     for (const rect of spellUnderlineRects.value) {
       if (x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height) {
         return rect;

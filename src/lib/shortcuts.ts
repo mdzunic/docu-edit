@@ -190,6 +190,21 @@ export const SHORTCUTS: ShortcutDefinition[] = [
     category: "View",
     bindings: [{ key: "p", mod: true, shift: true }],
   },
+  // SPEC-063 zoom (AC-11, AC-12). Ctrl/Cmd with =, - and 0; "+" (shift+=) is
+  // an alternate for zoom in so both the labelled and the shifted key work.
+  {
+    id: "view.zoomIn",
+    label: "Zoom in",
+    category: "View",
+    bindings: [
+      { key: "=", mod: true },
+      { key: "+", mod: true, shift: true },
+    ],
+  },
+  { id: "view.zoomOut", label: "Zoom out", category: "View", bindings: [{ key: "-", mod: true }] },
+  { id: "view.zoomReset", label: "Reset zoom to 100%", category: "View", bindings: [{ key: "0", mod: true }] },
+  // SPEC-063 Focus mode (AC-46).
+  { id: "view.focus", label: "Focus mode", category: "View", bindings: [{ key: "f", mod: true, shift: true }] },
 ];
 
 function normalizeKey(key: string): string {

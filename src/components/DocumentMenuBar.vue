@@ -28,6 +28,13 @@ import { GALLERY_PRESETS as MULTILEVEL_PRESETS } from "../lib/core/listDefinitio
 import { PICKER_MAX_ROWS, PICKER_MAX_COLS } from "../lib/core/tables";
 import { ACCEPTED_IMAGE_ACCEPT_ATTR } from "../lib/core/media";
 import { shortcutLabel } from "../lib/shortcuts";
+import { ZOOM_PRESETS } from "../lib/zoom";
+
+// SPEC-063: whether a preset's View → Zoom radio shows checked — only when no
+// fit mode is active and the live percentage matches the preset (AC-34).
+function zoomPresetChecked(preset = 0, percent = 100, fitMode = "none") {
+  return fitMode === "none" && Math.round(percent) === preset;
+}
 
 const props = defineProps({
   /** False renders every editing command disabled (present, not hidden). */
@@ -67,6 +74,13 @@ const props = defineProps({
   autoCaptionTables: { type: Boolean, default: false },
   /** The format painter's armed state: "" | "once" | "repeat". */
   painterMode: { type: String, default: "" },
+  /** SPEC-063 view mode: "print" | "web" (Focus is a separate flag). */
+  viewMode: { type: String, default: "print" },
+  /** SPEC-063 Focus mode active. */
+  focusMode: { type: Boolean, default: false },
+  /** SPEC-063 live zoom percentage and fit mode, for the View → Zoom checks. */
+  zoomPercent: { type: Number, default: 100 },
+  zoomFitMode: { type: String, default: "none" },
 });
 
 const emit = defineEmits([
@@ -261,6 +275,59 @@ function chooseTableGrid(rows = 0, cols = 0) {
     </template>
 
     <template #view>
+      <!-- SPEC-063: the three view modes as menuitemradio entries (AC-32). -->
+      <MenuSubmenu
+        label="Layout"
+        testid="view-menu-layout"
+      >
+        <MenuRadioItem
+          label="Print layout"
+          testid="layout-print"
+          :checked="viewMode === 'print' && !focusMode"
+          @select="emit('command', 'view.layout-print')"
+        />
+        <MenuRadioItem
+          label="Web layout"
+          testid="layout-web"
+          :checked="viewMode === 'web' && !focusMode"
+          @select="emit('command', 'view.layout-web')"
+        />
+        <MenuRadioItem
+          label="Focus"
+          testid="layout-focus"
+          :shortcut="shortcutLabel('view.focus')"
+          :checked="focusMode"
+          @select="emit('command', 'view.focus')"
+        />
+      </MenuSubmenu>
+      <!-- SPEC-063: the zoom ladder plus Fit width / Fit page (AC-34). -->
+      <MenuSubmenu
+        label="Zoom"
+        testid="view-menu-zoom"
+      >
+        <MenuRadioItem
+          v-for="preset in ZOOM_PRESETS"
+          :key="preset"
+          :label="`${preset}%`"
+          :testid="`zoom-${preset}`"
+          :checked="zoomPresetChecked(preset, zoomPercent, zoomFitMode)"
+          @select="emit('command', `view.zoom-${preset}`)"
+        />
+        <hr class="menu-separator">
+        <MenuRadioItem
+          label="Fit width"
+          testid="zoom-fit-width"
+          :checked="zoomFitMode === 'fit-width'"
+          @select="emit('command', 'view.zoom-fit-width')"
+        />
+        <MenuRadioItem
+          label="Fit page"
+          testid="zoom-fit-page"
+          :checked="zoomFitMode === 'fit-page'"
+          @select="emit('command', 'view.zoom-fit-page')"
+        />
+      </MenuSubmenu>
+      <hr class="menu-separator">
       <MenuCheckItem
         label="Ruler"
         testid="toggle-ruler-button"

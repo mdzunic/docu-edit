@@ -25,6 +25,11 @@ const props = defineProps({
    * positions measured from the text area's start. */
   tabStops: { type: Array, default: () => [] },
   disabled: { type: Boolean, default: false },
+  /** SPEC-063 zoom scale fraction (1 == 100 %). The ruler scales with the
+   * document so a ruler centimetre equals a document centimetre at every zoom
+   * (AC-53); its own drag math reads the live scaled rect, so it stays
+   * accurate without further adjustment (AC-54). */
+  zoom: { type: Number, default: 1 },
 });
 
 const emit = defineEmits(["update", "open-tabs-dialog"]);
@@ -363,7 +368,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
     data-testid="document-ruler"
     role="group"
     aria-label="Ruler"
-    :style="{ width: `${pageWidthCm}cm` }"
+    :style="{ width: `${pageWidthCm}cm`, transform: `scaleX(${zoom})`, transformOrigin: 'top center' }"
   >
     <!-- Margin zones shaded so the printable region reads at a glance. -->
     <div

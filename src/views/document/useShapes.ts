@@ -136,6 +136,9 @@ export function useShapes(deps: ShapesDeps) {
     getCaret,
     markDirty,
     refreshUndoRedoState,
+    zoom,
+    clientToContentPx,
+    contentPxToClient,
   } = deps;
 
   const shapeSelection = ref<ShapeLocation | null>(null);
@@ -442,8 +445,8 @@ export function useShapes(deps: ShapesDeps) {
     const el = root.querySelector(
       `.doc-shape-anchor[data-section="${location.section}"][data-block="${location.block}"] .doc-shape`,
     );
-    shapeHandles.value = el ? measureImageGeometry(pageEl, el) : null;
-    shapeAnchorMarker.value = measureShapeAnchorMarker(location, pageEl, root);
+    shapeHandles.value = el ? measureImageGeometry(pageEl, el, zoom.value) : null;
+    shapeAnchorMarker.value = measureShapeAnchorMarker(location, root);
   }
 
   /** The paragraph a shape at `location` is anchored to, as a block index
@@ -463,7 +466,6 @@ export function useShapes(deps: ShapesDeps) {
    * it isn't measurable. */
   function measureShapeAnchorMarker(
     location: ShapeLocation,
-    pageEl: Element,
     root: Element,
   ): { left: number; top: number } | null {
     const anchorBlockIndex = anchorParagraphBlockIndex(location);
@@ -474,9 +476,11 @@ export function useShapes(deps: ShapesDeps) {
     if (!el) {
       return null;
     }
-    const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    return { left: rect.left - pageRect.left, top: rect.top - pageRect.top };
+    // The marker is painted INSIDE .pages (the scale transform re-applies the
+    // zoom), so it carries unscaled, .pages-relative px (SPEC-063 AC-25).
+    const point = clientToContentPx(rect.left, rect.top);
+    return { left: point.x, top: point.y };
   }
 
   /** Every paragraph in a shape's own section, as re-anchoring candidates
@@ -492,7 +496,6 @@ export function useShapes(deps: ShapesDeps) {
     if (!model || !root || !pageEl) {
       return [];
     }
-    const pageRect = pageEl.getBoundingClientRect();
     const blocks = model.sections[location.section]?.blocks ?? [];
     const spans: ParagraphSpan[] = [];
     blocks.forEach((block, index) => {
@@ -504,11 +507,15 @@ export function useShapes(deps: ShapesDeps) {
         return;
       }
       const rect = el.getBoundingClientRect();
+      // Route through the zoom-aware helper so the page-relative cm is the
+      // unscaled model cm at any zoom (SPEC-063 AC-22).
+      const top = clientToContentPx(rect.left, rect.top);
+      const bottom = clientToContentPx(rect.left, rect.bottom);
       spans.push({
         section: location.section,
         block: index,
-        topCm: (rect.top - pageRect.top) * CM_PER_PX,
-        bottomCm: (rect.bottom - pageRect.top) * CM_PER_PX,
+        topCm: top.y * CM_PER_PX,
+        bottomCm: bottom.y * CM_PER_PX,
       });
     });
     return spans;
@@ -535,9 +542,14 @@ export function useShapes(deps: ShapesDeps) {
         continue;
       }
       const rect = el.getBoundingClientRect();
+      // The offset from the shape's own top-left, in unscaled model px, so
+      // the hit test compares like-for-like with the shape's cm geometry at
+      // any zoom (SPEC-063 AC-22/AC-24).
+      const origin = clientToContentPx(rect.left, rect.top);
+      const pointer = clientToContentPx(clientX, clientY);
       const point = {
-        x: (clientX - rect.left) * CM_PER_PX,
-        y: (clientY - rect.top) * CM_PER_PX,
+        x: (pointer.x - origin.x) * CM_PER_PX,
+        y: (pointer.y - origin.y) * CM_PER_PX,
       };
       const hit = pointHitsShape(point, {
         geometry: shape.geometry,
@@ -665,14 +677,19 @@ export function useShapes(deps: ShapesDeps) {
       return { left: 0, top: 0, placement: "below" };
     }
     const bounds = rotatedBounds(geometry.width, geometry.height, selectedShapeRotationDeg());
-    const pageRect = pageEl.getBoundingClientRect();
-    const shapeTop = pageRect.top + geometry.top - bounds.padY;
+    // The toolbar is a position:fixed element outside the scale transform, so
+    // its anchor is the shape's model-px geometry mapped back into client
+    // space through the zoom-aware helper (SPEC-063 AC-22/AC-57). The +8/px
+    // clearances are screen constants and stay unscaled.
+    const topLeft = contentPxToClient(geometry.left - bounds.padX, geometry.top - bounds.padY);
+    const shapeTop = topLeft.y;
     const bottomEdge = shapeTop - SHAPE_TOOLBAR_CLEARANCE_PX;
-    const left = pageRect.left + geometry.left - bounds.padX;
+    const left = topLeft.x;
     if (bottomEdge - SHAPE_TOOLBAR_MAX_HEIGHT_PX >= 0) {
       return { left, top: bottomEdge, placement: "above" };
     }
-    return { left, top: pageRect.top + geometry.top + geometry.height + bounds.padY + 8, placement: "below" };
+    const below = contentPxToClient(geometry.left - bounds.padX, geometry.top + geometry.height + bounds.padY);
+    return { left, top: below.y + 8, placement: "below" };
   }
 
   function applyShapeEdit(mutate: ShapeMutate | null, label = "") {
@@ -878,6 +895,7 @@ export function useShapes(deps: ShapesDeps) {
       shape,
       Math.max(1, Math.round(cmToPx(widthCm))),
       Math.max(1, Math.round(cmToPx(Math.max(heightCm, 0.05)))),
+      zoom.value,
     );
   }
 
@@ -892,9 +910,14 @@ export function useShapes(deps: ShapesDeps) {
     // pointer delta has to come back out of it before it can size the box
     // (drag the "e" handle of a 90° shape and the pointer travels down the
     // screen, but what grows is still the width).
+    // The pointer delta is measured in unscaled content px (both endpoints
+    // through the zoom-aware helper) so a resize tracks the pointer 1:1 at
+    // any zoom (SPEC-063 AC-24).
+    const start = clientToContentPx(drag.startClientX, drag.startClientY);
+    const now = clientToContentPx(event.clientX, event.clientY);
     const local = unrotateDelta(
-      (event.clientX - drag.startClientX) * CM_PER_PX,
-      (event.clientY - drag.startClientY) * CM_PER_PX,
+      (now.x - start.x) * CM_PER_PX,
+      (now.y - start.y) * CM_PER_PX,
       drag.rotationDeg,
     );
     const size = resizedImageSize(drag.start, asImageHandle(drag.handle), local.dx, local.dy, event.shiftKey);
@@ -1004,8 +1027,9 @@ export function useShapes(deps: ShapesDeps) {
       return;
     }
     event.preventDefault();
-    const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
+    // Unscaled, .pages-relative top in model cm (SPEC-063 AC-22).
+    const startTop = clientToContentPx(rect.left, rect.top);
     moveDragMoved = false;
     moveDrag = {
       location,
@@ -1013,7 +1037,7 @@ export function useShapes(deps: ShapesDeps) {
       startClientY: event.clientY,
       startOffsetXCm: shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm,
       startOffsetYCm: shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm,
-      startTopCm: (rect.top - pageRect.top) * CM_PER_PX,
+      startTopCm: startTop.y * CM_PER_PX,
       heightCm: shape.heightCm,
       groupOrdinal: shape.groupOrdinal,
       el,
@@ -1038,8 +1062,15 @@ export function useShapes(deps: ShapesDeps) {
     if (!moveDragMoved) {
       return;
     }
-    drag.dxCm = dxPx * CM_PER_PX;
-    drag.dyCm = dyPx * CM_PER_PX;
+    // The move must track the pointer 1:1 at any zoom: the drag delta and the
+    // handle preview are in unscaled content px, not raw (scaled) screen px
+    // (SPEC-063 AC-24/AC-25). The 3px threshold above stays in screen px.
+    const start = clientToContentPx(drag.startClientX, drag.startClientY);
+    const now = clientToContentPx(event.clientX, event.clientY);
+    const dxContent = now.x - start.x;
+    const dyContent = now.y - start.y;
+    drag.dxCm = dxContent * CM_PER_PX;
+    drag.dyCm = dyContent * CM_PER_PX;
     // A grouped member previews only on release (finishShapeMove's
     // moveGroup moves every member at once) — live-previewing just the
     // dragged element here would show the rest of the group left behind.
@@ -1051,8 +1082,8 @@ export function useShapes(deps: ShapesDeps) {
       if (drag.startHandles) {
         shapeHandles.value = {
           ...drag.startHandles,
-          left: drag.startHandles.left + dxPx,
-          top: drag.startHandles.top + dyPx,
+          left: drag.startHandles.left + dxContent,
+          top: drag.startHandles.top + dyContent,
         };
       }
       // The toolbar stays put wherever it was opened, which during a drag
@@ -1134,9 +1165,12 @@ export function useShapes(deps: ShapesDeps) {
       return;
     }
     event.preventDefault();
-    const pageRect = pageEl.getBoundingClientRect();
-    const centerClientX = pageRect.left + geometry.left + geometry.width / 2;
-    const centerClientY = pageRect.top + geometry.top + geometry.height / 2;
+    // The shape's centre in client space: its model-px centre mapped through
+    // the zoom-aware helper so the rotation pivot is where the shape actually
+    // sits on screen at any zoom (SPEC-063 AC-24).
+    const center = contentPxToClient(geometry.left + geometry.width / 2, geometry.top + geometry.height / 2);
+    const centerClientX = center.x;
+    const centerClientY = center.y;
     const startAngle = Math.atan2(event.clientY - centerClientY, event.clientX - centerClientX);
     rotateDrag = {
       location,
@@ -1240,9 +1274,10 @@ export function useShapes(deps: ShapesDeps) {
     if (!el) {
       return null;
     }
-    const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    return { anchor, left: (rect.left - pageRect.left) * CM_PER_PX, top: (rect.top - pageRect.top) * CM_PER_PX };
+    // Unscaled, .pages-relative anchor position in model cm (SPEC-063 AC-22).
+    const point = clientToContentPx(rect.left, rect.top);
+    return { anchor, left: point.x * CM_PER_PX, top: point.y * CM_PER_PX };
   }
 
   /** The page-relative cm box the pointer currently describes, and the
@@ -1257,19 +1292,22 @@ export function useShapes(deps: ShapesDeps) {
     if (!pageEl) {
       return null;
     }
-    const pageRect = pageEl.getBoundingClientRect();
     const isTextBox = geometry === "textbox";
     const realGeometry: ShapeGeometry = isTextBox ? "rect" : (geometry as ShapeGeometry);
+    // Both corners in unscaled, .pages-relative model cm so the drawn box
+    // matches the pointer at any zoom (SPEC-063 AC-24).
+    const startPoint = clientToContentPx(drag.startClientX, drag.startClientY);
+    const nowPoint = clientToContentPx(event.clientX, event.clientY);
     return {
       geometry: realGeometry,
       isTextBox,
       box: drawGestureBox(
         realGeometry,
         {
-          xCm: (drag.startClientX - pageRect.left) * CM_PER_PX,
-          yCm: (drag.startClientY - pageRect.top) * CM_PER_PX,
+          xCm: startPoint.x * CM_PER_PX,
+          yCm: startPoint.y * CM_PER_PX,
         },
-        { xCm: (event.clientX - pageRect.left) * CM_PER_PX, yCm: (event.clientY - pageRect.top) * CM_PER_PX },
+        { xCm: nowPoint.x * CM_PER_PX, yCm: nowPoint.y * CM_PER_PX },
         { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
       ),
     };

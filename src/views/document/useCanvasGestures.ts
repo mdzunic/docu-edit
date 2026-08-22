@@ -115,6 +115,8 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     selectField,
     openLinkTarget,
     maybeApplyPainter,
+    zoom,
+    clientToContentPx,
   } = deps;
 
   // --- tables (SPEC-022) ------------------------------------------------------
@@ -433,7 +435,7 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
       }
       return;
     }
-    tableHover.value = measureTableHandles(pageEl, table);
+    tableHover.value = measureTableHandles(pageEl, table, zoom.value);
   }
 
   // The farthest handle face sits 20px outside the table (buttons occupy
@@ -449,14 +451,16 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     if (!hover || !pageEl) {
       return false;
     }
-    const rect = pageEl.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    // The pointer and the band overhang are both taken into the unscaled,
+    // .pages-relative frame `hover` records, so the hit band lines up with the
+    // (zoom-independent) geometry at any zoom (SPEC-063 AC-25).
+    const point = clientToContentPx(event.clientX, event.clientY);
+    const band = HANDLE_BAND_PX / zoom.value;
     return (
-      x >= hover.left - HANDLE_BAND_PX &&
-      x <= hover.left + hover.width + HANDLE_BAND_PX &&
-      y >= hover.top - HANDLE_BAND_PX &&
-      y <= hover.top + hover.height + HANDLE_BAND_PX
+      point.x >= hover.left - band &&
+      point.x <= hover.left + hover.width + band &&
+      point.y >= hover.top - band &&
+      point.y <= hover.top + hover.height + band
     );
   }
 

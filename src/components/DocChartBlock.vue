@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
+import { inject, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asChart } from "../lib/documentModel";
 import { chartDisplayStyle, drawingWrapSpacerStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
@@ -33,6 +33,10 @@ const props = defineProps({
 defineEmits(["select", "edit-data"]);
 
 const canvasEl = useTemplateRef("canvasEl");
+// SPEC-063 AC-20: the presentation-layer zoom, injected from DocumentView, so
+// the backing store is painted at devicePixelRatio * zoom while the CSS size
+// stays the model px — the .pages transform then scales it without blurring.
+const documentZoom = inject("documentZoom", ref(1));
 
 function repaint() {
   const chart = asChart(props.block);
@@ -43,15 +47,16 @@ function repaint() {
   const widthPx = Math.max(1, Math.round(cmToPx(chart.widthCm)));
   const heightPx = Math.max(1, Math.round(cmToPx(Math.max(chart.heightCm, 0.05))));
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-  canvas.width = widthPx * dpr;
-  canvas.height = heightPx * dpr;
+  const scale = dpr * (documentZoom.value || 1);
+  canvas.width = Math.max(1, Math.round(widthPx * scale));
+  canvas.height = Math.max(1, Math.round(heightPx * scale));
   canvas.style.width = `${widthPx}px`;
   canvas.style.height = `${heightPx}px`;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     return;
   }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, widthPx, heightPx);
   // The chart's chrome (axis lines, gridlines, tick/label text) reads from the
   // theme tokens through resolveThemeColor (SPEC-059 AC-27/66/67); the series
@@ -72,6 +77,8 @@ onMounted(repaint);
 onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
 watch(resolvedTheme, repaint);
+// Re-paint the backing store when the zoom changes so it stays crisp (AC-20).
+watch(documentZoom, repaint);
 
 const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
 

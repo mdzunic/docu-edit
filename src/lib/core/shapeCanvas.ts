@@ -99,13 +99,19 @@ export function paintShapeIntoCanvas(
   shape: ShapeVisual,
   widthPx: number,
   heightPx: number,
+  zoomFraction = 1,
 ): void {
   const bounds = rotatedBounds(widthPx, heightPx, shape.rotationDeg ?? 0);
   const surfaceW = Math.max(1, Math.ceil(bounds.width));
   const surfaceH = Math.max(1, Math.ceil(bounds.height));
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-  canvas.width = surfaceW * dpr;
-  canvas.height = surfaceH * dpr;
+  // SPEC-063 AC-20: the CSS size stays the model px so the .pages transform
+  // scales it, but the backing store is multiplied by devicePixelRatio * zoom
+  // so the extra device pixels the transform will stretch it across are
+  // painted crisply rather than upscaled. zoom defaults to 1 (identity).
+  const scale = dpr * (zoomFraction || 1);
+  canvas.width = Math.max(1, Math.round(surfaceW * scale));
+  canvas.height = Math.max(1, Math.round(surfaceH * scale));
   canvas.style.width = `${surfaceW}px`;
   canvas.style.height = `${surfaceH}px`;
   canvas.style.left = `${-bounds.padX}px`;
@@ -114,7 +120,7 @@ export function paintShapeIntoCanvas(
   if (!ctx) {
     return;
   }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, surfaceW, surfaceH);
   ctx.translate(bounds.padX, bounds.padY);
   paintShape(ctx, shape, widthPx, heightPx);

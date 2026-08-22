@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
+import { inject, nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
 import { asShape } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
 import { drawingWrapSpacerStyle, shapeDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
@@ -48,6 +48,12 @@ defineEmits([
 
 const canvasEl = useTemplateRef("canvasEl");
 
+// SPEC-063 AC-20: the presentation-layer zoom, injected from DocumentView so
+// the canvas backing store is painted at devicePixelRatio * zoom and the
+// .pages transform scales it without blurring. Defaults to a static 1 when
+// rendered outside the editor (unit tests, print-only trees).
+const documentZoom = inject("documentZoom", ref(1));
+
 function repaint() {
   const shape = asShape(props.block);
   const canvas = canvasEl.value;
@@ -56,12 +62,14 @@ function repaint() {
   }
   const widthPx = Math.max(1, Math.round(cmToPx(shape.widthCm)));
   const heightPx = Math.max(1, Math.round(cmToPx(Math.max(shape.heightCm, 0.05))));
-  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx);
+  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx, documentZoom.value);
 }
 
 onMounted(repaint);
 onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
+// Re-paint the backing store when the zoom changes so it stays crisp (AC-20).
+watch(documentZoom, repaint);
 
 const textFrameEl = useTemplateRef("textFrameEl");
 /** Whether the shape's text is currently clipped past its box (AC-21,

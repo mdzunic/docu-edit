@@ -73,6 +73,7 @@ export function useFindReplace(deps: FindReplaceDeps) {
     onSessionClose,
     onUnmount,
     onScroll,
+    zoom,
   } = deps;
 
   const findVisible = ref(false);
@@ -522,12 +523,17 @@ export function useFindReplace(deps: FindReplaceDeps) {
     matches: FindMatch[],
   ) {
     const isCurrent = forceCurrent || matches[currentIndex] === match;
+    // The highlight layer paints INSIDE the scaled `.pages` container, so the
+    // rects carry unscaled, .pages-relative px — the CSS transform re-applies
+    // the zoom, keeping each highlight registered with its match (SPEC-063
+    // AC-25). Dividing by the scale undoes what getBoundingClientRect folded in.
+    const z = zoom.value || 1;
     for (const rect of matchClientRects(root, match)) {
       rects.push({
-        left: rect.left - pageRect.left,
-        top: rect.top - pageRect.top,
-        width: rect.width,
-        height: rect.height,
+        left: (rect.left - pageRect.left) / z,
+        top: (rect.top - pageRect.top) / z,
+        width: rect.width / z,
+        height: rect.height / z,
         current: isCurrent,
       });
     }

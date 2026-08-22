@@ -111,6 +111,7 @@ export function useComments(deps: CommentsDeps) {
     onSessionClose,
     onUnmount,
     onScroll,
+    zoom,
   } = deps;
 
   // --- pane / view state (per-user, not part of the model) -----------------
@@ -379,15 +380,20 @@ export function useComments(deps: CommentsDeps) {
       return;
     }
     const pagesRect = pagesEl.getBoundingClientRect();
+    // The highlight layer paints INSIDE the scaled `.pages` container, so the
+    // rects carry unscaled, .pages-relative px — the CSS transform re-applies
+    // the zoom, keeping the highlight registered with its text (SPEC-063
+    // AC-25). Dividing by the scale undoes what getBoundingClientRect folded in.
+    const z = zoom.value || 1;
     const rects: CommentHighlightRect[] = [];
     for (const { thread, start, end } of openThreads.value) {
       const active = activeThreadId.value === thread.threadId;
       for (const rect of rangeClientRects(root, start, end)) {
         rects.push({
-          left: rect.left - pagesRect.left,
-          top: rect.top - pagesRect.top,
-          width: rect.width,
-          height: rect.height,
+          left: (rect.left - pagesRect.left) / z,
+          top: (rect.top - pagesRect.top) / z,
+          width: rect.width / z,
+          height: rect.height / z,
           threadId: thread.threadId,
           active,
         });

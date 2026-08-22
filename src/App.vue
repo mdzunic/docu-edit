@@ -185,4 +185,120 @@ body.is-print-preview .doc-field-shaded {
     filter: none !important;
   }
 }
+
+/* SPEC-063 Focus mode: Print layout with the menu bar, toolbar and every open
+   pane hidden purely by CSS — the panes' own state is untouched, so the exact
+   set open on entry returns on exit (AC-44, AC-47). The status bar (page
+   indicator + zoom control) stays visible (AC-45, AC-56). Global, not scoped,
+   because it spans AppShell's chrome and DocumentView's pane docks. */
+.is-focus-mode .menubar-region,
+.is-focus-mode .toolbar,
+.is-focus-mode .outline-dock,
+.is-focus-mode .styles-dock,
+.is-focus-mode .comments-dock,
+.is-focus-mode .track-changes-dock,
+.is-focus-mode .version-history-dock,
+.is-focus-mode .accessibility-dock,
+.is-focus-mode .fonts-dock {
+  display: none;
+}
+
+/* SPEC-063 Web layout: the same paginated model rendered as one continuous
+   column — page frames, gaps, headers, footers and page numbers hidden
+   (AC-38, AC-39). The model and section properties are untouched (AC-42). */
+.is-web-layout .page {
+  /* !important throughout: DocPage.vue's scoped `.page` rule ties on
+     specificity (0,2,0) and, being later in source order, would otherwise win —
+     leaving the drop shadow and 12 px page gap visible in Web layout (AC-39). */
+  box-shadow: none !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  /* AC-40: the column is the first section's content width, not the full page
+     width; --web-content-width is set on the editor root (DocumentView).
+     !important overrides the per-page inline `width: <pageWidth>cm`. */
+  width: var(--web-content-width, auto) !important;
+}
+
+/* The page margins are inline padding on .page-content; drop the horizontal
+   pair in Web layout so the text fills the content-width column exactly (the
+   vertical padding stays as the inter-page rhythm). */
+.is-web-layout .page-content {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.is-web-layout .page-header-band,
+.is-web-layout .page-footer-band {
+  /* !important for the same specificity tie as `.page` above: DocPage.vue's
+     scoped band rule sets `display: flex` and would otherwise win on source
+     order, leaving the header/footer bands visible in Web layout (AC-39). */
+  display: none !important;
+}
+
+/* SPEC-063 AC-36: when the zoom leaves room, the paginated pages tile side by
+   side in a centred grid of `--page-grid-cols` columns (set on .document-content
+   by DocumentView). The grid lives inside the scaled `.pages`, so the 24px
+   screen gap is written in unscaled units (÷ zoom) and each cell is one page
+   wide (max-content). Only engaged above one column — a single column keeps the
+   untouched normal-flow centring. The page's own auto/12px margins are
+   neutralised so the grid gap alone spaces them (overlays measure live off
+   `.pages`, so they follow either way). */
+.document-content.is-page-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--page-grid-cols, 1), max-content);
+  justify-content: center;
+  gap: calc(24px / var(--zoom, 1));
+}
+
+.document-content.is-page-grid .page {
+  margin: 0;
+}
+
+/* SPEC-063 AC-52: print, print preview and PDF export always render at 100%
+   Print layout, regardless of the on-screen zoom or view mode. The zoom scale
+   transform is neutralised and its sizing wrapper reset to natural, and Web
+   layout's hidden page chrome is restored, so the sheets and the extracted
+   PDF geometry are the untransformed print layout. */
+body.is-print-preview .pages-viewport--scaled,
+body.is-exporting-pdf .pages-viewport--scaled {
+  width: auto;
+  height: auto;
+}
+
+body.is-print-preview .pages--scaled,
+body.is-exporting-pdf .pages--scaled {
+  position: relative;
+  left: auto;
+  margin-left: 0;
+  transform: none;
+}
+
+body.is-print-preview .page-header-band,
+body.is-print-preview .page-footer-band,
+body.is-exporting-pdf .page-header-band,
+body.is-exporting-pdf .page-footer-band {
+  /* !important to beat `.is-web-layout .page-header-band { display: none
+     !important }` above, so print, print preview and PDF export always restore
+     the header/footer bands even when Web layout is on (AC-52). */
+  display: revert !important;
+}
+
+@media print {
+  .pages-viewport--scaled {
+    width: auto !important;
+    height: auto !important;
+  }
+
+  .pages--scaled {
+    position: relative !important;
+    left: auto !important;
+    margin-left: 0 !important;
+    transform: none !important;
+  }
+
+  .is-web-layout .page-header-band,
+  .is-web-layout .page-footer-band {
+    display: revert !important;
+  }
+}
 </style>

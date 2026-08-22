@@ -193,6 +193,12 @@ export function usePdfExport(deps: PdfExportDeps) {
     }
     pdfExporting.value = true;
     pdfProgress.value = { done: 0, total: 0 };
+    // Export always reads the DOM at 100% Print layout regardless of the
+    // on-screen zoom or view mode (SPEC-063 AC-52): the marker's global rules
+    // (App.vue) neutralise the `.pages` scale transform and restore the page
+    // chrome that Web layout hides, so extractPageContent measures natural
+    // page geometry that matches the untransformed computed font sizes.
+    document.body.classList.add("is-exporting-pdf");
     try {
       // A content-empty document exports a zero-page PDF (AC-27) without
       // touching the DOM or fetching fonts.
@@ -218,6 +224,7 @@ export function usePdfExport(deps: PdfExportDeps) {
           : "an unexpected error occurred";
       deps.addToast(`${PDF_EXPORT_ERROR_PREFIX} — ${reason}`);
     } finally {
+      document.body.classList.remove("is-exporting-pdf");
       pdfExporting.value = false;
       pdfProgress.value = { done: 0, total: 0 };
       deps.endRealizeAll();

@@ -111,6 +111,18 @@ export interface EditorContext {
   onUnmount: (cb: () => void) => void;
   /** Registers a callback run on canvas scroll (overlay re-measurement). */
   onScroll: (cb: () => void) => void;
+  /** The presentation-layer zoom as a scale fraction (1 == 100 %),
+   * SPEC-063. The model, pagination and stored geometry are unaffected —
+   * this only scales the `.pages` transform and the coordinate helpers. */
+  zoom: Readonly<Ref<number>>;
+  /** Maps a client (viewport) point to unscaled content pixels relative to
+   * the scaled `.pages` box — every pointer path measures through this so it
+   * lands where the pointer is at any zoom (SPEC-063 AC-22, AC-24). */
+  clientToContentPx: (clientX: number, clientY: number) => { x: number; y: number };
+  /** The inverse: places a model-space content pixel into client
+   * coordinates for a position: fixed overlay outside the transform subtree
+   * (SPEC-063 AC-22, AC-57). */
+  contentPxToClient: (contentX: number, contentY: number) => { x: number; y: number };
 }
 
 /** The header/footer editing bridge shared by composables whose features
