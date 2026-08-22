@@ -216,4 +216,49 @@ body.is-print-preview .doc-field-shaded {
 .is-web-layout .page-footer-band {
   display: none;
 }
+
+/* SPEC-063 AC-52: print, print preview and PDF export always render at 100%
+   Print layout, regardless of the on-screen zoom or view mode. The zoom scale
+   transform is neutralised and its sizing wrapper reset to natural, and Web
+   layout's hidden page chrome is restored, so the sheets and the extracted
+   PDF geometry are the untransformed print layout. */
+body.is-print-preview .pages-viewport--scaled,
+body.is-exporting-pdf .pages-viewport--scaled {
+  width: auto;
+  height: auto;
+}
+
+body.is-print-preview .pages--scaled,
+body.is-exporting-pdf .pages--scaled {
+  position: relative;
+  left: auto;
+  margin-left: 0;
+  transform: none;
+}
+
+body.is-print-preview .page-header-band,
+body.is-print-preview .page-footer-band,
+body.is-exporting-pdf .page-header-band,
+body.is-exporting-pdf .page-footer-band {
+  display: revert;
+}
+
+@media print {
+  .pages-viewport--scaled {
+    width: auto !important;
+    height: auto !important;
+  }
+
+  .pages--scaled {
+    position: relative !important;
+    left: auto !important;
+    margin-left: 0 !important;
+    transform: none !important;
+  }
+
+  .is-web-layout .page-header-band,
+  .is-web-layout .page-footer-band {
+    display: revert !important;
+  }
+}
 </style>
