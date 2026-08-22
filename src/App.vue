@@ -186,21 +186,20 @@ body.is-print-preview .doc-field-shaded {
   }
 }
 
-/* SPEC-063 Focus mode: Print layout with the menu bar, toolbar and every open
-   pane hidden purely by CSS — the panes' own state is untouched, so the exact
-   set open on entry returns on exit (AC-44, AC-47). The status bar (page
+/* SPEC-063 Focus mode: Print layout with the menu bar, toolbar and the open
+   side panel hidden purely by CSS — the panel's own state is untouched, so the
+   exact pane open on entry returns on exit (AC-44, AC-47). The status bar (page
    indicator + zoom control) stays visible (AC-45, AC-56). Global, not scoped,
-   because it spans AppShell's chrome and DocumentView's pane docks. */
+   because it spans AppShell's chrome and DocumentView's side panel. SPEC-065
+   consolidated every pane dock into one `.side-panel-root`; `!important` beats
+   that component's scoped-class specificity tie so the open pane is hidden. */
 .is-focus-mode .menubar-region,
-.is-focus-mode .toolbar,
-.is-focus-mode .outline-dock,
-.is-focus-mode .styles-dock,
-.is-focus-mode .comments-dock,
-.is-focus-mode .track-changes-dock,
-.is-focus-mode .version-history-dock,
-.is-focus-mode .accessibility-dock,
-.is-focus-mode .fonts-dock {
+.is-focus-mode .toolbar {
   display: none;
+}
+
+.is-focus-mode .side-panel-root {
+  display: none !important;
 }
 
 /* SPEC-063 Web layout: the same paginated model rendered as one continuous

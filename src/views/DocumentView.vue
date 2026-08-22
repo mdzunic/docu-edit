@@ -4455,7 +4455,7 @@ function handleMenuCommand(id = "") {
   position: absolute;
   top: 0;
   left: 50%;
-  margin-left: calc(var(--pages-natural-w, 0px) / -2);
+  translate: -50% 0; /* centre via own width (%), not a stale JS measure lagging the grid relayout (AC-36); separate `translate` keeps `transform` the bare scale matrix (AC-16) */
   transform: scale(var(--zoom, 1));
   transform-origin: top center;
 }
