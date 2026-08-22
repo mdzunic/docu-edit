@@ -6,7 +6,7 @@
 import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
-import { SHAPE_DEFINITIONS } from "../core/shapeCatalogue";
+import { SHAPE_DEFINITIONS, adjustmentToGuideValue, guideValueToAdjustment } from "../core/shapeCatalogue";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import {
@@ -171,6 +171,7 @@ export function parseShapeElement(
   let heightCm: number;
   let geometry: ShapeGeometry;
   let unsupportedGeometryXml: string | undefined;
+  let adjustments: number[] = [];
 
   let lineOffsetXCm: number | undefined;
   let lineOffsetYCm: number | undefined;
@@ -201,12 +202,27 @@ export function parseShapeElement(
     geometry = mapped ?? "rect";
     if (!mapped) {
       unsupportedGeometryXml = enhancedGeometry ? new XMLSerializer().serializeToString(enhancedGeometry) : "";
+    } else if (enhancedGeometry) {
+      // draw:modifiers is a space-separated list of adjustment values in the
+      // shape's coordinate space, normalised to fractions (SPEC-069 AC-6b).
+      const modifiers = drawAttr(enhancedGeometry, "modifiers");
+      if (modifiers) {
+        adjustments = modifiers
+          .trim()
+          .split(/\s+/)
+          .map(Number)
+          .filter((n) => !Number.isNaN(n))
+          .map(guideValueToAdjustment);
+      }
     }
   }
 
   const shape: Shape = { type: "shape", geometry, widthCm, heightCm, wrap };
   if (unsupportedGeometryXml !== undefined) {
     shape.unsupportedGeometryXml = unsupportedGeometryXml;
+  }
+  if (adjustments.length > 0) {
+    shape.adjustments = adjustments;
   }
   if (fill) {
     shape.fill = fill;
@@ -318,7 +334,12 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
     );
   }
 
-  const geometryXml = shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"/>`;
+  const modifiersAttr =
+    shape.adjustments && shape.adjustments.length > 0
+      ? ` draw:modifiers="${shape.adjustments.map(adjustmentToGuideValue).join(" ")}"`
+      : "";
+  const geometryXml =
+    shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"${modifiersAttr}/>`;
   return (
     `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
     `${posAttrs} svg:width="${cmToOdfLength(shape.widthCm)}" svg:height="${cmToOdfLength(shape.heightCm)}">` +

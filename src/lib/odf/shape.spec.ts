@@ -75,6 +75,40 @@ function roundTrip(shape: Shape, styleName = "gr1") {
   return parseShapeElement(shapeEl, contentDoc, undefined, readCtx);
 }
 
+// --- adjustments (SPEC-069 AC-6b, AC-7b) ----------------------------------------
+
+describe("shape adjustments round-trip through draw:modifiers", () => {
+  // One geometry per adjustment-bearing group (AC-6c).
+  const cases: { geometry: Shape["geometry"]; adjustments: number[] }[] = [
+    { geometry: "roundRect", adjustments: [0.25] }, // Basic shapes
+    { geometry: "rightArrow", adjustments: [0.5, 0.3] }, // Block arrows
+    { geometry: "star6", adjustments: [0.4] }, // Stars and banners
+    { geometry: "wedgeRectCallout", adjustments: [0.2, 0.9] }, // Callouts
+  ];
+
+  for (const { geometry, adjustments } of cases) {
+    it(`writes draw:modifiers and reads it back for ${geometry}`, () => {
+      const shapeXml = shapeElementXml(baseShape({ geometry, adjustments }), "gr1", writeCtx);
+      expect(shapeXml).toContain("draw:modifiers=");
+      const parsed = roundTrip(baseShape({ geometry, adjustments }));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.shape.adjustments).toBeDefined();
+      parsed!.shape.adjustments!.forEach((value, i) => expect(value).toBeCloseTo(adjustments[i], 4));
+    });
+  }
+
+  it("omits draw:modifiers for a shape with no adjustments", () => {
+    const shapeXml = shapeElementXml(baseShape({ geometry: "roundRect" }), "gr1", writeCtx);
+    expect(shapeXml).not.toContain("draw:modifiers=");
+    expect(roundTrip(baseShape({ geometry: "roundRect" }))!.shape.adjustments).toBeUndefined();
+  });
+
+  it("preserves an out-of-range adjustment value verbatim on a same-format save (AC-7b)", () => {
+    const parsed = roundTrip(baseShape({ geometry: "roundRect", adjustments: [2] }));
+    expect(parsed!.shape.adjustments![0]).toBeCloseTo(2, 4);
+  });
+});
+
 // --- parseShapeElement — null cases ---------------------------------------------
 
 describe("parseShapeElement — null cases", () => {

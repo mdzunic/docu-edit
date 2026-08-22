@@ -65,7 +65,7 @@ export interface ShapeDefinition {
   /** The format(s) whose closest preset only approximates this geometry, so
    * a cross-format save to that format writes the preset AND reports a
    * `shapeGeometry` DropRecord (AC-9). Absent means both formats carry it. */
-  approximateIn?: ("docx" | "odf")[];
+  approximateIn?: ("docx" | "odt")[];
 }
 
 // --- unit-square geometry helpers -------------------------------------------
@@ -589,7 +589,7 @@ const STARS_BANNERS: ShapeDefinition[] = [
   { geometry: "star24", group: "Stars and banners", label: "Star (24-point)", prst: "star24", drawType: "star24", adjustments: starAdj(0.75), outline: (a) => starPoly(24, a[0] ?? 0.75) },
   { geometry: "star32", group: "Stars and banners", label: "Star (32-point)", prst: "star32", drawType: "star32", adjustments: starAdj(0.8), outline: (a) => starPoly(32, a[0] ?? 0.8) },
   { geometry: "irregularSeal1", group: "Stars and banners", label: "Explosion 1", aliases: ["seal", "burst", "bang"], prst: "irregularSeal1", drawType: "bang", outline: () => sealPoly(12, 7) },
-  { geometry: "irregularSeal2", group: "Stars and banners", label: "Explosion 2", aliases: ["seal", "burst", "bang"], prst: "irregularSeal2", drawType: "bang2", approximateIn: ["odf"], outline: () => sealPoly(16, 11) },
+  { geometry: "irregularSeal2", group: "Stars and banners", label: "Explosion 2", aliases: ["seal", "burst", "bang"], prst: "irregularSeal2", drawType: "bang2", approximateIn: ["odt"], outline: () => sealPoly(16, 11) },
   { geometry: "ribbon", group: "Stars and banners", label: "Down ribbon", aliases: ["banner"], prst: "ribbon", drawType: "down-ribbon", outline: () => ribbonPoly(false) },
   { geometry: "ribbon2", group: "Stars and banners", label: "Up ribbon", aliases: ["banner"], prst: "ribbon2", drawType: "up-ribbon", outline: () => ribbonPoly(true) },
   { geometry: "verticalScroll", group: "Stars and banners", label: "Vertical scroll", prst: "verticalScroll", drawType: "vertical-scroll", outline: () => scrollPoly(true) },
@@ -714,7 +714,7 @@ const CALLOUTS: ShapeDefinition[] = [
     prst: "borderCallout1",
     drawType: "line-callout-1",
     outline: rectPoly,
-    approximateIn: ["odf"],
+    approximateIn: ["odt"],
   },
   {
     geometry: "borderCallout2",
@@ -724,7 +724,7 @@ const CALLOUTS: ShapeDefinition[] = [
     prst: "borderCallout2",
     drawType: "line-callout-2",
     outline: rectPoly,
-    approximateIn: ["odf"],
+    approximateIn: ["odt"],
   },
   {
     geometry: "borderCallout3",
@@ -734,7 +734,7 @@ const CALLOUTS: ShapeDefinition[] = [
     prst: "borderCallout3",
     drawType: "line-callout-3",
     outline: rectPoly,
-    approximateIn: ["odf"],
+    approximateIn: ["odt"],
   },
   {
     geometry: "accentCallout1",
@@ -744,7 +744,7 @@ const CALLOUTS: ShapeDefinition[] = [
     prst: "accentCallout1",
     drawType: "accent-callout-1",
     outline: rectPoly,
-    approximateIn: ["odf"],
+    approximateIn: ["odt"],
   },
 ];
 
@@ -769,6 +769,32 @@ export function shapeDefinition(geometry: ShapeGeometry): ShapeDefinition | unde
  * declared default), the value `shapePolygon` and a fresh shape use. */
 export function shapeAdjustmentDefaults(def: ShapeDefinition): number[] {
   return (def.adjustments ?? []).map((spec) => spec.default);
+}
+
+// Adjustment values are normalised to fractions at the reader boundary
+// (SPEC-069 "Adjustment values"), the same choice the model makes for
+// lengths (cm) and rotation (degrees). Both formats express an adjustment as
+// an integer in a shape-relative scale — OOXML guide formulas and ODF
+// draw:modifiers — so a single hundred-thousandths scale round-trips a
+// fraction through our own reader/writer for every geometry. (Word's true
+// per-geometry semantics vary; matching them exactly is beyond this spec,
+// which only promises a faithful round-trip and clamped rendering.)
+const ADJ_SCALE = 100000;
+
+/** A 0..1-style fraction as the integer guide value the formats store. */
+export function adjustmentToGuideValue(fraction: number): number {
+  return Math.round(fraction * ADJ_SCALE);
+}
+
+/** A stored integer guide value back to its 0..1-style fraction. */
+export function guideValueToAdjustment(value: number): number {
+  return value / ADJ_SCALE;
+}
+
+/** The `a:gd@name` / positional name a geometry's i-th adjustment writes,
+ * matching Word's own convention (`adj` for a lone one, else `adj1`..). */
+export function adjustmentGuideName(index: number, count: number): string {
+  return count <= 1 ? "adj" : `adj${index + 1}`;
 }
 
 /** A shape's adjustments resolved for rendering: stored values where present,

@@ -24,6 +24,7 @@ import {
   type Table,
 } from "./documentModel";
 import { parseXml, XmlParseError } from "./core/xml";
+import { shapeDefinition } from "./core/shapeCatalogue";
 import {
   diffParagraphFormatting,
   paragraphStyleBase,
@@ -399,6 +400,14 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           // save re-emits it unchanged and reports nothing.
           if (blockAt.unsupportedGeometryXml && source !== target) {
             dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
+          } else if (source !== target) {
+            // A catalogue geometry the target format has no clean equivalent
+            // for: the writer emits the closest preset AND we report the drop
+            // (SPEC-069 AC-9 / "Cross-format mapping").
+            const def = shapeDefinition(blockAt.geometry);
+            if (def?.approximateIn?.some((format) => format === target)) {
+              dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
+            }
           }
           continue;
         }
