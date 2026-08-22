@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { ref, useTemplateRef, watch } from "vue";
+import { onBeforeUnmount, ref, useTemplateRef, watch } from "vue";
 import {
+  COMMON_FONT_SIZES,
   FONT_SIZE_RANGE_MESSAGE,
   parseFontSizeInput,
   stepFontSize,
 } from "../lib/fonts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import AppIcon from "./AppIcon.vue";
 
+// The font-size control (SPEC-013, SPEC-061 AC-21): one unit made of a −
+// stepper, an editable numeric field, a + stepper and a dropdown of common
+// sizes. Font-size is the one control whose meaning is the number itself
+// (AC-2's stated exception), so it stays a text field rather than an icon.
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
 const props = defineProps({
@@ -34,6 +40,9 @@ const clampMessage = ref("");
 let clampTimer = 0;
 const root = useTemplateRef("root");
 const tooltip = useTemplateRef("tooltip");
+const sizeButton = useTemplateRef("sizeButton");
+const sizeMenu = useTemplateRef("sizeMenu");
+const menuOpen = ref(false);
 
 // A fixed-position tooltip, like the toolbar's menus: .toolbar clips on
 // overflow-y, and this hint hangs below the control — absolutely positioned
@@ -45,6 +54,15 @@ const { menuStyle } = useFloatingMenu({
   menu: () => tooltip.value,
   offsetY: 6,
   align: "center",
+});
+
+// The common-sizes dropdown is a fixed-position menu escaping the strip's
+// clipping — the same pattern as HighlightPicker's swatch popup (SPEC-061
+// AC-21: the dropdown must not be painted over by the canvas below).
+const { menuStyle: sizeMenuStyle } = useFloatingMenu({
+  open: () => menuOpen.value,
+  anchor: () => sizeButton.value,
+  menu: () => sizeMenu.value,
 });
 
 function showClampTooltip() {
@@ -93,6 +111,42 @@ function step(direction = 1) {
     emit("change", next);
   }
 }
+
+function toggleMenu() {
+  if (!props.disabled) {
+    menuOpen.value = !menuOpen.value;
+  }
+}
+
+function chooseSize(size = 11) {
+  menuOpen.value = false;
+  draft.value = String(size);
+  emit("change", size);
+}
+
+function handleDocumentMousedown(event = new MouseEvent("mousedown")) {
+  if (
+    menuOpen.value &&
+    root.value &&
+    sizeMenu.value &&
+    event.target instanceof Node &&
+    !root.value.contains(event.target) &&
+    !sizeMenu.value.contains(event.target)
+  ) {
+    menuOpen.value = false;
+  }
+}
+
+function handleMenuKeydown(event = new KeyboardEvent("keydown")) {
+  if (event.key === "Escape") {
+    menuOpen.value = false;
+  }
+}
+
+document.addEventListener("mousedown", handleDocumentMousedown);
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", handleDocumentMousedown);
+});
 </script>
 
 <template>
@@ -101,6 +155,7 @@ function step(direction = 1) {
     class="font-size-control"
     role="group"
     aria-label="Font size"
+    @keydown="handleMenuKeydown"
   >
     <button
       type="button"
@@ -119,7 +174,6 @@ function step(direction = 1) {
       data-testid="font-size-input"
       type="text"
       inputmode="decimal"
-      title="Font size"
       aria-label="Font size in points"
       :disabled="disabled"
       :value="draft"
@@ -139,6 +193,44 @@ function step(direction = 1) {
     >
       +
     </button>
+    <button
+      ref="sizeButton"
+      type="button"
+      class="size-step size-menu-button"
+      data-testid="font-size-menu-button"
+      title="Font size"
+      aria-label="Common font sizes"
+      aria-haspopup="menu"
+      :aria-expanded="menuOpen ? 'true' : 'false'"
+      :disabled="disabled"
+      @mousedown.prevent
+      @click="toggleMenu"
+    >
+      <AppIcon name="chevron-down" />
+    </button>
+    <div
+      v-if="menuOpen"
+      ref="sizeMenu"
+      class="size-menu"
+      data-testid="font-size-menu"
+      role="menu"
+      aria-label="Common font sizes"
+      :style="sizeMenuStyle"
+    >
+      <button
+        v-for="size in COMMON_FONT_SIZES"
+        :key="size"
+        type="button"
+        role="menuitemradio"
+        :aria-checked="value === size ? 'true' : 'false'"
+        :class="{ checked: value === size }"
+        :data-testid="`font-size-option-${size}`"
+        @mousedown.prevent
+        @click="chooseSize(size)"
+      >
+        {{ size }}
+      </button>
+    </div>
     <span
       v-if="clampMessage"
       ref="tooltip"
@@ -165,8 +257,12 @@ function step(direction = 1) {
   height: var(--height-control);
   padding: 0;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: var(--border-width) solid var(--border-strong);
   background: var(--surface-base);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -210,9 +306,47 @@ function step(direction = 1) {
   opacity: 0.5;
 }
 
-/* The + button closes the group visually. */
-.font-size-control > .size-step:nth-of-type(2) {
+/* The dropdown expander closes the group visually. */
+.size-menu-button {
+  border-inline-start: none;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* position/left/top come inline from useFloatingMenu (fixed, escapes the
+   toolbar's vertical clipping). z-index over the canvas so its options are
+   clickable, not painted over (AC-21). */
+.size-menu {
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 4rem;
+  max-height: min(28rem, 80vh);
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: var(--shadow-2);
+}
+
+.size-menu button {
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  text-align: center;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.size-menu button:hover {
+  background: var(--surface-canvas);
+}
+
+.size-menu button.checked {
+  background: var(--accent-subtle);
 }
 
 /* position/left/top come inline from useFloatingMenu's menuStyle. */

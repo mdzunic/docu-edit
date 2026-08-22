@@ -42,10 +42,9 @@ import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
 import TocOptionsDialog from "../components/TocOptionsDialog.vue";
 import FindBar from "../components/FindBar.vue";
-import FontFamilySelect from "../components/FontFamilySelect.vue";
-import FontSizeControl from "../components/FontSizeControl.vue";
-import FormatToolbar from "../components/FormatToolbar.vue";
-import HighlightPicker from "../components/HighlightPicker.vue";
+import DocumentToolbar from "../components/DocumentToolbar.vue";
+import ContextualToolbar from "../components/ContextualToolbar.vue";
+import TextSelectionToolbar from "../components/TextSelectionToolbar.vue";
 import NoteSettingsDialog from "../components/NoteSettingsDialog.vue";
 import OutlinePane from "../components/OutlinePane.vue";
 import SidePanel from "../components/SidePanel.vue";
@@ -58,7 +57,6 @@ import DeleteCaptionPrompt from "../components/DeleteCaptionPrompt.vue";
 import FieldToolbar from "../components/FieldToolbar.vue";
 import PageNumberDialog from "../components/PageNumberDialog.vue";
 import PageSetupDialog from "../components/PageSetupDialog.vue";
-import ParagraphToolbar from "../components/ParagraphToolbar.vue";
 import PasteOptionsChip from "../components/PasteOptionsChip.vue";
 import PrintPreviewDialog from "../components/PrintPreviewDialog.vue";
 import MergeFieldPickerDialog from "../components/MergeFieldPickerDialog.vue";
@@ -67,12 +65,9 @@ import PropertiesDialog from "../components/PropertiesDialog.vue";
 import RenameDialog from "../components/RenameDialog.vue";
 import SplitCellDialog from "../components/SplitCellDialog.vue";
 import StatisticsDialog from "../components/StatisticsDialog.vue";
-import StylePicker from "../components/StylePicker.vue";
 import TableHandlesOverlay from "../components/TableHandlesOverlay.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
-import TextColorPicker from "../components/TextColorPicker.vue";
-import UndoRedoControls from "../components/UndoRedoControls.vue";
 import UiIconButton from "../components/ui/UiIconButton.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { useToasts } from "../composables/useToasts";
@@ -94,6 +89,7 @@ import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
+import { useTextSelectionToolbar } from "./document/useTextSelectionToolbar";
 import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
@@ -369,7 +365,7 @@ import {
   undo as undoDocument,
   undoLabel as undoDocumentLabel,
 } from "../lib/undoHistory";
-import { findShortcut, isOutsideDocumentInput, shortcutLabel } from "../lib/shortcuts";
+import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 import { applyTrackChanges } from "../lib/trackChangesDiff";
 import { isMacPlatform } from "../lib/core/platform";
 
@@ -2761,6 +2757,38 @@ const effectiveTrackChangesDisplayMode = computed(() =>
   versionHistoryPreviewActive.value ? asTrackChangesDisplayMode("all") : trackChangesDisplayMode.value,
 );
 
+// Width (px) the open right-docked panes claim on the toolbar's trailing edge,
+// so the strip collapses its bands like narrowing the window would (AC-15); the
+// left-docked (default-open) outline is excluded to keep 1024px fits (AC-36).
+const toolbarReservedRight = computed(
+  () =>
+    (stylesPaneOpen.value ? 288 : 0) +
+    (commentsPaneOpen.value ? 288 : 0) +
+    (trackChangesPaneOpen.value ? 288 : 0) +
+    (versionHistoryPaneOpen.value ? 320 : 0) +
+    (accessibilityPaneOpen.value ? 320 : 0) +
+    (fontsPaneOpen.value ? 320 : 0),
+);
+
+// The anchor point (centre-x/top/bottom of the current selection rect) the
+// shared ContextualToolbar positions the contextual field toolbar against.
+function fieldToolbarAnchor() {
+  const selection = typeof window !== "undefined" ? window.getSelection() : null;
+  const rect = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).getBoundingClientRect() : null;
+  return rect ? { left: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom } : { left: 0, top: 0, bottom: 0 };
+}
+
+// The contextual text-selection toolbar (SPEC-061 AC-24..30): raised over a
+// non-empty body selection, suppressed while read-only, an object toolbar is
+// showing, shape text is being edited, or a track-changes preview is on.
+const { visible: textSelectionToolbarVisible, anchor: textSelectionAnchor, hide: hideTextSelectionToolbar } =
+  useTextSelectionToolbar({
+    contentRoot: () => contentRoot.value,
+    suppressed: () =>
+      !editable.value || !!activeHeaderFooter.value || !!shapeSelection.value || !!imageSelection.value ||
+      !!chartSelection.value || !!selectedField.value || editingShapeText.value || versionHistoryPreviewActive.value,
+  });
+
 const {
   statusBarLanguageLabel,
   currentLanguageTag,
@@ -2994,21 +3022,14 @@ function handleGlobalShortcut(event = new KeyboardEvent("keydown")) {
 // the image file, the painter's click pair) have dedicated events bound in
 // the template.
 
-// Text colour and highlight stay in the toolbar (continuous-use) but are also
-// listed in the Format menu, so the menus remain a complete map — the spec's
-// one deliberate toolbar+menu exception. The menu entries open the real
-// toolbar pickers through these refs instead of duplicating the swatch popups
-// (which would collide on their fixed data-testids).
-const textColorPickerRef = useTemplateRef("textColorPickerRef");
-const highlightPickerRef = useTemplateRef("highlightPickerRef");
+// Text colour and highlight stay in the toolbar but are also listed in the
+// Format menu; those menu entries open the real toolbar pickers through these
+// refs (via DocumentToolbar) instead of duplicating the swatch popups (which
+// would collide on their fixed data-testids).
+const documentToolbarRef = useTemplateRef("documentToolbarRef");
 
-function openTextColorMenu() {
-  textColorPickerRef.value?.openMenu();
-}
-
-function openHighlightMenu() {
-  highlightPickerRef.value?.openMenu();
-}
+function openTextColorMenu() { documentToolbarRef.value?.openTextColorMenu(); }
+function openHighlightMenu() { documentToolbarRef.value?.openHighlightMenu(); }
 
 // Every nullary editor command, keyed by id — the ONE registry both the
 // menubar (handleMenuCommand) and the keyboard shortcut path (handleKeyDown's
@@ -3262,57 +3283,30 @@ function handleMenuCommand(id = "") {
       />
     </template>
     <template #toolbar>
-      <UndoRedoControls
+      <DocumentToolbar
         v-if="editable"
-        :can-undo="undoRedoState.canUndo"
-        :undo-label="undoRedoState.undoLabel"
-        :can-redo="undoRedoState.canRedo"
-        :redo-label="undoRedoState.redoLabel"
+        ref="documentToolbarRef"
+        :reserved-right="toolbarReservedRight"
+        :undo-redo="undoRedoState"
+        :style-entries="styleEntries"
+        :style-state="styleState"
+        :format-values="formatValues"
+        :document-fonts="documentFonts"
+        :recent-colors="recentColors"
+        :format-states="formatStates"
+        :paragraph-state="paragraphState"
+        :list-state="listState"
+        :paragraph-pagination="paragraphPagination"
         @undo="performUndo"
         @redo="performRedo"
-      />
-      <StylePicker
-        v-if="editable"
-        :entries="styleEntries"
-        :current-id="styleState.id"
-        :current-name="styleState.name"
-        @apply="handleApplyStyle"
+        @apply-style="handleApplyStyle"
         @update-style="handleUpdateStyle"
         @reset-style="handleResetStyle"
-      />
-      <FontFamilySelect
-        v-if="editable"
-        :value="formatValues.fontFamily"
-        :document-fonts="documentFonts"
-        @select="handleFontFamilySelect"
-      />
-      <!-- ?? undefined: the mixed state's null must reach the control as
-           "prop absent" so its own null default (= blank) applies. -->
-      <FontSizeControl
-        v-if="editable"
-        :value="formatValues.fontSizePt ?? undefined"
-        @change="handleFontSizeChange"
-      />
-      <FormatToolbar
-        v-if="editable"
-        :states="formatStates"
-        @toggle="toggleCharacterFormat"
-      />
-      <FieldToolbar
-        v-if="editable && selectedField"
-        :locked="isFieldLocked(selectedField)"
-        :read-only="isReadOnlyField(selectedField)"
-        @field-action="handleFieldAction"
-      />
-      <ParagraphToolbar
-        v-if="editable"
-        :alignment="paragraphState.alignment"
-        :space-before="paragraphState.spaceBefore"
-        :direction="paragraphState.direction"
-        :bulleted="listState.bulleted"
-        :numbered="listState.numbered"
-        :list-marker="listState.marker"
-        :pagination="paragraphPagination"
+        @font-family-select="handleFontFamilySelect"
+        @font-size-change="handleFontSizeChange"
+        @toggle-character-format="toggleCharacterFormat"
+        @text-color-select="handleTextColorSelect"
+        @highlight-select="handleHighlightSelect"
         @align="handleAlign"
         @indent="handleIndent"
         @spacing-preset="handleSpacingPreset"
@@ -3323,32 +3317,6 @@ function handleMenuCommand(id = "") {
         @list-marker="handleListMarker"
         @toggle-pagination="handleTogglePagination"
       />
-      <TextColorPicker
-        v-if="editable"
-        ref="textColorPickerRef"
-        :value="formatValues.color"
-        :mixed="formatValues.colorMixed"
-        :recent="recentColors"
-        @select="handleTextColorSelect"
-      />
-      <HighlightPicker
-        v-if="editable"
-        ref="highlightPickerRef"
-        :value="formatValues.highlight"
-        :mixed="formatValues.highlightMixed"
-        @select="handleHighlightSelect"
-      />
-      <button
-        v-if="editable"
-        type="button"
-        class="track-changes-toolbar-toggle"
-        data-testid="toolbar-track-changes-toggle"
-        :aria-pressed="trackChangesRecording"
-        :title="shortcutLabel('edit.toggleTrackChanges')"
-        @click="toggleTrackChangesRecording"
-      >
-        Track changes: {{ trackChangesRecording ? "On" : "Off" }}
-      </button>
     </template>
     <div
       v-if="lockState === 'busy'"
@@ -3942,53 +3910,104 @@ function handleMenuCommand(id = "") {
       @select="handlePasteOption"
       @dismiss="dismissPasteChip"
     />
-    <ImageToolbar
+    <ContextualToolbar
+      v-if="textSelectionToolbarVisible"
+      class="print-exclude"
+      testid="text-selection-toolbar"
+      label="Text selection actions"
+      placement="above"
+      :left="textSelectionAnchor.left"
+      :top="textSelectionAnchor.top"
+      :anchor-bottom="textSelectionAnchor.bottom"
+      @dismiss="hideTextSelectionToolbar"
+    >
+      <TextSelectionToolbar
+        :states="formatStates"
+        @toggle="toggleCharacterFormat"
+        @text-color="openTextColorMenu"
+        @highlight="openHighlightMenu"
+        @link="openLinkDialog"
+        @comment="openCommentComposer"
+      />
+    </ContextualToolbar>
+    <ContextualToolbar
+      v-if="editable && selectedField"
+      class="print-exclude"
+      testid="field-toolbar"
+      label="Field actions"
+      placement="above"
+      :left="fieldToolbarAnchor().left"
+      :top="fieldToolbarAnchor().top"
+      :anchor-bottom="fieldToolbarAnchor().bottom"
+    >
+      <FieldToolbar
+        :locked="isFieldLocked(selectedField)"
+        :read-only="isReadOnlyField(selectedField)"
+        @field-action="handleFieldAction"
+      />
+    </ContextualToolbar>
+    <ContextualToolbar
       v-if="imageSelection && imageHandles"
       class="print-exclude"
+      testid="image-toolbar"
+      label="Image formatting"
       :left="imageToolbarStyle().left"
       :top="imageToolbarStyle().top"
-      :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
-      @wrap="handleImageWrap"
-      @options="openImageOptions"
-      @delete="deleteImageWithCaptionPrompt"
-    />
-    <ShapeToolbar
+    >
+      <ImageToolbar
+        :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
+        @wrap="handleImageWrap"
+        @options="openImageOptions"
+        @delete="deleteImageWithCaptionPrompt"
+      />
+    </ContextualToolbar>
+    <ContextualToolbar
       v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection) && !movingShape"
       class="print-exclude"
+      testid="shape-toolbar"
+      label="Shape formatting"
       :left="shapeToolbarStyle().left"
       :top="shapeToolbarStyle().top"
-      :placement="shapeToolbarStyle().placement"
-      :fill="shapeAt(doc, shapeSelection)?.fill || ''"
-      :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
-      :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
-      :outline-dash="shapeAt(doc, shapeSelection)?.outline?.dash || 'solid'"
-      :rotation-deg="shapeAt(doc, shapeSelection)?.rotationDeg ?? 0"
-      :wrap="shapeAt(doc, shapeSelection)?.wrap || 'inline'"
-      :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
-      :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
-      :can-group="canGroupSelection()"
-      @fill="handleShapeFill"
-      @outline="handleShapeOutline"
-      @rotation="handleShapeRotationInput"
-      @wrap="handleShapeWrap"
-      @alt-text="handleShapeAltText"
-      @z-order="handleShapeZOrder"
-      @group="handleGroupSelected(currentGroupMembers())"
-      @ungroup="handleUngroupSelected"
-      @delete="handleShapeDelete"
-      @duplicate="handleShapeDuplicate"
-    />
-    <ChartToolbar
+      :lift="shapeToolbarStyle().placement === 'above'"
+    >
+      <ShapeToolbar
+        :fill="shapeAt(doc, shapeSelection)?.fill || ''"
+        :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
+        :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
+        :outline-dash="shapeAt(doc, shapeSelection)?.outline?.dash || 'solid'"
+        :rotation-deg="shapeAt(doc, shapeSelection)?.rotationDeg ?? 0"
+        :wrap="shapeAt(doc, shapeSelection)?.wrap || 'inline'"
+        :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
+        :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
+        :can-group="canGroupSelection()"
+        @fill="handleShapeFill"
+        @outline="handleShapeOutline"
+        @rotation="handleShapeRotationInput"
+        @wrap="handleShapeWrap"
+        @alt-text="handleShapeAltText"
+        @z-order="handleShapeZOrder"
+        @group="handleGroupSelected(currentGroupMembers())"
+        @ungroup="handleUngroupSelected"
+        @delete="handleShapeDelete"
+        @duplicate="handleShapeDuplicate"
+      />
+    </ContextualToolbar>
+    <ContextualToolbar
       v-if="chartSelection && chartHandles && doc && chartAt(doc, chartSelection)"
       class="print-exclude"
+      testid="chart-toolbar"
+      label="Chart formatting"
       :left="chartToolbarStyle().left"
       :top="chartToolbarStyle().top"
-      :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
-      @edit-data="handleChartEditData(chartSelection.section, chartSelection.block)"
-      @options="openChartOptions"
-      @delete="deleteChartWithCaptionPrompt"
-      @duplicate="handleChartDuplicate"
-    />
+    >
+      <ChartToolbar
+        :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
+        @edit-data="handleChartEditData(chartSelection.section, chartSelection.block)"
+        @options="openChartOptions"
+        @delete="deleteChartWithCaptionPrompt"
+        @duplicate="handleChartDuplicate"
+      />
+    </ContextualToolbar>
     <EditorContextMenu
       v-if="contextMenu.visible"
       class="print-exclude"
@@ -4289,28 +4308,9 @@ function handleMenuCommand(id = "") {
   text-decoration: underline;
 }
 
-/* SPEC-039 AC-1: a clear on/off state in both the toolbar and the status
-   bar — the toolbar button reads as a toggle chip, the status-bar one
-   matches word-count-button's plain-until-hovered look. */
-.track-changes-toolbar-toggle {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--height-control);
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  background: none;
-  cursor: pointer;
-}
-
-.track-changes-toolbar-toggle[aria-pressed="true"] {
-  background: var(--surface-sunken);
-  color: var(--success);
-  border-color: var(--success);
-}
-
+/* SPEC-039 AC-1 / SPEC-061 AC-19: the duplicate toolbar track-changes button
+   is removed; the status-bar control is the single one, matching
+   word-count-button's plain-until-hovered look. */
 .track-changes-status-indicator {
   font: inherit;
   font-size: var(--text-sm);

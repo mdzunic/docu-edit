@@ -132,7 +132,9 @@ test("sub-32px toolbar controls meet the 32×32 hit target (AC-48)", async ({ pa
     "paragraph-pagination-button",
     "list-bulleted-menu-button",
     "list-numbered-menu-button",
-    "toolbar-track-changes-toggle",
+    // SPEC-061 removed the duplicate toolbar track-changes toggle; the
+    // surviving status-bar control is a plain text control, not a toolbar
+    // hit-target.
   ];
   for (const id of ids) {
     const control = page.getByTestId(id);

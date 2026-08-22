@@ -8,8 +8,6 @@ import { ref, watch } from "vue";
 import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
-  left: { type: Number, required: true },
-  top: { type: Number, required: true },
   fill: { type: String, default: "" },
   outlineColor: { type: String, default: "" },
   outlineWidthPt: { type: Number, default: 1 },
@@ -19,11 +17,6 @@ const props = defineProps({
   altText: { type: String, default: "" },
   grouped: { type: Boolean, default: false },
   canGroup: { type: Boolean, default: false },
-  /** "above" anchors `top` at the toolbar's BOTTOM edge (it lifts itself by
-   * its own height in CSS), "below" at its top edge as usual — see
-   * useShapes.ts's shapeToolbarStyle for why the caller cannot resolve this
-   * to a plain `top` itself. */
-  placement: { type: String, default: "below" },
 });
 
 const emit = defineEmits([
@@ -61,10 +54,6 @@ watch(
     rotationInput.value = String(deg);
   },
 );
-
-function toolbarStyle() {
-  return { left: `${props.left}px`, top: `${props.top}px` };
-}
 
 function onFillInput(event = new Event("input")) {
   const target = event.target;
@@ -134,14 +123,7 @@ function onZOrderChange(event = new Event("change")) {
 </script>
 
 <template>
-  <div
-    class="shape-toolbar"
-    :class="{ 'shape-toolbar-above': placement === 'above' }"
-    data-testid="shape-toolbar"
-    role="toolbar"
-    aria-label="Shape formatting"
-    :style="toolbarStyle()"
-  >
+  <div class="shape-toolbar-controls">
     <label
       class="shape-toolbar-field"
       title="Fill colour"
@@ -328,27 +310,11 @@ function onZOrderChange(event = new Event("change")) {
 </template>
 
 <style scoped>
-.shape-toolbar {
-  position: fixed;
-  z-index: 30;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  max-width: 640px;
-  background: var(--surface-base);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-2);
-}
-
-/* Placed above the shape, `top` is where the toolbar's bottom edge belongs:
-   lifting by its own rendered height is the one measurement CSS can do that
-   the caller cannot, and it is what keeps a two- or three-row toolbar off
-   the shape it belongs to. */
-.shape-toolbar-above {
-  transform: translateY(-100%);
+/* The controls are direct flex children of the shared ContextualToolbar; this
+   wrapper only groups them in the template (display:contents removes its box
+   so the separators' align-self:stretch still resolves against the bar). */
+.shape-toolbar-controls {
+  display: contents;
 }
 
 .shape-toolbar-field {
