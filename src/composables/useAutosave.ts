@@ -7,6 +7,7 @@ import {
   createAutosaveScheduler,
   type AutosaveScheduler,
 } from "../lib/core/autosaveScheduler";
+import { usePreferences } from "./usePreferences";
 import {
   commitDocument,
   deleteDraft,
@@ -55,6 +56,12 @@ interface CommittedStash {
 }
 
 export function useAutosave(options: UseAutosaveOptions) {
+  // SPEC-066: crash-recovery drafts (the debounced saveDraft below) are the
+  // safety net and always run; the "Autosave" preference only gates the
+  // automatic *committed* writes at clean-close/pagehide, so turning it off
+  // stops the committed write, not the safety net (AC-47). The "Autosave
+  // delay" preference feeds the scheduler's debounce, read live per change.
+  const { preferences } = usePreferences();
   const saveState = ref<"saved" | "saving" | "error">("saved");
   const saveStateText = computed(() => {
     switch (saveState.value) {
@@ -83,6 +90,7 @@ export function useAutosave(options: UseAutosaveOptions) {
       flush: () => {
         void performSave();
       },
+      debounceMs: () => preferences.autosaveDelayMs,
     });
   }
 
@@ -194,7 +202,9 @@ export function useAutosave(options: UseAutosaveOptions) {
     }
     scheduler?.dispose();
     scheduler = null;
-    if (commit && recovery.value === null) {
+    // The committed write is gated on the Autosave preference (AC-47); the
+    // draft already written by the scheduler remains the recoverable copy.
+    if (commit && recovery.value === null && preferences.autosave) {
       void commitDocument(id, options.getCaret(), options.getScroll()).catch(
         () => {},
       );
@@ -337,9 +347,10 @@ export function useAutosave(options: UseAutosaveOptions) {
       event.preventDefault();
       // Chromium still requires returnValue for the prompt to show.
       event.returnValue = "";
-    } else if (recovery.value === null) {
+    } else if (recovery.value === null && preferences.autosave) {
       // Clean close: start the commit here, where more of the page
-      // lifetime remains than in pagehide.
+      // lifetime remains than in pagehide. Gated on the Autosave preference
+      // (AC-47) — a pending draft still flushed above keeps data recoverable.
       void commitDocument(docId, options.getCaret(), options.getScroll())
         .then(() => options.onCleanClose?.())
         .catch(() => {});
@@ -354,7 +365,7 @@ export function useAutosave(options: UseAutosaveOptions) {
       void saveDraft(docId, options.getCaret(), options.getScroll()).catch(
         () => {},
       );
-    } else if (recovery.value === null) {
+    } else if (recovery.value === null && preferences.autosave) {
       void commitDocument(docId, options.getCaret(), options.getScroll())
         .then(() => options.onCleanClose?.())
         .catch(() => {});

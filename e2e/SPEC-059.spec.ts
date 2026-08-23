@@ -82,12 +82,15 @@ test("choosing a theme sets data-theme on <html>, and system removes it (AC-4/6)
   expect(await htmlTheme(page)).toBeNull();
 });
 
-test("the preference persists under docu-edit:theme and survives a reload (AC-2/5/54/57)", async ({
+test("the preference persists in the preferences store and survives a reload (AC-2/5/54/57)", async ({
   page,
 }) => {
   await createDocument(page);
   await chooseTheme(page, "dark");
-  expect(await page.evaluate(() => localStorage.getItem("docu-edit:theme"))).toBe("dark");
+  // SPEC-066 folds the theme into the single docu-edit:preferences object.
+  expect(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("docu-edit:preferences") || "{}").theme),
+  ).toBe("dark");
 
   // A reload re-applies before the app owns the theme: the no-flash script in
   // index.html sets data-theme straight from storage, so it is present the
@@ -115,7 +118,9 @@ test("Dim page is default-off, dark-only, screen-only and persists (AC-13/14/49/
   await openAppearance(page);
   await expect(page.getByTestId("appearance-dim-page")).toBeEnabled();
   await page.getByTestId("appearance-dim-page").click();
-  expect(await page.evaluate(() => localStorage.getItem("docu-edit:dim-page"))).toBe("1");
+  expect(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("docu-edit:preferences") || "{}").dimPage),
+  ).toBe(true);
   expect(
     await page.evaluate(() => document.documentElement.getAttribute("data-dim-page")),
   ).toBe("1");

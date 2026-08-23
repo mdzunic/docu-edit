@@ -75,6 +75,7 @@ import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
 import UiIconButton from "../components/ui/UiIconButton.vue";
 import { useAutosave } from "../composables/useAutosave";
+import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useToasts } from "../composables/useToasts";
 import { noApplyEditOptions } from "./document/context";
 import { useAutocorrect } from "./document/useAutocorrect";
@@ -3094,6 +3095,9 @@ function openHighlightMenu() { documentToolbarRef.value?.openHighlightMenu(); }
 // object-literal type needs an index signature, which is TS-only syntax
 // espree cannot parse here — Map's get() is typed without one.
 const { themeMenu, themeCommands } = useThemeControls({ ...editorContext, invalidate: () => pagination.invalidateAll() });
+// The Preferences dialog (SPEC-066) is hosted by AppShell and shared via this
+// singleton flag, so File → Preferences… opens the same instance Cmd+, does.
+const preferencesDialog = usePreferencesDialog();
 const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059 AC-50); wiring in useThemeControls.
   ...zoomView.commands, ...viewModes.commands, // SPEC-063 zoom + view-mode command ids (AC-11, AC-33, AC-34).
   // File
@@ -3106,6 +3110,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["file.delete", () => { confirmingDelete.value = true; }],
   // Return to the library (SPEC-060); the route guard flushes autosave first.
   ["file.close", closeOpenDocument],
+  ["app.preferences", () => preferencesDialog.open()],
   // Edit
   // Ctrl/Cmd+Z (SPEC-015 AC-1).
   ["edit.undo", performUndo],

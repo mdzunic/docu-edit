@@ -5,7 +5,7 @@
 // changes in it (AC "leaves the toggle OFF"), and resets to OFF on every
 // session close (a document switch), so switching documents never leaks one
 // document's recording state into another's.
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import {
   acceptAllChanges,
   acceptChange as acceptChangeCommand,
@@ -16,7 +16,7 @@ import {
   rejectChange as rejectChangeCommand,
   type ChangeEntry,
 } from "../../lib/trackChanges";
-import { loadTrackChangesAuthor, saveTrackChangesAuthor } from "../../lib/trackChangesIdentity";
+import { usePreferences } from "../../composables/usePreferences";
 import type { ModelSelection } from "../../lib/commands";
 import { asTrackChangesDisplayMode } from "../../lib/documentModel";
 import type { EditorContext } from "./context";
@@ -49,8 +49,14 @@ export function useTrackChanges(deps: TrackChangesDeps) {
 
   // --- author identity (SPEC-038's settable identity, AC-6) -------------
 
-  const trackChangesAuthorName = ref(loadTrackChangesAuthor());
-  watch(trackChangesAuthorName, (name) => saveTrackChangesAuthor(name));
+  // The tracked-changes author is the same SPEC-038 settable identity as the
+  // comment author — now a centralized preference (SPEC-066), so setting your
+  // name once still affects both. A writable computed keeps the ref-shaped API.
+  const trackChangesPreferences = usePreferences();
+  const trackChangesAuthorName = computed({
+    get: () => trackChangesPreferences.preferences.authorName,
+    set: (name: string) => trackChangesPreferences.setPreference("authorName", name),
+  });
 
   // --- display mode (AC-9) -----------------------------------------------
 

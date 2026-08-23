@@ -11,6 +11,7 @@ import { computed, nextTick, ref, watch, type Ref, type ShallowRef } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { type DocumentModel, sectionContentWidthCm } from "../../lib/documentModel";
 import { useTier } from "../../composables/useResponsiveTier";
+import { usePreferences } from "../../composables/usePreferences";
 
 export type ViewMode = "print" | "web";
 
@@ -66,12 +67,15 @@ export function useViewModes(deps: ViewModesDeps) {
   const viewMode = ref<ViewMode>("print");
   // Focus is deliberately NOT loaded from or written to storage (AC-48, 50).
   const focusMode = ref(false);
+  // The default a new document opens in comes from preferences (SPEC-066).
+  const { preferences } = usePreferences();
 
   // Choose the mode for the current document: an explicit stored choice always
   // wins (SPEC-068 AC-36 — Print stays selectable and sticky), otherwise the
   // compact tier defaults to Web layout at fit-width (AC-35) and every wider
-  // tier defaults to Print (SPEC-063 AC-48). Defaults never write storage, so
-  // widening back to a desktop returns to Print unless the user pinned Web.
+  // tier falls back to the "Default view mode" preference (SPEC-066), Print by
+  // default (SPEC-063 AC-48). Defaults never write storage, so widening back to
+  // a desktop returns to the preferred default unless the user pinned a mode.
   function applyModeForTier(id: string): void {
     const stored = readStoredViewModeRaw(id);
     if (stored) {
@@ -80,7 +84,7 @@ export function useViewModes(deps: ViewModesDeps) {
       viewMode.value = "web";
       deps.onCompactWebDefault?.();
     } else {
-      viewMode.value = "print";
+      viewMode.value = preferences.defaultViewMode;
     }
   }
 

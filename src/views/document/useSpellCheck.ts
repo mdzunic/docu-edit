@@ -29,6 +29,7 @@ import {
   type CustomDictionaryEntry,
 } from "../../lib/customDictionary";
 import { noIdleHandle, scheduleIdleWork } from "../../lib/core/idleScheduler";
+import { usePreferences } from "../../composables/usePreferences";
 import { BLOCK_SELECTOR, domPointForCaret } from "../../lib/domCaret";
 
 /** A flagged word, addressed the same way a bookmark/find-match is: a
@@ -121,6 +122,9 @@ export type SpellCheckDeps = EditorContext;
 
 export function useSpellCheck(deps: SpellCheckDeps) {
   const { doc, contentRoot, pageRef, getScrollContainer, onScroll, onSessionClose, onUnmount, zoom } = deps;
+  // "Check spelling as you type" is a preference (SPEC-066): when off, no
+  // scanning runs and no underlines are shown.
+  const { preferences } = usePreferences();
 
   const spellUnderlineRects = shallowRef<SpellUnderlineRect[]>([]);
   // The custom dictionary's live entries (SPEC-035 AC-8.1, AC-8.2), for the
@@ -355,7 +359,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     const root = contentRoot.value as HTMLElement | null;
     const pageEl = pageRef.value as HTMLElement | null;
     const model = doc.value;
-    if (!root || !pageEl || !model) {
+    if (!root || !pageEl || !model || !preferences.spellCheck) {
       spellUnderlineRects.value = [];
       return;
     }
@@ -471,6 +475,21 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     invalidateIssueCache();
     scheduleSpellCheck();
   });
+
+  // Toggling the preference applies live (AC-7): re-scan when turned on, clear
+  // the underlines when turned off.
+  watch(
+    () => preferences.spellCheck,
+    (enabled) => {
+      if (enabled) {
+        invalidateIssueCache();
+        scheduleSpellCheck();
+      } else {
+        cancelSpellCheckScheduled();
+        spellUnderlineRects.value = [];
+      }
+    },
+  );
 
   onScroll(scheduleSpellCheck);
   onSessionClose(resetSpellCheckSession);

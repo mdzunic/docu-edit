@@ -9,6 +9,7 @@
 import { computed, ref, triggerRef } from "vue";
 import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { STORAGE_FULL_REASON } from "../../composables/useAutosave";
+import { usePreferences } from "../../composables/usePreferences";
 import { DEFAULT_TITLE } from "../../lib/documentModel";
 import { isStorageAvailable, touchDocument, trashDocument } from "../../lib/documentStore";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../../lib/docx/writer";
@@ -39,10 +40,18 @@ export function useFileActions(deps: FileActionsDeps) {
   const { doc, addToast, exportPdf, commitNow, noteVersionHistoryCommitPoint } = deps;
   // Deleting the open document navigates back to the library (SPEC-003).
   const router = useRouter();
+  // The "Default download format" preference (SPEC-066): "source" keeps the
+  // pre-spec behaviour (mirror the document's own format); a fixed choice
+  // makes the download button offer that format first.
+  const { preferences } = usePreferences();
 
   const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
 
   const downloadFormat = computed(() => {
+    const preferred = preferences.defaultDownloadFormat;
+    if (preferred === "docx" || preferred === "odt") {
+      return preferred;
+    }
     if (!doc.value) {
       return "docx";
     }
@@ -123,7 +132,9 @@ export function useFileActions(deps: FileActionsDeps) {
     // too, but only ever for an edited chart's lost properties (chartFeature)
     // — "Conversion report" is the wrong heading there, since nothing
     // converted; conversionReportSameFormat drives the dialog's own variant.
-    if (dropped.length > 0 && !doc.value.suppressConversionReport) {
+    // Gated on both the app-level "Show the conversion report" preference
+    // (SPEC-066) and the per-document "don't show again" (SPEC-008).
+    if (dropped.length > 0 && preferences.showConversionReport && !doc.value.suppressConversionReport) {
       conversionReportSameFormat.value = doc.value.format === format;
       conversionReport.value = dropped;
     }

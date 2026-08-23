@@ -176,10 +176,11 @@ describe("settings (AC-24, AC-27, AC-28)", () => {
     await typeAt(1, "-");
     await typeAt(2, "-");
     expect(await storedText("dash-off")).toBe("a--");
-    expect(JSON.parse(localStorage.getItem("docu-edit:autocorrect")!)).toEqual({
-      smartQuotes: true,
-      dashes: false,
-    });
+    // SPEC-066 folds the autocorrect toggles into docu-edit:preferences as
+    // smartQuotes / smartDashes.
+    const prefs = JSON.parse(localStorage.getItem("docu-edit:preferences")!);
+    expect(prefs.smartQuotes).toBe(true);
+    expect(prefs.smartDashes).toBe(false);
   });
 
   it("never runs on paste", async () => {
