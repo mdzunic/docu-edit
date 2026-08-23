@@ -30,12 +30,18 @@ const thumbnail = ref(getCachedThumbnail(props.id, props.lastModified) ?? null);
 // — a real IntersectionObserver is assignable to it.
 let observer = { disconnect() {} };
 
+// runWhenIdle is not itself cancellable, so a scheduled render can fire up to
+// 500ms after the card has scrolled out and unmounted — during whatever route
+// the user navigated to next. This guard drops that orphaned work so the
+// library never spends idle time rendering a thumbnail for a gone card.
+let unmounted = false;
+
 function produce() {
   if (thumbnail.value) {
     return;
   }
   runWhenIdle(() => {
-    if (thumbnail.value) {
+    if (unmounted || thumbnail.value) {
       return;
     }
     const model = getDocument(props.id);
@@ -66,6 +72,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  unmounted = true;
   observer.disconnect();
 });
 </script>
