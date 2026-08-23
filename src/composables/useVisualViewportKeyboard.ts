@@ -44,6 +44,11 @@ export interface VisualViewportKeyboardDeps {
   getCaretRect: () => DOMRect | null;
 }
 
+/** The visual viewport, or null in environments without it (jsdom, old UAs). */
+function viewport(): VisualViewport | null {
+  return typeof window !== "undefined" ? window.visualViewport : null;
+}
+
 export function useVisualViewportKeyboard(deps: VisualViewportKeyboardDeps) {
   /** The keyboard's height in px (0 when closed) — exposed so chrome can lift
    * off the keyboard rather than sitting behind it. */
@@ -52,10 +57,6 @@ export function useVisualViewportKeyboard(deps: VisualViewportKeyboardDeps) {
   // The document scroll position captured when the keyboard opened, restored on
   // close so nothing is lost (AC-31, AC-44).
   let restoreScrollTop: number | null = null;
-
-  function viewport(): VisualViewport | null {
-    return typeof window !== "undefined" ? window.visualViewport : null;
-  }
 
   function onViewportChange() {
     const vv = viewport();
