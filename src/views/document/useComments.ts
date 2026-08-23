@@ -21,7 +21,7 @@ import {
   visibleCommentThreads,
   type VisibleCommentThread,
 } from "../../lib/comments";
-import { loadCommentAuthor, saveCommentAuthor } from "../../lib/core/commentIdentity";
+import { usePreferences } from "../../composables/usePreferences";
 import { isCollapsed, type ModelSelection } from "../../lib/commands";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommentMessage } from "../../lib/documentModel";
@@ -138,8 +138,15 @@ export function useComments(deps: CommentsDeps) {
   const commentFilter = ref<CommentFilter>("all");
   const commentAuthorFilter = ref<string>("");
 
-  const commentAuthorName = ref(loadCommentAuthor());
-  watch(commentAuthorName, (name) => saveCommentAuthor(name));
+  // The author identity is the SPEC-038 settable name, now one of the
+  // centralized preferences (SPEC-066) rather than its own docu-edit:comment-
+  // author key. A writable computed so the comments UI still reads and sets it
+  // as a ref, but every write goes through the store (AC-18, AC-46).
+  const preferencesApi = usePreferences();
+  const commentAuthorName = computed({
+    get: () => preferencesApi.preferences.authorName,
+    set: (name: string) => preferencesApi.setPreference("authorName", name),
+  });
 
   const activeThreadId = ref<string | null>(null);
 
