@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
 import { resolveThemeColor, useTheme } from "./useTheme";
-import { THEME_STORAGE_KEY } from "../lib/themePrefs";
+import { PREFERENCES_STORAGE_KEY } from "../lib/preferences";
 
 // The composable is a module singleton, so these tests exercise the live
 // shared state; each resets the DOM attributes and storage it touches.
@@ -28,11 +28,12 @@ describe("useTheme (SPEC-059)", () => {
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
   });
 
-  it("persists the choice under the documented key (AC-2)", async () => {
+  it("persists the choice in the preferences store (AC-2; SPEC-066 folds theme in)", async () => {
     const { setTheme } = useTheme();
     setTheme("dark");
     await nextTick();
-    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
+    const prefs = JSON.parse(localStorage.getItem(PREFERENCES_STORAGE_KEY) as string) as { theme?: string };
+    expect(prefs.theme).toBe("dark");
   });
 
   it("resolvedTheme collapses system to the OS value and honours explicit choices (AC-3)", async () => {

@@ -9,10 +9,23 @@
          from the stored preference so the first paint is the right theme. Only
          an explicit "light"/"dark" is applied; "system" (or absent/unknown)
          leaves no attribute so the media query alone decides (AC-6). Wrapped
-         so a blocked localStorage (private mode, SPEC-003) never throws. -->
+         so a blocked localStorage (private mode, SPEC-003) never throws.
+         SPEC-066 folds the theme into docu-edit:preferences; this reads that
+         first and falls back to the pre-migration docu-edit:theme key so a
+         user upgrading (whose legacy key the app has not yet migrated) still
+         gets a flash-free first paint. -->
     <script>
       try {
-        var t = localStorage.getItem("docu-edit:theme");
+        var t = null;
+        var raw = localStorage.getItem("docu-edit:preferences");
+        if (raw) {
+          try {
+            t = JSON.parse(raw).theme;
+          } catch (parseError) {}
+        }
+        if (t !== "light" && t !== "dark") {
+          t = localStorage.getItem("docu-edit:theme");
+        }
         if (t === "light" || t === "dark") {
           document.documentElement.setAttribute("data-theme", t);
         }
