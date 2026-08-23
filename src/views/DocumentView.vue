@@ -102,6 +102,7 @@ import { useThemeControls } from "./document/useThemeControls";
 import { useCommandPalette } from "./document/useCommandPalette";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
+import { useLongPress, openContextMenuAtPoint } from "../composables/useLongPress";
 import { useCaptions } from "./document/useCaptions";
 import { renumberCaptions } from "../lib/captions";
 import { useEquations } from "./document/useEquations";
@@ -2953,6 +2954,12 @@ const {
   onContextMenu,
   handleFieldAction,
 } = useFields({ ...editorContext, tocPageNumberFor, handleContextMenu, closeContextMenu });
+
+// SPEC-068 AC-22/23: a touch long-press on the canvas opens the same context
+// menu the mouse right-click opens, by dispatching a synthetic contextmenu at
+// the point (which the contenteditable's @contextmenu handler runs unchanged);
+// a moving finger is a selection drag and never trips it.
+useLongPress({ target: () => contentRoot.value, onLongPress: openContextMenuAtPoint });
 
 const {
   captionDialogOpen,
