@@ -103,6 +103,7 @@ import { useCommandPalette } from "./document/useCommandPalette";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useLongPress, openContextMenuAtPoint } from "../composables/useLongPress";
+import { useVisualViewportKeyboard } from "../composables/useVisualViewportKeyboard";
 import { useCaptions } from "./document/useCaptions";
 import { renumberCaptions } from "../lib/captions";
 import { useEquations } from "./document/useEquations";
@@ -251,7 +252,7 @@ import {
   noHighlightRects,
   noMatches,
 } from "../lib/findReplace";
-import { noTableHandleGeometry } from "../lib/caretGeometry";
+import { caretClientRect, noTableHandleGeometry } from "../lib/caretGeometry";
 import { findTableElement, noColumnResizeDrag, noRowResizeDrag } from "../lib/tableResize";
 import { previewColumnWidths, previewRowHeight, tableRowElement } from "../lib/core/tables";
 import { CM_PER_PX } from "../lib/core/units";
@@ -2961,6 +2962,14 @@ const {
 // a moving finger is a selection drag and never trips it.
 useLongPress({ target: () => contentRoot.value, onLongPress: openContextMenuAtPoint });
 
+// SPEC-068 AC-29/30/31: keep the caret above the on-screen keyboard by scrolling
+// the document to the visual viewport, and restore the scroll position when the
+// keyboard closes.
+const { keyboardInset } = useVisualViewportKeyboard({
+  getScrollContainer: () => scrollContainer,
+  getCaretRect: () => { const root = contentRoot.value; return root && caret ? caretClientRect(root, caret) : null; },
+});
+
 const {
   captionDialogOpen,
   captionLabels,
@@ -3256,7 +3265,7 @@ function handleMenuCommand(id = "") {
   <AppShell
     v-if="doc"
     :class="viewRootClass"
-    :style="{ '--web-content-width': webContentWidthCss }"
+    :style="{ '--web-content-width': webContentWidthCss, '--keyboard-inset-bottom': keyboardInset + 'px' }"
     :document-title="doc.title"
     :title-editable="editable"
     :format-badge="formatBadge"

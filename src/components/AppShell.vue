@@ -436,6 +436,12 @@ h1.document-title[role="button"] {
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: var(--text-sm);
+  /* SPEC-068 — when the on-screen keyboard opens it overlays the bottom of the
+     viewport; DocumentView feeds the keyboard height as --keyboard-inset-bottom
+     and the status bar lifts by exactly that so it stays pinned to the visible
+     viewport rather than sitting behind the keyboard. 0 (no transform) when the
+     keyboard is closed. */
+  transform: translateY(calc(-1 * var(--keyboard-inset-bottom, 0px)));
 }
 
 .drop-overlay {
