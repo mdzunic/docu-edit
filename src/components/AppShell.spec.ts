@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -189,6 +189,21 @@ describe("AppShell", () => {
   });
 
   describe("drag-and-drop (SPEC-009)", () => {
+    // A drop navigates to /doc/:id, whose route component is a lazy
+    // `() => import("./views/DocumentView.vue")`. The very first time that
+    // module graph is imported in a test worker, Vite transforms the whole
+    // (now large) editor dependency tree on demand, which takes a few seconds
+    // — longer than untilNavigated's polling window, so the first navigating
+    // test would flake. Pre-importing the lazy route components here pays that
+    // transform cost once up front, so router.push() resolves from cache and
+    // each test's navigation completes promptly.
+    beforeAll(async () => {
+      await Promise.all([
+        import("../views/DocumentView.vue"),
+        import("../views/HomeView.vue"),
+      ]);
+    });
+
     it("shows a full-window 'Drop to open' overlay while a file is dragged over the window (AC-1)", async () => {
       const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
       mountedWrappers.push(wrapper);
