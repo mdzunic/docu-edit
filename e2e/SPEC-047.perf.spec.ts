@@ -14,16 +14,21 @@ import { MOD } from "./keys";
 // is local to this file, matching that convention.
 //
 // Timing validity: the baselines are calibrated for THIS FILE running with
-// the machine otherwise quiet. A full-suite `npx playwright test` runs
-// sibling spec files in parallel workers, whose CPU load can inflate these
-// samples — the median-of-5 plus the 15% relative allowance absorb typical
-// contention, but a timing failure seen only in a full-suite run should be
-// confirmed with a solo run of this file before being treated as a
-// regression. The same applies at HOST level: the factory's gate container
-// shares its host machine's CPU, so heavy work on the host during a gate
-// run (builds, other browser suites, review agents) starves the container
-// and inflates every row together — a gate failure whose rows all drifted
-// ~2x in unison is contention, and a quiet re-run is the diagnostic.
+// the machine otherwise quiet. playwright.config.ts therefore runs it in its
+// own project (`perf-large-document`), dispatched after every functional
+// test and after SPEC-052's two short samples: inside the one `chromium`
+// project it used to start mid-suite and spend its whole run sharing the
+// CPU with a sibling worker, and the single-shot open/save rows crept over
+// the 15% relative gate as the suite and the factory host grew busier. What
+// still overlaps — the last in-flight functional tests, SPEC-052's samples —
+// lands inside the first of the five runs, which the median absorbs. A
+// timing failure seen only in a full-suite run should still be confirmed
+// with a solo run of this file before being treated as a regression. The
+// same applies at HOST level: the factory's gate container shares its host
+// machine's CPU, so heavy work on the host during a gate run (builds, other
+// lanes' suites, review agents) starves the container and inflates every
+// row together — a gate failure whose rows all drifted ~2x in unison is
+// contention, and a quiet re-run is the diagnostic.
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_PATH = path.join(REPO_ROOT, "e2e", "fixtures", "spec-047-fixture.docx");

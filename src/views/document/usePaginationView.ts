@@ -182,7 +182,8 @@ export interface PaginationViewDeps extends EditorContext {
   /** The reactive caret mirror (SPEC-053 AC-10): a field run shades when the
    * caret sits on it. Unlike `getCaret()` this is a ref, so a caret move
    * re-renders the paragraph it lands in (which `getCaret()`, being
-   * non-reactive, would not). */
+   * non-reactive, would not). Read only through usePaginationView's
+   * `fieldCaret` computed, never directly by the page render. */
   caretPosition: Ref<CaretPosition | null>;
 }
 
@@ -269,6 +270,7 @@ function renderEntryFor(
   item: PageItem,
   marks: boolean,
   deps: PaginationViewDeps,
+  fieldCaret: CaretPosition | null,
 ): RenderEntry | null {
   const block = flatEntry.block;
   const column = item.columnIndex;
@@ -404,13 +406,13 @@ function renderEntryFor(
   const outlineCollapsed = outlineToggle && deps.collapsedHeadings.value.has(headingKey);
   // SPEC-053 field shading: the caret's offset within this body paragraph, so
   // the field run it lands on paints shaded (AC-10). Run start offsets let a
-  // field branch below know its own atom's offset.
-  // Read the reactive caret (not getCaret()) so a caret move actually
-  // re-renders this paragraph and repaints field shading (AC-10).
-  const caret = deps.caretPosition.value;
+  // field branch below know its own atom's offset. `fieldCaret` is the
+  // caret mirror narrowed by usePaginationView to "inside a field-bearing
+  // body paragraph" — never the raw reactive caret, which would make every
+  // caret move rebuild every page (see the computed's comment).
   const caretOffsetHere =
-    caret && caret.section === flatEntry.section && caret.block === flatEntry.blockIndex && !caret.cell
-      ? caret.offset
+    fieldCaret && fieldCaret.section === flatEntry.section && fieldCaret.block === flatEntry.blockIndex
+      ? fieldCaret.offset
       : null;
   const runStarts: number[] = [];
   {
@@ -994,6 +996,30 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     );
   });
 
+  /** SPEC-053 AC-10 field shading is the page render's only caret-dependent
+   * input, and it must not track the raw caret mirror: every keystroke and
+   * click replaces `caretPosition`, and a tracked read of it inside
+   * renderEntryFor rebuilt every realized page's entries and re-rendered every
+   * DocPage for a shading state that cannot have changed — a second full page
+   * pass inside the open's first-layout task (SPEC-047 AC-16's longest block)
+   * and extra full-page flushes on every keystroke. This computed is the caret
+   * only while it sits in a body paragraph that holds a shadeable field run,
+   * and null otherwise; a computed that keeps returning null never notifies
+   * pagedViews, so plain-text caret moves cost nothing here. Cell carets stay
+   * null, as before: table-cell fields are DocTableBlock's own paint. */
+  const fieldCaret = computed<CaretPosition | null>(() => {
+    const caret = deps.caretPosition.value;
+    const model = deps.doc.value;
+    if (!caret || !model || caret.cell) {
+      return null;
+    }
+    const block = model.sections[caret.section]?.blocks[caret.block];
+    if (!block || block.type !== "paragraph") {
+      return null;
+    }
+    return block.runs.some((run) => run.field && !isMergeChipField(run.field)) ? caret : null;
+  });
+
   /** The rendered pages: the layout's items joined with flatBlocks' per-block
    * render data, styles resolved from each page's own geometry. Under
    * virtualization only realized pages build entries; the rest render as
@@ -1003,6 +1029,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     if (!model) {
       return [];
     }
+    const fieldCaretNow = fieldCaret.value;
     const marks = deps.marksOn.value;
     const byAddress = new Map<string, FlatEntry>();
     for (const entry of flatBlocks.value) {
@@ -1056,7 +1083,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         if (!flatEntry) {
           continue;
         }
-        const entry = renderEntryFor(model, flatEntry, item, marks, deps);
+        const entry = renderEntryFor(model, flatEntry, item, marks, deps, fieldCaretNow);
         if (!entry) {
           continue;
         }
