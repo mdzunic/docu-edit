@@ -141,7 +141,10 @@ export function onStorageStatusChange(listener: () => void): () => void {
   return () => storageListeners.delete(listener);
 }
 
-function markStorageUnavailable(): void {
+/** Latches the storage-unavailable state and shows the SPEC-003 warning
+ * banner. Exported so the preferences module (SPEC-066) surfaces the same
+ * warning when a preference write hits a blocked or full `localStorage`. */
+export function markStorageUnavailable(): void {
   if (!storageAvailable) {
     return;
   }
