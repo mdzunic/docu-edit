@@ -39,6 +39,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: "file.mail-merge", label: "Mail merge…", path: ["File"], scope: "document" },
   { id: "file.delete", label: "Delete document", path: ["File"], scope: "document" },
   { id: "file.close", label: "Close", path: ["File"], scope: "document", aliases: ["return to library", "exit"] },
+  { id: "app.preferences", label: "Preferences…", path: ["File"], scope: "document", aliases: ["settings", "options"] },
 
   // --- Edit -----------------------------------------------------------------
   { id: "edit.undo", label: "Undo", path: ["Edit"], scope: "document" },
@@ -141,6 +142,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: "library.new-document", label: "New document", path: ["Library"], scope: "library" },
   { id: "library.new-from-template", label: "New from template…", path: ["Library"], scope: "library" },
   { id: "library.open", label: "Open document", path: ["Library"], scope: "library" },
+  { id: "library.preferences", label: "Preferences…", path: ["Library"], scope: "library", aliases: ["settings", "options"] },
 ];
 
 // Typed pass-throughs for CommandPalette.vue's untyped Array/Object props: a

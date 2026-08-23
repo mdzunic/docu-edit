@@ -14,6 +14,7 @@ import RowMenu from "../components/library/RowMenu.vue";
 import LibraryCard from "../components/library/LibraryCard.vue";
 import HighlightedTitle from "../components/library/HighlightedTitle.vue";
 import { openDocumentFile } from "../lib/openDocument";
+import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { COMMANDS, loadRecentCommands, pushRecentCommand } from "../lib/commandCatalogue";
 import {
   getOrCreateDocument,
@@ -316,6 +317,11 @@ async function handleFileChosen() {
 
 // --- command palette (SPEC-062) ------------------------------------------
 
+// Preferences (SPEC-066) are reachable from the library too (AC-39): the
+// app-bar button and the library command palette both open the dialog AppShell
+// hosts.
+const preferencesDialog = usePreferencesDialog();
+
 const libraryCommands = COMMANDS.filter((command) => command.scope === "library");
 const libraryCommandIds = libraryCommands.map((command) => command.id);
 const commandPaletteOpen = ref(false);
@@ -338,6 +344,8 @@ function runLibraryCommand(id = "") {
     openTemplateGallery();
   } else if (id === "library.open") {
     pickFile();
+  } else if (id === "library.preferences") {
+    preferencesDialog.open();
   }
 }
 
@@ -390,6 +398,15 @@ watch(sortKeyChoice, (value) => lib.setSortKey(value));
 
 <template>
   <AppShell document-title="No document">
+    <template #app-bar-actions>
+      <UiButton
+        variant="ghost"
+        data-testid="library-preferences"
+        @click="preferencesDialog.open()"
+      >
+        Preferences
+      </UiButton>
+    </template>
     <!-- First-run: no documents anywhere (AC-51..53). -->
     <div
       v-if="lib.libraryEmpty.value && lib.trashCount.value === 0 && !lib.showTrash.value"

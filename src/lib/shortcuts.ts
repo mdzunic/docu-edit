@@ -58,7 +58,10 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "format.italic", label: "Italic", category: "Formatting", bindings: [{ key: "i", mod: true }], overridesBrowser: true },
   { id: "format.underline", label: "Underline", category: "Formatting", bindings: [{ key: "u", mod: true }], overridesBrowser: true },
   { id: "format.strikethrough", label: "Strikethrough", category: "Formatting", bindings: [{ key: "x", mod: true, shift: true }] },
-  { id: "format.subscript", label: "Subscript", category: "Formatting", bindings: [{ key: ",", mod: true }] },
+  // SPEC-066 claims the conventional Cmd/Ctrl+, for Preferences (AC-2), the
+  // macOS system convention. Subscript moves to Cmd/Ctrl+Shift+, — the same
+  // key with Shift — so the pair still reads together and no binding collides.
+  { id: "format.subscript", label: "Subscript", category: "Formatting", bindings: [{ key: ",", mod: true, shift: true }] },
   { id: "format.superscript", label: "Superscript", category: "Formatting", bindings: [{ key: ".", mod: true }] },
   { id: "format.clearFormatting", label: "Clear formatting", category: "Formatting", bindings: [{ key: "\\", mod: true }] },
 
@@ -175,6 +178,10 @@ export const SHORTCUTS: ShortcutDefinition[] = [
 
   // File
   { id: "file.print", label: "Print", category: "File", bindings: [{ key: "p", mod: true }], overridesBrowser: true },
+  // SPEC-066 AC-1/AC-2: the conventional Preferences accelerator, Cmd+, on
+  // macOS / Ctrl+, elsewhere. Handled at the shell level so it opens from the
+  // library and the editor alike.
+  { id: "app.preferences", label: "Preferences", category: "File", bindings: [{ key: ",", mod: true }] },
 
   // View
   // SPEC-062 AC-1/AC-2: Ctrl/Cmd+K opens the command palette from anywhere in

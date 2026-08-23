@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import { useRouter } from "vue-router";
+import PreferencesDialog from "./PreferencesDialog.vue";
 import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
+import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useToasts } from "../composables/useToasts";
 import { storeDocument } from "../lib/documentStore";
 import {
@@ -162,13 +164,23 @@ onUnmounted(() => {
 // mid-search), the find bar, or another text input outside the document.
 const shortcutsOpen = ref(false);
 
+// The Preferences dialog (SPEC-066) is hosted here — the one component both
+// the library and the editor wrap — so Cmd/Ctrl+, and the dialog are reachable
+// from either view (AC-39, AC-40). The open flag is a shared singleton the
+// File menu and the library entry point drive too.
+const preferencesDialog = usePreferencesDialog();
+
 function handleGlobalKeydown(event = new KeyboardEvent("keydown")) {
   if (event.altKey || isOutsideDocumentInput(event.target)) {
     return;
   }
-  if (findShortcut(event)?.id === "view.shortcuts") {
+  const id = findShortcut(event)?.id;
+  if (id === "view.shortcuts") {
     event.preventDefault();
     shortcutsOpen.value = true;
+  } else if (id === "app.preferences") {
+    event.preventDefault();
+    preferencesDialog.open();
   }
 }
 
@@ -266,6 +278,10 @@ onUnmounted(() => {
     <ShortcutsDialog
       v-if="shortcutsOpen"
       @close="shortcutsOpen = false"
+    />
+    <PreferencesDialog
+      v-if="preferencesDialog.isOpen.value"
+      @close="preferencesDialog.close()"
     />
     <div
       v-if="showDropOverlay"
