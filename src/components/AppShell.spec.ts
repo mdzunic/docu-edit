@@ -39,9 +39,15 @@ function mountWithRouter(documentTitle = "t") {
 // A drop's router.push() resolves only once its target route's async
 // component has been dynamically import()ed, which needs real event-loop
 // time, not just a promise-queue flush (same reason HomeView's library
-// spec polls rather than awaiting flushPromises() alone).
+// spec polls rather than awaiting flushPromises() alone). The window is
+// generous (up to 10s) rather than tight: the drop handler also parses the
+// dropped .docx before it navigates, and on a CPU-starved gate worker that
+// parse plus the lazy editor import — even with the beforeAll cache-warm —
+// can outlast a 2s poll, which is exactly the flake this widening removes.
+// The window only costs wall-clock when navigation genuinely never happens;
+// the assertion that follows still fails a real navigation break.
 async function untilNavigated(router: ReturnType<typeof createRouter>) {
-  for (let i = 0; i < 200; i += 1) {
+  for (let i = 0; i < 1000; i += 1) {
     if (router.currentRoute.value.path !== "/") {
       return;
     }
