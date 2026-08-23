@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import UiButton from "./ui/UiButton.vue";
+import { useTier } from "../composables/useResponsiveTier";
 // The chart toolbar's controls (SPEC-052): "Edit data" (AC-5), "Chart
 // options" and delete/duplicate — disabled for an unsupported chart type
 // (AC-30), whose reason shows instead (AC-31). Positioning, chrome, ARIA and
@@ -10,6 +12,14 @@ defineProps({
 });
 
 defineEmits(["edit-data", "options", "delete", "duplicate"]);
+
+// SPEC-068 AC-12/13 — the chart data sheet is one of the commands disabled at
+// the compact tier (a spreadsheet grid at 390px is not usable). The chart
+// itself still renders and can be moved/deleted; only "Edit data" is off,
+// shown with a stated reason rather than removed.
+const tier = useTier();
+const dataSheetUnavailable = computed(() => tier.value === "compact");
+const DATA_SHEET_UNAVAILABLE_REASON = "not available on this screen size";
 </script>
 
 <template>
@@ -25,6 +35,8 @@ defineEmits(["edit-data", "options", "delete", "duplicate"]);
     <UiButton
       variant="ghost"
       data-testid="chart-edit-data-button"
+      :disabled="dataSheetUnavailable"
+      :title="dataSheetUnavailable ? DATA_SHEET_UNAVAILABLE_REASON : 'Edit data'"
       @mousedown.prevent
       @click="$emit('edit-data')"
     >
