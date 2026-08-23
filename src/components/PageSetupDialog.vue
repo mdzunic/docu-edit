@@ -11,7 +11,7 @@ import {
   pageSizeFor,
   textAreaTooNarrow,
 } from "../lib/core/pageSetup";
-import { fromCm, roundForDisplay, toCm } from "../lib/core/units";
+import { fromCm, parseLengthToCm, roundForDisplay } from "../lib/core/units";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 
@@ -64,9 +64,12 @@ const UNIT_OPTIONS = ["cm", "mm", "in", "pt"];
 const pageSize = computed(() => {
   if (paperSize.value === "Custom") {
     const u = asMeasurementUnit(unit.value);
+    // parseLengthToCm accepts a bare number in the current unit or an explicit
+    // suffix ("21cm", "8.5in"); null (unparseable) becomes NaN so sizeError
+    // catches it and OK stays disabled (SPEC-064 AC-11/AC-11b).
     return {
-      widthCm: toCm(Number(widthInput.value), u),
-      heightCm: toCm(Number(heightInput.value), u),
+      widthCm: parseLengthToCm(widthInput.value, u) ?? NaN,
+      heightCm: parseLengthToCm(heightInput.value, u) ?? NaN,
     };
   }
   return pageSizeFor(asPaperSizeName(paperSize.value), asOrientation(orientation.value));
@@ -75,10 +78,10 @@ const pageSize = computed(() => {
 const margins = computed(() => {
   const u = asMeasurementUnit(unit.value);
   return {
-    topCm: toCm(Number(marginTopInput.value), u),
-    rightCm: toCm(Number(marginRightInput.value), u),
-    bottomCm: toCm(Number(marginBottomInput.value), u),
-    leftCm: toCm(Number(marginLeftInput.value), u),
+    topCm: parseLengthToCm(marginTopInput.value, u) ?? NaN,
+    rightCm: parseLengthToCm(marginRightInput.value, u) ?? NaN,
+    bottomCm: parseLengthToCm(marginBottomInput.value, u) ?? NaN,
+    leftCm: parseLengthToCm(marginLeftInput.value, u) ?? NaN,
   };
 });
 
@@ -116,7 +119,11 @@ let previousUnit = unit.value;
 function convert(value = "0") {
   const from = asMeasurementUnit(previousUnit);
   const to = asMeasurementUnit(unit.value);
-  return String(roundForDisplay(fromCm(toCm(Number(value), from), to), to));
+  // Reinterpret whatever the field holds (a bare number or a suffixed value)
+  // through centimetres into the newly chosen unit; leave an unparseable draft
+  // untouched so the user can fix it.
+  const cm = parseLengthToCm(value, from);
+  return cm === null ? value : String(roundForDisplay(fromCm(cm, to), to));
 }
 function handleUnitChange() {
   widthInput.value = convert(widthInput.value);
@@ -140,9 +147,13 @@ const sizeError = computed(() => {
 
 /** AC-9: rejects margins that would leave a text area narrower than 1cm in
  * either dimension, with the exact required message. */
-const marginsError = computed(() =>
-  textAreaTooNarrow(pageSize.value, margins.value) ? MARGINS_TOO_LARGE_MESSAGE : "",
-);
+const marginsError = computed(() => {
+  const m = margins.value;
+  if (![m.topCm, m.rightCm, m.bottomCm, m.leftCm].every(Number.isFinite)) {
+    return "Enter a valid margin";
+  }
+  return textAreaTooNarrow(pageSize.value, m) ? MARGINS_TOO_LARGE_MESSAGE : "";
+});
 
 const error = computed(() => sizeError.value || marginsError.value);
 
@@ -230,8 +241,8 @@ function apply() {
             v-model="widthInput"
             class="field-input"
             data-testid="page-setup-width"
-            type="number"
-            step="0.01"
+            type="text"
+            inputmode="decimal"
             :aria-label="`Width in ${unit}`"
           >
         </label>
@@ -241,8 +252,8 @@ function apply() {
             v-model="heightInput"
             class="field-input"
             data-testid="page-setup-height"
-            type="number"
-            step="0.01"
+            type="text"
+            inputmode="decimal"
             :aria-label="`Height in ${unit}`"
           >
         </label>
@@ -267,8 +278,8 @@ function apply() {
             v-model="marginTopInput"
             class="field-input"
             data-testid="page-setup-margin-top"
-            type="number"
-            step="0.01"
+            type="text"
+            inputmode="decimal"
             :aria-label="`Top margin in ${unit}`"
           >
         </label>
@@ -278,8 +289,8 @@ function apply() {
             v-model="marginBottomInput"
             class="field-input"
             data-testid="page-setup-margin-bottom"
-            type="number"
-            step="0.01"
+            type="text"
+            inputmode="decimal"
             :aria-label="`Bottom margin in ${unit}`"
           >
         </label>
@@ -291,8 +302,8 @@ function apply() {
             v-model="marginLeftInput"
             class="field-input"
             data-testid="page-setup-margin-left"
-            type="number"
-            step="0.01"
+            type="text"
+            inputmode="decimal"
             :aria-label="`Left margin in ${unit}`"
           >
         </label>
@@ -302,8 +313,8 @@ function apply() {
             v-model="marginRightInput"
             class="field-input"
             data-testid="page-setup-margin-right"
-            type="number"
-            step="0.01"
+            type="text"
+            inputmode="decimal"
             :aria-label="`Right margin in ${unit}`"
           >
         </label>

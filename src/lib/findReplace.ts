@@ -71,6 +71,13 @@ export function noHighlightRects(): HighlightRect[] {
   return [];
 }
 
+/** Typed pass-through for a HighlightRect[] coming from a `.vue` template's
+ * `unknown[]` prop (espree bars the `PropType` annotation — same idiom as
+ * documentModel.asTabStops), so PageMarkupOverlays can iterate the rects. */
+export function asHighlightRects(value: unknown): HighlightRect[] {
+  return value as HighlightRect[];
+}
+
 /** A query that could not be compiled (an invalid regular expression), so the
  * search must not run and the bar shows the message inline (AC). */
 export interface QueryError {

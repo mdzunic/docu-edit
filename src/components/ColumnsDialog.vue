@@ -5,7 +5,7 @@
 // the resolved layout and scope for the parent to apply through a command;
 // Cancel closes. BaseDialog owns the shell, Escape and initial focus (the
 // [autofocus] count input).
-import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
 import {
   MAX_COLUMN_COUNT,
   MIN_COLUMN_COUNT,
@@ -13,26 +13,47 @@ import {
   asSectionColumns,
   resolveColumnWidthsCm,
 } from "../lib/documentModel";
+import { asMeasurementUnit, formatLength, parseLengthToCm } from "../lib/core/units";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 
 const props = defineProps({
   /** { columns: SectionColumns, contentWidthCm: number, applyTo: string }. */
   initial: { type: Object, required: true },
+  /** The document's measurement-unit preference (SPEC-064) — the length field
+   * text displays and parses in this unit; the model stays in centimetres. */
+  unit: { type: String, default: "cm" },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
 
+// The unit the width/spacing fields display/parse in; stored lengths stay cm.
+const measurementUnit = computed(() => asMeasurementUnit(props.unit));
+const unitLabel = computed(() => props.unit);
+
 const contentWidthCm = Number(props.initial.contentWidthCm) || 16;
 const seed = asSectionColumns(props.initial.columns);
+const seedGapCm = round(seed.gapCm ?? 1.27);
 
 const count = ref(Math.max(MIN_COLUMN_COUNT, Math.min(MAX_COLUMN_COUNT, seed.count || 1)));
 const countDraft = ref(String(count.value));
 const countError = ref("");
 const equalWidth = ref(seed.equalWidth !== false);
 const separator = ref(seed.separator === true);
-const gapCm = ref(round(seed.gapCm ?? 1.27));
-const widths = ref(seedWidths());
+// Spacing/gap held as display text in the current unit; cm stays canonical.
+const gapDraft = ref(formatLength(seedGapCm, measurementUnit.value));
+const gapCm = computed(() => {
+  const parsed = parseLengthToCm(gapDraft.value, measurementUnit.value);
+  return parsed !== null && parsed >= 0 ? round(parsed) : seedGapCm;
+});
+// Per-column widths held as display text; the parsed cm values stay canonical.
+const widthDrafts = ref(seedWidthsCm().map((cm) => formatLength(cm, measurementUnit.value)));
+const widthsCm = computed(() =>
+  widthDrafts.value.map((text) => {
+    const parsed = parseLengthToCm(text, measurementUnit.value);
+    return parsed === null ? Number.NaN : round(parsed);
+  }),
+);
 const applyTo = ref(props.initial.applyTo === "selection" ? "selection" : "thisSection");
 
 const countInput = useTemplateRef("countInput");
@@ -51,7 +72,7 @@ function round(value = 0) {
 
 // The per-column widths to seed the editable fields with: the section's own
 // widths when it has unequal columns, else the evenly computed widths.
-function seedWidths() {
+function seedWidthsCm() {
   const resolved = resolveColumnWidthsCm(
     { count: count.value, equalWidth: equalWidth.value, gapCm: gapCm.value, separator: false, widthsCm: seed.widthsCm },
     contentWidthCm,
@@ -59,22 +80,23 @@ function seedWidths() {
   return resolved.map(round);
 }
 
-// The widths shown in the (read-only, when equal) width fields.
+// The widths shown in the fields, as display text in the current unit: the
+// evenly computed split when equal (read-only), else the editable drafts.
 const displayWidths = computed(() => {
   if (equalWidth.value) {
     return resolveColumnWidthsCm(
       { count: count.value, equalWidth: true, gapCm: gapCm.value, separator: false },
       contentWidthCm,
-    ).map(round);
+    ).map((cm) => formatLength(cm, measurementUnit.value));
   }
-  return widths.value;
+  return widthDrafts.value;
 });
 
 function setCount(next = 1) {
   count.value = next;
   countDraft.value = String(next);
   countError.value = "";
-  widths.value = seedWidths();
+  widthDrafts.value = seedWidthsCm().map((cm) => formatLength(cm, measurementUnit.value));
 }
 
 function choosePreset(next = 1) {
@@ -97,26 +119,55 @@ function commitCount() {
 // when it just became false, seed the now-editable fields from the even split.
 function onEqualChange() {
   if (!equalWidth.value) {
-    widths.value = resolveColumnWidthsCm(
+    widthDrafts.value = resolveColumnWidthsCm(
       { count: count.value, equalWidth: true, gapCm: gapCm.value, separator: false },
       contentWidthCm,
-    ).map(round);
+    ).map((cm) => formatLength(cm, measurementUnit.value));
   }
 }
+
+const gapError = computed(() => {
+  if (count.value <= 1) {
+    return "";
+  }
+  const parsed = parseLengthToCm(gapDraft.value, measurementUnit.value);
+  if (gapDraft.value === "" || parsed === null || parsed < 0) {
+    return `Spacing must be a non-negative ${unitLabel.value} value`;
+  }
+  return "";
+});
 
 const widthError = computed(() => {
   if (equalWidth.value || count.value <= 1) {
     return "";
   }
-  for (const width of widths.value) {
+  for (const width of widthsCm.value) {
     if (!Number.isFinite(width) || width < MIN_SECTION_COLUMN_WIDTH_CM) {
-      return `Columns are too narrow (minimum ${MIN_SECTION_COLUMN_WIDTH_CM} cm)`;
+      return `Columns are too narrow (minimum ${formatLength(MIN_SECTION_COLUMN_WIDTH_CM, measurementUnit.value)} ${unitLabel.value})`;
     }
   }
   return "";
 });
 
-const error = computed(() => widthError.value);
+const error = computed(() => gapError.value || widthError.value);
+
+// Reformat the visible field text when the unit changes, re-deriving each from
+// its underlying cm value so centimetres stay the source of truth (SPEC-064).
+watch(
+  () => props.unit,
+  (next = "cm", previous = "cm") => {
+    const previousUnit = asMeasurementUnit(previous);
+    const nextUnit = asMeasurementUnit(next);
+    const gap = parseLengthToCm(gapDraft.value, previousUnit);
+    if (gap !== null) {
+      gapDraft.value = formatLength(gap, nextUnit);
+    }
+    widthDrafts.value = widthDrafts.value.map((text) => {
+      const cm = parseLengthToCm(text, previousUnit);
+      return cm === null ? text : formatLength(cm, nextUnit);
+    });
+  },
+);
 
 function apply() {
   if (error.value) {
@@ -128,7 +179,7 @@ function apply() {
       equalWidth: equalWidth.value,
       gapCm: gapCm.value,
       separator: separator.value,
-      widthsCm: equalWidth.value ? undefined : widths.value.slice(),
+      widthsCm: equalWidth.value ? undefined : widthsCm.value.slice(),
     },
     applyTo: applyTo.value,
   });
@@ -177,14 +228,13 @@ function apply() {
         >
       </label>
       <label class="field">
-        <span class="field-label">Spacing (cm)</span>
+        <span class="field-label">Spacing ({{ unitLabel }})</span>
         <input
-          v-model.number="gapCm"
+          v-model="gapDraft"
           class="field-input"
           data-testid="columns-spacing"
-          type="number"
-          min="0"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
           :disabled="count <= 1"
         >
       </label>
@@ -219,23 +269,22 @@ function apply() {
         :key="index"
         class="field width-field"
       >
-        <span class="field-label">Column {{ index + 1 }} width (cm)</span>
+        <span class="field-label">Column {{ index + 1 }} width ({{ unitLabel }})</span>
         <input
           v-if="equalWidth"
           class="field-input"
           :data-testid="`columns-width-${index}`"
-          type="number"
+          type="text"
           :value="width"
           disabled
         >
         <input
           v-else
-          v-model.number="widths[index]"
+          v-model="widthDrafts[index]"
           class="field-input"
           :data-testid="`columns-width-${index}`"
-          type="number"
-          :min="MIN_SECTION_COLUMN_WIDTH_CM"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
         >
       </label>
     </div>

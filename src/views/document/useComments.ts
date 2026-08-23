@@ -46,6 +46,13 @@ export function noCommentHighlightRects(): CommentHighlightRect[] {
   return [];
 }
 
+/** Typed pass-through for a CommentHighlightRect[] coming from a `.vue`
+ * template's `unknown[]` prop (espree bars the annotation), so
+ * PageMarkupOverlays can iterate the rects. */
+export function asCommentHighlightRects(value: unknown): CommentHighlightRect[] {
+  return value as CommentHighlightRect[];
+}
+
 export type CommentFilter = "all" | "open" | "resolved";
 
 /** Typed pass-through for a comment filter coming from a `.vue` template's

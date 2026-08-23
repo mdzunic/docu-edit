@@ -6,7 +6,13 @@
 import { describe, it, expect } from "vitest";
 import { createDocument, type DocumentModel, type Paragraph } from "./documentModel";
 import type { CaretPosition } from "./textEditing";
-import { caretSelection, setPageMargins, setPageSetup, type ModelSelection } from "./commands";
+import {
+  caretSelection,
+  setHeaderFooterDistance,
+  setPageMargins,
+  setPageSetup,
+  type ModelSelection,
+} from "./commands";
 import { cmToTwips, twipsToCm } from "./core/units";
 
 // The same twip-grid snap setPageSetup applies internally (commands.ts's
@@ -123,5 +129,53 @@ describe("setPageMargins also drops a stale preserved docxSectPr (SPEC-027 AC-10
     model.sourceXml = { docxSectPr: "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>" };
     const result = setPageMargins(model, selection(), { leftCm: 3 });
     expect(result.model.sourceXml?.docxSectPr).toBeUndefined();
+  });
+});
+
+describe("setPageMargins top/bottom (SPEC-064 AC-2a — the vertical ruler)", () => {
+  it("sets the top margin from a vertical-ruler drag, snapped to the grid", () => {
+    const result = setPageMargins(doc(), selection(), { topCm: 3 });
+    expect(result.model.defaultStyles.margins.topCm).toBe(snap(3));
+    // The other three margins are untouched.
+    expect(result.model.defaultStyles.margins.bottomCm).toBe(doc().defaultStyles.margins.bottomCm);
+    expect(result.model.defaultStyles.margins.leftCm).toBe(doc().defaultStyles.margins.leftCm);
+  });
+
+  it("sets the bottom margin and clamps a negative drag to zero", () => {
+    const result = setPageMargins(doc(), selection(), { bottomCm: -5 });
+    expect(result.model.defaultStyles.margins.bottomCm).toBe(0);
+  });
+
+  it("edits the caret section's own margins when it carries them (SPEC-028)", () => {
+    const model = doc();
+    model.sections[0].margins = { topCm: 2, rightCm: 2, bottomCm: 2, leftCm: 2 };
+    const result = setPageMargins(model, selection(), { topCm: 4 });
+    expect(result.model.sections[0].margins?.topCm).toBe(snap(4));
+    // The document defaults stay put.
+    expect(result.model.defaultStyles.margins.topCm).toBe(model.defaultStyles.margins.topCm);
+  });
+});
+
+describe("setHeaderFooterDistance (SPEC-064 AC-3a/AC-3b)", () => {
+  it("writes the caret section's header distance from the top edge", () => {
+    const result = setHeaderFooterDistance(doc(), selection(), { headerDistanceCm: 1.5 });
+    expect(result.model.sections[0].headerDistanceCm).toBe(snap(1.5));
+    expect(result.model.sections[0].footerDistanceCm).toBeUndefined();
+  });
+
+  it("writes the caret section's footer distance from the bottom edge", () => {
+    const result = setHeaderFooterDistance(doc(), selection(), { footerDistanceCm: 0.8 });
+    expect(result.model.sections[0].footerDistanceCm).toBe(snap(0.8));
+  });
+
+  it("clamps a negative distance to zero", () => {
+    const result = setHeaderFooterDistance(doc(), selection(), { headerDistanceCm: -2 });
+    expect(result.model.sections[0].headerDistanceCm).toBe(0);
+  });
+
+  it("leaves the page margins and content untouched", () => {
+    const result = setHeaderFooterDistance(doc(), selection(), { headerDistanceCm: 1.5 });
+    expect(result.model.defaultStyles.margins).toEqual(doc().defaultStyles.margins);
+    expect(result.model.sections[0].blocks).toEqual(doc().sections[0].blocks);
   });
 });

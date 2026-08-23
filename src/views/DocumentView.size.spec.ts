@@ -33,12 +33,13 @@
 //   2026-08-15  4715  Phase 2b — useCanvasGestures extracted
 //   2026-08-17  4667  Phase 2c — usePaginationEngine extracted
 //   2026-08-22  4616  SPEC-065 — seven pane docks collapsed into one SidePanel
+//   2026-08-22  4584  SPEC-064 — find/comment/spell overlays → PageMarkupOverlays
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 4616;
+const LINE_BUDGET = 4584;
 
 describe("DocumentView size budget", () => {
   it(`DocumentView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

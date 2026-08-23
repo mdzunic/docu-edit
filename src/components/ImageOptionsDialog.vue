@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed, watch } from "vue";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
+import { parseLengthToCm, formatLength, asMeasurementUnit } from "../lib/core/units";
 
 // The "Image options" panel (SPEC-024 AC-15..22): alt text, size in cm with
 // a lock-aspect-ratio toggle, and a "Reset size" button. Same dialog shape
@@ -13,13 +14,22 @@ const props = defineProps({
   /** Prefill: { altText, widthCm, heightCm, naturalWidthCm, naturalHeightCm,
    * lockAspectRatio }. */
   initial: { type: Object, required: true },
+  /** The app-wide measurement unit (SPEC-064); size fields display and parse
+   * in it while the model keeps centimetres. */
+  unit: { type: String, default: "cm" },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
 
+// The size fields show/enter values in the current unit; unitLabel names it.
+const measurementUnit = computed(() => asMeasurementUnit(props.unit));
+const unitLabel = computed(() => props.unit);
+
 const altText = ref(String(props.initial.altText || ""));
-const widthCm = ref(String(props.initial.widthCm));
-const heightCm = ref(String(props.initial.heightCm));
+// widthCm/heightCm hold the field text in the display unit; widthCmValue()/
+// heightCmValue() convert back to the centimetres the model stores.
+const widthCm = ref(formatLength(Number(props.initial.widthCm), measurementUnit.value));
+const heightCm = ref(formatLength(Number(props.initial.heightCm), measurementUnit.value));
 const lockAspectRatio = ref(props.initial.lockAspectRatio !== false);
 
 const naturalWidthCm = Number(props.initial.naturalWidthCm) || Number(props.initial.widthCm) || 1;
@@ -28,14 +38,26 @@ const naturalHeightCm = Number(props.initial.naturalHeightCm) || Number(props.in
 // image's natural (source) ratio, not whatever the box currently shows.
 const naturalRatio = naturalWidthCm / naturalHeightCm;
 
+function widthCmValue() {
+  return parseLengthToCm(widthCm.value, measurementUnit.value);
+}
+
+function heightCmValue() {
+  return parseLengthToCm(heightCm.value, measurementUnit.value);
+}
+
 function widthError() {
-  const value = Number(widthCm.value);
-  return Number.isFinite(value) && value > 0 && value <= 500 ? "" : "Width must be between 0 and 500cm";
+  const value = widthCmValue();
+  return value !== null && value > 0 && value <= 500
+    ? ""
+    : `Width must be between 0 and ${formatLength(500, measurementUnit.value)}${unitLabel.value}`;
 }
 
 function heightError() {
-  const value = Number(heightCm.value);
-  return Number.isFinite(value) && value > 0 && value <= 500 ? "" : "Height must be between 0 and 500cm";
+  const value = heightCmValue();
+  return value !== null && value > 0 && value <= 500
+    ? ""
+    : `Height must be between 0 and ${formatLength(500, measurementUnit.value)}${unitLabel.value}`;
 }
 
 function error() {
@@ -48,9 +70,9 @@ function handleWidthInput() {
   if (!lockAspectRatio.value) {
     return;
   }
-  const width = Number(widthCm.value);
-  if (Number.isFinite(width) && width > 0) {
-    heightCm.value = (width / naturalRatio).toFixed(2);
+  const width = widthCmValue();
+  if (width !== null && width > 0) {
+    heightCm.value = formatLength(width / naturalRatio, measurementUnit.value);
   }
 }
 
@@ -58,18 +80,31 @@ function handleHeightInput() {
   if (!lockAspectRatio.value) {
     return;
   }
-  const height = Number(heightCm.value);
-  if (Number.isFinite(height) && height > 0) {
-    widthCm.value = (height * naturalRatio).toFixed(2);
+  const height = heightCmValue();
+  if (height !== null && height > 0) {
+    widthCm.value = formatLength(height * naturalRatio, measurementUnit.value);
   }
 }
 
 // AC-21, AC-22: restores natural size and re-enables the lock.
 function resetSize() {
-  widthCm.value = naturalWidthCm.toFixed(2);
-  heightCm.value = naturalHeightCm.toFixed(2);
+  widthCm.value = formatLength(naturalWidthCm, measurementUnit.value);
+  heightCm.value = formatLength(naturalHeightCm, measurementUnit.value);
   lockAspectRatio.value = true;
 }
+
+// Reformat the visible field text from the underlying centimetres when the
+// app-wide unit changes while the dialog is open (SPEC-064).
+watch(() => props.unit, (next, prev) => {
+  const width = parseLengthToCm(widthCm.value, asMeasurementUnit(prev));
+  const height = parseLengthToCm(heightCm.value, asMeasurementUnit(prev));
+  if (width !== null) {
+    widthCm.value = formatLength(width, asMeasurementUnit(next));
+  }
+  if (height !== null) {
+    heightCm.value = formatLength(height, asMeasurementUnit(next));
+  }
+});
 
 function apply() {
   if (error()) {
@@ -77,8 +112,8 @@ function apply() {
   }
   emit("apply", {
     altText: altText.value.trim(),
-    widthCm: Number(widthCm.value),
-    heightCm: Number(heightCm.value),
+    widthCm: widthCmValue(),
+    heightCm: heightCmValue(),
   });
 }
 </script>
@@ -104,28 +139,24 @@ function apply() {
 
     <div class="field-row">
       <label class="field">
-        <span class="field-label">Width (cm)</span>
+        <span class="field-label">Width ({{ unitLabel }})</span>
         <input
           v-model="widthCm"
           class="field-input"
           data-testid="image-options-width"
-          type="number"
-          min="0.1"
-          max="500"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
           @input="handleWidthInput"
         >
       </label>
       <label class="field">
-        <span class="field-label">Height (cm)</span>
+        <span class="field-label">Height ({{ unitLabel }})</span>
         <input
           v-model="heightCm"
           class="field-input"
           data-testid="image-options-height"
-          type="number"
-          min="0.1"
-          max="500"
-          step="0.1"
+          type="text"
+          inputmode="decimal"
           @input="handleHeightInput"
         >
       </label>

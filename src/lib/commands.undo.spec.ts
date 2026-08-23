@@ -92,6 +92,8 @@ const REGISTRY: Record<string, Scenario> = {
   toggleSpaceBefore: (model) => commands.toggleSpaceBefore(model, caretSelection(caret(0, 0))),
   setPageMargins: (model) =>
     commands.setPageMargins(model, caretSelection(caret(0, 0)), { leftCm: 3 }),
+  setHeaderFooterDistance: (model) =>
+    commands.setHeaderFooterDistance(model, caretSelection(caret(0, 0)), { headerDistanceCm: 1.5 }),
   setPageSetup: (model) =>
     commands.setPageSetup(model, caretSelection(caret(0, 0)), {
       pageSize: { widthCm: 29.7, heightCm: 21 },

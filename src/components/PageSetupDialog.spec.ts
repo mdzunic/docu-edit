@@ -141,6 +141,36 @@ describe("PageSetupDialog (SPEC-027 AC-1..9)", () => {
     expect(wrapper.get('[data-testid="page-setup-apply"]').attributes("disabled")).toBeDefined();
   });
 
+  it("accepts an explicit unit suffix in a length field, converting whatever the display unit (AC-11)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    // Unit is cm, but the user types inches with an explicit suffix.
+    await wrapper.get('[data-testid="page-setup-margin-top"]').setValue("1in");
+    await wrapper.get('[data-testid="page-setup-margin-bottom"]').setValue("10 MM");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    const emitted = wrapper.emitted("apply")![0][0] as { margins: { topCm: number; bottomCm: number } };
+    expect(emitted.margins.topCm).toBeCloseTo(2.54, 5);
+    expect(emitted.margins.bottomCm).toBeCloseTo(1, 5);
+  });
+
+  it("interprets a bare number in the current display unit (AC-11a)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    await wrapper.get('[data-testid="page-setup-unit"]').setValue("in");
+    await wrapper.get('[data-testid="page-setup-margin-top"]').setValue("2");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    const emitted = wrapper.emitted("apply")![0][0] as { margins: { topCm: number } };
+    // A bare "2" while the display unit is inches means 2in = 5.08cm.
+    expect(emitted.margins.topCm).toBeCloseTo(5.08, 5);
+  });
+
+  it("rejects an unparseable length: the field signals an error and does not commit (AC-11b)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    await wrapper.get('[data-testid="page-setup-margin-top"]').setValue("wide");
+    expect(wrapper.get('[data-testid="page-setup-margins-error"]').text()).toBe("Enter a valid margin");
+    expect(wrapper.get('[data-testid="page-setup-apply"]').attributes("disabled")).toBeDefined();
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    expect(wrapper.emitted("apply")).toBeUndefined();
+  });
+
   it("Custom size and unit round-trip through OK (AC-4)", async () => {
     const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
     await wrapper.get('[data-testid="page-setup-paper-size"]').setValue("Custom");

@@ -33,14 +33,15 @@ function withSectionGeometry(
   return updated;
 }
 
-/** Sets the page's left/right margins (the ruler's margin markers, AC-23).
- * When the caret's section carries its own margins (SPEC-028), the drag
- * edits that section; otherwise it edits the document defaults, exactly as
- * before sections could diverge. */
+/** Sets the page's margins from a ruler marker drag — the horizontal ruler's
+ * left/right (SPEC-014 AC-23) and the vertical ruler's top/bottom (SPEC-064
+ * AC-2a). When the caret's section carries its own margins (SPEC-028), the
+ * drag edits that section; otherwise it edits the document defaults, exactly
+ * as before sections could diverge. */
 export function setPageMargins(
   model: DocumentModel,
   selection: ModelSelection,
-  patch: { leftCm?: number; rightCm?: number },
+  patch: { leftCm?: number; rightCm?: number; topCm?: number; bottomCm?: number },
 ): CommandResult {
   const { start } = orderedRange(model, selection);
   const section = model.sections[start.section];
@@ -50,6 +51,12 @@ export function setPageMargins(
   }
   if (patch.rightCm !== undefined) {
     margins.rightCm = snapCm(Math.max(0, patch.rightCm));
+  }
+  if (patch.topCm !== undefined) {
+    margins.topCm = snapCm(Math.max(0, patch.topCm));
+  }
+  if (patch.bottomCm !== undefined) {
+    margins.bottomCm = snapCm(Math.max(0, patch.bottomCm));
   }
   let next: DocumentModel;
   if (section.margins) {
@@ -68,6 +75,38 @@ export function setPageMargins(
       defaultStyles: { ...model.defaultStyles, margins },
     });
   }
+  const range = orderedRange(next, selection);
+  return { model: next, selection: { anchor: range.start, focus: range.end } };
+}
+
+/** Sets the caret section's header distance from the top edge and/or footer
+ * distance from the bottom edge, from a vertical-ruler band-boundary drag
+ * (SPEC-064 AC-3a/AC-3b). Writes the per-section field (SPEC-029) directly —
+ * these distances are a display/layout preference on the section, not part of
+ * the page margins, so the drag never disturbs the margin markers. Negative
+ * distances are clamped to zero. */
+export function setHeaderFooterDistance(
+  model: DocumentModel,
+  selection: ModelSelection,
+  patch: { headerDistanceCm?: number; footerDistanceCm?: number },
+): CommandResult {
+  const target = orderedRange(model, selection).start.section;
+  const next: DocumentModel = {
+    ...model,
+    sections: model.sections.map((section, index) => {
+      if (index !== target) {
+        return section;
+      }
+      const updated: Section = { ...section };
+      if (patch.headerDistanceCm !== undefined) {
+        updated.headerDistanceCm = snapCm(Math.max(0, patch.headerDistanceCm));
+      }
+      if (patch.footerDistanceCm !== undefined) {
+        updated.footerDistanceCm = snapCm(Math.max(0, patch.footerDistanceCm));
+      }
+      return updated;
+    }),
+  };
   const range = orderedRange(next, selection);
   return { model: next, selection: { anchor: range.start, focus: range.end } };
 }
