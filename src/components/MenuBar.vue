@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from "vue";
 import { asMenuBarMenus } from "../lib/core/menuBar";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
+import { useTier } from "../composables/useResponsiveTier";
 
 // The application menu bar (SPEC-049). This component is deliberately
 // *structural only*: it renders the menu titles and their popups, and owns
@@ -261,10 +262,124 @@ function onTitleEnter(index = 0) {
 // popup — so this component no longer hand-rolls a document mousedown
 // listener, and a mouse-opened menu now closes on Escape even though
 // @mousedown.prevent left focus on the page (SPEC-058 AC-39).
+
+// SPEC-068 AC-7/8 — at the compact tier the whole bar collapses into one
+// "Menu" button that opens a full-height sheet listing the same menus in bar
+// order, each command still authored by the caller's slot. The medium tier
+// keeps the real menu bar (AC-6). The sheet is a single scrollable overlay
+// rather than nested popups: at 390px a fly-out submenu has nowhere to fly, so
+// every menu's items are stacked under its label and a tap on a command runs it
+// and closes the sheet.
+const tier = useTier();
+const compact = computed(() => tier.value === "compact");
+const sheetOpen = ref(false);
+
+function openSheet() {
+  sheetOpen.value = true;
+}
+function closeSheet() {
+  sheetOpen.value = false;
+}
+function onSheetKeydown(event = new KeyboardEvent("keydown")) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSheet();
+  }
+}
+// A tap on a real command inside the sheet runs it (the caller's @select fires
+// on the same click) and then dismisses the sheet — mirroring onPopupClick for
+// the docked bar. data-menu-keep-open opts a control out (the format painter).
+function onSheetClick(event = new MouseEvent("click")) {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return;
+  }
+  const item = target.closest(
+    '[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],button',
+  );
+  if (!item || item.closest("[data-menu-keep-open]") || item.closest("[data-menu-sheet-chrome]")) {
+    return;
+  }
+  closeSheet();
+}
+
+// Leaving the compact tier (window widened, orientation change) must not strand
+// an open sheet over a menu bar that is no longer collapsed.
+watch(compact, (isCompact) => {
+  if (!isCompact) {
+    sheetOpen.value = false;
+  }
+});
+onBeforeUnmount(() => {
+  sheetOpen.value = false;
+});
 </script>
 
 <template>
+  <!-- Compact tier (SPEC-068 AC-7/8): one "Menu" button + a full-height sheet
+       holding every menu's commands, stacked under their labels. -->
   <div
+    v-if="compact"
+    class="menu-bar menu-bar-compact"
+    data-testid="menu-bar"
+  >
+    <button
+      type="button"
+      class="menu-title menu-button"
+      data-testid="menu-button"
+      aria-haspopup="menu"
+      :aria-expanded="sheetOpen ? 'true' : 'false'"
+      @click="openSheet"
+    >
+      Menu
+    </button>
+    <Teleport to="body">
+      <div
+        v-if="sheetOpen"
+        class="menu-sheet-scrim"
+        data-testid="menu-sheet-scrim"
+        @click="closeSheet"
+      />
+      <div
+        v-if="sheetOpen"
+        class="menu-sheet"
+        role="menu"
+        :aria-label="ariaLabel"
+        data-testid="menu-sheet"
+        @keydown="onSheetKeydown"
+        @click="onSheetClick"
+      >
+        <header
+          class="menu-sheet-header"
+          data-menu-sheet-chrome
+        >
+          <span class="menu-sheet-title">Menu</span>
+          <button
+            type="button"
+            class="menu-sheet-close"
+            data-testid="menu-sheet-close"
+            aria-label="Close menu"
+            @click="closeSheet"
+          >
+            ✕
+          </button>
+        </header>
+        <section
+          v-for="menu in menuList"
+          :key="menu.id"
+          class="menu-sheet-section"
+          :data-testid="`menu-sheet-section-${menu.id}`"
+        >
+          <h2 class="menu-section-label">
+            {{ menu.label }}
+          </h2>
+          <slot :name="menu.id" />
+        </section>
+      </div>
+    </Teleport>
+  </div>
+  <div
+    v-else
     ref="root"
     class="menu-bar"
     role="menubar"
@@ -442,6 +557,147 @@ function onTitleEnter(index = 0) {
 }
 
 .menu-popup :deep(.menu-section-label) {
+  padding: var(--space-1) var(--space-5) var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--line-tight);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* ---- Compact tier: the "Menu" button + full-height sheet (SPEC-068) -------- */
+.menu-bar-compact {
+  align-items: center;
+}
+
+.menu-button {
+  height: var(--height-control);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* A dim scrim behind the sheet; the sheet itself sits above it. Teleported to
+   body so it covers the whole app, and pinned to the visual viewport edges so
+   the on-screen keyboard cannot push it out of reach (SPEC-068). */
+.menu-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: var(--surface-overlay);
+}
+
+.menu-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 91;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.menu-sheet-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-raised);
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.menu-sheet-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.menu-sheet-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--height-control);
+  height: var(--height-control);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-lg);
+}
+
+.menu-sheet-close:hover {
+  background: var(--state-hover);
+}
+
+.menu-sheet-section {
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+/* The sheet reuses the popup command chrome so a caller's slotted items look
+   and behave identically whether they render docked or in the sheet. */
+.menu-sheet :deep([role="menuitem"]),
+.menu-sheet :deep([role="menuitemcheckbox"]),
+.menu-sheet :deep([role="menuitemradio"]) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  box-sizing: border-box;
+  min-height: var(--height-control);
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-5);
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.menu-sheet :deep([role="menuitem"]:hover:not(:disabled)),
+.menu-sheet :deep([role="menuitemcheckbox"]:hover:not(:disabled)),
+.menu-sheet :deep([role="menuitemradio"]:hover:not(:disabled)),
+.menu-sheet :deep([role="menuitem"]:focus),
+.menu-sheet :deep([role="menuitemcheckbox"]:focus),
+.menu-sheet :deep([role="menuitemradio"]:focus) {
+  background: var(--state-hover);
+}
+
+.menu-sheet :deep([role="menuitem"]:disabled),
+.menu-sheet :deep([role="menuitemcheckbox"]:disabled),
+.menu-sheet :deep([role="menuitemradio"]:disabled) {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.menu-sheet :deep(.menu-check) {
+  display: inline-block;
+  width: 1rem;
+  flex: none;
+  color: var(--accent);
+}
+
+.menu-sheet :deep(.menu-shortcut) {
+  margin-left: auto;
+  padding-left: var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.menu-sheet :deep(.menu-separator) {
+  margin: var(--space-1) 0;
+  border: none;
+  border-top: var(--border-width) solid var(--border-subtle);
+}
+
+.menu-sheet :deep(.menu-section-label) {
   padding: var(--space-1) var(--space-5) var(--space-1);
   font-size: var(--text-xs);
   line-height: var(--line-tight);

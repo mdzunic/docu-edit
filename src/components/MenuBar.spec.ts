@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import { h } from "vue";
 import MenuBar from "./MenuBar.vue";
+import { setTierWidthForTest } from "../composables/useResponsiveTier";
 
 const MENUS = [
   { id: "file", label: "File" },
@@ -204,6 +205,62 @@ describe("MenuBar (SPEC-049)", () => {
     await wrapper.get('[data-testid="menu-file"]').trigger("keydown", { key: "ArrowDown" });
     // The disabled item is skipped.
     expect(document.activeElement?.getAttribute("data-testid")).toBe("file-c");
+    wrapper.unmount();
+  });
+});
+
+// SPEC-068 AC-7/8 — at the compact tier the bar is one "Menu" button opening a
+// full-height sheet with every menu's commands. The sheet is teleported to
+// body, so queries run against the document.
+describe("MenuBar compact tier (SPEC-068)", () => {
+  afterEach(() => {
+    setTierWidthForTest(1440);
+    document.querySelectorAll('[data-testid="menu-sheet"]').forEach((el) => el.remove());
+  });
+
+  it("collapses to a single Menu button (AC-7) that opens a sheet with all six menus (AC-8)", async () => {
+    setTierWidthForTest(390);
+    const wrapper = mountBar();
+    // No docked menubar at compact; just the Menu button.
+    expect(wrapper.find('[role="menubar"]').exists()).toBe(false);
+    const button = wrapper.get('[data-testid="menu-button"]');
+    expect(button.text()).toBe("Menu");
+    expect(button.attributes("aria-expanded")).toBe("false");
+    expect(document.querySelector('[data-testid="menu-sheet"]')).toBeNull();
+
+    await button.trigger("click");
+    expect(button.attributes("aria-expanded")).toBe("true");
+    const sheet = document.querySelector('[data-testid="menu-sheet"]');
+    expect(sheet).not.toBeNull();
+    // Every menu's slot content appears, under its label, in bar order.
+    expect(sheet?.querySelector('[data-testid="menu-sheet-section-file"]')).not.toBeNull();
+    expect(sheet?.querySelector('[data-testid="menu-sheet-section-edit"]')).not.toBeNull();
+    expect(sheet?.querySelector('[data-testid="menu-sheet-section-view"]')).not.toBeNull();
+    expect(sheet?.querySelector('[data-testid="file-a"]')).not.toBeNull();
+    wrapper.unmount();
+  });
+
+  it("closes the sheet when a command is tapped", async () => {
+    setTierWidthForTest(390);
+    const wrapper = mountBar();
+    await wrapper.get('[data-testid="menu-button"]').trigger("click");
+    const item = document.querySelector('[data-testid="file-a"]');
+    (item as HTMLElement).click();
+    await wrapper.vm.$nextTick();
+    expect(document.querySelector('[data-testid="menu-sheet"]')).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("dismisses the sheet when the tier widens past compact", async () => {
+    setTierWidthForTest(390);
+    const wrapper = mountBar();
+    await wrapper.get('[data-testid="menu-button"]').trigger("click");
+    expect(document.querySelector('[data-testid="menu-sheet"]')).not.toBeNull();
+    setTierWidthForTest(1200);
+    await wrapper.vm.$nextTick();
+    expect(document.querySelector('[data-testid="menu-sheet"]')).toBeNull();
+    // And the docked menu bar is back.
+    expect(wrapper.find('[role="menubar"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });
