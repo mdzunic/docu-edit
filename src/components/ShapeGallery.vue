@@ -151,13 +151,18 @@ function iconClass(geometry = "rect") {
 }
 
 /* The whole catalogue no longer fits the Insert menu vertically, so the
-   groups scroll inside a bounded box while the menu itself stays whole
-   (SPEC-028's 720px viewport constraint the gallery already respects). */
+   groups scroll inside a bounded box while the menu itself stays whole. The
+   cap is tight on purpose: SPEC-028 AC-8/AC-9 asserts all four break commands
+   below this gallery lay out inside a 720px viewport, and everything above
+   them (the table grid, this gallery, the chart gallery) has to leave room.
+   The rem cap wins over 40vh at the 720px height the e2e drives, so the box
+   stays small there; 40vh only takes over on a viewport too short for the
+   rem cap to fit. */
 .shape-gallery-scroll {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  max-height: 40vh;
+  max-height: min(40vh, 8.5rem);
   overflow-y: auto;
 }
 
