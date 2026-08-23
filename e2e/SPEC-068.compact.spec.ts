@@ -17,7 +17,11 @@ async function newDocument(page: Page): Promise<void> {
 }
 
 test("the library is usable and collapses its header actions at compact (AC-37/38/39)", async ({ page }) => {
+  // Seed a document so the populated library (with its header row) renders,
+  // rather than the empty state's own action buttons.
+  await newDocument(page);
   await page.goto("/");
+  await expect(page.getByTestId("library")).toBeVisible();
   // One primary action + the search box stay visible; the rest collapse behind
   // the overflow menu.
   await expect(page.getByTestId("new-document")).toBeVisible();
@@ -84,6 +88,11 @@ test("compact editor: fit-width web layout, essential toolbar, menu sheet, edit,
   await composer.fill("Looks good on mobile");
   await page.getByTestId("comments-pane").getByTestId("comment-composer-submit").click();
   await expect(page.locator('[data-testid^="comment-thread-"]')).toHaveCount(1);
+
+  // Close the comments overlay so it no longer covers the app bar (AC-4: the
+  // panel overlays at compact).
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("comments-pane")).toHaveCount(0);
 
   // Download the document as .docx (AC-47 download step).
   await expect(page.getByTestId("download-menu")).toBeVisible();
