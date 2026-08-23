@@ -9,6 +9,11 @@ const props = defineProps({
    * caret/selection the parent is tracking. */
   states: { type: Object, required: true },
   disabled: { type: Boolean, default: false },
+  /** SPEC-068: an optional whitelist of format keys to render, in the fixed
+   * FORMATS order. The compact toolbar's essential band shows only bold and
+   * italic inline (`['bold','italic']`) and relocates the rest to the overflow;
+   * omitted (the default) renders all six. */
+  only: { type: Array, default: null },
 });
 
 const emit = defineEmits(["toggle"]);
@@ -48,6 +53,16 @@ function toggle(key = "") {
     emit("toggle", key);
   }
 }
+
+// The rendered subset: every format whose key is in `only` (order preserved),
+// or all of them when `only` is unset.
+function shownFormats() {
+  const whitelist = props.only;
+  if (!Array.isArray(whitelist)) {
+    return FORMATS;
+  }
+  return FORMATS.filter((format) => whitelist.includes(format.key));
+}
 </script>
 
 <template>
@@ -57,7 +72,7 @@ function toggle(key = "") {
     aria-label="Character formatting"
   >
     <UiToggleButton
-      v-for="format in FORMATS"
+      v-for="format in shownFormats()"
       :key="format.key"
       :icon="format.icon"
       :label="tooltip(format)"

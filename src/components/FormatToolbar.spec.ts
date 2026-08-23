@@ -17,6 +17,24 @@ describe("FormatToolbar", () => {
     expect(strikethrough.attributes("title")).toBe("Strikethrough (Ctrl+Shift+X)");
   });
 
+  it("renders only the whitelisted formats when `only` is set (SPEC-068 AC-9)", () => {
+    const wrapper = mount(FormatToolbar, {
+      props: { states: OFF_STATES, only: ["bold", "italic"] },
+    });
+    expect(wrapper.find('[data-testid="format-bold"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="format-italic"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="format-underline"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="format-strikethrough"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="format-subscript"]').exists()).toBe(false);
+  });
+
+  it("renders all six formats when `only` is omitted", () => {
+    const wrapper = mount(FormatToolbar, { props: { states: OFF_STATES } });
+    for (const key of ["bold", "italic", "underline", "strikethrough", "subscript", "superscript"]) {
+      expect(wrapper.find(`[data-testid="format-${key}"]`).exists()).toBe(true);
+    }
+  });
+
   it("reflects an 'off' state as aria-pressed=false", () => {
     const wrapper = mount(FormatToolbar, { props: { states: OFF_STATES } });
     expect(wrapper.get('[data-testid="format-bold"]').attributes("aria-pressed")).toBe("false");

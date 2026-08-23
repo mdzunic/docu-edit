@@ -11,6 +11,7 @@ import HighlightPicker from "./HighlightPicker.vue";
 import ParagraphToolbar from "./ParagraphToolbar.vue";
 import { useToolbarOverflow } from "../composables/useToolbarOverflow";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import { useTier } from "../composables/useResponsiveTier";
 
 // The banded document toolbar (SPEC-061). It groups the strip's controls into
 // eight fixed bands separated by subtle rules (AC-3, AC-4), collapses the
@@ -100,6 +101,34 @@ const { collapsedCount, measuring, isCollapsed } = useToolbarOverflow({
   reserved,
 });
 
+// SPEC-068 AC-9 — at the compact tier the strip reduces to one essential band:
+// undo, redo (band 1), the style picker (band 2), bold + italic (the reduced
+// band 4) and the overflow button. Everything else — the font Type band, the
+// remaining character formats, and the Colour/Paragraph/Lists/extras bands —
+// relocates into the overflow menu (and stays reachable in the menu sheet and
+// command palette, AC-10). This is a curated collapse layered ABOVE the
+// width-driven overflow: those bands are forced into overflow at compact
+// regardless of measured width, so the essential band is stable at 390px.
+const tier = useTier();
+const compact = () => tier.value === "compact";
+const COMPACT_OVERFLOW_BANDS = new Set([3, 5, 6, 7, 8]);
+// The character formats the reduced band 4 keeps inline at compact; the rest
+// teleport into the overflow menu's Character section.
+const COMPACT_INLINE_FORMATS = ["bold", "italic"];
+const COMPACT_OVERFLOW_FORMATS = ["underline", "strikethrough", "subscript", "superscript"];
+
+/** Whether a band is collapsed into the overflow menu — the union of the
+ * width-driven plan and the compact tier's forced set. */
+function bandCollapsed(band = 0) {
+  return (compact() && COMPACT_OVERFLOW_BANDS.has(band)) || isCollapsed(band);
+}
+
+/** The overflow button is present whenever anything is collapsed — which at
+ * compact is always the case. */
+function overflowVisible() {
+  return collapsedCount.value > 0 || measuring.value || compact();
+}
+
 // A collapsible band's controls teleport into the matching section of the
 // (kept-mounted) overflow menu only while the band is collapsed; otherwise the
 // Teleport is disabled and they render in place in the strip. The target is a
@@ -109,10 +138,20 @@ function teleportDisabled(band = 0) {
   // so we never enable one whose destination is not yet in the DOM (the
   // insertBefore-of-null crash). Re-evaluated every render via the reactive
   // measuring/collapsedCount reads above.
-  if (measuring.value || !isCollapsed(band)) {
+  if (measuring.value || !bandCollapsed(band)) {
     return true;
   }
   return !document.getElementById(`overflow-band-${band}`);
+}
+
+// The reduced band 4's overflow half (SPEC-068): the character formats beyond
+// bold/italic teleport into the overflow menu's Character section, but only at
+// the compact tier — at every other tier band 4 renders all six inline.
+function extrasTeleportDisabled() {
+  if (measuring.value || !compact()) {
+    return true;
+  }
+  return !document.getElementById("overflow-band-4x");
 }
 
 const { menuStyle } = useFloatingMenu({
@@ -358,9 +397,38 @@ onBeforeUnmount(() => {
         data-testid="toolbar-overflow-menu"
         :style="menuStyle"
       >
+        <!-- Compact tier only (SPEC-068): the Type band and the character
+             formats beyond bold/italic relocate here so the essential band
+             stays undo/redo/style/bold/italic. -->
+        <div
+          v-show="compact() && bandCollapsed(3)"
+          class="overflow-section"
+          data-overflow-band="3"
+        >
+          <p class="overflow-heading">
+            {{ BAND_NAMES[3] }}
+          </p>
+          <div
+            id="overflow-band-3"
+            class="overflow-band-target"
+          />
+        </div>
+        <div
+          v-show="compact()"
+          class="overflow-section"
+          data-overflow-band="4x"
+        >
+          <p class="overflow-heading">
+            {{ BAND_NAMES[4] }}
+          </p>
+          <div
+            id="overflow-band-4x"
+            class="overflow-band-target"
+          />
+        </div>
         <div
           v-for="band in [5, 6, 7, 8]"
-          v-show="isCollapsed(band)"
+          v-show="bandCollapsed(band)"
           :key="band"
           class="overflow-section"
           :data-overflow-band="band"
@@ -409,25 +477,31 @@ onBeforeUnmount(() => {
         @reset-style="emit('reset-style', $event)"
       />
     </div>
-    <!-- Band 3 — Type -->
+    <!-- Band 3 — Type. Relocates to the overflow menu at the compact tier. -->
     <div
-      v-show="!isCollapsed(3) || measuring"
+      v-show="!bandCollapsed(3) || measuring"
       class="band"
       data-band="3"
       role="group"
       :aria-label="BAND_NAMES[3]"
     >
-      <FontFamilySelect
-        :value="formatValues.fontFamily"
-        :document-fonts="documentFonts"
-        @select="emit('font-family-select', $event)"
-      />
-      <FontSizeControl
-        :value="formatValues.fontSizePt ?? undefined"
-        @change="emit('font-size-change', $event)"
-      />
+      <Teleport
+        to="#overflow-band-3"
+        :disabled="teleportDisabled(3)"
+      >
+        <FontFamilySelect
+          :value="formatValues.fontFamily"
+          :document-fonts="documentFonts"
+          @select="emit('font-family-select', $event)"
+        />
+        <FontSizeControl
+          :value="formatValues.fontSizePt ?? undefined"
+          @change="emit('font-size-change', $event)"
+        />
+      </Teleport>
     </div>
-    <!-- Band 4 — Character -->
+    <!-- Band 4 — Character. At compact only bold/italic stay in the essential
+         band; the rest teleport into the overflow menu's Character section. -->
     <div
       v-show="!isCollapsed(4) || measuring"
       class="band"
@@ -437,12 +511,24 @@ onBeforeUnmount(() => {
     >
       <FormatToolbar
         :states="formatStates"
+        :only="compact() && !measuring ? COMPACT_INLINE_FORMATS : undefined"
         @toggle="emit('toggle-character-format', $event)"
       />
+      <Teleport
+        to="#overflow-band-4x"
+        :disabled="extrasTeleportDisabled()"
+      >
+        <FormatToolbar
+          v-if="compact() && !measuring"
+          :states="formatStates"
+          :only="COMPACT_OVERFLOW_FORMATS"
+          @toggle="emit('toggle-character-format', $event)"
+        />
+      </Teleport>
     </div>
     <!-- Band 5 — Colour -->
     <div
-      v-show="!isCollapsed(5) || measuring"
+      v-show="!bandCollapsed(5) || measuring"
       class="band"
       data-band="5"
       role="group"
@@ -469,7 +555,7 @@ onBeforeUnmount(() => {
     </div>
     <!-- Band 6 — Paragraph (alignment + line spacing) -->
     <div
-      v-show="!isCollapsed(6) || measuring"
+      v-show="!bandCollapsed(6) || measuring"
       class="band"
       data-band="6"
       role="group"
@@ -502,7 +588,7 @@ onBeforeUnmount(() => {
     </div>
     <!-- Band 7 — Lists (indents + list toggles) -->
     <div
-      v-show="!isCollapsed(7) || measuring"
+      v-show="!bandCollapsed(7) || measuring"
       class="band"
       data-band="7"
       role="group"
@@ -535,7 +621,7 @@ onBeforeUnmount(() => {
     </div>
     <!-- Band 8 — Paragraph extras (direction + pagination) -->
     <div
-      v-show="!isCollapsed(8) || measuring"
+      v-show="!bandCollapsed(8) || measuring"
       class="band"
       data-band="8"
       role="group"
@@ -567,7 +653,7 @@ onBeforeUnmount(() => {
       </Teleport>
     </div>
     <button
-      v-show="collapsedCount > 0 || measuring"
+      v-show="overflowVisible()"
       ref="overflowButton"
       type="button"
       class="overflow-button"
