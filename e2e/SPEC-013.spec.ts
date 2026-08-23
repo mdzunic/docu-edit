@@ -317,7 +317,7 @@ test("all four controls reflect the caret and blank out on a mixed selection (AC
   await expect(input).toHaveValue("");
 });
 
-test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+, / Ctrl+. (AC-24..27)", async ({
+test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shift+< / Ctrl+. (AC-24..27)", async ({
   page,
 }) => {
   const id = await createDocument(page);
@@ -325,7 +325,8 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+, /
   await page.keyboard.type("H2O");
   await selectRange(page, 1, 2);
 
-  await page.keyboard.press(`${MOD}+Comma`);
+  // SPEC-066 moved subscript to Ctrl+Shift+, so Cmd/Ctrl+, opens Preferences.
+  await page.keyboard.press(`${MOD}+Shift+Comma`);
   await waitForSaved(page);
   expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
     { text: "H", formatting: {} },

@@ -194,6 +194,13 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <hr class="menu-separator">
       <MenuItem
+        label="Preferences…"
+        testid="file-menu-preferences"
+        :shortcut="shortcutLabel('app.preferences')"
+        @select="emit('command', 'app.preferences')"
+      />
+      <hr class="menu-separator">
+      <MenuItem
         label="Close"
         testid="file-menu-close"
         @select="emit('command', 'file.close')"

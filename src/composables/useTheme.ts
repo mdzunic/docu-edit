@@ -1,11 +1,6 @@
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import {
-  loadDimPage,
-  loadThemePreference,
-  saveDimPage,
-  saveThemePreference,
-  type ThemePreference,
-} from "../lib/themePrefs";
+import type { ThemePreference } from "../lib/themePrefs";
+import { loadPreferences, onPreferencesChange, savePreference } from "../lib/preferences";
 
 // The app-shell theme controller (SPEC-059). A single module-level singleton
 // so every view — the library (HomeView), the open-from-URL loader and the
@@ -16,11 +11,15 @@ import {
 //
 // It deliberately holds no CSS-var reading of its own beyond resolveThemeColor
 // (the canvas helper, AC-61); chrome themes purely through the token
-// redefinitions in tokens.css. Persistence lives in lib/themePrefs.ts behind
-// the SPEC-003 storage guard (AC-56).
+// redefinitions in tokens.css. Persistence now lives in the centralized
+// preferences store (SPEC-066): theme and dim-page are two of its fields, so
+// this module reads and writes them through it rather than through their old
+// standalone keys, and reacts to changes made anywhere else — the Preferences
+// dialog or another tab — via onPreferencesChange (AC-18, AC-44).
 
-const theme: Ref<ThemePreference> = ref(loadThemePreference());
-const dimPage: Ref<boolean> = ref(loadDimPage());
+const initialPreferences = loadPreferences();
+const theme: Ref<ThemePreference> = ref(initialPreferences.theme);
+const dimPage: Ref<boolean> = ref(initialPreferences.dimPage);
 // Tracks the OS setting so `system` follows prefers-color-scheme live (AC-3).
 const systemDark = ref(false);
 
@@ -78,6 +77,16 @@ function install(): void {
     });
   }
 
+  // Any preference change — our own setters, the Preferences dialog or another
+  // tab (via the storage event) — flows back here and re-applies to the DOM,
+  // so the singleton stays the single owner of every theme change (AC-60).
+  onPreferencesChange((prefs) => {
+    theme.value = prefs.theme;
+    dimPage.value = prefs.dimPage;
+    applyDataTheme();
+    applyDimPage();
+  });
+
   applyDataTheme();
   applyDimPage();
 }
@@ -88,15 +97,14 @@ function install(): void {
  * DOM application directly (not through a component-scoped watch) so the Vue
  * app remains the single owner of every theme change (AC-60). */
 function setTheme(next: ThemePreference): void {
-  theme.value = next;
-  saveThemePreference(next);
-  applyDataTheme();
+  // The write notifies onPreferencesChange (registered in install), which
+  // updates theme.value and applies data-theme — one path for local, dialog
+  // and cross-tab changes alike.
+  savePreference("theme", next);
 }
 
 function setDimPage(on: boolean): void {
-  dimPage.value = on;
-  saveDimPage(on);
-  applyDimPage();
+  savePreference("dimPage", on);
 }
 
 function toggleDimPage(): void {

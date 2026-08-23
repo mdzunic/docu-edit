@@ -5,6 +5,8 @@
 // quota exceeded), the app keeps working in-memory and the storage status
 // flips so the UI can show its warning banner.
 import { createDocument, type DocumentModel } from "./documentModel";
+import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
+import { PAPER_SIZES } from "./core/pageSetup";
 import { type MediaPart } from "./core/media";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
 import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
@@ -141,7 +143,10 @@ export function onStorageStatusChange(listener: () => void): () => void {
   return () => storageListeners.delete(listener);
 }
 
-function markStorageUnavailable(): void {
+/** Latches the storage-unavailable state and shows the SPEC-003 warning
+ * banner. Exported so the preferences module (SPEC-066) surfaces the same
+ * warning when a preference write hits a blocked or full `localStorage`. */
+export function markStorageUnavailable(): void {
   if (!storageAvailable) {
     return;
   }
@@ -150,6 +155,11 @@ function markStorageUnavailable(): void {
     listener();
   }
 }
+
+// Wire the preferences store's SPEC-003 warning hook (AC-21) to the same
+// banner state, without preferences importing documentStore (which would
+// create an initialisation cycle).
+setPreferencesStorageFailureHandler(markStorageUnavailable);
 
 // The media array reference last written for each doc, so persistMedia can
 // skip a rewrite when nothing image-related changed (see MediaRecord's own
@@ -319,6 +329,40 @@ export function getStoredRecord(id: string): StoredDocumentRecord | undefined {
   return records.get(id);
 }
 
+/** Applies the "new documents" preferences (SPEC-066) to a freshly-created
+ * blank model: font, size, page size, margins and language seed the default
+ * styles, and the three per-document app-preference fields (measurement unit,
+ * ruler and formatting-mark visibility) are set from their app-level defaults
+ * so a new document inherits them (AC-24..27). The last three are written only
+ * when they differ from the model's implicit default, so a document created
+ * with default preferences is identical to one created before this spec — and
+ * an existing document, never passed through here, keeps its own stored value.
+ * The model defaults stay the fallback when no preference is set (SPEC-002). */
+function applyNewDocumentPreferences(model: DocumentModel): void {
+  const prefs = loadPreferences();
+  const styles = model.defaultStyles;
+  styles.fontFamily = prefs.defaultFontFamily;
+  styles.fontSizePt = prefs.defaultFontSizePt;
+  styles.language = prefs.defaultLanguage;
+  const pageSize = PAPER_SIZES[prefs.defaultPageSizeId as keyof typeof PAPER_SIZES];
+  if (pageSize) {
+    styles.pageSize = { ...pageSize };
+  }
+  const margins = MARGIN_PRESETS[prefs.defaultMarginsId];
+  if (margins) {
+    styles.margins = { ...margins };
+  }
+  if (prefs.measurementUnit !== "cm") {
+    model.measurementUnit = prefs.measurementUnit;
+  }
+  if (prefs.showRuler !== true) {
+    model.showRuler = prefs.showRuler;
+  }
+  if (prefs.showFormattingMarks !== false) {
+    model.showFormattingMarks = prefs.showFormattingMarks;
+  }
+}
+
 /** Returns the stored document for an id, creating and storing a fresh one
  * if none exists yet. */
 export function getOrCreateDocument(id: string): DocumentModel {
@@ -326,11 +370,13 @@ export function getOrCreateDocument(id: string): DocumentModel {
   if (existing) {
     return existing.model;
   }
+  const model = createDocument(id);
+  applyNewDocumentPreferences(model);
   const record: StoredDocumentRecord = {
     id,
     format: "new",
     lastModified: Date.now(),
-    model: createDocument(id),
+    model,
   };
   records.set(id, record);
   persist(record);

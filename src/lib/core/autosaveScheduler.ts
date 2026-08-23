@@ -15,7 +15,10 @@ export const AUTOSAVE_RETRY_MS = 5000;
 export interface AutosaveSchedulerOptions {
   /** Called when a save should happen. */
   flush: () => void;
-  debounceMs?: number;
+  /** The debounce interval, or a getter read at each change so a live change
+   * to the "Autosave delay" preference (SPEC-066) takes effect on the next
+   * edit without recreating the scheduler. */
+  debounceMs?: number | (() => number);
   maxIntervalMs?: number;
   retryMs?: number;
 }
@@ -37,7 +40,9 @@ type Timer = ReturnType<typeof setTimeout> | null;
 export function createAutosaveScheduler(
   options: AutosaveSchedulerOptions,
 ): AutosaveScheduler {
-  const debounceMs = options.debounceMs ?? AUTOSAVE_DEBOUNCE_MS;
+  const debounceOption = options.debounceMs;
+  const resolveDebounceMs = (): number =>
+    typeof debounceOption === "function" ? debounceOption() : (debounceOption ?? AUTOSAVE_DEBOUNCE_MS);
   const maxIntervalMs = options.maxIntervalMs ?? AUTOSAVE_MAX_INTERVAL_MS;
   const retryMs = options.retryMs ?? AUTOSAVE_RETRY_MS;
 
@@ -74,7 +79,7 @@ export function createAutosaveScheduler(
       if (debounceTimer !== null) {
         clearTimeout(debounceTimer);
       }
-      debounceTimer = setTimeout(fire, debounceMs);
+      debounceTimer = setTimeout(fire, resolveDebounceMs());
       if (deadlineTimer === null) {
         deadlineTimer = setTimeout(fire, maxIntervalMs);
       }

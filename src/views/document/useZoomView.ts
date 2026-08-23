@@ -24,6 +24,7 @@ import {
   stepZoomUp,
   ZOOM_PRESETS,
 } from "../../lib/zoom";
+import { usePreferences } from "../../composables/usePreferences";
 
 export type FitMode = "none" | "fit-width" | "fit-page";
 
@@ -88,6 +89,8 @@ function firstPageEl(pages: Element | null): HTMLElement | null {
 export function useZoomView(deps: ZoomViewDeps) {
   const { documentId, pageRef, getScrollContainer, onUnmount } = deps;
   const isGridEligible = deps.isGridEligible ?? (() => true);
+  // The default a new document opens at comes from preferences (SPEC-066).
+  const { preferences } = usePreferences();
 
   // The source of truth is the integer percentage; the scale fraction the
   // template and helpers use is derived from it (AC-21: EditorContext.zoom
@@ -181,13 +184,24 @@ export function useZoomView(deps: ZoomViewDeps) {
   );
 
   // Load the stored zoom whenever the document changes; a document with no
-  // stored value opens at 100 % (AC-30, AC-31).
+  // stored value opens at the "Default zoom for new documents" preference
+  // (SPEC-066), which is 100 % by default (AC-30, AC-31). A fit-mode default
+  // is applied by activating the fit mode; recomputeFit fills in the percent
+  // once the geometry is measured.
   watch(
     documentId,
     (id) => {
       const stored = readStoredZoom(id);
-      zoomPercent.value = stored ?? DEFAULT_ZOOM;
-      fitMode.value = "none";
+      if (stored !== null) {
+        zoomPercent.value = stored;
+        fitMode.value = "none";
+      } else if (preferences.defaultZoom === "fit-width" || preferences.defaultZoom === "fit-page") {
+        fitMode.value = preferences.defaultZoom;
+        recomputeFit();
+      } else {
+        zoomPercent.value = preferences.defaultZoom;
+        fitMode.value = "none";
+      }
     },
     { immediate: true },
   );

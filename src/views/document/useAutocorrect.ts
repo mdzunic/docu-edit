@@ -7,16 +7,15 @@
 // the literal typed character. The picker dialog and the non-breaking-space
 // shortcut insert literally — never through the typed-input path, so
 // autocorrect never sees them.
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import {
   dashSubstitution,
   decadeSubstitution,
   isDigit,
-  loadAutocorrectSettings,
-  saveAutocorrectSettings,
   smartQuote,
   type Replacement,
 } from "../../lib/core/autocorrect";
+import { usePreferences } from "../../composables/usePreferences";
 import { caretSelection, deleteRange, documentStart, insertText } from "../../lib/commands";
 import { blockText, paragraphAtCaret } from "../../lib/textEditing";
 import { breakGroup } from "../../lib/undoHistory";
@@ -75,8 +74,16 @@ export function useAutocorrect(deps: AutocorrectDeps) {
   // --- special characters and autocorrect (SPEC-026) --------------------------
   // The "Insert → Special characters" picker dialog.
   const specialCharacterDialogOpen = ref(false);
-  // Smart-quote/dash autocorrect settings, persisted in localStorage.
-  const autocorrectSettings = ref(loadAutocorrectSettings());
+  // Smart-quote/dash autocorrect settings now live in the centralized
+  // preferences store (SPEC-066): smartQuotes and smartDashes are two of its
+  // fields, so this reads and toggles them through it rather than the old
+  // docu-edit:autocorrect key (AC-18, AC-46). The shape autocorrect's decision
+  // functions expect ({ smartQuotes, dashes }) is derived from those fields.
+  const { preferences, setPreference } = usePreferences();
+  const autocorrectSettings = computed(() => ({
+    smartQuotes: preferences.smartQuotes,
+    dashes: preferences.smartDashes,
+  }));
   // Tracking state for the follow-up substitutions: the caret offset just after
   // an en dash / opening single quote THIS feature produced (or -1 for none).
   // These are plain lets, not refs — they never drive rendering, only the next
@@ -122,21 +129,11 @@ export function useAutocorrect(deps: AutocorrectDeps) {
   }
 
   function toggleAutocorrectSmartQuotes(): void {
-    const next = {
-      ...autocorrectSettings.value,
-      smartQuotes: !autocorrectSettings.value.smartQuotes,
-    };
-    autocorrectSettings.value = next;
-    saveAutocorrectSettings(next);
+    setPreference("smartQuotes", !preferences.smartQuotes);
   }
 
   function toggleAutocorrectDashes(): void {
-    const next = {
-      ...autocorrectSettings.value,
-      dashes: !autocorrectSettings.value.dashes,
-    };
-    autocorrectSettings.value = next;
-    saveAutocorrectSettings(next);
+    setPreference("smartDashes", !preferences.smartDashes);
   }
 
   /** Runs the smart-quote/dash/decade substitutions after a single character was

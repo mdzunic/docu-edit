@@ -18,7 +18,7 @@ import {
   type VersionsIndexRecord,
 } from "../../lib/versionHistory";
 import { createVersionCadenceTimer, type VersionCadenceTimer } from "../../lib/core/versionCadenceScheduler";
-import { loadCommentAuthor } from "../../lib/core/commentIdentity";
+import { usePreferences } from "../../composables/usePreferences";
 import { applyTrackChanges } from "../../lib/trackChangesDiff";
 import { caretSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
@@ -70,13 +70,25 @@ export function useVersionHistory(deps: UseVersionHistoryDeps) {
   let cachedPrev: { id: string; model: DocumentModel } | null = null;
   let changedSinceLastVersion = false;
 
+  // The version author is the SPEC-038 identity, now a centralized preference
+  // (SPEC-066) — read live so a rename is reflected without a reload.
+  const versionHistoryPreferences = usePreferences();
   function authorName(): string {
-    return loadCommentAuthor();
+    return versionHistoryPreferences.preferences.authorName;
   }
 
   async function attemptSnapshot(trigger: SnapshotTrigger): Promise<void> {
     const model = doc.value;
     if (!model || !documentId.value || previewActive.value) {
+      return;
+    }
+    // "Keep version history" off stops the periodic recording (SPEC-066);
+    // the snapshots that protect a restore still run so undoing a restore
+    // never loses the pre-restore state.
+    if (
+      !versionHistoryPreferences.preferences.keepVersionHistory &&
+      (trigger === "cadence" || trigger === "commit")
+    ) {
       return;
     }
     const result = await recordVersion({
