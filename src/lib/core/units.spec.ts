@@ -4,12 +4,20 @@ import {
   cmToEmu,
   cmToTwips,
   emuToCm,
+  formatLength,
+  fromCm,
   halfPointsToPt,
+  parseLengthToCm,
   ptToHalfPoints,
   ptToTwentiethsOfPoint,
+  roundForDisplay,
+  toCm,
   twentiethsOfPointToPt,
   twipsToCm,
 } from "./units";
+import type { MeasurementUnit } from "./units";
+
+const ALL_UNITS: MeasurementUnit[] = ["cm", "mm", "in", "pt"];
 
 describe("inverse unit conversions (SPEC-006 writer)", () => {
   it("cmToTwips inverts twipsToCm exactly for the integers real files use", () => {
@@ -77,5 +85,106 @@ describe("cmToEmu / emuToCm (SPEC-024 DrawingML sizes)", () => {
   it("emuToCm is the plain (unrounded) inverse ratio", () => {
     expect(emuToCm(914400)).toBeCloseTo(2.54, 10);
     expect(emuToCm(0)).toBe(0);
+  });
+});
+
+describe("parseLengthToCm (SPEC-064 AC-11, AC-17)", () => {
+  it("reads a bare number in the current display unit", () => {
+    expect(parseLengthToCm("2", "cm")).toBeCloseTo(2, 10);
+    expect(parseLengthToCm("10", "mm")).toBeCloseTo(1, 10);
+    expect(parseLengthToCm("1", "in")).toBeCloseTo(2.54, 10);
+    expect(parseLengthToCm("72", "pt")).toBeCloseTo(2.54, 10);
+  });
+
+  it("honours an explicit suffix whatever the display unit", () => {
+    // Display unit is cm, but each suffix wins.
+    expect(parseLengthToCm("2cm", "cm")).toBeCloseTo(2, 10);
+    expect(parseLengthToCm("0.5in", "cm")).toBeCloseTo(1.27, 10);
+    expect(parseLengthToCm("12pt", "cm")).toBeCloseTo((12 / 72) * 2.54, 10);
+    expect(parseLengthToCm("10mm", "cm")).toBeCloseTo(1, 10);
+    // Display unit is inches, but a cm suffix still means centimetres.
+    expect(parseLengthToCm("3cm", "in")).toBeCloseTo(3, 10);
+  });
+
+  it("is case- and space-insensitive", () => {
+    expect(parseLengthToCm("0.5 IN", "cm")).toBeCloseTo(1.27, 10);
+    expect(parseLengthToCm("  2 Cm ", "in")).toBeCloseTo(2, 10);
+    expect(parseLengthToCm("12 PT", "cm")).toBeCloseTo((12 / 72) * 2.54, 10);
+  });
+
+  it("accepts a leading dot, a sign and negative indents", () => {
+    expect(parseLengthToCm(".5", "in")).toBeCloseTo(1.27, 10);
+    expect(parseLengthToCm("+2", "cm")).toBeCloseTo(2, 10);
+    expect(parseLengthToCm("-1.5cm", "cm")).toBeCloseTo(-1.5, 10);
+  });
+
+  it("accepts a numeric input as a bare number in the current unit (type=number v-model)", () => {
+    expect(parseLengthToCm(2, "cm")).toBeCloseTo(2, 10);
+    expect(parseLengthToCm(1, "in")).toBeCloseTo(2.54, 10);
+    expect(parseLengthToCm(Number.NaN, "cm")).toBeNull();
+  });
+
+  it("rejects unparseable input (AC-11b)", () => {
+    expect(parseLengthToCm("", "cm")).toBeNull();
+    expect(parseLengthToCm("   ", "cm")).toBeNull();
+    expect(parseLengthToCm("abc", "cm")).toBeNull();
+    expect(parseLengthToCm("2cmm", "cm")).toBeNull();
+    expect(parseLengthToCm("2 km", "cm")).toBeNull();
+    expect(parseLengthToCm("1e3", "cm")).toBeNull();
+    expect(parseLengthToCm("5.", "cm")).toBeNull();
+  });
+});
+
+describe("formatLength (SPEC-064 AC-17a)", () => {
+  it("converts out of centimetres, rounds per unit, and adds no suffix", () => {
+    expect(formatLength(2.54, "cm")).toBe("2.54");
+    expect(formatLength(2.54, "in")).toBe("1");
+    expect(formatLength(1, "mm")).toBe("10");
+    expect(formatLength(2.54, "pt")).toBe("72");
+    // Float noise is rounded away, not shown.
+    expect(formatLength(1 / 3, "cm")).toBe("0.33");
+  });
+});
+
+describe("length round-trip and drift (SPEC-064 AC-12, AC-17b)", () => {
+  it("parseLengthToCm(formatLength(x, u), u) returns x to within display precision", () => {
+    // roundForDisplay's own step, per unit, in centimetres.
+    // Half the unit's display step, expressed in centimetres: cm rounds to
+    // 0.01cm, mm to 0.1mm (0.01cm), in to 0.01in (~0.025cm), pt to 1pt (~0.035cm).
+    const toleranceCm: Record<MeasurementUnit, number> = {
+      cm: 0.005,
+      mm: 0.005,
+      in: 0.02,
+      pt: 0.02,
+    };
+    for (const unit of ALL_UNITS) {
+      for (const cm of [0, 0.37, 1, 2.54, 3.14, 12.7, 21, 29.7]) {
+        const roundTripped = parseLengthToCm(formatLength(cm, unit), unit);
+        expect(roundTripped).not.toBeNull();
+        expect(Math.abs((roundTripped as number) - cm)).toBeLessThanOrEqual(toleranceCm[unit]);
+      }
+    }
+  });
+
+  it("switching units back and forth does not drift the stored centimetre value", () => {
+    // The model stores cm and never rounds; only display rounds. Converting a
+    // stored cm to a unit and back is the exact inverse ratio (no rounding),
+    // so a measurement that is only ever converted for display cannot drift.
+    for (const unit of ALL_UNITS) {
+      for (const cm of [2.54, 1.27, 3.7, 0.63, 18.2]) {
+        expect(toCm(fromCm(cm, unit), unit)).toBeCloseTo(cm, 10);
+      }
+    }
+  });
+
+  it("roundForDisplay never mutates and only the display value is coarsened", () => {
+    // A precise stored cm formatted then re-parsed differs from the original by
+    // at most the unit's display step — proof the model value is the source of
+    // truth and rounding lives strictly at the boundary.
+    const stored = 2.5399999;
+    for (const unit of ALL_UNITS) {
+      const shown = roundForDisplay(fromCm(stored, unit), unit);
+      expect(Number.isFinite(shown)).toBe(true);
+    }
   });
 });

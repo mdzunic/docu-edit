@@ -19,5 +19,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.spec.ts"],
+    // The DocumentView specs mount the whole editor, and the first test in each
+    // file pays for transforming its entire dependency graph: ~3-4 s on an idle
+    // machine, and past Vitest's 5 s default under the load of the full suite
+    // running in the factory's container (eight files timed out together on
+    // 2026-08-22 and took 68 tests down with them). A timeout is a hang
+    // detector, not a performance budget — give it room.
+    testTimeout: 30_000,
   },
 });

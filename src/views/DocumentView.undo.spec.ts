@@ -29,8 +29,17 @@ beforeEach(() => {
 });
 
 let wrapper: VueWrapper | null = null;
+// Bumped when a test ends. A test that dies on Vitest's timeout cannot cancel
+// its in-flight mountAt: the dynamic import keeps going, resolves under the
+// NEXT test, mounts a second editor into document.body and overwrites
+// `wrapper` — so afterEach unmounts the wrong one and the stale editor keeps
+// receiving every later test's input (one timed-out first test cascaded into
+// 11 failures here). mountAt compares this stamp after its awaits and refuses
+// to mount once its test is over.
+let generation = 0;
 
 afterEach(() => {
+  generation += 1;
   wrapper?.unmount();
   wrapper = null;
   vi.doUnmock("../lib/idb");
@@ -45,9 +54,13 @@ async function microtasks() {
 }
 
 async function mountAt(path: string) {
+  const gen = generation;
   const { default: DocumentView } = await import("./DocumentView.vue");
   const router = createRouter({ history: createMemoryHistory(), routes });
   await router.push(path);
+  if (gen !== generation) {
+    throw new Error("mountAt: the test ended before DocumentView finished loading — not mounting into the next test");
+  }
   wrapper = mount(DocumentView, {
     global: { plugins: [router] },
     attachTo: document.body,

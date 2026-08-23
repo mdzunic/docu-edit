@@ -100,6 +100,13 @@ export function noSpellUnderlineRect(): SpellUnderlineRect {
   return { left: 0, top: 0, width: 0, height: 0, section: 0, block: 0, start: 0, end: 0, word: "", lang: "" };
 }
 
+/** Typed pass-through for a SpellUnderlineRect[] coming from a `.vue`
+ * template's `unknown[]` prop (espree bars the annotation), so
+ * PageMarkupOverlays can iterate the rects. */
+export function asSpellUnderlineRects(value: unknown): SpellUnderlineRect[] {
+  return value as SpellUnderlineRect[];
+}
+
 // SPEC-035 AC-16.1: the visible region plus a 500px margin above/below.
 const VIEWPORT_MARGIN_PX = 500;
 

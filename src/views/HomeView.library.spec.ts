@@ -23,12 +23,17 @@ afterEach(() => {
 
 // Navigations triggered by clicks lazy-load the target route component,
 // which needs real event-loop time (module fetch), not just promise flushes;
-// poll with a real delay (bounded) until the router settles.
+// poll with a real delay (bounded) until the router settles. The cold import
+// of DocumentView is 3-4 s on an idle machine and slower under the full
+// suite's load in the container, so the budget must stay well under the 30 s
+// testTimeout while leaving ample headroom for that first-mount import (a
+// 2 s budget flaked once DocumentView grew heavier — see the b422c38
+// slow-first-mount fix for the DocumentView specs).
 async function untilPath(
   router: ReturnType<typeof createRouter>,
   path: string,
 ) {
-  for (let i = 0; i < 200; i += 1) {
+  for (let i = 0; i < 2500; i += 1) {
     if (router.currentRoute.value.path === path) {
       return;
     }
