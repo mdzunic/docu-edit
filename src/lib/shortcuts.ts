@@ -59,9 +59,10 @@ export const SHORTCUTS: ShortcutDefinition[] = [
   { id: "format.underline", label: "Underline", category: "Formatting", bindings: [{ key: "u", mod: true }], overridesBrowser: true },
   { id: "format.strikethrough", label: "Strikethrough", category: "Formatting", bindings: [{ key: "x", mod: true, shift: true }] },
   // SPEC-066 claims the conventional Cmd/Ctrl+, for Preferences (AC-2), the
-  // macOS system convention. Subscript moves to Cmd/Ctrl+Shift+, — the same
-  // key with Shift — so the pair still reads together and no binding collides.
-  { id: "format.subscript", label: "Subscript", category: "Formatting", bindings: [{ key: ",", mod: true, shift: true }] },
+  // macOS system convention. Subscript moves to the same physical comma key
+  // with Shift, which the browser reports as "<" (bindings match the produced
+  // character, like view.zoomIn's "+" alternate) — so no binding collides.
+  { id: "format.subscript", label: "Subscript", category: "Formatting", bindings: [{ key: "<", mod: true, shift: true }] },
   { id: "format.superscript", label: "Superscript", category: "Formatting", bindings: [{ key: ".", mod: true }] },
   { id: "format.clearFormatting", label: "Clear formatting", category: "Formatting", bindings: [{ key: "\\", mod: true }] },
 

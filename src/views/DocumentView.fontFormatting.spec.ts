@@ -121,8 +121,9 @@ describe("the toolbar has all four controls plus sub/superscript (AC-1..4, AC-24
     expect(byTestId("font-size-increase")).toBeTruthy();
     expect(byTestId("text-color-button")).toBeTruthy();
     expect(byTestId("highlight-button")).toBeTruthy();
-    // SPEC-066 moved subscript off Cmd/Ctrl+, (now Preferences) to Ctrl+Shift+,.
-    expect(byTestId("format-subscript").getAttribute("title")).toBe("Subscript (Ctrl+Shift+,)");
+    // SPEC-066 moved subscript off Cmd/Ctrl+, (now Preferences) to the comma
+    // key with Shift, which reports as "<".
+    expect(byTestId("format-subscript").getAttribute("title")).toBe("Subscript (Ctrl+Shift+<)");
     expect(byTestId("format-superscript").getAttribute("title")).toBe("Superscript (Ctrl+.)");
   });
 
@@ -294,13 +295,14 @@ describe("applying formats from the controls", () => {
 });
 
 describe("subscript and superscript (AC-24..27)", () => {
-  it("Ctrl+Shift+, applies subscript to the selection and Ctrl+. flips it to superscript", async () => {
+  it("Ctrl+Shift+< applies subscript to the selection and Ctrl+. flips it to superscript", async () => {
     const id = "vert-align";
     await mountWithContent(id, [paragraph(["H2O"])]);
     moveSelection({ section: 0, block: 0, offset: 1 }, { section: 0, block: 0, offset: 2 });
     await nextTick();
-    // SPEC-066 moved subscript to Ctrl+Shift+, (Cmd/Ctrl+, is now Preferences).
-    fireKey({ key: ",", ctrlKey: true, shiftKey: true });
+    // SPEC-066 moved subscript to the comma key with Shift, reported as "<"
+    // (Cmd/Ctrl+, is now Preferences).
+    fireKey({ key: "<", ctrlKey: true, shiftKey: true });
     await nextTick();
     expect(await storedRuns(id)).toEqual([
       [

@@ -317,7 +317,7 @@ test("all four controls reflect the caret and blank out on a mixed selection (AC
   await expect(input).toHaveValue("");
 });
 
-test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shift+, / Ctrl+. (AC-24..27)", async ({
+test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shift+< / Ctrl+. (AC-24..27)", async ({
   page,
 }) => {
   const id = await createDocument(page);
