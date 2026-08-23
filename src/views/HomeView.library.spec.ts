@@ -226,44 +226,41 @@ describe("HomeView library list", () => {
     expect(copy!.id).not.toBe("doc-dup");
   });
 
-  it("delete asks for confirmation naming the document (AC-14)", async () => {
-    const { mountHome, store } = await loadModules();
-    seed(store, "doc-del", "Doomed doc", 1000);
-    const { wrapper } = await mountHome();
-
-    await wrapper.get('[data-testid="row-menu"]').trigger("click");
-    await wrapper.get('[data-testid="menu-delete"]').trigger("click");
-    expect(wrapper.get('[data-testid="delete-message"]').text()).toContain(
-      "Doomed doc",
-    );
-  });
-
-  it("confirming deletion removes the document (AC-15)", async () => {
+  // SPEC-067 amends SPEC-003's delete AC: deleting from the library moves the
+  // document to the trash (not a confirm-then-erase), with an Undo toast. The
+  // document is kept intact, so it can be restored. Permanent deletion is a
+  // separate, explicit step from the Trash view (covered in HomeView.trash.spec).
+  it("deleting moves the document to trash rather than erasing it (AC-33)", async () => {
     const { store, mountHome } = await loadModules();
     seed(store, "doc-del", "Doomed doc", 1000);
     const { wrapper } = await mountHome();
 
     await wrapper.get('[data-testid="row-menu"]').trigger("click");
     await wrapper.get('[data-testid="menu-delete"]').trigger("click");
-    await wrapper.get('[data-testid="delete-confirm"]').trigger("click");
 
-    expect(store.getDocument("doc-del")).toBeUndefined();
-    expect(wrapper.find('[data-testid="library-list"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
-  });
-
-  it("cancelling deletion keeps the document", async () => {
-    const { store, mountHome } = await loadModules();
-    seed(store, "doc-del", "Survivor", 1000);
-    const { wrapper } = await mountHome();
-
-    await wrapper.get('[data-testid="row-menu"]').trigger("click");
-    await wrapper.get('[data-testid="menu-delete"]').trigger("click");
-    await wrapper.get('[data-testid="delete-cancel"]').trigger("click");
-
+    // Gone from the library list, but kept in the store and now in the trash.
+    expect(store.listDocuments()).toEqual([]);
+    expect(store.getDocument("doc-del")?.title).toBe("Doomed doc");
+    expect(store.listTrashedDocuments().map((e) => e.id)).toEqual(["doc-del"]);
+    // No confirm dialog for a library delete — the trash is the safety net.
     expect(wrapper.find('[data-testid="delete-dialog"]').exists()).toBe(false);
-    expect(store.getDocument("doc-del")?.title).toBe("Survivor");
-    expect(wrapper.get('[data-testid="row-title"]').text()).toBe("Survivor");
+  });
+
+  it("offers an Undo toast that restores the deleted document (AC-34, AC-35)", async () => {
+    const { store, mountHome } = await loadModules();
+    seed(store, "doc-del", "Bring me back", 1000);
+    const { wrapper } = await mountHome();
+
+    await wrapper.get('[data-testid="row-menu"]').trigger("click");
+    await wrapper.get('[data-testid="menu-delete"]').trigger("click");
+
+    const toast = wrapper.get('[data-testid="toast"]');
+    expect(toast.text()).toContain("Bring me back");
+    await wrapper.get('[data-testid="toast-action"]').trigger("click");
+
+    expect(store.listTrashedDocuments()).toEqual([]);
+    expect(store.listDocuments().map((e) => e.id)).toEqual(["doc-del"]);
+    expect(wrapper.get('[data-testid="row-title"]').text()).toBe("Bring me back");
   });
 
   // SPEC-060: returning from a closed document carries its id in router state;

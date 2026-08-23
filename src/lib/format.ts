@@ -50,9 +50,11 @@ const BADGE_LABELS: Record<DocumentFormat, string> = {
   new: "New",
 };
 
-/** The display label for a library row's format badge. */
-export function formatBadgeLabel(format: DocumentFormat): string {
-  return BADGE_LABELS[format];
+/** The display label for a library row's format badge. Accepts a plain string
+ * (a runtime-typed .vue prop) and falls back to its upper-case form for any
+ * value outside the known formats. */
+export function formatBadgeLabel(format: string): string {
+  return BADGE_LABELS[format as DocumentFormat] ?? format.toUpperCase();
 }
 
 const DOCUMENT_FORMAT_LABELS: Record<ModelDocumentFormat, string> = {

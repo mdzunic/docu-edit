@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -39,9 +39,15 @@ function mountWithRouter(documentTitle = "t") {
 // A drop's router.push() resolves only once its target route's async
 // component has been dynamically import()ed, which needs real event-loop
 // time, not just a promise-queue flush (same reason HomeView's library
-// spec polls rather than awaiting flushPromises() alone).
+// spec polls rather than awaiting flushPromises() alone). The window is
+// generous (up to 10s) rather than tight: the drop handler also parses the
+// dropped .docx before it navigates, and on a CPU-starved gate worker that
+// parse plus the lazy editor import — even with the beforeAll cache-warm —
+// can outlast a 2s poll, which is exactly the flake this widening removes.
+// The window only costs wall-clock when navigation genuinely never happens;
+// the assertion that follows still fails a real navigation break.
 async function untilNavigated(router: ReturnType<typeof createRouter>) {
-  for (let i = 0; i < 200; i += 1) {
+  for (let i = 0; i < 1000; i += 1) {
     if (router.currentRoute.value.path !== "/") {
       return;
     }
@@ -189,6 +195,21 @@ describe("AppShell", () => {
   });
 
   describe("drag-and-drop (SPEC-009)", () => {
+    // A drop navigates to /doc/:id, whose route component is a lazy
+    // `() => import("./views/DocumentView.vue")`. The very first time that
+    // module graph is imported in a test worker, Vite transforms the whole
+    // (now large) editor dependency tree on demand, which takes a few seconds
+    // — longer than untilNavigated's polling window, so the first navigating
+    // test would flake. Pre-importing the lazy route components here pays that
+    // transform cost once up front, so router.push() resolves from cache and
+    // each test's navigation completes promptly.
+    beforeAll(async () => {
+      await Promise.all([
+        import("../views/DocumentView.vue"),
+        import("../views/HomeView.vue"),
+      ]);
+    });
+
     it("shows a full-window 'Drop to open' overlay while a file is dragged over the window (AC-1)", async () => {
       const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
       mountedWrappers.push(wrapper);
