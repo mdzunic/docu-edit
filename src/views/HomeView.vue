@@ -12,6 +12,7 @@ import TemplateGalleryDialog from "../components/TemplateGalleryDialog.vue";
 import CommandPalette from "../components/CommandPalette.vue";
 import RowMenu from "../components/library/RowMenu.vue";
 import LibraryCard from "../components/library/LibraryCard.vue";
+import { useTier } from "../composables/useResponsiveTier";
 import HighlightedTitle from "../components/library/HighlightedTitle.vue";
 import { openDocumentFile } from "../lib/openDocument";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
@@ -36,6 +37,25 @@ const { addToast } = useToasts();
 useTheme();
 
 const lib = useLibrary();
+
+// SPEC-068 AC-38 — at the compact tier the library's three header actions
+// collapse to one primary action (New document) plus an overflow menu holding
+// the rest; the cards reflow to one column (CSS) and search stays visible.
+const tier = useTier();
+const compact = computed(() => tier.value === "compact");
+const headerActionsMenuOpen = ref(false);
+const HEADER_OVERFLOW_ACTIONS = [
+  { id: "new-from-template", label: "New from template…", testid: "new-from-template" },
+  { id: "open-document", label: "Open document", testid: "open-document" },
+];
+function runHeaderAction(id = "") {
+  headerActionsMenuOpen.value = false;
+  if (id === "new-from-template") {
+    openTemplateGallery();
+  } else if (id === "open-document") {
+    pickFile();
+  }
+}
 
 const fileInput = useTemplateRef("fileInput");
 const openError = ref("");
@@ -656,18 +676,31 @@ watch(sortKeyChoice, (value) => lib.setSortKey(value));
             >
               New document
             </UiButton>
-            <UiButton
-              data-testid="new-from-template"
-              @click="openTemplateGallery"
-            >
-              New from template…
-            </UiButton>
-            <UiButton
-              data-testid="open-document"
-              @click="pickFile"
-            >
-              Open document
-            </UiButton>
+            <template v-if="!compact">
+              <UiButton
+                data-testid="new-from-template"
+                @click="openTemplateGallery"
+              >
+                New from template…
+              </UiButton>
+              <UiButton
+                data-testid="open-document"
+                @click="pickFile"
+              >
+                Open document
+              </UiButton>
+            </template>
+            <RowMenu
+              v-else
+              :open="headerActionsMenuOpen"
+              label="More actions"
+              :items="HEADER_OVERFLOW_ACTIONS"
+              button-testid="library-actions-overflow"
+              menu-testid="library-actions-overflow-menu"
+              @toggle="headerActionsMenuOpen = !headerActionsMenuOpen"
+              @close="headerActionsMenuOpen = false"
+              @select="runHeaderAction"
+            />
           </div>
         </div>
         <div
@@ -1379,6 +1412,23 @@ watch(sortKeyChoice, (value) => lib.setSortKey(value));
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
   gap: var(--space-5);
+}
+
+/* SPEC-068 AC-37/38/39 — the compact tier (<640px). Cards reflow to a single
+   column, the search box takes its own full-width row so it always stays
+   visible, and the header actions (already collapsed to one primary button +
+   an overflow menu in the template) sit alongside it. The 640px boundary is
+   the compact tier's, matching useResponsiveTier. */
+@media (max-width: 639.98px) {
+  .library-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .library-search {
+    flex: 1 1 100%;
+    min-width: 0;
+    order: 1;
+  }
 }
 
 .trash-note,

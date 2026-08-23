@@ -14,6 +14,7 @@ import {
   UNSUPPORTED_FILE_TYPE_MESSAGE,
 } from "../lib/openDocument";
 import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
+import { installTierObserver, useTier } from "../composables/useResponsiveTier";
 
 // Runtime prop/emit declarations (not the defineProps<{...}>()/defineEmits<{...}>()
 // generics) because ESLint parses .vue scripts with espree, which rejects
@@ -34,6 +35,22 @@ const emit = defineEmits(["update:documentTitle"]);
 const isEditingTitle = ref(false);
 const draftTitle = ref("");
 const titleInput = useTemplateRef("titleInput");
+
+// SPEC-068 — the shell root is the width the three layout tiers key off. A
+// ResizeObserver here (not device sniffing) means a narrow desktop window
+// behaves identically to a tablet of the same width (AC-1), and the tier
+// switches live as the window resizes with no reload (AC-2). The tier is
+// module-level shared state (useResponsiveTier) so it also reaches chrome that
+// DocumentView slots into this shell, which provide/inject could not.
+const shellRoot = useTemplateRef("shellRoot");
+const tier = useTier();
+let stopTierObserver = () => {};
+onMounted(() => {
+  stopTierObserver = installTierObserver(() => shellRoot.value);
+});
+onUnmounted(() => {
+  stopTierObserver();
+});
 
 async function startEditingTitle() {
   if (!props.titleEditable) {
@@ -193,7 +210,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="shell">
+  <div
+    ref="shellRoot"
+    class="shell"
+    :data-tier="tier"
+    data-testid="app-shell"
+  >
     <header
       class="app-bar"
       data-testid="app-bar"
@@ -430,6 +452,12 @@ h1.document-title[role="button"] {
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: var(--text-sm);
+  /* SPEC-068 — when the on-screen keyboard opens it overlays the bottom of the
+     viewport; DocumentView feeds the keyboard height as --keyboard-inset-bottom
+     and the status bar lifts by exactly that so it stays pinned to the visible
+     viewport rather than sitting behind the keyboard. 0 (no transform) when the
+     keyboard is closed. */
+  transform: translateY(calc(-1 * var(--keyboard-inset-bottom, 0px)));
 }
 
 .drop-overlay {

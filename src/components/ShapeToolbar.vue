@@ -4,8 +4,9 @@
 // rotation, wrap mode, alt text, z-order and group/ungroup. Mirrors
 // ImageToolbar.vue's own pattern and positioning convention. Runtime
 // prop/emit declarations per the espree constraint (see AppShell.vue).
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import UiButton from "./ui/UiButton.vue";
+import { useTier } from "../composables/useResponsiveTier";
 
 const props = defineProps({
   fill: { type: String, default: "" },
@@ -28,6 +29,7 @@ const emit = defineEmits([
   "z-order",
   "group",
   "ungroup",
+  "options",
   "delete",
   "duplicate",
 ]);
@@ -46,6 +48,14 @@ const Z_ORDER_COMMANDS = [
   { command: "backward", label: "Send backward" },
   { command: "back", label: "Send to back" },
 ];
+
+// SPEC-068: the drawing position dialog is one of the commands disabled at
+// the compact tier (a 390px canvas cannot host it) — it stays visible with a
+// stated reason rather than vanishing (AC-12/13). A shape can still be moved
+// by drag and deleted at compact; only this precise numeric editor is off.
+const tier = useTier();
+const positionUnavailable = computed(() => tier.value === "compact");
+const POSITION_UNAVAILABLE_REASON = "not available on this screen size";
 
 const rotationInput = ref(String(props.rotationDeg));
 watch(
@@ -288,6 +298,16 @@ function onZOrderChange(event = new Event("change")) {
       >
     </label>
     <span class="shape-toolbar-separator" />
+    <UiButton
+      variant="ghost"
+      data-testid="shape-position-button"
+      :disabled="positionUnavailable"
+      :title="positionUnavailable ? POSITION_UNAVAILABLE_REASON : 'Position and size'"
+      @mousedown.prevent
+      @click="emit('options')"
+    >
+      Position &amp; size…
+    </UiButton>
     <UiButton
       variant="ghost"
       data-testid="shape-duplicate-button"

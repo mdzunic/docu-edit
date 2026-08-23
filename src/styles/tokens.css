@@ -105,6 +105,27 @@
   }
 }
 
+/* SPEC-068 — coarse-pointer target sizing (AC-14/15/16). When the PRIMARY
+ * pointer is coarse (a fingertip, not a mouse), every interactive control
+ * grows to a 44×44 CSS px minimum; a fine pointer keeps the 32px baseline. The
+ * lever is --height-control — the one token UiButton/UiIconButton/UiSelect/
+ * UiToggleButton all read for their hit size — so every control scales for free
+ * without touching its own rule, exactly as dark mode redefines colours here
+ * without adding names. The growth comes from the target token and the low
+ * spacing steps that pad controls, NOT from enlarging the icons: --text-* and
+ * icon sizes are untouched, so the chrome breathes rather than the glyphs
+ * ballooning. This is a SEPARATE axis from the width tiers: a touchscreen
+ * laptop gets the full layout with large targets, a narrow mouse-driven window
+ * gets the compact layout with small ones. */
+@media (pointer: coarse) {
+  :root {
+    --height-control: 44px;
+    --space-2: 6px;
+    --space-3: 10px;
+    --space-4: 14px;
+  }
+}
+
 /* ---- Dark palette (SPEC-059) ---------------------------------------------
  * The dark theme redefines the same token *values* — it adds no new names, so
  * every var() across the app themes for free. Only colour and shadow tokens

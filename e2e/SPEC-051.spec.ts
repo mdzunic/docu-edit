@@ -921,3 +921,40 @@ test.describe("SPEC-051 — group move/resize/rotate as one unit (AC-36..38)", (
     await expect.poll(topmostTestId).toBe(await first.getAttribute("data-testid"));
   });
 });
+
+test.describe("SPEC-068 — drawing handle degrades to a numeric position dialog (AC-42)", () => {
+  test("the shape toolbar's Position & size dialog resizes and repositions a shape numerically", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 400, 300);
+    // Insertion leaves the new shape selected with its toolbar up.
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    const drawing = drawingAt(page, 0);
+    const before = await drawing.boundingBox();
+    if (!before) {
+      throw new Error("the drawing has no bounding box");
+    }
+
+    // Open the numeric fallback — the coarse-pointer path for a handle drag.
+    await page.getByTestId("shape-position-button").click();
+    await expect(page.getByTestId("shape-position-dialog")).toBeVisible();
+
+    // Enlarge the shape well beyond the 3cm x 2cm default and commit.
+    await page.getByTestId("shape-position-width").fill("12");
+    await page.getByTestId("shape-position-height").fill("8");
+    await page.getByTestId("shape-position-apply").click();
+    await expect(page.getByTestId("shape-position-dialog")).toHaveCount(0);
+
+    // The committed size shows up as a visibly larger rendered drawing.
+    await expect
+      .poll(async () => (await drawing.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(before.width + 20);
+
+    // Re-opening the dialog reflects the persisted numeric size.
+    await page.getByTestId("shape-position-button").click();
+    await expect(page.getByTestId("shape-position-dialog")).toBeVisible();
+    await expect(page.getByTestId("shape-position-width")).toHaveValue("12");
+    await expect(page.getByTestId("shape-position-height")).toHaveValue("8");
+  });
+});

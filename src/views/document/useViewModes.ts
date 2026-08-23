@@ -10,6 +10,7 @@
 import { computed, nextTick, ref, watch, type Ref, type ShallowRef } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { type DocumentModel, sectionContentWidthCm } from "../../lib/documentModel";
+import { useTier } from "../../composables/useResponsiveTier";
 import { usePreferences } from "../../composables/usePreferences";
 
 export type ViewMode = "print" | "web";
@@ -21,6 +22,11 @@ export interface ViewModesDeps {
   /** Run after a Print/Web/Focus change has settled in the DOM: the presenter
    * re-tiles the page grid and re-fits an active fit mode (SPEC-063 AC-36). */
   onLayoutSettled?: () => void;
+  /** SPEC-068 AC-35: run when the compact tier defaults a document with no
+   * stored preference to Web layout, so the presenter can also switch to
+   * fit-width. Deferred by the caller (nextTick) since it reaches the zoom
+   * presenter, which is wired after this composable. */
+  onCompactWebDefault?: () => void;
 }
 
 /** The per-document persistence key for the print/web view mode (AC-49). */
@@ -28,13 +34,16 @@ export function viewModeStorageKey(documentId: string): string {
   return `docu-edit:view-mode:${documentId}`;
 }
 
-function readStoredViewMode(documentId: string): ViewMode | null {
+/** The explicitly stored mode, or null when the document has never had one
+ * written — the signal that a tier default may choose the mode (SPEC-068). Only
+ * setViewMode writes storage, so a default never masquerades as a user choice. */
+function readStoredViewModeRaw(documentId: string): ViewMode | null {
   if (!documentId) {
     return null;
   }
   try {
-    const raw = localStorage.getItem(viewModeStorageKey(documentId));
-    return raw === "web" ? "web" : raw === "print" ? "print" : null;
+    const value = localStorage.getItem(viewModeStorageKey(documentId));
+    return value === "web" || value === "print" ? value : null;
   } catch {
     return null;
   }
@@ -53,6 +62,7 @@ function writeStoredViewMode(documentId: string, mode: ViewMode): void {
 
 export function useViewModes(deps: ViewModesDeps) {
   const { documentId, doc } = deps;
+  const tier = useTier();
 
   const viewMode = ref<ViewMode>("print");
   // Focus is deliberately NOT loaded from or written to storage (AC-48, 50).
@@ -60,17 +70,39 @@ export function useViewModes(deps: ViewModesDeps) {
   // The default a new document opens in comes from preferences (SPEC-066).
   const { preferences } = usePreferences();
 
-  // Load the stored print/web mode when the document changes; a document with
-  // no stored value opens in the "Default view mode" preference (SPEC-066),
-  // Print by default, always with Focus off (AC-48, 51).
+  // Choose the mode for the current document: an explicit stored choice always
+  // wins (SPEC-068 AC-36 — Print stays selectable and sticky), otherwise the
+  // compact tier defaults to Web layout at fit-width (AC-35) and every wider
+  // tier falls back to the "Default view mode" preference (SPEC-066), Print by
+  // default (SPEC-063 AC-48). Defaults never write storage, so widening back to
+  // a desktop returns to the preferred default unless the user pinned a mode.
+  function applyModeForTier(id: string): void {
+    const stored = readStoredViewModeRaw(id);
+    if (stored) {
+      viewMode.value = stored;
+    } else if (tier.value === "compact") {
+      viewMode.value = "web";
+      deps.onCompactWebDefault?.();
+    } else {
+      viewMode.value = preferences.defaultViewMode;
+    }
+  }
+
+  // Load the stored/defaulted print/web mode when the document changes, always
+  // with Focus off (AC-48, 51).
   watch(
     documentId,
     (id) => {
-      viewMode.value = readStoredViewMode(id) ?? preferences.defaultViewMode;
+      applyModeForTier(id);
       focusMode.value = false;
     },
     { immediate: true },
   );
+
+  // Re-evaluate the default when the tier changes live (a resize or an
+  // orientation flip crossing 640px), without disturbing an explicit choice or
+  // the current Focus state.
+  watch(tier, () => applyModeForTier(documentId.value));
 
   function setViewMode(mode: ViewMode): void {
     viewMode.value = mode;

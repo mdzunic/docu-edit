@@ -26,6 +26,7 @@ import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
 import { SUPPORTED_LANGUAGES } from "../lib/core/language";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
+import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
@@ -103,6 +104,9 @@ import { useThemeControls } from "./document/useThemeControls";
 import { useCommandPalette } from "./document/useCommandPalette";
 import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
+import { useLongPress, openContextMenuAtPoint } from "../composables/useLongPress";
+import { useVisualViewportKeyboard } from "../composables/useVisualViewportKeyboard";
+import { usePinchZoom } from "../composables/usePinchZoom";
 import { useCaptions } from "./document/useCaptions";
 import { renumberCaptions } from "../lib/captions";
 import { useEquations } from "./document/useEquations";
@@ -251,7 +255,7 @@ import {
   noHighlightRects,
   noMatches,
 } from "../lib/findReplace";
-import { noTableHandleGeometry } from "../lib/caretGeometry";
+import { caretClientRect, noTableHandleGeometry } from "../lib/caretGeometry";
 import { findTableElement, noColumnResizeDrag, noRowResizeDrag } from "../lib/tableResize";
 import { previewColumnWidths, previewRowHeight, tableRowElement } from "../lib/core/tables";
 import { CM_PER_PX } from "../lib/core/units";
@@ -597,7 +601,10 @@ const pageRef = useTemplateRef("pageRef");
 // SPEC-063 Print/Web + Focus (AC-32..51); also owns the Web-layout content
 // width (AC-40) and re-tiles/re-fits the presenter once the layout settles
 // (AC-36 — onLayoutSettled runs past setup, when zoomView exists).
-const viewModes = useViewModes({ documentId, doc, onLayoutSettled: () => { zoomView.recomputeGrid(); zoomView.recomputeFit(); } });
+// onCompactWebDefault (SPEC-068 AC-35) is deferred to nextTick so zoomView —
+// wired just below — exists when the compact tier defaults this document to Web
+// layout at fit-width.
+const viewModes = useViewModes({ documentId, doc, onLayoutSettled: () => { zoomView.recomputeGrid(); zoomView.recomputeFit(); }, onCompactWebDefault: () => { void nextTick(() => zoomView.setFitWidth()); } });
 const { viewMode, focusMode, rootClass: viewRootClass, exitFocus, webContentWidthCss } = viewModes;
 
 // Zoom (SPEC-063): created before the shared context — its scale fraction and coordinate helpers are part of it (AC-21, AC-22).
@@ -769,6 +776,10 @@ const {
   handleShapeWrap,
   handleShapeAltText,
   handleShapeZOrder,
+  shapePositionOpen,
+  shapePositionInitial,
+  openShapePosition,
+  handleShapePositionApply,
   handleGroupSelected,
   handleUngroupSelected,
   currentGroupMembers,
@@ -2952,6 +2963,30 @@ const {
   handleFieldAction,
 } = useFields({ ...editorContext, tocPageNumberFor, handleContextMenu, closeContextMenu });
 
+// SPEC-068 AC-22/23: a touch long-press on the canvas opens the same context
+// menu the mouse right-click opens, by dispatching a synthetic contextmenu at
+// the point (which the contenteditable's @contextmenu handler runs unchanged);
+// a moving finger is a selection drag and never trips it.
+useLongPress({ target: () => contentRoot.value, onLongPress: openContextMenuAtPoint });
+
+// SPEC-068 AC-29/30/31: keep the caret above the on-screen keyboard by scrolling
+// the document to the visual viewport, and restore the scroll position when the
+// keyboard closes.
+const { keyboardInset } = useVisualViewportKeyboard({
+  getScrollContainer: () => scrollContainer,
+  getCaretRect: () => { const root = contentRoot.value; return root && caret ? caretClientRect(root, caret) : null; },
+});
+
+// SPEC-068 AC-32/33/34: pinch drives the zoom transform (setZoomPercent clamps
+// to the zoom band); a two-finger pan scrolls. The chrome never scales because
+// only .pages carries the zoom transform.
+usePinchZoom({
+  getScrollContainer: () => scrollContainer,
+  target: () => scrollContainer,
+  getZoomPercent: () => zoomView.zoomPercent.value,
+  setZoomPercent: (percent) => zoomView.setZoomPercent(percent),
+});
+
 const {
   captionDialogOpen,
   captionLabels,
@@ -3251,7 +3286,7 @@ function handleMenuCommand(id = "") {
   <AppShell
     v-if="doc"
     :class="viewRootClass"
-    :style="{ '--web-content-width': webContentWidthCss }"
+    :style="{ '--web-content-width': webContentWidthCss, '--keyboard-inset-bottom': keyboardInset + 'px' }"
     :document-title="doc.title"
     :title-editable="editable"
     :format-badge="formatBadge"
@@ -3972,6 +4007,7 @@ function handleMenuCommand(id = "") {
         @z-order="handleShapeZOrder"
         @group="handleGroupSelected(currentGroupMembers())"
         @ungroup="handleUngroupSelected"
+        @options="openShapePosition"
         @delete="handleShapeDelete"
         @duplicate="handleShapeDuplicate"
       />
@@ -4212,6 +4248,13 @@ function handleMenuCommand(id = "") {
       @apply="handleImageOptionsApplyAndRescan"
       @cancel="imageOptionsOpen = false"
     />
+    <ShapePositionDialog
+      v-if="shapePositionOpen"
+      :initial="shapePositionInitial"
+      :unit="doc?.measurementUnit || 'cm'"
+      @apply="handleShapePositionApply"
+      @cancel="shapePositionOpen = false"
+    />
     <ChartDataSheetDialog
       v-if="editingChartData"
       :initial="chartDataSheetInitial"
@@ -4427,6 +4470,19 @@ function handleMenuCommand(id = "") {
   border-radius: 2px;
   background: var(--surface-base);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+/* SPEC-068: object handles enlarge for a coarse pointer so a fingertip can grab
+   them (AC-42's touch-equivalent for handle drag; handles are already shown
+   while selected rather than on hover — AC-20). The position/size numeric
+   dialogs remain the fallback where a drag is impractical. */
+@media (pointer: coarse) {
+  .image-resize-handle,
+  .shape-resize-handle,
+  .shape-rotation-handle {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 /* The selected shape's eight resize handles plus rotation handle (SPEC-051

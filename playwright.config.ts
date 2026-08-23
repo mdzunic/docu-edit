@@ -23,6 +23,12 @@ import { defineConfig, devices } from "@playwright/test";
 // would then never run them at all — the gate would go green with the
 // budgets unmeasured.
 const PERF_SPEC = /\.perf\.spec\.ts$/;
+// SPEC-068: the compact touch project owns the *.compact.spec.ts files and runs
+// them at a 390×844 phone viewport with touch emulation. The desktop `chromium`
+// project ignores them so the full suite keeps running unchanged at the desktop
+// viewport (AC-48) — these specs assert the compact layout, which the desktop
+// project would not exercise.
+const COMPACT_SPEC = /\.compact\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -42,7 +48,20 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: PERF_SPEC },
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: [PERF_SPEC, COMPACT_SPEC] },
+    // A phone-sized, touch-enabled project for the compact tier (SPEC-068
+    // AC-47). 390×844 is the reference compact viewport; hasTouch/isMobile turn
+    // on touch emulation and the mobile input model.
+    {
+      name: "compact",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        isMobile: true,
+      },
+      testMatch: COMPACT_SPEC,
+    },
     // SPEC-052's two single-shot samples go ahead of SPEC-047's median-of-5
     // benchmark so the long one inherits the quietest window.
     { name: "perf-charts", use: { ...devices["Desktop Chrome"] }, testMatch: /SPEC-052\.perf\.spec\.ts$/ },

@@ -13,6 +13,11 @@ defineProps({
   /** Pre-formatted accelerator, e.g. "Ctrl+K"; "" shows none. */
   shortcut: { type: String, default: "" },
   disabled: { type: Boolean, default: false },
+  /** SPEC-068 AC-12/13: when a command is disabled because it cannot work on
+   * this screen size (not because it is inapplicable), the stated reason is
+   * shown in the item — e.g. "not available on this screen size" — so the menu
+   * stays a stable map of the product and nothing is silently dropped. */
+  reason: { type: String, default: "" },
 });
 
 const emit = defineEmits(["select"]);
@@ -25,14 +30,34 @@ const emit = defineEmits(["select"]);
     class="menu-item"
     :data-testid="testid || undefined"
     :disabled="disabled"
+    :title="disabled && reason ? reason : undefined"
     tabindex="-1"
     @mousedown.prevent
     @click="emit('select')"
   >
     <span class="menu-item-label">{{ label }}</span>
     <span
-      v-if="shortcut"
+      v-if="disabled && reason"
+      class="menu-item-reason"
+      data-testid="menu-item-reason"
+    >{{ reason }}</span>
+    <span
+      v-else-if="shortcut"
       class="menu-shortcut"
     >{{ shortcut }}</span>
   </button>
 </template>
+
+<style scoped>
+/* The stated reason a command is disabled on this screen size (SPEC-068):
+   pushed to the trailing edge like a shortcut, but muted and italic so it
+   reads as an explanation, not an accelerator. */
+.menu-item-reason {
+  margin-left: auto;
+  padding-left: var(--space-6);
+  color: var(--text-disabled);
+  font-size: var(--text-xs);
+  font-style: italic;
+  white-space: nowrap;
+}
+</style>
