@@ -82,6 +82,15 @@ export function useVersionHistory(deps: UseVersionHistoryDeps) {
     if (!model || !documentId.value || previewActive.value) {
       return;
     }
+    // "Keep version history" off stops the periodic recording (SPEC-066);
+    // the snapshots that protect a restore still run so undoing a restore
+    // never loses the pre-restore state.
+    if (
+      !versionHistoryPreferences.preferences.keepVersionHistory &&
+      (trigger === "cadence" || trigger === "commit")
+    ) {
+      return;
+    }
     const result = await recordVersion({
       docId: documentId.value,
       model,

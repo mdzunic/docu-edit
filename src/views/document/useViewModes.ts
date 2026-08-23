@@ -10,6 +10,7 @@
 import { computed, nextTick, ref, watch, type Ref, type ShallowRef } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { type DocumentModel, sectionContentWidthCm } from "../../lib/documentModel";
+import { usePreferences } from "../../composables/usePreferences";
 
 export type ViewMode = "print" | "web";
 
@@ -27,14 +28,15 @@ export function viewModeStorageKey(documentId: string): string {
   return `docu-edit:view-mode:${documentId}`;
 }
 
-function readStoredViewMode(documentId: string): ViewMode {
+function readStoredViewMode(documentId: string): ViewMode | null {
   if (!documentId) {
-    return "print";
+    return null;
   }
   try {
-    return localStorage.getItem(viewModeStorageKey(documentId)) === "web" ? "web" : "print";
+    const raw = localStorage.getItem(viewModeStorageKey(documentId));
+    return raw === "web" ? "web" : raw === "print" ? "print" : null;
   } catch {
-    return "print";
+    return null;
   }
 }
 
@@ -55,13 +57,16 @@ export function useViewModes(deps: ViewModesDeps) {
   const viewMode = ref<ViewMode>("print");
   // Focus is deliberately NOT loaded from or written to storage (AC-48, 50).
   const focusMode = ref(false);
+  // The default a new document opens in comes from preferences (SPEC-066).
+  const { preferences } = usePreferences();
 
   // Load the stored print/web mode when the document changes; a document with
-  // no stored value opens in Print layout, always with Focus off (AC-48, 51).
+  // no stored value opens in the "Default view mode" preference (SPEC-066),
+  // Print by default, always with Focus off (AC-48, 51).
   watch(
     documentId,
     (id) => {
-      viewMode.value = readStoredViewMode(id);
+      viewMode.value = readStoredViewMode(id) ?? preferences.defaultViewMode;
       focusMode.value = false;
     },
     { immediate: true },
