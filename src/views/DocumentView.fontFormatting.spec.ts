@@ -27,8 +27,14 @@ beforeEach(() => {
 });
 
 let wrapper: VueWrapper | null = null;
+// Bumped when a test ends: a test that dies on Vitest's timeout cannot cancel
+// its in-flight mount, whose import resolves under the NEXT test and would
+// otherwise mount a second editor and overwrite `wrapper` (afterEach then
+// unmounts the wrong one and the stale editor swallows later tests' input).
+let generation = 0;
 
 afterEach(() => {
+  generation += 1;
   wrapper?.unmount();
   wrapper = null;
   vi.doUnmock("../lib/idb");
@@ -49,12 +55,16 @@ function paragraph(...runs: Array<[string, Record<string, unknown>?]>): Paragrap
 }
 
 async function mountWithContent(id: string, blocks: Paragraph[]) {
+  const gen = generation;
   const store = await import("../lib/documentStore");
   const model = store.getOrCreateDocument(id);
   model.sections = [{ blocks }];
   const { default: DocumentView } = await import("./DocumentView.vue");
   const router = createRouter({ history: createMemoryHistory(), routes });
   await router.push(`/doc/${id}`);
+  if (gen !== generation) {
+    throw new Error("mountWithContent: the test ended before DocumentView finished loading — not mounting into the next test");
+  }
   wrapper = mount(DocumentView, {
     global: { plugins: [router] },
     attachTo: document.body,
