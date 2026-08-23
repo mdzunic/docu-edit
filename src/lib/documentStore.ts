@@ -28,6 +28,13 @@ export interface StoredDocumentRecord {
   caret?: CaretPosition | null;
   /** Canvas scrollTop in pixels at the last commit. */
   scroll?: number;
+  /** Starred by the user (SPEC-067). Absent means not starred. */
+  starred?: boolean;
+  /** When the document was moved to the trash (SPEC-067), as an epoch
+   * millisecond value. Absent means it is in the library. A record with this
+   * set is excluded from listDocuments() and from every enumeration; it keeps
+   * its id and content, so restoreDocument returns it intact. */
+  trashedAt?: number;
 }
 
 /** The autosave journal (SPEC-010): written on the 2 s / 30 s cadence,
@@ -106,6 +113,11 @@ export interface LibraryEntry {
   title: string;
   format: DocumentFormat;
   lastModified: number;
+  /** Whether the user has starred the document (SPEC-067). */
+  starred: boolean;
+  /** Epoch ms the document was trashed — present only on entries returned by
+   * listTrashedDocuments(); always absent from listDocuments(). */
+  trashedAt?: number;
 }
 
 export const MAX_TITLE_LENGTH = 200;
@@ -325,16 +337,35 @@ export function getOrCreateDocument(id: string): DocumentModel {
   return record.model;
 }
 
-/** Library rows sorted by last modified, newest first. */
+function toLibraryEntry(record: StoredDocumentRecord): LibraryEntry {
+  return {
+    id: record.id,
+    format: record.format,
+    lastModified: record.lastModified,
+    title: record.model.title,
+    starred: record.starred === true,
+    trashedAt: record.trashedAt,
+  };
+}
+
+/** Library rows sorted by last modified, newest first. Excludes trashed
+ * documents (SPEC-067): a record with `trashedAt` set is not enumerated
+ * here, nor anywhere else the library lists documents. */
 export function listDocuments(): LibraryEntry[] {
   return [...records.values()]
-    .map(({ id, format, lastModified, model }) => ({
-      id,
-      format,
-      lastModified,
-      title: model.title,
-    }))
+    .filter((record) => record.trashedAt === undefined)
+    .map(toLibraryEntry)
     .sort((a, b) => b.lastModified - a.lastModified);
+}
+
+/** Trashed documents only (SPEC-067), most recently trashed first. The
+ * counterpart to listDocuments(): together they partition the store on
+ * `trashedAt`. */
+export function listTrashedDocuments(): LibraryEntry[] {
+  return [...records.values()]
+    .filter((record) => record.trashedAt !== undefined)
+    .map(toLibraryEntry)
+    .sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0));
 }
 
 // --- mutations -------------------------------------------------------------
@@ -410,6 +441,85 @@ export function duplicateDocument(
   records.set(copyId, copy);
   persist(copy);
   return copy;
+}
+
+/** Moves a document to the trash (SPEC-067): sets `trashedAt` so it drops
+ * out of listDocuments() and every enumeration, but keeps its id, model,
+ * version history and draft intact so restoreDocument returns it whole. Does
+ * NOT bump lastModified — trashing is not an edit — so a restored document
+ * sorts back exactly where it was. This is the reversible delete; only
+ * "Delete permanently" and "Empty trash" reach deleteDocument. */
+export function trashDocument(id: string): void {
+  const record = records.get(id);
+  if (!record || record.trashedAt !== undefined) {
+    return;
+  }
+  record.trashedAt = Date.now();
+  persist(record);
+}
+
+/** Restores a trashed document to the library (SPEC-067) by clearing
+ * `trashedAt`. The inverse of trashDocument; the toast's Undo and the Trash
+ * view's Restore both call it. */
+export function restoreDocument(id: string): void {
+  const record = records.get(id);
+  if (!record || record.trashedAt === undefined) {
+    return;
+  }
+  delete record.trashedAt;
+  persist(record);
+}
+
+/** Sets (or clears) a document's starred flag (SPEC-067) and persists.
+ * Absent means not starred, so clearing removes the field. */
+export function setStarred(id: string, starred: boolean): void {
+  const record = records.get(id);
+  if (!record) {
+    return;
+  }
+  if (starred) {
+    record.starred = true;
+  } else {
+    delete record.starred;
+  }
+  persist(record);
+}
+
+/** How much room the library occupies (SPEC-067): the approximate byte size
+ * of every record — trashed included, since a trashed document still costs
+ * space until it is permanently deleted — and a per-document breakdown so the
+ * storage panel can name the largest. Sizes are derived from the in-memory
+ * model (the persisted shell plus its media), which is a close proxy for the
+ * IndexedDB footprint without a round trip. Sorted largest first. */
+export function libraryStorageUsage(): {
+  totalBytes: number;
+  byDocument: Array<{ id: string; bytes: number }>;
+} {
+  let totalBytes = 0;
+  const byDocument: Array<{ id: string; bytes: number }> = [];
+  for (const record of records.values()) {
+    const bytes = approximateRecordBytes(record);
+    totalBytes += bytes;
+    byDocument.push({ id: record.id, bytes });
+  }
+  byDocument.sort((a, b) => b.bytes - a.bytes);
+  return { totalBytes, byDocument };
+}
+
+const byteCounter =
+  typeof TextEncoder === "function" ? new TextEncoder() : null;
+
+/** UTF-8 byte length of a document record's persisted content — its model
+ * serialised as JSON. Media (base64) dominates when present, which is exactly
+ * what makes a document large on disk. Falls back to the string length when
+ * TextEncoder is unavailable, and to 0 if the model is not serialisable. */
+function approximateRecordBytes(record: StoredDocumentRecord): number {
+  try {
+    const json = JSON.stringify(record.model);
+    return byteCounter ? byteCounter.encode(json).length : json.length;
+  } catch {
+    return 0;
+  }
 }
 
 /** Removes a document from the session and from storage, along with any

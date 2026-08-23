@@ -69,14 +69,20 @@ describe("DocumentView document deletion", () => {
     );
   });
 
-  it("confirming removes the doc, navigates to / and toasts (AC-15, AC-19, AC-20)", async () => {
+  // SPEC-067: File → Delete moves the document to the trash rather than
+  // erasing it, keeping its toast and its navigation. The record is kept
+  // intact (so Trash can restore it) but drops out of the library list.
+  it("confirming moves the doc to trash, navigates to / and toasts (AC-33, AC-19, AC-20)", async () => {
     const { wrapper, router, store } = await mountAt("/doc/open-doc");
 
     await wrapper.get('[data-testid="delete-document"]').trigger("click");
     await wrapper.get('[data-testid="delete-confirm"]').trigger("click");
     await untilPath(router, "/");
 
-    expect(store.getDocument("open-doc")).toBeUndefined();
+    // Kept intact but out of the library and now in the trash.
+    expect(store.getDocument("open-doc")).toBeDefined();
+    expect(store.listDocuments().find((e) => e.id === "open-doc")).toBeUndefined();
+    expect(store.listTrashedDocuments().map((e) => e.id)).toContain("open-doc");
     expect(router.currentRoute.value.path).toBe("/");
     expect(wrapper.get('[data-testid="toast"]').text()).toBe(
       "Deleted Untitled document",

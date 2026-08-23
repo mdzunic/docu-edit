@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useToasts } from "../composables/useToasts";
 
-const { toasts } = useToasts();
+const { toasts, runToastAction } = useToasts();
 </script>
 
 <template>
@@ -17,7 +17,16 @@ const { toasts } = useToasts();
       role="status"
       data-testid="toast"
     >
-      {{ toast.message }}
+      <span class="toast-message">{{ toast.message }}</span>
+      <button
+        v-if="toast.action"
+        type="button"
+        class="toast-action"
+        data-testid="toast-action"
+        @click="runToastAction(toast.id)"
+      >
+        {{ toast.action.label }}
+      </button>
     </div>
   </div>
 </template>
@@ -37,6 +46,10 @@ const { toasts } = useToasts();
 }
 
 .toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  pointer-events: auto;
   padding: var(--space-3) var(--space-6);
   border-radius: var(--radius-sm);
   /* An inverted chip: --text-primary and --surface-base flip together across
@@ -48,5 +61,21 @@ const { toasts } = useToasts();
   color: var(--surface-base);
   font-size: var(--text-md);
   box-shadow: var(--shadow-2);
+}
+
+.toast-action {
+  font: inherit;
+  font-weight: var(--weight-bold);
+  color: var(--surface-base);
+  background: transparent;
+  border: var(--border-width) solid var(--surface-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  background: var(--surface-base);
+  color: var(--text-primary);
 }
 </style>

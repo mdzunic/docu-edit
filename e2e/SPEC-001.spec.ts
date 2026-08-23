@@ -28,17 +28,18 @@ test("app bar shows the product name and 'No document' (AC-2, AC-3, AC-4)", asyn
   await expect(page.getByTestId("document-title")).toHaveText("No document");
 });
 
-test("empty state shows 'No document open' and both buttons (AC-5..AC-8)", async ({
+// SPEC-067 redesigned the first-run empty state into a "Welcome to docu-edit"
+// screen with three start actions (blank / template / open a file); this test
+// tracks that copy while still asserting the empty state and its actions exist.
+test("empty state shows the first-run welcome and start actions (AC-5..AC-8)", async ({
   page,
 }) => {
   await page.goto("/");
-  await expect(page.getByTestId("canvas")).toContainText("No document open");
+  await expect(page.getByTestId("canvas")).toContainText("Welcome to docu-edit");
   await expect(
     page.getByRole("button", { name: "New document" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Open document" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open a file" })).toBeVisible();
 });
 
 // SPEC-002 replaced the client-side-timestamp placeholder title with the
@@ -146,7 +147,7 @@ test("at 1024px the bars stack without overlap and nothing is cut off (AC-16, AC
 
   // The empty-state actions are fully inside the canvas, hence usable.
   const openButton = (await page
-    .getByRole("button", { name: "Open document" })
+    .getByRole("button", { name: "Open a file" })
     .boundingBox())!;
   expect(openButton.y).toBeGreaterThanOrEqual(canvas.y);
   expect(openButton.y + openButton.height).toBeLessThanOrEqual(
