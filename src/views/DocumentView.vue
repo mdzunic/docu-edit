@@ -4454,6 +4454,19 @@ function handleMenuCommand(id = "") {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
+/* SPEC-068: object handles enlarge for a coarse pointer so a fingertip can grab
+   them (AC-42's touch-equivalent for handle drag; handles are already shown
+   while selected rather than on hover — AC-20). The position/size numeric
+   dialogs remain the fallback where a drag is impractical. */
+@media (pointer: coarse) {
+  .image-resize-handle,
+  .shape-resize-handle,
+  .shape-rotation-handle {
+    width: 20px;
+    height: 20px;
+  }
+}
+
 /* The selected shape's eight resize handles plus rotation handle (SPEC-051
    AC-10, AC-16) — same overlay convention as .image-handles. */
 .shape-handles {
