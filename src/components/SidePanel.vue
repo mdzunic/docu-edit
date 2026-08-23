@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { asSidePanelTabs } from "../views/document/useSidePanel";
+import { useTier } from "../composables/useResponsiveTier";
 
 // The consolidated side panel chrome (SPEC-065): one docked, tabbed,
 // resizable region hosting every auxiliary pane. It draws the header (active
@@ -44,13 +45,15 @@ const activeTitle = computed(() => {
   return active ? active.title : "";
 });
 
-// --- responsive overlay (AC-25/26): below 900px the panel overlays the
-// document with a scrim instead of displacing it. -----------------------------
-const viewportWidth = ref(typeof window === "undefined" ? 1024 : window.innerWidth);
-const overlay = computed(() => viewportWidth.value < 900);
-function onViewportResize() {
-  viewportWidth.value = window.innerWidth;
-}
+// --- responsive overlay (SPEC-065 AC-25/26, SPEC-068 AC-4): the panel docks
+// and displaces the document only at the full tier (≥1024px). At the medium
+// and compact tiers it overlays the document with a scrim instead of
+// displacing it — SPEC-068's tier table subsumes SPEC-065's original below-900
+// rule with the medium tier's 1024 boundary, and is the normative source. The
+// tier is the shell-root width the whole app shares, not a private window
+// measurement. -----------------------------------------------------------------
+const tier = useTier();
+const overlay = computed(() => tier.value !== "full");
 function onWindowKeydown(event = new KeyboardEvent("keydown")) {
   // Escape closes the overlay panel (AC-25b).
   if (overlay.value && event.key === "Escape") {
@@ -58,11 +61,9 @@ function onWindowKeydown(event = new KeyboardEvent("keydown")) {
   }
 }
 onMounted(() => {
-  window.addEventListener("resize", onViewportResize);
   window.addEventListener("keydown", onWindowKeydown);
 });
 onBeforeUnmount(() => {
-  window.removeEventListener("resize", onViewportResize);
   window.removeEventListener("keydown", onWindowKeydown);
 });
 
@@ -264,9 +265,10 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
 </template>
 
 <style scoped>
-/* The panel is a flex column sibling of the document (AC-26 ≥900px: it
-   displaces the document). page-wrap stays first in the DOM so focus runs
-   document -> panel (AC-21); a left dock only reorders it visually. */
+/* The panel is a flex column sibling of the document (SPEC-065 AC-26 / SPEC-068
+   full tier ≥1024px: it displaces the document). page-wrap stays first in the
+   DOM so focus runs document -> panel (AC-21); a left dock only reorders it
+   visually. */
 .side-panel-root {
   flex: 0 0 auto;
   display: flex;
@@ -282,7 +284,8 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
      the panel's own inner edge (AC-8). Without it the handle resolves against
      .editor-layout and lands ~half the viewport away, over the document, so
      neither drag-resize (AC-8) nor double-click-collapse (AC-10) is reachable.
-     Overlay mode (<900px) overrides this with position: fixed. */
+     Overlay mode (medium/compact tiers, <1024px) overrides this with
+     position: fixed. */
   position: relative;
   display: flex;
   box-sizing: border-box;
@@ -451,7 +454,8 @@ function onHandleKeydown(event = new KeyboardEvent("keydown")) {
   overflow: auto;
 }
 
-/* Below 900px the panel overlays the document (AC-25): fixed to the viewport
+/* At the medium/compact tiers (<1024px) the panel overlays the document
+   (SPEC-065 AC-25 / SPEC-068 AC-4): fixed to the viewport
    over a scrim, taking no layout space so the document does not reflow. */
 .side-panel-root.overlay {
   flex: 0 0 0;
