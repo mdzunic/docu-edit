@@ -44,15 +44,17 @@ export interface UsePinchZoomDeps {
   setZoomPercent: (percent: number) => void;
 }
 
+/** The two active touches of a pinch, or null when it is not a two-finger
+ * gesture. */
+function twoTouches(event: TouchEvent): [Touch, Touch] | null {
+  return event.touches.length === 2 ? [event.touches[0], event.touches[1]] : null;
+}
+
 export function usePinchZoom(deps: UsePinchZoomDeps) {
   let active = false;
   let startDistance = 0;
   let startZoom = 100;
   let lastCentroid = { x: 0, y: 0 };
-
-  function twoTouches(event: TouchEvent): [Touch, Touch] | null {
-    return event.touches.length === 2 ? [event.touches[0], event.touches[1]] : null;
-  }
 
   function onTouchStart(event: Event) {
     const pair = twoTouches(event as TouchEvent);
