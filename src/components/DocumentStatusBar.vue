@@ -6,8 +6,16 @@
 // component so DocumentView's template holds a single wiring tag rather than
 // the whole strip. The controls themselves are unchanged; only their host
 // moved.
+import { computed } from "vue";
 import LanguageStatusControl from "./LanguageStatusControl.vue";
 import ZoomControl from "./ZoomControl.vue";
+import { useTier } from "../composables/useResponsiveTier";
+
+// SPEC-068: the compact status bar keeps only the page indicator and the zoom
+// control; the word count, language control and track-changes toggle drop into
+// the menu sheet (Tools) and stay reachable via the command palette (AC-10).
+const tier = useTier();
+const compact = computed(() => tier.value === "compact");
 
 // Runtime prop/emit declarations (espree bars TS-only syntax in .vue
 // scripts — see CLAUDE.md).
@@ -65,6 +73,7 @@ const emit = defineEmits([
     @fit-page="emit('zoom-fit-page')"
   />
   <button
+    v-if="!compact"
     type="button"
     class="word-count-button"
     data-testid="word-count-button"
@@ -73,6 +82,7 @@ const emit = defineEmits([
     {{ wordCountText }}
   </button>
   <LanguageStatusControl
+    v-if="!compact"
     :current-language-tag="currentLanguageTag"
     :current-language-label="currentLanguageLabel"
     :language-options="languageOptions"
@@ -83,7 +93,7 @@ const emit = defineEmits([
     @toggle-no-proof="emit('toggle-no-proof', $event)"
   />
   <button
-    v-if="editable"
+    v-if="editable && !compact"
     type="button"
     class="track-changes-status-indicator"
     data-testid="status-bar-track-changes"
