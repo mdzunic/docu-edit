@@ -40,6 +40,10 @@ export function useLongPress(options: UseLongPressOptions) {
   let startX = 0;
   let startY = 0;
   let fired = false;
+  /** Set when a long-press fires; the very next synthetic click is swallowed
+   * (capturing phase, at the window) so it cannot dismiss the menu the
+   * long-press opened. */
+  let swallowClick = false;
 
   function cancel() {
     if (timer !== null) {
@@ -58,12 +62,19 @@ export function useLongPress(options: UseLongPressOptions) {
     }
     cancel();
     fired = false;
+    // A fresh press starts before any stale synthetic click could arrive;
+    // drop the pending swallow so a normal tap is never eaten.
+    swallowClick = false;
     startX = pointer.clientX;
     startY = pointer.clientY;
     const target = pointer.target;
     timer = window.setTimeout(() => {
       timer = null;
       fired = true;
+      // After a touch the browser synthesizes a click; left to run it would
+      // land as an outside-click and immediately dismiss the menu the
+      // long-press just opened. Arm a one-shot swallow for it.
+      swallowClick = true;
       options.onLongPress({ clientX: startX, clientY: startY, target });
     }, thresholdMs);
   }
@@ -86,6 +97,20 @@ export function useLongPress(options: UseLongPressOptions) {
     cancel();
   }
 
+  /** Eats the single click the browser synthesizes after a long-press touch,
+   * so it does not register as an outside-click and close the just-opened
+   * context menu. Runs at the window in the capturing phase, ahead of any
+   * document-level dismiss listener. */
+  function onClickCapture(event: Event) {
+    if (!swallowClick) {
+      return;
+    }
+    swallowClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+    (event as Event & { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.();
+  }
+
   /** Whether the last completed gesture fired the long-press — call sites use
    * it to swallow the click the browser synthesizes after a touch. */
   function consumedLongPress(): boolean {
@@ -101,9 +126,15 @@ export function useLongPress(options: UseLongPressOptions) {
     el.addEventListener("pointermove", onPointerMove);
     el.addEventListener("pointerup", onPointerEnd);
     el.addEventListener("pointercancel", onPointerEnd);
+    if (typeof window !== "undefined") {
+      window.addEventListener("click", onClickCapture, true);
+    }
   }
 
   function detach() {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("click", onClickCapture, true);
+    }
     const el = options.target();
     if (!el) {
       return;

@@ -26,6 +26,7 @@ import CustomDictionaryDialog from "../components/CustomDictionaryDialog.vue";
 import { SUPPORTED_LANGUAGES } from "../lib/core/language";
 import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.vue";
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
+import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
@@ -774,6 +775,10 @@ const {
   handleShapeWrap,
   handleShapeAltText,
   handleShapeZOrder,
+  shapePositionOpen,
+  shapePositionInitial,
+  openShapePosition,
+  handleShapePositionApply,
   handleGroupSelected,
   handleUngroupSelected,
   currentGroupMembers,
@@ -3997,6 +4002,7 @@ function handleMenuCommand(id = "") {
         @z-order="handleShapeZOrder"
         @group="handleGroupSelected(currentGroupMembers())"
         @ungroup="handleUngroupSelected"
+        @options="openShapePosition"
         @delete="handleShapeDelete"
         @duplicate="handleShapeDuplicate"
       />
@@ -4236,6 +4242,13 @@ function handleMenuCommand(id = "") {
       :unit="doc?.measurementUnit || 'cm'"
       @apply="handleImageOptionsApplyAndRescan"
       @cancel="imageOptionsOpen = false"
+    />
+    <ShapePositionDialog
+      v-if="shapePositionOpen"
+      :initial="shapePositionInitial"
+      :unit="doc?.measurementUnit || 'cm'"
+      @apply="handleShapePositionApply"
+      @cancel="shapePositionOpen = false"
     />
     <ChartDataSheetDialog
       v-if="editingChartData"

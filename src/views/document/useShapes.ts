@@ -53,6 +53,7 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setShapePosition,
   setShapeRotation,
   setShapeSize,
   setShapeWrap,
@@ -153,6 +154,11 @@ export function useShapes(deps: ShapesDeps) {
    * out of scope for this gesture. */
   const shapeMultiSelection = ref<ShapeLocation[]>([]);
   const shapeHandles = ref<ReturnType<typeof noImageHandleGeometry>>(noImageHandleGeometry());
+  /** The numeric "Position & size" dialog (AC-42) — the touch/coarse-pointer
+   * fallback for dragging a drawing handle. `shapePositionInitial` is the
+   * captured prefill the dialog opens with. */
+  const shapePositionOpen = ref(false);
+  const shapePositionInitial = ref({ offsetXCm: 0, offsetYCm: 0, widthCm: 0, heightCm: 0, inline: false });
   /** The anchor marker's position (AC-27) — page-relative px, same basis as
    * shapeHandles (measureImageGeometry). Null when nothing is selected, or
    * the selected shape's preceding block isn't a paragraph to mark (see
@@ -966,6 +972,41 @@ export function useShapes(deps: ShapesDeps) {
     applyShapeEdit((model, selection) => reorderShapeZ(model, selection, location, command), "reorder shape");
   }
 
+  /** Opens the numeric "Position & size" dialog for the selected shape
+   * (AC-42): the fallback for a handle drag when the pointer is coarse.
+   * Prefills from the shape's current offset and size. */
+  function openShapePosition() {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    if (!shape) {
+      return;
+    }
+    shapePositionInitial.value = {
+      offsetXCm: Number((shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm).toFixed(2)),
+      offsetYCm: Number((shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm).toFixed(2)),
+      widthCm: Number(shape.widthCm.toFixed(2)),
+      heightCm: Number(shape.heightCm.toFixed(2)),
+      inline: shape.wrap === "inline",
+    };
+    shapePositionOpen.value = true;
+  }
+
+  function handleShapePositionApply(
+    payload = { offsetXCm: 0, offsetYCm: 0, widthCm: 0, heightCm: 0 },
+  ) {
+    shapePositionOpen.value = false;
+    const location = shapeSelection.value;
+    if (!location) {
+      return;
+    }
+    applyShapeEdit((model, selection) => {
+      const sized = setShapeSize(model, selection, location, payload.widthCm, payload.heightCm);
+      return setShapePosition(sized.model, sized.selection, location, payload.offsetXCm, payload.offsetYCm);
+    }, "shape position");
+    void nextTick().then(remeasureShapeHandles);
+  }
+
   /** Groups a list of selected drawing locations (AC-34..36) — called by
    * the multi-select UI (Shift-click) with every selected location. Leaves
    * the group's first member selected (single-select, not multi — every
@@ -1660,6 +1701,10 @@ export function useShapes(deps: ShapesDeps) {
     handleShapeWrap,
     handleShapeAltText,
     handleShapeZOrder,
+    shapePositionOpen,
+    shapePositionInitial,
+    openShapePosition,
+    handleShapePositionApply,
     handleGroupSelected,
     handleUngroupSelected,
     currentGroupMembers,

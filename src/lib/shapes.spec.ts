@@ -24,6 +24,7 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setShapePosition,
   setShapeRotation,
   setShapeSize,
   setShapeWrap,
@@ -365,6 +366,38 @@ describe("setShapeSize (AC-4..AC-8's resize handles / toolbar)", () => {
   it("is a no-op when the location doesn't address a shape", () => {
     const model = doc(paragraph("text"));
     const { model: next } = setShapeSize(model, selectionAt(0, 0), location, 8, 4);
+    expect(blockText(next.sections[0].blocks[0])).toBe("text");
+  });
+});
+
+// --- setShapePosition (AC-42's numeric position dialog) ----------------------
+
+describe("setShapePosition (SPEC-068 AC-42)", () => {
+  const location: ShapeLocation = { section: 0, block: 0 };
+
+  it("sets an absolute offset for a floating shape", () => {
+    const model = doc(shape({ wrap: "square", offsetXCm: 1, offsetYCm: 2 }), paragraph(""));
+    const { model: next } = setShapePosition(model, selectionAt(0, 0), location, 5.5, 7.25);
+    expect(shapeAt(next, location)).toMatchObject({ offsetXCm: 5.5, offsetYCm: 7.25 });
+  });
+
+  it("replaces (does not add to) the current offset", () => {
+    const model = doc(shape({ wrap: "square", offsetXCm: 10, offsetYCm: 10 }), paragraph(""));
+    const { model: next } = setShapePosition(model, selectionAt(0, 0), location, 0, 0);
+    expect(shapeAt(next, location)).toMatchObject({ offsetXCm: 0, offsetYCm: 0 });
+  });
+
+  it("is a no-op for an inline shape (the wrap mode ignores offsets)", () => {
+    const model = doc(shape({ wrap: "inline", offsetXCm: 1, offsetYCm: 2 }), paragraph(""));
+    const { model: next } = setShapePosition(model, selectionAt(0, 0), location, 3, 3);
+    // The offset is left exactly as it was — the dialog's position fields are
+    // disabled for an inline shape, and the setter refuses to write them.
+    expect(shapeAt(next, location)).toMatchObject({ offsetXCm: 1, offsetYCm: 2 });
+  });
+
+  it("is a no-op when the location doesn't address a shape", () => {
+    const model = doc(paragraph("text"));
+    const { model: next } = setShapePosition(model, selectionAt(0, 0), location, 1, 1);
     expect(blockText(next.sections[0].blocks[0])).toBe("text");
   });
 });

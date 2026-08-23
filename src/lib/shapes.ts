@@ -267,6 +267,26 @@ export function setShapeSize(
   return { model: next, selection };
 }
 
+/** Sets a shape's offset from its reference edges to absolute cm (the
+ * drawing position dialog — SPEC-068 AC-42, the numeric fallback for a
+ * handle drag on a coarse pointer). No-op for an inline shape, whose offset
+ * the wrap mode ignores; floating shapes store the values verbatim. */
+export function setShapePosition(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+  offsetXCm: number,
+  offsetYCm: number,
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape || shape.wrap === "inline") {
+    return { model: next, selection };
+  }
+  replaceShape(next, location, { ...shape, offsetXCm, offsetYCm });
+  return { model: next, selection };
+}
+
 /** Moves a shape by a page-space delta (a drag, or a keyboard nudge —
  * AC-40, AC-41), adjusting its own offset. Used directly for a shape whose
  * anchor did not change; a drag that crosses a paragraph boundary instead

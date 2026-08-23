@@ -65,6 +65,45 @@ describe("useLongPress (SPEC-068 AC-22/23)", () => {
     wrapper.unmount();
   });
 
+  it("swallows the synthetic click that follows a fired long-press so it cannot dismiss the menu", () => {
+    const onLongPress = vi.fn();
+    const wrapper = mountWithLongPress(onLongPress);
+    const surface = wrapper.get('[data-testid="surface"]').element;
+    const outsideClick = vi.fn();
+    window.addEventListener("click", outsideClick);
+
+    surface.dispatchEvent(touch("pointerdown", 100, 200));
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    surface.dispatchEvent(touch("pointerup", 100, 200));
+    // The browser's synthetic post-touch click.
+    surface.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(outsideClick).not.toHaveBeenCalled();
+
+    // Only the one click is eaten; a subsequent tap clicks through normally.
+    surface.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(outsideClick).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("click", outsideClick);
+    wrapper.unmount();
+  });
+
+  it("does not swallow a click when no long-press fired (a plain tap)", () => {
+    const onLongPress = vi.fn();
+    const wrapper = mountWithLongPress(onLongPress);
+    const surface = wrapper.get('[data-testid="surface"]').element;
+    const outsideClick = vi.fn();
+    window.addEventListener("click", outsideClick);
+
+    surface.dispatchEvent(touch("pointerdown", 100, 200));
+    vi.advanceTimersByTime(LONG_PRESS_MS / 2);
+    surface.dispatchEvent(touch("pointerup", 100, 200));
+    surface.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(outsideClick).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("click", outsideClick);
+    wrapper.unmount();
+  });
+
   it("ignores a mouse pointer (right click already works)", () => {
     const onLongPress = vi.fn();
     const wrapper = mountWithLongPress(onLongPress);
