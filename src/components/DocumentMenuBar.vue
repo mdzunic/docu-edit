@@ -16,8 +16,9 @@
 // command clicks.
 //
 // Runtime prop/emit declarations per the espree constraint (see AppShell.vue).
-import { ref, useTemplateRef } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 import MenuBar from "./MenuBar.vue";
+import { useTier } from "../composables/useResponsiveTier";
 import MenuItem from "./MenuItem.vue";
 import MenuCheckItem from "./MenuCheckItem.vue";
 import MenuRadioItem from "./MenuRadioItem.vue";
@@ -96,6 +97,17 @@ const emit = defineEmits([
   "painter-click",
   "painter-dblclick",
 ]);
+
+// SPEC-068 AC-12/13 — features that genuinely cannot be operated by touch on a
+// small screen stay LISTED in their menu but disabled, with a stated reason,
+// below 640px. The menu is a stable map of the product (SPEC-049): a command is
+// disabled, never hidden. Resizing past 640px re-enables them with no reload.
+const tier = useTier();
+const compact = computed(() => tier.value === "compact");
+const COMPACT_UNAVAILABLE_REASON = "not available on this screen size";
+/** The reason string for an item that is unavailable only because of the
+ * compact tier (empty at every wider tier so the shortcut shows instead). */
+const compactReason = computed(() => (compact.value ? COMPACT_UNAVAILABLE_REASON : ""));
 
 const MENUS = [
   { id: "file", label: "File" },
@@ -183,6 +195,8 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <MenuItem
         label="Mail merge…"
         testid="file-menu-mail-merge"
+        :disabled="compact"
+        :reason="compactReason"
         @select="emit('command', 'file.mail-merge')"
       />
       <hr class="menu-separator">
@@ -468,11 +482,25 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <div class="menu-section-label">
         Shape
       </div>
-      <ShapeGallery @pick="emit('shape-pick', $event)" />
+      <!-- Drawing creation gestures need a canvas that does not exist at the
+           compact width (SPEC-068): the gallery is replaced by a disabled,
+           reasoned entry, while existing drawings still render/select/move. -->
+      <ShapeGallery
+        v-if="!compact"
+        @pick="emit('shape-pick', $event)"
+      />
+      <MenuItem
+        v-else
+        label="Shapes"
+        testid="insert-shapes-disabled"
+        disabled
+        :reason="compactReason"
+      />
       <MenuItem
         label="Text box"
         testid="insert-textbox-button"
-        :disabled="!editable"
+        :disabled="!editable || compact"
+        :reason="compactReason"
         @select="emit('command', 'insert.textbox')"
       />
       <hr class="menu-separator">
@@ -541,7 +569,8 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <MenuItem
         label="Merge field…"
         testid="insert-menu-merge-field"
-        :disabled="!editable"
+        :disabled="!editable || compact"
+        :reason="compactReason"
         @select="emit('command', 'insert.merge-field')"
       />
       <hr class="menu-separator">
@@ -810,7 +839,8 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <MenuItem
         label="Convert {{…}} text to merge fields"
         testid="tools-menu-convert-merge-fields"
-        :disabled="!editable || !canConvertLiteralChips"
+        :disabled="!editable || !canConvertLiteralChips || compact"
+        :reason="compactReason"
         @select="emit('command', 'tools.convert-merge-fields')"
       />
     </template>
