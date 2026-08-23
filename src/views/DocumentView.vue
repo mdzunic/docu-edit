@@ -596,7 +596,10 @@ const pageRef = useTemplateRef("pageRef");
 // SPEC-063 Print/Web + Focus (AC-32..51); also owns the Web-layout content
 // width (AC-40) and re-tiles/re-fits the presenter once the layout settles
 // (AC-36 — onLayoutSettled runs past setup, when zoomView exists).
-const viewModes = useViewModes({ documentId, doc, onLayoutSettled: () => { zoomView.recomputeGrid(); zoomView.recomputeFit(); } });
+// onCompactWebDefault (SPEC-068 AC-35) is deferred to nextTick so zoomView —
+// wired just below — exists when the compact tier defaults this document to Web
+// layout at fit-width.
+const viewModes = useViewModes({ documentId, doc, onLayoutSettled: () => { zoomView.recomputeGrid(); zoomView.recomputeFit(); }, onCompactWebDefault: () => { void nextTick(() => zoomView.setFitWidth()); } });
 const { viewMode, focusMode, rootClass: viewRootClass, exitFocus, webContentWidthCss } = viewModes;
 
 // Zoom (SPEC-063): created before the shared context — its scale fraction and coordinate helpers are part of it (AC-21, AC-22).

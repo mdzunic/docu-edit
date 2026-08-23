@@ -1,23 +1,30 @@
-import { effectScope, ref, shallowRef, type Ref } from "vue";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { effectScope, nextTick, ref, shallowRef, type Ref } from "vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useViewModes, viewModeStorageKey } from "./useViewModes";
+import { setTierWidthForTest } from "../../composables/useResponsiveTier";
 import type { DocumentModel } from "../../lib/documentModel";
 import { cmToPx } from "../../lib/core/units";
 
-function mount(id = "doc-1"): { view: ReturnType<typeof useViewModes>; documentId: Ref<string>; stop: () => void } {
+function mount(
+  id = "doc-1",
+  opts: { onCompactWebDefault?: () => void } = {},
+): { view: ReturnType<typeof useViewModes>; documentId: Ref<string>; stop: () => void } {
   const documentId = ref(id);
   const doc = shallowRef<DocumentModel | null>(null);
   const scope = effectScope();
   let view!: ReturnType<typeof useViewModes>;
   scope.run(() => {
-    view = useViewModes({ documentId, doc });
+    view = useViewModes({ documentId, doc, onCompactWebDefault: opts.onCompactWebDefault });
   });
   return { view, documentId, stop: () => scope.stop() };
 }
 
 describe("useViewModes", () => {
   beforeEach(() => localStorage.clear());
-  afterEach(() => localStorage.clear());
+  afterEach(() => {
+    localStorage.clear();
+    setTierWidthForTest(1440);
+  });
 
   it("opens in Print layout with Focus off by default (AC-48, AC-51)", () => {
     const h = mount();
@@ -78,6 +85,39 @@ describe("useViewModes", () => {
     map.get("view.focus")?.();
     expect(h.view.focusMode.value).toBe(true);
     h.stop();
+  });
+
+  describe("compact-tier default (SPEC-068 AC-35/36)", () => {
+    it("defaults a document with no stored mode to Web layout at compact, and signals fit-width", () => {
+      setTierWidthForTest(390);
+      const onCompactWebDefault = vi.fn();
+      const h = mount("doc-c1", { onCompactWebDefault });
+      expect(h.view.viewMode.value).toBe("web");
+      expect(h.view.isWebLayout.value).toBe(true);
+      expect(onCompactWebDefault).toHaveBeenCalled();
+      h.stop();
+    });
+
+    it("keeps Print at compact when the user has explicitly pinned it (AC-36)", () => {
+      localStorage.setItem(viewModeStorageKey("doc-c2"), "print");
+      setTierWidthForTest(390);
+      const h = mount("doc-c2");
+      expect(h.view.viewMode.value).toBe("print");
+      h.stop();
+    });
+
+    it("does not persist the compact default, so widening returns to Print", async () => {
+      setTierWidthForTest(390);
+      const h = mount("doc-c3");
+      expect(h.view.viewMode.value).toBe("web");
+      expect(localStorage.getItem(viewModeStorageKey("doc-c3"))).toBeNull();
+      // A live widen past the compact boundary reverts the default to Print
+      // (the tier watch flushes on the microtask queue).
+      setTierWidthForTest(1200);
+      await nextTick();
+      expect(h.view.viewMode.value).toBe("print");
+      h.stop();
+    });
   });
 
   describe("Web-layout content width (AC-40)", () => {
