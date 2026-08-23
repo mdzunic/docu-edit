@@ -277,3 +277,33 @@ describe("keyboard navigation (AC-58, AC-59, AC-60)", () => {
     expect(store.listTrashedDocuments().length).toBe(1);
   });
 });
+
+// SPEC-068 AC-37/38/39 — the compact tier. The tier keys off window width at
+// module-import time (jsdom has no layout for the ResizeObserver to measure),
+// so we seed innerWidth to a compact value before loading the fresh modules.
+describe("compact tier (SPEC-068)", () => {
+  it("collapses the header actions to a primary + overflow and keeps search visible", async () => {
+    const original = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true, writable: true });
+    try {
+      const { store, mountHome } = await loadModules();
+      seed(store, "a", "One", 3000);
+      const { wrapper } = await mountHome();
+
+      // The single primary action and the search box remain (AC-39).
+      expect(wrapper.find('[data-testid="new-document"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="library-search"]').exists()).toBe(true);
+      // The other two actions collapse behind an overflow menu (AC-38): not inline.
+      expect(wrapper.find('[data-testid="library-actions-overflow"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="new-from-template"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="open-document"]').exists()).toBe(false);
+
+      // Opening the overflow exposes them, still reachable (AC-38, AC-11).
+      await wrapper.get('[data-testid="library-actions-overflow"]').trigger("click");
+      expect(wrapper.find('[data-testid="new-from-template"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="open-document"]').exists()).toBe(true);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: original, configurable: true, writable: true });
+    }
+  });
+});
