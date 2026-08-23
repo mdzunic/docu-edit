@@ -104,6 +104,7 @@ import { usePaginationView } from "./document/usePaginationView";
 import { useFields } from "./document/useFields";
 import { useLongPress, openContextMenuAtPoint } from "../composables/useLongPress";
 import { useVisualViewportKeyboard } from "../composables/useVisualViewportKeyboard";
+import { usePinchZoom } from "../composables/usePinchZoom";
 import { useCaptions } from "./document/useCaptions";
 import { renumberCaptions } from "../lib/captions";
 import { useEquations } from "./document/useEquations";
@@ -2968,6 +2969,16 @@ useLongPress({ target: () => contentRoot.value, onLongPress: openContextMenuAtPo
 const { keyboardInset } = useVisualViewportKeyboard({
   getScrollContainer: () => scrollContainer,
   getCaretRect: () => { const root = contentRoot.value; return root && caret ? caretClientRect(root, caret) : null; },
+});
+
+// SPEC-068 AC-32/33/34: pinch drives the zoom transform (setZoomPercent clamps
+// to the zoom band); a two-finger pan scrolls. The chrome never scales because
+// only .pages carries the zoom transform.
+usePinchZoom({
+  getScrollContainer: () => scrollContainer,
+  target: () => scrollContainer,
+  getZoomPercent: () => zoomView.zoomPercent.value,
+  setZoomPercent: (percent) => zoomView.setZoomPercent(percent),
 });
 
 const {
