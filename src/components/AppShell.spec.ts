@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import AppShell from "./AppShell.vue";
 import { routes } from "../router";
+import { setTierWidthForTest } from "../composables/useResponsiveTier";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "docx", "fixtures");
 const docxBytes = readFileSync(join(fixturesDir, "word-authored.docx"));
@@ -287,6 +288,28 @@ describe("AppShell", () => {
       window.dispatchEvent(fileDragEvent("dragleave"));
       await nextTick();
       expect(router.currentRoute.value.path).toBe("/doc/already-open");
+    });
+  });
+
+  // SPEC-068 AC-1/2 — the shell exposes the live layout tier as a data
+  // attribute so CSS and e2e can key off it. The shared width feeds every
+  // consumer of useTier(); here we drive it directly (jsdom has no layout, so
+  // the ResizeObserver never measures a real width).
+  describe("layout tier (SPEC-068)", () => {
+    it("reflects the current tier on the shell root, live", async () => {
+      setTierWidthForTest(1440);
+      const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
+      mountedWrappers.push(wrapper);
+      const shell = wrapper.get('[data-testid="app-shell"]');
+      expect(shell.attributes("data-tier")).toBe("full");
+
+      setTierWidthForTest(800);
+      await nextTick();
+      expect(shell.attributes("data-tier")).toBe("medium");
+
+      setTierWidthForTest(390);
+      await nextTick();
+      expect(shell.attributes("data-tier")).toBe("compact");
     });
   });
 });
