@@ -370,19 +370,30 @@ test("dark theme: controls that style only their background still read in the pa
   await page.evaluate(() => localStorage.setItem("docu-edit:theme", "dark"));
   await page.reload();
 
-  const textPrimary = await page.evaluate(() => {
-    const probe = document.createElement("span");
-    probe.style.color = getComputedStyle(document.documentElement)
-      .getPropertyValue("--text-primary")
-      .trim();
-    document.body.appendChild(probe);
-    const value = getComputedStyle(probe).color;
-    probe.remove();
-    return value;
-  });
+  const resolveToken = (token: string) =>
+    page.evaluate((name) => {
+      const probe = document.createElement("span");
+      probe.style.color = getComputedStyle(document.documentElement)
+        .getPropertyValue(name)
+        .trim();
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    }, token);
 
-  // The library's own buttons first (they had the same gap).
-  await expect(page.getByTestId("new-document").first()).toHaveCSS("color", textPrimary);
+  const textPrimary = await resolveToken("--text-primary");
+
+  // The library's own primary CTA first. SPEC-067 rebuilt the empty-state and
+  // library-header "New document" control as a design-system primary UiButton
+  // (variant-primary), so it now carries its OWN on-brand text colour —
+  // --text-on-brand, white on the accent fill — rather than inheriting
+  // --text-primary as the old bare <button> did. That is still a palette
+  // colour, not the unreadable UA black this test exists to catch, so the
+  // readability guarantee holds; the expected token is just the one the
+  // button's variant sets.
+  const textOnBrand = await resolveToken("--text-on-brand");
+  await expect(page.getByTestId("new-document").first()).toHaveCSS("color", textOnBrand);
 
   await page.getByTestId("new-document").first().click();
   await expect(page).toHaveURL(/\/doc\/.+/);
