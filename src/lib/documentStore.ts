@@ -5,7 +5,7 @@
 // quota exceeded), the app keeps working in-memory and the storage status
 // flips so the UI can show its warning banner.
 import { createDocument, type DocumentModel } from "./documentModel";
-import { loadPreferences, MARGIN_PRESETS } from "./preferences";
+import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
 import { type MediaPart } from "./core/media";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
@@ -155,6 +155,11 @@ export function markStorageUnavailable(): void {
     listener();
   }
 }
+
+// Wire the preferences store's SPEC-003 warning hook (AC-21) to the same
+// banner state, without preferences importing documentStore (which would
+// create an initialisation cycle).
+setPreferencesStorageFailureHandler(markStorageUnavailable);
 
 // The media array reference last written for each doc, so persistMedia can
 // skip a rewrite when nothing image-related changed (see MediaRecord's own

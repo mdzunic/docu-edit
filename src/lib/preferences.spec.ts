@@ -12,6 +12,7 @@ import {
   resetPreferences,
   resetPreferencesSession,
   savePreference,
+  setPreferencesStorageFailureHandler,
 } from "./preferences";
 
 function stored(): Record<string, unknown> {
@@ -215,9 +216,9 @@ describe("preferences store (SPEC-066)", () => {
       expect(loadPreferences().theme).toBe("dark");
     });
 
-    it("shows the SPEC-003 storage warning when a write is blocked (AC-21)", async () => {
-      const documentStore = await import("./documentStore");
-      const spy = vi.spyOn(documentStore, "markStorageUnavailable");
+    it("shows the SPEC-003 storage warning when a write is blocked (AC-21)", () => {
+      const handler = vi.fn();
+      setPreferencesStorageFailureHandler(handler);
       restore = Object.getOwnPropertyDescriptor(window, "localStorage");
       Object.defineProperty(window, "localStorage", {
         configurable: true,
@@ -231,8 +232,7 @@ describe("preferences store (SPEC-066)", () => {
       });
 
       savePreference("theme", "dark");
-      expect(spy).toHaveBeenCalled();
-      spy.mockRestore();
+      expect(handler).toHaveBeenCalled();
     });
   });
 });

@@ -12,7 +12,6 @@
 // (lib/themePrefs.ts, lib/core/autocorrect.ts, lib/core/commentIdentity.ts):
 // a blocked or full localStorage (SPEC-003) degrades to in-session
 // preferences and shows the storage warning, and never throws.
-import { markStorageUnavailable } from "./documentStore";
 import type { MeasurementUnit } from "./core/units";
 import type { Margins } from "./core/pageSetup";
 import { PAPER_SIZE_NAMES } from "./core/pageSetup";
@@ -32,6 +31,19 @@ import {
 
 /** The one key every preference lives under (AC-9). */
 export const PREFERENCES_STORAGE_KEY = "docu-edit:preferences";
+
+// The SPEC-003 storage-warning hook. documentStore owns the warning banner and
+// registers its markStorageUnavailable here at load; keeping this a registered
+// callback (rather than importing documentStore) avoids a documentStore ⇄
+// preferences import cycle, which would leave this module half-initialised when
+// useTheme/usePreferences call loadPreferences at their own module load.
+let storageFailureHandler: (() => void) | undefined;
+
+/** Registers the handler run when a preferences write hits a blocked or full
+ * localStorage (AC-21) — documentStore wires its warning banner through it. */
+export function setPreferencesStorageFailureHandler(handler: () => void): void {
+  storageFailureHandler = handler;
+}
 
 /** A zoom that is a fixed percentage, or one of the two fit modes (SPEC-063). */
 export type DefaultZoom = number | "fit-width" | "fit-page";
@@ -280,7 +292,7 @@ function migrateLegacyKeys(stored: Record<string, unknown>): Record<string, unkn
     } catch {
       // A blocked write leaves the legacy keys in place to try again next
       // load; the in-session merge still applies.
-      markStorageUnavailable();
+      storageFailureHandler?.();
     }
   }
 
@@ -308,7 +320,7 @@ function persist(prefs: Preferences): void {
   } catch {
     // Blocked or full: the in-session copy (set by the caller) still applies,
     // and the SPEC-003 warning banner is shown (AC-21).
-    markStorageUnavailable();
+    storageFailureHandler?.();
   }
 }
 
