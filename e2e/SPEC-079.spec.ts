@@ -32,6 +32,11 @@ test("the stage renders slide 1 with its title larger than its body text", async
   const titleSize = await fontSizePx(stage.getByText("Quarterly Review"));
   const bodySize = await fontSizePx(stage.getByText("FY26 results and outlook"));
   expect(titleSize).toBeGreaterThan(bodySize);
+
+  // The text frame must occupy a real, legible box — not collapse to a
+  // zero-width column (the failure mode when a placeholder had no geometry).
+  const titleBox = await stage.getByTestId("slide-text-frame").first().boundingBox();
+  expect(titleBox?.width ?? 0).toBeGreaterThan(100);
 });
 
 test("the filmstrip lists the fixture's slide count", async ({ page }) => {

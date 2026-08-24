@@ -148,25 +148,29 @@ export const FIXTURE_SHAPE_FILL = "#8faadc";
  * txStyles and an inherited body placeholder, a theme, an image part, and
  * four slides. */
 export async function buildPptxFixtureBytes(): Promise<Uint8Array> {
+  // Slides 1-3 carry their placeholders'/text boxes' own a:xfrm — as real
+  // decks do — so they render at legible slide-space boxes (AC-42/63/65).
+  // Slide 4 alone is left to exercise the three placeholder inheritance levels
+  // (AC-9/10/11/12).
   const slide1 = pptxSlideXml(
-    pptxSp(2, "Title 1", { type: "ctrTitle" }, ["<a:r><a:t>Quarterly Review</a:t></a:r>"]) +
-      pptxSp(3, "Subtitle 2", { type: "subTitle", idx: "1" }, ["<a:r><a:t>FY26 results and outlook</a:t></a:r>"]),
+    pptxSp(2, "Title 1", { type: "ctrTitle" }, ["<a:r><a:t>Quarterly Review</a:t></a:r>"], xfrm(2, 6, 29, 3)) +
+      pptxSp(3, "Subtitle 2", { type: "subTitle", idx: "1" }, ["<a:r><a:t>FY26 results and outlook</a:t></a:r>"], xfrm(2, 10, 29, 2)),
   );
   const slide2 = pptxSlideXml(
-    pptxSp(2, "Title 1", { type: "title" }, ["<a:r><a:t>Roadmap</a:t></a:r>"]) +
+    pptxSp(2, "Title 1", { type: "title" }, ["<a:r><a:t>Roadmap</a:t></a:r>"], xfrm(2, 1, 29, 3)) +
       pptxSp(3, "Content 2", { type: "body" }, [
         "<a:r><a:t>Ship presentations MVP</a:t></a:r>",
         "<a:r><a:t>Broaden format support</a:t></a:r>",
         "<a:r><a:t>Hire two engineers</a:t></a:r><a:br/><a:r><a:t>Open Berlin office</a:t></a:r>",
-      ]),
+      ], xfrm(2, 5, 29, 12)),
   );
   const slide3 = pptxSlideXml(
     pptxSp(2, "TextBox 1", undefined, [
       "<a:r><a:t>Thank you</a:t></a:r>",
       "<a:r><a:t>questions@example.com</a:t></a:r>",
-    ]) +
+    ], xfrm(2, 2, 24, 6)) +
       `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="4" name="Group 3"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
-      pptxSp(5, "Grouped 4", undefined, ["<a:r><a:t>Grouped note</a:t></a:r>"]) +
+      pptxSp(5, "Grouped 4", undefined, ["<a:r><a:t>Grouped note</a:t></a:r>"], xfrm(2, 10, 20, 3)) +
       `</p:grpSp>`,
   );
 
@@ -374,20 +378,23 @@ function odpFrame(cls: string | undefined, paragraphs: string[], geometry = ""):
  * grouped shape a draw:g), with styles.xml carrying the master page and the
  * page size. */
 export async function buildOdpFixtureBytes(): Promise<Uint8Array> {
+  // The twin's slides 1-3 carry the same slide-space geometry as the .pptx
+  // twin so both formats render legibly (AC-42/63/65); slide 4 alone leaves a
+  // placeholder geometry-less to exercise the master-page fallback (AC-21).
   const page1 =
     `<draw:page draw:name="page1">` +
-    odpFrame("title", ["Quarterly Review"]) +
-    odpFrame("subtitle", ["FY26 results and outlook"]) +
+    odpFrame("title", ["Quarterly Review"], geom(2, 6, 29, 3)) +
+    odpFrame("subtitle", ["FY26 results and outlook"], geom(2, 10, 29, 2)) +
     `</draw:page>`;
   const page2 =
     `<draw:page draw:name="page2">` +
-    odpFrame("title", ["Roadmap"]) +
-    odpFrame("outline", ["Ship presentations MVP", "Broaden format support", "Hire two engineers", "Open Berlin office"]) +
+    odpFrame("title", ["Roadmap"], geom(2, 1, 29, 3)) +
+    odpFrame("outline", ["Ship presentations MVP", "Broaden format support", "Hire two engineers", "Open Berlin office"], geom(2, 5, 29, 12)) +
     `</draw:page>`;
   const page3 =
     `<draw:page draw:name="page3">` +
-    odpFrame(undefined, ["Thank you", "questions@example.com"]) +
-    `<draw:g>${odpFrame(undefined, ["Grouped note"])}</draw:g>` +
+    odpFrame(undefined, ["Thank you", "questions@example.com"], geom(2, 2, 24, 6)) +
+    `<draw:g>${odpFrame(undefined, ["Grouped note"], geom(2, 10, 20, 3))}</draw:g>` +
     `</draw:page>`;
 
   // Slide 4: title (inline geometry), body (no geometry → master-page
