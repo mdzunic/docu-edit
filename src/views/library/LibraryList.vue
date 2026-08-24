@@ -92,7 +92,7 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
         :tabindex="props.lib.rowTabindex(entry.id, index)"
         :aria-selected="props.lib.isSelected(entry.id)"
         @click="onRowClick(entry.id, $event)"
-        @focus="props.lib.focusedId.value = entry.id"
+        @focus="props.lib.setFocusedId(entry.id)"
       >
         <td
           class="cell-select"

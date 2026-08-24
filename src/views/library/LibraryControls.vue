@@ -6,7 +6,7 @@
 // knows what kinds of documents the app can make.
 // `lib` is the LibraryController from useLibrary (runtime-typed Object —
 // the .vue ESLint parser bars the PropType syntax; see useLibrary.ts).
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { formatBadgeLabel } from "../../lib/format";
 import { FILTERABLE_FORMATS } from "../../lib/libraryView";
 
@@ -19,6 +19,15 @@ const props = defineProps({
 // v-model can assign to it; setSortKey validates the value.
 const sortKeyChoice = ref(String(props.lib.sort.value.key));
 watch(sortKeyChoice, (value) => props.lib.setSortKey(value));
+
+// The search box binds through a get/set computed so v-model never assigns to
+// the `lib` prop's ref directly (vue/no-mutating-props); the setter routes the
+// write through the controller and the getter keeps the box in sync when the
+// controller clears the search (e.g. "Clear filters").
+const searchText = computed({
+  get: () => String(props.lib.search.value),
+  set: (value) => props.lib.setSearch(value),
+});
 </script>
 
 <template>
@@ -28,7 +37,7 @@ watch(sortKeyChoice, (value) => props.lib.setSortKey(value));
         Documents
       </h2>
       <input
-        v-model="props.lib.search.value"
+        v-model="searchText"
         type="search"
         class="library-search"
         data-testid="library-search"
@@ -97,7 +106,7 @@ watch(sortKeyChoice, (value) => props.lib.setSortKey(value));
         type="button"
         class="trash-link"
         data-testid="trash-link"
-        @click="props.lib.showTrash.value = true"
+        @click="props.lib.setShowTrash(true)"
       >
         Trash <span
           class="trash-count"

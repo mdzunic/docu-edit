@@ -60,7 +60,7 @@ const usageHigh = computed(() => usagePercent.value !== null && usagePercent.val
       type="button"
       class="storage-trash-link"
       data-testid="storage-trash-link"
-      @click="props.lib.showTrash.value = true"
+      @click="props.lib.setShowTrash(true)"
     >
       {{ usageHigh ? "Storage is running low — empty the trash" : "Review the trash" }}
     </button>

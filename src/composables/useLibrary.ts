@@ -169,6 +169,22 @@ export function useLibrary() {
     saveLibrarySort(sort.value);
   }
 
+  /** Setters the library sub-components call in place of assigning to the
+   * controller's refs directly — those live behind the `lib` prop there, so a
+   * bare `lib.x.value = …` trips vue/no-mutating-props. HomeView, which owns
+   * the controller as a local, still assigns to the refs directly. */
+  function setSearch(value: string): void {
+    search.value = value;
+  }
+
+  function setShowTrash(value: boolean): void {
+    showTrash.value = value;
+  }
+
+  function setFocusedId(id: string): void {
+    focusedId.value = id;
+  }
+
   // --- filters -------------------------------------------------------------
 
   function toggleFormat(format: DocumentFormat): void {
@@ -382,6 +398,10 @@ export function useLibrary() {
     showTrash,
     now,
     focusedId,
+    // setters (prop-safe for sub-components)
+    setSearch,
+    setShowTrash,
+    setFocusedId,
     // derived
     visible,
     trashVisible,

@@ -27,7 +27,7 @@ const emit = defineEmits(["empty-trash", "keydown", "menu-toggle", "menu-close",
         <UiButton
           variant="ghost"
           data-testid="back-to-library"
-          @click="props.lib.showTrash.value = false"
+          @click="props.lib.setShowTrash(false)"
         >
           ← Library
         </UiButton>
@@ -88,7 +88,7 @@ const emit = defineEmits(["empty-trash", "keydown", "menu-toggle", "menu-close",
           data-testid="library-row"
           :data-doc-id="entry.id"
           :tabindex="props.lib.rowTabindex(entry.id, index)"
-          @focus="props.lib.focusedId.value = entry.id"
+          @focus="props.lib.setFocusedId(entry.id)"
         >
           <td
             class="cell-title"
