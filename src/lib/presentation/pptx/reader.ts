@@ -372,7 +372,7 @@ function geometryFor(
   if (!xfrm || xfrm.xEmu === undefined || xfrm.cxEmu === undefined) {
     const inherited = inheritedPlaceholder(phType, phIdx, role, ctx)?.xfrm;
     if (inherited) {
-      xfrm = { ...inherited, ...(ownXfrm ?? {}) };
+      xfrm = { ...inherited, ...ownXfrm };
       // A partial own xfrm (rotation only) keeps the inherited offset/extent.
       if (ownXfrm?.xEmu === undefined) {
         xfrm.xEmu = inherited.xEmu;
@@ -399,20 +399,11 @@ function inheritedPlaceholder(
   role: PlaceholderRole | undefined,
   ctx: SlideContext,
 ): PlaceholderInfo | undefined {
+  // Match by (type + idx) — layout first, then master (AC-9/10). A title
+  // placeholder also matches ignoring idx (titles rarely carry one).
+  void role;
   const key = phKey(phType, phIdx);
-  const byKey = ctx.layoutPh.get(key) ?? ctx.masterPh.get(key);
-  if (byKey) {
-    return byKey;
-  }
-  if (role) {
-    for (const info of ctx.layoutPh.values()) {
-      if (info.role === role) return info;
-    }
-    for (const info of ctx.masterPh.values()) {
-      if (info.role === role) return info;
-    }
-  }
-  return undefined;
+  return ctx.layoutPh.get(key) ?? ctx.masterPh.get(key);
 }
 
 function frameBase(
