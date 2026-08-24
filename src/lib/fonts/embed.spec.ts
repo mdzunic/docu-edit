@@ -6,7 +6,7 @@ import type { DocumentModel } from "../documentModel";
 import { createDefaultStyles } from "../documentModel";
 import { parseOdt } from "../odf/reader";
 import { writeOdt } from "../odf/writer";
-import { SVG_NAMESPACE, XLINK_NAMESPACE } from "../odf/xml";
+import { SVG_NAMESPACE, XLINK_NAMESPACE } from "../core/odfXml";
 import { extractDocxEmbeddedFonts, extractOdtEmbeddedFonts } from "./embeddedFonts";
 import { embedFontsIntoDocx } from "./embedDocx";
 import { embedFontsIntoOdt } from "./embedOdt";

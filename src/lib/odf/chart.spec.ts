@@ -7,7 +7,7 @@ import { parseXml } from "../core/xml";
 import { equalStructural } from "../equality";
 import { type Chart } from "../documentModel";
 import { CHART_CATALOGUE, DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
-import { DRAW_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
+import { DRAW_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "../core/odfXml";
 
 // A real draw:frame lives inside content.xml, whose root already declares
 // every namespace it uses — a standalone parse needs the same ambient

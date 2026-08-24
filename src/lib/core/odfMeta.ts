@@ -1,8 +1,10 @@
-// .odt `meta.xml` parsing/serialisation (SPEC-041): `office:meta`'s
+// ODF `meta.xml` parsing/serialisation (SPEC-041): `office:meta`'s
 // dc:title/dc:subject/dc:description/meta:keyword/meta:initial-creator/
 // dc:creator/meta:creation-date/dc:date and `meta:user-defined` custom
-// properties. Shared by reader.ts (parsing) and writer.ts (building), the
-// same split as docx/docProps.ts.
+// properties. The part is defined by the ODF package spec, not by any one
+// document format — an `.odp` carries the identical part — so the module
+// lives in core (the OPC twin is ./opcProperties.ts); the .odt reader
+// (parsing) and writer (building) share it.
 //
 // Two ODF fields are counter-intuitively named relative to their OOXML
 // counterparts: `meta:initial-creator` is the ORIGINAL author (OOXML's
@@ -14,9 +16,9 @@ import type {
   DocumentProperties,
   ExtraMetadataField,
   UnsupportedCustomProperty,
-} from "../documentModel";
-import { childElements, escapeXml, parseXml, serializeElement, XmlParseError } from "../core/xml";
-import { DC_NAMESPACE, META_NAMESPACE, OFFICE_NAMESPACE } from "./xml";
+} from "./documentProperties";
+import { childElements, escapeXml, parseXml, serializeElement, XmlParseError } from "./xml";
+import { DC_NAMESPACE, META_NAMESPACE, OFFICE_NAMESPACE } from "./odfXml";
 
 /** A timestamp in the W3CDTF profile meta.xml requires (whole seconds, UTC),
  * e.g. "2026-08-03T12:00:00Z". */

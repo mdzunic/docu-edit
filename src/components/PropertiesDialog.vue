@@ -36,8 +36,8 @@ import { documentFormatLabel, formatFileSize, formatTimestamp } from "../lib/for
 import { docxFileName } from "../lib/docx/writer";
 import { odtFileName } from "../lib/odf/writer";
 import { mdFileName } from "../lib/md/writer";
-import { CORE_EXTRA_FIELD_LABELS } from "../lib/docx/docProps";
-import { META_EXTRA_FIELD_LABELS } from "../lib/odf/meta";
+import { CORE_EXTRA_FIELD_LABELS } from "../lib/core/opcProperties";
+import { META_EXTRA_FIELD_LABELS } from "../lib/core/odfMeta";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 

@@ -110,7 +110,8 @@ import {
 } from "./properties";
 import { ooxmlColorToCss } from "../core/colors";
 import { eighthPointsToPt, twipsToCm } from "../core/units";
-import { parseCoreProperties, parseCustomProperties } from "./docProps";
+import { parseCoreProperties, parseCustomProperties } from "../core/opcProperties";
+import { OFFICE_DOCUMENT_RELATIONSHIP } from "../core/packageDetect";
 
 export class DocxOpenError extends Error {}
 export class LegacyDocError extends Error {}
@@ -118,7 +119,6 @@ export class LegacyDocError extends Error {}
 export const INVALID_DOCX_MESSAGE = "This file isn't a Word document we can open";
 export const LEGACY_DOC_MESSAGE = "Old .doc files aren't supported — save as .docx first";
 
-const OFFICE_DOCUMENT_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 const STYLES_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 const CORE_PROPERTIES_RELATIONSHIP =
   "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";

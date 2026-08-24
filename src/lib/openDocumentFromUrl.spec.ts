@@ -28,8 +28,9 @@ describe("openDocumentFromUrl", () => {
     });
 
     const doc = await openDocumentFromUrl("https://example.com/reports/Quarterly.docx");
-    expect(doc.format).toBe("docx");
-    expect(doc.title).toBe("Quarterly");
+    expect(doc.kind).toBe("text");
+    expect(doc.model.format).toBe("docx");
+    expect(doc.model.title).toBe("Quarterly");
   });
 
   it("names the document from a Content-Disposition header when present", async () => {
@@ -45,7 +46,7 @@ describe("openDocumentFromUrl", () => {
     });
 
     const doc = await openDocumentFromUrl("https://example.com/download?id=42");
-    expect(doc.title).toBe("Team Notes");
+    expect(doc.model.title).toBe("Team Notes");
   });
 
   it("wraps a network failure or CORS block in OpenFromUrlError with the reason (AC-11, AC-12)", async () => {
@@ -80,7 +81,8 @@ describe("openDocumentFromUrl", () => {
       arrayBuffer: () => Promise.resolve(docxBytes.buffer.slice(docxBytes.byteOffset, docxBytes.byteOffset + docxBytes.byteLength)),
     });
     const doc = await openDocumentFromUrl("https://example.com/files/report.docx");
-    expect(doc.format).toBe("docx");
+    expect(doc.kind).toBe("text");
+    expect(doc.model.format).toBe("docx");
   });
 
   it("refuses a response advertising more than 50 MB via Content-Length, before downloading it (AC-14)", async () => {

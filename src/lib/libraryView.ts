@@ -10,6 +10,8 @@ export const FILTERABLE_FORMATS: readonly DocumentFormat[] = [
   "docx",
   "odt",
   "md",
+  "pptx",
+  "odp",
   "new",
 ];
 
@@ -125,6 +127,8 @@ export function filterCounts(
     docx: 0,
     odt: 0,
     md: 0,
+    pptx: 0,
+    odp: 0,
     new: 0,
   };
   let starred = 0;

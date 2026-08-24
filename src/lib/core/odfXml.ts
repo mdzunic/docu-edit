@@ -1,8 +1,10 @@
-// ODF namespace constants and attribute helpers. The generic XML machinery
-// (parseXml, childElements, firstChildElement) is shared with the .docx
-// reader — see src/lib/docx/xml.ts — since both formats are namespaced XML
-// parsed with the platform's DOMParser. Attributes are read by namespace URI
-// rather than prefix, since producers are free to rebind prefixes.
+// ODF namespace constants and attribute helpers, shared by every
+// OpenDocument format this repo reads (`.odt` text in src/lib/odf/, `.odp`
+// presentations in src/lib/presentation/odp/). The generic XML machinery
+// (parseXml, childElements, firstChildElement) lives in ./xml — both
+// package families are namespaced XML parsed with the platform's DOMParser.
+// Attributes are read by namespace URI rather than prefix, since producers
+// are free to rebind prefixes.
 
 export const OFFICE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 export const TEXT_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
@@ -22,6 +24,8 @@ export const META_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:meta:1.0";
 /** Data styles (SPEC-053) — `number:date-style`/`number:time-style` bodies a
  * date/time field's `style:data-style-name` points at. */
 export const NUMBER_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
+/** Presentations (`.odp`) — `office:presentation`, `presentation:class`. */
+export const PRESENTATION_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
 
 /** Reads an `office:*` attribute regardless of the bound prefix. */
 export function officeAttr(el: Element, localName: string): string | null {
@@ -63,4 +67,9 @@ export function drawAttr(el: Element, localName: string): string | null {
 /** Reads an `xlink:*` attribute regardless of the bound prefix. */
 export function xlinkAttr(el: Element, localName: string): string | null {
   return el.getAttributeNS(XLINK_NAMESPACE, localName);
+}
+
+/** Reads a `presentation:*` attribute regardless of the bound prefix. */
+export function presentationAttr(el: Element, localName: string): string | null {
+  return el.getAttributeNS(PRESENTATION_NAMESPACE, localName);
 }

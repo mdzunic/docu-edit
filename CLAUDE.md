@@ -34,14 +34,29 @@ src/
   router.ts        route table; add routes here, not inline
   App.vue          root shell — renders <RouterView />
   views/           one component per route
+    library/       the landing page's library module (product-neutral UI)
+    document/      the text editor's composables
   components/      reusable UI
   lib/             framework-free logic (parsers, formatters, converters)
+    core/          product-neutral layer (may import only core siblings)
+    docx/ odf/ md/ the TEXT product's format readers/writers
+    presentation/  the PRESENTATION product (.pptx/.odp); imports core only
 e2e/               Playwright specs; e2e/SPEC-NNN.spec.ts per feature
 ```
 
 Keep document parsing and serialisation in `src/lib/` as plain TypeScript with
 no Vue imports — it must be unit-testable without mounting a component, and
-`.docx`/`.odt` handling is the part most likely to be reused headlessly.
+`.docx`/`.odt`/`.pptx`/`.odp` handling is the part most likely to be reused
+headlessly.
+
+Two products share this repo: the word processor (documentModel.ts +
+docx/odf/md, `/doc/:id`) and presentations (lib/presentation, `/slides/:id`).
+They must never import each other — anything both need is format/product-
+neutral by definition and belongs in `src/lib/core`; the app layer
+(`documentKinds.ts`, `openDocument.ts`, `documentStore.ts`, the router, the
+views) is where they compose. Enforced by `core/boundary.spec.ts` and
+`presentation/boundary.spec.ts`; the fuller map is
+`docs/presentations-architecture.md`.
 
 ## Conventions
 
@@ -53,6 +68,10 @@ no Vue imports — it must be unit-testable without mounting a component, and
   gains only a `use*({ ...editorContext, ...extras })` wiring call and the
   template hookup. `DocumentView.size.spec.ts` enforces a line budget that
   only ratchets down — when it fails, extract; never raise the budget.
+- `src/views/HomeView.vue` is the landing page's wiring hub under the same
+  rule (`HomeView.size.spec.ts`): library UI belongs in a product-neutral
+  `src/views/library/` component; HomeView keeps only product wiring
+  (create/open actions, kind routing via `lib/documentKinds.ts`, dialogs).
 - Props and emits fully typed; no `any`
 - Scoped styles by default; global styles only in `App.vue`
 - Prefer semantic HTML and ARIA roles — e2e tests select by role and test-id,

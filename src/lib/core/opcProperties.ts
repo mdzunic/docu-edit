@@ -1,15 +1,18 @@
-// .docx document-properties parsing/serialisation (SPEC-041): docProps/core.xml
+// OPC document-properties parsing/serialisation (SPEC-041): docProps/core.xml
 // (dc:title/dc:subject/dc:creator/dc:description/cp:keywords/cp:lastModifiedBy/
 // dcterms:created/dcterms:modified) and docProps/custom.xml (typed custom
-// properties). Shared by reader.ts (parsing) and writer.ts (building) so the
-// field list is declared exactly once. `docProps/app.xml` is deliberately not
-// modelled here: none of its schema elements (Company, Manager, Template,
-// Application, word/character-count snapshot, ...) correspond to anything
-// this feature edits, so it stays a plain preserved OpaquePart like any other
-// unmodelled package part (see reader.ts's opaque-part loop) rather than
-// being parsed and rebuilt for no field this editor actually changes.
-import type { CustomProperty, CustomPropertyType, DocumentProperties, ExtraMetadataField, UnsupportedCustomProperty } from "../documentModel";
-import { childElements, escapeXml, parseXml, serializeElement, XmlParseError } from "../core/xml";
+// properties). These parts are defined at the OPC package level, not by any
+// one document format — a `.pptx` carries the identical parts — so the
+// module lives in core; the .docx reader (parsing) and writer (building)
+// share it so the field list is declared exactly once. `docProps/app.xml`
+// is deliberately not modelled here: none of its schema elements (Company,
+// Manager, Template, Application, word/character-count snapshot, ...)
+// correspond to anything this feature edits, so it stays a plain preserved
+// OpaquePart like any other unmodelled package part (see the docx reader's
+// opaque-part loop) rather than being parsed and rebuilt for no field this
+// editor actually changes.
+import type { CustomProperty, CustomPropertyType, DocumentProperties, ExtraMetadataField, UnsupportedCustomProperty } from "./documentProperties";
+import { childElements, escapeXml, parseXml, serializeElement, XmlParseError } from "./xml";
 
 export const CORE_PROPERTIES_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";

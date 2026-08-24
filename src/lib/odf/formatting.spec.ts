@@ -8,7 +8,7 @@ import { parseTextProperties } from "./properties";
 import { parseOdt } from "./reader";
 import { buildContentXml, writeOdt } from "./writer";
 import { parseXml } from "../core/xml";
-import { FO_NAMESPACE, STYLE_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, STYLE_NAMESPACE } from "../core/odfXml";
 
 function textProperties(attrs: string): Element {
   return parseXml(

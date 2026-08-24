@@ -3,17 +3,19 @@
 // error, CORS block, a non-OK status, or a response that plainly isn't a
 // document — is normalised into a single OpenFromUrlError so the view can
 // show one message ("Couldn't open that link") with the underlying reason.
-import type { DocumentModel } from "./documentModel";
 import {
   FILE_TOO_LARGE_MESSAGE,
   MAX_FILE_SIZE_BYTES,
-  openDocumentFile,
+  openAnyDocumentFile,
+  type OpenedFile,
 } from "./openDocument";
 
 export class OpenFromUrlError extends Error {}
 
 const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const ODT_CONTENT_TYPE = "application/vnd.oasis.opendocument.text";
+const PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const ODP_CONTENT_TYPE = "application/vnd.oasis.opendocument.presentation";
 // SPEC-050: Markdown's registered content type. Plain "text/plain" is
 // deliberately not included here — unlike the extension check below (which
 // only ever matches an actual .md/.markdown URL), that would accept any
@@ -26,7 +28,7 @@ const GENERIC_BINARY_CONTENT_TYPES = ["application/zip", "application/octet-stre
 
 function hasDocumentExtension(url: string): boolean {
   try {
-    return /\.(docx|odt|md|markdown)$/i.test(new URL(url).pathname);
+    return /\.(docx|odt|md|markdown|pptx|odp)$/i.test(new URL(url).pathname);
   } catch {
     return false;
   }
@@ -41,6 +43,8 @@ function isSupportedContentType(contentType: string | null): boolean {
     type === DOCX_CONTENT_TYPE ||
     type === ODT_CONTENT_TYPE ||
     type === MARKDOWN_CONTENT_TYPE ||
+    type === PPTX_CONTENT_TYPE ||
+    type === ODP_CONTENT_TYPE ||
     GENERIC_BINARY_CONTENT_TYPES.includes(type)
   );
 }
@@ -75,10 +79,11 @@ function deriveFileName(response: Response, url: string): string {
 }
 
 /** Fetches, validates and parses the document at `url` (SPEC-009 AC-9..
- * AC-14). Delegates to `openDocumentFile` once the bytes are in hand, so
+ * AC-14). Delegates to `openAnyDocumentFile` once the bytes are in hand, so
  * format detection, the size limit and parsing errors all match the
- * file-picker path exactly. */
-export async function openDocumentFromUrl(url: string): Promise<DocumentModel> {
+ * file-picker path exactly — presentations included; the caller routes by
+ * the returned `kind`. */
+export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
   let response: Response;
   try {
     response = await fetch(url);
@@ -94,7 +99,7 @@ export async function openDocumentFromUrl(url: string): Promise<DocumentModel> {
   const contentType = response.headers.get("content-type");
   if (!isSupportedContentType(contentType) && !hasDocumentExtension(url)) {
     throw new OpenFromUrlError(
-      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt or .md document`,
+      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt, .md, .pptx or .odp document`,
     );
   }
 
@@ -110,7 +115,7 @@ export async function openDocumentFromUrl(url: string): Promise<DocumentModel> {
     // resolves against the document's own URL — the one open path that has
     // one (a picked/dropped file has no base to resolve a relative path
     // against at all).
-    return await openDocumentFile(file, { baseUrl: url });
+    return await openAnyDocumentFile(file, { baseUrl: url });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpenFromUrlError(reason);

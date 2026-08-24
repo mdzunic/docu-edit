@@ -35,55 +35,16 @@ import { paragraphHasTrackedChange } from "./renderFormatting";
 import { equalColumnWidthsCm } from "./tables";
 
 // --- base64 ----------------------------------------------------------------
-
-// Chunked so String.fromCharCode never exceeds the argument-count limit.
-const BASE64_CHUNK = 0x8000;
-
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
-  }
-  return btoa(binary);
-}
-
-/** The async twin of `bytesToBase64` (SPEC-047 AC-3/AC-16): encodes through
- * `FileReader.readAsDataURL`, i.e. the browser's native base64 encoder,
- * which runs an order of magnitude faster than the JS `fromCharCode`+`btoa`
- * loop — profiling the 46MB benchmark fixture's open put ~0.6s of its
- * time in that loop alone. The output is byte-identical standard base64.
- * Falls back to the sync path where FileReader/Blob are missing. */
-export function bytesToBase64Async(bytes: Uint8Array): Promise<string> {
-  if (typeof FileReader !== "function" || typeof Blob !== "function") {
-    return Promise.resolve(bytesToBase64(bytes));
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      const url = reader.result as string;
-      resolve(url.slice(url.indexOf(",") + 1));
-    });
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("base64 encode failed")));
-    reader.readAsDataURL(new Blob([bytes as BlobPart]));
-  });
-}
-
-export function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
+//
+// The codecs moved to core/packageParts.ts (they are package plumbing every
+// product shares); re-exported here because the word-processor layer has
+// always imported them from this module.
+export { base64ToBytes, bytesToBase64, bytesToBase64Async } from "./core/packageParts";
+import { base64ToBytes, decodedPartBytes } from "./core/packageParts";
 
 /** The model's opaque parts as name -> decoded bytes, in model order. */
 export function opaquePartBytes(model: DocumentModel): Map<string, Uint8Array> {
-  const parts = new Map<string, Uint8Array>();
-  for (const part of model.opaque ?? []) {
-    parts.set(part.name, base64ToBytes(part.data));
-  }
-  return parts;
+  return decodedPartBytes(model.opaque);
 }
 
 // --- writer result ---------------------------------------------------------

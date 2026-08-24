@@ -11,6 +11,7 @@ import {
   deleteDocument,
   duplicateDocument,
   getDocument,
+  getPresentation,
   libraryStorageUsage,
   listDocuments,
   listTrashedDocuments,
@@ -18,6 +19,8 @@ import {
   setStarred,
   trashDocument,
 } from "../lib/documentStore";
+import type { DocumentKind } from "../lib/documentKinds";
+import { downloadPresentation } from "../lib/presentation/download";
 import {
   filterCounts,
   filterLibrary,
@@ -314,6 +317,15 @@ export function useLibrary() {
 
   async function downloadDocuments(ids: string[]): Promise<void> {
     for (const id of ids) {
+      // Kind dispatch (see documentKinds.ts): each entry downloads through
+      // its own product's writer.
+      if (kindOf(id) === "presentation") {
+        const presentation = getPresentation(id);
+        if (presentation) {
+          await downloadPresentation(presentation);
+        }
+        continue;
+      }
       const model = getDocument(id);
       if (model) {
         await downloadDocument(model);
@@ -340,6 +352,24 @@ export function useLibrary() {
   /** The title of any document (library or trashed), for toasts and dialogs. */
   function titleOf(id: string): string {
     return entryById.value.get(id)?.title ?? "Untitled document";
+  }
+
+  /** Which product an entry belongs to — drives each row's route (see
+   * documentKinds.editorPathFor). Unknown ids read as text, the safe
+   * default (/doc/:id shows its own not-found state). */
+  function kindOf(id: string): DocumentKind {
+    return entryById.value.get(id)?.kind ?? "text";
+  }
+
+  /** Roving tabindex for a row/card (AC-57): the focused row is tabbable;
+   * with no focus yet, the first row is. Shared by the list, grid and trash
+   * renderings so keyboard entry behaves identically in each. */
+  function rowTabindex(id: string, index: number): number {
+    const focused = focusedId.value;
+    if (focused === id) {
+      return 0;
+    }
+    return focused === "" && index === 0 ? 0 : -1;
   }
 
   return {
@@ -398,7 +428,14 @@ export function useLibrary() {
     focusNext,
     focusFirst,
     titleOf,
+    kindOf,
+    rowTabindex,
     // lifecycle
     refresh,
   };
 }
+
+/** The reactive controller the library components receive as their `lib`
+ * prop (runtime-typed `Object` in the .vue files — the espree constraint —
+ * so this alias is where the real shape lives for .ts callers). */
+export type LibraryController = ReturnType<typeof useLibrary>;

@@ -10,7 +10,7 @@ import type { DocumentModel } from "../documentModel";
 import { opaquePartBytes } from "../opaque";
 import { childElements, parseXml } from "../core/xml";
 import { WORD_NAMESPACE } from "../docx/xml";
-import { STYLE_NAMESPACE, SVG_NAMESPACE, XLINK_NAMESPACE } from "../odf/xml";
+import { STYLE_NAMESPACE, SVG_NAMESPACE, XLINK_NAMESPACE } from "../core/odfXml";
 
 /** The OOXML `r:id` relationship-reference namespace (distinct from the
  * package relationships namespace of a `.rels` part itself). */

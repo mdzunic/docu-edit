@@ -11,7 +11,7 @@
 import type { EquationSpec } from "../documentModel";
 import { escapeXmlAttribute, parseXml, XmlParseError } from "../core/xml";
 import { MATHML_NAMESPACE, parseMathML, serializeMathML } from "../math/mathml";
-import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, XLINK_NAMESPACE, xlinkAttr } from "./xml";
+import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, XLINK_NAMESPACE, xlinkAttr } from "../core/odfXml";
 
 /** The manifest media-type of an embedded formula object. */
 export const FORMULA_OBJECT_CONTENT_TYPE = "application/vnd.oasis.opendocument.formula";

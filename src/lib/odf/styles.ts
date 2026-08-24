@@ -19,7 +19,7 @@ import {
 } from "../documentModel";
 import { childElements, firstChildElement, serializeElement } from "../core/xml";
 import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../core/lists";
-import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "./xml";
+import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "../core/odfXml";
 import {
   cleanFontFamily,
   paragraphPropertiesOf,

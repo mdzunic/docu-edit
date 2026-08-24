@@ -5,7 +5,7 @@
 // content.xml's office:font-face-decls and a manifest entry. Framework-free.
 import { unzip } from "../core/zip";
 import { zip } from "../core/zipWriter";
-import { SVG_NAMESPACE, XLINK_NAMESPACE } from "../odf/xml";
+import { SVG_NAMESPACE, XLINK_NAMESPACE } from "../core/odfXml";
 import type { EmbedFace } from "./embedPlan";
 
 const FONT_MEDIA_TYPE = "application/x-font-ttf";

@@ -69,6 +69,7 @@ describe("initLibrary", () => {
         id: "persisted-id",
         title: "From storage",
         format: "new",
+        kind: "text",
         lastModified: 1000,
         starred: false,
       },
@@ -212,6 +213,7 @@ describe("listDocuments", () => {
         id: "entry-id",
         title: "My report",
         format: "new",
+        kind: "text",
         lastModified: 42_000,
         starred: false,
       },
@@ -309,10 +311,14 @@ describe("duplicateDocument", () => {
     expect(copy.model.title).toBe("Plan (copy)");
     expect(copy.format).toBe("new");
     expect(copy.lastModified).toBe(2000);
-    // Content is copied…
-    expect(copy.model.sections).toEqual(original.sections);
+    // Content is copied… (read back through the text accessor, which is the
+    // same object as copy.model — the record's model type spans both
+    // products since the presentations preparation).
+    const copyModel = store.getDocument(copy.id)!;
+    expect(copyModel).toBe(copy.model);
+    expect(copyModel.sections).toEqual(original.sections);
     // …but the copy is independent: mutating it leaves the original alone.
-    copy.model.sections[0]!.blocks.push({ type: "paragraph", runs: [] });
+    copyModel.sections[0]!.blocks.push({ type: "paragraph", runs: [] });
     expect(original.sections[0]!.blocks).toHaveLength(2);
     // The copy sorts to the top and is persisted.
     expect(store.listDocuments()[0]?.id).toBe(copy.id);

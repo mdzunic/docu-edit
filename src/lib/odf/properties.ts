@@ -14,7 +14,7 @@ import type {
 import { firstChildElement } from "../core/xml";
 import { HIGHLIGHT_NAMES } from "../core/colors";
 import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../core/language";
-import { foAttr, styleAttr, STYLE_NAMESPACE } from "./xml";
+import { foAttr, styleAttr, STYLE_NAMESPACE } from "../core/odfXml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 
 /** Font families keyed by `style:font-face`'s name — built from the

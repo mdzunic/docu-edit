@@ -14,7 +14,7 @@ import {
 } from "./writer";
 import { unzip } from "../core/zip";
 import { parseXml } from "../core/xml";
-import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
+import { OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "../core/odfXml";
 import { asParagraph, createDocument, type Block, type DocumentModel, type Paragraph } from "../documentModel";
 import { firstStructuralDifference } from "../equality";
 

@@ -20,13 +20,26 @@ import {
 import { type ListDefinition } from "./core/lists";
 import { type MediaPart } from "./core/media";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
-import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE } from "./odf/reader";
+import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE, ODT_MIMETYPE, OTT_MIMETYPE } from "./odf/reader";
 import { unzip, ZipError } from "./core/zip";
+import { detectPackage } from "./core/packageDetect";
 import { readFileAsArrayBuffer } from "./core/fileReader";
 import { parseMd, type ParseMdOptions } from "./md/reader";
 import { inferListStyleTypes } from "./styles";
+import { OPENABLE_EXTENSIONS } from "./documentKinds";
+import type { PresentationModel } from "./presentation/model";
+import { assemblePresentation, presentationFormatOf } from "./presentation/open";
+import { parsePptx } from "./presentation/pptx/reader";
+import { parseOdp } from "./presentation/odp/reader";
 
 export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
+
+/** A file whose format was recognised but isn't openable where it was
+ * handed in — an ODF package of an unsupported kind, or a presentation
+ * given to a text-only entry point. */
+export class UnsupportedFileError extends Error {}
+export const UNSUPPORTED_ODF_MESSAGE = "This OpenDocument file isn't a text document or presentation we can open";
+export const PRESENTATION_NOT_TEXT_MESSAGE = "This is a presentation file — open it from the library instead";
 
 /** SPEC-009 AC-14: shared across every open path (picker, drag-drop,
  * URL fetch) since they all funnel through `openDocumentFile`. */
@@ -41,28 +54,12 @@ export class FileTooLargeError extends Error {}
  * except Markdown (SPEC-050), which has no content signature at all and is
  * admitted by extension as the deliberate, documented exception (see
  * `openDocumentFile`). */
-export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt and .md files";
+export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt, .md, .pptx and .odp files";
+
+const SUPPORTED_EXTENSION_PATTERN = new RegExp(`\\.(${OPENABLE_EXTENSIONS.join("|")})$`, "i");
 
 export function hasSupportedExtension(fileName: string): boolean {
-  return /\.(docx|odt|md|markdown)$/i.test(fileName);
-}
-
-/** Whether `bytes` is a ZIP package, regardless of what kind — the one
- * content signature Markdown detection needs (SPEC-050's "Detection"):
- * a `.md`/`.markdown`-named file is only admitted by extension when it is
- * *not* a ZIP, so a same-named ZIP (a mis-saved/renamed .docx, say) still
- * takes the content-sniffed path below and fails there on its own terms
- * rather than being silently misread as Markdown. */
-async function isZipPackage(bytes: Uint8Array): Promise<boolean> {
-  try {
-    await unzip(bytes);
-    return true;
-  } catch (error) {
-    if (error instanceof ZipError) {
-      return false;
-    }
-    throw error;
-  }
+  return SUPPORTED_EXTENSION_PATTERN.test(fileName);
 }
 
 /** SPEC-046: the template gallery's "Import template file…" picker, a
@@ -75,7 +72,7 @@ export function hasTemplateFileExtension(fileName: string): boolean {
 /** The app-bar title for an opened document: its file name with the
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
-  const withoutExtension = fileName.replace(/\.(docx|dotx|odt|ott|md|markdown)$/i, "");
+  const withoutExtension = fileName.replace(/\.(docx|dotx|odt|ott|md|markdown|pptx|odp)$/i, "");
   return withoutExtension.length > 0 ? withoutExtension : fileName;
 }
 
@@ -168,35 +165,88 @@ export function assembleDocumentModel(
   return inferListStyleTypes(model);
 }
 
-/** Reads and parses a picked File into a new DocumentModel (not yet stored
- * or navigated to — the caller does that once this resolves). The format is
- * detected from the file's contents: a ZIP whose `mimetype` entry declares
- * OpenDocument text opens as .odt, a flat XML ODF file (.fodt) is rejected
- * with its specific message, and anything else that is a ZIP takes the
- * .docx path. Markdown has no magic bytes and no container (SPEC-050's
- * "Detection"), so content sniffing cannot decide it — the deliberate
- * exception: a file that is not a ZIP package is Markdown if its name ends
- * `.md`/`.markdown`, and takes the .docx path (where parseDocx rejects it on
- * its own terms) otherwise. `hasSupportedExtension` has already rejected
- * anything else for the one open path (drag-and-drop) that checks a name at
- * all; the picker/URL paths reach here for any file they were handed. */
-export async function openDocumentFile(file: File, options: ParseMdOptions = {}): Promise<DocumentModel> {
+/** What the kind-agnostic open path hands back: which product owns the
+ * file, plus that product's parsed model. The caller stores and routes by
+ * `kind` (see documentKinds.ts). */
+export type OpenedFile =
+  | { kind: "text"; model: DocumentModel }
+  | { kind: "presentation"; model: PresentationModel };
+
+/** The shared open pipeline. Unzips at most once for detection (parsers
+ * re-unzip on their own, as they always did), then dispatches on the
+ * package's own declarations — see detectPackage:
+ * - an ODF package opens as .odt (text mimetype), .odp (presentation
+ *   mimetype), or is rejected with the honest unsupported-ODF message;
+ * - an OPC package whose main part declares PresentationML opens as .pptx;
+ * - anything else that is a ZIP takes the .docx path and fails there on its
+ *   own terms;
+ * - a non-ZIP is flat ODF (rejected specifically), Markdown by extension
+ *   (SPEC-050's deliberate exception — Markdown has no content signature),
+ *   or takes the .docx path (whose legacy-.doc detection also lives there).
+ * `allowPresentations` is false for the text-only entry point, which must
+ * keep returning DocumentModel — a presentation there is an error, not a
+ * silent misparse. */
+async function openFile(file: File, options: ParseMdOptions, allowPresentations: boolean): Promise<OpenedFile> {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     throw new FileTooLargeError(FILE_TOO_LARGE_MESSAGE);
   }
   const buffer = await readFileAsArrayBuffer(file);
   const bytes = new Uint8Array(buffer);
-  const odf = await detectOdf(bytes);
-  if (odf === "flat") {
-    throw new FlatOdfError(FLAT_ODF_MESSAGE);
+  const title = titleFromFileName(file.name);
+  const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
+
+  let parts: Map<string, Uint8Array> | null = null;
+  try {
+    parts = await unzip(bytes);
+  } catch (error) {
+    if (!(error instanceof ZipError)) {
+      throw error;
+    }
   }
-  if (odf === "package") {
-    return assembleDocumentModel(titleFromFileName(file.name), "odt", await parseOdt(bytes));
+  if (parts === null) {
+    if ((await detectOdf(bytes)) === "flat") {
+      throw new FlatOdfError(FLAT_ODF_MESSAGE);
+    }
+    if (/\.(md|markdown)$/i.test(file.name)) {
+      return text(assembleDocumentModel(title, "md", await parseMd(bytes, options)));
+    }
+    return text(assembleDocumentModel(title, "docx", await parseDocx(bytes)));
   }
-  if (/\.(md|markdown)$/i.test(file.name) && !(await isZipPackage(bytes))) {
-    return assembleDocumentModel(titleFromFileName(file.name), "md", await parseMd(bytes, options));
+
+  const info = detectPackage(parts);
+  const presentationFormat = presentationFormatOf(info);
+  if (presentationFormat !== null) {
+    if (!allowPresentations) {
+      throw new UnsupportedFileError(PRESENTATION_NOT_TEXT_MESSAGE);
+    }
+    const parsed = presentationFormat === "pptx" ? await parsePptx(bytes) : await parseOdp(bytes);
+    return { kind: "presentation", model: assemblePresentation(title, presentationFormat, parsed) };
   }
-  return assembleDocumentModel(titleFromFileName(file.name), "docx", await parseDocx(bytes));
+  if (info.container === "odf") {
+    if (info.mimetype === ODT_MIMETYPE || info.mimetype === OTT_MIMETYPE) {
+      return text(assembleDocumentModel(title, "odt", await parseOdt(bytes)));
+    }
+    throw new UnsupportedFileError(UNSUPPORTED_ODF_MESSAGE);
+  }
+  return text(assembleDocumentModel(title, "docx", await parseDocx(bytes)));
+}
+
+/** Reads and parses a picked File of ANY supported kind (not yet stored or
+ * navigated to — the caller does that, routing by `kind`). The generic
+ * entry points (library picker, drag-and-drop, /open?url=) call this. */
+export async function openAnyDocumentFile(file: File, options: ParseMdOptions = {}): Promise<OpenedFile> {
+  return openFile(file, options, true);
+}
+
+/** Reads and parses a picked File into a new text DocumentModel — the
+ * text-only entry point (template import, style import). A presentation
+ * handed here is rejected with a specific message rather than misparsed. */
+export async function openDocumentFile(file: File, options: ParseMdOptions = {}): Promise<DocumentModel> {
+  const opened = await openFile(file, options, false);
+  if (opened.kind !== "text") {
+    throw new UnsupportedFileError(PRESENTATION_NOT_TEXT_MESSAGE);
+  }
+  return opened.model;
 }
 
 /** Reads and parses a `.dotx`/`.ott` File as a template (SPEC-046 AC-9..11):

@@ -20,7 +20,7 @@ import type { ChartOptions, ChartSeries, ChartType } from "../core/charts";
 import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "../core/charts";
 import { escapeXmlAttribute, escapeXmlText, parseXml, serializeElement, XmlParseError } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
-import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, svgAttr, textAttr, xlinkAttr } from "./xml";
+import { DRAW_NAMESPACE, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE, svgAttr, textAttr, xlinkAttr } from "../core/odfXml";
 
 export const CHART_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0";
 

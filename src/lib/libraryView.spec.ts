@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LibraryEntry } from "./documentStore";
+import { kindOfFormat } from "./documentKinds";
 import {
   filterCounts,
   filterLibrary,
@@ -10,10 +11,12 @@ import {
 } from "./libraryView";
 
 function entry(over: Partial<LibraryEntry> & { id: string }): LibraryEntry {
+  const format = over.format ?? "new";
   return {
     id: over.id,
     title: over.title ?? over.id,
-    format: over.format ?? "new",
+    format,
+    kind: over.kind ?? kindOfFormat(format),
     lastModified: over.lastModified ?? 0,
     starred: over.starred ?? false,
     trashedAt: over.trashedAt,

@@ -3,9 +3,10 @@ import { onMounted, ref, useTemplateRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import { useTheme } from "../composables/useTheme";
-import { openDocumentFile } from "../lib/openDocument";
+import { openAnyDocumentFile } from "../lib/openDocument";
 import { openDocumentFromUrl } from "../lib/openDocumentFromUrl";
-import { storeDocument } from "../lib/documentStore";
+import { storeDocument, storePresentation } from "../lib/documentStore";
+import { editorPathFor } from "../lib/documentKinds";
 
 const route = useRoute();
 const router = useRouter();
@@ -36,12 +37,16 @@ async function run() {
   status.value = "loading";
   errorReason.value = "";
   try {
-    const doc = await openDocumentFromUrl(url);
-    storeDocument(doc);
+    const opened = await openDocumentFromUrl(url);
+    if (opened.kind === "presentation") {
+      storePresentation(opened.model);
+    } else {
+      storeDocument(opened.model);
+    }
     // Replace, not push: reloading /doc/:id afterwards must not re-fetch
     // the URL (AC-16), and the failed /open?url=... entry shouldn't sit in
     // history either.
-    router.replace(`/doc/${doc.id}`);
+    router.replace(editorPathFor(opened.kind, opened.model.id));
   } catch (error) {
     status.value = "error";
     errorReason.value = error instanceof Error ? error.message : String(error);
@@ -63,9 +68,13 @@ async function handleFileChosen() {
     return;
   }
   try {
-    const doc = await openDocumentFile(file);
-    storeDocument(doc);
-    router.replace(`/doc/${doc.id}`);
+    const opened = await openAnyDocumentFile(file);
+    if (opened.kind === "presentation") {
+      storePresentation(opened.model);
+    } else {
+      storeDocument(opened.model);
+    }
+    router.replace(editorPathFor(opened.kind, opened.model.id));
   } catch (error) {
     status.value = "error";
     errorReason.value = error instanceof Error ? error.message : String(error);

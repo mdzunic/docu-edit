@@ -50,7 +50,7 @@ describe("OpenFromUrlView", () => {
   });
 
   it("shows a loading state while the fetch is in flight (AC-10)", async () => {
-    let resolveFetch: (doc: ReturnType<typeof createDocument>) => void = () => {};
+    let resolveFetch: (opened: { kind: "text"; model: ReturnType<typeof createDocument> }) => void = () => {};
     vi.mocked(openDocumentFromUrl).mockReturnValue(
       new Promise((resolve) => {
         resolveFetch = resolve;
@@ -61,13 +61,13 @@ describe("OpenFromUrlView", () => {
     expect(wrapper.find('[data-testid="open-from-url-loading"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="open-from-url-error"]').exists()).toBe(false);
 
-    resolveFetch(createDocument("resolved-id"));
+    resolveFetch({ kind: "text", model: createDocument("resolved-id") });
     await flushPromises();
   });
 
   it("fetches the URL and opens the document, storing it and navigating to /doc/:id (AC-9, AC-15)", async () => {
     const doc = { ...createDocument("from-url-id"), format: "docx" as const };
-    vi.mocked(openDocumentFromUrl).mockResolvedValue(doc);
+    vi.mocked(openDocumentFromUrl).mockResolvedValue({ kind: "text", model: doc });
     const { wrapper, router } = await mountAt("/open?url=https://example.com/report.docx");
     await flushPromises();
     await untilPath(router, "/doc/from-url-id");

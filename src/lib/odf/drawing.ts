@@ -11,7 +11,7 @@ import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";
 import { cmToOdfLength, odfLengthToCm } from "./units";
-import { DRAW_NAMESPACE, SVG_NAMESPACE, STYLE_NAMESPACE, XLINK_NAMESPACE, drawAttr, styleAttr, svgAttr, textAttr, xlinkAttr } from "./xml";
+import { DRAW_NAMESPACE, SVG_NAMESPACE, STYLE_NAMESPACE, XLINK_NAMESPACE, drawAttr, styleAttr, svgAttr, textAttr, xlinkAttr } from "../core/odfXml";
 
 /** A frame's graphic-family style resolved to SPEC-024's wrap enum — the
  * inverse of graphicPropertiesXml's own encoding below. Keyed by

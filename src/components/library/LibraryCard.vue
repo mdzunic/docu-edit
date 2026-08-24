@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { getDocument } from "../../lib/documentStore";
+import { getDocument, getPresentation } from "../../lib/documentStore";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { getDocumentLibraryStats } from "../../lib/libraryStats";
 import { formatBadgeLabel, formatRelativeTime } from "../../lib/format";
@@ -41,9 +41,19 @@ const emit = defineEmits([
 // annotation; `statsReady` gates the display until the idle pass fills it in.
 const statsReady = ref(false);
 const stats = ref({ words: 0, pages: 0 });
+// A presentation entry's count line (its kind is on the entry itself).
+const slideTotal = ref(0);
 
 onMounted(() => {
   runWhenIdle(() => {
+    if (props.entry.kind === "presentation") {
+      const presentation = getPresentation(props.entry.id);
+      if (presentation) {
+        slideTotal.value = presentation.slides.length;
+        statsReady.value = true;
+      }
+      return;
+    }
     const model = getDocument(props.entry.id);
     if (model) {
       stats.value = getDocumentLibraryStats(props.entry.id, props.entry.lastModified, model);
@@ -129,7 +139,10 @@ function onClick(event = new MouseEvent("click")) {
         class="card-counts"
         data-testid="row-counts"
       >
-        <template v-if="statsReady">
+        <template v-if="statsReady && props.entry.kind === 'presentation'">
+          {{ slideTotal }} {{ slideTotal === 1 ? "slide" : "slides" }}
+        </template>
+        <template v-else-if="statsReady">
           {{ stats.pages }} {{ stats.pages === 1 ? "page" : "pages" }} ·
           {{ stats.words }} {{ stats.words === 1 ? "word" : "words" }}
         </template>

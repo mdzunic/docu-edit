@@ -5,6 +5,8 @@
 // quota exceeded), the app keeps working in-memory and the storage status
 // flips so the UI can show its warning banner.
 import { createDocument, type DocumentModel } from "./documentModel";
+import { kindOfFormat, type DocumentKind, type LibraryFormat } from "./documentKinds";
+import type { PresentationModel } from "./presentation/model";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
 import { type MediaPart } from "./core/media";
@@ -13,8 +15,19 @@ import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
 import type { CaretPosition } from "./textEditing";
 
 /** Where a document's content last came from or went to. "new" means it was
- * created in the app and has never been opened from or saved as a file. */
-export type DocumentFormat = "docx" | "odt" | "md" | "new";
+ * created in the app and has never been opened from or saved as a file.
+ * Spans every kind the library holds (see documentKinds.ts). */
+export type DocumentFormat = LibraryFormat;
+
+/** Everything a library record's `model` can hold: the word processor's
+ * document tree or a presentation. Discriminated by `kind` — only
+ * `PresentationModel` declares one. */
+export type StoredModel = DocumentModel | PresentationModel;
+
+/** Narrows a stored model to the presentation product's. */
+export function isPresentationModel(model: StoredModel): model is PresentationModel {
+  return "kind" in model && model.kind === "presentation";
+}
 
 /** What the library persists per document: the model plus its metadata.
  * This is the COMMITTED record (SPEC-010): the last clean state, which the
@@ -24,7 +37,7 @@ export interface StoredDocumentRecord {
   format: DocumentFormat;
   /** Epoch milliseconds of the last modification. */
   lastModified: number;
-  model: DocumentModel;
+  model: StoredModel;
   /** Caret position at the last commit, so reopening restores it without
    * reconstruction (SPEC-010). Absent on records from before autosave. */
   caret?: CaretPosition | null;
@@ -114,6 +127,9 @@ export interface LibraryEntry {
   id: string;
   title: string;
   format: DocumentFormat;
+  /** Which product the entry belongs to — drives the row's route and the
+   * kind-specific card details. Derived from `format` (see documentKinds). */
+  kind: DocumentKind;
   lastModified: number;
   /** Whether the user has starred the document (SPEC-067). */
   starred: boolean;
@@ -244,7 +260,7 @@ function persistDraftMedia(docId: string, media: MediaPart[] | undefined): Promi
 /** A model with `media` stripped to `[]` for the shell record `persist`/
  * `saveDraft`/`commitDocument` hand to `putRecord` — the array itself
  * always goes through `persistMedia` instead. */
-function stripMedia(model: DocumentModel): DocumentModel {
+function stripMedia<M extends StoredModel>(model: M): M {
   return { ...model, media: [] };
 }
 
@@ -253,7 +269,7 @@ function stripMedia(model: DocumentModel): DocumentModel {
  * every read path (initLibrary, refreshDocumentFromStorage, loadDraft).
  * Absent when nothing was ever persisted for it (a document with no
  * images never gets a MediaRecord — see persistMedia's skip). */
-function rejoinMedia(model: DocumentModel, media: MediaPart[] | undefined): DocumentModel {
+function rejoinMedia(model: StoredModel, media: MediaPart[] | undefined): StoredModel {
   if (media === undefined || media.length === 0) {
     return model;
   }
@@ -319,9 +335,28 @@ export function initLibrary(): Promise<void> {
 
 // --- reads -----------------------------------------------------------------
 
-/** Returns the stored document for an id, or undefined if none exists. */
+/** Returns the stored text document for an id, or undefined if none exists
+ * — including when the id belongs to a presentation (callers of this
+ * accessor are the word processor's paths; they must never receive the
+ * other product's model). */
 export function getDocument(id: string): DocumentModel | undefined {
-  return records.get(id)?.model;
+  const model = records.get(id)?.model;
+  return model !== undefined && !isPresentationModel(model) ? model : undefined;
+}
+
+/** The presentation counterpart of `getDocument`: undefined for absent ids
+ * and for text documents alike. */
+export function getPresentation(id: string): PresentationModel | undefined {
+  const model = records.get(id)?.model;
+  return model !== undefined && isPresentationModel(model) ? model : undefined;
+}
+
+/** Which product owns a stored id — the routing guard's question ("is
+ * /doc/:id actually a presentation?"); undefined when nothing is stored
+ * under the id. */
+export function documentKindOf(id: string): DocumentKind | undefined {
+  const record = records.get(id);
+  return record ? kindOfFormat(record.format) : undefined;
 }
 
 /** The full in-memory record (metadata + model) for an id. */
@@ -371,6 +406,12 @@ function applyNewDocumentPreferences(model: DocumentModel): void {
 export function getOrCreateDocument(id: string): DocumentModel {
   const existing = records.get(id);
   if (existing) {
+    if (isPresentationModel(existing.model)) {
+      // Unreachable through the views (DocumentView redirects presentation
+      // ids to /slides/:id before loading), and creating a text document
+      // over a presentation's id would destroy it — so fail loudly.
+      throw new Error(`Document ${id} is a presentation`);
+    }
     return existing.model;
   }
   const model = createDocument(id);
@@ -383,13 +424,14 @@ export function getOrCreateDocument(id: string): DocumentModel {
   };
   records.set(id, record);
   persist(record);
-  return record.model;
+  return model;
 }
 
 function toLibraryEntry(record: StoredDocumentRecord): LibraryEntry {
   return {
     id: record.id,
     format: record.format,
+    kind: kindOfFormat(record.format),
     lastModified: record.lastModified,
     title: record.model.title,
     starred: record.starred === true,
@@ -605,6 +647,10 @@ export async function saveDraft(
   if (!record) {
     throw new Error(`No document with id ${id}`);
   }
+  if (isPresentationModel(record.model)) {
+    // Drafts are a text-editor feature; nothing edits presentations yet.
+    throw new Error(`Document ${id} is a presentation`);
+  }
   const mediaWrite = persistDraftMedia(id, record.model.media);
   const draft: DraftRecord = {
     id: draftKey(id),
@@ -743,13 +789,23 @@ export function replaceDocumentModel(
  * a library record (format from the model, defaulting to "new") and writes
  * through to storage like every other mutation. */
 export function storeDocument(doc: DocumentModel): void {
+  storeRecord(doc, doc.format ?? "new");
+}
+
+/** The presentation counterpart of `storeDocument` — the open path stores a
+ * freshly parsed `.pptx`/`.odp` through the same record machinery. */
+export function storePresentation(model: PresentationModel): void {
+  storeRecord(model, model.format);
+}
+
+function storeRecord(model: StoredModel, format: DocumentFormat): void {
   const record: StoredDocumentRecord = {
-    id: doc.id,
-    format: doc.format ?? "new",
+    id: model.id,
+    format,
     lastModified: Date.now(),
-    model: doc,
+    model,
   };
-  records.set(doc.id, record);
+  records.set(model.id, record);
   // Deferred to browser idle (SPEC-047 AC-3/AC-16): storeDocument runs on
   // the open path right before navigating into the document, and the
   // IndexedDB put's synchronous structured clone of a large model was one

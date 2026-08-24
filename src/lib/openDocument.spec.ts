@@ -157,7 +157,7 @@ describe("hasSupportedExtension", () => {
 
 describe("SPEC-050 — Markdown detection", () => {
   it("names all three formats in the unsupported-file-type message", () => {
-    expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe("We can only open .docx, .odt and .md files");
+    expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe("We can only open .docx, .odt, .md, .pptx and .odp files");
   });
 
   it("opens a .md file by extension — the deliberate exception to content sniffing", async () => {

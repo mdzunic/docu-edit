@@ -12,7 +12,7 @@ import { buildContentXml, buildStylesXml, writeOdt } from "./writer";
 import { unzip } from "../core/zip";
 import { equalBytes } from "../core/equality";
 import { parseXml } from "../core/xml";
-import { FO_NAMESPACE, STYLE_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, STYLE_NAMESPACE } from "../core/odfXml";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 

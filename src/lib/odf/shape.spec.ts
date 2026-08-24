@@ -12,7 +12,7 @@ import {
 } from "./shape";
 import { parseXml } from "../core/xml";
 import { canonicalizeXml } from "../core/xml";
-import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
+import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "../core/odfXml";
 import { type Paragraph, type Shape } from "../documentModel";
 import { SHAPE_CATALOGUE } from "../core/shapes";
 

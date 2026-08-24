@@ -11,6 +11,7 @@ import { usePreferences } from "./usePreferences";
 import {
   commitDocument,
   deleteDraft,
+  isPresentationModel,
   loadDraft,
   refreshDocumentFromStorage,
   replaceDocumentModel,
@@ -158,6 +159,12 @@ export function useAutosave(options: UseAutosaveOptions) {
     scheduler = makeScheduler();
     const record = await refreshDocumentFromStorage(id);
     if (docId !== id || !record) {
+      return;
+    }
+    if (isPresentationModel(record.model)) {
+      // Autosave is a text-editor session; a presentation id can only reach
+      // here through a misrouted view, and starting a session would clobber
+      // the presentation with text-editor state.
       return;
     }
     const draft = await loadDraft(id);

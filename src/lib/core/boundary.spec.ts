@@ -73,10 +73,10 @@ describe("core layer boundary", () => {
 // (documentModel.ts's shared helpers, mediaRefs.ts) or in core
 // (core/media.ts's content-type mapping, core/xml.ts's escapes).
 describe("format layer boundaries", () => {
-  /** Import specifiers in `name` (under `dir`) that resolve into a `docx/`
-   * or `odf/` path segment named by `banned` — "../docx/x", "./odf/x" and
-   * aliased "…/docx/x" forms alike. */
-  function formatImportViolations(dir: string, name: string, banned: "docx" | "odf"): string[] {
+  /** Import specifiers in `name` (under `dir`) that resolve into a `docx/`,
+   * `odf/` or `presentation/` path segment named by `banned` — "../docx/x",
+   * "./odf/x" and aliased "…/docx/x" forms alike. */
+  function formatImportViolations(dir: string, name: string, banned: "docx" | "odf" | "presentation"): string[] {
     const source = readFileSync(join(dir, name), "utf8");
     const bannedSegment = new RegExp(`(^|/)${banned}/`);
     return importSpecifiers(source)
@@ -96,6 +96,17 @@ describe("format layer boundaries", () => {
   it("no docx/ module imports from odf/", () => {
     const docxDir = join(libDir, "docx");
     const violations = runtimeModules(docxDir).flatMap((name) => formatImportViolations(docxDir, name, "odf"));
+    expect(violations).toEqual([]);
+  });
+
+  // The two products never entangle: the word processor's format layers must
+  // not reach into the presentation layer. (The presentation side of the
+  // same rule — only core imports allowed — is presentation/boundary.spec.ts.)
+  it("no docx/ or odf/ module imports from presentation/", () => {
+    const violations = ["docx", "odf"].flatMap((format) => {
+      const dir = join(libDir, format);
+      return runtimeModules(dir).flatMap((name) => formatImportViolations(dir, name, "presentation"));
+    });
     expect(violations).toEqual([]);
   });
 
@@ -134,6 +145,7 @@ describe("format layer boundaries", () => {
     const violations = MODEL_LAYER_MODULES.flatMap((name) => [
       ...formatImportViolations(libDir, name, "docx"),
       ...formatImportViolations(libDir, name, "odf"),
+      ...formatImportViolations(libDir, name, "presentation"),
     ]);
     expect(violations).toEqual([]);
   });

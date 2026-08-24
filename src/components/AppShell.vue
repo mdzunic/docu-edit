@@ -8,10 +8,11 @@ import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useToasts } from "../composables/useToasts";
-import { storeDocument } from "../lib/documentStore";
+import { storeDocument, storePresentation } from "../lib/documentStore";
+import { editorPathFor } from "../lib/documentKinds";
 import {
   hasSupportedExtension,
-  openDocumentFile,
+  openAnyDocumentFile,
   UNSUPPORTED_FILE_TYPE_MESSAGE,
 } from "../lib/openDocument";
 import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
@@ -150,12 +151,16 @@ async function handleDrop(event = new DragEvent("drop")) {
     return;
   }
   try {
-    const doc = await openDocumentFile(file);
-    storeDocument(doc);
-    if (files.length > 1) {
-      addToast(`Opened ${doc.title} — only one file at a time`);
+    const opened = await openAnyDocumentFile(file);
+    if (opened.kind === "presentation") {
+      storePresentation(opened.model);
+    } else {
+      storeDocument(opened.model);
     }
-    router?.push(`/doc/${doc.id}`);
+    if (files.length > 1) {
+      addToast(`Opened ${opened.model.title} — only one file at a time`);
+    }
+    router?.push(editorPathFor(opened.kind, opened.model.id));
   } catch (error) {
     dropError.value = error instanceof Error ? error.message : String(error);
   }

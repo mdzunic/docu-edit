@@ -119,7 +119,7 @@ import {
   TEXT_NAMESPACE,
   XLINK_NAMESPACE,
   styleAttr,
-} from "./xml";
+} from "../core/odfXml";
 
 // Declared locally on each number:date-style/time-style element (the
 // TABLE_XMLNS pattern), so content.xml is unchanged for documents with no
@@ -127,10 +127,10 @@ import {
 const NUMBER_XMLNS = ` xmlns:number="${NUMBER_NAMESPACE}"`;
 import { inlineWriteLayout, linkTargetOf, type LinkTarget } from "../links";
 import { cmToOdfLength, multiplierToOdfPercentage, ptToOdfLength } from "./units";
-import { buildMetaXml, type OdfMetaInput } from "./meta";
+import { buildMetaXml, type OdfMetaInput } from "../core/odfMeta";
 import { stripPersonalInfo } from "../personalInfo";
 
-export { buildMetaXml } from "./meta";
+export { buildMetaXml } from "../core/odfMeta";
 
 export { ODT_MIMETYPE };
 

@@ -1,5 +1,6 @@
 import type { DocumentFormat } from "./documentStore";
 import type { DocumentFormat as ModelDocumentFormat } from "./documentModel";
+import type { PresentationFormat } from "./presentation/model";
 
 /**
  * Format a date for display as a document title, e.g. "2026-08-02 14:35".
@@ -47,6 +48,8 @@ const BADGE_LABELS: Record<DocumentFormat, string> = {
   docx: "DOCX",
   odt: "ODT",
   md: "MD",
+  pptx: "PPTX",
+  odp: "ODP",
   new: "New",
 };
 
@@ -67,6 +70,16 @@ const DOCUMENT_FORMAT_LABELS: Record<ModelDocumentFormat, string> = {
  * AC-2) — "" for a document with no source/saved format yet (AC-18a). */
 export function documentFormatLabel(format?: ModelDocumentFormat): string {
   return format ? DOCUMENT_FORMAT_LABELS[format] : "";
+}
+
+const PRESENTATION_FORMAT_LABELS: Record<PresentationFormat, string> = {
+  pptx: "PowerPoint (.pptx)",
+  odp: "OpenDocument Presentation (.odp)",
+};
+
+/** The full format name a presentation's view header shows. */
+export function presentationFormatLabel(format: PresentationFormat): string {
+  return PRESENTATION_FORMAT_LABELS[format];
 }
 
 /** A byte count as a human-readable size (SPEC-041 AC-2's General tab),

@@ -18,7 +18,7 @@ import {
   styleAttr,
   svgAttr,
   textAttr,
-} from "./xml";
+} from "../core/odfXml";
 
 // Our own extension namespace, used to round-trip groupOrdinal and rotation
 // (ODF's real `draw:transform` is a general affine-matrix string; encoding

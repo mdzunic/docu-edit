@@ -14,7 +14,7 @@ test("'Open document' opens a file picker limited to supported formats (AC-1)", 
   // or .markdown file — from the library, the file picker, or a drop")
   // supersede that exact value. The picker must still be limited to formats
   // the app can open.
-  await expect(input).toHaveAttribute("accept", ".docx,.odt,.md,.markdown");
+  await expect(input).toHaveAttribute("accept", ".docx,.odt,.md,.markdown,.pptx,.odp");
 });
 
 test("choosing a .docx file parses it and opens it at /doc/:id (AC-2)", async ({ page }) => {

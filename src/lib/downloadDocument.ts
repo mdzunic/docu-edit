@@ -4,6 +4,7 @@
 // the editor. Kept framework-free (no Vue) so the library composable and any
 // headless caller can trigger a download without mounting a component.
 import type { DocumentModel } from "./documentModel";
+import { triggerBlobDownload } from "./core/triggerDownload";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "./docx/writer";
 import { MD_MIME_TYPE, mdFileName, writeMd } from "./md/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "./odf/writer";
@@ -44,10 +45,5 @@ export async function downloadDocument(model: DocumentModel): Promise<void> {
       : format === "md"
         ? MD_MIME_TYPE
         : DOCX_MIME_TYPE;
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  triggerBlobDownload(bytes, fileName, mimeType);
 }

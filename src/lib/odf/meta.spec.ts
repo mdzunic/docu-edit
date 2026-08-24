@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildMetaXml, parseOdfCustomProperties, parseOdfMeta } from "./meta";
+import { buildMetaXml, parseOdfCustomProperties, parseOdfMeta } from "../core/odfMeta";
 import { parseXml } from "../core/xml";
 import { parseOdt } from "./reader";
 import { writeOdt } from "./writer";

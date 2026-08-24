@@ -4,7 +4,7 @@ import {
   buildCustomPropertiesXml,
   parseCoreProperties,
   parseCustomProperties,
-} from "./docProps";
+} from "../core/opcProperties";
 import { parseXml } from "../core/xml";
 import { parseDocx } from "./reader";
 import { writeDocx } from "./writer";

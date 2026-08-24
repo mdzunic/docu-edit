@@ -118,10 +118,10 @@ import {
 } from "./media";
 import { zip, type ZipEntryInput } from "../core/zipWriter";
 import { yieldToMainThread } from "../core/idleScheduler";
-import { buildCorePropertiesXml, buildCustomPropertiesXml, type CorePropertiesInput } from "./docProps";
+import { buildCorePropertiesXml, buildCustomPropertiesXml, type CorePropertiesInput } from "../core/opcProperties";
 import { stripPersonalInfo } from "../personalInfo";
 
-export { buildCorePropertiesXml, buildCustomPropertiesXml } from "./docProps";
+export { buildCorePropertiesXml, buildCustomPropertiesXml } from "../core/opcProperties";
 
 export const DOCX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";

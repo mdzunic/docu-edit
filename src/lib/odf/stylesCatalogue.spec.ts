@@ -7,7 +7,7 @@ import { unzip } from "../core/zip";
 import { parseOdt, type ParsedOdtDocument } from "./reader";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import { buildStylesXml, patchOdtStylesXml, writeOdt } from "./writer";
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "./xml";
+import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE } from "../core/odfXml";
 
 // SPEC-019 — the ODF side of the style catalogue: named paragraph styles
 // read from styles.xml with style:parent-style-name inheritance (AC-7),

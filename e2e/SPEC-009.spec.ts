@@ -73,7 +73,7 @@ test("dropping an unsupported file type shows the specific error and does not na
   await waitUntilAppReady(page);
   const dataTransfer = await dataTransferWithFiles(page, [{ name: "notes.txt", mime: "text/plain", base64: Buffer.from("hello").toString("base64") }]);
   await page.dispatchEvent("body", "drop", { dataTransfer });
-  await expect(page.getByTestId("drop-error")).toHaveText("We can only open .docx, .odt and .md files");
+  await expect(page.getByTestId("drop-error")).toHaveText("We can only open .docx, .odt, .md, .pptx and .odp files");
   await expect(page).toHaveURL(/\/$/);
 });
 

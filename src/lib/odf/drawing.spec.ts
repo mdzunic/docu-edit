@@ -6,7 +6,7 @@ import {
   parseDrawFrame,
 } from "./drawing";
 import { parseXml } from "../core/xml";
-import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "./xml";
+import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "../core/odfXml";
 import type { Image, ImageWrapMode } from "../documentModel";
 
 /** A minimal 24-byte PNG (see imageDimensions.spec.ts's own builder), just

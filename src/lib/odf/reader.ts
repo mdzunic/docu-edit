@@ -79,7 +79,7 @@ import { parseShapeElement } from "./shape";
 import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
-import { parseOdfCustomProperties, parseOdfMeta } from "./meta";
+import { parseOdfCustomProperties, parseOdfMeta } from "../core/odfMeta";
 import {
   DC_NAMESPACE,
   DRAW_NAMESPACE,
@@ -93,7 +93,7 @@ import {
   tableAttr,
   textAttr,
   xlinkAttr,
-} from "./xml";
+} from "../core/odfXml";
 import {
   catalogToNamedStyles,
   listStyleIsComposite,
