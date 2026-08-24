@@ -31,7 +31,8 @@ async function openFixture(page: Page, path: string): Promise<void> {
 }
 
 async function download(page: Page, format: "docx" | "odt"): Promise<string> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const file: Download = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId(`download-${format}`).click(),

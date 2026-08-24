@@ -34,6 +34,83 @@ describe("LibraryThumbnail", () => {
     expect(getDocument).toHaveBeenCalledWith("doc-a");
   });
 
+  it("renders a document's images in the preview", async () => {
+    const model = {
+      sections: [
+        {
+          blocks: [
+            { type: "paragraph", runs: [{ text: "Title", formatting: {} }], headingLevel: 1 },
+            {
+              type: "image",
+              mediaId: "m1",
+              widthCm: 8,
+              heightCm: 4,
+              wrap: "inline",
+              naturalWidthPx: 100,
+              naturalHeightPx: 50,
+            },
+          ],
+        },
+      ],
+      defaultStyles: {
+        pageSize: { widthCm: 21, heightCm: 29.7 },
+        margins: { topCm: 2.54, bottomCm: 2.54, leftCm: 2.54, rightCm: 2.54 },
+      },
+      media: [{ mediaId: "m1", contentType: "image/png", data: "AAAA" }],
+    } as unknown as DocumentModel;
+    vi.spyOn(documentStore, "getDocument").mockReturnValue(model);
+    const wrapper = mount(LibraryThumbnail, {
+      props: { id: "doc-img", lastModified: 1, format: "docx" },
+    });
+    vi.runAllTimers();
+    await wrapper.vm.$nextTick();
+    const img = wrapper.get("img.thumbnail-image");
+    expect(img.attributes("src")).toBe("data:image/png;base64,AAAA");
+    expect(img.attributes("style")).toContain("aspect-ratio: 2");
+    expect(wrapper.text()).toContain("Title");
+    wrapper.unmount();
+  });
+
+  it("renders a text-box shape as a painted canvas with its text overlaid", async () => {
+    const model = {
+      sections: [
+        {
+          blocks: [
+            {
+              type: "shape",
+              geometry: "rect",
+              widthCm: 8,
+              heightCm: 4,
+              wrap: "square",
+              fill: "#ffe0a0",
+              text: {
+                vAlign: "middle",
+                blocks: [
+                  { type: "paragraph", runs: [{ text: "Note to self", formatting: {} }] },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      defaultStyles: {
+        pageSize: { widthCm: 21, heightCm: 29.7 },
+        margins: { topCm: 2.54, bottomCm: 2.54, leftCm: 2.54, rightCm: 2.54 },
+      },
+    } as unknown as DocumentModel;
+    vi.spyOn(documentStore, "getDocument").mockReturnValue(model);
+    const wrapper = mount(LibraryThumbnail, {
+      props: { id: "doc-shape", lastModified: 1, format: "docx" },
+    });
+    vi.runAllTimers();
+    await wrapper.vm.$nextTick();
+    const shape = wrapper.get(".thumbnail-shape");
+    expect(shape.find("canvas.thumbnail-shape-canvas").exists()).toBe(true);
+    expect(shape.get(".thumbnail-shape-text").classes()).toContain("valign-middle");
+    expect(shape.text()).toContain("Note to self");
+    wrapper.unmount();
+  });
+
   it("drops the scheduled render when the card unmounts first", () => {
     const getDocument = vi.spyOn(documentStore, "getDocument").mockReturnValue(MODEL);
     const wrapper = mount(LibraryThumbnail, {

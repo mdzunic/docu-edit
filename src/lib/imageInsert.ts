@@ -32,7 +32,7 @@ export interface PreparedImageInsert {
  * caller shows it as a toast and inserts nothing, logging nothing to the
  * console (AC-34). `targetFormat` is the document's effective save format
  * (the caller's own `doc.format === "odt" ? "odt" : "docx"` rule, the same
- * one DownloadMenu's default uses) — only it decides whether an SVG is
+ * one the default download format uses) — only it decides whether an SVG is
  * converted (AC-2) or kept as-is (AC-3). */
 export async function prepareImageInsert(file: File, targetFormat: DocumentFormat): Promise<PreparedImageInsert> {
   if (!isAcceptedImageType(file.type)) {

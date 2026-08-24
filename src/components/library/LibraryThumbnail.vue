@@ -8,6 +8,11 @@ import {
   THUMBNAIL_ASPECT_RATIO,
 } from "../../lib/libraryThumbnail";
 import { formatBadgeLabel } from "../../lib/format";
+import { paintChart } from "../../lib/core/chartCanvas";
+import { paintShape } from "../../lib/core/shapeCanvas";
+import { rotatedBounds } from "../../lib/core/shapeGeometry";
+import { cmToPx } from "../../lib/core/units";
+import { resolveThemeColor, useTheme } from "../../composables/useTheme";
 
 // A document's first-page thumbnail (SPEC-067). It NEVER blocks the library:
 // the card renders immediately with a paper-shaped skeleton, and the real
@@ -75,6 +80,75 @@ onBeforeUnmount(() => {
   unmounted = true;
   observer.disconnect();
 });
+
+// A theme switch must repaint chart canvases with freshly resolved chrome
+// colours — the canvases carry the theme in their :key, so flipping it
+// remounts them and re-runs the paint ref callback below.
+const { resolvedTheme } = useTheme();
+
+/** Function ref for a chart line's canvas: paints the (cloned) chart block
+ * through the same core/chartCanvas painter the page uses, at the chart's
+ * model px size — the canvas's CSS box (a fraction of the miniature) then
+ * scales it down crisply. jsdom has no 2D context, so a null ctx is a no-op. */
+// Default expressions (not annotations) give the params inferred types —
+// the espree constraint AppShell.vue documents; Object() types them `any`,
+// wide enough for the template ref's Element | component | null.
+function paintThumbnailChart(el = Object(), chart = Object()) {
+  if (!(el instanceof HTMLCanvasElement)) {
+    return;
+  }
+  const widthPx = Math.max(1, Math.round(cmToPx(chart.widthCm)));
+  const heightPx = Math.max(1, Math.round(cmToPx(Math.max(chart.heightCm, 0.05))));
+  el.width = widthPx;
+  el.height = heightPx;
+  const ctx = el.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.clearRect(0, 0, widthPx, heightPx);
+  paintChart(ctx, chart, widthPx, heightPx, {
+    axis: resolveThemeColor("--chart-axis"),
+    gridline: resolveThemeColor("--chart-gridline"),
+    text: resolveThemeColor("--chart-text"),
+  });
+}
+
+/** grid-template-columns for a table line — the table's own column
+ * proportions as fr units. */
+function tableColumns(table = Object()) {
+  return table.columnFractions.map((fraction = 0) => `${fraction.toFixed(4)}fr`).join(" ");
+}
+
+/** Function ref for a shape line's canvas: paints the stripped ShapeVisual
+ * through the same core/shapeCanvas painter the page uses, at the shape's
+ * model px, on a surface grown to the rotated bounds (mirroring
+ * paintShapeIntoCanvas) so a rotated shape's corners are not clipped. The
+ * canvas is percent-positioned against the shape-box wrapper, which the
+ * miniature sizes like the page does. Colours are document data (plus the
+ * painter's own placeholder grey), so no theme resolve is needed. */
+function paintThumbnailShape(el = Object(), shapeLine = Object()) {
+  if (!(el instanceof HTMLCanvasElement)) {
+    return;
+  }
+  const widthPx = shapeLine.widthPx;
+  const heightPx = shapeLine.heightPx;
+  const bounds = rotatedBounds(widthPx, heightPx, shapeLine.shape.rotationDeg ?? 0);
+  const surfaceW = Math.max(1, Math.ceil(bounds.width));
+  const surfaceH = Math.max(1, Math.ceil(bounds.height));
+  el.width = surfaceW;
+  el.height = surfaceH;
+  el.style.width = `${(surfaceW / widthPx) * 100}%`;
+  el.style.left = `${(-bounds.padX / widthPx) * 100}%`;
+  el.style.top = `${(-bounds.padY / heightPx) * 100}%`;
+  el.style.aspectRatio = String(surfaceW / surfaceH);
+  const ctx = el.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.clearRect(0, 0, surfaceW, surfaceH);
+  ctx.translate(bounds.padX, bounds.padY);
+  paintShape(ctx, shapeLine.shape, widthPx, heightPx);
+}
 </script>
 
 <template>
@@ -89,14 +163,86 @@ onBeforeUnmount(() => {
       v-if="thumbnail && !thumbnail.failed && thumbnail.lines.length > 0"
       class="thumbnail-page"
     >
-      <p
+      <template
         v-for="(line, index) in thumbnail.lines"
         :key="index"
-        class="thumbnail-line"
-        :class="line.level > 0 ? `is-heading level-${Math.min(line.level, 3)}` : 'is-body'"
       >
-        {{ line.text }}
-      </p>
+        <img
+          v-if="line.image"
+          class="thumbnail-image"
+          :src="line.image.src"
+          :style="{
+            width: `${line.image.widthFraction * 100}%`,
+            aspectRatio: String(line.image.aspectRatio),
+          }"
+          alt=""
+          loading="lazy"
+          decoding="async"
+        >
+        <div
+          v-else-if="line.table"
+          class="thumbnail-table"
+          :style="{
+            width: `${line.table.widthFraction * 100}%`,
+            gridTemplateColumns: tableColumns(line.table),
+          }"
+        >
+          <template
+            v-for="(row, rowIndex) in line.table.rows"
+            :key="rowIndex"
+          >
+            <span
+              v-for="(cell, cellIndex) in row"
+              :key="cellIndex"
+              class="thumbnail-cell"
+              :class="{ 'is-table-header': rowIndex < line.table.headerRows }"
+            >{{ cell }}</span>
+          </template>
+        </div>
+        <div
+          v-else-if="line.shape"
+          class="thumbnail-shape"
+          :style="{
+            width: `${line.shape.widthFraction * 100}%`,
+            aspectRatio: String(line.shape.aspectRatio),
+          }"
+        >
+          <canvas
+            :ref="(el) => paintThumbnailShape(el, line.shape)"
+            class="thumbnail-shape-canvas"
+          />
+          <div
+            v-if="line.shape.textLines.length > 0"
+            class="thumbnail-shape-text"
+            :class="`valign-${line.shape.vAlign}`"
+          >
+            <p
+              v-for="(shapeText, textIndex) in line.shape.textLines"
+              :key="textIndex"
+              class="thumbnail-line is-body"
+            >
+              {{ shapeText }}
+            </p>
+          </div>
+        </div>
+        <canvas
+          v-else-if="line.chart"
+          :key="`chart-${index}-${resolvedTheme}`"
+          :ref="(el) => paintThumbnailChart(el, line.chart && line.chart.chart)"
+          class="thumbnail-chart"
+          :style="{
+            width: `${line.chart.widthFraction * 100}%`,
+            aspectRatio: String(line.chart.aspectRatio),
+          }"
+        />
+        <p
+          v-else
+          class="thumbnail-line"
+          :class="line.level > 0 ? `is-heading level-${Math.min(line.level, 3)}` : 'is-body'"
+        >
+          {{ line.text }}
+        </p>
+      </template>
     </div>
     <div
       v-else-if="thumbnail"
@@ -142,6 +288,87 @@ onBeforeUnmount(() => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* An image line: sized by the extractor as a fraction of the page's content
+   width (with the page's display aspect ratio), so the miniature scales it
+   exactly like the page does. object-fit fill mirrors the page renderer,
+   which stretches the bitmap to its display box. */
+.thumbnail-image {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  object-fit: fill;
+}
+
+/* A table line: the leading cells laid out on the table's own column
+   proportions. The 1px gap over the container's background draws the
+   hairline grid; cells paint the paper colour back on top. */
+.thumbnail-table {
+  flex: none;
+  display: grid;
+  gap: var(--border-width);
+  padding: var(--border-width);
+  background: var(--border-subtle);
+}
+
+.thumbnail-cell {
+  min-width: 0;
+  min-height: calc(var(--text-sm) * 0.68);
+  padding: 0 calc(var(--space-1) / 2);
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  font-size: calc(var(--text-sm) * 0.45);
+  line-height: calc(var(--text-sm) * 0.68);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.thumbnail-cell.is-table-header {
+  color: var(--text-primary);
+  font-weight: var(--weight-bold);
+}
+
+/* A chart line: painted by paintThumbnailChart at the chart's model px into
+   the backing store; this CSS box scales it down like the page miniature. */
+.thumbnail-chart {
+  display: block;
+  flex: none;
+  max-width: 100%;
+}
+
+/* A shape line: the wrapper is the shape's box (sized like the page sizes
+   it); the canvas inside is percent-positioned by paintThumbnailShape so a
+   rotated shape's grown surface still lines up, and the text frame's lines
+   overlay the geometry the way the page's DOM text does. */
+.thumbnail-shape {
+  position: relative;
+  flex: none;
+  max-width: 100%;
+}
+
+.thumbnail-shape-canvas {
+  position: absolute;
+  display: block;
+}
+
+.thumbnail-shape-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: calc(var(--space-1) / 2);
+  overflow: hidden;
+}
+
+.thumbnail-shape-text.valign-middle {
+  justify-content: center;
+}
+
+.thumbnail-shape-text.valign-bottom {
+  justify-content: flex-end;
 }
 
 .thumbnail-line.is-body {

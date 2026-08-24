@@ -36,7 +36,8 @@ async function openVersionHistoryPane(page: Page): Promise<void> {
 }
 
 async function downloadCurrentDocx(page: Page): Promise<void> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   await downloadPromise;

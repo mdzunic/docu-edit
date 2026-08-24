@@ -82,7 +82,9 @@ test("Download offers Markdown (.md) and the downloaded file re-opens with the s
   });
   await expect(page).toHaveURL(/\/doc\/.+/);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const option = page.getByTestId("download-md");
   await expect(option).toHaveText("Markdown (.md)");
   const downloadPromise = page.waitForEvent("download");
@@ -112,7 +114,9 @@ test("saving a .docx document as .md shows the conversion report for content Mar
   await page.keyboard.type("Centered text");
   await page.getByTestId("align-center").click();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-md").click();
   await downloadPromise;
@@ -137,7 +141,9 @@ test("front matter and constructs outside the supported subset stay off the canv
   expect(canvasText).not.toContain("title: Kitchen Sink");
   expect(canvasText).not.toContain("raw-html-block");
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-md").click();
   const text = await downloadedText(await downloadPromise);
@@ -165,7 +171,8 @@ test("saving a .docx-backed document as .md does not change what it is — it st
   await expect(page.getByTestId("format-badge")).toHaveText("DOCX");
 
   // Exporting to .md is a one-off download, not a format change.
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const mdDownloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-md").click();
   await mdDownloadPromise;
@@ -176,7 +183,8 @@ test("saving a .docx-backed document as .md does not change what it is — it st
   await expect(page.getByTestId("format-badge")).toHaveText("DOCX");
 
   // A later save as .docx still round-trips the preserved package intact.
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const docxDownloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const outBytes = await downloadedBuffer(await docxDownloadPromise);

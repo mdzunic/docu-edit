@@ -116,7 +116,8 @@ async function toggleRecording(page: Page): Promise<void> {
 }
 
 async function downloadFile(page: Page, format: "docx" | "odt"): Promise<Buffer> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId(`download-${format}`).click();
   const download = await downloadPromise;
@@ -498,7 +499,9 @@ test("a tracked table row insert round-trips through odt; an unrepresentable pro
   await cellAt(0, 0).click({ button: "right" });
   await page.getByTestId("context-menu-merge-cells").click();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-odt").click();
   await downloadPromise;

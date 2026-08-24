@@ -1837,11 +1837,16 @@ export interface DocumentModel {
   /** The Page setup dialog's measurement-unit preference (SPEC-027 AC-6,
    * AC-7); absent means "cm", the product default. */
   measurementUnit?: MeasurementUnit;
-  /** Whether the rulers are shown (SPEC-027 AC-14, SPEC-064 AC-7): one flag
-   * governs both the horizontal ruler and the vertical ruler together. Absent
-   * means shown — the ruler predates this toggle (SPEC-014) and was always
-   * visible, so an unset field must keep reading as visible. */
+  /** Whether the horizontal ruler is shown (SPEC-027 AC-14). Absent means
+   * shown — the ruler predates this toggle (SPEC-014) and was always visible,
+   * so an unset field must keep reading as visible. View → Rulers flips this
+   * and `showVerticalRuler` together; View → Horizontal ruler flips it alone. */
   showRuler?: boolean;
+  /** Whether the vertical ruler is shown (SPEC-064); absent means shown, the
+   * same convention as `showRuler`. Separately toggleable from the horizontal
+   * ruler (View → Vertical ruler), and persisted like `showRuler` — an app
+   * preference on the document, never written to a `.docx`/`.odt`. */
+  showVerticalRuler?: boolean;
   /** Whether formatting marks (¶, spaces, tabs, break markers) are shown
    * (SPEC-028 AC-12..16); absent means hidden, the product default. A
    * document-level app preference persisted like `showRuler` — neither

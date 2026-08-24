@@ -195,9 +195,9 @@ function confirmReset() {
         />
       </UiField>
       <UiField
-        label="Show ruler by default"
+        label="Show rulers by default"
         for="preferences-show-ruler"
-        hint="New documents open with the ruler shown. Default: on"
+        hint="New documents open with both rulers shown. Default: on"
       >
         <input
           id="preferences-show-ruler"
@@ -440,7 +440,7 @@ function confirmReset() {
       <UiField
         label="Default download format"
         for="preferences-download-format"
-        hint="Format the download button offers first. Default: Same as source"
+        hint="Format the one-click “Download a copy” links save in. Default: Same as source"
       >
         <UiSelect
           id="preferences-download-format"

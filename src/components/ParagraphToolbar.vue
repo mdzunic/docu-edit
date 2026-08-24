@@ -594,14 +594,25 @@ onBeforeUnmount(() => {
   border-top: var(--border-width) solid var(--border-default);
 }
 
-/* A list toggle and its dropdown expander read as one control. */
+/* A list toggle and its dropdown expander read as one control: the toggle
+   takes the same outline the expander (a .paragraph-button) already has, so
+   the pair forms one bordered split button like the indent/spacing buttons
+   beside it — a borderless toggle glued to a bordered caret read as broken. */
 .list-cluster {
   display: inline-flex;
 }
 
 .list-cluster .list-toggle {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--surface-base);
   border-start-end-radius: 0;
   border-end-end-radius: 0;
+}
+
+.list-cluster .list-toggle.is-pressed {
+  color: var(--text-accent);
+  background: var(--surface-selected);
 }
 
 .list-cluster .list-menu-button {

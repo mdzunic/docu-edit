@@ -196,7 +196,8 @@ test.describe("SPEC-030 multi-column layout", () => {
     await createDocument(page);
     await typeParagraphs(page, 6);
     await applyColumns(page, 3);
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-docx").click(),
@@ -210,7 +211,8 @@ test.describe("SPEC-030 multi-column layout", () => {
     await createDocument(page);
     await typeParagraphs(page, 6);
     await applyColumns(page, 2);
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-odt").click(),
@@ -427,7 +429,8 @@ test.describe("SPEC-030 multi-column layout", () => {
     await createDocument(page);
     await typeParagraphs(page, 4);
     await applyColumns(page, 2);
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-docx").click(),
@@ -508,7 +511,8 @@ test.describe("SPEC-030 multi-column layout", () => {
     await page.getByTestId("menu-title-insert").click();
     await page.getByTestId("break-column").click();
     await page.keyboard.type("AfterBreak");
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-docx").click(),

@@ -48,6 +48,10 @@ export interface CommandPaletteDeps extends EditorContext {
  * toggles, the always-on info dialogs). Every other document command needs an
  * editable document, mirroring SPEC-049's menu. */
 const ALWAYS_AVAILABLE = new Set([
+  "file.export-docx",
+  "file.export-odt",
+  "file.export-md",
+  "file.export-pdf",
   "file.print",
   "file.properties",
   "file.version-history",
@@ -56,6 +60,8 @@ const ALWAYS_AVAILABLE = new Set([
   "edit.selectAll",
   "find.openReplace",
   "view.ruler",
+  "view.horizontal-ruler",
+  "view.vertical-ruler",
   "view.outline-pane",
   "view.styles-pane",
   "view.comments-pane",

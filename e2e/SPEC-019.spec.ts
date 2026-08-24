@@ -56,7 +56,8 @@ async function fontSizePx(page: Page, index: number): Promise<number> {
 /** Downloads the document in the given format and returns the file path —
  * the same helper as e2e/SPEC-018.spec.ts. */
 async function download(page: Page, format: "docx" | "odt"): Promise<string> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const file: Download = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId(`download-${format}`).click(),

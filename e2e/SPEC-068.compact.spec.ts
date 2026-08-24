@@ -94,9 +94,13 @@ test("compact editor: fit-width web layout, essential toolbar, menu sheet, edit,
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("comments-pane")).toHaveCount(0);
 
-  // Download the document as .docx (AC-47 download step).
-  await expect(page.getByTestId("download-menu")).toBeVisible();
-  await page.getByTestId("download-menu").click();
+  // Download the document as .docx (AC-47 download step) — Download lives in
+  // File -> Export (the app-bar button was removed), reached through the
+  // sheet; the Export submenu carries data-menu-keep-open, so the sheet
+  // stays up while the flyout is used.
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("menu-sheet")).toBeVisible();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;

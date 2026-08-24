@@ -125,3 +125,74 @@ test("Enter opens the focused row from the keyboard (AC-57, AC-58)", async ({
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(`/doc/${id}$`));
 });
+
+// A 240×120 solid-blue PNG (405 bytes), pre-encoded so this spec needs no
+// PNG encoder of its own (SPEC-024's spec carries one for its insert tests).
+const BLUE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAPAAAAB4CAIAAABD1OhwAAABXElEQVR4nO3SUQkAIBTAwJfIatY1jiUEYRxcgH1s1j6QMd8L4CFDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphiblAs5s9A7sSMF/AAAAAElFTkSuQmCC",
+  "base64",
+);
+
+test("a grid card's thumbnail shows the document's images, tables, charts and shapes (AC-3)", async ({
+  page,
+}) => {
+  await createDocument(page, "Picture report");
+  await page.getByTestId("document-content").click();
+  await page.keyboard.type("Quarterly picture");
+
+  // A chart from the gallery (SPEC-052) — inserted first, while the caret is
+  // still in a plain paragraph (charts do not insert inside tables)…
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("chart-gallery-columnClustered").click();
+  await expect(
+    page.getByTestId("document-content").locator('[data-testid^="drawing-"]'),
+  ).toBeVisible();
+
+  // …an image via the Insert menu's hidden file input (SPEC-024)…
+  await page
+    .getByTestId("insert-image-file-input")
+    .setInputFiles({ name: "chart.png", mimeType: "image/png", buffer: BLUE_PNG });
+  await expect(
+    page.getByTestId("document-content").locator('[data-testid="doc-image"]'),
+  ).toBeVisible();
+
+  // …a shape placed with a click (SPEC-051)…
+  await page.getByTestId("document-content").click({ position: { x: 20, y: 20 } });
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("shape-gallery-rect").click();
+  await page.getByTestId("document-content").click({ position: { x: 420, y: 300 } });
+  // Drawings share one testid counter (SPEC-051): the chart is drawing-0,
+  // the placed shape drawing-1.
+  await expect(
+    page.getByTestId("document-content").locator('[data-testid^="drawing-"]'),
+  ).toHaveCount(2);
+
+  // …and last a 2×2 table with a cell of text (SPEC-023), so the caret can
+  // stay in it until close.
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("table-grid-cell-2-2").click();
+  await expect(page.getByTestId("document-content").locator("table.doc-table")).toHaveCount(1);
+  await page.getByTestId("table-cell-0-0").click();
+  await page.keyboard.type("North");
+
+  // Close flushes the save before navigating (SPEC-060), so the library row
+  // is current on arrival.
+  await page.getByTestId("close-document").click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByTestId("view-grid").click();
+
+  const thumbnail = page.getByTestId("row-thumbnail").first();
+  const thumbnailImage = thumbnail.locator("img.thumbnail-image");
+  await expect(thumbnailImage).toBeVisible();
+  const src = await thumbnailImage.getAttribute("src");
+  expect(src).toMatch(/^data:image\/png;base64,/);
+  // The table miniature shows its leading cell text on a grid…
+  await expect(thumbnail.locator(".thumbnail-table")).toBeVisible();
+  await expect(thumbnail.locator(".thumbnail-table")).toContainText("North");
+  // …the chart paints on its own small canvas…
+  await expect(thumbnail.locator("canvas.thumbnail-chart")).toBeVisible();
+  // …the shape paints too…
+  await expect(thumbnail.locator("canvas.thumbnail-shape-canvas")).toBeVisible();
+  // …and the document's text still previews alongside them.
+  await expect(thumbnail).toContainText("Quarterly picture");
+});

@@ -31,6 +31,10 @@ export interface CommandMeta {
  * offers. Listed menu-by-menu, matching the bar's order. */
 export const COMMANDS: CommandMeta[] = [
   // --- File -----------------------------------------------------------------
+  { id: "file.export-docx", label: "Word (.docx)", path: ["File", "Export"], scope: "document", icon: "download", aliases: ["download", "save as", "export docx"] },
+  { id: "file.export-odt", label: "OpenDocument Text (.odt)", path: ["File", "Export"], scope: "document", icon: "download", aliases: ["download", "save as", "export odt"] },
+  { id: "file.export-md", label: "Markdown (.md)", path: ["File", "Export"], scope: "document", icon: "download", aliases: ["download", "save as", "export markdown"] },
+  { id: "file.export-pdf", label: "PDF (.pdf)", path: ["File", "Export"], scope: "document", icon: "download", aliases: ["download", "save as", "export pdf"] },
   { id: "file.print", label: "Print", path: ["File"], scope: "document" },
   { id: "file.page-setup", label: "Page setup", path: ["File"], scope: "document", aliases: ["margins", "orientation", "paper size"] },
   { id: "file.properties", label: "Properties…", path: ["File"], scope: "document", aliases: ["metadata", "author"] },
@@ -55,7 +59,9 @@ export const COMMANDS: CommandMeta[] = [
   { id: "field.update", label: "Update field", path: ["Edit"], scope: "document", aliases: ["refresh field", "F9"] },
 
   // --- View -----------------------------------------------------------------
-  { id: "view.ruler", label: "Ruler", path: ["View"], scope: "document" },
+  { id: "view.ruler", label: "Rulers", path: ["View"], scope: "document", aliases: ["ruler", "both rulers"] },
+  { id: "view.horizontal-ruler", label: "Horizontal ruler", path: ["View"], scope: "document", aliases: ["ruler"] },
+  { id: "view.vertical-ruler", label: "Vertical ruler", path: ["View"], scope: "document", aliases: ["ruler"] },
   { id: "view.outline-pane", label: "Outline pane", path: ["View"], scope: "document", aliases: ["navigation"] },
   { id: "view.styles-pane", label: "Styles pane", path: ["View"], scope: "document" },
   { id: "view.comments-pane", label: "Comments pane", path: ["View"], scope: "document" },

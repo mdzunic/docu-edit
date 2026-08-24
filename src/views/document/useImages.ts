@@ -34,6 +34,18 @@ import type { CommandResult } from "../../lib/commands";
 
 const HANDLE_SIZE = 8;
 
+/** Gap the floating toolbar keeps between its nearest edge and the image's
+ * edge: the half-handle that hangs outside the image plus clear air, so the
+ * resize handles stay visible and grabbable with the toolbar open. */
+const IMAGE_TOOLBAR_CLEARANCE_PX = HANDLE_SIZE / 2 + 16;
+
+/** Upper bound on the wrapped toolbar's own height (its controls wrap to at
+ * most two rows at the shared max-width). Only the "is there room above?"
+ * decision uses it — placing above needs no measured height, the host lifts
+ * the bar by its real height — so erring high merely flips an image very
+ * near the top of the viewport to a below placement a little sooner. */
+const IMAGE_TOOLBAR_MAX_HEIGHT_PX = 96;
+
 type ImageMutate = (
   model: DocumentModel,
   selection: ModelSelection,
@@ -121,24 +133,28 @@ export function useImages(deps: ImagesDeps) {
     };
   }
 
-  /** The floating image toolbar's fixed (viewport) position (AC-9). */
-  function imageToolbarStyle(): { left: number; top: number } {
+  /** The floating image toolbar's fixed (viewport) position (AC-9). When it
+   * sits above the image, `top` is the bar's BOTTOM edge (`placement:
+   * "above"` — the host lifts the bar by its own height), kept
+   * IMAGE_TOOLBAR_CLEARANCE_PX clear of the image's top edge so the bar never
+   * covers the resize handles however many rows its controls wrap to. */
+  function imageToolbarStyle(): { left: number; top: number; placement: string } {
     const geometry = imageHandles.value;
     const pageEl = pageRef.value;
     if (!geometry || !pageEl) {
-      return { left: 0, top: 0 };
+      return { left: 0, top: 0, placement: "below" };
     }
     // The toolbar is position:fixed outside the scale transform, so its anchor
     // is the image's unscaled model geometry mapped back into client space
-    // through the zoom-aware helper (SPEC-063 AC-57). The 40/8 px offsets are
+    // through the zoom-aware helper (SPEC-063 AC-57). The px clearances are
     // screen constants and stay unscaled.
     const anchor = contentPxToClient(geometry.left, geometry.top);
-    const above = anchor.y - 40;
+    const bottomEdge = anchor.y - IMAGE_TOOLBAR_CLEARANCE_PX;
+    if (bottomEdge - IMAGE_TOOLBAR_MAX_HEIGHT_PX >= 0) {
+      return { left: anchor.x, top: bottomEdge, placement: "above" };
+    }
     const below = contentPxToClient(geometry.left, geometry.top + geometry.height);
-    return {
-      left: anchor.x,
-      top: above >= 0 ? above : below.y + 8,
-    };
+    return { left: anchor.x, top: below.y + IMAGE_TOOLBAR_CLEARANCE_PX, placement: "below" };
   }
 
   /** Runs an image command against the currently selected image and commits

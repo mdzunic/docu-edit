@@ -299,7 +299,9 @@ test.describe("Custom style round trip (AC-13, AC-14)", () => {
     await page.keyboard.press(`${MOD}+Home`);
     await newStyle(page, "paragraph", "RoundTrip Style", { bold: true });
 
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+
+    await page.getByTestId("file-menu-export").click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-docx").click(),
@@ -329,7 +331,9 @@ test.describe("Import styles from another document (AC-19..24)", () => {
     await newStyle(page, "paragraph", "Shared Name", { bold: true });
     await newStyle(page, "paragraph", "Imported Unique Style", { italic: true });
 
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+
+    await page.getByTestId("file-menu-export").click();
     const [sourceDownload] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-docx").click(),
@@ -396,7 +400,8 @@ test.describe("Unmodeled styles (AC-15, AC-16, AC-17, AC-18)", () => {
 
     // AC-18: on export the unmodeled style is written back unchanged — same id,
     // same visible name, same border colour it was read in with.
-    await page.getByTestId("download-menu").click();
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
     const [dl] = await Promise.all([
       page.waitForEvent("download"),
       page.getByTestId("download-docx").click(),

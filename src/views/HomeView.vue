@@ -421,6 +421,7 @@ watch(sortKeyChoice, (value) => lib.setSortKey(value));
     <template #app-bar-actions>
       <UiButton
         variant="ghost"
+        class="app-bar-preferences"
         data-testid="library-preferences"
         @click="preferencesDialog.open()"
       >
@@ -1064,6 +1065,22 @@ watch(sortKeyChoice, (value) => lib.setSortKey(value));
 </template>
 
 <style scoped>
+/* The ghost button's greys are tuned for light surfaces; on the brand bar it
+   takes the on-brand foreground and a translucent wash (the same treatment
+   the editor's Close control gets) so it reads in both themes. */
+.app-bar-preferences {
+  color: var(--text-on-brand);
+}
+
+.app-bar-preferences:not(:disabled):hover {
+  color: var(--text-on-brand);
+  background: color-mix(in srgb, var(--text-on-brand) 12%, transparent);
+}
+
+.app-bar-preferences:not(:disabled):active {
+  background: color-mix(in srgb, var(--text-on-brand) 20%, transparent);
+}
+
 .empty-state {
   height: 100%;
   display: flex;

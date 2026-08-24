@@ -47,7 +47,12 @@ const props = defineProps({
   },
   autocorrectSmartQuotes: { type: Boolean, default: false },
   autocorrectDashes: { type: Boolean, default: false },
-  showRuler: { type: Boolean, default: true },
+  /** View → Rulers: true when both rulers are shown, "mixed" when only one
+   * is (SPEC-027 AC-14, SPEC-064 AC-7). */
+  showRuler: { type: [Boolean, String], default: true },
+  /** The per-ruler toggles' own states. */
+  showHorizontalRuler: { type: Boolean, default: true },
+  showVerticalRuler: { type: Boolean, default: true },
   outlinePaneOpen: { type: Boolean, default: false },
   stylesPaneOpen: { type: Boolean, default: false },
   commentsPaneOpen: { type: Boolean, default: false },
@@ -109,6 +114,16 @@ const COMPACT_UNAVAILABLE_REASON = "not available on this screen size";
  * compact tier (empty at every wider tier so the shortcut shows instead). */
 const compactReason = computed(() => (compact.value ? COMPACT_UNAVAILABLE_REASON : ""));
 
+// File → Export's formats, in menu order: Word (SPEC-006), OpenDocument
+// (SPEC-007), Markdown (SPEC-050), PDF (SPEC-034 AC-14). The id doubles as the
+// `file.export-<id>` command suffix and the item's `download-<id>` testid.
+const EXPORT_FORMATS = [
+  { id: "docx", label: "Word (.docx)" },
+  { id: "odt", label: "OpenDocument Text (.odt)" },
+  { id: "md", label: "Markdown (.md)" },
+  { id: "pdf", label: "PDF (.pdf)" },
+];
+
 const MENUS = [
   { id: "file", label: "File" },
   { id: "edit", label: "Edit" },
@@ -164,6 +179,22 @@ function chooseTableGrid(rows = 0, cols = 0) {
     aria-label="Document menu"
   >
     <template #file>
+      <!-- Export (SPEC-006/007/034/050): a copy of the document in a chosen
+           format, downloaded. Lives here rather than as an app-bar button so
+           the bar keeps only the save state and the Close control. -->
+      <MenuSubmenu
+        label="Export"
+        testid="file-menu-export"
+      >
+        <MenuItem
+          v-for="format in EXPORT_FORMATS"
+          :key="format.id"
+          :label="format.label"
+          :testid="`download-${format.id}`"
+          @select="emit('command', `file.export-${format.id}`)"
+        />
+      </MenuSubmenu>
+      <hr class="menu-separator">
       <MenuItem
         label="Print"
         testid="file-menu-print"
@@ -349,12 +380,26 @@ function chooseTableGrid(rows = 0, cols = 0) {
         />
       </MenuSubmenu>
       <hr class="menu-separator">
+      <!-- Rulers: one control for both (SPEC-064 AC-7), then each on its own. -->
       <MenuCheckItem
-        label="Ruler"
+        label="Rulers"
         testid="toggle-ruler-button"
         :checked="showRuler"
         @select="emit('command', 'view.ruler')"
       />
+      <MenuCheckItem
+        label="Horizontal ruler"
+        testid="toggle-horizontal-ruler-button"
+        :checked="showHorizontalRuler"
+        @select="emit('command', 'view.horizontal-ruler')"
+      />
+      <MenuCheckItem
+        label="Vertical ruler"
+        testid="toggle-vertical-ruler-button"
+        :checked="showVerticalRuler"
+        @select="emit('command', 'view.vertical-ruler')"
+      />
+      <hr class="menu-separator">
       <MenuCheckItem
         label="Outline pane"
         testid="view-menu-outline"

@@ -356,7 +356,10 @@ function applyNewDocumentPreferences(model: DocumentModel): void {
     model.measurementUnit = prefs.measurementUnit;
   }
   if (prefs.showRuler !== true) {
+    // One "show rulers by default" preference seeds both per-document flags;
+    // View → Horizontal/Vertical ruler then toggles them apart.
     model.showRuler = prefs.showRuler;
+    model.showVerticalRuler = prefs.showRuler;
   }
   if (prefs.showFormattingMarks !== false) {
     model.showFormattingMarks = prefs.showFormattingMarks;

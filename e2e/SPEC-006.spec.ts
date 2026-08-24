@@ -49,17 +49,20 @@ async function downloadedBuffer(download: Download): Promise<Buffer> {
   return readFileSync(path);
 }
 
-test("the app bar offers Download > Word (.docx) and downloads <title>.docx (AC-1, AC-2)", async ({
+test("File → Export offers Word (.docx) and downloads <title>.docx (AC-1, AC-2)", async ({
   page,
 }) => {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(docxFixture);
   await expect(page).toHaveURL(/\/doc\/.+/);
 
-  const downloadButton = page.getByTestId("download-menu");
-  await expect(downloadButton).toBeVisible();
-  await expect(page.getByTestId("app-bar").getByTestId("download-menu")).toBeVisible();
-  await downloadButton.click();
+  // The export formats live in the File menu's Export submenu; the app bar
+  // itself carries no Download button (it keeps the save state and Close).
+  await expect(page.getByTestId("app-bar").getByTestId("download-menu")).toHaveCount(0);
+  await page.getByTestId("menu-title-file").click();
+  const exportMenu = page.getByTestId("file-menu-export");
+  await expect(exportMenu).toBeVisible();
+  await exportMenu.click();
   const option = page.getByTestId("download-docx");
   await expect(option).toHaveText("Word (.docx)");
 
@@ -76,7 +79,8 @@ test("the downloaded package is a valid OPC ZIP with all required parts (AC-3..A
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(docxFixture);
   await expect(page).toHaveURL(/\/doc\/.+/);
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const buffer = await downloadedBuffer(await downloadPromise);
@@ -112,7 +116,9 @@ test("a document opened from .odt downloads as converted WordprocessingML, not r
   await expect(page).toHaveURL(/\/doc\/.+/);
   await expect(page.getByTestId("format-badge")).toHaveText("ODT");
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;
@@ -138,7 +144,9 @@ test("downloading a blank document produces a valid one-paragraph file (AC-24)",
   await page.getByTestId("new-document").first().click();
   await expect(page).toHaveURL(/\/doc\/.+/);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;

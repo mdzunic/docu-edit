@@ -60,7 +60,8 @@ async function openChartsFixture(page: Page): Promise<void> {
 }
 
 async function download(page: Page, format: "docx" | "odt"): Promise<Download> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId(`download-${format}`).click();
   return downloadPromise;

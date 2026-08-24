@@ -18,7 +18,7 @@ import BaseDialog from "./BaseDialog.vue";
 // dialog open (AC-5, AC-6). BaseDialog owns the shell, Escape and initial
 // focus (the [autofocus] search input); its #header-extra slot carries the
 // × close button on the title row. Runtime emit declaration per the espree
-// constraint (see DownloadMenu.vue).
+// constraint (see AppShell.vue).
 const emit = defineEmits(["insert", "cancel"]);
 
 const query = ref("");

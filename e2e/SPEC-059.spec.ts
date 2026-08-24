@@ -222,7 +222,8 @@ async function downloadedBuffer(download: Download): Promise<Buffer> {
 
 async function exportPdf(page: Page): Promise<Buffer> {
   const downloadPromise = page.waitForEvent("download");
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   await page.getByTestId("download-pdf").click();
   return downloadedBuffer(await downloadPromise);
 }

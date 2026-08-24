@@ -42,7 +42,8 @@ export function useFileActions(deps: FileActionsDeps) {
   const router = useRouter();
   // The "Default download format" preference (SPEC-066): "source" keeps the
   // pre-spec behaviour (mirror the document's own format); a fixed choice
-  // makes the download button offer that format first.
+  // makes the one-click "Download a copy" escape hatches (the save-error link,
+  // the close-without-saving dialog) save in that format.
   const { preferences } = usePreferences();
 
   const formatBadge = computed(() => doc.value?.format?.toUpperCase() ?? "");
@@ -263,7 +264,19 @@ export function useFileActions(deps: FileActionsDeps) {
     router.push("/");
   }
 
+  // The File -> Export command ids the menu bar and command palette dispatch
+  // through (SPEC-006/007/050/034) — literal tuples, one per format (the same
+  // list as the menu's EXPORT_FORMATS), because commandCatalogue.spec.ts reads
+  // this block from source to hold the catalogue and the registry together.
+  const commands: Array<[string, () => void]> = [
+    ["file.export-docx", () => { void handleDownload("docx"); }],
+    ["file.export-odt", () => { void handleDownload("odt"); }],
+    ["file.export-md", () => { void handleDownload("md"); }],
+    ["file.export-pdf", () => { void handleDownload("pdf"); }],
+  ];
+
   return {
+    commands,
     closing,
     storageWarningOpen,
     closeOpenDocument,

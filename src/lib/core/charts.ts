@@ -138,25 +138,108 @@ export interface ChartFromTableResult {
   unparsable: string[];
 }
 
-/** Reads a table's cells into chart data: the first row (from its second
- * cell on) gives series names, the first column (from its second row on)
- * gives categories, every other cell is a value. A one-time copy — this
- * module keeps no reference to the table afterwards (SPEC-052 "Out of
- * scope": no live link). */
+/** Reads one table cell's text as a number the way a person typing into a
+ * table would expect, or null when it is not a number. Beyond what `Number()`
+ * accepts: surrounding whitespace, a leading or trailing currency sign
+ * ("$10", "10 €"), a trailing percent ("10%" → 10, the number shown), a
+ * trailing unit word ("10 kg"), accounting negatives ("(1,000)"), and the
+ * usual digit-grouping and decimal conventions — "1,000.5" and "1.000,5",
+ * "1 000", "1'000", and a decimal comma ("10,5"). A lone point is always a
+ * decimal point ("1.500" is one and a half, as in `Number()`); a lone comma
+ * is a decimal comma except in the one shape that reads as digit grouping —
+ * one to three digits, the comma, exactly three digits ("1,000", "12,500") —
+ * so "0,125" and "1234,5" stay decimals. */
+export function parseChartNumber(raw: string): number | null {
+  let text = raw.trim();
+  if (text === "") {
+    return null;
+  }
+  // Scientific notation is already a number; nothing below applies to it.
+  if (/^[-+−]?\d+(?:\.\d+)?e[-+]?\d+$/i.test(text)) {
+    const value = Number(text.replace("−", "-"));
+    return Number.isFinite(value) ? value : null;
+  }
+  // Accounting negative: "(1,000)".
+  let negative = false;
+  if (/^\(.*\)$/.test(text)) {
+    negative = true;
+    text = text.slice(1, -1).trim();
+  }
+  // Leading sign, then a leading currency sign; a trailing percent, currency
+  // sign or unit word (letters and degree/percent signs only) — each may be
+  // separated from the figure by whitespace.
+  const signMatch = /^([-+−])\s*/.exec(text);
+  if (signMatch) {
+    negative = negative || signMatch[1] !== "+";
+    text = text.slice(signMatch[0].length);
+  }
+  text = text.replace(/^[$€£¥₹₽¢]\s*/, "").replace(/\s*(?:%|[$€£¥₹₽¢]|[A-Za-z°µ][A-Za-z°µ²³/.]*)$/, "");
+  // Digit grouping by space, non-breaking/thin space or apostrophe.
+  text = text.replace(/[\s\u00a0\u202f']/g, "");
+  if (!/^[\d.,]+$/.test(text) || !/\d/.test(text)) {
+    return null;
+  }
+  const commas = text.split(",").length - 1;
+  const points = text.split(".").length - 1;
+  /** Strips a digit-grouping separator, insisting the groups it separated
+   * were real thousands groups ("1,000,000", never "1,2,3"). */
+  const ungroup = (grouped: string, separator: string): string | null =>
+    new RegExp(`^\\d{1,3}(?:\\${separator}\\d{3})*$`).test(grouped) ? grouped.split(separator).join("") : null;
+  if (commas > 0 && points > 0) {
+    // Both present: the last one is the decimal separator.
+    const decimal = text.lastIndexOf(",") > text.lastIndexOf(".") ? "," : ".";
+    const grouping = decimal === "," ? "." : ",";
+    const [whole, fraction, ...rest] = text.split(decimal);
+    const ungrouped = ungroup(whole, grouping);
+    if (rest.length > 0 || ungrouped === null || fraction.includes(grouping)) {
+      return null;
+    }
+    text = `${ungrouped}.${fraction}`;
+  } else if (commas > 1 || points > 1) {
+    // Repeated separators can only be digit grouping: "1,000,000" / "1.000.000".
+    const ungrouped = ungroup(text, commas > 1 ? "," : ".");
+    if (ungrouped === null) {
+      return null;
+    }
+    text = ungrouped;
+  } else if (commas === 1) {
+    const [whole, fraction] = text.split(",");
+    const grouping = whole.length >= 1 && whole.length <= 3 && whole !== "0" && fraction.length === 3;
+    text = grouping ? whole + fraction : `${whole}.${fraction}`;
+  }
+  const value = Number(text);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return negative ? -value : value;
+}
+
+/** Reads a table's cells into chart data. The first column (from its second
+ * row on, or from its first when there is no header row) gives categories —
+ * even when those are numbers, like years. The first row gives series names
+ * when it is a header row: any of its cells beyond the first that is not a
+ * number marks it as one; a first row of nothing but numbers is data, and
+ * the series are named "Series 1", "Series 2"… Every other cell is a value,
+ * read by parseChartNumber. A one-time copy — this module keeps no reference
+ * to the table afterwards (SPEC-052 "Out of scope": no live link). */
 export function chartDataFromTableCells(cellText: string[][]): ChartFromTableResult {
   const unparsable: string[] = [];
-  if (cellText.length < 2 || (cellText[0]?.length ?? 0) < 2) {
+  const columns = Math.max(0, ...cellText.map((row) => row.length));
+  if (cellText.length < 1 || columns < 2) {
     return { categories: [], series: [], unparsable };
   }
-  const header = cellText[0];
-  const seriesCount = header.length - 1;
+  const first = cellText[0];
+  const firstRowIsHeader = Array.from({ length: columns - 1 }, (_, i) => (first[i + 1] ?? "").trim()).some(
+    (text) => text !== "" && parseChartNumber(text) === null,
+  );
+  const seriesCount = columns - 1;
   const series: ChartSeries[] = Array.from({ length: seriesCount }, (_, i) => ({
-    name: header[i + 1]?.trim() || `Series ${i + 1}`,
+    name: (firstRowIsHeader ? first[i + 1]?.trim() : "") || `Series ${i + 1}`,
     values: [],
     color: DEFAULT_CHART_COLORS[i % DEFAULT_CHART_COLORS.length],
   }));
   const categories: string[] = [];
-  for (let r = 1; r < cellText.length; r++) {
+  for (let r = firstRowIsHeader ? 1 : 0; r < cellText.length; r++) {
     const row = cellText[r];
     categories.push(row[0]?.trim() ?? "");
     for (let s = 0; s < seriesCount; s++) {
@@ -165,14 +248,18 @@ export function chartDataFromTableCells(cellText: string[][]): ChartFromTableRes
         series[s].values.push(null);
         continue;
       }
-      const n = Number(raw);
-      if (Number.isFinite(n)) {
+      const n = parseChartNumber(raw);
+      if (n !== null) {
         series[s].values.push(n);
       } else {
         series[s].values.push(null);
         unparsable.push(raw);
       }
     }
+  }
+  if (categories.length === 0) {
+    // A header row with no data rows under it: nothing to chart.
+    return { categories: [], series: [], unparsable };
   }
   return { categories, series, unparsable };
 }

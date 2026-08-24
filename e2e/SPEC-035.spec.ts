@@ -337,7 +337,9 @@ test("language round-trips through a .docx save and reopen, reflected in the sta
   await page.getByTestId("language-option-de-DE").click();
   await typeBody(page, "haus");
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;

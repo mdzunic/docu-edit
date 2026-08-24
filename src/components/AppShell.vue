@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import { useRouter } from "vue-router";
+import AppIcon from "./AppIcon.vue";
 import PreferencesDialog from "./PreferencesDialog.vue";
 import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StorageWarningBanner from "./StorageWarningBanner.vue";
@@ -220,32 +221,80 @@ onUnmounted(() => {
       class="app-bar"
       data-testid="app-bar"
     >
-      <!-- The leading control slot (SPEC-060): the editor fills it with the
-           Close control, left of the product name. Empty in views with no
-           open document, so their bar is unchanged. -->
-      <slot name="app-bar-leading" />
       <!-- The product name is the app's home affordance (SPEC-060): a real
            link to the library in every view, so it reads as a link to
            assistive technology. In the editor the route guard flushes any
            pending autosave before this navigation lands, exactly as the Close
            control does — @click.prevent keeps it a client-side navigation so
-           that guard runs (a full document load would bypass it). -->
+           that guard runs (a full document load would bypass it). The mark is
+           decorative (aria-hidden): the link's name stays the wordmark. -->
       <a
         class="product-name"
         data-testid="product-name"
         href="/"
         @click.prevent="goHome"
-      >docu-edit</a>
+      ><svg
+        class="brand-mark"
+        data-testid="brand-mark"
+        viewBox="0 0 24 24"
+        width="26"
+        height="26"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <rect
+          class="brand-mark-tile"
+          x="1"
+          y="1"
+          width="22"
+          height="22"
+          rx="6"
+        />
+        <path
+          class="brand-mark-glyph"
+          d="M7.5 5.5h6L17 9v9.5h-9.5z"
+        />
+        <path
+          class="brand-mark-glyph"
+          d="M13.5 5.5V9H17"
+        />
+        <path
+          class="brand-mark-glyph"
+          d="M10 12.5h4.5"
+        />
+        <path
+          class="brand-mark-glyph"
+          d="M10 15.5h2.5"
+        />
+        <path
+          class="brand-mark-glyph"
+          d="M14.75 13.75v3.5"
+        />
+      </svg><span class="product-wordmark">docu-edit</span></a>
+      <span
+        class="app-bar-divider"
+        aria-hidden="true"
+      />
+      <!-- The title doubles as the rename control (SPEC-002): when editable it
+           carries a pencil that surfaces on hover/focus and a hover wash, so
+           "click to rename" is discoverable rather than a hidden gesture. -->
       <h1
         v-if="!isEditingTitle"
         class="document-title"
+        :class="{ 'document-title--editable': titleEditable }"
         data-testid="document-title"
         :tabindex="titleEditable ? 0 : undefined"
         :role="titleEditable ? 'button' : undefined"
+        :title="titleEditable ? 'Rename document' : undefined"
         @click="startEditingTitle"
         @keydown.enter="startEditingTitle"
       >
-        {{ documentTitle }}
+        <span class="document-title-text">{{ documentTitle }}</span>
+        <AppIcon
+          v-if="titleEditable"
+          class="document-title-pencil"
+          name="pencil"
+        />
       </h1>
       <input
         v-else
@@ -253,6 +302,7 @@ onUnmounted(() => {
         v-model="draftTitle"
         class="document-title document-title-input"
         data-testid="document-title-input"
+        aria-label="Document title"
         @keydown.enter="commitTitleEdit"
         @keydown.escape="cancelTitleEdit"
         @blur="commitTitleEdit"
@@ -336,25 +386,33 @@ onUnmounted(() => {
 .app-bar {
   flex: none;
   display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
+  align-items: center;
+  gap: var(--space-3);
   /* One stated height (AC-15): the app bar reads the brand surface token. */
   height: var(--height-app-bar);
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-2) var(--space-5);
   background: var(--surface-brand);
   color: var(--text-on-brand);
   box-sizing: border-box;
 }
 
+/* The brand: a tile mark in the accent colour beside the wordmark, set a step
+   larger and heavier than the title so the product reads first. The link's
+   padding gives its hover/focus treatment room without shifting the row. */
 .product-name {
-  font-weight: var(--weight-bold);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
   color: inherit;
   text-decoration: none;
   border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast) var(--easing);
 }
 
 .product-name:hover {
-  text-decoration: underline;
+  background: color-mix(in srgb, var(--text-on-brand) 10%, transparent);
 }
 
 .product-name:focus-visible {
@@ -362,23 +420,104 @@ onUnmounted(() => {
   outline-offset: var(--space-1);
 }
 
-.document-title {
-  margin: 0;
-  font-size: var(--text-lg);
-  font-weight: var(--weight-regular);
+.brand-mark {
+  display: block;
+  flex: none;
 }
 
-h1.document-title[role="button"] {
+.brand-mark-tile {
+  fill: var(--accent);
+}
+
+.brand-mark-glyph {
+  fill: none;
+  stroke: var(--text-on-brand);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.product-wordmark {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.01em;
+  line-height: var(--line-tight);
+  white-space: nowrap;
+}
+
+/* A hairline between the brand and the document title. */
+.app-bar-divider {
+  flex: none;
+  align-self: stretch;
+  width: var(--border-width);
+  margin: var(--space-2) 0;
+  background: color-mix(in srgb, var(--text-on-brand) 30%, transparent);
+}
+
+.document-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-regular);
+  line-height: var(--line-tight);
+}
+
+.document-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The rename affordance (SPEC-002): an editable title is a button — it shows
+   a hand cursor, a wash on hover/focus and a pencil that fades in beside the
+   text. The pencil always takes its space so the row never shifts. */
+.document-title--editable {
   cursor: pointer;
+  transition: background-color var(--motion-fast) var(--easing);
+}
+
+.document-title--editable:hover,
+.document-title--editable:focus-visible {
+  background: color-mix(in srgb, var(--text-on-brand) 12%, transparent);
+}
+
+.document-title--editable:focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
+}
+
+.document-title-pencil {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  opacity: 0.55;
+  transition: opacity var(--motion-fast) var(--easing);
+}
+
+.document-title--editable:hover .document-title-pencil,
+.document-title--editable:focus-visible .document-title-pencil {
+  opacity: 1;
 }
 
 .document-title-input {
   font: inherit;
+  font-size: var(--text-lg);
+  min-width: 16rem;
   color: var(--text-primary);
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+}
+
+.document-title-input:focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: var(--space-1);
 }
 
 /* Pushed to the far edge of the app bar; align-self keeps the actions

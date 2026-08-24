@@ -83,7 +83,9 @@ test("a merge field chip renders as {{name}}, is a single caret atom, and surviv
   await page.getByTestId("merge-field-picker-custom-insert").click();
   await expect(chips(page)).toHaveCount(1);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;

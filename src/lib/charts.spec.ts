@@ -17,6 +17,7 @@ import {
 } from "./charts";
 import {
   chartDataFromTableCells,
+  parseChartNumber,
   NEW_CHART_HEIGHT_CM,
   NEW_CHART_WIDTH_CM,
   sampleChartCategories,
@@ -252,7 +253,80 @@ describe("chartDataFromTableCells (AC-21, AC-22)", () => {
   it("returns empty data for a table too small to hold a header + data column", () => {
     expect(chartDataFromTableCells([["only"]])).toEqual({ categories: [], series: [], unparsable: [] });
     expect(chartDataFromTableCells([])).toEqual({ categories: [], series: [], unparsable: [] });
+    // A header row with nothing under it has nothing to chart either.
+    expect(chartDataFromTableCells([["", "Revenue"]])).toEqual({ categories: [], series: [], unparsable: [] });
   });
+
+  it("treats a first row of nothing but numbers as data, naming the series itself", () => {
+    const cells = [
+      ["2021", "10", "5"],
+      ["2022", "20", "8"],
+    ];
+    const result = chartDataFromTableCells(cells);
+    // The first column stays the category column even when it holds numbers.
+    expect(result.categories).toEqual(["2021", "2022"]);
+    expect(result.series.map((s) => s.name)).toEqual(["Series 1", "Series 2"]);
+    expect(result.series.map((s) => s.values)).toEqual([
+      [10, 20],
+      [5, 8],
+    ]);
+    expect(result.unparsable).toEqual([]);
+  });
+
+  it("reads the numbers people actually type into tables (AC-22)", () => {
+    const cells = [
+      ["", "Revenue", "Share"],
+      ["Q1", "$1,250.50", "12.5%"],
+      ["Q2", "1.250,5", "10 %"],
+      ["Q3", "(1,000)", "0,125"],
+      ["Q4", "1 000 kg", "n/a"],
+    ];
+    const result = chartDataFromTableCells(cells);
+    expect(result.series[0].values).toEqual([1250.5, 1250.5, -1000, 1000]);
+    expect(result.series[1].values).toEqual([12.5, 10, 0.125, null]);
+    expect(result.unparsable).toEqual(["n/a"]);
+  });
+});
+
+describe("parseChartNumber", () => {
+  it.each([
+    ["10", 10],
+    [" 10 ", 10],
+    ["1.5", 1.5],
+    ["1,5", 1.5],
+    ["1,000", 1000],
+    ["12,500", 12500],
+    ["1.500", 1.5],
+    ["0,125", 0.125],
+    ["1234,5", 1234.5],
+    ["1,250.5", 1250.5],
+    ["1.250,5", 1250.5],
+    ["1 000", 1000],
+    ["1\u00a0000", 1000],
+    ["1'000", 1000],
+    ["1,000,000", 1000000],
+    ["1.000.000", 1000000],
+    ["$10", 10],
+    ["10 €", 10],
+    ["€ 1.234,56", 1234.56],
+    ["10%", 10],
+    ["12.5%", 12.5],
+    ["10 kg", 10],
+    ["(1,000)", -1000],
+    ["-5", -5],
+    ["−5", -5],
+    ["+5", 5],
+    ["1.5e3", 1500],
+  ])("reads %j as %d", (raw, expected) => {
+    expect(parseChartNumber(raw)).toBe(expected);
+  });
+
+  it.each([["not a number"], [""], ["   "], ["abc"], ["1,2,3.4"], ["1,00,000"], ["n/a"], ["--"], ["1.2.3,4,5"]])(
+    "rejects %j",
+    (raw) => {
+      expect(parseChartNumber(raw)).toBeNull();
+    },
+  );
 });
 
 describe("insertChartFromTable (AC-21)", () => {

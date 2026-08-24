@@ -1,6 +1,7 @@
 // The Page setup dialog (SPEC-027 AC-1..7), the Format → Columns dialog
-// (SPEC-030), the "Show/hide ruler" view toggle, and the ruler's
-// caret-section geometry (page width, margins and column boundaries). With
+// (SPEC-030), the ruler visibility toggles (both rulers together, or each on
+// its own), and the ruler's caret-section geometry (page width, margins and
+// column boundaries). With
 // per-section page setup (SPEC-028 AC-20) both dialogs prefill from — and
 // the ruler follows — the section under the caret, read live through
 // getCaretSectionIndex. The ruler's marker-drag handler (handleRulerUpdate)
@@ -148,21 +149,57 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
     root.focus();
   }
 
-  /** The "Show/hide ruler" toggle (AC-14): a view preference, not an
-   * undo-able content edit — same direct-mutation + touchDocument pattern as
-   * handleTitleUpdate, and triggerRef is required for the same reason (doc is
-   * a shallowRef; mutating a field on its current value alone doesn't
-   * re-render). */
-  function toggleRuler() {
+  // --- ruler visibility (SPEC-027 AC-14, SPEC-064 AC-7) ---------------------
+  // Two per-document flags, absent reading as shown (documentModel.ts's own
+  // convention): `showRuler` for the horizontal ruler, `showVerticalRuler` for
+  // the vertical one. View → Rulers flips both together (one control, as
+  // SPEC-064 asked); View → Horizontal ruler / Vertical ruler flip one each.
+
+  /** True while the horizontal ruler is shown. */
+  const showHorizontalRuler = computed(() => doc.value?.showRuler !== false);
+  /** True while the vertical ruler is enabled (it still hides in web layout,
+   * see useVerticalRuler). */
+  const showVerticalRuler = computed(() => doc.value?.showVerticalRuler !== false);
+  /** The View → Rulers check state: checked when both rulers are shown,
+   * "mixed" when only one is, unchecked when neither. */
+  const rulersCheckState = computed(() =>
+    showHorizontalRuler.value && showVerticalRuler.value
+      ? true
+      : showHorizontalRuler.value || showVerticalRuler.value
+        ? "mixed"
+        : false,
+  );
+
+  /** Writes the two flags. A view preference, not an undo-able content edit —
+   * same direct-mutation + touchDocument pattern as handleTitleUpdate, and
+   * triggerRef is required for the same reason (doc is a shallowRef; mutating
+   * a field on its current value alone doesn't re-render). */
+  function setRulerVisibility(horizontal = true, vertical = true) {
     const model = doc.value;
     if (!model) {
       return;
     }
-    // Absent reads as shown (documentModel.ts's own convention), so the flip
-    // is "was it explicitly false" rather than a plain `!model.showRuler`.
-    model.showRuler = model.showRuler === false;
+    model.showRuler = horizontal;
+    model.showVerticalRuler = vertical;
     triggerRef(doc);
     touchDocument(model.id);
+  }
+
+  /** View → Rulers: hides both rulers when both are shown, otherwise shows
+   * both — one control that always lands on an all-or-nothing state. */
+  function toggleRuler() {
+    const bothShown = showHorizontalRuler.value && showVerticalRuler.value;
+    setRulerVisibility(!bothShown, !bothShown);
+  }
+
+  /** View → Horizontal ruler: flips the horizontal ruler alone. */
+  function toggleHorizontalRuler() {
+    setRulerVisibility(!showHorizontalRuler.value, showVerticalRuler.value);
+  }
+
+  /** View → Vertical ruler: flips the vertical ruler alone. */
+  function toggleVerticalRuler() {
+    setRulerVisibility(showHorizontalRuler.value, !showVerticalRuler.value);
   }
 
   /** Sets the document's measurement-unit preference from a ruler right-click
@@ -218,7 +255,17 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
     return { boundaries };
   });
 
+  // The View -> ruler command ids (SPEC-027 AC-14, SPEC-064): the master
+  // Rulers toggle and the per-axis toggles, owned beside the visibility
+  // state they flip.
+  const commands: Array<[string, () => void]> = [
+    ["view.ruler", toggleRuler],
+    ["view.horizontal-ruler", toggleHorizontalRuler],
+    ["view.vertical-ruler", toggleVerticalRuler],
+  ];
+
   return {
+    commands,
     pageSetupOpen,
     pageSetupInitial,
     columnsDialogOpen,
@@ -227,7 +274,12 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
     handlePageSetupApply,
     openColumnsDialog,
     handleColumnsApply,
+    showHorizontalRuler,
+    showVerticalRuler,
+    rulersCheckState,
     toggleRuler,
+    toggleHorizontalRuler,
+    toggleVerticalRuler,
     setMeasurementUnit,
     rulerSectionIndex,
     rulerPageWidthCm,

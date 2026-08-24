@@ -54,9 +54,28 @@ const props = defineProps({
 
 const emit = defineEmits(["update"]);
 
-/** The strip's fixed width in cm; kept in sync with the `.vertical-ruler`
- * width rule so the inline left offset seats its right edge on the page. */
-const STRIP_WIDTH_CM = 0.9;
+/** The strip's on-screen width and its gap to the page, in rem — the same
+ * 1.5rem / 0.25rem the horizontal ruler's height and bottom margin use, so
+ * the two rulers frame the page with one thickness and one gutter. The strip
+ * lives inside the scaled `.pages` subtree, so these are divided by the zoom
+ * (see `--ruler-zoom` in the template) to stay constant on screen while the
+ * tick positions along the strip keep scaling with the document. */
+const STRIP_WIDTH_REM = 1.5;
+const STRIP_GAP_REM = 0.25;
+
+/** The inline geometry: the page-height extent, the zoom the cross-axis
+ * sizes divide by, and the left offset that seats the strip's right edge one
+ * gutter left of the page (the `.pages` column centres the page, so the strip
+ * anchors at 50 % and shifts left by half the page width plus its own width
+ * and gap). */
+const rootStyle = computed(() => {
+  const zoom = props.zoom > 0 ? props.zoom : 1;
+  return {
+    height: `${props.pageHeightCm}cm`,
+    marginLeft: `calc(-${props.pageWidthCm / 2}cm - ${(STRIP_WIDTH_REM + STRIP_GAP_REM) / zoom}rem)`,
+    "--ruler-zoom": String(zoom),
+  };
+});
 
 const root = useTemplateRef("root");
 
@@ -263,10 +282,7 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
     role="group"
     aria-label="Vertical ruler"
     :data-active-band="activeBand"
-    :style="{
-      height: `${pageHeightCm}cm`,
-      marginLeft: `calc(-${pageWidthCm / 2}cm - ${STRIP_WIDTH_CM}cm)`,
-    }"
+    :style="rootStyle"
     @mousedown.stop
   >
     <!-- Margin zones shaded so the printable region reads at a glance. -->
@@ -354,17 +370,21 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
 </template>
 
 <style scoped>
-/* A fixed-width strip pinned just left of the page. It lives inside the scaled
-   `.pages` subtree, so its cm-sized geometry scales with the document (a ruler
-   cm == a document cm at every zoom) and it scrolls with the page. `.pages` is
-   the full column with the page centred in it, so the strip anchors at 50 %
-   and shifts left by half the page width plus its own width (inline style) to
-   sit against the page's left edge. */
+/* A narrow strip pinned just left of the page, one gutter away from it. It
+   lives inside the scaled `.pages` subtree, so its cm-sized geometry along
+   the strip scales with the document (a ruler cm == a document cm at every
+   zoom) and it scrolls with the page. Its cross-axis sizes — width, tick
+   lengths, label size — are rem values divided by the zoom (`--ruler-zoom`,
+   set inline) so they stay constant on screen exactly as the horizontal
+   ruler's height and labels do: the two rulers read as one frame at every
+   zoom. `.pages` is the full column with the page centred in it, so the strip
+   anchors at 50 % and shifts left by half the page width plus its own width
+   and gap (inline style). */
 .vertical-ruler {
   position: absolute;
   top: 0;
   left: 50%;
-  width: 0.9cm;
+  width: calc(1.5rem / var(--ruler-zoom, 1));
   background: var(--surface-base);
   border: 1px solid var(--border-default);
   border-radius: 2px;
@@ -390,24 +410,26 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
   pointer-events: none;
 }
 
+/* Ticks grow inward from the page-facing edge; the same minor/major lengths
+   and label size as the horizontal ruler's, zoom-compensated like the strip. */
 .v-tick {
   position: absolute;
   right: 0;
-  width: 0.15cm;
+  width: calc(0.25rem / var(--ruler-zoom, 1));
   height: 0;
   border-top: 1px solid var(--border-strong);
 }
 
 .v-tick.major {
-  width: 0.3cm;
+  width: calc(0.4375rem / var(--ruler-zoom, 1));
 }
 
 .v-tick-label {
   position: absolute;
-  right: 0.32cm;
+  right: calc(0.5625rem / var(--ruler-zoom, 1));
   top: 50%;
   transform: translateY(-50%);
-  font-size: 0.2cm;
+  font-size: calc(0.5625rem / var(--ruler-zoom, 1));
   line-height: 1;
   color: var(--text-secondary);
   white-space: nowrap;

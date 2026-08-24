@@ -291,6 +291,55 @@ test("View → Ruler toggles both rulers together with one control (AC-7)", asyn
   await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
 });
 
+test("View → Horizontal ruler and View → Vertical ruler toggle each ruler on its own", async ({ page }) => {
+  await createDocument(page);
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
+
+  // Hiding the vertical ruler alone leaves the horizontal one, and the group
+  // control reports the partial state.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("toggle-vertical-ruler-button").click();
+  await expect(page.getByTestId("document-vertical-ruler")).toHaveCount(0);
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await page.getByTestId("menu-title-view").click();
+  await expect(page.getByTestId("toggle-ruler-button")).toHaveAttribute("aria-checked", "mixed");
+  await expect(page.getByTestId("toggle-vertical-ruler-button")).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByTestId("toggle-horizontal-ruler-button")).toHaveAttribute("aria-checked", "true");
+
+  // Hiding the horizontal ruler too empties the group; showing it again brings
+  // back only the horizontal ruler.
+  await page.getByTestId("toggle-horizontal-ruler-button").click();
+  await expect(page.getByTestId("document-ruler")).toHaveCount(0);
+  await page.getByTestId("menu-title-view").click();
+  await expect(page.getByTestId("toggle-ruler-button")).toHaveAttribute("aria-checked", "false");
+  await page.getByTestId("toggle-horizontal-ruler-button").click();
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await expect(page.getByTestId("document-vertical-ruler")).toHaveCount(0);
+
+  // The group control from a partial state shows both.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("toggle-ruler-button").click();
+  await expect(page.getByTestId("document-ruler")).toBeVisible();
+  await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();
+});
+
+test("the vertical ruler sits one gutter left of the page, as thick as the horizontal ruler is tall (AC-1)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  const horizontal = (await page.getByTestId("document-ruler").boundingBox())!;
+  const vertical = (await page.getByTestId("document-vertical-ruler").boundingBox())!;
+  const pageBox = (await page.locator(".page").first().boundingBox())!;
+  // Same thickness, and the same gap to the page the horizontal ruler keeps.
+  expect(vertical.width).toBeCloseTo(horizontal.height, 0);
+  const horizontalGap = pageBox.y - (horizontal.y + horizontal.height);
+  const verticalGap = pageBox.x - (vertical.x + vertical.width);
+  expect(verticalGap).toBeGreaterThan(0);
+  expect(verticalGap).toBeCloseTo(horizontalGap, 0);
+  expect(vertical.y).toBeCloseTo(pageBox.y, 0);
+});
+
 test("the vertical ruler is hidden in web layout, the horizontal ruler stays (AC-8)", async ({ page }) => {
   await createDocument(page);
   await expect(page.getByTestId("document-vertical-ruler")).toBeVisible();

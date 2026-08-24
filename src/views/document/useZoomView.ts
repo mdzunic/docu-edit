@@ -126,14 +126,15 @@ export function useZoomView(deps: ZoomViewDeps) {
     };
   });
 
-  // The ruler sits above `.pages` as a sibling. It scales its centimetre ticks
-  // with a `scaleX` transform, so its own *layout* box never grows and it stays
-  // centred in the page column — but `.pages` reserves its full scaled footprint
-  // and so left-aligns (and scrolls) once that footprint overflows the column.
-  // Giving the ruler the SAME scaled-footprint layout width makes it share that
+  // The ruler sits above `.pages` as a sibling. It lays itself out at the
+  // zoomed page width (every tick at its centimetre × zoom — no transform, so
+  // its labels and markers never stretch) and is centred in the page column —
+  // but `.pages` reserves its full scaled footprint and so left-aligns (and
+  // scrolls) once that footprint overflows the column. Giving the ruler's
+  // wrapper the SAME scaled-footprint layout width makes it share that
   // overflow behaviour, so ruler and page track together at every zoom
-  // (AC-53/AC-54); the ruler itself is centred within this box (CSS) so the
-  // scaleX pivot still lands on the footprint centre.
+  // (AC-53/AC-54); the ruler itself is centred within this box (CSS) on the
+  // footprint centre.
   const rulerSizerStyle = computed(() =>
     scaled.value
       ? ({ width: `${naturalWidth.value * zoom.value}px` } as Record<string, string>)

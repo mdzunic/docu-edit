@@ -127,6 +127,7 @@ type FieldKey =
   | "suppressConversionReport"
   | "measurementUnit"
   | "showRuler"
+  | "showVerticalRuler"
   | "showFormattingMarks"
   | "comments"
   | "trackChangesRecording"
@@ -146,6 +147,7 @@ const FIELD_KEYS: readonly FieldKey[] = [
   "suppressConversionReport",
   "measurementUnit",
   "showRuler",
+  "showVerticalRuler",
   "showFormattingMarks",
   "comments",
   "trackChangesRecording",

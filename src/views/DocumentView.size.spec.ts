@@ -39,7 +39,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 4584;
+const LINE_BUDGET = 4582;
 
 describe("DocumentView size budget", () => {
   it(`DocumentView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

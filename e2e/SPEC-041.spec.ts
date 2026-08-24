@@ -35,7 +35,8 @@ async function switchTab(page: Page, tab: "general" | "description" | "statistic
 /** Downloads the document in the given format and returns the file path
  * (SPEC-013's own helper, reused here for the save/reopen round trips). */
 async function download(page: Page, format: "docx" | "odt"): Promise<string> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const file = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId(`download-${format}`).click(),

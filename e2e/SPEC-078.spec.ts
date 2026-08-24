@@ -132,7 +132,8 @@ test.describe("SPEC-078 — two drawings, one anchor paragraph", () => {
 /** Downloads the current document in `format` and reopens the file from
  * the library screen, returning once the editor is back. */
 async function saveAndReopen(page: Page, format: "docx" | "odt"): Promise<void> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId(`download-${format}`).click();
   const download = await downloadPromise;

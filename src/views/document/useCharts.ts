@@ -29,7 +29,20 @@ import { isChart, type DocumentModel, type ImageWrapMode } from "../../lib/docum
 import { asChartType, type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
 import { type CellRange } from "../../lib/core/tables";
 import { blockText, type CaretPosition } from "../../lib/textEditing";
+import type { Ref } from "vue";
 import type { EditorContext } from "./context";
+
+/** Gap the floating chart toolbar keeps between its nearest edge and the
+ * chart's edge: the half-handle that hangs outside the chart plus clear air,
+ * so the handles stay visible and grabbable with the toolbar open — the same
+ * clearance the image toolbar keeps (useImages.ts). */
+const CHART_TOOLBAR_CLEARANCE_PX = 4 + 16;
+
+/** Upper bound on the toolbar's own height for the "is there room above?"
+ * decision; placing above needs no measured height (the host lifts the bar by
+ * its real height), so erring high only flips a chart very near the top of
+ * the viewport to a below placement a little sooner. */
+const CHART_TOOLBAR_MAX_HEIGHT_PX = 96;
 
 function sameChartLocation(a: ChartLocation, b: ChartLocation): boolean {
   return a.section === b.section && a.block === b.block;
@@ -39,6 +52,10 @@ export interface ChartsDeps extends EditorContext {
   /** The active cell-range selection, read live for the "Chart from table"
    * commands (SPEC-052 AC-21). */
   getCellSelection: () => CellRange | null;
+  /** The reactive caret mirror: with no cell range selected, the table the
+   * caret sits in is the "Chart from table" source, and the menu item's
+   * enabled state follows the caret into and out of tables. */
+  caretPosition: Ref<CaretPosition | null>;
 }
 
 export function useCharts(deps: ChartsDeps) {
@@ -54,6 +71,7 @@ export function useCharts(deps: ChartsDeps) {
     addToast,
     zoom,
     contentPxToClient,
+    caretPosition,
   } = deps;
 
   const chartSelection = ref<ChartLocation | null>(null);
@@ -176,8 +194,10 @@ export function useCharts(deps: ChartsDeps) {
     const selection = currentSelection(root) ?? caretSelection(documentStart());
     const result = insertChartFromTable(model, selection, tableLocation, chartType, data);
     applyEdit(result, selection, "insert chart from table");
-    const inserted = chartInsertedLocation(result.model, { ...documentStart(), section: tableLocation.section, block: tableLocation.block });
-    if (inserted) {
+    // insertChartFromTable places the chart directly after the table — select
+    // exactly that block (not the nearest chart, which could be a neighbour).
+    const inserted: ChartLocation = { section: tableLocation.section, block: tableLocation.block + 1 };
+    if (isChart(result.model.sections[inserted.section]?.blocks[inserted.block])) {
       chartSelection.value = inserted;
       void nextTick().then(remeasureChartHandles);
     }
@@ -190,34 +210,55 @@ export function useCharts(deps: ChartsDeps) {
     insertChartAction(asChartType(chartType));
   }
 
-  /** Whether a table is selected for "Insert → Chart from table" (AC-21) — a
-   * table block is the target of the active cell-range selection. */
-  const tableSelectedForChart = computed(() => {
+  /** The table "Insert → Chart from table" reads (AC-21): the table holding
+   * the active cell-range selection, else the table the caret sits in — so
+   * clicking into a table is enough to make the command available. Null when
+   * neither points at a table. */
+  const chartSourceTable = computed<{ section: number; block: number } | null>(() => {
     const model = doc.value;
-    const range = deps.getCellSelection();
-    if (!model || !range) {
-      return false;
+    if (!model) {
+      return null;
     }
-    const block = model.sections[range.section]?.blocks[range.block];
-    return !!block && block.type === "table";
+    const range = deps.getCellSelection();
+    const caret = caretPosition.value;
+    const location = range
+      ? { section: range.section, block: range.block }
+      : caret?.cell
+        ? { section: caret.section, block: caret.block }
+        : null;
+    if (!location) {
+      return null;
+    }
+    const block = model.sections[location.section]?.blocks[location.block];
+    return block?.type === "table" ? location : null;
   });
 
-  /** "Insert → Chart from table" (AC-21, AC-22): reads the selected table's
+  /** Whether "Insert → Chart from table" applies (AC-21). */
+  const tableSelectedForChart = computed(() => chartSourceTable.value !== null);
+
+  /** "Insert → Chart from table" (AC-21, AC-22): reads the source table's
    * cells (every row/column — a whole-table source is the simplest, most
    * predictable default), reporting any cell that could not be read as a
-   * number. */
+   * number. A table with nothing chartable (fewer than two columns, or no
+   * data row) inserts nothing and says why, rather than placing an empty
+   * chart. */
   function handleChartFromTable(chartType = "columnClustered") {
     const model = doc.value;
-    const range = deps.getCellSelection();
-    if (!model || !range) {
+    const location = chartSourceTable.value;
+    if (!model || !location) {
       return;
     }
-    const table = model.sections[range.section]?.blocks[range.block];
+    const table = model.sections[location.section]?.blocks[location.block];
     if (!table || table.type !== "table") {
       return;
     }
     const cellText = table.rows.map((row) => row.cells.map((cell) => cell.blocks.map((paragraph) => blockText(paragraph)).join(" ")));
-    const result = insertChartFromTableAction({ section: range.section, block: range.block }, asChartType(chartType), cellText);
+    const data = chartDataFromTableCells(cellText);
+    if (data.series.length === 0 || data.categories.length === 0) {
+      addToast("Chart from table needs at least two columns and a data row: categories down the first column, one series per further column.");
+      return;
+    }
+    const result = insertChartFromTableAction(location, asChartType(chartType), cellText);
     if (result.unparsable.length > 0) {
       addToast(`Chart from table: ${result.unparsable.length} cell(s) could not be read as a number and were left blank.`);
     }
@@ -320,23 +361,27 @@ export function useCharts(deps: ChartsDeps) {
     applyChartMutate((model, selection, location) => moveChart(model, selection, location, dxCm, dyCm), "move chart");
   }
 
-  function chartToolbarStyle(): { left: number; top: number } {
+  /** The floating chart toolbar's fixed (viewport) position. Above the chart,
+   * `top` is the bar's BOTTOM edge (`placement: "above"` — the host lifts the
+   * bar by its own height) kept CHART_TOOLBAR_CLEARANCE_PX clear of the
+   * chart's top edge, so the bar never covers the selection handles. */
+  function chartToolbarStyle(): { left: number; top: number; placement: string } {
     const geometry = chartHandles.value;
     const pageEl = pageRef.value;
     if (!geometry || !pageEl) {
-      return { left: 0, top: 0 };
+      return { left: 0, top: 0, placement: "below" };
     }
     // The toolbar is position:fixed outside the scale transform, so its anchor
     // is the chart's unscaled model geometry mapped back into client space
-    // through the zoom-aware helper (SPEC-063 AC-57). The 44/8 px offsets are
+    // through the zoom-aware helper (SPEC-063 AC-57). The px clearances are
     // screen constants and stay unscaled.
     const anchor = contentPxToClient(geometry.left, geometry.top);
-    const above = anchor.y - 44;
+    const bottomEdge = anchor.y - CHART_TOOLBAR_CLEARANCE_PX;
+    if (bottomEdge - CHART_TOOLBAR_MAX_HEIGHT_PX >= 0) {
+      return { left: anchor.x, top: bottomEdge, placement: "above" };
+    }
     const below = contentPxToClient(geometry.left, geometry.top + geometry.height);
-    return {
-      left: anchor.x,
-      top: above >= 0 ? above : below.y + 8,
-    };
+    return { left: anchor.x, top: below.y + CHART_TOOLBAR_CLEARANCE_PX, placement: "below" };
   }
 
   /** "Selection and hit testing" recovery, mirroring shapeAtClientPoint: a

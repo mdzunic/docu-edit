@@ -411,7 +411,8 @@ async function seedLinkAndBookmark(page: Page): Promise<void> {
 }
 
 async function downloadAs(page: Page, format: "docx" | "odt"): Promise<string> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId(`download-${format}`).click(),

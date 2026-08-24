@@ -63,7 +63,9 @@ test("the app bar offers Download > OpenDocument Text (.odt) and downloads <titl
   await page.getByTestId("open-document-input").setInputFiles(odtFixture);
   await expect(page).toHaveURL(/\/doc\/.+/);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const option = page.getByTestId("download-odt");
   await expect(option).toHaveText("OpenDocument Text (.odt)");
 
@@ -80,7 +82,8 @@ test("the downloaded package is a valid ODF ZIP: stored mimetype first, all requ
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(odtFixture);
   await expect(page).toHaveURL(/\/doc\/.+/);
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-odt").click();
   const buffer = await downloadedBuffer(await downloadPromise);
@@ -128,7 +131,9 @@ test("a document opened from .docx downloads as converted ODF, not renamed OPC (
   await expect(page).toHaveURL(/\/doc\/.+/);
   await expect(page.getByTestId("format-badge")).toHaveText("DOCX");
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-odt").click();
   const download = await downloadPromise;
@@ -154,7 +159,9 @@ test("downloading a blank document produces a valid one-paragraph file (AC-2)", 
   await page.getByTestId("new-document").first().click();
   await expect(page).toHaveURL(/\/doc\/.+/);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-odt").click();
   const download = await downloadPromise;

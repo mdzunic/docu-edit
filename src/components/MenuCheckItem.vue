@@ -1,14 +1,18 @@
 <script setup lang="ts">
+import { computed } from "vue";
+
 // A toggle command in a MenuBar popup (SPEC-049): role="menuitemcheckbox"
 // with a live check mark (AC-11). Used for the View menu's ruler / outline /
 // comments toggles and the Edit menu's autocorrect switches. tabindex -1 so
-// the menu bar remains one tab stop (AC-8).
+// the menu bar remains one tab stop (AC-8). `checked` also takes the ARIA
+// tri-state "mixed" — a group toggle (View → Rulers) whose members are only
+// partly on — rendered as aria-checked="mixed" with a dash for its mark.
 //
 // Runtime prop/emit declarations per the espree constraint (see AppShell.vue).
-defineProps({
+const props = defineProps({
   label: { type: String, required: true },
   testid: { type: String, default: "" },
-  checked: { type: Boolean, default: false },
+  checked: { type: [Boolean, String], default: false },
   disabled: { type: Boolean, default: false },
   shortcut: { type: String, default: "" },
   /** A trailing descriptive note, e.g. "Screen only" (SPEC-059 AC-71) — shown
@@ -17,6 +21,11 @@ defineProps({
 });
 
 const emit = defineEmits(["select"]);
+
+const ariaChecked = computed(() =>
+  props.checked === "mixed" ? "mixed" : props.checked === true ? "true" : "false",
+);
+const mark = computed(() => (props.checked === "mixed" ? "–" : props.checked === true ? "✓" : ""));
 </script>
 
 <template>
@@ -25,7 +34,7 @@ const emit = defineEmits(["select"]);
     role="menuitemcheckbox"
     class="menu-item"
     :data-testid="testid || undefined"
-    :aria-checked="checked ? 'true' : 'false'"
+    :aria-checked="ariaChecked"
     :disabled="disabled"
     tabindex="-1"
     @mousedown.prevent
@@ -34,7 +43,7 @@ const emit = defineEmits(["select"]);
     <span
       class="menu-check"
       aria-hidden="true"
-    >{{ checked ? "✓" : "" }}</span>
+    >{{ mark }}</span>
     <span class="menu-item-label">{{ label }}</span>
     <span
       v-if="hint"

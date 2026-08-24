@@ -88,13 +88,19 @@ describe("DocumentView", () => {
     expect(getDocument("edit-title-id")?.title).toBe("Project Plan");
   });
 
-  it("offers a Download action in the app bar for an open document (SPEC-006 AC-1)", async () => {
+  it("offers File → Export for an open document, and keeps the app bar to the save state and Close (SPEC-006 AC-1, SPEC-060)", async () => {
     vi.mocked(documentExists).mockReturnValue(true);
     const wrapper = await mountAt("/doc/download-id");
     const appBar = wrapper.get('[data-testid="app-bar"]');
-    const download = appBar.get('[data-testid="download-menu"]');
-    expect(download.text()).toBe("Download");
-    await download.trigger("click");
+    // The bar carries no Download button any more; Close sits in its trailing
+    // actions cluster, after the save state.
+    expect(appBar.find('[data-testid="download-menu"]').exists()).toBe(false);
+    const actions = appBar.get(".app-bar-actions");
+    expect(actions.find('[data-testid="save-state"]').exists()).toBe(true);
+    expect(actions.find('[data-testid="close-document"]').exists()).toBe(true);
+    // Export lives in the File menu, as a submenu of the download formats.
+    await wrapper.get('[data-testid="menu-title-file"]').trigger("click");
+    await wrapper.get('[data-testid="file-menu-export"]').trigger("click");
     expect(wrapper.get('[data-testid="download-docx"]').text()).toBe("Word (.docx)");
   });
 

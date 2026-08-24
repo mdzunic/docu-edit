@@ -41,7 +41,8 @@ async function applyStyle(page: Page, styleId: string): Promise<void> {
 
 /** Downloads the document in the given format and returns the file path. */
 async function download(page: Page, format: "docx" | "odt"): Promise<string> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const file: Download = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId(`download-${format}`).click(),

@@ -356,7 +356,8 @@ async function measureTyping(
 async function measureSave(page: Page): Promise<{ saveMs: number; mainThreadBlockDuringSaveMs: number }> {
   await resetLongTasks(page);
   const t0 = Date.now();
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByTestId("download-docx").click();
   await downloadPromise;

@@ -175,7 +175,9 @@ test("duplicating an opened chart and editing the copy leaves the original's par
   await page.getByTestId("chart-data-cell-1-1").blur();
   await page.getByTestId("chart-data-apply").click();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const buffer = await downloadedBuffer(await downloadPromise);
@@ -311,6 +313,61 @@ test("Insert -> Chart from table builds a chart from the selected table's cells"
   await expect(page.getByText(/could not be read as a number/i)).toBeVisible();
 });
 
+test("Chart from table works from a caret inside the table and reads the numbers as typed (AC-21, AC-22)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("table-grid-cell-3-3").click();
+  const cellAt = (row: number, col: number) => page.getByTestId(`table-cell-${row}-${col}`);
+  const fill = async (row: number, col: number, text: string) => {
+    await cellAt(row, col).locator(".doc-paragraph").first().click();
+    await page.keyboard.type(text);
+  };
+  await fill(0, 1, "Revenue");
+  await fill(0, 2, "Cost");
+  await fill(1, 0, "Q1");
+  await fill(1, 1, "$1,250.50");
+  await fill(1, 2, "4");
+  await fill(2, 0, "Q2");
+  await fill(2, 1, "20");
+  await fill(2, 2, "7 €");
+
+  // No drag selection: the caret simply sits in a cell. That is enough.
+  await cellAt(1, 1).locator(".doc-paragraph").first().click();
+  await page.getByTestId("menu-title-insert").click();
+  await expect(page.getByTestId("insert-chart-from-table-button")).toBeEnabled();
+  await page.getByTestId("insert-chart-from-table-button").click();
+
+  await expect(drawings(page)).toHaveCount(1);
+  expect(await canvasHasOpaquePixel(drawingAt(page, 0))).toBe(true);
+  // Currency signs and digit grouping are read, not reported as unreadable.
+  await expect(page.getByText(/could not be read as a number/i)).toHaveCount(0);
+
+  // The data sheet shows the table's figures as numbers.
+  await drawingAt(page, 0).dblclick();
+  await expect(page.getByTestId("chart-data-sheet-dialog")).toBeVisible();
+  await expect(page.getByTestId("chart-data-cell-0-1")).toHaveValue("Revenue");
+  await expect(page.getByTestId("chart-data-cell-0-2")).toHaveValue("Cost");
+  await expect(page.getByTestId("chart-data-cell-1-0")).toHaveValue("Q1");
+  await expect(page.getByTestId("chart-data-cell-1-1")).toHaveValue("1250.5");
+  await expect(page.getByTestId("chart-data-cell-2-2")).toHaveValue("7");
+});
+
+test("Chart from table refuses a table with nothing to chart and says why (AC-22)", async ({ page }) => {
+  await createDocument(page);
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("table-grid-cell-1-1").click();
+  const cell = page.getByTestId("table-cell-0-0");
+  await cell.locator(".doc-paragraph").first().click();
+  await page.keyboard.type("42");
+
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("insert-chart-from-table-button").click();
+  await expect(drawings(page)).toHaveCount(0);
+  await expect(page.getByText(/needs at least two columns/i)).toBeVisible();
+});
+
 // --- byte-identical preservation (AC-25, AC-26) -----------------------------
 
 test("an unedited chart survives a same-format save byte-identical after editing an unrelated paragraph", async ({ page }) => {
@@ -321,7 +378,9 @@ test("an unedited chart survives a same-format save byte-identical after editing
   await content(page).getByText("Editable intro paragraph.").click();
   await page.keyboard.type(" Edited.");
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;

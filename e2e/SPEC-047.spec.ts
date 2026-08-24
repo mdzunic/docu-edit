@@ -100,7 +100,9 @@ test("a document past the block ceiling opens read-only with a warning naming th
   await expect(page.getByTestId("find-count")).not.toHaveText("0 of 0");
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   const download = await downloadPromise;

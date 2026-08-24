@@ -127,9 +127,11 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
   watch([caretPosition, doc], () => measureRows(), { flush: "post" });
   onScroll(measureRows);
 
+  // Its own per-document flag (View → Vertical ruler; View → Rulers sets both
+  // flags at once), and print layout only (AC-8).
   const showVerticalRuler = computed(() => {
     const model = doc.value;
-    return !!model && model.showRuler !== false && viewMode.value === "print";
+    return !!model && model.showVerticalRuler !== false && viewMode.value === "print";
   });
 
   const verticalRulerProps = computed(() => ({

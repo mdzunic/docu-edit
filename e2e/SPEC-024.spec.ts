@@ -188,6 +188,23 @@ test("clicking an image selects it, showing eight resize handles and a floating 
   await expect(page.getByTestId("image-toolbar")).toBeVisible();
 });
 
+test("the floating toolbar clears the top resize handles instead of covering them (AC-9)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  // Push the image down the page so there is room for the toolbar above it.
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Enter");
+  }
+  await insertViaPicker(page, SMALL_PNG);
+  await images(page).first().click();
+  const toolbar = (await page.getByTestId("image-toolbar").boundingBox())!;
+  const image = (await images(page).first().boundingBox())!;
+  const handle = (await page.getByTestId("image-resize-n").boundingBox())!;
+  // The bar sits above the image with clear air between it and the handles.
+  expect(toolbar.y + toolbar.height).toBeLessThan(handle.y);
+  expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(image.y - 16);
+});
+
 test("dragging a corner handle resizes proportionally (AC-10)", async ({ page }) => {
   await createDocument(page);
   await content(page).click();
@@ -376,7 +393,9 @@ test("alt text and size survive a .docx save and re-open (AC-23, AC-25)", async 
   await page.getByTestId("image-options-alt-text").fill("Round trip photo");
   await page.getByTestId("image-options-apply").click();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-docx").click(),
@@ -420,7 +439,9 @@ test("an SVG inserted into a .docx-bound document is converted to PNG, not retai
   await insertViaPicker(page, SIMPLE_SVG, "vector.svg", "image/svg+xml");
   await expect(images(page)).toHaveCount(1);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-docx").click(),
@@ -441,7 +462,9 @@ test("an SVG inserted into an .odt-bound document is stored as an SVG media part
   await insertViaPicker(page, SIMPLE_SVG, "vector.svg", "image/svg+xml");
   await expect(images(page)).toHaveCount(3);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-odt").click(),
@@ -463,7 +486,9 @@ test("alt text is written to .odt as svg:desc (AC-24)", async ({ page }) => {
   await page.getByTestId("image-options-alt-text").fill("ODT alt text");
   await page.getByTestId("image-options-apply").click();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-odt").click(),
@@ -481,7 +506,8 @@ test("images are stored as real media parts with content types and relationships
   await createDocument(page);
   await content(page).click();
   await insertViaPicker(page, SMALL_PNG);
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-docx").click(),
@@ -551,7 +577,9 @@ test("deleting one of two uses of the same image keeps its media part; deleting 
   await page.keyboard.press("Delete");
   await expect(images(page)).toHaveCount(1);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const [download1] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-docx").click(),
@@ -565,7 +593,9 @@ test("deleting one of two uses of the same image keeps its media part; deleting 
   await page.keyboard.press("Delete");
   await expect(images(page)).toHaveCount(0);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const [download2] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-docx").click(),

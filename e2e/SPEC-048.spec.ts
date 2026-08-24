@@ -115,7 +115,11 @@ async function openFontsPane(page: Page): Promise<void> {
 async function download(page: Page, testid: string) {
   const [dl] = await Promise.all([
     page.waitForEvent("download"),
-    page.getByTestId("download-menu").click().then(() => page.getByTestId(testid).click()),
+    page
+      .getByTestId("menu-title-file")
+      .click()
+      .then(() => page.getByTestId("file-menu-export").click())
+      .then(() => page.getByTestId(testid).click()),
   ]);
   return dl;
 }

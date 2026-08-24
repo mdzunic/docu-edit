@@ -115,6 +115,43 @@ function valueExtent(chart: ChartVisual, series: ChartSeries[]): { min: number; 
   return { min, max };
 }
 
+/** A "nice" number near `x` — 1, 2, 5 or 10 times a power of ten; `round`
+ * picks the nearest, otherwise the smallest nice number ≥ x (Heckbert's
+ * nice-numbers algorithm, Graphics Gems I). */
+function niceNumber(x: number, round: boolean): number {
+  if (!(x > 0) || !Number.isFinite(x)) {
+    return 1;
+  }
+  const exponent = Math.floor(Math.log10(x));
+  const fraction = x / 10 ** exponent;
+  let nice: number;
+  if (round) {
+    nice = fraction < 1.5 ? 1 : fraction < 3 ? 2 : fraction < 7 ? 5 : 10;
+  } else {
+    nice = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  }
+  return nice * 10 ** exponent;
+}
+
+/** The value axis: the data extent widened to round tick values (0, 500,
+ * 1000, 1500 rather than 0, 312.63, 625.25, 937.88, 1250.5), with the ticks
+ * themselves. An explicit option minimum/maximum is kept exactly as set; the
+ * ticks then fall on the round steps inside it. */
+function axisScale(chart: ChartVisual, series: ChartSeries[]): { min: number; max: number; ticks: number[] } {
+  const extent = valueExtent(chart, series);
+  const range = niceNumber(extent.max - extent.min, false);
+  const step = niceNumber(range / 4, true);
+  const min = chart.options.valueAxisMin !== undefined ? extent.min : Math.floor(extent.min / step + 1e-9) * step;
+  const max = chart.options.valueAxisMax !== undefined ? extent.max : Math.ceil(extent.max / step - 1e-9) * step;
+  const ticks: number[] = [];
+  const first = Math.ceil(min / step - 1e-9) * step;
+  for (let v = first; v <= max + step * 1e-9 && ticks.length < 50; v += step) {
+    // Snap away the float drift of repeated addition (0.30000000000000004).
+    ticks.push(Number(v.toFixed(10)));
+  }
+  return { min, max: max > min ? max : min + step, ticks };
+}
+
 function paintLegend(
   ctx: CanvasRenderingContext2D,
   chart: ChartVisual,
@@ -131,6 +168,13 @@ function paintLegend(
   const swatch = 8;
   const gap = 4;
   ctx.font = LABEL_FONT;
+  // The legend paints last, after the axis labels have left the context's
+  // text alignment at "center"/"right" and its baseline at "middle"/"bottom";
+  // its own geometry below assumes a left-aligned label on the alphabetic
+  // baseline beside the swatch — without resetting, every label lands centred
+  // on the swatch's right edge and the next swatch paints over it.
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
   if (pos === "right" || pos === "left") {
     const width = Math.min(
       widthPx * 0.35,
@@ -242,8 +286,10 @@ function paintAxes(
   layout: Layout,
   min: number,
   max: number,
+  ticks: number[],
 ): void {
   const { plotX, plotY, plotW, plotH } = layout;
+  const yFor = (v: number) => plotY + plotH - ((v - min) / (max - min)) * plotH;
   ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -262,9 +308,12 @@ function paintAxes(
 
   if (chart.options.gridlines) {
     ctx.strokeStyle = gridlineColor;
-    const steps = 4;
-    for (let i = 1; i <= steps; i++) {
-      const y = plotY + (plotH / steps) * i;
+    for (const v of ticks) {
+      const y = yFor(v);
+      // The baseline is the axis line itself; a gridline there just thickens it.
+      if (Math.abs(y - (plotY + plotH)) < 0.5) {
+        continue;
+      }
       ctx.beginPath();
       ctx.moveTo(plotX, y);
       ctx.lineTo(plotX + plotW, y);
@@ -276,11 +325,8 @@ function paintAxes(
   ctx.font = LABEL_FONT;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  const steps = 4;
-  for (let i = 0; i <= steps; i++) {
-    const v = min + ((max - min) * (steps - i)) / steps;
-    const y = plotY + (plotH / steps) * i;
-    ctx.fillText(formatAxisNumber(v), plotX - 4, y);
+  for (const v of ticks) {
+    ctx.fillText(formatAxisNumber(v), plotX - 4, yFor(v));
   }
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
@@ -607,10 +653,10 @@ export function paintChart(
   }
 
   const layout = computeLayout(ctx, chart, series, widthPx, heightPx);
-  const { min, max } = valueExtent(chart, series);
+  const { min, max, ticks } = axisScale(chart, series);
   const hasAxes = chartHasAxes(chart.chartType);
   if (hasAxes) {
-    paintAxes(ctx, chart, layout, min, max);
+    paintAxes(ctx, chart, layout, min, max, ticks);
     if (chart.chartType === "columnClustered" || chart.chartType === "columnStacked" || chart.chartType === "barClustered") {
       paintBarLike(ctx, chart, series, layout, min, max);
     } else if (chart.chartType === "line" || chart.chartType === "lineMarkers" || chart.chartType === "area") {

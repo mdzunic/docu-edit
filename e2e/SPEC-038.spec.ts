@@ -282,12 +282,16 @@ test("the Download menu stays clickable with the comments pane open (AC-18, AC-1
   await commentOn(page, text, "section", "Looks good");
   await expect(pane(page)).toBeVisible();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const docxDownload = page.waitForEvent("download");
   await page.getByTestId("download-docx").click();
   await docxDownload;
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const odtDownload = page.waitForEvent("download");
   await page.getByTestId("download-odt").click();
   await odtDownload;

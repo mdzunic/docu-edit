@@ -23,20 +23,30 @@ function tupleKeysInBlock(source: string, openMarker: string): string[] {
     throw new Error(`marker not found: ${openMarker}`);
   }
   const rest = source.slice(start + openMarker.length);
-  const end = rest.indexOf("]);");
-  const block = end === -1 ? rest : rest.slice(0, end);
+  // The block ends at "]);" (a Map literal) or a bare "];" (a command array),
+  // whichever comes first.
+  const ends = [rest.indexOf("]);"), rest.indexOf("];")].filter((index) => index !== -1);
+  const block = ends.length === 0 ? rest : rest.slice(0, Math.min(...ends));
   return [...block.matchAll(/\[\s*"([a-zA-Z][\w.-]*)"\s*,/g)].map((match) => match[1]);
 }
 
 /** The live `editorCommands` keys, read from source: the inline Map in
- * DocumentView.vue plus the themeCommands spread in from useThemeControls. */
+ * DocumentView.vue plus the command lists spread in from useThemeControls,
+ * useFileActions (File -> Export) and usePageSetupDialogs (the ruler
+ * toggles). */
+const COMMAND_LIST_MARKER = "const commands: Array<[string, () => void]> = [";
+
 function liveRegistryIds(): string[] {
   const view = readFileSync(join(here, "../views/DocumentView.vue"), "utf8");
   const theme = readFileSync(join(here, "../views/document/useThemeControls.ts"), "utf8");
+  const fileActions = readFileSync(join(here, "../views/document/useFileActions.ts"), "utf8");
+  const pageSetup = readFileSync(join(here, "../views/document/usePageSetupDialogs.ts"), "utf8");
   const inline = tupleKeysInBlock(view, "const editorCommands = new Map([");
   const themeBlock = theme.slice(theme.indexOf("themeCommands"));
   const themeIds = [...themeBlock.matchAll(/\[\s*"([a-zA-Z][\w.-]*)"\s*,/g)].map((m) => m[1]);
-  return [...new Set([...inline, ...themeIds])];
+  const exportIds = tupleKeysInBlock(fileActions, COMMAND_LIST_MARKER);
+  const rulerIds = tupleKeysInBlock(pageSetup, COMMAND_LIST_MARKER);
+  return [...new Set([...inline, ...themeIds, ...exportIds, ...rulerIds])];
 }
 
 describe("COMMANDS completeness (SPEC-062 AC-31, AC-32)", () => {

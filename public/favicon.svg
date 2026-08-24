@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64">
+  <!-- docu-edit brand mark: the accent tile with a page-and-caret glyph,
+       mirroring AppShell.vue's .brand-mark (which reads the same colours
+       from the design tokens). -->
+  <rect x="1" y="1" width="22" height="22" rx="6" fill="#1a73e8"/>
+  <g fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7.5 5.5h6L17 9v9.5h-9.5z"/>
+    <path d="M13.5 5.5V9H17"/>
+    <path d="M10 12.5h4.5"/>
+    <path d="M10 15.5h2.5"/>
+    <path d="M14.75 13.75v3.5"/>
+  </g>
+</svg>

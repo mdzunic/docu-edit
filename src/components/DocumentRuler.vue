@@ -30,16 +30,27 @@ const props = defineProps({
    * and the markers' spoken values honour it. */
   unit: { type: String, default: "cm" },
   disabled: { type: Boolean, default: false },
-  /** SPEC-063 zoom scale fraction (1 == 100 %). The ruler scales with the
-   * document so a ruler centimetre equals a document centimetre at every zoom
-   * (AC-53); its own drag math reads the live scaled rect, so it stays
-   * accurate without further adjustment (AC-54). */
+  /** SPEC-063 zoom scale fraction (1 == 100 %). The ruler lays itself out at
+   * the zoomed width and places every tick, zone and marker at its document
+   * centimetre × zoom (see `rulerCm`), so a ruler centimetre equals a document
+   * centimetre at every zoom (AC-53) while the chrome itself — labels, marker
+   * glyphs, the tab selector, the strip's height — stays unstretched, exactly
+   * as the vertical ruler's. Its drag math reads the live laid-out rect, so it
+   * stays accurate without further adjustment (AC-54). */
   zoom: { type: Number, default: 1 },
 });
 
 const emit = defineEmits(["update", "open-tabs-dialog"]);
 
 const root = useTemplateRef("root");
+
+/** A document-centimetre position or length as the CSS length it occupies on
+ * the zoomed ruler. Every geometric style in the template goes through this,
+ * so the zoom is a layout fact rather than a transform — nothing drawn on the
+ * ruler is stretched. */
+function rulerCm(cm = 0) {
+  return `${cm * (props.zoom > 0 ? props.zoom : 1)}cm`;
+}
 
 /** The marker kind being dragged, or "" while idle. */
 const dragging = ref("");
@@ -167,6 +178,9 @@ function onMarkerKey(marker = MARKERS[0], event = new KeyboardEvent("keydown")) 
   emit("update", valueFromMarkerPosition(kind, positionOf(marker) + delta, context.value, props.formatting));
 }
 
+/** The pointer's position as a document centimetre from the page's left
+ * edge: the ruler's laid-out width IS the zoomed page width, so the fraction
+ * of it under the pointer maps straight onto the page (zoom-correct, AC-54). */
 function positionCmFromEvent(event = new PointerEvent("pointermove")) {
   const el = root.value;
   if (!el) {
@@ -436,23 +450,23 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
     data-testid="document-ruler"
     role="group"
     aria-label="Ruler"
-    :style="{ width: `${pageWidthCm}cm`, transform: `scaleX(${zoom})`, transformOrigin: 'top center' }"
+    :style="{ width: rulerCm(pageWidthCm) }"
   >
     <!-- Margin zones shaded so the printable region reads at a glance. -->
     <div
       class="margin-zone"
-      :style="{ left: 0, width: `${marginLeftCm}cm` }"
+      :style="{ left: 0, width: rulerCm(marginLeftCm) }"
     />
     <div
       class="margin-zone"
-      :style="{ right: 0, width: `${marginRightCm}cm` }"
+      :style="{ right: 0, width: rulerCm(marginRightCm) }"
     />
     <div
       v-for="(tick, index) in ticks"
       :key="index"
       class="tick"
       :class="{ major: tick.major }"
-      :style="{ left: `${tick.cm}cm` }"
+      :style="{ left: rulerCm(tick.cm) }"
     >
       <span
         v-if="tick.major"
@@ -465,7 +479,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
     <div
       class="tab-lane"
       data-testid="ruler-tab-lane"
-      :style="{ left: `${marginLeftCm}cm`, right: `${marginRightCm}cm` }"
+      :style="{ left: rulerCm(marginLeftCm), right: rulerCm(marginRightCm) }"
       @click="handleTabLaneClick"
     />
     <button
@@ -489,7 +503,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       :class="{ 'tab-handle-dragging': handle.dragging, 'tab-handle-off': handle.off }"
       :data-testid="`ruler-tab-stop-${handle.index}`"
       :data-tab-alignment="handle.alignment"
-      :style="{ left: `${handle.pageCm}cm` }"
+      :style="{ left: rulerCm(handle.pageCm) }"
       :title="`${handle.alignment} tab stop — drag to move, drag off to remove`"
       :aria-label="`${handle.alignment} tab stop at ${handle.positionCm} cm`"
       :disabled="disabled"
@@ -511,7 +525,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       aria-orientation="horizontal"
       :aria-valuenow="displayValue(valueCmOf(marker))"
       :aria-valuetext="valueText(marker.label, valueCmOf(marker))"
-      :style="{ left: `${positionOf(marker)}cm` }"
+      :style="{ left: rulerCm(positionOf(marker)) }"
       :title="marker.label"
       :aria-label="marker.label"
       :disabled="disabled"
@@ -529,7 +543,7 @@ function endColumnDrag(index = 0, event = new PointerEvent("pointerup")) {
       type="button"
       class="marker marker-column-boundary"
       :data-testid="`ruler-column-boundary-${boundary.index}`"
-      :style="{ left: `${boundary.pageCm}cm` }"
+      :style="{ left: rulerCm(boundary.pageCm) }"
       title="Column boundary"
       aria-label="Column boundary"
       :disabled="disabled"

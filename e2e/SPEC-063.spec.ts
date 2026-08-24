@@ -130,7 +130,7 @@ test.describe("SPEC-063 zoom and view modes", () => {
     await expect(input).toHaveValue("120%");
   });
 
-  test("zoom is a single scale transform with a top-center origin; the ruler scales in step (AC-16, AC-53)", async ({
+  test("zoom is a single scale transform with a top-center origin; the ruler scales in step without stretching (AC-16, AC-53)", async ({
     page,
   }) => {
     await newDoc(page);
@@ -139,17 +139,37 @@ test.describe("SPEC-063 zoom and view modes", () => {
       const pages = document.querySelector<HTMLElement>(".pages--scaled") ??
         document.querySelector<HTMLElement>('[data-testid="document-pages"]')!;
       const ruler = document.querySelector<HTMLElement>('[data-testid="document-ruler"]')!;
+      const rulerBox = ruler.getBoundingClientRect();
+      // The first labelled tick after the origin ("1") and the selector glyph.
+      const labels = Array.from(ruler.querySelectorAll<HTMLElement>(".tick-label"));
+      const one = labels.find((el) => el.textContent?.trim() === "1")!;
+      const tickOne = one.parentElement!.getBoundingClientRect();
+      const selector = ruler.querySelector<HTMLElement>('[data-testid="ruler-tab-selector"]')!.getBoundingClientRect();
       return {
         transform: getComputedStyle(pages).transform,
         origin: getComputedStyle(pages).transformOrigin,
         rulerTransform: getComputedStyle(ruler).transform,
+        rulerWidth: rulerBox.width,
+        rulerHeight: rulerBox.height,
+        // Ticks are positioned inside the ruler's 1px border: measure from the
+        // padding box (clientLeft is that border width).
+        tickOneOffset: tickOne.left - (rulerBox.left + ruler.clientLeft),
+        selectorAspect: selector.width / selector.height,
       };
     });
-    // scale(1.5) on the pages, scaleX(1.5) on the ruler.
+    // scale(1.5) on the pages…
     expect(geom.transform).toBe("matrix(1.5, 0, 0, 1.5, 0, 0)");
-    expect(geom.rulerTransform).toBe("matrix(1.5, 0, 0, 1, 0, 0)");
     // transform-origin's x is the horizontal centre (its y is the top: 0px).
     expect(geom.origin.endsWith(" 0px")).toBeTruthy();
+    // …while the ruler scales by layout, not by a stretching transform: it is
+    // laid out at the zoomed page width (21cm × 1.5 at 96dpi), its 1cm tick
+    // sits 1.5cm from its left edge, and its chrome keeps its proportions —
+    // the 1.5rem height and the square tab selector are not widened.
+    expect(geom.rulerTransform).toBe("none");
+    expect(geom.rulerWidth).toBeCloseTo(21 * 1.5 * (96 / 2.54), 0);
+    expect(geom.tickOneOffset).toBeCloseTo(1.5 * (96 / 2.54), 0);
+    expect(geom.rulerHeight).toBe(24);
+    expect(geom.selectorAspect).toBeCloseTo(1, 1);
   });
 
   test("the ruler stays registered with the page at 50% and 200% (AC-53, AC-54)", async ({
@@ -179,6 +199,52 @@ test.describe("SPEC-063 zoom and view modes", () => {
       // the page (AC-53).
       expect(Math.abs(o.dxCenter)).toBeLessThanOrEqual(2);
       expect(Math.abs(o.rulerW - o.pageW)).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test("spell underlines stay on their words straight after a zoom change, without a scroll (AC-25)", async ({
+    page,
+  }) => {
+    await newDoc(page);
+    await page.getByTestId("document-content").click();
+    await page.keyboard.type("This is a teh mispeled wrod on the page.");
+    const underline = page.locator('[data-testid="spell-underline"]').first();
+    await expect(underline).toBeVisible();
+
+    // The underline's offset from its word's glyph box, in client px.
+    async function offset() {
+      return page.evaluate(() => {
+        const el = document.querySelector('[data-testid="spell-underline"]')!;
+        const word = el.getAttribute("data-word") ?? "";
+        const box = el.getBoundingClientRect();
+        const block = document.querySelector('[data-testid="document-content"] [data-section][data-block]')!;
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+          const text = node.textContent ?? "";
+          const at = text.indexOf(word);
+          if (at >= 0) {
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + word.length);
+            const glyph = range.getBoundingClientRect();
+            return { dx: box.left - glyph.left, dy: box.top - glyph.top, dw: box.width - glyph.width };
+          }
+        }
+        return { dx: NaN, dy: NaN, dw: NaN };
+      });
+    }
+
+    // The `.pages` box changes shape between the unscaled (100 %) and scaled
+    // layouts, so a rect measured in one is wrong in the other until it is
+    // re-measured: every zoom change must re-measure on its own, with no
+    // scroll to prompt it.
+    for (const pct of ["150", "50", "100", "200"]) {
+      await setZoomInput(page, pct);
+      await expect.poll(async () => Math.abs((await offset()).dx), { timeout: 3000 }).toBeLessThanOrEqual(1);
+      const o = await offset();
+      expect(Math.abs(o.dy)).toBeLessThanOrEqual(1);
+      expect(Math.abs(o.dw)).toBeLessThanOrEqual(1);
     }
   });
 

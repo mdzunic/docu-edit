@@ -114,7 +114,8 @@ function buildPng(width: number, height: number, [r, g, b]: [number, number, num
 /** Downloads via Download → PDF and returns the file bytes as latin-1 text
  * (binary-safe for substring assertions against PDF structure). */
 async function downloadPdfText(page: Page): Promise<string> {
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-pdf").click(),
@@ -456,7 +457,8 @@ test("a large export shows progress, keeps the UI responsive and completes well 
   expect(totalPages).toBeGreaterThan(10);
 
   const started = Date.now();
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByTestId("download-pdf").click();
   // The progress indicator appears while pages are extracted (AC-22)…
@@ -506,7 +508,9 @@ test("a failed export shows \"Couldn't create the PDF\" with a reason and leaves
   await page.keyboard.type("Failure test content");
   await waitForPagination(page);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   await page.getByTestId("download-pdf").click();
   const toast = page.getByTestId("toast").first();
   await expect(toast).toBeVisible({ timeout: 15_000 });

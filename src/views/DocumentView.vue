@@ -73,7 +73,6 @@ import StatisticsDialog from "../components/StatisticsDialog.vue";
 import TableHandlesOverlay from "../components/TableHandlesOverlay.vue";
 import TablePropertiesDialog from "../components/TablePropertiesDialog.vue";
 import TabStopsDialog from "../components/TabStopsDialog.vue";
-import UiIconButton from "../components/ui/UiIconButton.vue";
 import { useAutosave } from "../composables/useAutosave";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useToasts } from "../composables/useToasts";
@@ -118,6 +117,7 @@ import { useDocumentLanguage } from "./document/useDocumentLanguage";
 import { useStyleManager } from "./document/useStyleManager";
 import { useContextMenus } from "./document/useContextMenus";
 import { useFileActions } from "./document/useFileActions";
+import { useOverlayRemeasure } from "./document/useOverlayRemeasure";
 import { usePageSetupDialogs } from "./document/usePageSetupDialogs";
 import { useVerticalRuler } from "./document/useVerticalRuler";
 import { useOutlinePane } from "./document/useOutlinePane";
@@ -822,7 +822,7 @@ const {
   chartAtClientPoint,
   chartDataSheetInitial,
   chartOptionsInitial,
-} = useCharts({ ...editorContext, getCellSelection: () => cellSelection.value });
+} = useCharts({ ...editorContext, getCellSelection: () => cellSelection.value, caretPosition });
 
 // Equations (SPEC-056): Insert → Equation / Display equation and Alt+=. The
 // session's editing surface, op dispatch and overlay live in the composable
@@ -1136,6 +1136,9 @@ function handleScroll() {
   scrollHooks.forEach((cb) => cb());
 }
 
+// Zoom moves every measured overlay just as a scroll does — policy in useOverlayRemeasure.
+const { remeasureDrawingHandles } = useOverlayRemeasure({ ...editorContext, scrollHooks, remeasureShapeHandles, remeasureImageHandles, remeasureChartHandles });
+
 function handleSelectionChange() {
   const root = contentRoot.value;
   // During composition the DOM temporarily contains preedit text, so model
@@ -1366,7 +1369,7 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
   // insertion it reverses does.
   void scrollModelCaretIntoView(caret);
   // A snapshot can move (or remove) a selected drawing; handles re-find it.
-  void nextTick().then(() => { remeasureShapeHandles(); remeasureImageHandles(); remeasureChartHandles(); });
+  void nextTick().then(remeasureDrawingHandles);
   fireFindRefresh();
 }
 
@@ -1884,8 +1887,9 @@ const {
 });
 
 // --- page setup, columns and ruler visibility (SPEC-027, SPEC-030) ----------
-// The Page setup and Format → Columns dialogs, the "Show/hide ruler" toggle
-// and the ruler's caret-section geometry live in usePageSetupDialogs.
+// The Page setup and Format → Columns dialogs, the ruler toggles (both
+// together, or each alone) and the ruler's caret-section geometry live in
+// usePageSetupDialogs.
 // caretSectionIndex is declared later (with the caret-page tracking), so it
 // comes in as a lazy getter — read only when a dialog opens or a ruler
 // computed evaluates, after setup.
@@ -1898,7 +1902,9 @@ const {
   handlePageSetupApply,
   openColumnsDialog,
   handleColumnsApply,
-  toggleRuler,
+  showVerticalRuler: showVerticalRulerPref,
+  rulersCheckState,
+  commands: rulerCommands,
   setMeasurementUnit,
   rulerPageWidthCm,
   rulerMarginLeftCm,
@@ -2612,6 +2618,7 @@ const {
   storageWarningOpen,
   handleTitleUpdate,
   handleDownload,
+  commands: fileExportCommands,
   closeConversionReport,
   saveCurrentAsTemplate,
   deleteOpenDocument,
@@ -3100,7 +3107,7 @@ const { themeMenu, themeCommands } = useThemeControls({ ...editorContext, invali
 const preferencesDialog = usePreferencesDialog();
 const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059 AC-50); wiring in useThemeControls.
   ...zoomView.commands, ...viewModes.commands, // SPEC-063 zoom + view-mode command ids (AC-11, AC-33, AC-34).
-  // File
+  ...fileExportCommands, // File — Export command ids; wiring in useFileActions.
   ["file.print", openPrintPreview],
   ["file.page-setup", openPageSetup],
   ["file.properties", openProperties],
@@ -3127,7 +3134,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["edit.autocorrect-smart-quotes", toggleAutocorrectSmartQuotes],
   ["edit.autocorrect-dashes", toggleAutocorrectDashes],
   // View
-  ["view.ruler", toggleRuler],
+  ...rulerCommands, // View — Rulers/Horizontal/Vertical toggles; wiring in usePageSetupDialogs.
   ["view.outline-pane", () => toggleSidePane("outline")],
   ["view.styles-pane", () => toggleSidePane("styles")],
   ["view.comments-pane", () => toggleSidePane("comments")],
@@ -3292,21 +3299,14 @@ function handleMenuCommand(id = "") {
     :format-badge="formatBadge"
     @update:document-title="handleTitleUpdate"
   >
-    <template #app-bar-leading>
-      <UiIconButton
-        icon="close"
-        label="Close document"
-        data-testid="close-document"
-        :busy="closing"
-        @click="closeOpenDocument"
-      />
-    </template>
     <template #app-bar-actions>
       <EditorSaveStatus
         :save-state="saveState"
         :save-state-text="saveStateText"
         :download-format="downloadFormat"
+        :closing="closing"
         @download="handleDownload"
+        @close="closeOpenDocument"
       />
     </template>
     <template #menubar>
@@ -3315,7 +3315,9 @@ function handleMenuCommand(id = "") {
         :undo-redo="undoRedoState"
         :autocorrect-smart-quotes="autocorrectSettings.smartQuotes"
         :autocorrect-dashes="autocorrectSettings.dashes"
-        :show-ruler="doc.showRuler !== false"
+        :show-ruler="rulersCheckState"
+        :show-horizontal-ruler="doc.showRuler !== false"
+        :show-vertical-ruler="showVerticalRulerPref"
         :outline-pane-open="outlinePaneOpen"
         :styles-pane-open="stylesPaneOpen"
         :comments-pane-open="commentsPaneOpen"
@@ -3972,6 +3974,7 @@ function handleMenuCommand(id = "") {
       label="Image formatting"
       :left="imageToolbarStyle().left"
       :top="imageToolbarStyle().top"
+      :lift="imageToolbarStyle().placement === 'above'"
     >
       <ImageToolbar
         :wrap="imageAt(doc, imageSelection)?.wrap || 'inline'"
@@ -4019,6 +4022,7 @@ function handleMenuCommand(id = "") {
       label="Chart formatting"
       :left="chartToolbarStyle().left"
       :top="chartToolbarStyle().top"
+      :lift="chartToolbarStyle().placement === 'above'"
     >
       <ChartToolbar
         :unsupported="chartAt(doc, chartSelection)?.unsupportedChartXml !== undefined"
@@ -4422,8 +4426,9 @@ function handleMenuCommand(id = "") {
    centres (and left-aligns/scrolls when the footprint overflows the column)
    exactly as the page does, keeping a ruler centimetre over the document
    centimetre it measures. When scaled it takes the footprint width and centres
-   the ruler on the footprint centre (its scoped `margin: 0 auto` neutralised)
-   so the scaleX pivot lands there too; at 100 % it is a plain passthrough. */
+   the ruler — which lays itself out at the zoomed page width, no transform —
+   on the footprint centre (its scoped `margin: 0 auto` neutralised); at 100 %
+   it is a plain passthrough. */
 .ruler-sizer--scaled {
   margin: 0 auto;
   display: flex;
@@ -4433,9 +4438,8 @@ function handleMenuCommand(id = "") {
 .ruler-sizer--scaled :deep(.ruler) {
   margin-left: 0;
   margin-right: 0;
-  /* Keep the ruler's natural (unscaled) layout width so its centimetre ticks
-     stay correct and only the scaleX transform sizes it — never let the flex
-     box shrink it to the (smaller) footprint at zoom < 100 %. */
+  /* The ruler's layout width is its zoomed page width — never let the flex
+     box shrink it. */
   flex-shrink: 0;
 }
 

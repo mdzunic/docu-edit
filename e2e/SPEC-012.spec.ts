@@ -201,7 +201,9 @@ test("bold round-trips through the .docx and .odt writers (apply, save, re-open 
   await page.keyboard.press(`${MOD}+b`);
   await waitForSaved(page);
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const docxDownload = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-docx").click(),
@@ -209,7 +211,9 @@ test("bold round-trips through the .docx and .odt writers (apply, save, re-open 
   const docxPath = await docxDownload.path();
   expect(docxPath).toBeTruthy();
 
-  await page.getByTestId("download-menu").click();
+  await page.getByTestId("menu-title-file").click();
+
+  await page.getByTestId("file-menu-export").click();
   const odtDownload = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("download-odt").click(),

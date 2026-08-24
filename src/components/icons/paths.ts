@@ -110,6 +110,8 @@ export const ICON_PATHS: Record<string, string[]> = {
   "more-horizontal": ["M5 10h.01", "M10 10h.01", "M15 10h.01"],
   "more-vertical": ["M10 5v.01", "M10 10v.01", "M10 15v.01"],
   settings: ["M10 8a2 2 0 1 1-2 2 2 2 0 0 1 2-2z", "M10 3v2", "M10 15v2", "M3 10h2", "M15 10h2", "M5 5l1.5 1.5", "M13.5 13.5L15 15", "M15 5l-1.5 1.5", "M6.5 13.5L5 15"],
+  // The rename affordance on the app bar's document title (AppShell.vue).
+  pencil: ["M4 16l1-4 9-9 3 3-9 9z", "M12 5l3 3"],
   warning: ["M10 4l6 11H4z", "M10 9v3", "M10 14h.01"],
   error: ["M10 4a6 6 0 1 1-6 6 6 6 0 0 1 6-6z", "M7.5 7.5l5 5", "M12.5 7.5l-5 5"],
   info: ["M10 4a6 6 0 1 1-6 6 6 6 0 0 1 6-6z", "M10 9v4", "M10 6.5h.01"],
