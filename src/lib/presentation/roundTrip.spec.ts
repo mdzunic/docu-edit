@@ -21,15 +21,21 @@ import { writePptx } from "./pptx/writer";
 import { writeOdp } from "./odp/writer";
 import { assemblePresentation, presentationFormatOf, readPresentationBytes } from "./open";
 import { detectPackage } from "../core/packageDetect";
-import { slideCount } from "./model";
+import { slideCount, type Slide } from "./model";
+import { slideOutline } from "./slideModel";
 
 const EXPECTED_OUTLINE = FIXTURE_SLIDES.map((slide) => ({
   title: "title" in slide ? slide.title : undefined,
   lines: [...slide.lines],
 }));
 
-function outlineOf(slides: { title?: string; lines: string[] }[]): { title: string | undefined; lines: string[] }[] {
-  return slides.map((slide) => ({ title: slide.title, lines: slide.lines }));
+/** The prep milestone's outline observable, now DERIVED from the frame model
+ * via `slideOutline` (AC-4) — the round-trip's expected strings are unchanged. */
+function outlineOf(slides: Slide[]): { title: string | undefined; lines: string[] }[] {
+  return slides.map((slide) => {
+    const outline = slideOutline(slide);
+    return { title: outline.title, lines: outline.lines };
+  });
 }
 
 describe("pptx reader", () => {
@@ -141,10 +147,14 @@ describe("presentationFormatOf / assemblePresentation", () => {
 
     const withoutProperties = assemblePresentation("Bare", "pptx", {
       slides: [],
+      slideWidthCm: 33.867,
+      slideHeightCm: 19.05,
+      media: [],
       opaque: [],
       properties: {},
     });
     expect("properties" in withoutProperties).toBe(false);
+    expect("media" in withoutProperties).toBe(false);
   });
 
   it("stays JSON-serialisable (the store's persistence contract)", async () => {

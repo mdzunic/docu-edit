@@ -3,7 +3,8 @@
 // PresentationModel ready to store and navigate to — the presentation twin
 // of openDocument.ts's assembleDocumentModel tail. The app-level funnel
 // (openDocument.ts) owns choosing between products; this module owns
-// everything from "it's a presentation" down.
+// everything from "it's a presentation" down, plus the SPEC-079 migration of
+// preparation-milestone records.
 import type { PackageInfo } from "../core/packageDetect";
 import {
   DEFAULT_PRESENTATION_TITLE,
@@ -13,6 +14,8 @@ import {
 } from "./model";
 import { parsePptx, PPTX_MAIN_CONTENT_TYPE, PptxOpenError } from "./pptx/reader";
 import { ODP_MIMETYPE, OdpOpenError, OTP_MIMETYPE, parseOdp } from "./odp/reader";
+import { writePptx } from "./pptx/writer";
+import { writeOdp } from "./odp/writer";
 
 export { PptxOpenError, OdpOpenError };
 
@@ -43,12 +46,22 @@ export function assemblePresentation(
     title,
     format,
     slides: parsed.slides,
+    slideWidthCm: parsed.slideWidthCm,
+    slideHeightCm: parsed.slideHeightCm,
     opaque: parsed.opaque,
   };
+  if (parsed.media.length > 0) {
+    model.media = parsed.media;
+  }
   if (Object.keys(parsed.properties).length > 0) {
     model.properties = parsed.properties;
   }
   return model;
+}
+
+/** Re-parses a package from a format's bytes. */
+async function parseBytes(bytes: Uint8Array | ArrayBuffer, format: PresentationFormat): Promise<ParsedPresentation> {
+  return format === "pptx" ? parsePptx(bytes) : parseOdp(bytes);
 }
 
 /** Reads and parses presentation bytes directly into a new
@@ -60,6 +73,20 @@ export async function readPresentationBytes(
   format: PresentationFormat,
   title: string = DEFAULT_PRESENTATION_TITLE,
 ): Promise<PresentationModel> {
-  const parsed = format === "pptx" ? await parsePptx(bytes) : await parseOdp(bytes);
+  const parsed = await parseBytes(bytes, format);
   return assemblePresentation(title, format, parsed);
+}
+
+/** Upgrades a preparation-milestone record (its model still holding the
+ * outline-shaped slides, no `slideWidthCm`) to the SPEC-079 slide model
+ * (AC-54..56): re-emit its retained package via the format's writer (pure
+ * part re-emission — nothing about the writers changes), re-parse via the new
+ * reader, and keep the same id/title so the store overwrites in place. No
+ * data is lost — the retained `opaque` is the source of truth. */
+export async function upgradePresentationModel(model: PresentationModel): Promise<PresentationModel> {
+  const { bytes } = model.format === "odp" ? await writeOdp(model) : await writePptx(model);
+  const parsed = await parseBytes(bytes, model.format);
+  const upgraded = assemblePresentation(model.title, model.format, parsed);
+  upgraded.id = model.id;
+  return upgraded;
 }

@@ -1,17 +1,48 @@
-// The `.odp` -> PresentationModel pipeline (preparation milestone): verify
-// the package's `mimetype` entry declares an OpenDocument presentation,
-// walk content.xml's office:presentation draw:pages, and extract a
-// read-only text outline per slide. Every package part is retained
-// verbatim (SPEC-008 applied wholesale), `mimetype` included — the writer
-// re-emits them with `mimetype` first and STOREd.
+// The `.odp` -> PresentationModel pipeline (SPEC-079): verify the package's
+// `mimetype`, read the master page's page size, and walk content.xml's
+// office:presentation draw:pages into WYSIWYG `Slide`s — frames with
+// geometry, text with effective formatting resolved through ODF style chains
+// (style:style parent-style-name across content.xml automatic styles and
+// styles.xml), images, shapes, groups and foreign placeholder boxes. The
+// whole package is retained verbatim in `opaque` so a no-edit download stays
+// byte-identical. Reading is tolerant: an unreadable page still yields a
+// slide.
 import { bytesToBase64Async, type OpaquePart } from "../../core/packageParts";
 import { readOdfMimetype } from "../../core/packageDetect";
 import { parseOdfCustomProperties, parseOdfMeta } from "../../core/odfMeta";
 import type { DocumentProperties } from "../../core/documentProperties";
+import type { MediaPart } from "../../core/media";
+import { contentTypeForPartName } from "../../core/media";
 import { unzip, ZipError } from "../../core/zip";
-import { firstChildElement, parseXml, XmlParseError } from "../../core/xml";
-import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TEXT_NAMESPACE, presentationAttr } from "../../core/odfXml";
-import type { ParsedPresentation, SlidePreview } from "../model";
+import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../../core/xml";
+import {
+  DRAW_NAMESPACE,
+  OFFICE_NAMESPACE,
+  STYLE_NAMESPACE,
+  TABLE_NAMESPACE,
+  TEXT_NAMESPACE,
+  drawAttr,
+  foAttr,
+  odfColorToCss,
+  odfLengthToCm,
+  odfLengthToPt,
+  presentationAttr,
+  styleAttr,
+  svgAttr,
+  xlinkAttr,
+} from "../../core/odfXml";
+import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
+import type { ShapeGeometry } from "../../core/shapes";
+import {
+  DEFAULT_SLIDE_HEIGHT_CM,
+  DEFAULT_SLIDE_WIDTH_CM,
+  type ParsedPresentation,
+  type PlaceholderRole,
+  type Slide,
+  type SlideFrame,
+  type SlideParagraph,
+  type SlideRun,
+} from "../model";
 
 export class OdpOpenError extends Error {}
 
@@ -19,55 +50,490 @@ export const INVALID_ODP_MESSAGE = "This file isn't an OpenDocument presentation
 
 /** The package mimetype identifying an OpenDocument presentation. */
 export const ODP_MIMETYPE = "application/vnd.oasis.opendocument.presentation";
-/** An `.otp` template's mimetype — same package shape, opened the same way
- * (the same convention as the odt reader's OTT handling). */
+/** An `.otp` template's mimetype — same package shape, opened the same way. */
 export const OTP_MIMETYPE = "application/vnd.oasis.opendocument.presentation-template";
+
+const DEFAULT_FONT_SIZE_PT = 18;
 
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
-/** Whether an element sits inside a title-classed frame — walked upward so
- * text nested in a title frame's text box attributes correctly. */
-function inTitleFrame(el: Element, pageEl: Element): boolean {
-  for (let node = el.parentElement; node && node !== pageEl; node = node.parentElement) {
-    if (
-      node.namespaceURI === DRAW_NAMESPACE &&
-      node.localName === "frame" &&
-      presentationAttr(node, "class") === "title"
-    ) {
-      return true;
-    }
-  }
-  return false;
+interface RunProps {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontFamily?: string;
+  sizePt?: number;
+  color?: string;
 }
 
-/** One draw:page's preview: title from title-classed frames, every other
- * text:p's text as lines, in document order. */
-function pagePreviewOf(pageEl: Element): SlidePreview {
-  const preview: SlidePreview = { lines: [] };
-  const titleParts: string[] = [];
-  const paragraphs = pageEl.getElementsByTagNameNS(TEXT_NAMESPACE, "p");
-  for (const paragraph of Array.from(paragraphs)) {
-    const text = (paragraph.textContent ?? "").trim();
-    if (text.length === 0) {
-      continue;
-    }
-    if (inTitleFrame(paragraph, pageEl)) {
-      titleParts.push(text);
-    } else {
-      preview.lines.push(text);
-    }
-  }
-  if (titleParts.length > 0) {
-    preview.title = titleParts.join(" ");
-  }
-  return preview;
+interface GraphicProps {
+  fill?: string; // "solid" | "none" | ...
+  fillColor?: string;
+  stroke?: string; // "solid" | "none" | "dash"
+  strokeColor?: string;
+  strokeWidthPt?: number;
 }
 
-/** Parses an `.odp` file's bytes into the slide previews + retained parts
- * the presentation model needs. Throws `OdpOpenError` for anything that
- * isn't a valid, openable `.odp` package. */
+interface StyleEntry {
+  parent?: string;
+  text: RunProps;
+  align?: SlideParagraph["align"];
+  graphic: GraphicProps;
+}
+
+/** Indexes every `style:style` (by name) from content.xml's automatic styles
+ * and styles.xml so a run can resolve through its `parent-style-name` chain. */
+class StyleResolver {
+  private readonly styles = new Map<string, StyleEntry>();
+  private readonly cache = new Map<string, RunProps>();
+
+  add(styleEl: Element): void {
+    const name = styleAttr(styleEl, "name");
+    if (!name) {
+      return;
+    }
+    const parent = styleAttr(styleEl, "parent-style-name") ?? undefined;
+    const entry: StyleEntry = { parent, text: {}, graphic: {} };
+    const textProps = firstChildElement(styleEl, STYLE_NAMESPACE, "text-properties");
+    if (textProps) {
+      entry.text = readTextProps(textProps);
+    }
+    const paraProps = firstChildElement(styleEl, STYLE_NAMESPACE, "paragraph-properties");
+    const align = paraProps ? alignOf(foAttr(paraProps, "text-align")) : undefined;
+    if (align) {
+      entry.align = align;
+    }
+    const graphicProps = firstChildElement(styleEl, STYLE_NAMESPACE, "graphic-properties");
+    if (graphicProps) {
+      entry.graphic = readGraphicProps(graphicProps);
+    }
+    this.styles.set(name, entry);
+  }
+
+  private resolveGraphic(name: string | null | undefined): GraphicProps {
+    if (!name) {
+      return {};
+    }
+    const entry = this.styles.get(name);
+    if (!entry) {
+      return {};
+    }
+    const base = entry.parent ? this.resolveGraphic(entry.parent) : {};
+    return { ...base, ...entry.graphic };
+  }
+
+  /** The resolved solid fill colour of a graphic style, or undefined when the
+   * style has no fill (draw:fill="none") or no colour. */
+  fillColor(name: string | null | undefined): string | undefined {
+    const graphic = this.resolveGraphic(name);
+    if (graphic.fill === "none") {
+      return undefined;
+    }
+    return graphic.fillColor;
+  }
+
+  /** The resolved stroke of a graphic style, or undefined for no stroke. */
+  stroke(name: string | null | undefined): { color: string; widthPt: number } | undefined {
+    const graphic = this.resolveGraphic(name);
+    if (graphic.stroke === "none" || !graphic.strokeColor) {
+      return undefined;
+    }
+    return { color: graphic.strokeColor, widthPt: graphic.strokeWidthPt ?? 0.75 };
+  }
+
+  /** The effective run properties of a style, merging its parent chain. */
+  resolve(name: string | null | undefined): RunProps {
+    if (!name) {
+      return {};
+    }
+    const cached = this.cache.get(name);
+    if (cached) {
+      return cached;
+    }
+    const entry = this.styles.get(name);
+    if (!entry) {
+      return {};
+    }
+    const base = entry.parent ? this.resolve(entry.parent) : {};
+    const merged = mergeProps(base, entry.text);
+    this.cache.set(name, merged);
+    return merged;
+  }
+
+  align(name: string | null | undefined): SlideParagraph["align"] {
+    let current = name ?? undefined;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const entry = this.styles.get(current);
+      if (entry?.align) {
+        return entry.align;
+      }
+      current = entry?.parent;
+    }
+    return undefined;
+  }
+}
+
+function readTextProps(textProps: Element): RunProps {
+  const props: RunProps = {};
+  const size = odfLengthToPt(foAttr(textProps, "font-size"));
+  if (size !== undefined) {
+    props.sizePt = size;
+  }
+  const weight = foAttr(textProps, "font-weight");
+  if (weight) {
+    props.bold = weight === "bold" || Number(weight) >= 600;
+  }
+  const style = foAttr(textProps, "font-style");
+  if (style) {
+    props.italic = style === "italic" || style === "oblique";
+  }
+  const underline = styleAttr(textProps, "text-underline-style");
+  if (underline) {
+    props.underline = underline !== "none";
+  }
+  const color = odfColorToCss(foAttr(textProps, "color"));
+  if (color) {
+    props.color = color;
+  }
+  const font = styleAttr(textProps, "font-name") ?? foAttr(textProps, "font-family");
+  if (font) {
+    props.fontFamily = font;
+  }
+  return props;
+}
+
+function readGraphicProps(props: Element): GraphicProps {
+  const graphic: GraphicProps = {};
+  const fill = drawAttr(props, "fill");
+  if (fill) graphic.fill = fill;
+  const fillColor = odfColorToCss(drawAttr(props, "fill-color"));
+  if (fillColor) graphic.fillColor = fillColor;
+  const stroke = drawAttr(props, "stroke");
+  if (stroke) graphic.stroke = stroke;
+  const strokeColor = odfColorToCss(svgAttr(props, "stroke-color"));
+  if (strokeColor) graphic.strokeColor = strokeColor;
+  const widthCm = odfLengthToCm(svgAttr(props, "stroke-width"));
+  if (widthCm !== undefined) graphic.strokeWidthPt = (widthCm / 2.54) * 72;
+  return graphic;
+}
+
+function mergeProps(base: RunProps, over: RunProps): RunProps {
+  return {
+    bold: over.bold ?? base.bold,
+    italic: over.italic ?? base.italic,
+    underline: over.underline ?? base.underline,
+    fontFamily: over.fontFamily ?? base.fontFamily,
+    sizePt: over.sizePt ?? base.sizePt,
+    color: over.color ?? base.color,
+  };
+}
+
+function alignOf(value: string | null): SlideParagraph["align"] {
+  if (value === "center") return "center";
+  if (value === "end" || value === "right") return "right";
+  if (value === "justify") return "justify";
+  if (value === "start" || value === "left") return "left";
+  return undefined;
+}
+
+function roleOf(cls: string | null): PlaceholderRole | undefined {
+  if (!cls) {
+    return undefined;
+  }
+  if (cls === "title") return "title";
+  if (cls === "subtitle") return "subtitle";
+  if (cls === "outline" || cls === "body" || cls === "text" || cls === "notes") return "body";
+  return "other";
+}
+
+function runFromProps(text: string, props: RunProps): SlideRun {
+  const run: SlideRun = { text };
+  if (props.bold) run.bold = true;
+  if (props.italic) run.italic = true;
+  if (props.underline) run.underline = true;
+  if (props.fontFamily) run.fontFamily = props.fontFamily;
+  if (props.sizePt !== undefined && props.sizePt !== DEFAULT_FONT_SIZE_PT) run.sizePt = props.sizePt;
+  if (props.color) run.color = props.color;
+  return run;
+}
+
+/** Parses a `draw:text-box`'s `text:p`/`text:list` paragraphs into
+ * SlideParagraphs, resolving each run through the style chain. */
+function parseTextBox(textBox: Element, role: PlaceholderRole | undefined, styles: StyleResolver): SlideParagraph[] {
+  const paragraphs: SlideParagraph[] = [];
+  const walk = (container: Element): void => {
+    for (const child of Array.from(container.children)) {
+      if (child.namespaceURI !== TEXT_NAMESPACE) {
+        continue;
+      }
+      if (child.localName === "p") {
+        const para = parseParagraph(child, role, styles);
+        if (para.runs.length > 0) {
+          paragraphs.push(para);
+        }
+      } else if (child.localName === "list" || child.localName === "list-item") {
+        walk(child);
+      }
+    }
+  };
+  walk(textBox);
+  return paragraphs;
+}
+
+function parseParagraph(p: Element, role: PlaceholderRole | undefined, styles: StyleResolver): SlideParagraph {
+  const paraStyleName = textStyleName(p);
+  const paraProps = styles.resolve(paraStyleName);
+  const runs: SlideRun[] = [];
+  for (const node of Array.from(p.childNodes)) {
+    if (node.nodeType === 3) {
+      const text = node.textContent ?? "";
+      if (text.length > 0) {
+        runs.push(runFromProps(text, paraProps));
+      }
+    } else if (node.nodeType === 1) {
+      const el = node as Element;
+      if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "span") {
+        const spanProps = mergeProps(paraProps, styles.resolve(textStyleName(el)));
+        const text = el.textContent ?? "";
+        if (text.length > 0) {
+          runs.push(runFromProps(text, spanProps));
+        }
+      } else if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "a") {
+        // A hyperlink renders as plain styled text (out of scope: real links).
+        const text = el.textContent ?? "";
+        if (text.length > 0) {
+          runs.push(runFromProps(text, paraProps));
+        }
+      }
+    }
+  }
+  const para: SlideParagraph = { runs };
+  const align = styles.align(paraStyleName);
+  if (align) para.align = align;
+  const bullet = role === "body" ? "disc" : undefined;
+  if (bullet) para.bullet = bullet;
+  return para;
+}
+
+function textStyleName(el: Element): string | null {
+  return el.getAttributeNS(TEXT_NAMESPACE, "style-name");
+}
+
+interface Geometry {
+  xCm: number;
+  yCm: number;
+  widthCm: number;
+  heightCm: number;
+}
+
+function geometryOf(el: Element): Geometry | undefined {
+  const x = odfLengthToCm(svgAttr(el, "x"));
+  const y = odfLengthToCm(svgAttr(el, "y"));
+  const w = odfLengthToCm(svgAttr(el, "width"));
+  const h = odfLengthToCm(svgAttr(el, "height"));
+  if (x === undefined || y === undefined || w === undefined || h === undefined) {
+    return undefined;
+  }
+  return { xCm: x, yCm: y, widthCm: w, heightCm: h };
+}
+
+interface OdpContext {
+  styles: StyleResolver;
+  masterPh: Map<string, Geometry>;
+  media: Map<string, MediaPart>;
+  parts: Map<string, Uint8Array>;
+}
+
+function frameBase(geom: Geometry): { id: string; xCm: number; yCm: number; widthCm: number; heightCm: number } {
+  return { id: crypto.randomUUID(), xCm: geom.xCm, yCm: geom.yCm, widthCm: geom.widthCm, heightCm: geom.heightCm };
+}
+
+/** Parses one shape element into a frame, or null for a non-shape. */
+function parseFrameChild(el: Element, ctx: OdpContext): SlideFrame | null {
+  if (el.namespaceURI !== DRAW_NAMESPACE) {
+    return null;
+  }
+  switch (el.localName) {
+    case "frame":
+      return parseDrawFrame(el, ctx);
+    case "custom-shape":
+      return parseCustomShape(el, ctx);
+    case "rect":
+    case "ellipse":
+    case "circle":
+      return parseBasicShape(el, ctx);
+    case "line":
+      return parseLine(el, ctx);
+    case "g":
+      return parseGroup(el, ctx);
+    default:
+      return foreignOf(el, "Object");
+  }
+}
+
+function graphicFillColor(el: Element, ctx: OdpContext): string | undefined {
+  const styleName = drawAttr(el, "style-name");
+  return styleName ? ctx.styles.fillColor(styleName) : undefined;
+}
+
+function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
+  const cls = presentationAttr(frame, "class");
+  const role = roleOf(cls);
+  let geom = geometryOf(frame);
+  if (!geom && cls) {
+    geom = ctx.masterPh.get(cls); // AC-21: master page placeholder fallback.
+  }
+  const base = frameBase(geom ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
+
+  const image = firstChildElement(frame, DRAW_NAMESPACE, "image");
+  if (image) {
+    const href = xlinkAttr(image, "href");
+    const partPath = href ? normaliseHref(href) : undefined;
+    if (partPath && collectMedia(partPath, ctx)) {
+      return { ...base, kind: "image", mediaId: partPath };
+    }
+    return foreignAt(frame, base, "Media");
+  }
+
+  const table = frame.getElementsByTagNameNS(TABLE_NAMESPACE, "table")[0];
+  if (table) {
+    return foreignAt(frame, base, "Table");
+  }
+
+  const textBox = firstChildElement(frame, DRAW_NAMESPACE, "text-box");
+  if (textBox) {
+    const paragraphs = parseTextBox(textBox, role, ctx.styles);
+    const out: SlideFrame = { ...base, kind: "text", paragraphs };
+    if (role) out.role = role;
+    return out;
+  }
+  return foreignAt(frame, base, "Object");
+}
+
+function parseCustomShape(el: Element, ctx: OdpContext): SlideFrame {
+  const geom = geometryOf(el);
+  const base = frameBase(geom ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
+  const enhanced = firstChildElement(el, DRAW_NAMESPACE, "enhanced-geometry");
+  const drawType = enhanced ? drawAttr(enhanced, "type") : null;
+  const geometry = drawType ? DRAW_TYPE_TO_GEOMETRY[drawType] : undefined;
+  if (!geom || !geometry) {
+    return foreignAt(el, base, "Object");
+  }
+  return shapeFrame(el, base, geometry, ctx);
+}
+
+function parseBasicShape(el: Element, ctx: OdpContext): SlideFrame {
+  const geom = geometryOf(el);
+  const base = frameBase(geom ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
+  const geometry = el.localName === "rect" ? "rect" : "ellipse";
+  if (!geom) {
+    return foreignAt(el, base, "Object");
+  }
+  return shapeFrame(el, base, geometry, ctx);
+}
+
+function shapeFrame(
+  el: Element,
+  base: ReturnType<typeof frameBase>,
+  geometry: ShapeGeometry,
+  ctx: OdpContext,
+): SlideFrame {
+  const frame: SlideFrame = { ...base, kind: "shape", geometry };
+  const fill = graphicFillColor(el, ctx);
+  if (fill) frame.fill = { type: "solid", color: fill };
+  const stroke = ctx.styles.stroke(drawAttr(el, "style-name"));
+  if (stroke) frame.stroke = stroke;
+  const textBox = firstChildElement(el, DRAW_NAMESPACE, "text-box") ?? el;
+  const paragraphs = parseTextBox(textBox, undefined, ctx.styles);
+  if (paragraphs.length > 0) frame.paragraphs = paragraphs;
+  return frame;
+}
+
+function parseLine(el: Element, ctx: OdpContext): SlideFrame {
+  const x1 = odfLengthToCm(svgAttr(el, "x1")) ?? 0;
+  const y1 = odfLengthToCm(svgAttr(el, "y1")) ?? 0;
+  const x2 = odfLengthToCm(svgAttr(el, "x2")) ?? 0;
+  const y2 = odfLengthToCm(svgAttr(el, "y2")) ?? 0;
+  const base = frameBase({
+    xCm: Math.min(x1, x2),
+    yCm: Math.min(y1, y2),
+    widthCm: Math.abs(x2 - x1),
+    heightCm: Math.abs(y2 - y1),
+  });
+  const frame: SlideFrame = { ...base, kind: "shape", geometry: "line" };
+  const stroke = ctx.styles.stroke(drawAttr(el, "style-name"));
+  if (stroke) frame.stroke = stroke;
+  return frame;
+}
+
+function parseGroup(el: Element, ctx: OdpContext): SlideFrame {
+  const children: SlideFrame[] = [];
+  for (const child of Array.from(el.children)) {
+    const frame = parseFrameChild(child, ctx);
+    if (frame) {
+      children.push(frame);
+    }
+  }
+  // A draw:g has no box of its own; its bounds are its children's union.
+  const bounds = unionBounds(children);
+  return { ...frameBase(bounds), kind: "group", children, xml: serializeElement(el) };
+}
+
+function unionBounds(frames: SlideFrame[]): Geometry {
+  if (frames.length === 0) {
+    return { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 };
+  }
+  const minX = Math.min(...frames.map((f) => f.xCm));
+  const minY = Math.min(...frames.map((f) => f.yCm));
+  const maxX = Math.max(...frames.map((f) => f.xCm + f.widthCm));
+  const maxY = Math.max(...frames.map((f) => f.yCm + f.heightCm));
+  return { xCm: minX, yCm: minY, widthCm: maxX - minX, heightCm: maxY - minY };
+}
+
+function foreignOf(el: Element, label: string): SlideFrame {
+  const geom = geometryOf(el);
+  const base = frameBase(geom ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
+  return foreignAt(el, base, label);
+}
+
+function foreignAt(el: Element, base: ReturnType<typeof frameBase>, label: string): SlideFrame {
+  const frame: SlideFrame = { ...base, kind: "foreign", xml: serializeElement(el), label };
+  if (!(base.widthCm > 0 && base.heightCm > 0)) {
+    frame.noBounds = true;
+  }
+  return frame;
+}
+
+function normaliseHref(href: string): string {
+  return href.replace(/^\.\//, "").replace(/^\//, "");
+}
+
+function collectMedia(partPath: string, ctx: OdpContext): boolean {
+  if (ctx.media.has(partPath)) {
+    return true;
+  }
+  const raw = ctx.parts.get(partPath);
+  if (!raw) {
+    return false;
+  }
+  const contentType = contentTypeForPartName(partPath) ?? "image/png";
+  ctx.media.set(partPath, { mediaId: partPath, contentType, data: base64Sync(raw) });
+  return true;
+}
+
+function base64Sync(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return typeof btoa === "function" ? btoa(binary) : Buffer.from(bytes).toString("base64");
+}
+
+/** Parses an `.odp` file's bytes into the slide model. */
 export async function parseOdp(data: ArrayBuffer | Uint8Array): Promise<ParsedPresentation> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   let parts: Map<string, Uint8Array>;
@@ -103,15 +569,34 @@ export async function parseOdp(data: ArrayBuffer | Uint8Array): Promise<ParsedPr
     throw new OdpOpenError(INVALID_ODP_MESSAGE);
   }
 
-  const slides: SlidePreview[] = [];
-  for (const child of Array.from(presentation.children)) {
-    if (child.namespaceURI === DRAW_NAMESPACE && child.localName === "page") {
-      slides.push(pagePreviewOf(child));
+  // Styles: content.xml automatic styles + styles.xml (styles + automatic).
+  const styles = new StyleResolver();
+  addStylesFrom(contentDoc.documentElement, styles);
+  const stylesBytes = parts.get("styles.xml");
+  let stylesDoc: Document | undefined;
+  if (stylesBytes) {
+    try {
+      stylesDoc = parseXml(decodeUtf8(stylesBytes));
+      addStylesFrom(stylesDoc.documentElement, styles);
+    } catch {
+      stylesDoc = undefined;
     }
   }
 
-  // Document properties from meta.xml (SPEC-041) — the same merge the odt
-  // reader performs. Tolerant: metadata never blocks opening.
+  const masterPh = buildMasterPlaceholders(stylesDoc);
+  const { widthCm, heightCm } = pageSize(stylesDoc, contentDoc);
+
+  const media = new Map<string, MediaPart>();
+  const ctx: OdpContext = { styles, masterPh, media, parts };
+
+  const slides: Slide[] = [];
+  for (const child of Array.from(presentation.children)) {
+    if (child.namespaceURI === DRAW_NAMESPACE && child.localName === "page") {
+      slides.push(parsePage(child, ctx));
+    }
+  }
+
+  // Document properties from meta.xml.
   const metaBytes = parts.get("meta.xml");
   const metaText = metaBytes ? decodeUtf8(metaBytes) : undefined;
   const properties: DocumentProperties = metaText ? parseOdfMeta(metaText) : {};
@@ -125,12 +610,99 @@ export async function parseOdp(data: ArrayBuffer | Uint8Array): Promise<ParsedPr
     }
   }
 
-  // Retain the whole package, in package order (SPEC-008 wholesale) —
-  // `mimetype` included, so the writer can re-emit it byte-identical.
   const opaque: OpaquePart[] = [];
   for (const [name, partBytes] of parts) {
     opaque.push({ name, data: await bytesToBase64Async(partBytes) });
   }
 
-  return { slides, opaque, properties };
+  return {
+    slides,
+    slideWidthCm: widthCm,
+    slideHeightCm: heightCm,
+    media: [...media.values()],
+    opaque,
+    properties,
+  };
+}
+
+function parsePage(page: Element, ctx: OdpContext): Slide {
+  const frames: SlideFrame[] = [];
+  for (const child of Array.from(page.children)) {
+    const frame = parseFrameChild(child, ctx);
+    if (frame) {
+      frames.push(frame);
+    }
+  }
+  const slide: Slide = { id: crypto.randomUUID(), frames, sourceXml: serializeElement(page) };
+  const preserved: Record<string, string> = {};
+  for (const child of Array.from(page.children)) {
+    if (child.namespaceURI === PRESENTATION_NS && child.localName === "notes") {
+      preserved["presentation:notes"] = serializeElement(child);
+    }
+  }
+  if (Object.keys(preserved).length > 0) {
+    slide.preserved = preserved;
+  }
+  return slide;
+}
+
+const PRESENTATION_NS = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
+
+/** Adds every `style:style` under a document root's `office:styles` /
+ * `office:automatic-styles` to the resolver. */
+function addStylesFrom(root: Element, resolver: StyleResolver): void {
+  for (const container of ["automatic-styles", "styles"]) {
+    const stylesEl = firstChildElement(root, OFFICE_NAMESPACE, container);
+    if (!stylesEl) {
+      continue;
+    }
+    for (const styleEl of Array.from(stylesEl.children)) {
+      if (styleEl.namespaceURI === STYLE_NAMESPACE && styleEl.localName === "style") {
+        resolver.add(styleEl);
+      }
+    }
+  }
+}
+
+/** class → geometry from the master pages' presentation placeholders (AC-21). */
+function buildMasterPlaceholders(stylesDoc: Document | undefined): Map<string, Geometry> {
+  const map = new Map<string, Geometry>();
+  if (!stylesDoc) {
+    return map;
+  }
+  const masterStyles = firstChildElement(stylesDoc.documentElement, OFFICE_NAMESPACE, "master-styles");
+  if (!masterStyles) {
+    return map;
+  }
+  const frames = masterStyles.getElementsByTagNameNS(DRAW_NAMESPACE, "frame");
+  for (const frame of Array.from(frames)) {
+    const cls = presentationAttr(frame, "class");
+    const geom = geometryOf(frame);
+    if (cls && geom && !map.has(cls)) {
+      map.set(cls, geom);
+    }
+  }
+  return map;
+}
+
+/** The slide size from the master page's `style:page-layout`
+ * (`fo:page-width`/`fo:page-height`), else the default. */
+function pageSize(stylesDoc: Document | undefined, contentDoc: Document): { widthCm: number; heightCm: number } {
+  const search = (doc: Document | undefined): { widthCm: number; heightCm: number } | undefined => {
+    if (!doc) {
+      return undefined;
+    }
+    const layouts = doc.documentElement.getElementsByTagNameNS(STYLE_NAMESPACE, "page-layout-properties");
+    for (const props of Array.from(layouts)) {
+      const w = odfLengthToCm(foAttr(props, "page-width"));
+      const h = odfLengthToCm(foAttr(props, "page-height"));
+      if (w !== undefined && h !== undefined) {
+        return { widthCm: w, heightCm: h };
+      }
+    }
+    return undefined;
+  };
+  return (
+    search(stylesDoc) ?? search(contentDoc) ?? { widthCm: DEFAULT_SLIDE_WIDTH_CM, heightCm: DEFAULT_SLIDE_HEIGHT_CM }
+  );
 }
