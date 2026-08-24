@@ -195,24 +195,37 @@ test("the size control accepts 0.5 pt steps, has +/- buttons, and clamps out-of-
     { text: "sized", formatting: { fontSizePt: 11 } },
   ]);
 
-  // Out-of-range input clamps with a tooltip (AC-9, AC-12).
-  await input.fill("500");
-  await input.press("Enter");
-  await expect(page.getByTestId("font-size-tooltip")).toBeVisible();
-  await expect(page.getByTestId("font-size-tooltip")).toContainText("between 1 and 409");
-  // …and genuinely on screen. toBeVisible() ignores clipping by an
-  // ancestor's overflow, which is exactly how this hint used to be lost:
-  // it hung below a toolbar strip that clips on overflow-y, so the user's
-  // input was silently corrected with no explanation. Hit-test it.
-  const reached = await page.evaluate(() => {
-    const tip = document.querySelector('[data-testid="font-size-tooltip"]')!.getBoundingClientRect();
-    const at = document.elementFromPoint(
-      Math.round(tip.left + tip.width / 2),
-      Math.round(tip.top + tip.height / 2),
-    );
-    return !!at?.closest('[data-testid="font-size-tooltip"]');
-  });
-  expect(reached).toBe(true);
+  // Out-of-range input clamps with a tooltip (AC-9, AC-12). The tooltip
+  // self-dismisses 3 s after the commit, and checking it in separate
+  // sequential steps could straddle that window on a loaded full-suite run:
+  // the tooltip genuinely showed, then expired between two checks and the
+  // leftover ones failed. Re-arm the commit per toPass attempt instead, so
+  // a straddled window is a retry, not a failure.
+  await expect(async () => {
+    await input.fill("500");
+    await input.press("Enter");
+    const tooltip = page.getByTestId("font-size-tooltip");
+    await expect(tooltip).toBeVisible({ timeout: 2000 });
+    await expect(tooltip).toContainText("between 1 and 409", { timeout: 500 });
+    // …and genuinely on screen. toBeVisible() ignores clipping by an
+    // ancestor's overflow, which is exactly how this hint used to be lost:
+    // it hung below a toolbar strip that clips on overflow-y, so the user's
+    // input was silently corrected with no explanation. Hit-test it. Null
+    // means the tooltip expired before this attempt's hit-test — retry.
+    const reached = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="font-size-tooltip"]');
+      if (!el) {
+        return false;
+      }
+      const tip = el.getBoundingClientRect();
+      const at = document.elementFromPoint(
+        Math.round(tip.left + tip.width / 2),
+        Math.round(tip.top + tip.height / 2),
+      );
+      return !!at?.closest('[data-testid="font-size-tooltip"]');
+    });
+    expect(reached).toBe(true);
+  }).toPass({ timeout: 15_000 });
   await expect(input).toHaveValue("409");
   await waitForSaved(page);
   expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([

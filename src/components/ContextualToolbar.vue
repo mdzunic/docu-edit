@@ -58,10 +58,23 @@ function reposition() {
   const maxLeft = Math.max(MARGIN, window.innerWidth - rect.width - MARGIN);
   if (props.placement === "above") {
     // Centre horizontally on the anchor point and lift above it; flip below
-    // when the bar would run off the top of the viewport.
+    // when the bar would run off the top of the viewport OR overlap the
+    // toolbar strip (SPEC-061 "The text selection toolbar"). For a selection
+    // near the top of the first page the "above" slot is exactly where the
+    // strip's controls sit, and a bar parked there steals their clicks — a
+    // reach for the font-size stepper lands on the bar's own Insert link.
     left = props.left - rect.width / 2;
     top = props.top - rect.height - MARGIN;
-    if (top < MARGIN) {
+    const strip = document.querySelector('[data-testid="doc-toolbar-strip"]');
+    const stripRect = strip ? strip.getBoundingClientRect() : null;
+    const clearTop =
+      stripRect && stripRect.height > 0 ? Math.max(MARGIN, stripRect.bottom + MARGIN) : MARGIN;
+    if (top < clearTop) {
+      // Flip to just below the anchor — never to an arbitrary floor. When the
+      // anchor itself is scrolled out above the canvas this degenerates to the
+      // viewport-margin clamp below, same as it always has; a floor at the
+      // strip's bottom would instead park the orphaned bar over the first
+      // lines of content, stealing their clicks.
       top = props.anchorBottom + MARGIN;
     }
     const maxTop = Math.max(MARGIN, window.innerHeight - rect.height - MARGIN);
