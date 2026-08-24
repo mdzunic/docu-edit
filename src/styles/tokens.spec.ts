@@ -26,6 +26,10 @@ const EXEMPT_FILES = new Set([
   "components/DocImageBlock.vue",
   "components/DocShapeBlock.vue",
   "components/DocChartBlock.vue",
+  // SPEC-079's slide renderer: SlideFrameView paints the user's slide — model
+  // colours, geometry in px that mirrors the model, the neutral foreign
+  // placeholder box — exactly the document-content/canvas exemption above.
+  "components/presentation/SlideFrameView.vue",
   "components/DocTocBlock.vue",
   "components/DocTofBlock.vue",
   "components/DocHeadingToggle.vue",

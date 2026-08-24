@@ -5,9 +5,10 @@
 // read side by side; this one never touches Image and drawing.ts never
 // touches Shape, per SPEC-024's "no shipped call site changes".
 import type { Block, Paragraph, Shape } from "../documentModel";
-import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
+import type { ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
-import { SHAPE_DEFINITIONS, adjustmentGuideName, adjustmentToGuideValue, guideValueToAdjustment } from "../core/shapeCatalogue";
+import { adjustmentGuideName, adjustmentToGuideValue } from "../core/shapeCatalogue";
+import { GEOMETRY_TO_PRST, PRST_TO_GEOMETRY, parseAvLstAdjustments } from "../core/drawingMl";
 import { escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
@@ -38,14 +39,9 @@ function ooxmlRotToDeg(rot: number): number {
   return Math.round(rot / 60000);
 }
 
-// The OOXML preset-name maps, both derived from the single SHAPE_DEFINITIONS
-// table (SPEC-069 AC-15a) rather than maintained here beside it.
-const GEOMETRY_TO_PRST: Record<string, string> = Object.fromEntries(
-  SHAPE_DEFINITIONS.map((def) => [def.geometry, def.prst]),
-);
-const PRST_TO_GEOMETRY: Record<string, ShapeGeometry> = Object.fromEntries(
-  SHAPE_DEFINITIONS.map((def) => [def.prst, def.geometry]),
-);
+// The OOXML preset-name maps and the `a:avLst` adjustment parser now live in
+// core/drawingMl.ts (SPEC-079's two-phase move) so the `.pptx` reader shares
+// them; this module re-imports them, its behaviour unchanged.
 
 /** Everything needed to parse a `wps:txbx`'s `w:txbxContent` into
  * `Shape.text.blocks` — injected by the caller (reader.ts) so this module
@@ -113,29 +109,6 @@ function parseOutline(spPr: Element): ShapeOutline | undefined {
     dash = "dot";
   }
   return { color, widthPt, dash };
-}
-
-/** The adjustment fractions carried by a `a:prstGeom/a:avLst`: every
- * `a:gd@fmla="val N"` in document order, normalised from the guide value to
- * a fraction (SPEC-069 AC-6a). Guides with any other formula are ignored (we
- * only model literal adjust values). */
-function parseAdjustments(prstGeom: Element): number[] {
-  const avLst = firstChildElement(prstGeom, A_NAMESPACE, "avLst");
-  if (!avLst) {
-    return [];
-  }
-  const adjustments: number[] = [];
-  for (const gd of Array.from(avLst.children)) {
-    if (gd.namespaceURI !== A_NAMESPACE || gd.localName !== "gd") {
-      continue;
-    }
-    const fmla = gd.getAttribute("fmla") ?? "";
-    const match = /^val\s+(-?\d+)$/.exec(fmla.trim());
-    if (match) {
-      adjustments.push(guideValueToAdjustment(Number(match[1])));
-    }
-  }
-  return adjustments;
 }
 
 /** The `a:avLst` a shape's adjustments serialise to (SPEC-069 AC-6a) —
@@ -253,7 +226,7 @@ export function parseShapeDrawing(
   if (!geometry) {
     shape.unsupportedGeometryXml = serializeElement(prstGeom ?? spPr);
   } else if (prstGeom) {
-    const adjustments = parseAdjustments(prstGeom);
+    const adjustments = parseAvLstAdjustments(prstGeom);
     if (adjustments.length > 0) {
       shape.adjustments = adjustments;
     }

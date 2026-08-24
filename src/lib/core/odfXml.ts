@@ -5,6 +5,7 @@
 // package families are namespaced XML parsed with the platform's DOMParser.
 // Attributes are read by namespace URI rather than prefix, since producers
 // are free to rebind prefixes.
+import { CM_PER_INCH, POINTS_PER_INCH } from "./units";
 
 export const OFFICE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 export const TEXT_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
@@ -72,4 +73,65 @@ export function xlinkAttr(el: Element, localName: string): string | null {
 /** Reads a `presentation:*` attribute regardless of the bound prefix. */
 export function presentationAttr(el: Element, localName: string): string | null {
   return el.getAttributeNS(PRESENTATION_NAMESPACE, localName);
+}
+
+// --- ODF measured-value parsers (SPEC-079's move from odf/units.ts) ---------
+// ODF writes measured values as strings with an explicit unit suffix
+// ("2.54cm", "1in", "12pt"); the reading direction is product-neutral (both
+// `.odt` text and `.odp` slides parse the same strings), so it lives in core
+// and odf/units.ts re-exports it. The writer direction (searching for a
+// byte-exact round-trip string) stays in odf/units.ts.
+
+const CM_PER_ODF_UNIT: Record<string, number> = {
+  cm: 1,
+  mm: 0.1,
+  in: CM_PER_INCH,
+  pt: CM_PER_INCH / POINTS_PER_INCH,
+  pc: (CM_PER_INCH / POINTS_PER_INCH) * 12,
+};
+
+const ODF_LENGTH_PATTERN = /^(-?\d+(?:\.\d+)?)(cm|mm|in|pt|pc)$/;
+
+/** Parses an ODF length ("1.27cm", "-0.5in", "12pt") to centimetres, or
+ * undefined for a missing/unitless/percentage value. */
+export function odfLengthToCm(value: string | null | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const match = ODF_LENGTH_PATTERN.exec(value.trim());
+  if (!match) {
+    return undefined;
+  }
+  return Number(match[1]) * CM_PER_ODF_UNIT[match[2]];
+}
+
+/** Parses an ODF length to points (the model's unit for font sizes and
+ * paragraph spacing), or undefined if it is not an absolute length. */
+export function odfLengthToPt(value: string | null | undefined): number | undefined {
+  const cm = odfLengthToCm(value);
+  return cm === undefined ? undefined : (cm / CM_PER_INCH) * POINTS_PER_INCH;
+}
+
+const ODF_PERCENTAGE_PATTERN = /^(\d+(?:\.\d+)?)%$/;
+
+/** Parses an ODF percentage ("130%") to its number (130), or undefined for
+ * anything else. */
+export function odfPercentage(value: string | null | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const match = ODF_PERCENTAGE_PATTERN.exec(value.trim());
+  if (!match) {
+    return undefined;
+  }
+  return Number(match[1]);
+}
+
+/** Normalises an ODF colour ("#C9211E") to a CSS colour ("#c9211e"), or
+ * undefined for "transparent"/keyword/empty values (meaning "inherit"). */
+export function odfColorToCss(value: string | null | undefined): string | undefined {
+  if (!value || !value.startsWith("#")) {
+    return undefined;
+  }
+  return value.toLowerCase();
 }

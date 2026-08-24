@@ -1,59 +1,149 @@
 <script setup lang="ts">
-// The presentation workspace at /slides/:id — deliberately a read-only
-// preview, not an editor: the presentations product ships open/preserve/
-// save-back first (the same arc SPEC-001..008 walked for text). It renders
-// the parsed slide outline, offers the byte-preserving download, and
-// redirects a text-document id to /doc/:id (DocumentView does the reverse),
-// so a stale or hand-edited URL never opens a model in the wrong product.
-import { computed, shallowRef, watch } from "vue";
+// The presentation workspace at /slides/:id (SPEC-079): a WYSIWYG slide stage
+// that scales to fit the workspace (letterboxed, correct aspect ratio) plus a
+// keyboard-navigable filmstrip — the read-only outline and its note are gone.
+// The view owns current-slide state, the stage's fit scaling (a
+// ResizeObserver), global PageUp/PageDown navigation, and the on-open upgrade
+// of preparation-milestone records. It still redirects a text-document id to
+// /doc/:id (DocumentView does the reverse). Runtime declarations, not
+// defineProps<{...}>() generics — espree lints .vue scripts.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
+import SlideStage from "../components/presentation/SlideStage.vue";
+import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import { useTheme } from "../composables/useTheme";
-import { documentKindOf, getPresentation, initLibrary } from "../lib/documentStore";
+import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
 import { downloadPresentation } from "../lib/presentation/download";
+import { isLegacyPresentationModel } from "../lib/presentation/model";
+import { upgradePresentationModel } from "../lib/presentation/open";
+import { cmToPx } from "../lib/core/units";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
 
 const route = useRoute();
 const router = useRouter();
 
-// No menu bar here — read the shared theme composable so the view is themed
-// by the same tokens and follows the OS live (the SPEC-059 convention every
-// menubar-less view uses).
+// No menu bar here — read the shared theme composable so the surrounding
+// workspace is themed by the app tokens and follows the OS live (SPEC-059).
 useTheme();
 
 const presentationId = computed(() => String(route.params.id ?? ""));
 
-function loadPresentation() {
-  return getPresentation(presentationId.value) ?? null;
+// A legacy (preparation-milestone) model still holds outline-shaped slides,
+// which the frame renderer cannot draw — hide it until loadPresentation has
+// upgraded it, so the filmstrip/stage only ever see the frame model.
+function initialModel() {
+  const model = getPresentation(presentationId.value) ?? null;
+  return model && isLegacyPresentationModel(model) ? null : model;
 }
 
-const presentation = shallowRef(loadPresentation());
+const presentation = shallowRef(initialModel());
+const currentIndex = ref(0);
 
-function syncFromStore() {
+async function loadPresentation() {
   // A text document's id belongs to the word processor — hand it over.
   if (documentKindOf(presentationId.value) === "text") {
     void router.replace(`/doc/${presentationId.value}`);
     return;
   }
-  presentation.value = loadPresentation();
+  let model = getPresentation(presentationId.value) ?? null;
+  // Preparation-milestone records upgrade on open (AC-54..56).
+  if (model && isLegacyPresentationModel(model)) {
+    try {
+      const upgraded = await upgradePresentationModel(model);
+      storePresentation(upgraded);
+      model = getPresentation(presentationId.value) ?? upgraded;
+    } catch {
+      // Reading stays tolerant: if the retained package cannot be re-parsed,
+      // keep the record as-is rather than blanking the view.
+    }
+  }
+  presentation.value = model;
+  currentIndex.value = 0;
+  void nextTick(recomputeScale);
 }
 
 // main.ts awaits initLibrary() before mounting, so the store is hydrated in
-// the running app; re-syncing after it resolves matters only when the view
-// is mounted directly (tests) — the same pattern HomeView uses.
-syncFromStore();
-initLibrary().then(syncFromStore);
-watch(presentationId, syncFromStore);
+// the running app; re-syncing after it resolves matters only when the view is
+// mounted directly (tests) — the same pattern HomeView uses.
+void loadPresentation();
+void initLibrary().then(loadPresentation);
+watch(presentationId, () => {
+  void loadPresentation();
+});
 
 const title = computed(() => presentation.value?.title ?? "No document");
 const badge = computed(() => (presentation.value ? formatBadgeLabel(presentation.value.format) : ""));
-const formatName = computed(() =>
-  presentation.value ? presentationFormatLabel(presentation.value.format) : "",
+const formatName = computed(() => (presentation.value ? presentationFormatLabel(presentation.value.format) : ""));
+const slideTotal = computed(() => presentation.value?.slides.length ?? 0);
+const slideCountLabel = computed(() => (slideTotal.value === 1 ? "1 slide" : `${slideTotal.value} slides`));
+
+const currentSlide = computed(() => presentation.value?.slides[currentIndex.value] ?? null);
+const liveLabel = computed(() =>
+  presentation.value ? `Slide ${currentIndex.value + 1} of ${slideTotal.value}` : "",
 );
-const slideCountLabel = computed(() => {
-  const count = presentation.value?.slides.length ?? 0;
-  return count === 1 ? "1 slide" : `${count} slides`;
+const deckMedia = computed(() => presentation.value?.media ?? []);
+
+function selectSlide(index = 0) {
+  if (index >= 0 && index < slideTotal.value) {
+    currentIndex.value = index;
+  }
+}
+
+// --- fit-to-workspace scaling ----------------------------------------------
+
+const stageContainer = useTemplateRef("stageContainer");
+const stageScale = ref(1);
+const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recomputeScale) : null;
+
+function recomputeScale() {
+  const container = stageContainer.value;
+  const model = presentation.value;
+  if (!container || !model) {
+    return;
+  }
+  const availableW = container.clientWidth;
+  const availableH = container.clientHeight;
+  const surfaceW = cmToPx(model.slideWidthCm);
+  const surfaceH = cmToPx(model.slideHeightCm);
+  if (surfaceW <= 0 || surfaceH <= 0 || availableW <= 0 || availableH <= 0) {
+    return;
+  }
+  stageScale.value = Math.min(availableW / surfaceW, availableH / surfaceH);
+}
+
+watch([presentation, currentSlide], () => {
+  void nextTick(recomputeScale);
+});
+
+// --- global slide navigation (AC-48) ---------------------------------------
+
+function onGlobalKeydown(event = new KeyboardEvent("keydown")) {
+  if (event.key !== "PageUp" && event.key !== "PageDown") {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+    return;
+  }
+  event.preventDefault();
+  selectSlide(currentIndex.value + (event.key === "PageDown" ? 1 : -1));
+}
+
+onMounted(() => {
+  if (resizeObserver && stageContainer.value) {
+    resizeObserver.observe(stageContainer.value);
+  }
+  window.addEventListener("resize", recomputeScale);
+  window.addEventListener("keydown", onGlobalKeydown);
+  void nextTick(recomputeScale);
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  window.removeEventListener("resize", recomputeScale);
+  window.removeEventListener("keydown", onGlobalKeydown);
 });
 
 function download() {
@@ -121,47 +211,31 @@ function close() {
         </div>
       </header>
 
-      <p
-        class="deck-note"
-        data-testid="presentation-note"
-      >
-        Read-only preview — editing presentations isn't supported yet. Download
-        returns the file with every part of the original preserved.
-      </p>
-
-      <ol class="slide-list">
-        <li
-          v-for="(slide, index) in presentation.slides"
-          :key="index"
-          class="slide-card"
-          data-testid="presentation-slide"
+      <div class="deck-body">
+        <SlideFilmstrip
+          :slides="presentation.slides"
+          :width-cm="presentation.slideWidthCm"
+          :height-cm="presentation.slideHeightCm"
+          :media="deckMedia"
+          :current-index="currentIndex"
+          @select="selectSlide"
+        />
+        <div
+          ref="stageContainer"
+          class="stage-workspace"
+          data-testid="stage-workspace"
         >
-          <span class="slide-number">{{ index + 1 }}</span>
-          <div class="slide-body">
-            <h3
-              v-if="slide.title"
-              class="slide-title"
-              data-testid="presentation-slide-title"
-            >
-              {{ slide.title }}
-            </h3>
-            <p
-              v-for="(line, lineIndex) in slide.lines"
-              :key="lineIndex"
-              class="slide-line"
-              data-testid="presentation-slide-line"
-            >
-              {{ line }}
-            </p>
-            <p
-              v-if="!slide.title && slide.lines.length === 0"
-              class="slide-empty"
-            >
-              (no text on this slide)
-            </p>
-          </div>
-        </li>
-      </ol>
+          <SlideStage
+            v-if="currentSlide"
+            :slide="currentSlide"
+            :width-cm="presentation.slideWidthCm"
+            :height-cm="presentation.slideHeightCm"
+            :media="deckMedia"
+            :scale="stageScale"
+            :live-label="liveLabel"
+          />
+        </div>
+      </div>
     </div>
   </AppShell>
 </template>
@@ -189,9 +263,10 @@ function close() {
 }
 
 .presentation {
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: var(--space-7) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .deck-header {
@@ -199,6 +274,8 @@ function close() {
   align-items: flex-start;
   gap: var(--space-4);
   flex-wrap: wrap;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--border-width) solid var(--border-subtle);
 }
 
 .deck-facts {
@@ -225,64 +302,27 @@ function close() {
   gap: var(--space-3);
 }
 
-.deck-note {
-  margin: var(--space-4) 0 var(--space-5);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
+.deck-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) 1fr;
 }
 
-.slide-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+.deck-body :deep(.filmstrip) {
+  border-right: var(--border-width) solid var(--border-subtle);
+  max-height: 100%;
 }
 
-.slide-card {
-  display: flex;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  background: var(--surface-base);
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-}
-
-.slide-number {
-  flex: none;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
-  min-width: 1.5rem;
-  text-align: right;
-}
-
-.slide-body {
+.stage-workspace {
+  position: relative;
   min-width: 0;
-}
-
-.slide-title {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-bold);
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.slide-line {
-  margin: 0 0 var(--space-1);
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.slide-empty {
-  margin: 0;
-  color: var(--text-secondary);
-  font-style: italic;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: var(--surface-sunken);
+  overflow: hidden;
 }
 </style>

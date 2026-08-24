@@ -6,7 +6,11 @@
 import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
 import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
-import { SHAPE_DEFINITIONS, adjustmentToGuideValue, guideValueToAdjustment } from "../core/shapeCatalogue";
+import { adjustmentToGuideValue, guideValueToAdjustment } from "../core/shapeCatalogue";
+import {
+  GEOMETRY_TO_DRAW_TYPE,
+  DRAW_TYPE_TO_GEOMETRY as DRAW_TYPE_TO_GEOMETRY_TABLE,
+} from "../core/drawingMl";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import {
@@ -35,17 +39,9 @@ const DE_NAMESPACE = "urn:docu-edit:shape";
 // draw:custom-shape/draw:line element itself (svg:width/height/x/y, etc).
 const SHAPE_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}"`;
 
-// The ODF draw:type maps, both derived from the single SHAPE_DEFINITIONS
-// table (SPEC-069 AC-15a). The forward map carries every geometry (line and
-// arrow both serialise as draw:line, so both map to "line"); the reverse map
-// is built only from area geometries (draw:custom-shape), since a draw:line
-// is recognised structurally, not by draw:type.
-const GEOMETRY_TO_DRAW_TYPE: Record<string, string> = Object.fromEntries(
-  SHAPE_DEFINITIONS.map((def) => [def.geometry, def.drawType]),
-);
-const DRAW_TYPE_TO_GEOMETRY_TABLE: Record<string, ShapeGeometry> = Object.fromEntries(
-  SHAPE_DEFINITIONS.filter((def) => !def.isLine).map((def) => [def.drawType, def.geometry]),
-);
+// The ODF draw:type maps now live in core/drawingMl.ts (SPEC-079's two-phase
+// move) so the `.odp` reader shares them; this module re-imports them (the
+// reverse map aliased to its historical name), its behaviour unchanged.
 
 /** Everything needed to parse a shape's text:p children into
  * `Shape.text.blocks` — injected by the caller (reader.ts) so this module

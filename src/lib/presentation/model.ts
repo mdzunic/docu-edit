@@ -1,32 +1,137 @@
 // The in-memory presentation model — the second product's counterpart of
-// documentModel.ts, deliberately minimal for now. The preparation milestone
-// (open `.pptx`/`.odp`, list it in the library, preview its slides, save it
-// back with nothing lost) models only what that needs: a read-only text
-// outline per slide, plus the entire source package retained verbatim.
-// Editing specs will grow this model the way SPEC-011+ grew the text one.
+// documentModel.ts. SPEC-079 turns it into a real, WYSIWYG-renderable slide
+// model: each slide is a z-ordered list of frames (text placeholders, images,
+// shapes, groups and foreign placeholder boxes) with effective geometry (cm)
+// and effective text formatting resolved at read, plus the whole source
+// package retained verbatim in `opaque` so a no-edit download stays
+// byte-identical (SPEC-008 applied wholesale). Editing specs (SPEC-080+) grow
+// and mutate this model and re-render through SPEC-079's renderer — so THIS
+// FILE is the normative source for the slide model, the way
+// documentModel.ts is for the text model.
 //
 // Layering rule (enforced by boundary.spec.ts): this directory imports only
 // src/lib/core — never documentModel.ts, the commands, or the .docx/.odt
-// format layers. Plain serialisable data only, like documentModel.ts, so
-// the document store persists both products' models through the same
-// IndexedDB machinery.
+// format layers. Plain serialisable data only (all lengths cm, font sizes pt,
+// colours lowercase `#rrggbb` hex), so the document store persists both
+// products' models through the same IndexedDB machinery.
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
+import type { ShapeGeometry } from "../core/shapes";
 
 /** The presentation file formats, by the package family they ride in:
  * `.pptx` is OPC/PresentationML, `.odp` is an ODF package. */
 export type PresentationFormat = "pptx" | "odp";
 
-/** One slide's read-only preview: what the stub presentation view renders. */
-export interface SlidePreview {
-  /** The slide's title text, when a title placeholder (`.pptx`
-   * `p:ph type="title"|"ctrTitle"`, `.odp` `presentation:class="title"`)
-   * carries one. */
-  title?: string;
-  /** The slide's remaining visible text, one entry per paragraph, in
-   * document order (title text excluded). */
-  lines: string[];
+/** A placeholder frame's semantic role. Present on a `TextFrame` marks it as
+ * a placeholder (vs. a free text box). */
+export type PlaceholderRole = "title" | "subtitle" | "body" | "other";
+
+/** A resolved frame/background fill. Only the two forms this spec renders —
+ * a solid colour and "no fill"; gradients resolve to their first stop's
+ * colour and image/pattern fills to white before they reach here. */
+export type SlideFill =
+  | { type: "solid"; color: string }
+  | { type: "none" };
+
+/** One run of text with its EFFECTIVE formatting already resolved (the run's
+ * own properties, else the shape/placeholder/theme chain). Absent optional
+ * fields render with the renderer's defaults noted below. */
+export interface SlideRun {
+  text: string;
+  bold?: true;
+  italic?: true;
+  underline?: true;
+  fontFamily?: string; // effective; absent = renderer default stack
+  sizePt?: number; // effective; absent = 18
+  color?: string; // effective; absent = #000000
+}
+
+/** One paragraph (visual line) of a text body. An explicit line break
+ * (`a:br`) starts a new paragraph, so each entry is one rendered row. */
+export interface SlideParagraph {
+  runs: SlideRun[];
+  align?: "left" | "center" | "right" | "justify"; // absent = left
+  /** Bullet marker: "disc" renders •, "number" renders 1./2./… restarting
+   *  per contiguous same-level run of numbered paragraphs. */
+  bullet?: "disc" | "number";
+  level?: number; // 0..8 indent level; absent = 0
+}
+
+interface SlideFrameBase {
+  /** Minted at read (crypto.randomUUID()); stable for the model's life —
+   *  selection, undo and (SPEC-086) animation targets hang off it. Never
+   *  serialised to either file format. */
+  id: string;
+  xCm: number;
+  yCm: number;
+  widthCm: number;
+  heightCm: number;
+  rotationDeg?: number; // clockwise, like DrawingPlacement's convention
+}
+
+export interface TextFrame extends SlideFrameBase {
+  kind: "text";
+  role?: PlaceholderRole; // present = it is a placeholder
+  /** pptx only: the source `p:ph`'s type/idx attributes, written back
+   *  verbatim on rebuild so Office keeps the inheritance chain. */
+  phType?: string;
+  phIdx?: number;
+  paragraphs: SlideParagraph[];
+  fill?: SlideFill; // frame background; absent = none
+}
+
+export interface ImageFrame extends SlideFrameBase {
+  kind: "image";
+  mediaId: string; // key into model.media
+}
+
+export interface ShapeFrame extends SlideFrameBase {
+  kind: "shape";
+  geometry: ShapeGeometry; // core/shapes id, e.g. "rect", "ellipse"
+  adjustments?: number[]; // core/shapeCatalogue fractions
+  fill?: SlideFill;
+  stroke?: { color: string; widthPt: number };
+  paragraphs?: SlideParagraph[]; // shape text, centred per bodyPr default
+}
+
+export interface GroupFrame extends SlideFrameBase {
+  kind: "group";
+  children: SlideFrame[]; // coordinates already in slide space
+  /** The whole source element (`p:grpSp` / `draw:g`), verbatim — what the
+   *  writers re-emit; children exist for rendering only until SPEC-082's
+   *  ungroup command drops the xml and promotes them. */
+  xml: string;
+}
+
+export interface ForeignFrame extends SlideFrameBase {
+  kind: "foreign";
+  xml: string; // verbatim source element
+  /** Placeholder-box label: "Table" | "Chart" | "Media" | "Object". */
+  label: string;
+  /** True when x/y/width/height could not be parsed — render nothing. */
+  noBounds?: true;
+}
+
+export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | GroupFrame | ForeignFrame;
+
+export interface Slide {
+  id: string; // minted at read, never serialised
+  frames: SlideFrame[]; // z-order, back to front
+  background?: SlideFill; // effective (inheritance resolved)
+  /** pptx: this slide's part path ("ppt/slides/slide2.xml"); ties the
+   *  model slide to its verbatim part in `opaque`. Absent for .odp and
+   *  (later) from-scratch slides. */
+  partName?: string;
+  /** odp: the source `draw:page` element markup, verbatim. SPEC-081's
+   *  writer splices it back for untouched pages. */
+  sourceXml?: string;
+  /** Verbatim XML captured for rebuild-time retention (SPEC-081 uses it;
+   *  this spec only fills it): pptx `p:bg`, `p:transition`, `p:timing`,
+   *  `p:clrMapOvr`, `p:extLst` and the root `p:sld` attribute string; odp
+   *  `presentation:notes`, `anim:*` children and the `draw:page` attribute
+   *  string. Keys are those element names. */
+  preserved?: Record<string, string>;
 }
 
 /** The root of a presentation. `kind` is the literal discriminant that
@@ -39,16 +144,21 @@ export interface PresentationModel {
    * convention as `DocumentModel.title`. */
   title: string;
   format: PresentationFormat;
-  slides: SlidePreview[];
+  slides: Slide[];
+  /** The slide surface size, in centimetres (pptx `p:sldSz`, odp master page
+   * `fo:page-width`/`fo:page-height`); the stage's aspect ratio. */
+  slideWidthCm: number;
+  slideHeightCm: number;
   /** Every part of the source package, verbatim and in package order —
-   * SPEC-008's retention rule applied wholesale: nothing is editable yet,
-   * so nothing is rebuilt on save and the writer re-emits exactly these.
+   * SPEC-008's retention rule applied wholesale. The writers re-emit exactly
+   * these, so a no-edit download stays byte-identical; media referenced by
+   * `ImageFrame`s is ALSO copied into `media`, but the bytes stay here too
+   * (bounded duplication until SPEC-081's rebuild writers take over media).
    * (`.odp`'s `mimetype` entry is included and written first + STOREd.) */
   opaque: OpaquePart[];
-  /** Reserved for the editing milestone (image bytes split out the way
-   * `DocumentModel.media` is); never set by the preparation readers. The
-   * field exists so the store's media split/rejoin machinery types over
-   * both products' models. */
+  /** Image bytes split out the way `DocumentModel.media` is, so the store's
+   * media split (MEDIA_KEY_PREFIX) persists them once per record and an
+   * `ImageFrame` references one by `mediaId` (AC-32). */
   media?: MediaPart[];
   /** Document metadata read from `docProps/core.xml` (.pptx) / `meta.xml`
    * (.odp); absent when the package declares none. */
@@ -57,11 +167,20 @@ export interface PresentationModel {
 
 export const DEFAULT_PRESENTATION_TITLE = "Untitled presentation";
 
+/** The default slide size when a package declares none: PowerPoint's 16:9
+ * widescreen (12192000×6858000 EMU). */
+export const DEFAULT_SLIDE_WIDTH_CM = 33.867;
+export const DEFAULT_SLIDE_HEIGHT_CM = 19.05;
+
 /** What a presentation reader hands back — the shared assembly input of
  * `assemblePresentation` (presentation/open.ts), the same split as the text
  * side's `ParsedDocxDocument`/`ParsedOdtDocument` vs `assembleDocumentModel`. */
 export interface ParsedPresentation {
-  slides: SlidePreview[];
+  slides: Slide[];
+  slideWidthCm: number;
+  slideHeightCm: number;
+  /** Image bytes referenced by the slides' `ImageFrame`s. */
+  media: MediaPart[];
   /** Every source package part, verbatim, in package order. */
   opaque: OpaquePart[];
   /** Metadata from `docProps/core.xml`/`meta.xml`; `{}` when none. */
@@ -71,4 +190,11 @@ export interface ParsedPresentation {
 /** How many slides the library/preview surfaces report for a model. */
 export function slideCount(model: PresentationModel): number {
   return model.slides.length;
+}
+
+/** Whether a stored record's model predates SPEC-079 (its slides are the
+ * preparation milestone's outline shape, not `Slide[]`): it has no
+ * `slideWidthCm`. The view upgrades such a record on open (AC-54). */
+export function isLegacyPresentationModel(model: PresentationModel): boolean {
+  return typeof (model as { slideWidthCm?: unknown }).slideWidthCm !== "number";
 }

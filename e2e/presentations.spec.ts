@@ -64,18 +64,20 @@ function expectPartsEqual(written: Map<string, Buffer>, source: Map<string, Buff
   }
 }
 
-test("opening a .pptx lands on the /slides preview with the deck's outline", async ({ page }) => {
+test("opening a .pptx lands on the /slides stage with the deck's slides", async ({ page }) => {
   await openFixture(page, pptxFixture);
 
   await expect(page.getByTestId("presentation-view")).toBeVisible();
   await expect(page.getByTestId("document-title")).toHaveText("mini-deck");
-  await expect(page.getByTestId("presentation-slide-count")).toHaveText("3 slides");
-  await expect(page.getByTestId("presentation-slide")).toHaveCount(3);
-  await expect(page.getByTestId("presentation-slide-title").first()).toHaveText("Quarterly Review");
-  // Grouped shapes' text is part of the outline (the reader walks p:grpSp).
-  await expect(page.getByTestId("presentation-slide-line").filter({ hasText: "Grouped note" })).toHaveCount(1);
-  // The stub is honest about what it is.
-  await expect(page.getByTestId("presentation-note")).toContainText("Read-only preview");
+  await expect(page.getByTestId("presentation-slide-count")).toHaveText("4 slides");
+  // The filmstrip lists every slide; the stage renders the first (SPEC-079).
+  await expect(page.getByTestId("filmstrip-slide")).toHaveCount(4);
+  await expect(page.getByTestId("stage-workspace").getByText("Quarterly Review")).toBeVisible();
+  // Grouped shapes' text renders when navigated to (the reader walks p:grpSp).
+  await page.getByTestId("filmstrip-slide").nth(2).click();
+  await expect(page.getByTestId("stage-workspace").getByText("Grouped note")).toBeVisible();
+  // The read-only preview note is gone.
+  await expect(page.getByTestId("presentation-note")).toHaveCount(0);
 });
 
 test("the library lists a presentation with its badge and routes it back to /slides", async ({ page }) => {
@@ -115,8 +117,8 @@ test("downloading a .pptx re-emits every source part byte-identical (SPEC-008's 
 
 test("opening and downloading an .odp round-trips, mimetype first and STOREd", async ({ page }) => {
   await openFixture(page, odpFixture);
-  await expect(page.getByTestId("presentation-slide-count")).toHaveText("3 slides");
-  await expect(page.getByTestId("presentation-slide-title").first()).toHaveText("Quarterly Review");
+  await expect(page.getByTestId("presentation-slide-count")).toHaveText("4 slides");
+  await expect(page.getByTestId("stage-workspace").getByText("Quarterly Review")).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("presentation-download").click();
@@ -137,5 +139,5 @@ test("a presentation shows in the grid with a slide count", async ({ page }) => 
 
   await page.getByTestId("view-grid").click();
   const card = page.getByTestId("library-row").filter({ hasText: "mini-deck" });
-  await expect(card.getByTestId("row-counts")).toHaveText(/3 slides/);
+  await expect(card.getByTestId("row-counts")).toHaveText(/4 slides/);
 });
