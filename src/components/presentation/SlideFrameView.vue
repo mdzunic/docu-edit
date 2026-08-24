@@ -1,163 +1,78 @@
 <script setup lang="ts">
 // One slide frame rendered absolutely-positioned in slide space (SPEC-079):
-// text → nested divs/spans with inline styles, images → <img> from the media
-// resolver, shapes → a devicePixelRatio-crisp <canvas> painted by
-// paintShapeIntoCanvas plus a centred text overlay, groups → this component
-// recursively, foreign → a labelled dashed placeholder box. Dumb and
-// read-only: props in, nothing emitted, no store access.
-import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
+// text → nested divs/spans, images → <img> from the media resolver, shapes →
+// a devicePixelRatio-crisp <canvas> painted by paintShapeIntoCanvas plus a
+// centred text overlay, groups → this component recursively, foreign → a
+// labelled dashed placeholder box. Runtime prop declarations, not
+// defineProps<{...}>() generics — this repo lints .vue scripts with espree,
+// which rejects TS-only syntax; every typed transform lives in slideRender.ts.
+import { computed, onMounted, useTemplateRef, watch } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
-import type { ShapeVisual } from "../../lib/core/shapes";
-import type { SlideFrame, SlideParagraph } from "../../lib/presentation/model";
+import {
+  asResolver,
+  asSlideFrame,
+  framePositionStyle,
+  groupChildren,
+  imageSrc,
+  isForeignVisible,
+  foreignLabel,
+  markedParagraphs,
+  paragraphStyle,
+  runStyle,
+  shapeVisualOf,
+  textFrameFill,
+} from "./slideRender";
 
-const props = defineProps<{
-  frame: SlideFrame;
+const props = defineProps({
+  /** The SlideFrame to render (presentation model). */
+  frame: { type: Object, required: true },
   /** Resolves a media id to a `data:` URI (or "" when unresolved). */
-  resolveMedia: (mediaId: string) => string;
-}>();
-
-/** pt → px at 96/72, the same ratio the text editor uses. */
-const PT_TO_PX = 96 / 72;
-const LEVEL_INDENT_CM = 0.95;
-
-function px(cm: number): string {
-  return `${cmToPx(cm)}px`;
-}
-
-const positionStyle = computed(() => {
-  const f = props.frame;
-  const style: Record<string, string> = {
-    position: "absolute",
-    left: px(f.xCm),
-    top: px(f.yCm),
-    width: px(f.widthCm),
-    height: px(f.heightCm),
-  };
-  if (f.rotationDeg) {
-    style.transform = `rotate(${f.rotationDeg}deg)`;
-    style.transformOrigin = "center";
-  }
-  return style;
+  resolveMedia: { type: Function, required: true },
 });
 
-/** A text body's paragraphs annotated with their bullet marker (numbered
- * bullets restart per contiguous same-level run). */
-function markedParagraphs(paragraphs: SlideParagraph[]): { para: SlideParagraph; marker: string }[] {
-  const counts: Record<number, number> = {};
-  let prev: SlideParagraph | undefined;
-  return paragraphs.map((para) => {
-    let marker = "";
-    if (para.bullet === "number") {
-      const level = para.level ?? 0;
-      if (prev && prev.bullet === "number" && (prev.level ?? 0) === level) {
-        counts[level] = (counts[level] ?? 0) + 1;
-      } else {
-        counts[level] = 1;
-      }
-      marker = `${counts[level]}.`;
-    } else if (para.bullet === "disc") {
-      marker = "•";
-    }
-    prev = para;
-    return { para, marker };
-  });
-}
+const frame = computed(() => asSlideFrame(props.frame));
+const kind = computed(() => frame.value.kind);
+const position = computed(() => framePositionStyle(frame.value));
+const paragraphs = computed(() => markedParagraphs(frame.value));
+const textFill = computed(() => textFrameFill(frame.value));
+const children = computed(() => groupChildren(frame.value));
+const foreignVisible = computed(() => isForeignVisible(frame.value));
+const foreignText = computed(() => foreignLabel(frame.value));
+const imgSrc = computed(() => imageSrc(frame.value, asResolver(props.resolveMedia)));
 
-const textParagraphs = computed(() => {
-  if (props.frame.kind === "text") {
-    return markedParagraphs(props.frame.paragraphs);
-  }
-  if (props.frame.kind === "shape" && props.frame.paragraphs) {
-    return markedParagraphs(props.frame.paragraphs);
-  }
-  return [];
-});
+const canvasEl = useTemplateRef("canvasEl");
 
-function paragraphStyle(para: SlideParagraph): Record<string, string> {
-  return {
-    textAlign: para.align ?? "left",
-    marginLeft: para.level ? px(para.level * LEVEL_INDENT_CM) : "0",
-  };
-}
-
-function runStyle(run: { bold?: true; italic?: true; underline?: true; fontFamily?: string; sizePt?: number; color?: string }): Record<string, string> {
-  const style: Record<string, string> = {};
-  if (run.bold) style.fontWeight = "700";
-  if (run.italic) style.fontStyle = "italic";
-  if (run.underline) style.textDecoration = "underline";
-  if (run.fontFamily) style.fontFamily = `'${run.fontFamily}', sans-serif`;
-  style.fontSize = `${(run.sizePt ?? 18) * PT_TO_PX}px`;
-  style.color = run.color ?? "#000000";
-  return style;
-}
-
-const frameFill = computed(() => {
-  const f = props.frame;
-  if ((f.kind === "text") && f.fill && f.fill.type === "solid") {
-    return f.fill.color;
-  }
-  return "transparent";
-});
-
-// --- shape canvas ----------------------------------------------------------
-
-const canvas = ref<HTMLCanvasElement | null>(null);
-
-const shapeVisual = computed<ShapeVisual | null>(() => {
-  const f = props.frame;
-  if (f.kind !== "shape") {
-    return null;
-  }
-  const visual: ShapeVisual = { geometry: f.geometry };
-  if (f.fill && f.fill.type === "solid") {
-    visual.fill = f.fill.color;
-  }
-  if (f.stroke) {
-    visual.outline = { color: f.stroke.color, widthPt: f.stroke.widthPt, dash: "solid" };
-  }
-  if (f.adjustments && f.adjustments.length > 0) {
-    visual.adjustments = f.adjustments;
-  }
-  // Rotation is applied by the frame's CSS transform (AC-36), so the canvas
-  // paints the shape unrotated.
-  return visual;
-});
-
-function paint(): void {
-  const el = canvas.value;
-  const visual = shapeVisual.value;
+function paint() {
+  const el = canvasEl.value;
+  const visual = shapeVisualOf(frame.value);
   if (!el || !visual) {
     return;
   }
-  paintShapeIntoCanvas(el, visual, cmToPx(props.frame.widthCm), cmToPx(props.frame.heightCm));
+  try {
+    paintShapeIntoCanvas(el, visual, cmToPx(frame.value.widthCm), cmToPx(frame.value.heightCm));
+  } catch {
+    // A host without a real 2D canvas (jsdom) can't paint; rendering must
+    // never break the view.
+  }
 }
 
+// paintShapeIntoCanvas sizes the backing store at devicePixelRatio, so the
+// shape stays crisp at dpr ≥ 2 (AC-43); repaint whenever the frame changes.
 onMounted(paint);
 watch(() => props.frame, paint, { deep: true });
-
-// devicePixelRatio can change (moving a window between displays); repaint so
-// the canvas stays crisp (AC-43).
-let mql: MediaQueryList | undefined;
-onMounted(() => {
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-    mql.addEventListener?.("change", paint);
-  }
-});
-onBeforeUnmount(() => mql?.removeEventListener?.("change", paint));
 </script>
 
 <template>
   <!-- Text frame -->
   <div
-    v-if="frame.kind === 'text'"
+    v-if="kind === 'text'"
     class="frame text-frame"
-    :style="{ ...positionStyle, background: frameFill }"
+    :style="{ ...position, background: textFill }"
     data-testid="slide-text-frame"
   >
     <div
-      v-for="(entry, index) in textParagraphs"
+      v-for="(entry, index) in paragraphs"
       :key="index"
       class="paragraph"
       :style="paragraphStyle(entry.para)"
@@ -178,34 +93,34 @@ onBeforeUnmount(() => mql?.removeEventListener?.("change", paint));
 
   <!-- Image frame -->
   <div
-    v-else-if="frame.kind === 'image'"
+    v-else-if="kind === 'image'"
     class="frame"
-    :style="positionStyle"
+    :style="position"
   >
     <img
       class="frame-image"
-      :src="resolveMedia(frame.mediaId)"
+      :src="imgSrc"
       alt=""
     >
   </div>
 
   <!-- Shape frame -->
   <div
-    v-else-if="frame.kind === 'shape'"
+    v-else-if="kind === 'shape'"
     class="frame shape-frame"
-    :style="positionStyle"
+    :style="position"
     data-testid="slide-shape-frame"
   >
     <canvas
-      ref="canvas"
+      ref="canvasEl"
       class="shape-canvas"
     />
     <div
-      v-if="textParagraphs.length > 0"
+      v-if="paragraphs.length > 0"
       class="shape-text"
     >
       <div
-        v-for="(entry, index) in textParagraphs"
+        v-for="(entry, index) in paragraphs"
         :key="index"
         class="paragraph"
         :style="{ textAlign: 'center' }"
@@ -221,15 +136,13 @@ onBeforeUnmount(() => mql?.removeEventListener?.("change", paint));
 
   <!-- Group frame: children already in slide space, rendered read-only -->
   <div
-    v-else-if="frame.kind === 'group'"
+    v-else-if="kind === 'group'"
     class="frame group-frame"
-    :style="positionStyle"
+    :style="position"
     data-testid="slide-group-frame"
   >
-    <!-- Children carry absolute slide-space coordinates; they render against
-         the stage, not this box, so they sit in a zero-size origin layer. -->
     <SlideFrameView
-      v-for="child in frame.children"
+      v-for="child in children"
       :key="child.id"
       :frame="child"
       :resolve-media="resolveMedia"
@@ -238,12 +151,12 @@ onBeforeUnmount(() => mql?.removeEventListener?.("change", paint));
 
   <!-- Foreign placeholder box -->
   <div
-    v-else-if="frame.kind === 'foreign' && !frame.noBounds"
+    v-else-if="foreignVisible"
     class="frame foreign-frame"
-    :style="positionStyle"
+    :style="position"
     data-testid="slide-foreign-frame"
   >
-    <span class="foreign-label">{{ frame.label }}</span>
+    <span class="foreign-label">{{ foreignText }}</span>
   </div>
 </template>
 

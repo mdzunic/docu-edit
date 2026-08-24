@@ -5,9 +5,9 @@
 // The view owns current-slide state, the stage's fit scaling (a
 // ResizeObserver), global PageUp/PageDown navigation, and the on-open upgrade
 // of preparation-milestone records. It still redirects a text-document id to
-// /doc/:id (DocumentView does the reverse) so a stale URL never opens a model
-// in the wrong product.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+// /doc/:id (DocumentView does the reverse). Runtime declarations, not
+// defineProps<{...}>() generics — espree lints .vue scripts.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
@@ -16,7 +16,7 @@ import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import { useTheme } from "../composables/useTheme";
 import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
 import { downloadPresentation } from "../lib/presentation/download";
-import { isLegacyPresentationModel, type PresentationModel } from "../lib/presentation/model";
+import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
 import { cmToPx } from "../lib/core/units";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
@@ -30,10 +30,18 @@ useTheme();
 
 const presentationId = computed(() => String(route.params.id ?? ""));
 
-const presentation = shallowRef<PresentationModel | null>(null);
+// A legacy (preparation-milestone) model still holds outline-shaped slides,
+// which the frame renderer cannot draw — hide it until loadPresentation has
+// upgraded it, so the filmstrip/stage only ever see the frame model.
+function initialModel() {
+  const model = getPresentation(presentationId.value) ?? null;
+  return model && isLegacyPresentationModel(model) ? null : model;
+}
+
+const presentation = shallowRef(initialModel());
 const currentIndex = ref(0);
 
-async function loadPresentation(): Promise<void> {
+async function loadPresentation() {
   // A text document's id belongs to the word processor — hand it over.
   if (documentKindOf(presentationId.value) === "text") {
     void router.replace(`/doc/${presentationId.value}`);
@@ -53,6 +61,7 @@ async function loadPresentation(): Promise<void> {
   }
   presentation.value = model;
   currentIndex.value = 0;
+  void nextTick(recomputeScale);
 }
 
 // main.ts awaits initLibrary() before mounting, so the store is hydrated in
@@ -66,30 +75,29 @@ watch(presentationId, () => {
 
 const title = computed(() => presentation.value?.title ?? "No document");
 const badge = computed(() => (presentation.value ? formatBadgeLabel(presentation.value.format) : ""));
-const formatName = computed(() =>
-  presentation.value ? presentationFormatLabel(presentation.value.format) : "",
-);
-const slideCount = computed(() => presentation.value?.slides.length ?? 0);
-const slideCountLabel = computed(() => (slideCount.value === 1 ? "1 slide" : `${slideCount.value} slides`));
+const formatName = computed(() => (presentation.value ? presentationFormatLabel(presentation.value.format) : ""));
+const slideTotal = computed(() => presentation.value?.slides.length ?? 0);
+const slideCountLabel = computed(() => (slideTotal.value === 1 ? "1 slide" : `${slideTotal.value} slides`));
 
 const currentSlide = computed(() => presentation.value?.slides[currentIndex.value] ?? null);
 const liveLabel = computed(() =>
-  presentation.value ? `Slide ${currentIndex.value + 1} of ${slideCount.value}` : "",
+  presentation.value ? `Slide ${currentIndex.value + 1} of ${slideTotal.value}` : "",
 );
+const deckMedia = computed(() => presentation.value?.media ?? []);
 
-function selectSlide(index: number): void {
-  if (index >= 0 && index < slideCount.value) {
+function selectSlide(index = 0) {
+  if (index >= 0 && index < slideTotal.value) {
     currentIndex.value = index;
   }
 }
 
 // --- fit-to-workspace scaling ----------------------------------------------
 
-const stageContainer = ref<HTMLElement | null>(null);
+const stageContainer = useTemplateRef("stageContainer");
 const stageScale = ref(1);
-let resizeObserver: ResizeObserver | undefined;
+const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recomputeScale) : null;
 
-function recomputeScale(): void {
+function recomputeScale() {
   const container = stageContainer.value;
   const model = presentation.value;
   if (!container || !model) {
@@ -111,19 +119,12 @@ watch([presentation, currentSlide], () => {
 
 // --- global slide navigation (AC-48) ---------------------------------------
 
-function isTextInput(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
-}
-
-function onGlobalKeydown(event: KeyboardEvent): void {
+function onGlobalKeydown(event = new KeyboardEvent("keydown")) {
   if (event.key !== "PageUp" && event.key !== "PageDown") {
     return;
   }
-  if (isTextInput(event.target)) {
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
     return;
   }
   event.preventDefault();
@@ -131,11 +132,8 @@ function onGlobalKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  if (typeof ResizeObserver !== "undefined") {
-    resizeObserver = new ResizeObserver(recomputeScale);
-    if (stageContainer.value) {
-      resizeObserver.observe(stageContainer.value);
-    }
+  if (resizeObserver && stageContainer.value) {
+    resizeObserver.observe(stageContainer.value);
   }
   window.addEventListener("resize", recomputeScale);
   window.addEventListener("keydown", onGlobalKeydown);
@@ -148,13 +146,13 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onGlobalKeydown);
 });
 
-function download(): void {
+function download() {
   if (presentation.value) {
     void downloadPresentation(presentation.value);
   }
 }
 
-function close(): void {
+function close() {
   // Mirrors the editor's close (useFileActions): the library scrolls to and
   // highlights the row that was just closed (SPEC-060).
   router.push({ path: "/", state: { closedDocId: presentationId.value } });
@@ -218,7 +216,7 @@ function close(): void {
           :slides="presentation.slides"
           :width-cm="presentation.slideWidthCm"
           :height-cm="presentation.slideHeightCm"
-          :media="presentation.media"
+          :media="deckMedia"
           :current-index="currentIndex"
           @select="selectSlide"
         />
@@ -232,7 +230,7 @@ function close(): void {
             :slide="currentSlide"
             :width-cm="presentation.slideWidthCm"
             :height-cm="presentation.slideHeightCm"
-            :media="presentation.media"
+            :media="deckMedia"
             :scale="stageScale"
             :live-label="liveLabel"
           />
@@ -324,7 +322,7 @@ function close(): void {
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
-  background: var(--surface-sunken, var(--surface-base));
+  background: var(--surface-sunken);
   overflow: hidden;
 }
 </style>

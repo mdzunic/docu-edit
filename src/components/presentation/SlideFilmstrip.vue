@@ -3,47 +3,45 @@
 // each a scaled-down, non-interactive SlideStage — for tests and assistive
 // tech. role="listbox"/"option", aria-selected, each option labelled
 // "Slide N of M — <title or 'untitled'>", keyboard nav with
-// ArrowUp/ArrowDown/Home/End. Dumb: props in, `select` out, no store access.
+// ArrowUp/ArrowDown/Home/End. Runtime prop/emit declarations, not
+// defineProps<{...}>() generics (espree lints .vue scripts); params take a
+// default value so TS infers their type without an annotation.
 import { computed } from "vue";
-import { cmToPx } from "../../lib/core/units";
-import type { MediaPart } from "../../lib/core/media";
-import type { Slide } from "../../lib/presentation/model";
-import { slideOutline } from "../../lib/presentation/slideModel";
 import SlideStage from "./SlideStage.vue";
+import { asSlides, filmstripLabel, filmstripThumbScale } from "./slideRender";
 
-const props = defineProps<{
-  slides: Slide[];
-  widthCm: number;
-  heightCm: number;
-  media?: MediaPart[];
-  currentIndex: number;
-}>();
+const props = defineProps({
+  slides: { type: Array, default: () => [] },
+  widthCm: { type: Number, required: true },
+  heightCm: { type: Number, required: true },
+  media: { type: Array, default: () => [] },
+  currentIndex: { type: Number, default: 0 },
+});
 
-const emit = defineEmits<{ (event: "select", index: number): void }>();
+const emit = defineEmits(["select"]);
 
 /** Target thumbnail width in px; the stage scales down to fit it. */
 const THUMB_WIDTH_PX = 168;
 
-const scale = computed(() => THUMB_WIDTH_PX / Math.max(1, cmToPx(props.widthCm)));
+const slides = computed(() => asSlides(props.slides));
+const scale = computed(() => filmstripThumbScale(props.widthCm, THUMB_WIDTH_PX));
 
-function optionLabel(slide: Slide, index: number): string {
-  const outline = slideOutline(slide);
-  const name = outline.title && outline.title.trim().length > 0 ? outline.title : "untitled";
-  return `Slide ${index + 1} of ${props.slides.length} — ${name}`;
+function label(slide = slides.value[0], index = 0) {
+  return filmstripLabel(slide, index, slides.value.length);
 }
 
-function optionId(index: number): string {
+function optionId(index = 0) {
   return `filmstrip-option-${index}`;
 }
 
-function select(index: number): void {
-  if (index >= 0 && index < props.slides.length) {
+function select(index = 0) {
+  if (index >= 0 && index < slides.value.length) {
     emit("select", index);
   }
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  let next: number | null = null;
+function onKeydown(event = new KeyboardEvent("keydown")) {
+  let next = null;
   switch (event.key) {
     case "ArrowDown":
     case "ArrowRight":
@@ -57,12 +55,12 @@ function onKeydown(event: KeyboardEvent): void {
       next = 0;
       break;
     case "End":
-      next = props.slides.length - 1;
+      next = slides.value.length - 1;
       break;
     default:
       return;
   }
-  if (next !== null && next >= 0 && next < props.slides.length) {
+  if (next !== null && next >= 0 && next < slides.value.length) {
     event.preventDefault();
     select(next);
   }
@@ -87,7 +85,7 @@ function onKeydown(event: KeyboardEvent): void {
       :class="{ selected: index === currentIndex }"
       role="option"
       :aria-selected="index === currentIndex"
-      :aria-label="optionLabel(slide, index)"
+      :aria-label="label(slide, index)"
       data-testid="filmstrip-slide"
       @click="select(index)"
     >
@@ -112,38 +110,39 @@ function onKeydown(event: KeyboardEvent): void {
 .filmstrip {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3, 0.75rem);
-  padding: var(--space-3, 0.75rem);
+  gap: var(--space-3);
+  padding: var(--space-3);
   overflow-y: auto;
   outline: none;
 }
 
 .filmstrip:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--focus-ring, #4472c4);
+  outline: var(--border-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--border-width));
 }
 
 .filmstrip-option {
   display: flex;
   align-items: center;
-  gap: var(--space-2, 0.5rem);
+  gap: var(--space-2);
   cursor: pointer;
-  border-radius: var(--radius-sm, 4px);
-  padding: var(--space-1, 0.25rem);
-  border: var(--border-width, 1px) solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
+  border: var(--border-width) solid transparent;
 }
 
 .filmstrip-option.selected {
-  border-color: var(--accent, #4472c4);
-  background: var(--surface-raised, rgba(68, 114, 196, 0.08));
+  border-color: var(--accent);
+  background: var(--surface-raised);
 }
 
 .thumb-number {
   flex: none;
   width: 1.5rem;
   text-align: right;
-  color: var(--text-secondary, #666);
-  font-size: var(--text-sm, 0.85rem);
-  font-weight: var(--weight-bold, 700);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
 }
 
 .thumb-stage {
