@@ -1,6 +1,6 @@
 ---
 id: SPEC-000
-title: Product roadmap — browser word processor for .docx and .odt
+title: Product roadmap — word processor and presentations
 status: draft
 area: product
 ---
@@ -9,11 +9,18 @@ This file is the index for the spec set. It is not a work order — no engineer
 should implement it. It exists so a business person can see the intended order
 of the queue and pick which spec to label `status:ready` next.
 
-The product: a browser-based word processor that opens `.docx` (OOXML) and
-`.odt` (ODF) documents, edits them with the feature depth people expect from
-Google Docs and LibreOffice Writer, saves them back in the same format without
-destroying what it did not understand, and generates new documents in both
-formats from scratch.
+The first product: a browser-based word processor that opens `.docx` (OOXML)
+and `.odt` (ODF) documents, edits them with the feature depth people expect
+from Google Docs and LibreOffice Writer, saves them back in the same format
+without destroying what it did not understand, and generates new documents in
+both formats from scratch.
+
+The second product (Phase 13): presentations — `.pptx`/`.odp` decks in the
+same app and library, sharing `src/lib/core` but never importing the word
+processor (see `docs/presentations-architecture.md`). Its preparation
+milestone (open, library, outline preview, byte-preserving save) shipped
+outside the numbered queue on 2026-08-24; SPEC-079 onward builds the editor
+on top of it.
 
 Specs are ordered so each one is shippable on its own and builds on the ones
 before it. Later specs assume earlier ones are merged (`depends_on` in each
@@ -50,7 +57,17 @@ rejecting SPEC-007 as ambiguous:
    confused with the **document's** theme (colours and fonts saved into the
    file), defined in `specs/077-document-themes.md`. The shape geometry
    catalogue that supersedes SPEC-051's fourteen entries is defined in
-   `specs/069-shape-catalogue-expansion.md`. Nothing redefines these.
+   `specs/069-shape-catalogue-expansion.md`. On the presentation side:
+   the slide model (frames, effective values, preservation fields) is
+   defined in `specs/079-slide-canvas-rendering.md`; the presentation
+   writers' rebuild rules and the presentation undo stack in
+   `specs/080-create-presentation-and-slide-management.md`; slide-part
+   serialisation in `specs/081-slide-text-editing.md`; playback
+   navigation semantics in `specs/084-slideshow-playback.md`; the
+   transition model and wire mappings in
+   `specs/085-slide-transitions.md`; the animation model and canonical
+   timing forms in `specs/086-slide-animations.md`. Nothing redefines
+   these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -214,6 +231,30 @@ tells Word the wrong anchor paragraph.
 | --- | --- |
 | SPEC-078 | Explicit anchors for floating drawings |
 
+### Phase 13 — The presentation product
+Builds the slides editor on the 2026-08-24 preparation milestone
+(read-only preview + byte-preserving save). Order matters more than
+usual here: SPEC-079 defines the slide model everything else edits,
+SPEC-080/081 build the save machinery every content spec reuses, and
+the last three are the product's payoff features — Keynote import needs
+the editor to import *into*, and the HTML export replays what SPEC-084
+–086 define. SPEC-087 additionally needs a human-generated fixture
+(`scripts/make-keynote-fixture.applescript`) committed before it can go
+ready.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-079 | Slide rendering — the slide canvas, placeholders and the filmstrip |
+| SPEC-080 | Create a presentation, and slide management |
+| SPEC-081 | Slide text editing and formatting |
+| SPEC-082 | Slide objects — insert, arrange and style images, shapes and text boxes |
+| SPEC-083 | Speaker notes |
+| SPEC-084 | Slideshow playback |
+| SPEC-085 | Slide transitions |
+| SPEC-086 | Slide animations — entrance and exit builds |
+| SPEC-087 | Import Apple Keynote presentations (.key) |
+| SPEC-088 | Export a presentation to HTML — self-contained, with transitions and animations |
+
 ---
 
 ## Backlog — identified, not yet specced
@@ -244,3 +285,14 @@ first.
 | Forced-colours / high-contrast mode | SPEC-059's out of scope |
 | Folders or tags in the library | SPEC-067's out of scope |
 | Document protection, read-only enforcement, encryption | Never specced |
+| Slide layouts picker and master editing | SPEC-080's out of scope (new slides are title+body only) |
+| Tables and charts on slides (beyond foreign-frame preservation) | SPEC-079 renders placeholders only |
+| Slide size setup dialog | SPEC-080's out of scope |
+| Presenter view — notes, next slide, timer | SPEC-083/084 both name it |
+| Slide sorter / grid view, copy-paste of slides across decks | SPEC-080's out of scope |
+| Per-paragraph text builds, emphasis effects, motion paths | SPEC-086's out of scope |
+| Transition/build import from Keynote onto SPEC-085/086 models | SPEC-087 drops and counts them |
+| Rotation editing, adjustment handles, multi-select on slides | SPEC-082's out of scope |
+| Embedded audio/video on slides | SPEC-088 keeps placeholders |
+| Keynote ’09 (`index.apxl`), .pages/.numbers products | SPEC-087 rejects with pointers |
+| Deck export to PDF; HTML export via the generation API | SPEC-034 is text-only; SPEC-088 names the API follow-up |
