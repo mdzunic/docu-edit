@@ -74,7 +74,9 @@ export interface SlideTextEditing {
 export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
   const editingFrameId = ref<string | null>(null);
   const host = ref<HTMLElement | null>(null);
-  const toolbarState = ref<SelectionFormatState | null>(null);
+  // Bumped when the DOM caret/selection moves (no model change) so the toolbar
+  // state recomputes; model edits recompute it through the reactive frame.
+  const selectionTick = ref(0);
   let suppressInput = false;
 
   // --- undo-burst state -----------------------------------------------------
@@ -114,6 +116,22 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   const toolbarEnabled = computed(() => targetFrame() !== null);
 
+  // Reactive over the target frame's model (via commit's triggerRef) AND the
+  // DOM selection (via selectionTick), so it survives undo/redo and caret moves.
+  const toolbarState = computed<SelectionFormatState | null>(() => {
+    const frame = targetFrame();
+    if (!frame) return null;
+    selectionTick.value; // eslint-disable-line no-unused-expressions -- reactive touch
+    let range: TextRange;
+    if (editingFrame.value && host.value) {
+      const dom = selectionRangeOf(host.value) ?? lastRange;
+      range = dom ? { start: dom.start, end: dom.end } : { start: { para: 0, offset: 0 }, end: { para: 0, offset: 0 } };
+    } else {
+      range = wholeFrameRange(frame);
+    }
+    return selectionFormatState(frame, range);
+  });
+
   // --- session lifecycle ----------------------------------------------------
   function startEditing(frameId: string, selectAll = false): void {
     if (!textFrameById(frameId)) return;
@@ -142,7 +160,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
         const range = selectionRangeOf(el);
         if (range) {
           lastRange = range;
-          refreshToolbar();
+          selectionTick.value++;
         }
       };
       el.addEventListener("input", onInput);
@@ -172,7 +190,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     el.focus();
     if (selectAll) selectAllIn(el);
     else placeCaretAtEnd(el, frame);
-    refreshToolbar();
+    selectionTick.value++;
   }
 
   function placeCaretAtEnd(el: HTMLElement, frame: TextFrame): void {
@@ -193,7 +211,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     editingFrameId.value = null;
     host.value = null;
     lastRange = null;
-    refreshToolbar();
+    selectionTick.value++;
   }
 
   // --- normalise-after-input ------------------------------------------------
@@ -214,7 +232,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     frame.paragraphs = next;
     markSlideEdited(slide, model.format);
     deps.commit();
-    refreshToolbar();
+    selectionTick.value++;
   }
 
   function onPaste(event: ClipboardEvent): void {
@@ -252,7 +270,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       } else if (key === "a") {
         event.preventDefault();
         if (host.value) selectAllIn(host.value);
-        refreshToolbar();
+        selectionTick.value++;
       }
     }
   }
@@ -283,7 +301,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       setSelectionRange(host.value, range.start, range.end);
     }
     deps.commit();
-    refreshToolbar();
+    selectionTick.value++;
   }
 
   function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
@@ -316,20 +334,6 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     runCommand(delta > 0 ? "Indent" : "Outdent", (frame, range) =>
       setIndentLevel(frame, { startPara: range.start.para, endPara: range.end.para }, delta),
     );
-
-  // --- toolbar reflection ---------------------------------------------------
-  function refreshToolbar(): void {
-    const frame = targetFrame();
-    if (!frame) {
-      toolbarState.value = null;
-      return;
-    }
-    const range =
-      editingFrame.value && host.value
-        ? selectionRangeOf(host.value) ?? { start: { para: 0, offset: 0 }, end: { para: 0, offset: 0 } }
-        : wholeFrameRange(frame);
-    toolbarState.value = selectionFormatState(frame, { start: range.start, end: range.end });
-  }
 
   return {
     editingFrameId,
