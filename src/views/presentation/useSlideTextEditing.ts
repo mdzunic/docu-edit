@@ -98,6 +98,24 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     }
   }
 
+  // The slides model is a shallowRef and child views' computeds key off object
+  // identity, so a nested `frame.paragraphs = …` is not seen by the read-only
+  // renderers (the stage's other frames, the filmstrip thumbnail — AC-43/44).
+  // Replace BOTH the edited frame and its slide with fresh objects (same ids)
+  // so every `:slide`/`:frame`-bound view re-renders. The editing frame's
+  // contenteditable host is imperatively managed and keyed by id, so it is not
+  // disturbed; the slide id is unchanged, so selection is not dropped.
+  function bumpFrame(frame: TextFrame): void {
+    const model = deps.model.value;
+    const current = deps.currentSlide.value;
+    if (!model || !current) return;
+    const frames = current.frames.map((f) => (f.id === frame.id ? { ...f } : f));
+    const index = model.slides.indexOf(current);
+    if (index >= 0) {
+      model.slides[index] = { ...current, frames };
+    }
+  }
+
   // --- frame lookup ---------------------------------------------------------
   function textFrameById(frameId: string | null): TextFrame | null {
     const slide = deps.currentSlide.value;
@@ -157,6 +175,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     host.value = el;
     if (el && editingFrame.value) {
       const onSelectionChange = (): void => {
+        // Only while the host is focused — a toolbar click moves focus off the
+        // contenteditable and collapses its selection; ignoring that keeps the
+        // pre-click selection available for the command (lastRange).
+        if (el.ownerDocument.activeElement !== el) return;
         const range = selectionRangeOf(el);
         if (range) {
           lastRange = range;
@@ -230,6 +252,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     const next = normalizeTextFrameDom(el);
     mergeParagraphProps(next, frame.paragraphs);
     frame.paragraphs = next;
+    bumpFrame(frame);
     markSlideEdited(slide, model.format);
     deps.commit();
     selectionTick.value++;
@@ -280,8 +303,11 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
    * else the whole selected frame (AC-25). */
   function commandRange(frame: TextFrame): TextRange {
     if (editingFrame.value && host.value) {
-      const dom = selectionRangeOf(host.value) ?? lastRange;
-      if (dom) return { start: dom.start, end: dom.end };
+      const live = selectionRangeOf(host.value);
+      // Prefer a real (non-collapsed) selection; a toolbar click collapses the
+      // live one, so fall back to the last selection captured while focused.
+      const chosen = live && !isCollapsed(live) ? live : lastRange && !isCollapsed(lastRange) ? lastRange : live ?? lastRange;
+      if (chosen) return { start: chosen.start, end: chosen.end };
     }
     return wholeFrameRange(frame);
   }
@@ -300,6 +326,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       renderEditableParagraphs(host.value, frame.paragraphs);
       setSelectionRange(host.value, range.start, range.end);
     }
+    bumpFrame(frame);
     deps.commit();
     selectionTick.value++;
   }
@@ -355,6 +382,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     toggleBulletCmd,
     indent,
   };
+}
+
+function isCollapsed(range: { start: { para: number; offset: number }; end: { para: number; offset: number } }): boolean {
+  return range.start.para === range.end.para && range.start.offset === range.end.offset;
 }
 
 type SlideParagraphList = TextFrame["paragraphs"];

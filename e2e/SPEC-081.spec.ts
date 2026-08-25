@@ -1,13 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 // SPEC-081 — slide text editing: open the pptx fixture, retype the slide-1
 // title (bolded via the toolbar), add a bulleted body line on slide 2,
 // download and re-open, and confirm both edits survive; a second download with
 // no further edits re-downloads the edited deck stably.
 
-const FIXTURE = join(__dirname, "fixtures", "mini-deck.pptx");
+const FIXTURE = join(here, "fixtures", "mini-deck.pptx");
 
 /** The text frames on the MAIN stage (not the filmstrip thumbnails). */
 function stageFrames(page: Page) {

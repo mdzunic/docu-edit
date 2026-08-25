@@ -117,6 +117,7 @@ onBeforeUnmount(() => observer?.disconnect());
         aria-label="Bold"
         :aria-pressed="pressed('bold')"
         :disabled="!enabled"
+        @mousedown.prevent
         @click="emit('bold')"
       >
         <b>B</b>
@@ -128,6 +129,7 @@ onBeforeUnmount(() => observer?.disconnect());
         aria-label="Italic"
         :aria-pressed="pressed('italic')"
         :disabled="!enabled"
+        @mousedown.prevent
         @click="emit('italic')"
       >
         <i>I</i>
@@ -139,6 +141,7 @@ onBeforeUnmount(() => observer?.disconnect());
         aria-label="Underline"
         :aria-pressed="pressed('underline')"
         :disabled="!enabled"
+        @mousedown.prevent
         @click="emit('underline')"
       >
         <u>U</u>
@@ -179,6 +182,7 @@ onBeforeUnmount(() => observer?.disconnect());
             :aria-pressed="alignActive(a.value) ? 'true' : 'false'"
             :data-align="a.value"
             :disabled="!enabled"
+            @mousedown.prevent
             @click="emit('align', a.value)"
           >
             {{ a.glyph }}
@@ -193,6 +197,7 @@ onBeforeUnmount(() => observer?.disconnect());
             aria-label="Bulleted list"
             :aria-pressed="pressed('bullet')"
             :disabled="!enabled"
+            @mousedown.prevent
             @click="emit('bullet')"
           >
             •
@@ -203,6 +208,7 @@ onBeforeUnmount(() => observer?.disconnect());
             data-testid="slides-outdent"
             aria-label="Decrease indent"
             :disabled="!enabled"
+            @mousedown.prevent
             @click="emit('outdent')"
           >
             ⇤
@@ -213,6 +219,7 @@ onBeforeUnmount(() => observer?.disconnect());
             data-testid="slides-indent"
             aria-label="Increase indent"
             :disabled="!enabled"
+            @mousedown.prevent
             @click="emit('indent')"
           >
             ⇥

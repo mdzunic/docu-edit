@@ -181,12 +181,25 @@ export function caretAddressOf(host: HTMLElement): CaretAddress | null {
   const sel = host.ownerDocument.getSelection();
   if (!sel || sel.rangeCount === 0) return null;
   const { focusNode, focusOffset } = sel;
-  if (!focusNode || !host.contains(focusNode)) return null;
+  if (!focusNode || (focusNode !== host && !host.contains(focusNode))) return null;
+  return addressAt(host, focusNode, focusOffset);
+}
+
+/** Maps a DOM (node, offset) inside `host` to a paragraph/character address.
+ * Handles a point on the host itself (a whole-content selection's endpoints,
+ * where the node is the host and the offset is a block index). */
+function addressAt(host: HTMLElement, node: Node, offset: number): CaretAddress {
   const blocks = Array.from(host.children);
+  if (node === host) {
+    if (offset >= blocks.length) {
+      const last = Math.max(0, blocks.length - 1);
+      return { para: last, offset: (blocks[last]?.textContent ?? "").length };
+    }
+    return { para: offset, offset: 0 };
+  }
   for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (block === focusNode || block.contains(focusNode)) {
-      return { para: i, offset: offsetWithin(block, focusNode, focusOffset) };
+    if (blocks[i] === node || blocks[i].contains(node)) {
+      return { para: i, offset: offsetWithin(blocks[i], node, offset) };
     }
   }
   return { para: Math.max(0, blocks.length - 1), offset: 0 };
@@ -303,12 +316,6 @@ export function selectionRangeOf(host: HTMLElement): { start: CaretAddress; end:
 }
 
 function pointOf(host: HTMLElement, node: Node | null, offset: number): CaretAddress | null {
-  if (!node || !host.contains(node)) return null;
-  const blocks = Array.from(host.children);
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i] === node || blocks[i].contains(node)) {
-      return { para: i, offset: offsetWithin(blocks[i], node, offset) };
-    }
-  }
-  return { para: Math.max(0, blocks.length - 1), offset: 0 };
+  if (!node || (node !== host && !host.contains(node))) return null;
+  return addressAt(host, node, offset);
 }
