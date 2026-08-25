@@ -19,14 +19,9 @@
 import { decodedPartBytes } from "../../core/packageParts";
 import { buildMetaXml } from "../../core/odfMeta";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
-import {
-  DEFAULT_PRESENTATION_TITLE,
-  type PlaceholderRole,
-  type PresentationModel,
-  type Slide,
-  type TextFrame,
-} from "../model";
+import { DEFAULT_PRESENTATION_TITLE, type PresentationModel } from "../model";
 import { ODP_MIMETYPE } from "./reader";
+import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
 
 export { ODP_MIMETYPE };
 
@@ -84,19 +79,32 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
 
 function rebuildContentXml(model: PresentationModel, envelope: { prefix: string; suffix: string }): string {
   const usedNames = new Set<string>();
+  const registry = new StyleRegistry();
+  // A source that (pathologically) already uses `de-`-prefixed names cannot
+  // collide with a generated one — seed the counters past every such name.
+  registry.seedFrom(envelope.prefix + envelope.suffix + model.slides.map((s) => s.sourceXml ?? "").join(""));
   let lastMaster = "Default";
   const pages = model.slides.map((slide) => {
     if (slide.sourceXml) {
+      // Untouched or duplicated page: re-emit its source markup verbatim (its
+      // draw:name uniqued for a duplicate) — splice-equality (AC-33).
       const master = drawNameAttr(slide.sourceXml, "draw:master-page-name");
       if (master) {
         lastMaster = master;
       }
       return uniqueDrawName(slide.sourceXml, usedNames);
     }
-    const page = generatePage(slide, uniqueName("page", usedNames), lastMaster);
-    return page;
+    // Dirty or new page: rebuild from the model, keeping its original
+    // draw:page attributes (AC-37) and generating automatic styles.
+    const preservedMaster = slide.preserved?.["@page"]
+      ? drawAttr(slide.preserved["@page"], "draw:master-page-name")
+      : undefined;
+    const master = preservedMaster ?? lastMaster;
+    lastMaster = master;
+    return serializePage(slide, registry, usedNames, master);
   });
-  return envelope.prefix + pages.join("") + envelope.suffix;
+  const content = envelope.prefix + pages.join("") + envelope.suffix;
+  return registry.hasStyles() ? spliceAutomaticStyles(content, registry.xml()) : content;
 }
 
 /** The value of an attribute like `draw:name="…"` in a page's markup. */
@@ -130,50 +138,22 @@ function uniqueName(base: string, used: Set<string>): string {
   return candidate;
 }
 
-// --- shared page serialisation ---------------------------------------------
-
-const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
-  title: "title",
-  subtitle: "subtitle",
-  body: "body",
-  other: "outline",
-};
-
-function esc(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function frameXml(frame: TextFrame): string {
-  const cls = frame.role ? ROLE_TO_CLASS[frame.role] : "outline";
-  const geom =
-    ` svg:x="${frame.xCm}cm" svg:y="${frame.yCm}cm" svg:width="${frame.widthCm}cm" svg:height="${frame.heightCm}cm"`;
-  return `<draw:frame presentation:class="${esc(cls)}"${geom}><draw:text-box/></draw:frame>`;
-}
-
-/** A fresh `draw:page` for a placeholder-only slide (from-scratch and new
- * pages). Uses the given master page name (AC-28). */
-function generatePage(slide: Slide, name: string, master: string): string {
-  const frames = slide.frames
-    .filter((frame): frame is TextFrame => frame.kind === "text")
-    .map(frameXml)
-    .join("");
-  return `<draw:page draw:name="${esc(name)}" draw:master-page-name="${esc(master)}">${frames}</draw:page>`;
-}
-
 // --- from-scratch package --------------------------------------------------
 
 function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInput[] {
   const used = new Set<string>();
-  const pages = model.slides.map((slide) => generatePage(slide, uniqueName("page", used), "Default")).join("");
+  const registry = new StyleRegistry();
+  const pages = model.slides.map((slide) => serializePage(slide, registry, used, "Default")).join("");
 
-  const content =
+  const base =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}"` +
-    ` xmlns:draw="${DRAW_NS}" xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:presentation="${PRESENTATION_NS}"` +
-    ` office:version="1.2">` +
-    `<office:automatic-styles/>` +
+    ` xmlns:draw="${DRAW_NS}" xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:xlink="http://www.w3.org/1999/xlink"` +
+    ` xmlns:presentation="${PRESENTATION_NS}" office:version="1.2">` +
+    `<office:automatic-styles></office:automatic-styles>` +
     `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
     `</office:document-content>`;
+  const content = registry.hasStyles() ? spliceAutomaticStyles(base, registry.xml()) : base;
 
   const styles =
     `<?xml version="1.0" encoding="UTF-8"?>` +

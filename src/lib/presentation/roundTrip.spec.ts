@@ -42,6 +42,7 @@ import {
 } from "./model";
 import { slideOutline } from "./slideModel";
 import { addSlide, createBlankPresentation, deleteSlide, duplicateSlide, moveSlide } from "./slides";
+import { applyRunFormat, markSlideEdited, wholeFrameRange } from "./text";
 
 function geomOf(frame: SlideFrame): [number, number, number, number] {
   return [frame.xCm, frame.yCm, frame.widthCm, frame.heightCm];
@@ -467,5 +468,86 @@ describe("odp substitution rebuild", () => {
     const reopened = await readPresentationBytes((await writeOdp(model)).bytes, "odp", "Deck");
     // The reordered deck still round-trips its four pages.
     expect(reopened.slides).toHaveLength(4);
+  });
+});
+
+// --- SPEC-081: edit → save → reopen text/formatting fidelity ----------------
+
+function titleFrameOf(slide: Slide): TextFrame {
+  return slide.frames.find((f): f is TextFrame => f.kind === "text" && f.role === "title")!;
+}
+
+describe("SPEC-081 edit → save → reopen fidelity", () => {
+  it("pptx: an edited title survives; untouched siblings + structural parts stay byte-verbatim (AC-32/33/41/42/45)", async () => {
+    const sourceBytes = await buildPptxFixtureBytes();
+    const source = await unzip(sourceBytes);
+    const model = await readPresentationBytes(sourceBytes, "pptx", "Deck");
+    const title = titleFrameOf(model.slides[0]);
+    title.paragraphs = [{ runs: [{ text: "Edited Title" }] }];
+    applyRunFormat(title, wholeFrameRange(title), { bold: true, color: "#123456" });
+    markSlideEdited(model.slides[0], "pptx");
+
+    const { bytes } = await writePptx(model);
+    const written = await unzip(bytes);
+    // A text-only edit rebuilds ONLY the dirty slide part.
+    for (const [name, data] of source) {
+      if (name === "ppt/slides/slide1.xml") continue;
+      expect(equalBytes(written.get(name)!, data), `part ${name} must stay byte-verbatim`).toBe(true);
+    }
+
+    const reopened = await readPresentationBytes(bytes, "pptx", "Deck");
+    const rt = titleFrameOf(reopened.slides[0]);
+    expect(rt.paragraphs[0].runs[0].text).toBe("Edited Title");
+    expect(rt.paragraphs[0].runs[0].bold).toBe(true);
+    expect(rt.paragraphs[0].runs[0].color).toBe("#123456");
+    expect(slideOutline(reopened.slides[0]).title).toBe("Edited Title");
+
+    // Stability (AC-47): the rebuilt part is byte-stable across writes, and a
+    // reopen → re-download re-emits it verbatim.
+    const twice = await unzip((await writePptx(model)).bytes);
+    expect(equalBytes(twice.get("ppt/slides/slide1.xml")!, written.get("ppt/slides/slide1.xml")!)).toBe(true);
+    const redownload = await unzip((await writePptx(reopened)).bytes);
+    expect(equalBytes(redownload.get("ppt/slides/slide1.xml")!, written.get("ppt/slides/slide1.xml")!)).toBe(true);
+  });
+
+  it("pptx: a bulleted body line added to a dirty slide round-trips (AC-45/46)", async () => {
+    const model = await readPresentationBytes(await buildPptxFixtureBytes(), "pptx", "Deck");
+    const body = model.slides[1].frames.find((f): f is TextFrame => f.kind === "text" && f.role === "body")!;
+    body.paragraphs.push({ runs: [{ text: "A new bullet" }], bullet: "disc" });
+    markSlideEdited(model.slides[1], "pptx");
+    const reopened = await readPresentationBytes((await writePptx(model)).bytes, "pptx", "Deck");
+    const rtBody = reopened.slides[1].frames.find((f): f is TextFrame => f.kind === "text" && f.role === "body")!;
+    const last = rtBody.paragraphs[rtBody.paragraphs.length - 1];
+    expect(last.runs[0].text).toBe("A new bullet");
+    expect(last.bullet).toBe("disc");
+  });
+
+  it("odp: an edited title survives; content.xml alone rebuilds, every other part verbatim (AC-31/42/45)", async () => {
+    const sourceBytes = await buildOdpFixtureBytes();
+    const source = await unzip(sourceBytes);
+    const model = await readPresentationBytes(sourceBytes, "odp", "Deck");
+    const title = titleFrameOf(model.slides[0]);
+    title.paragraphs = [{ runs: [{ text: "Edited Title", bold: true }] }];
+    markSlideEdited(model.slides[0], "odp");
+    expect(model.slides[0].sourceXml).toBeUndefined(); // AC-31
+
+    const { bytes } = await writeOdp(model);
+    const written = await unzip(bytes);
+    for (const [name, data] of source) {
+      if (name === "content.xml") {
+        expect(equalBytes(written.get(name)!, data)).toBe(false);
+        continue;
+      }
+      expect(equalBytes(written.get(name)!, data), `part ${name} must stay byte-verbatim`).toBe(true);
+    }
+    // Untouched pages spliced verbatim inside the rebuilt content.xml.
+    const content = new TextDecoder().decode(written.get("content.xml")!);
+    expect(content).toContain("Broaden format support"); // page 2, untouched
+
+    const reopened = await readPresentationBytes(bytes, "odp", "Deck");
+    const rt = titleFrameOf(reopened.slides[0]);
+    expect(rt.paragraphs[0].runs[0].text).toBe("Edited Title");
+    expect(rt.paragraphs[0].runs[0].bold).toBe(true);
+    expect(slideOutline(reopened.slides[0]).title).toBe("Edited Title");
   });
 });
