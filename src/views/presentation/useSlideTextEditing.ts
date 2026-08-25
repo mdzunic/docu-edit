@@ -252,8 +252,8 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     const next = normalizeTextFrameDom(el);
     mergeParagraphProps(next, frame.paragraphs);
     frame.paragraphs = next;
+    markSlideEdited(slide, model.format); // before bumpFrame so the clone carries dirty
     bumpFrame(frame);
-    markSlideEdited(slide, model.format);
     deps.commit();
     selectionTick.value++;
   }

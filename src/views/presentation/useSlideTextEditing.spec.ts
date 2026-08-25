@@ -74,4 +74,18 @@ describe("undo-burst coalescing (AC-28/29)", () => {
     editing.onInput();
     expect(records).toEqual(["Typing", "Bold", "Typing"]);
   });
+
+  it("replaces the slide object on edit so outline-derived views update live (AC-43/44)", () => {
+    const { editing, host, model } = setup();
+    const before = model.value.slides[0];
+    host.innerHTML = "<div>hello there</div>";
+    editing.onInput();
+    // A fresh slide identity (its frame too) is what makes the filmstrip and the
+    // read-only stage re-render off the shallowRef.
+    expect(model.value.slides[0]).not.toBe(before);
+    expect(model.value.slides[0].frames[0]).not.toBe(before.frames[0]);
+    const frame = model.value.slides[0].frames[0];
+    expect(frame.kind === "text" && frame.paragraphs[0].runs[0].text).toBe("hello there");
+    expect(model.value.slides[0].dirty).toBe(true);
+  });
 });
