@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { IMAGE_RELATIONSHIP, drawingXml, parseDrawing } from "./drawing";
+import {
+  IMAGE_RELATIONSHIP,
+  drawingXml,
+  fillPendingMediaDataSync,
+  parseDrawing,
+  pendingMediaByteLength,
+} from "./drawing";
 import { parseXml } from "../core/xml";
+import { bytesToBase64 } from "../opaque";
 import type { Image } from "../documentModel";
 
 const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -284,6 +291,31 @@ describe("drawingXml round-trips through parseDrawing", () => {
     };
     const parsed = roundTrip(source);
     expect(parsed!.image.wrap).toBe("infront");
+  });
+});
+
+describe("deferred media encode (SPEC-047 AC-3/AC-16)", () => {
+  const rels = relsMap([["rId1", IMAGE_REL("media/image1.png")]]);
+  const parts = partsMap([["word/media/image1.png", PNG_BYTES]]);
+
+  it("parseDrawing leaves media.data empty and defers the byte length", () => {
+    const media = parseDrawing(drawingElement(inlinePictureXml()), rels, MAIN_PART_PATH, parts)!.media;
+    // The base64 pass is deferred (encoded in bounded chunks by parseDocx),
+    // so the freshly parsed part carries no data yet but knows its size.
+    expect(media.data).toBe("");
+    expect(pendingMediaByteLength(media)).toBe(PNG_BYTES.length);
+  });
+
+  it("fillPendingMediaDataSync encodes byte-identically and then reports a zero pending length", () => {
+    const media = parseDrawing(drawingElement(inlinePictureXml()), rels, MAIN_PART_PATH, parts)!.media;
+    fillPendingMediaDataSync(media);
+    expect(media.data).toBe(bytesToBase64(PNG_BYTES));
+    // Consumed: a second pass over an already-encoded part is a no-op, so
+    // parseDocx's chunk accounting counts each part's bytes exactly once.
+    expect(pendingMediaByteLength(media)).toBe(0);
+    const before = media.data;
+    fillPendingMediaDataSync(media);
+    expect(media.data).toBe(before);
   });
 });
 
