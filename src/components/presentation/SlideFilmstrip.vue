@@ -62,6 +62,16 @@ function select(index = 0) {
 }
 
 function onKeydown(event = new KeyboardEvent("keydown")) {
+  // Shift+F10 / the Menu (ContextMenu) key opens the current thumbnail's menu
+  // (AC-24). Handled here on the focusable listbox — the options themselves
+  // are not focusable, so the aria-activedescendant slide is the target.
+  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+    event.preventDefault();
+    const index = props.currentIndex;
+    const pos = anchorPoint(listboxRef.value, `#${optionId(index)}`);
+    openMenuAt(index, pos.x, pos.y);
+    return;
+  }
   let next = null;
   switch (event.key) {
     case "ArrowDown":
@@ -103,15 +113,6 @@ function openMenuFromButton(index = 0, event = new MouseEvent("click")) {
 function onContextMenu(index = 0, event = new MouseEvent("contextmenu")) {
   event.preventDefault();
   openMenuAt(index, event.clientX, event.clientY);
-}
-
-function onOptionKeydown(index = 0, event = new KeyboardEvent("keydown")) {
-  // Shift+F10 / the Menu (ContextMenu) key opens the menu (AC-24).
-  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-    event.preventDefault();
-    const pos = anchorPoint(listboxRef.value, `#${optionId(index)}`);
-    openMenuAt(index, pos.x, pos.y);
-  }
 }
 
 function closeMenu(refocus = true) {
@@ -225,7 +226,6 @@ function announceMove(from = 0, to = 0) {
         draggable="true"
         @click="select(index)"
         @contextmenu="onContextMenu(index, $event)"
-        @keydown="onOptionKeydown(index, $event)"
         @dragstart="onDragStart(index, $event)"
         @dragover="onDragOver(index, $event)"
         @drop="onDrop(index, $event)"

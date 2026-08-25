@@ -174,8 +174,8 @@ describe("PresentationView slide management (SPEC-080)", () => {
     const { wrapper } = await mountWith(createBlankPresentation());
     await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
     await flushPromises();
-    const option = options(wrapper)[0];
-    await option.trigger("keydown", { key: "F10", shiftKey: true });
+    // Shift+F10 on the focusable listbox opens the current thumbnail's menu.
+    await wrapper.get('[data-testid="slide-filmstrip"]').trigger("keydown", { key: "F10", shiftKey: true });
     expect(wrapper.find('[data-testid="slide-context-menu"]').exists()).toBe(true);
     await wrapper.get('[data-testid="slide-menu-delete"]').trigger("click");
     await flushPromises();

@@ -15,8 +15,21 @@ Open a `.pptx` or `.odp` from any open path (library picker, drag-drop,
 slide count, open a **read-only preview** at `/slides/:id` (title + text
 outline per slide), and download it back — with **every part of the source
 package re-emitted byte-identical** (SPEC-008's retention rule applied
-wholesale, `.odp`'s `mimetype` entry first and STOREd). No editing yet;
-nothing about the model precludes it.
+wholesale, `.odp`'s `mimetype` entry first and STOREd).
+
+Since **SPEC-080** the deck is no longer read-only: create a blank deck from
+the landing page ("New presentation", `createBlankPresentation`, `pptx` from
+birth), and add / duplicate / delete / reorder slides from the filmstrip, all
+undoable (a per-view stack capped at 100, `usePresentationUndo`) and persisted
+write-through. The writers gained two paths beside verbatim re-emission — a
+**from-scratch** minimal-package build (a deck with no retained `opaque`) and a
+**part-substitution** rebuild that rewrites only the structural parts
+(`presentation.xml`/its rels/`[Content_Types].xml` for pptx; `content.xml`
+spliced from the page envelope for odp) while every untouched slide part /
+`draw:page` re-emits byte-verbatim (`presentation/slides.ts` commands are the
+normative source; SPEC-080 the normative source for the rebuild rules and the
+undo stack). Text and object editing inside a slide are still to come
+(SPEC-081/082).
 
 ## Layering
 
