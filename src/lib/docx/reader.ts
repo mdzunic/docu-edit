@@ -2908,12 +2908,13 @@ export async function parseDocx(
   // round trip per part costs more in scheduling than `btoa` spends on the
   // bytes — on the benchmark fixture the round-trip pass measured ~2x the
   // synchronous one, and its per-part latency is exactly what a loaded gate
-  // host inflates (SPEC-047 AC-3). To keep AC-16's 150ms main-thread-block
-  // budget, the encodes run in byte-bounded chunks with one real yield
-  // between them: CHUNK_BYTES of source bytes per chunk keeps each `btoa`
-  // run a short task (~6 MB encodes well under the budget on the calibrated
-  // container) instead of one fused block over the whole package.
-  const CHUNK_BYTES = 6 * 1024 * 1024;
+  // host inflates (SPEC-047 AC-3). AC-16's 150ms main-thread-block budget is
+  // held by running the encodes in small byte-bounded chunks with one real
+  // yield between them: `btoa` costs ~18ms per source MB on the factory
+  // container, so CHUNK_BYTES = 2 MB keeps each chunk's block to ~40ms — well
+  // under the budget with room for a loaded host — while the whole pass still
+  // costs about half what the per-part round-trip pass did.
+  const CHUNK_BYTES = 2 * 1024 * 1024;
   let chunkBytes = 0;
   for (let i = 0; i < pendingEncodes.length; i++) {
     pendingEncodes[i].encode();
