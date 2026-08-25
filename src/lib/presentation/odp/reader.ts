@@ -598,10 +598,22 @@ export async function parseOdp(
   const media = new Map<string, MediaPart>();
   const ctx: OdpContext = { styles, masterPh, media, parts };
 
+  // Split content.xml around its draw:pages (SPEC-080): the writer's
+  // splice-equality envelope + each page's EXACT source substring, so
+  // `prefix + pages.join("") + suffix` reproduces content.xml byte-for-byte.
+  const contentText = decodeUtf8(contentBytes);
+  const { prefix, suffix, pageSources } = splitContentEnvelope(contentText);
+
   const slides: Slide[] = [];
+  let pageIndex = 0;
   for (const child of Array.from(presentation.children)) {
     if (child.namespaceURI === DRAW_NAMESPACE && child.localName === "page") {
-      slides.push(parsePage(child, ctx));
+      const slide = parsePage(child, ctx);
+      if (pageSources[pageIndex] !== undefined) {
+        slide.sourceXml = pageSources[pageIndex];
+      }
+      slides.push(slide);
+      pageIndex += 1;
     }
   }
 
@@ -631,7 +643,30 @@ export async function parseOdp(
     media: [...media.values()],
     opaque,
     properties,
+    odpContentEnvelope: { prefix, suffix },
   };
+}
+
+/** Splits a content.xml string into everything before its first `draw:page`,
+ * everything from the `office:presentation` close onwards, and each page's
+ * exact source substring (the region between pages sliced at every
+ * `<draw:page` boundary, so trailing whitespace stays with its page and the
+ * three pieces recombine byte-for-byte). A deck with no pages yields empty
+ * `pageSources` and a prefix/suffix that already recombine. */
+function splitContentEnvelope(content: string): { prefix: string; suffix: string; pageSources: string[] } {
+  const closeIdx = content.lastIndexOf("</office:presentation>");
+  const suffixStart = closeIdx >= 0 ? closeIdx : content.length;
+  const firstPage = content.indexOf("<draw:page");
+  if (firstPage < 0 || firstPage >= suffixStart) {
+    return { prefix: content.slice(0, suffixStart), suffix: content.slice(suffixStart), pageSources: [] };
+  }
+  const region = content.slice(firstPage, suffixStart);
+  const starts: number[] = [];
+  for (let idx = region.indexOf("<draw:page"); idx !== -1; idx = region.indexOf("<draw:page", idx + 1)) {
+    starts.push(idx);
+  }
+  const pageSources = starts.map((start, i) => region.slice(start, i + 1 < starts.length ? starts[i + 1] : region.length));
+  return { prefix: content.slice(0, firstPage), suffix: content.slice(suffixStart), pageSources };
 }
 
 function parsePage(page: Element, ctx: OdpContext): Slide {

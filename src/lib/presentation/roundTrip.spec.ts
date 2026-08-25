@@ -41,6 +41,7 @@ import {
   type ForeignFrame,
 } from "./model";
 import { slideOutline } from "./slideModel";
+import { addSlide, createBlankPresentation, deleteSlide, duplicateSlide, moveSlide } from "./slides";
 
 function geomOf(frame: SlideFrame): [number, number, number, number] {
   return [frame.xCm, frame.yCm, frame.widthCm, frame.heightCm];
@@ -262,7 +263,7 @@ describe("SPEC-079 frame model", () => {
     const image = model.slides[3].frames.find((f) => f.kind === "image");
     expect(image?.kind === "image" && image.mediaId).toBe("ppt/media/image1.png");
     // The bytes stay in opaque too (a no-edit download round-trips).
-    expect(model.opaque.some((p) => p.name === "ppt/media/image1.png")).toBe(true);
+    expect(model.opaque?.some((p) => p.name === "ppt/media/image1.png")).toBe(true);
   });
 
   it("flattens groups and labels foreign objects (AC-37/38/39/40)", async () => {
@@ -295,5 +296,176 @@ describe("SPEC-079 frame model", () => {
     expect(upgraded.title).toBe("Legacy deck");
     expect(upgraded.slides).toHaveLength(4);
     expect(slideOutline(upgraded.slides[0]).title).toBe("Quarterly Review");
+  });
+});
+
+// --- SPEC-080 writers: from-scratch build + part-substitution rebuild -------
+
+const STRUCTURAL_PPTX_PARTS = new Set([
+  "ppt/presentation.xml",
+  "ppt/_rels/presentation.xml.rels",
+  "[Content_Types].xml",
+]);
+
+function r3(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+/** SPEC-078's "compare resolved facts, not minted values" rule for
+ * presentations: the comparable placeholder facts (kind, role, geometry
+ * rounded, text) — minted ids, `phType`, retention and package fields
+ * dropped, so a build → re-parse round trip is deep-comparable across
+ * formats. */
+function strippedForCompare(model: PresentationModel): unknown {
+  return {
+    format: model.format,
+    title: model.title,
+    w: r3(model.slideWidthCm),
+    h: r3(model.slideHeightCm),
+    slides: model.slides.map((slide) =>
+      slide.frames.map((frame) => ({
+        kind: frame.kind,
+        role: frame.kind === "text" ? frame.role : undefined,
+        x: r3(frame.xCm),
+        y: r3(frame.yCm),
+        w: r3(frame.widthCm),
+        h: r3(frame.heightCm),
+        paragraphs: frame.kind === "text" ? frame.paragraphs : undefined,
+      })),
+    ),
+  };
+}
+
+describe("from-scratch writers (no retained package)", () => {
+  it("pptx: a blank + added deck re-opens with the same slides, placeholders and geometry (AC-8/9)", async () => {
+    const model = createBlankPresentation();
+    addSlide(model, 0); // a title+body slide too
+    const { bytes } = await writePptx(model);
+    const reopened = await readPresentationBytes(bytes, "pptx", model.title);
+    expect(strippedForCompare(reopened)).toEqual(strippedForCompare(model));
+  });
+
+  it("odp: a from-scratch deck re-opens the same, mimetype first and STOREd (AC-10/11)", async () => {
+    const model: PresentationModel = { ...createBlankPresentation(), format: "odp" };
+    addSlide(model, 0);
+    const { bytes } = await writeOdp(model);
+    const reopened = await readPresentationBytes(bytes, "odp", model.title);
+    expect(strippedForCompare(reopened)).toEqual(strippedForCompare(model));
+    // ODF container rule: mimetype first + STOREd (method 0 at offset 8).
+    expect(bytes[8]).toBe(0);
+    expect(new TextDecoder().decode(bytes.slice(30, 38))).toBe("mimetype");
+  });
+});
+
+describe("pptx substitution rebuild", () => {
+  async function openFixture(): Promise<{ model: PresentationModel; source: Map<string, Uint8Array> }> {
+    const bytes = await buildPptxFixtureBytes();
+    return { model: await readPresentationBytes(bytes, "pptx", "Deck"), source: await unzip(bytes) };
+  }
+
+  function expectUntouched(written: Map<string, Uint8Array>, source: Map<string, Uint8Array>): void {
+    for (const [name, data] of source) {
+      if (STRUCTURAL_PPTX_PARTS.has(name) || !written.has(name)) {
+        continue;
+      }
+      expect(equalBytes(written.get(name)!, data), `part ${name} must stay byte-verbatim`).toBe(true);
+    }
+  }
+
+  it("reordering rebuilds only the structural parts; unmodelled parts stay byte-verbatim (AC-48/50/53/54)", async () => {
+    const { model, source } = await openFixture();
+    moveSlide(model, 3, 0); // slide4 to the front → [s4, s1, s2, s3]
+    const { bytes } = await writePptx(model);
+    const written = await unzip(bytes);
+    // No parts added or removed on a reorder.
+    expect(new Set(written.keys())).toEqual(new Set(source.keys()));
+    expectUntouched(written, source);
+    // presentation.xml changed; Content-Types unchanged (no slides added/removed).
+    expect(equalBytes(written.get("ppt/presentation.xml")!, source.get("ppt/presentation.xml")!)).toBe(false);
+    expect(equalBytes(written.get("[Content_Types].xml")!, source.get("[Content_Types].xml")!)).toBe(true);
+    // The re-minted sldIdLst carries the new order (slide4's part now first).
+    const reopened = await readPresentationBytes(bytes, "pptx", "Deck");
+    expect(reopened.slides[0].partName).toBe("ppt/slides/slide4.xml");
+  });
+
+  it("adding a slide appends a fresh part + rels and its Content-Types override (AC-27)", async () => {
+    const { model, source } = await openFixture();
+    addSlide(model, 0);
+    const { bytes } = await writePptx(model);
+    const written = await unzip(bytes);
+    expect(written.has("ppt/slides/slide5.xml")).toBe(true);
+    expect(written.has("ppt/slides/_rels/slide5.xml.rels")).toBe(true);
+    expectUntouched(written, source);
+    // The new slide references the current slide's layout (slide1 → layout1).
+    const rels = new TextDecoder().decode(written.get("ppt/slides/_rels/slide5.xml.rels")!);
+    expect(rels).toContain("slideLayout1.xml");
+    const reopened = await readPresentationBytes(bytes, "pptx", "Deck");
+    expect(reopened.slides).toHaveLength(5);
+  });
+
+  it("deleting a slide drops its part, rels and Content-Types override (AC-34)", async () => {
+    const { model, source } = await openFixture();
+    deleteSlide(model, 0);
+    const { bytes } = await writePptx(model);
+    const written = await unzip(bytes);
+    expect(written.has("ppt/slides/slide1.xml")).toBe(false);
+    expect(written.has("ppt/slides/_rels/slide1.xml.rels")).toBe(false);
+    expect(new TextDecoder().decode(written.get("[Content_Types].xml")!)).not.toContain("/ppt/slides/slide1.xml");
+    expectUntouched(written, source);
+    const reopened = await readPresentationBytes(bytes, "pptx", "Deck");
+    expect(reopened.slides).toHaveLength(3);
+  });
+
+  it("a duplicated slide's part + rels bytes equal the source's (AC-32/33)", async () => {
+    const { model, source } = await openFixture();
+    duplicateSlide(model, 1); // duplicate slide2
+    const { bytes } = await writePptx(model);
+    const written = await unzip(bytes);
+    expect(equalBytes(written.get("ppt/slides/slide5.xml")!, source.get("ppt/slides/slide2.xml")!)).toBe(true);
+    expect(
+      equalBytes(written.get("ppt/slides/_rels/slide5.xml.rels")!, source.get("ppt/slides/_rels/slide2.xml.rels")!),
+    ).toBe(true);
+    const reopened = await readPresentationBytes(bytes, "pptx", "Deck");
+    expect(reopened.slides).toHaveLength(5);
+  });
+
+  it("re-emits every part byte-identical when nothing structural changed (AC-51/52)", async () => {
+    const { model, source } = await openFixture();
+    const { bytes } = await writePptx(model);
+    const written = await unzip(bytes);
+    expect([...written.keys()]).toEqual([...source.keys()]);
+    for (const [name, data] of source) {
+      expect(equalBytes(written.get(name)!, data), `part ${name}`).toBe(true);
+    }
+  });
+});
+
+describe("odp substitution rebuild", () => {
+  it("the reader's envelope + page sources recombine into content.xml byte-for-byte (AC-50)", async () => {
+    const bytes = await buildOdpFixtureBytes();
+    const model = await readPresentationBytes(bytes, "odp", "Deck");
+    const content = new TextDecoder().decode((await unzip(bytes)).get("content.xml")!);
+    const envelope = model.odpContentEnvelope!;
+    const spliced = envelope.prefix + model.slides.map((slide) => slide.sourceXml).join("") + envelope.suffix;
+    expect(spliced).toBe(content);
+  });
+
+  it("reordering rebuilds only content.xml; every other part stays byte-verbatim (AC-49/50)", async () => {
+    const bytes = await buildOdpFixtureBytes();
+    const source = await unzip(bytes);
+    const model = await readPresentationBytes(bytes, "odp", "Deck");
+    moveSlide(model, 0, 3);
+    const written = await unzip((await writeOdp(model)).bytes);
+    expect(new Set(written.keys())).toEqual(new Set(source.keys()));
+    for (const [name, data] of source) {
+      if (name === "content.xml") {
+        expect(equalBytes(written.get(name)!, data)).toBe(false);
+        continue;
+      }
+      expect(equalBytes(written.get(name)!, data), `part ${name} must stay byte-verbatim`).toBe(true);
+    }
+    const reopened = await readPresentationBytes((await writeOdp(model)).bytes, "odp", "Deck");
+    // The reordered deck still round-trips its four pages.
+    expect(reopened.slides).toHaveLength(4);
   });
 });

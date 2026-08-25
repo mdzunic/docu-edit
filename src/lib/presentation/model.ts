@@ -119,6 +119,11 @@ export interface Slide {
   id: string; // minted at read, never serialised
   frames: SlideFrame[]; // z-order, back to front
   background?: SlideFill; // effective (inheritance resolved)
+  /** Set by any command that changes this slide's own content or properties
+   *  (SPEC-081+ set it; this spec's new/duplicated slides are born without
+   *  partName/sourceXml instead). Dirty slides are rebuilt by the writers;
+   *  clean ones re-emit verbatim (SPEC-080). */
+  dirty?: true;
   /** pptx: this slide's part path ("ppt/slides/slide2.xml"); ties the
    *  model slide to its verbatim part in `opaque`. Absent for .odp and
    *  (later) from-scratch slides. */
@@ -154,8 +159,12 @@ export interface PresentationModel {
    * these, so a no-edit download stays byte-identical; media referenced by
    * `ImageFrame`s is ALSO copied into `media`, but the bytes stay here too
    * (bounded duplication until SPEC-081's rebuild writers take over media).
-   * (`.odp`'s `mimetype` entry is included and written first + STOREd.) */
-  opaque: OpaquePart[];
+   * (`.odp`'s `mimetype` entry is included and written first + STOREd.)
+   *
+   * Absent on from-scratch decks (`createBlankPresentation`) and on the copy
+   * `stripRetention` hands the cross-format writer: with no retained package
+   * the writers build a fresh minimal package instead (SPEC-080). */
+  opaque?: OpaquePart[];
   /** Image bytes split out the way `DocumentModel.media` is, so the store's
    * media split (MEDIA_KEY_PREFIX) persists them once per record and an
    * `ImageFrame` references one by `mediaId` (AC-32). */
@@ -163,6 +172,17 @@ export interface PresentationModel {
   /** Document metadata read from `docProps/core.xml` (.pptx) / `meta.xml`
    * (.odp); absent when the package declares none. */
   properties?: DocumentProperties;
+  /** Set when slides were added/removed/reordered since open (SPEC-080).
+   * Absent on a freshly opened deck; from-scratch decks are always fully
+   * built. The writers rebuild the structural parts only when this (or a
+   * slide's `dirty`) is set. */
+  structureDirty?: true;
+  /** odp only: content.xml split at read — everything before the first
+   * `draw:page` and everything after the last (the `office:presentation`
+   * close onwards). `prefix + pages.join("") + suffix` equals the source
+   * content.xml byte-for-byte for an untouched deck. Absent for pptx and
+   * from-scratch decks (SPEC-080). */
+  odpContentEnvelope?: { prefix: string; suffix: string };
 }
 
 export const DEFAULT_PRESENTATION_TITLE = "Untitled presentation";
@@ -185,6 +205,9 @@ export interface ParsedPresentation {
   opaque: OpaquePart[];
   /** Metadata from `docProps/core.xml`/`meta.xml`; `{}` when none. */
   properties: DocumentProperties;
+  /** odp only: content.xml split around its `draw:page`s (SPEC-080) — the
+   * writer's splice-equality envelope. Absent for pptx. */
+  odpContentEnvelope?: { prefix: string; suffix: string };
 }
 
 /** How many slides the library/preview surfaces report for a model. */
