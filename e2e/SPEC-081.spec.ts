@@ -88,6 +88,22 @@ test("double-click drops the caret at the click point, not the end (AC-1)", asyn
   await expect(title).toContainText("XXXQuarterly Review");
 });
 
+test("the presentation font-size control clamps typed entry to 6-96 (AC-18)", async ({ page }) => {
+  await openFixture(page);
+  // Select the title frame so the toolbar targets it (no editing session needed).
+  await stageFrames(page).first().click();
+  const size = page.getByTestId("font-size-input");
+  await expect(size).toBeEnabled();
+
+  await size.fill("200");
+  await size.press("Enter");
+  await expect(size).toHaveValue("96"); // clamped to the presentation max
+
+  await size.fill("2");
+  await size.press("Enter");
+  await expect(size).toHaveValue("6"); // clamped to the presentation min
+});
+
 async function downloadTo(page: Page, name: string): Promise<string> {
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("presentation-download").click();
