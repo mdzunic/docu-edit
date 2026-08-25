@@ -2391,20 +2391,30 @@ function parseOdtNoteSettings(
   return undefined;
 }
 
-export async function parseOdt(data: ArrayBuffer | Uint8Array): Promise<ParsedOdtDocument> {
+export async function parseOdt(
+  data: ArrayBuffer | Uint8Array,
+  preunzipped?: Map<string, Uint8Array>,
+): Promise<ParsedOdtDocument> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 
+  // Reuse the parts the open funnel already inflated for detection, so an
+  // `.odt` is decompressed once, not twice (see parseDocx). Direct callers
+  // pass only `data` and unzip here as before.
   let parts: Map<string, Uint8Array>;
-  try {
-    parts = await unzip(bytes);
-  } catch (error) {
-    if (error instanceof ZipError) {
-      if (isFlatOdf(bytes)) {
-        throw new FlatOdfError(FLAT_ODF_MESSAGE);
+  if (preunzipped) {
+    parts = preunzipped;
+  } else {
+    try {
+      parts = await unzip(bytes);
+    } catch (error) {
+      if (error instanceof ZipError) {
+        if (isFlatOdf(bytes)) {
+          throw new FlatOdfError(FLAT_ODF_MESSAGE);
+        }
+        throw new OdtOpenError(INVALID_ODT_MESSAGE);
       }
-      throw new OdtOpenError(INVALID_ODT_MESSAGE);
+      throw error;
     }
-    throw error;
   }
 
   const contentBytes = parts.get("content.xml");

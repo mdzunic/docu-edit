@@ -723,16 +723,25 @@ interface ChainDocs {
 
 /** Parses a `.pptx` file's bytes into the slide model. Throws
  * `PptxOpenError` for anything that isn't a valid, openable `.pptx`. */
-export async function parsePptx(data: ArrayBuffer | Uint8Array): Promise<ParsedPresentation> {
+export async function parsePptx(
+  data: ArrayBuffer | Uint8Array,
+  preunzipped?: Map<string, Uint8Array>,
+): Promise<ParsedPresentation> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  // Reuse the parts the open funnel already inflated for detection (see
+  // parseDocx). Direct callers pass only `data` and unzip here as before.
   let parts: Map<string, Uint8Array>;
-  try {
-    parts = await unzip(bytes);
-  } catch (error) {
-    if (error instanceof ZipError) {
-      throw new PptxOpenError(INVALID_PPTX_MESSAGE);
+  if (preunzipped) {
+    parts = preunzipped;
+  } else {
+    try {
+      parts = await unzip(bytes);
+    } catch (error) {
+      if (error instanceof ZipError) {
+        throw new PptxOpenError(INVALID_PPTX_MESSAGE);
+      }
+      throw error;
     }
-    throw error;
   }
   const info = detectPackage(parts);
   if (info.container !== "opc" || info.mainContentType !== PPTX_MAIN_CONTENT_TYPE) {

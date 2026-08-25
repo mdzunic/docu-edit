@@ -2473,21 +2473,31 @@ function parseCommentsPart(
  * project's document model needs. Throws `LegacyDocError` for a binary
  * Word 97-2003 `.doc` file, or `DocxOpenError` for anything else that
  * isn't a valid, openable `.docx` package. */
-export async function parseDocx(data: ArrayBuffer | Uint8Array): Promise<ParsedDocxDocument> {
+export async function parseDocx(
+  data: ArrayBuffer | Uint8Array,
+  preunzipped?: Map<string, Uint8Array>,
+): Promise<ParsedDocxDocument> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 
   if (isLegacyDoc(bytes)) {
     throw new LegacyDocError(LEGACY_DOC_MESSAGE);
   }
 
+  // The shared open funnel (openDocument.ts) already inflated the package to
+  // classify it; reuse those parts so a large `.docx` is decompressed once,
+  // not twice. Direct callers pass only `data` and unzip here as before.
   let parts: Map<string, Uint8Array>;
-  try {
-    parts = await unzip(bytes);
-  } catch (error) {
-    if (error instanceof ZipError) {
-      throw new DocxOpenError(INVALID_DOCX_MESSAGE);
+  if (preunzipped) {
+    parts = preunzipped;
+  } else {
+    try {
+      parts = await unzip(bytes);
+    } catch (error) {
+      if (error instanceof ZipError) {
+        throw new DocxOpenError(INVALID_DOCX_MESSAGE);
+      }
+      throw error;
     }
-    throw error;
   }
 
   const readPart = (path: string): string | undefined => {

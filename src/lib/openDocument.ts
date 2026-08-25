@@ -213,22 +213,26 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     return text(assembleDocumentModel(title, "docx", await parseDocx(bytes)));
   }
 
+  // We already inflated the package once above to classify it; hand those
+  // parts to the chosen parser so it doesn't decompress the same bytes a
+  // second time (a large `.docx`/media-heavy package otherwise pays the
+  // whole inflate twice on the open path — SPEC-047).
   const info = detectPackage(parts);
   const presentationFormat = presentationFormatOf(info);
   if (presentationFormat !== null) {
     if (!allowPresentations) {
       throw new UnsupportedFileError(PRESENTATION_NOT_TEXT_MESSAGE);
     }
-    const parsed = presentationFormat === "pptx" ? await parsePptx(bytes) : await parseOdp(bytes);
+    const parsed = presentationFormat === "pptx" ? await parsePptx(bytes, parts) : await parseOdp(bytes, parts);
     return { kind: "presentation", model: assemblePresentation(title, presentationFormat, parsed) };
   }
   if (info.container === "odf") {
     if (info.mimetype === ODT_MIMETYPE || info.mimetype === OTT_MIMETYPE) {
-      return text(assembleDocumentModel(title, "odt", await parseOdt(bytes)));
+      return text(assembleDocumentModel(title, "odt", await parseOdt(bytes, parts)));
     }
     throw new UnsupportedFileError(UNSUPPORTED_ODF_MESSAGE);
   }
-  return text(assembleDocumentModel(title, "docx", await parseDocx(bytes)));
+  return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, parts)));
 }
 
 /** Reads and parses a picked File of ANY supported kind (not yet stored or

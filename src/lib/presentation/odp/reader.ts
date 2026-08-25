@@ -534,16 +534,25 @@ function base64Sync(bytes: Uint8Array): string {
 }
 
 /** Parses an `.odp` file's bytes into the slide model. */
-export async function parseOdp(data: ArrayBuffer | Uint8Array): Promise<ParsedPresentation> {
+export async function parseOdp(
+  data: ArrayBuffer | Uint8Array,
+  preunzipped?: Map<string, Uint8Array>,
+): Promise<ParsedPresentation> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  // Reuse the parts the open funnel already inflated for detection (see
+  // parseDocx). Direct callers pass only `data` and unzip here as before.
   let parts: Map<string, Uint8Array>;
-  try {
-    parts = await unzip(bytes);
-  } catch (error) {
-    if (error instanceof ZipError) {
-      throw new OdpOpenError(INVALID_ODP_MESSAGE);
+  if (preunzipped) {
+    parts = preunzipped;
+  } else {
+    try {
+      parts = await unzip(bytes);
+    } catch (error) {
+      if (error instanceof ZipError) {
+        throw new OdpOpenError(INVALID_ODP_MESSAGE);
+      }
+      throw error;
     }
-    throw error;
   }
   const mimetype = readOdfMimetype(parts);
   if (mimetype !== ODP_MIMETYPE && mimetype !== OTP_MIMETYPE) {
