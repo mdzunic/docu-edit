@@ -41,4 +41,15 @@ describe("FontSizeControl", () => {
     const current = wrapper.get('[data-testid="font-size-option-12"]');
     expect(current.attributes("aria-checked")).toBe("true");
   });
+
+  it("clamps typed entry to a supplied min/max (SPEC-081 AC-18: 6–96)", async () => {
+    const wrapper = mount(FontSizeControl, { props: { value: 18, min: 6, max: 96 } });
+    const input = wrapper.get('[data-testid="font-size-input"]');
+    await input.setValue("200");
+    await input.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("change")?.at(-1)).toEqual([96]);
+    await input.setValue("2");
+    await input.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("change")?.at(-1)).toEqual([6]);
+  });
 });

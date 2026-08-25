@@ -8,7 +8,7 @@ import type { PresentationModel, Slide } from "../../lib/presentation/model";
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
 import { useFrameSelection } from "./useFrameSelection";
-import { useSlideTextEditing } from "./useSlideTextEditing";
+import { useSlideTextEditing, type CaretPoint } from "./useSlideTextEditing";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return (
@@ -46,8 +46,8 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     }
     selection.select(id);
   }
-  function onStartEdit(id: string): void {
-    editing.startEditing(id);
+  function onStartEdit(id: string, point?: CaretPoint): void {
+    editing.startEditing(id, false, point);
   }
   function onSurfaceDeselect(): void {
     if (editing.editingFrameId.value) editing.stopEditing();

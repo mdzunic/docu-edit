@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { cssColorToHex, normalizeTextFrameDom, renderEditableParagraphs } from "./slideTextDom";
+import {
+  cssColorToHex,
+  normalizeTextFrameDom,
+  placeCaretAtPoint,
+  renderEditableParagraphs,
+} from "./slideTextDom";
 import type { SlideParagraph } from "../../lib/presentation/model";
 
 function host(): HTMLElement {
@@ -110,6 +115,65 @@ describe("paragraph props survive a paragraph-count change", () => {
       { runs: [{ text: "B" }], bullet: "disc", level: 1 },
       { runs: [{ text: "C" }], bullet: "disc", level: 2 },
     ]);
+  });
+});
+
+// jsdom has no layout, so the hit-test API is absent; stub it on the document
+// as a plain property (index-signature cast so it can be deleted afterwards).
+function stubHitTest(resolve: () => Range): void {
+  (document as unknown as Record<string, unknown>).caretRangeFromPoint = resolve;
+}
+function clearHitTest(): void {
+  delete (document as unknown as Record<string, unknown>).caretRangeFromPoint;
+}
+
+describe("placeCaretAtPoint (AC-1: caret at the click point)", () => {
+  it("places the caret at the hit-tested point when it lands inside the host", () => {
+    const el = host();
+    document.body.appendChild(el);
+    renderEditableParagraphs(el, [{ runs: [{ text: "Quarterly Review" }] }]);
+    const textNode = el.querySelector("span")!.firstChild!;
+    stubHitTest(() => {
+      const range = document.createRange();
+      range.setStart(textNode, 0); // the point-before-'Q' the AC exercises
+      return range;
+    });
+    try {
+      expect(placeCaretAtPoint(el, 5, 5)).toBe(true);
+      const sel = document.getSelection()!;
+      expect(sel.focusNode).toBe(textNode);
+      expect(sel.focusOffset).toBe(0);
+    } finally {
+      clearHitTest();
+      document.body.removeChild(el);
+    }
+  });
+
+  it("returns false when the point resolves outside the host (caller falls back)", () => {
+    const el = host();
+    document.body.appendChild(el);
+    renderEditableParagraphs(el, [{ runs: [{ text: "hi" }] }]);
+    const outside = document.createElement("div");
+    outside.textContent = "elsewhere";
+    document.body.appendChild(outside);
+    stubHitTest(() => {
+      const range = document.createRange();
+      range.setStart(outside.firstChild!, 0);
+      return range;
+    });
+    try {
+      expect(placeCaretAtPoint(el, 5, 5)).toBe(false);
+    } finally {
+      clearHitTest();
+      document.body.removeChild(el);
+      document.body.removeChild(outside);
+    }
+  });
+
+  it("returns false when neither hit-test API exists (jsdom)", () => {
+    const el = host();
+    renderEditableParagraphs(el, [{ runs: [{ text: "hi" }] }]);
+    expect(placeCaretAtPoint(el, 1, 1)).toBe(false);
   });
 });
 

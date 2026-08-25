@@ -330,6 +330,44 @@ function applyRange(doc: Document, range: Range): void {
   sel.addRange(range);
 }
 
+/** Places the caret at the viewport point (clientX, clientY) when it lands
+ * inside `host`, returning true on success (AC-1: a double-click drops the
+ * caret at the click point, not at the end). Uses `caretRangeFromPoint`
+ * (Chromium/WebKit) or `caretPositionFromPoint` (standard); returns false when
+ * neither exists (jsdom) or the point resolves outside the host, so the caller
+ * can fall back to placing the caret at the end. */
+export function placeCaretAtPoint(host: HTMLElement, clientX: number, clientY: number): boolean {
+  const doc = host.ownerDocument;
+  const range = caretRangeAtPoint(doc, clientX, clientY);
+  if (!range) return false;
+  const node = range.startContainer;
+  if (node !== host && !host.contains(node)) return false;
+  range.collapse(true);
+  applyRange(doc, range);
+  return true;
+}
+
+function caretRangeAtPoint(doc: Document, x: number, y: number): Range | null {
+  if (typeof doc.caretRangeFromPoint === "function") {
+    return doc.caretRangeFromPoint(x, y);
+  }
+  // caretPositionFromPoint is the standardised form (Firefox); not in every
+  // lib.dom, so reach it through a narrow cast rather than the Document type.
+  const posFromPoint = (
+    doc as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    }
+  ).caretPositionFromPoint;
+  if (typeof posFromPoint === "function") {
+    const pos = posFromPoint.call(doc, x, y);
+    if (!pos) return null;
+    const range = doc.createRange();
+    range.setStart(pos.offsetNode, pos.offset);
+    return range;
+  }
+  return null;
+}
+
 /** Selects all text in `host` (Cmd/Ctrl+A within the frame, AC-10). */
 export function selectAllIn(host: HTMLElement): void {
   const doc = host.ownerDocument;

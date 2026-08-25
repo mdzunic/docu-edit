@@ -25,6 +25,7 @@ import {
 import {
   normalizeTextFrameDom,
   placeCaret,
+  placeCaretAtPoint,
   renderEditableParagraphs,
   selectAllIn,
   selectionRangeOf,
@@ -34,6 +35,13 @@ import type { FrameSelection } from "./useFrameSelection";
 
 /** How long a pause closes a typing burst (SPEC-081: ≥ 1s). */
 export const TYPING_BURST_MS = 1000;
+
+/** The viewport coordinates of a double-click, so the session drops the caret
+ * at the click point rather than the end of the frame (AC-1). */
+export interface CaretPoint {
+  x: number;
+  y: number;
+}
 
 export interface SlideTextEditingDeps {
   model: Ref<PresentationModel | null>;
@@ -53,7 +61,7 @@ export interface SlideTextEditing {
   /** The current selection's formatting for the toolbar (null when nothing is
    * targeted). */
   toolbarState: Ref<SelectionFormatState | null>;
-  startEditing: (frameId: string, selectAll?: boolean) => void;
+  startEditing: (frameId: string, selectAll?: boolean, point?: CaretPoint) => void;
   stopEditing: () => void;
   registerHost: (el: HTMLElement | null) => void;
   onInput: () => void;
@@ -151,20 +159,22 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   });
 
   // --- session lifecycle ----------------------------------------------------
-  function startEditing(frameId: string, selectAll = false): void {
+  function startEditing(frameId: string, selectAll = false, point?: CaretPoint): void {
     if (!textFrameById(frameId)) return;
     deps.selection.select(frameId);
     editingFrameId.value = frameId;
     // registerHost (from the mounted contenteditable) finishes the setup; a
     // re-entry into the same frame just refreshes.
     if (host.value) {
-      renderAndFocus(selectAll);
+      renderAndFocus(selectAll, point);
     } else {
       pendingSelectAll = selectAll;
+      pendingPoint = point ?? null;
     }
   }
 
   let pendingSelectAll = false;
+  let pendingPoint: CaretPoint | null = null;
 
   let detachHost: (() => void) | null = null;
   function registerHost(el: HTMLElement | null): void {
@@ -199,8 +209,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
         el.removeEventListener("cut", onCut);
         el.ownerDocument.removeEventListener("selectionchange", onSelectionChange);
       };
-      renderAndFocus(pendingSelectAll);
+      renderAndFocus(pendingSelectAll, pendingPoint ?? undefined);
       pendingSelectAll = false;
+      pendingPoint = null;
     }
   }
 
@@ -208,14 +219,19 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   // moved focus off the contenteditable (its live selection would be empty).
   let lastRange: { start: { para: number; offset: number }; end: { para: number; offset: number } } | null = null;
 
-  function renderAndFocus(selectAll: boolean): void {
+  function renderAndFocus(selectAll: boolean, point?: CaretPoint): void {
     const el = host.value;
     const frame = editingFrame.value;
     if (!el || !frame) return;
     renderEditableParagraphs(el, frame.paragraphs);
     el.focus();
+    // A double-click drops the caret at the click point (AC-1); a select-all
+    // start (Enter-to-edit selects nothing, but a keyboard entry may) or a
+    // point that lands outside the host falls back to the end.
     if (selectAll) selectAllIn(el);
-    else placeCaretAtEnd(el, frame);
+    else if (point && placeCaretAtPoint(el, point.x, point.y)) {
+      /* caret placed at the click point */
+    } else placeCaretAtEnd(el, frame);
     selectionTick.value++;
   }
 

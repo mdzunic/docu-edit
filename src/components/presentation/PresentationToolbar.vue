@@ -40,6 +40,12 @@ const emit = defineEmits([
   "outdent",
 ]);
 
+// SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
+// narrower range than the word processor's 1–409 — passed to the shared
+// FontSizeControl so both typed entry and the steppers respect it.
+const PRESENTATION_FONT_SIZE_MIN = 6;
+const PRESENTATION_FONT_SIZE_MAX = 96;
+
 const s = computed(() => asFormatState(props.state));
 
 // --- control values from the folded selection state ------------------------
@@ -104,6 +110,8 @@ onBeforeUnmount(() => observer?.disconnect());
     >
       <FontSizeControl
         :value="sizeValue"
+        :min="PRESENTATION_FONT_SIZE_MIN"
+        :max="PRESENTATION_FONT_SIZE_MAX"
         :disabled="!enabled"
         @change="(pt) => emit('size', pt)"
       />

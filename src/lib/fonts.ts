@@ -50,9 +50,15 @@ export const COMMON_FONT_SIZES = [
   8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72,
 ];
 
+/** The range message for a given min/max (SPEC-081 reuses the control with a
+ * narrower 6–96 presentation range, so the tooltip must name whichever limits
+ * are in force, not always Word's 1–409). */
+export function fontSizeRangeMessage(min = MIN_FONT_SIZE_PT, max = MAX_FONT_SIZE_PT): string {
+  return `Font size must be between ${min} and ${max} pt`;
+}
+
 /** Shown when out-of-range input is clamped (SPEC-013 AC). */
-export const FONT_SIZE_RANGE_MESSAGE =
-  `Font size must be between ${MIN_FONT_SIZE_PT} and ${MAX_FONT_SIZE_PT} pt`;
+export const FONT_SIZE_RANGE_MESSAGE = fontSizeRangeMessage();
 
 export interface FontSizeParse {
   /** The accepted size, snapped to the 0.5 pt grid and clamped into range;
@@ -65,22 +71,32 @@ export interface FontSizeParse {
 
 /** Parses the size control's text input: accepts "11", "11.5", "11,5"
  * (decimal comma), trims whitespace, snaps to the 0.5 pt grid and clamps
- * into 1..409. */
-export function parseFontSizeInput(input: string): FontSizeParse {
+ * into min..max (defaults to Word's 1..409; the presentation toolbar passes
+ * its own 6..96). */
+export function parseFontSizeInput(
+  input: string,
+  min = MIN_FONT_SIZE_PT,
+  max = MAX_FONT_SIZE_PT,
+): FontSizeParse {
   const raw = Number(input.trim().replace(",", "."));
   if (input.trim().length === 0 || Number.isNaN(raw)) {
     return { clamped: false };
   }
   const snapped = Math.round(raw * 2) / 2;
-  const value = Math.min(Math.max(snapped, MIN_FONT_SIZE_PT), MAX_FONT_SIZE_PT);
+  const value = Math.min(Math.max(snapped, min), max);
   return { value, clamped: value !== snapped };
 }
 
 /** One +/− button step: the nearest 0.5 pt grid point strictly above/below
  * the current size (an off-grid 11.3 steps to 11.5 up, 11 down), clamped
  * into range. */
-export function stepFontSize(current: number, direction: 1 | -1): number {
+export function stepFontSize(
+  current: number,
+  direction: 1 | -1,
+  min = MIN_FONT_SIZE_PT,
+  max = MAX_FONT_SIZE_PT,
+): number {
   const scaled = current * 2;
   const stepped = (direction === 1 ? Math.floor(scaled + 1) : Math.ceil(scaled - 1)) / 2;
-  return Math.min(Math.max(stepped, MIN_FONT_SIZE_PT), MAX_FONT_SIZE_PT);
+  return Math.min(Math.max(stepped, min), max);
 }

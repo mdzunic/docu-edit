@@ -70,7 +70,7 @@ const surfaceStyle = computed(() => ({
         :selected="frame.id === selectedFrameId"
         :editing="frame.id === editingFrameId"
         @select="(id) => emit('frame-select', id)"
-        @start-edit="(id) => emit('frame-start-edit', id)"
+        @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @edit-mounted="(el) => emit('edit-mounted', el)"
         @edit-unmounted="() => emit('edit-unmounted')"
       />

@@ -3,6 +3,7 @@ import { createDocument } from "./documentModel";
 import {
   documentFontFamilies,
   FONT_SIZE_RANGE_MESSAGE,
+  fontSizeRangeMessage,
   MAX_FONT_SIZE_PT,
   MIN_FONT_SIZE_PT,
   parseFontSizeInput,
@@ -97,6 +98,19 @@ describe("parseFontSizeInput", () => {
     expect(FONT_SIZE_RANGE_MESSAGE).toContain("1");
     expect(FONT_SIZE_RANGE_MESSAGE).toContain("409");
   });
+
+  it("clamps to a caller-supplied range (SPEC-081 presentation 6–96)", () => {
+    expect(parseFontSizeInput("200", 6, 96)).toEqual({ value: 96, clamped: true });
+    expect(parseFontSizeInput("2", 6, 96)).toEqual({ value: 6, clamped: true });
+    expect(parseFontSizeInput("18", 6, 96)).toEqual({ value: 18, clamped: false });
+  });
+});
+
+describe("fontSizeRangeMessage", () => {
+  it("names whichever limits are in force", () => {
+    expect(fontSizeRangeMessage(6, 96)).toContain("6");
+    expect(fontSizeRangeMessage(6, 96)).toContain("96");
+  });
 });
 
 describe("stepFontSize", () => {
@@ -114,5 +128,10 @@ describe("stepFontSize", () => {
   it("clamps at the range ends (AC)", () => {
     expect(stepFontSize(MAX_FONT_SIZE_PT, 1)).toBe(MAX_FONT_SIZE_PT);
     expect(stepFontSize(MIN_FONT_SIZE_PT, -1)).toBe(MIN_FONT_SIZE_PT);
+  });
+
+  it("clamps at a caller-supplied range (SPEC-081 presentation 6–96)", () => {
+    expect(stepFontSize(96, 1, 6, 96)).toBe(96);
+    expect(stepFontSize(6, -1, 6, 96)).toBe(6);
   });
 });

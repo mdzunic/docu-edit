@@ -79,7 +79,9 @@ function onFrameMousedown(event = new MouseEvent("mousedown")) {
 function onFrameDblclick(event = new MouseEvent("dblclick")) {
   if (frame.value.kind !== "text") return;
   event.stopPropagation();
-  emit("start-edit", frame.value.id);
+  // Pass the click's viewport coordinates so the session drops the caret at the
+  // click point rather than the end of the frame (AC-1).
+  emit("start-edit", frame.value.id, { x: event.clientX, y: event.clientY });
 }
 
 function paint() {

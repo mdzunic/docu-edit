@@ -70,6 +70,24 @@ test("edit a title + add a bulleted body line, round-trip the download, re-downl
   await expect(stageFrames(page).first()).toContainText("New Title");
 });
 
+test("double-click drops the caret at the click point, not the end (AC-1)", async ({ page }) => {
+  await openFixture(page);
+  const title = stageFrames(page).first();
+  await expect(title).toContainText("Quarterly Review");
+
+  // Double-click just inside the left edge, over the very start of the text, so
+  // the caret lands before 'Q' — not at the end of the frame's content.
+  const box = await title.boundingBox();
+  if (!box) throw new Error("no title box");
+  await page.mouse.dblclick(box.x + 3, box.y + box.height / 2);
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+  await page.keyboard.type("XXX");
+  await page.keyboard.press("Escape");
+
+  // Caret at the click point → the typed text is at the START, not appended.
+  await expect(title).toContainText("XXXQuarterly Review");
+});
+
 async function downloadTo(page: Page, name: string): Promise<string> {
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("presentation-download").click();
