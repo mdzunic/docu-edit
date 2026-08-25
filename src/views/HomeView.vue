@@ -396,7 +396,16 @@ onMounted(async () => {
       @new-document="createNewDocument"
       @new-from-template="openTemplateGallery"
       @open-file="pickFile"
-    />
+    >
+      <template #extra-actions>
+        <UiButton
+          data-testid="new-presentation"
+          @click="createNewPresentation"
+        >
+          New presentation
+        </UiButton>
+      </template>
+    </LibraryEmptyState>
 
     <!-- Trash view (AC-36..39, AC-45). -->
     <LibraryTrash

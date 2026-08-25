@@ -11,11 +11,8 @@ import { join } from "node:path";
 
 async function newPresentationFromLanding(page: Page): Promise<void> {
   await page.goto("/");
-  // The first-run empty state offers no "New presentation"; create a document
-  // to populate the library, then the library controls expose it (AC-1).
-  await page.getByTestId("new-document").click();
-  await expect(page).toHaveURL(/\/doc\/.+/);
-  await page.goto("/");
+  // "New presentation" sits beside "New document" on the first-run empty state
+  // too, not only once the library holds a document (AC-1).
   await page.getByTestId("new-presentation").click();
   await expect(page).toHaveURL(/\/slides\/.+/);
   await expect(page.getByTestId("presentation-view")).toBeVisible();

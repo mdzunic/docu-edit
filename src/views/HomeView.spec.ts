@@ -42,6 +42,21 @@ describe("HomeView", () => {
     expect(openButton.isVisible()).toBe(true);
   });
 
+  // SPEC-080 AC-1: "New presentation" sits beside "New document" on the
+  // first-run empty state, not only once the library already holds a document.
+  // This runs before any doc-creating test, so the library is genuinely empty
+  // and the empty state (not the library controls) is what renders.
+  it("offers 'New presentation' on the genuinely empty first-run state (AC-1)", async () => {
+    const { wrapper, router } = mountHome();
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
+    const emptyState = wrapper.get('[data-testid="empty-state"]');
+    const button = emptyState.get('[data-testid="new-presentation"]');
+    expect(button.text()).toBe("New presentation");
+    await button.trigger("click");
+    await router.isReady();
+    expect(router.currentRoute.value.path).toMatch(/^\/slides\/.+/);
+  });
+
   it("creates a document and navigates to /doc/:id on click (AC-1)", async () => {
     const { wrapper, router } = mountHome();
     await wrapper.get('[data-testid="new-document"]').trigger("click");

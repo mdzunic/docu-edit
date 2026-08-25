@@ -28,6 +28,9 @@ const emit = defineEmits(["new-document", "new-from-template", "open-file"]);
       >
         New document
       </UiButton>
+      <!-- Extra create actions the wiring hub supplies (e.g. HomeView's
+           "New presentation"), kept out of this product-neutral component. -->
+      <slot name="extra-actions" />
       <UiButton
         data-testid="new-from-template"
         @click="emit('new-from-template')"
