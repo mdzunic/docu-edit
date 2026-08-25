@@ -28,11 +28,17 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /** The async twin of `bytesToBase64` (SPEC-047 AC-3/AC-16): encodes through
- * `FileReader.readAsDataURL`, i.e. the browser's native base64 encoder,
- * which runs an order of magnitude faster than the JS `fromCharCode`+`btoa`
- * loop — profiling the 46MB benchmark fixture's open put ~0.6s of its
- * time in that loop alone. The output is byte-identical standard base64.
- * Falls back to the sync path where FileReader/Blob are missing. */
+ * `FileReader.readAsDataURL`, the browser's native base64 encoder; the output
+ * is byte-identical standard base64. The native encode itself is quick, but
+ * every call costs one async round trip, and over the hundreds of small parts
+ * a large package carries that scheduling dominates: on the 46MB benchmark
+ * fixture a per-part FileReader pass measured ~2x the wall clock of a
+ * synchronous `bytesToBase64` pass, so the docx reader defers its encodes and
+ * runs them synchronously in byte-bounded chunks instead — see
+ * `fillPendingMediaDataSync` (docx/drawing.ts) and the deferred-encode pass in
+ * docx/reader.ts. Suited to keeping an occasional large encode off the main
+ * thread, not to per-part loops; of the readers only pptx/odp still call it
+ * that way. Falls back to the sync path where FileReader/Blob are missing. */
 export function bytesToBase64Async(bytes: Uint8Array): Promise<string> {
   if (typeof FileReader !== "function" || typeof Blob !== "function") {
     return Promise.resolve(bytesToBase64(bytes));
