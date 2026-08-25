@@ -347,7 +347,8 @@ function announceMove(from = 0, to = 0) {
 }
 
 .filmstrip-option.drop-target {
-  border-top: 2px solid var(--accent);
+  border-top-color: var(--accent);
+  background: var(--surface-raised);
 }
 
 .thumb-number {
@@ -422,10 +423,14 @@ function announceMove(from = 0, to = 0) {
   cursor: pointer;
 }
 
-.slide-context-menu-item:hover,
+.slide-context-menu-item:hover {
+  background: var(--surface-sunken);
+}
+
 .slide-context-menu-item:focus-visible {
   background: var(--surface-sunken);
-  outline: none;
+  outline: var(--border-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--border-width));
 }
 
 .menu-backdrop {

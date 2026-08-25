@@ -495,10 +495,14 @@ function close() {
   cursor: pointer;
 }
 
-.download-menu-item:hover,
+.download-menu-item:hover {
+  background: var(--surface-sunken);
+}
+
 .download-menu-item:focus-visible {
   background: var(--surface-sunken);
-  outline: none;
+  outline: var(--border-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--border-width));
 }
 
 .menu-backdrop {
