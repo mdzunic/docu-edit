@@ -1,0 +1,364 @@
+// The slide text-editing session (SPEC-081): double-click (or Enter) starts an
+// in-place contenteditable session; typing/Enter/Backspace/Delete/caret moves
+// are the browser's, and after every input `normalizeTextFrameDom` walks the
+// host back into the frame's `paragraphs` (normalise-after-input, so the DOM
+// never diverges). Formatting NEVER round-trips through execCommand — a toolbar
+// or keyboard command edits the model (src/lib/presentation/text.ts) and
+// re-renders the host. Typing coalesces into one undo entry per burst (a pause
+// ≥ 1s, ending the session, or any non-typing command closes it); formatting is
+// one entry each. Every edit marks the slide dirty and persists.
+import { computed, ref, type ComputedRef, type Ref } from "vue";
+import type { PresentationModel, Slide, TextFrame } from "../../lib/presentation/model";
+import {
+  applyParagraphFormat,
+  applyRunFormat,
+  markSlideEdited,
+  selectionFormatState,
+  setIndentLevel,
+  toggleBullet,
+  wholeFrameRange,
+  type ParagraphFormatPatch,
+  type RunFormatPatch,
+  type SelectionFormatState,
+  type TextRange,
+} from "../../lib/presentation/text";
+import {
+  normalizeTextFrameDom,
+  placeCaret,
+  renderEditableParagraphs,
+  selectAllIn,
+  selectionRangeOf,
+  setSelectionRange,
+} from "../../components/presentation/slideTextDom";
+import type { FrameSelection } from "./useFrameSelection";
+
+/** How long a pause closes a typing burst (SPEC-081: ≥ 1s). */
+export const TYPING_BURST_MS = 1000;
+
+export interface SlideTextEditingDeps {
+  model: Ref<PresentationModel | null>;
+  currentSlide: ComputedRef<Slide | null>;
+  selection: FrameSelection;
+  /** Snapshot pre-command state for undo (usePresentationUndo.record). */
+  record: (label?: string) => void;
+  /** Re-render the shallowRef + persist write-through (PresentationView). */
+  commit: () => void;
+}
+
+export interface SlideTextEditing {
+  editingFrameId: Ref<string | null>;
+  /** Whether the toolbar's formatting controls act on something (an editing
+   * session, or a selected text frame). */
+  toolbarEnabled: ComputedRef<boolean>;
+  /** The current selection's formatting for the toolbar (null when nothing is
+   * targeted). */
+  toolbarState: Ref<SelectionFormatState | null>;
+  startEditing: (frameId: string, selectAll?: boolean) => void;
+  stopEditing: () => void;
+  registerHost: (el: HTMLElement | null) => void;
+  onInput: () => void;
+  onKeydown: (event: KeyboardEvent) => void;
+  onPaste: (event: ClipboardEvent) => void;
+  // Formatting commands (toolbar + keyboard).
+  toggleBold: () => void;
+  toggleItalic: () => void;
+  toggleUnderline: () => void;
+  setFontFamily: (family: string) => void;
+  setFontSize: (sizePt: number) => void;
+  setColor: (color: string) => void;
+  setAlign: (align: NonNullable<TextFrame["paragraphs"][number]["align"]>) => void;
+  toggleBulletCmd: () => void;
+  indent: (delta: 1 | -1) => void;
+}
+
+export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
+  const editingFrameId = ref<string | null>(null);
+  const host = ref<HTMLElement | null>(null);
+  const toolbarState = ref<SelectionFormatState | null>(null);
+  let suppressInput = false;
+
+  // --- undo-burst state -----------------------------------------------------
+  let burstActive = false;
+  let burstTimer = 0;
+  function noteTyping(): void {
+    if (!burstActive) {
+      deps.record("Typing");
+      burstActive = true;
+    }
+    if (burstTimer) clearTimeout(burstTimer);
+    burstTimer = window.setTimeout(closeBurst, TYPING_BURST_MS);
+  }
+  function closeBurst(): void {
+    burstActive = false;
+    if (burstTimer) {
+      clearTimeout(burstTimer);
+      burstTimer = 0;
+    }
+  }
+
+  // --- frame lookup ---------------------------------------------------------
+  function textFrameById(frameId: string | null): TextFrame | null {
+    const slide = deps.currentSlide.value;
+    if (!slide || frameId === null) return null;
+    const frame = slide.frames.find((f) => f.id === frameId);
+    return frame && frame.kind === "text" ? frame : null;
+  }
+  const editingFrame = computed(() => textFrameById(editingFrameId.value));
+  /** The frame a command targets: the one being edited, else a selected text
+   * frame (AC-25). */
+  function targetFrame(): TextFrame | null {
+    if (editingFrame.value) return editingFrame.value;
+    const selected = deps.selection.selectedFrame.value;
+    return selected && selected.kind === "text" ? selected : null;
+  }
+
+  const toolbarEnabled = computed(() => targetFrame() !== null);
+
+  // --- session lifecycle ----------------------------------------------------
+  function startEditing(frameId: string, selectAll = false): void {
+    if (!textFrameById(frameId)) return;
+    deps.selection.select(frameId);
+    editingFrameId.value = frameId;
+    // registerHost (from the mounted contenteditable) finishes the setup; a
+    // re-entry into the same frame just refreshes.
+    if (host.value) {
+      renderAndFocus(selectAll);
+    } else {
+      pendingSelectAll = selectAll;
+    }
+  }
+
+  let pendingSelectAll = false;
+
+  function registerHost(el: HTMLElement | null): void {
+    host.value = el;
+    if (el && editingFrame.value) {
+      renderAndFocus(pendingSelectAll);
+      pendingSelectAll = false;
+    }
+  }
+
+  function renderAndFocus(selectAll: boolean): void {
+    const el = host.value;
+    const frame = editingFrame.value;
+    if (!el || !frame) return;
+    renderEditableParagraphs(el, frame.paragraphs);
+    el.focus();
+    if (selectAll) selectAllIn(el);
+    else placeCaretAtEnd(el, frame);
+    refreshToolbar();
+  }
+
+  function placeCaretAtEnd(el: HTMLElement, frame: TextFrame): void {
+    const last = Math.max(0, frame.paragraphs.length - 1);
+    const lastLen = frame.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
+    placeCaret(el, { para: last, offset: lastLen });
+  }
+
+  function stopEditing(): void {
+    closeBurst();
+    if (host.value && editingFrame.value) {
+      syncModelFromDom();
+    }
+    editingFrameId.value = null;
+    host.value = null;
+    refreshToolbar();
+  }
+
+  // --- normalise-after-input ------------------------------------------------
+  function onInput(): void {
+    if (suppressInput) return;
+    noteTyping();
+    syncModelFromDom();
+  }
+
+  function syncModelFromDom(): void {
+    const el = host.value;
+    const frame = editingFrame.value;
+    const slide = deps.currentSlide.value;
+    const model = deps.model.value;
+    if (!el || !frame || !slide || !model) return;
+    const next = normalizeTextFrameDom(el);
+    mergeParagraphProps(next, frame.paragraphs);
+    frame.paragraphs = next;
+    markSlideEdited(slide, model.format);
+    deps.commit();
+    refreshToolbar();
+  }
+
+  function onPaste(event: ClipboardEvent): void {
+    if (!host.value || !editingFrame.value) return;
+    event.preventDefault();
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    if (text.length === 0) return;
+    closeBurst();
+    deps.record("Paste");
+    suppressInput = true;
+    insertPlainText(host.value, text);
+    suppressInput = false;
+    syncModelFromDom();
+  }
+
+  function onKeydown(event: KeyboardEvent): void {
+    if (!editingFrame.value) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      stopEditing();
+      return;
+    }
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && !event.shiftKey && !event.altKey) {
+      const key = event.key.toLowerCase();
+      if (key === "b") {
+        event.preventDefault();
+        toggleBold();
+      } else if (key === "i") {
+        event.preventDefault();
+        toggleItalic();
+      } else if (key === "u") {
+        event.preventDefault();
+        toggleUnderline();
+      } else if (key === "a") {
+        event.preventDefault();
+        if (host.value) selectAllIn(host.value);
+        refreshToolbar();
+      }
+    }
+  }
+
+  // --- formatting commands --------------------------------------------------
+  /** The model TextRange a command applies to: the DOM selection when editing,
+   * else the whole selected frame (AC-25). */
+  function commandRange(frame: TextFrame): TextRange {
+    if (editingFrame.value && host.value) {
+      const dom = selectionRangeOf(host.value);
+      if (dom) return { start: dom.start, end: dom.end };
+    }
+    return wholeFrameRange(frame);
+  }
+
+  function runCommand(label: string, apply: (frame: TextFrame, range: TextRange) => void): void {
+    const frame = targetFrame();
+    const slide = deps.currentSlide.value;
+    const model = deps.model.value;
+    if (!frame || !slide || !model) return;
+    closeBurst();
+    const range = commandRange(frame);
+    deps.record(label);
+    apply(frame, range);
+    markSlideEdited(slide, model.format);
+    if (editingFrame.value && host.value) {
+      renderEditableParagraphs(host.value, frame.paragraphs);
+      setSelectionRange(host.value, range.start, range.end);
+    }
+    deps.commit();
+    refreshToolbar();
+  }
+
+  function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
+    runCommand(label, (frame, range) =>
+      applyParagraphFormat(frame, { startPara: range.start.para, endPara: range.end.para }, patch),
+    );
+  }
+
+  function toggleRunMark(label: string, key: "bold" | "italic" | "underline"): void {
+    const state = toolbarState.value;
+    const on = state ? state[key] !== true : true; // mixed/false → turn on
+    const patch: RunFormatPatch = { [key]: on };
+    runCommand(label, (frame, range) => applyRunFormat(frame, range, patch));
+  }
+
+  const toggleBold = (): void => toggleRunMark("Bold", "bold");
+  const toggleItalic = (): void => toggleRunMark("Italic", "italic");
+  const toggleUnderline = (): void => toggleRunMark("Underline", "underline");
+  const setFontFamily = (family: string): void =>
+    runCommand("Font", (frame, range) => applyRunFormat(frame, range, { fontFamily: family }));
+  const setFontSize = (sizePt: number): void =>
+    runCommand("Font size", (frame, range) => applyRunFormat(frame, range, { sizePt }));
+  const setColor = (color: string): void =>
+    runCommand("Text colour", (frame, range) => applyRunFormat(frame, range, { color }));
+  const setAlign = (align: NonNullable<TextFrame["paragraphs"][number]["align"]>): void =>
+    paragraphCommand("Align", { align });
+  const toggleBulletCmd = (): void =>
+    runCommand("Bullet", (frame, range) => toggleBullet(frame, { startPara: range.start.para, endPara: range.end.para }));
+  const indent = (delta: 1 | -1): void =>
+    runCommand(delta > 0 ? "Indent" : "Outdent", (frame, range) =>
+      setIndentLevel(frame, { startPara: range.start.para, endPara: range.end.para }, delta),
+    );
+
+  // --- toolbar reflection ---------------------------------------------------
+  function refreshToolbar(): void {
+    const frame = targetFrame();
+    if (!frame) {
+      toolbarState.value = null;
+      return;
+    }
+    const range =
+      editingFrame.value && host.value
+        ? selectionRangeOf(host.value) ?? { start: { para: 0, offset: 0 }, end: { para: 0, offset: 0 } }
+        : wholeFrameRange(frame);
+    toolbarState.value = selectionFormatState(frame, { start: range.start, end: range.end });
+  }
+
+  return {
+    editingFrameId,
+    toolbarEnabled,
+    toolbarState,
+    startEditing,
+    stopEditing,
+    registerHost,
+    onInput,
+    onKeydown,
+    onPaste,
+    toggleBold,
+    toggleItalic,
+    toggleUnderline,
+    setFontFamily,
+    setFontSize,
+    setColor,
+    setAlign,
+    toggleBulletCmd,
+    indent,
+  };
+}
+
+type SlideParagraphList = TextFrame["paragraphs"];
+
+/** Carries a frame's paragraph-level properties (align/bullet/level) — which
+ * typing does not touch — across a DOM normalise, matching by index. */
+function mergeParagraphProps(next: SlideParagraphList, prev: SlideParagraphList): void {
+  for (let i = 0; i < next.length; i++) {
+    const before = prev[i];
+    if (!before) continue;
+    if (before.align) next[i].align = before.align;
+    if (before.bullet) next[i].bullet = before.bullet;
+    if (before.level) next[i].level = before.level;
+  }
+}
+
+/** Inserts plain text at the caret, newlines becoming paragraph breaks
+ * (AC-13). Deletes any selected content first. */
+function insertPlainText(host: HTMLElement, text: string): void {
+  const doc = host.ownerDocument;
+  const sel = doc.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  let range = sel.getRangeAt(0);
+  range.deleteContents();
+  const parts = text.replace(/\r\n?/g, "\n").split("\n");
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) {
+      const br = doc.createElement("br");
+      range.insertNode(br);
+      range.setStartAfter(br);
+    }
+    if (parts[i].length > 0) {
+      const node = doc.createTextNode(parts[i]);
+      range.insertNode(node);
+      range.setStartAfter(node);
+    }
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    range = sel.getRangeAt(0);
+  }
+}
