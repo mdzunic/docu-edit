@@ -4,6 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
 import { DocxOpenError, LegacyDocError, LEGACY_DOC_MESSAGE, INVALID_DOCX_MESSAGE, parseDocx } from "./reader";
+import { unzip } from "../core/zip";
 import type { Paragraph } from "../documentModel";
 import { asParagraph } from "../documentModel";
 
@@ -297,5 +298,29 @@ describe("parseDocx — error handling", () => {
     const docMagic = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]);
     await expect(parseDocx(docMagic)).rejects.toThrow(LegacyDocError);
     await expect(parseDocx(docMagic)).rejects.toThrow(LEGACY_DOC_MESSAGE);
+  });
+});
+
+// The shared open funnel (openDocument.ts) inflates the package once to
+// classify it, then hands the parts to the parser so a large package is not
+// decompressed a second time (the SPEC-047 open-path budget regressed when
+// each parser re-unzipped the same bytes). This guards that contract: given
+// pre-unzipped parts, parseDocx must use them and must NOT re-unzip `data`.
+describe("parseDocx — reuses pre-unzipped parts", () => {
+  const fixture = loadFixture("word-authored.docx");
+
+  it("parses from supplied parts identically to unzipping the bytes itself", async () => {
+    const parts = await unzip(fixture);
+    const fromParts = await parseDocx(fixture, parts);
+    const fromBytes = await parseDocx(fixture);
+    expect(fromParts.sections).toEqual(fromBytes.sections);
+  });
+
+  it("does not re-unzip when parts are supplied (bytes are never touched)", async () => {
+    const parts = await unzip(fixture);
+    // `data` here is not a ZIP at all — if the parser fell back to unzipping
+    // it, this would throw. It must parse purely from the supplied parts.
+    const parsed = await parseDocx(new Uint8Array([1, 2, 3, 4]), parts);
+    expect(parsed.sections[0].blocks.length).toBeGreaterThan(0);
   });
 });
