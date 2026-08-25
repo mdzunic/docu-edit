@@ -211,3 +211,76 @@ describe("PresentationView slide management (SPEC-080)", () => {
     expect(store.getStoredRecord(id)?.lastModified).toBeGreaterThanOrEqual(before);
   });
 });
+
+describe("PresentationView text editing (SPEC-081)", () => {
+  // Scope to the main stage — the filmstrip thumbnails render the same frames
+  // read-only (no selection/editing wiring).
+  const stage = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
+    wrapper.get('[data-testid="stage-workspace"]');
+  const frames = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
+    stage(wrapper).findAll('[data-testid="slide-text-frame"]');
+
+  it("shows an empty-placeholder prompt by role, outside editing (AC-15)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation());
+    const prompts = stage(wrapper).findAll('[data-testid="slide-placeholder-prompt"]');
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0].text()).toBe("Click to add title");
+    expect(prompts[1].text()).toBe("Click to add text");
+  });
+
+  it("selects a frame on click and deselects on a surface click (AC-4/5)", async () => {
+    const { wrapper } = await mountWith(await freshDeck());
+    await frames(wrapper)[0].trigger("mousedown");
+    expect(frames(wrapper)[0].classes()).toContain("is-selected");
+    await stage(wrapper).get(".stage-surface").trigger("mousedown");
+    expect(frames(wrapper)[0].classes()).not.toContain("is-selected");
+  });
+
+  it("Tab cycles frame selection in z-order (AC-6)", async () => {
+    const { wrapper } = await mountWith(await freshDeck());
+    await frames(wrapper)[0].trigger("mousedown");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+    await flushPromises();
+    expect(frames(wrapper)[1].classes()).toContain("is-selected");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }));
+    await flushPromises();
+    expect(frames(wrapper)[0].classes()).toContain("is-selected");
+    wrapper.unmount();
+  });
+
+  it("double-click enters an editing session; Escape ends it (AC-1/2/3)", async () => {
+    const { wrapper } = await mountWith(await freshDeck());
+    await frames(wrapper)[0].trigger("dblclick");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="slide-text-edit"]').exists()).toBe(true);
+    expect(frames(wrapper)[0].classes()).toContain("is-editing");
+    await wrapper.get('[data-testid="slide-text-edit"]').trigger("keydown", { key: "Escape" });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="slide-text-edit"]').exists()).toBe(false);
+  });
+
+  it("the toolbar disables when nothing is targeted and enables on selection (AC-25)", async () => {
+    const { wrapper } = await mountWith(await freshDeck());
+    expect(wrapper.get('[data-testid="slides-bold"]').attributes("disabled")).toBeDefined();
+    await frames(wrapper)[0].trigger("mousedown");
+    expect(wrapper.get('[data-testid="slides-bold"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("applies bold to a selected frame and reflects it, as one undo entry (AC-24/25/29)", async () => {
+    const { wrapper, store } = await mountWith(await freshDeck());
+    const id = store.listDocuments()[0].id;
+    await frames(wrapper)[0].trigger("mousedown");
+    expect(wrapper.get('[data-testid="slides-bold"]').attributes("aria-pressed")).toBe("false");
+    await wrapper.get('[data-testid="slides-bold"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="slides-bold"]').attributes("aria-pressed")).toBe("true");
+    const title = store.getPresentation(id)!.slides[0].frames.find((f) => f.kind === "text" && f.role === "title");
+    expect(title && title.kind === "text" && title.paragraphs[0].runs.every((r) => r.bold)).toBe(true);
+    expect(store.getPresentation(id)!.slides[0].dirty).toBe(true);
+    // One undo entry: undoing reverts the bold.
+    await wrapper.get('[data-testid="presentation-undo"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="slides-bold"]').attributes("aria-pressed")).toBe("false");
+    wrapper.unmount();
+  });
+});

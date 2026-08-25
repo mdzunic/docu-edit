@@ -20,7 +20,19 @@ const props = defineProps({
   /** When set, an aria-live region announces this label on change (AC-53).
    * Only the main stage passes it; filmstrip thumbnails do not. */
   liveLabel: { type: String, default: undefined },
+  /** SPEC-081 selection/editing overlays (the filmstrip thumbnails pass
+   * neither, so they stay read-only). */
+  selectedFrameId: { type: String, default: null },
+  editingFrameId: { type: String, default: null },
 });
+
+const emit = defineEmits(["frame-select", "frame-start-edit", "edit-mounted", "edit-unmounted", "surface-pointerdown"]);
+
+function onSurfacePointerdown() {
+  // Frames stop propagation on their own pointer-down, so this only fires for a
+  // click on empty surface — deselect (AC-4).
+  emit("surface-pointerdown");
+}
 
 const slide = computed(() => asSlide(props.slide));
 const frames = computed(() => slide.value.frames);
@@ -48,12 +60,19 @@ const surfaceStyle = computed(() => ({
     <div
       class="stage-surface"
       :style="surfaceStyle"
+      @mousedown="onSurfacePointerdown"
     >
       <SlideFrameView
         v-for="frame in frames"
         :key="frame.id"
         :frame="frame"
         :resolve-media="resolveMedia"
+        :selected="frame.id === selectedFrameId"
+        :editing="frame.id === editingFrameId"
+        @select="(id) => emit('frame-select', id)"
+        @start-edit="(id, point) => emit('frame-start-edit', id, point)"
+        @edit-mounted="(el) => emit('edit-mounted', el)"
+        @edit-unmounted="() => emit('edit-unmounted')"
       />
     </div>
     <div

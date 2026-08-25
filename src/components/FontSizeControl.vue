@@ -2,7 +2,9 @@
 import { onBeforeUnmount, ref, useTemplateRef, watch } from "vue";
 import {
   COMMON_FONT_SIZES,
-  FONT_SIZE_RANGE_MESSAGE,
+  fontSizeRangeMessage,
+  MAX_FONT_SIZE_PT,
+  MIN_FONT_SIZE_PT,
   parseFontSizeInput,
   stepFontSize,
 } from "../lib/fonts";
@@ -20,6 +22,11 @@ const props = defineProps({
    * indeterminate state for a mixed selection (SPEC-013 AC). */
   value: { type: Number, default: null },
   disabled: { type: Boolean, default: false },
+  /** The accepted size range in points. Defaults to Word's 1–409; the
+   * presentation toolbar (SPEC-081 AC-18) passes its own 6–96 so typed and
+   * stepped values clamp to that range. */
+  min: { type: Number, default: MIN_FONT_SIZE_PT },
+  max: { type: Number, default: MAX_FONT_SIZE_PT },
 });
 
 const emit = defineEmits(["change"]);
@@ -66,7 +73,7 @@ const { menuStyle: sizeMenuStyle } = useFloatingMenu({
 });
 
 function showClampTooltip() {
-  clampMessage.value = FONT_SIZE_RANGE_MESSAGE;
+  clampMessage.value = fontSizeRangeMessage(props.min, props.max);
   clearTimeout(clampTimer);
   clampTimer = window.setTimeout(() => {
     clampMessage.value = "";
@@ -74,7 +81,7 @@ function showClampTooltip() {
 }
 
 function commit() {
-  const { value, clamped } = parseFontSizeInput(draft.value);
+  const { value, clamped } = parseFontSizeInput(draft.value, props.min, props.max);
   if (value === undefined) {
     // Not a number: restore the last known size rather than guessing.
     draft.value = props.value === null ? "" : String(props.value);
@@ -106,7 +113,7 @@ function step(direction = 1) {
   if (props.disabled || props.value === null) {
     return;
   }
-  const next = stepFontSize(props.value, direction === 1 ? 1 : -1);
+  const next = stepFontSize(props.value, direction === 1 ? 1 : -1, props.min, props.max);
   if (next !== props.value) {
     emit("change", next);
   }
