@@ -253,9 +253,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     const slide = deps.currentSlide.value;
     const model = deps.model.value;
     if (!el || !frame || !slide || !model) return;
-    const next = normalizeTextFrameDom(el);
-    mergeParagraphProps(next, frame.paragraphs);
-    frame.paragraphs = next;
+    // normalizeTextFrameDom recovers paragraph-level props (align/bullet/level)
+    // per DOM block, so bullet/indent stay glued to their paragraph across a
+    // keystroke that changes the paragraph count (Enter, Backspace-merge).
+    frame.paragraphs = normalizeTextFrameDom(el);
     markSlideEdited(slide, model.format); // before bumpFrame so the clone carries dirty
     bumpFrame(frame);
     deps.commit();
@@ -410,20 +411,6 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
 function isCollapsed(range: { start: { para: number; offset: number }; end: { para: number; offset: number } }): boolean {
   return range.start.para === range.end.para && range.start.offset === range.end.offset;
-}
-
-type SlideParagraphList = TextFrame["paragraphs"];
-
-/** Carries a frame's paragraph-level properties (align/bullet/level) — which
- * typing does not touch — across a DOM normalise, matching by index. */
-function mergeParagraphProps(next: SlideParagraphList, prev: SlideParagraphList): void {
-  for (let i = 0; i < next.length; i++) {
-    const before = prev[i];
-    if (!before) continue;
-    if (before.align) next[i].align = before.align;
-    if (before.bullet) next[i].bullet = before.bullet;
-    if (before.level) next[i].level = before.level;
-  }
 }
 
 /** Inserts plain text at the caret, newlines becoming paragraph breaks

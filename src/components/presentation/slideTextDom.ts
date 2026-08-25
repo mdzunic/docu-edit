@@ -14,7 +14,12 @@ type RunMarks = Omit<SlideRun, "text">;
 /** Renders paragraphs into an editable host: one `<div class="ce-p">` per
  * paragraph, one `<span>` per run with inline styles for its DEFINED marks
  * only (so the normaliser reads `undefined` back as `undefined`). An empty
- * paragraph gets a lone `<br>` so it keeps a caret line. */
+ * paragraph gets a lone `<br>` so it keeps a caret line. Paragraph-level props
+ * (align/bullet/level) ride along as `data-*` attributes plus a `data-p`
+ * marker, so `normalizeTextFrameDom` recovers them per-block — that keeps
+ * bullet/indent glued to the paragraph's DOM element across a keystroke that
+ * changes the paragraph count (Enter, Backspace-merge), rather than matching by
+ * a shifting array index. */
 export function renderEditableParagraphs(host: HTMLElement, paragraphs: SlideParagraph[]): void {
   const doc = host.ownerDocument;
   host.textContent = "";
@@ -22,7 +27,11 @@ export function renderEditableParagraphs(host: HTMLElement, paragraphs: SlidePar
   for (const para of paras) {
     const block = doc.createElement("div");
     block.className = "ce-p";
+    block.dataset.p = "1";
     block.style.textAlign = para.align ?? "left";
+    if (para.align) block.dataset.align = para.align;
+    if (para.bullet) block.dataset.bullet = para.bullet;
+    if (para.level) block.dataset.level = String(para.level);
     if (para.runs.length === 0) {
       block.appendChild(doc.createElement("br"));
     } else {
@@ -46,47 +55,105 @@ function runSpan(doc: Document, run: SlideRun): HTMLSpanElement {
   return span;
 }
 
+/** A paragraph's block-level properties, the subset `renderEditableParagraphs`
+ * stamps onto each block and `normalizeTextFrameDom` reads back. */
+type ParaProps = Pick<SlideParagraph, "align" | "bullet" | "level">;
+
+interface PendingLine {
+  runs: SlideRun[];
+  props: ParaProps;
+  /** Props came from a block WE rendered (`data-p`), so they are authoritative
+   * — even an empty `props` is an explicit "no bullet/align" and must not be
+   * overwritten by inheritance. A browser-created block (`data-p` absent) is
+   * `false` and inherits from the preceding paragraph. */
+  explicit: boolean;
+}
+
 /** Reads a contenteditable host back into paragraphs: block children and
  * `<br>`s split paragraphs, styled spans carry run marks, bare text is a plain
- * run. Paragraph-level properties (align/bullet/level) are NOT recovered here —
- * they are set by toolbar commands on the model and merged back by the caller. */
+ * run. Paragraph-level properties (align/bullet/level) are recovered from each
+ * block's `data-*` attributes; a block the browser created (Enter/paste split,
+ * so it carries no `data-p` marker) inherits them from the preceding paragraph,
+ * matching how an editor carries bullet/indent onto a new line. */
 export function normalizeTextFrameDom(host: HTMLElement): SlideParagraph[] {
-  const lines: SlideRun[][] = [[]];
-  const line = (): SlideRun[] => lines[lines.length - 1];
+  const lines: PendingLine[] = [{ runs: [], props: {}, explicit: false }];
+  const line = (): PendingLine => lines[lines.length - 1];
   const push = (text: string, marks: RunMarks): void => {
     if (text.length === 0) return;
-    line().push(buildRun(text, marks));
+    line().runs.push(buildRun(text, marks));
   };
-  const newLine = (): void => {
-    lines.push([]);
+  const newLine = (props: ParaProps, explicit: boolean): void => {
+    lines.push({ runs: [], props, explicit });
   };
 
-  const walk = (node: Node, marks: RunMarks): void => {
+  const walk = (node: Node, marks: RunMarks, blockProps: ParaProps, blockExplicit: boolean): void => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
         push(child.textContent ?? "", marks);
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         const el = child as HTMLElement;
         if (el.tagName === "BR") {
-          newLine();
+          // A soft break stays inside the enclosing block, so the new line keeps
+          // that block's props.
+          newLine(blockProps, blockExplicit);
         } else if (isBlock(el)) {
-          if (line().length > 0) newLine();
-          walk(el, marksFrom(el, marks));
-          newLine();
+          const { props, explicit } = paraPropsFrom(el);
+          if (line().runs.length > 0) {
+            newLine(props, explicit);
+          } else {
+            const cur = line();
+            cur.props = props;
+            cur.explicit = explicit;
+          }
+          walk(el, marksFrom(el, marks), props, explicit);
+          newLine(blockProps, blockExplicit);
         } else {
-          walk(el, marksFrom(el, marks));
+          walk(el, marksFrom(el, marks), blockProps, blockExplicit);
         }
       }
     }
   };
-  walk(host, {});
+  walk(host, {}, {}, false);
 
   // Drop a single trailing empty line left by a block boundary, but keep an
   // all-empty host as one empty paragraph.
-  while (lines.length > 1 && lines[lines.length - 1].length === 0) {
+  while (lines.length > 1 && lines[lines.length - 1].runs.length === 0) {
     lines.pop();
   }
-  return lines.map((runs) => ({ runs: coalesce(runs) }));
+
+  // Inherit block props onto browser-created paragraphs from the last rendered
+  // one; an explicitly-rendered paragraph keeps its own props (including an
+  // explicit "no bullet" after a toggle-off), so nothing clobbers them.
+  let carried: ParaProps = {};
+  for (const l of lines) {
+    if (l.explicit) carried = l.props;
+    else l.props = carried;
+  }
+
+  return lines.map((l) => {
+    const para: SlideParagraph = { runs: coalesce(l.runs) };
+    if (l.props.align) para.align = l.props.align;
+    if (l.props.bullet) para.bullet = l.props.bullet;
+    if (l.props.level) para.level = l.props.level;
+    return para;
+  });
+}
+
+/** Recovers a block's paragraph-level props from its `data-*` attributes.
+ * `explicit` is true when the block carries our `data-p` marker (we rendered
+ * it), false for a block the browser minted during an edit. */
+function paraPropsFrom(el: HTMLElement): { props: ParaProps; explicit: boolean } {
+  const explicit = el.dataset.p === "1";
+  const props: ParaProps = {};
+  const align = el.dataset.align;
+  if (align === "left" || align === "center" || align === "right" || align === "justify") {
+    props.align = align;
+  }
+  const bullet = el.dataset.bullet;
+  if (bullet === "disc" || bullet === "number") props.bullet = bullet;
+  const level = Number(el.dataset.level);
+  if (Number.isFinite(level) && level > 0) props.level = level;
+  return { props, explicit };
 }
 
 function isBlock(el: HTMLElement): boolean {

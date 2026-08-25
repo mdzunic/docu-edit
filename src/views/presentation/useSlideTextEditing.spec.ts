@@ -5,7 +5,7 @@ import type { PresentationModel } from "../../lib/presentation/model";
 import { useFrameSelection } from "./useFrameSelection";
 import { TYPING_BURST_MS, useSlideTextEditing } from "./useSlideTextEditing";
 
-function setup() {
+function setup(paragraphs: unknown = [{ runs: [{ text: "hi" }] }]) {
   const model = ref({
     kind: "presentation",
     id: "d",
@@ -17,7 +17,7 @@ function setup() {
       {
         id: "s1",
         frames: [
-          { id: "f1", kind: "text", role: "body", xCm: 0, yCm: 0, widthCm: 10, heightCm: 5, paragraphs: [{ runs: [{ text: "hi" }] }] },
+          { id: "f1", kind: "text", role: "body", xCm: 0, yCm: 0, widthCm: 10, heightCm: 5, paragraphs },
         ],
       },
     ],
@@ -87,5 +87,28 @@ describe("undo-burst coalescing (AC-28/29)", () => {
     const frame = model.value.slides[0].frames[0];
     expect(frame.kind === "text" && frame.paragraphs[0].runs[0].text).toBe("hello there");
     expect(model.value.slides[0].dirty).toBe(true);
+  });
+
+  it("keeps bullets on the surviving lines when Enter adds a paragraph (AC-8/11)", () => {
+    const { editing, host, model } = setup([
+      { runs: [{ text: "A" }], bullet: "disc" },
+      { runs: [{ text: "B" }], bullet: "disc" },
+      { runs: [{ text: "C" }], bullet: "disc" },
+    ]);
+    // startEditing rendered the bulleted blocks with data-p markers into `host`.
+    // Simulate the browser inserting a fresh paragraph (Enter at end of A + a
+    // typed word) — a plain <div> with no marker.
+    const inserted = document.createElement("div");
+    inserted.textContent = "word";
+    host.children[0].after(inserted);
+    editing.onInput();
+    const frame = model.value.slides[0].frames[0];
+    const paras = frame.kind === "text" ? frame.paragraphs : [];
+    expect(paras.map((p) => [p.runs.map((r) => r.text).join(""), p.bullet])).toEqual([
+      ["A", "disc"],
+      ["word", "disc"],
+      ["B", "disc"],
+      ["C", "disc"], // was silently de-bulleted by the index-based merge
+    ]);
   });
 });
