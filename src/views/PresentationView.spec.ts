@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "../router";
+import { createBlankPresentation } from "../lib/presentation/slides";
 import type { PresentationModel } from "../lib/presentation/model";
 
 beforeEach(() => {
@@ -126,5 +127,87 @@ describe("PresentationView filmstrip", () => {
     const upgraded = store.getPresentation(fresh.id);
     expect(upgraded && typeof upgraded.slideWidthCm).toBe("number");
     expect(wrapper.findAll('[data-testid="filmstrip-slide"]')).toHaveLength(4);
+  });
+});
+
+describe("PresentationView slide management (SPEC-080)", () => {
+  const options = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
+    wrapper.findAll('[data-testid="filmstrip-slide"]');
+
+  it("adds a slide via the Add slide button (AC-16/25)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation());
+    expect(options(wrapper)).toHaveLength(1);
+    await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(2);
+  });
+
+  it("undoes and redoes via the toolbar buttons, which enable/disable (AC-40/41/42)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation());
+    expect(wrapper.get('[data-testid="presentation-undo"]').attributes("disabled")).toBeDefined();
+    await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="presentation-undo"]').attributes("disabled")).toBeUndefined();
+
+    await wrapper.get('[data-testid="presentation-undo"]').trigger("click");
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(1);
+    await wrapper.get('[data-testid="presentation-redo"]').trigger("click");
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(2);
+  });
+
+  it("undoes and redoes via Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z (AC-40/41)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation());
+    await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
+    await flushPromises();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }));
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(1);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true }));
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(2);
+    wrapper.unmount();
+  });
+
+  it("opens the context menu with Shift+F10 and deletes a slide (AC-24/21)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation());
+    await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
+    await flushPromises();
+    // Shift+F10 on the focusable listbox opens the current thumbnail's menu.
+    await wrapper.get('[data-testid="slide-filmstrip"]').trigger("keydown", { key: "F10", shiftKey: true });
+    expect(wrapper.find('[data-testid="slide-context-menu"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="slide-menu-delete"]').trigger("click");
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(1);
+  });
+
+  it("shows an empty state with an Add slide action at zero slides (AC-35)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation());
+    await wrapper.get('[data-testid="presentation-slide-menu"]').trigger("click");
+    await wrapper.get('[data-testid="slide-menu-delete"]').trigger("click");
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(0);
+    expect(wrapper.find('[data-testid="presentation-empty"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="presentation-empty-add"]').trigger("click");
+    await flushPromises();
+    expect(options(wrapper)).toHaveLength(1);
+  });
+
+  it("offers 'Download a copy as…' the other format (AC-13)", async () => {
+    const { wrapper } = await mountWith(createBlankPresentation()); // pptx-born
+    expect(wrapper.find('[data-testid="presentation-download-menu-popup"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="presentation-download-menu"]').trigger("click");
+    expect(wrapper.get('[data-testid="download-copy-as"]').text()).toContain(".odp");
+  });
+
+  it("persists mutations write-through so a reload shows them (AC-46/47)", async () => {
+    const { wrapper, store } = await mountWith(createBlankPresentation());
+    const id = store.listDocuments()[0].id;
+    const before = store.getStoredRecord(id)?.lastModified ?? 0;
+    await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
+    await flushPromises();
+    expect(store.getPresentation(id)?.slides).toHaveLength(2);
+    expect(store.getStoredRecord(id)?.lastModified).toBeGreaterThanOrEqual(before);
   });
 });

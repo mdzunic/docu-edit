@@ -12,9 +12,10 @@ import type { PresentationFormat } from "./presentation/model";
 export type DocumentKind = "text" | "presentation";
 
 /** Every format the library can hold: the text formats, the presentation
- * formats, and "new" (created in the app, never opened from or saved to a
- * file — always a text document until a "blank presentation" feature
- * exists). */
+ * formats, and "new" (a text document created in the app, never opened from
+ * or saved to a file). Blank presentations do NOT use "new": they carry
+ * `"pptx"` from birth (`createBlankPresentation`, SPEC-080), so `kindOfFormat`
+ * routes and the library badges them as presentations with no new format. */
 export type LibraryFormat = TextDocumentFormat | PresentationFormat | "new";
 
 const PRESENTATION_FORMATS: ReadonlySet<string> = new Set(["pptx", "odp"]);

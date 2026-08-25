@@ -56,6 +56,9 @@ export function assemblePresentation(
   if (Object.keys(parsed.properties).length > 0) {
     model.properties = parsed.properties;
   }
+  if (parsed.odpContentEnvelope) {
+    model.odpContentEnvelope = parsed.odpContentEnvelope;
+  }
   return model;
 }
 

@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import HomeView from "./HomeView.vue";
-import { getDocument } from "../lib/documentStore";
+import { getDocument, getPresentation } from "../lib/documentStore";
 import { DEFAULT_TITLE } from "../lib/documentModel";
+import { DEFAULT_PRESENTATION_TITLE } from "../lib/presentation/model";
 import { routes } from "../router";
 
 function mountHome() {
@@ -41,6 +42,21 @@ describe("HomeView", () => {
     expect(openButton.isVisible()).toBe(true);
   });
 
+  // SPEC-080 AC-1: "New presentation" sits beside "New document" on the
+  // first-run empty state, not only once the library already holds a document.
+  // This runs before any doc-creating test, so the library is genuinely empty
+  // and the empty state (not the library controls) is what renders.
+  it("offers 'New presentation' on the genuinely empty first-run state (AC-1)", async () => {
+    const { wrapper, router } = mountHome();
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
+    const emptyState = wrapper.get('[data-testid="empty-state"]');
+    const button = emptyState.get('[data-testid="new-presentation"]');
+    expect(button.text()).toBe("New presentation");
+    await button.trigger("click");
+    await router.isReady();
+    expect(router.currentRoute.value.path).toMatch(/^\/slides\/.+/);
+  });
+
   it("creates a document and navigates to /doc/:id on click (AC-1)", async () => {
     const { wrapper, router } = mountHome();
     await wrapper.get('[data-testid="new-document"]').trigger("click");
@@ -49,6 +65,21 @@ describe("HomeView", () => {
     expect(router.currentRoute.value.path).toMatch(/^\/doc\/.+/);
     const id = router.currentRoute.value.params.id as string;
     expect(getDocument(id)?.title).toBe(DEFAULT_TITLE);
+  });
+
+  it("stores a blank deck and navigates to /slides/:id on 'New presentation' (SPEC-080 AC-1)", async () => {
+    const { wrapper, router } = mountHome();
+    const button = wrapper.get('[data-testid="new-presentation"]');
+    expect(button.text()).toBe("New presentation");
+    await button.trigger("click");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toMatch(/^\/slides\/.+/);
+    const id = router.currentRoute.value.params.id as string;
+    const model = getPresentation(id);
+    expect(model?.title).toBe(DEFAULT_PRESENTATION_TITLE);
+    expect(model?.format).toBe("pptx");
+    expect(model?.slides).toHaveLength(1);
   });
 
   it("'New from template…' opens the template gallery, offering 'Blank document' alongside templates (SPEC-046 AC-1)", async () => {
