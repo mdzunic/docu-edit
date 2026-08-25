@@ -14,7 +14,7 @@ import type { DocumentProperties } from "../../core/documentProperties";
 import type { MediaPart } from "../../core/media";
 import { contentTypeForPartName } from "../../core/media";
 import { unzip, ZipError } from "../../core/zip";
-import { firstChildElement, parseXml, serializeElement, XmlParseError } from "../../core/xml";
+import { escapeXmlAttribute, firstChildElement, parseXml, serializeElement, XmlParseError } from "../../core/xml";
 import {
   DRAW_NAMESPACE,
   OFFICE_NAMESPACE,
@@ -679,15 +679,37 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
   }
   const slide: Slide = { id: crypto.randomUUID(), frames, sourceXml: serializeElement(page) };
   const preserved: Record<string, string> = {};
+  const pageAttrs = Array.from(page.attributes)
+    .map((attr) => ` ${attr.name}="${escapeXmlAttribute(attr.value)}"`)
+    .join("");
+  if (pageAttrs) {
+    preserved["@page"] = pageAttrs;
+  }
+  const anim: string[] = [];
   for (const child of Array.from(page.children)) {
     if (child.namespaceURI === PRESENTATION_NS && child.localName === "notes") {
       preserved["presentation:notes"] = serializeElement(child);
+    } else if (isAnimationElement(child)) {
+      anim.push(serializeElement(child));
     }
+  }
+  if (anim.length > 0) {
+    preserved["anim"] = anim.join("");
   }
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
   }
   return slide;
+}
+
+/** Whether an element is one of a page's animation children (`anim:*`) the
+ * page serialiser re-emits verbatim (AC-38). */
+function isAnimationElement(el: Element): boolean {
+  if (el.prefix === "anim") {
+    return true;
+  }
+  const ns = el.namespaceURI ?? "";
+  return ns.includes("animation") || ns.includes("smil");
 }
 
 const PRESENTATION_NS = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";

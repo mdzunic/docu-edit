@@ -22,11 +22,13 @@ import {
   relsPathFor,
   resolvePartPath,
   RELATIONSHIPS_NAMESPACE,
+  type Relationship,
 } from "../../core/xml";
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
-import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide, type TextFrame } from "../model";
+import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide } from "../model";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
+import { serializeSlideXml } from "./serialize";
 
 export { PPTX_MIME_TYPE } from "./reader";
 
@@ -69,49 +71,48 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
     return { bytes: await zip(buildFromScratch(model, options.modified ?? new Date())) };
   }
   const parts = decodedPartBytes(model.opaque);
-  const structural = model.structureDirty === true || model.slides.some((slide) => slide.dirty === true);
-  if (!structural) {
-    // Nothing structural changed — re-emit verbatim (AC-51).
+  const anyDirty = model.slides.some((slide) => slide.dirty === true);
+  if (!model.structureDirty && !anyDirty) {
+    // Nothing changed — re-emit verbatim (AC-51).
     const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
     return { bytes };
+  }
+  if (!model.structureDirty) {
+    // Text-only edits: substitute each dirty slide's own part in place —
+    // presentation.xml, its rels and [Content_Types].xml stay byte-verbatim,
+    // and every untouched slide/unmodelled part is copied through (SPEC-081
+    // Dirtying: a text edit does not rebuild the structural parts).
+    return { bytes: await zip(buildTextEditSubstitution(model, parts)) };
   }
   return { bytes: await zip(buildSubstitution(model, parts)) };
 }
 
+/** Rebuilds only the dirty slides' own parts, in place; every other part
+ * (structural parts, untouched slides, the dirty slides' `.rels`) is copied
+ * byte-verbatim. */
+function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
+  const rebuilt = new Map<string, Uint8Array>();
+  for (const slide of model.slides) {
+    if (slide.dirty && slide.partName && parts.has(slide.partName)) {
+      const rels = slideRelsOf(slide.partName, parts);
+      rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName)));
+    }
+  }
+  return [...parts].map(([name, data]) => ({ name, data: rebuilt.get(name) ?? data }));
+}
+
+function slideRelsOf(slidePartName: string, parts: Map<string, Uint8Array>): Map<string, Relationship> {
+  const relsBytes = parts.get(relsPathFor(slidePartName));
+  return relsBytes ? parseRelationships(decode(relsBytes)) : new Map();
+}
+
 // --- shared slide serialisation --------------------------------------------
 
-function capitalise(text: string): string {
-  return text.length > 0 ? text[0].toUpperCase() + text.slice(1) : text;
-}
-
-/** An empty placeholder `p:sp` — `p:ph` + `a:xfrm` + empty `p:txBody`, the
- * only shape a from-scratch / new slide holds this spec (AC-2/26). */
-function placeholderSpXml(frame: TextFrame, index: number): string {
-  const phAttrs =
-    `${frame.phType ? ` type="${escapeXmlAttribute(frame.phType)}"` : ""}` +
-    `${frame.phIdx !== undefined ? ` idx="${frame.phIdx}"` : ""}`;
-  const name = frame.role ? capitalise(frame.role) : "TextBox";
-  return (
-    `<p:sp><p:nvSpPr><p:cNvPr id="${index + 2}" name="${escapeXmlAttribute(name)}"/>` +
-    `<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph${phAttrs}/></p:nvPr></p:nvSpPr>` +
-    `<p:spPr><a:xfrm><a:off x="${cmToEmu(frame.xCm)}" y="${cmToEmu(frame.yCm)}"/>` +
-    `<a:ext cx="${cmToEmu(frame.widthCm)}" cy="${cmToEmu(frame.heightCm)}"/></a:xfrm></p:spPr>` +
-    `<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody></p:sp>`
-  );
-}
-
-/** A slide part's XML from its (placeholder-only) frames. */
-function slideXml(slide: Slide): string {
-  const shapes = slide.frames
-    .filter((frame): frame is TextFrame => frame.kind === "text")
-    .map((frame, index) => placeholderSpXml(frame, index))
-    .join("");
-  return (
-    `${XML_DECL}<p:sld xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
-    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
-    shapes +
-    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
-  );
+/** A slide part's XML from its frames (SPEC-081's serialiser). `rels`/`path`
+ * resolve an ImageFrame's media back to its `r:embed`; a from-scratch / new
+ * slide passes an empty rels map (it bears no images yet). */
+function slideXml(slide: Slide, rels: Map<string, Relationship> = new Map(), path = ""): string {
+  return serializeSlideXml(slide, rels, path);
 }
 
 function slideRelsXml(layoutTarget: string): string {
@@ -306,7 +307,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   const rebuiltPresXml = spliceSldIdLst(origPresXml, `<p:sldIdLst>${sldIdLstInner}</p:sldIdLst>`);
 
   // Rebuild [Content_Types].xml: add overrides for added slides, drop overrides
-  // for removed parts; everything else byte-verbatim.
+  // for removed parts; everything else byte-verbatim. A dirty slide re-emitted
+  // under its own name (kind "verbatim") already has an override — only genuinely
+  // new part names are added.
   const addedSlidePaths = emitted.filter((entry) => entry.kind !== "verbatim").map((entry) => entry.emitName);
   const rebuiltContentTypes = rebuildContentTypes(
     decode(parts.get("[Content_Types].xml") ?? encode("")),
@@ -314,8 +317,19 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     [...removed],
   );
 
+  // A dirty slide kept under its own part name is rebuilt in place (its rels
+  // stay verbatim); an untouched one re-emits byte-verbatim.
+  const rebuiltOwn = new Map<string, Uint8Array>();
+  for (const entry of emitted) {
+    if (entry.kind === "verbatim" && entry.slide.dirty) {
+      const rels = slideRelsOf(entry.emitName, parts);
+      rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
+    }
+  }
+
   // Assemble: iterate opaque parts in order, substituting the three structural
-  // parts and skipping removed parts; then append new/duplicated slide parts.
+  // parts, rebuilding dirty own-name slides, and skipping removed parts; then
+  // append new/duplicated slide parts.
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
     if (removed.has(name)) {
@@ -328,7 +342,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     } else if (name === "[Content_Types].xml") {
       entries.push({ name, data: encode(rebuiltContentTypes) });
     } else {
-      entries.push({ name, data });
+      entries.push({ name, data: rebuiltOwn.get(name) ?? data });
     }
   }
   for (const entry of emitted) {
@@ -337,14 +351,21 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     }
     const relsName = relsPathFor(entry.emitName);
     if (entry.kind === "duplicate" && entry.sourceName) {
-      entries.push({ name: entry.emitName, data: parts.get(entry.sourceName)! });
-      const sourceRels = parts.get(relsPathFor(entry.sourceName));
-      if (sourceRels) {
-        entries.push({ name: relsName, data: sourceRels });
+      // A duplicated-then-edited slide is rebuilt from the model; its rels are
+      // still the source's (carried, ids intact). An unedited duplicate copies
+      // the source part's bytes verbatim (AC-33).
+      const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
+      const rels = sourceRelsBytes ? parseRelationships(decode(sourceRelsBytes)) : new Map<string, Relationship>();
+      const xml = entry.slide.dirty
+        ? encode(slideXml(entry.slide, rels, entry.emitName))
+        : parts.get(entry.sourceName)!;
+      entries.push({ name: entry.emitName, data: xml });
+      if (sourceRelsBytes) {
+        entries.push({ name: relsName, data: sourceRelsBytes });
       }
     } else {
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath));
-      entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide)) });
+      entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide, new Map(), entry.emitName)) });
       entries.push({ name: relsName, data: encode(slideRelsXml(layoutTarget)) });
     }
   }

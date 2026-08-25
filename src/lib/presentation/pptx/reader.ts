@@ -30,6 +30,7 @@ import {
 } from "../../core/drawingMl";
 import {
   childElements,
+  escapeXmlAttribute,
   firstChildElement,
   parseRelationships,
   parseXml,
@@ -978,11 +979,18 @@ function resolveChain(slidePath: string, slideRels: Map<string, Relationship>, d
   return { layoutRoot, masterRoot, themeRoot };
 }
 
-/** Captures the verbatim preservation fields SPEC-081 re-emits (this spec
- * only fills them): `p:bg`, `p:transition`, `p:timing`, `p:clrMapOvr`,
+/** Captures the verbatim preservation fields SPEC-081 re-emits: the root
+ * `p:sld` attribute string (under `@root`, so its `xmlns`/`showMasterSp`/…
+ * survive), plus `p:bg`, `p:transition`, `p:timing`, `p:clrMapOvr`,
  * `p:extLst`. Keyed by element name. */
 function collectPreserved(slideRoot: Element): Record<string, string> {
   const preserved: Record<string, string> = {};
+  const rootAttrs = Array.from(slideRoot.attributes)
+    .map((attr) => ` ${attr.name}="${escapeXmlAttribute(attr.value)}"`)
+    .join("");
+  if (rootAttrs) {
+    preserved["@root"] = rootAttrs;
+  }
   const cSld = pChild(slideRoot, "cSld");
   const bg = cSld && pChild(cSld, "bg");
   if (bg) {
