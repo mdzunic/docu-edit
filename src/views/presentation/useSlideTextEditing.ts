@@ -130,13 +130,39 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   let pendingSelectAll = false;
 
+  let detachHost: (() => void) | null = null;
   function registerHost(el: HTMLElement | null): void {
+    if (detachHost) {
+      detachHost();
+      detachHost = null;
+    }
     host.value = el;
     if (el && editingFrame.value) {
+      const onSelectionChange = (): void => {
+        const range = selectionRangeOf(el);
+        if (range) {
+          lastRange = range;
+          refreshToolbar();
+        }
+      };
+      el.addEventListener("input", onInput);
+      el.addEventListener("keydown", onKeydown);
+      el.addEventListener("paste", onPaste);
+      el.ownerDocument.addEventListener("selectionchange", onSelectionChange);
+      detachHost = () => {
+        el.removeEventListener("input", onInput);
+        el.removeEventListener("keydown", onKeydown);
+        el.removeEventListener("paste", onPaste);
+        el.ownerDocument.removeEventListener("selectionchange", onSelectionChange);
+      };
       renderAndFocus(pendingSelectAll);
       pendingSelectAll = false;
     }
   }
+
+  // The last selection observed inside the host — used when a toolbar click has
+  // moved focus off the contenteditable (its live selection would be empty).
+  let lastRange: { start: { para: number; offset: number }; end: { para: number; offset: number } } | null = null;
 
   function renderAndFocus(selectAll: boolean): void {
     const el = host.value;
@@ -160,8 +186,13 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     if (host.value && editingFrame.value) {
       syncModelFromDom();
     }
+    if (detachHost) {
+      detachHost();
+      detachHost = null;
+    }
     editingFrameId.value = null;
     host.value = null;
+    lastRange = null;
     refreshToolbar();
   }
 
@@ -231,7 +262,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
    * else the whole selected frame (AC-25). */
   function commandRange(frame: TextFrame): TextRange {
     if (editingFrame.value && host.value) {
-      const dom = selectionRangeOf(host.value);
+      const dom = selectionRangeOf(host.value) ?? lastRange;
       if (dom) return { start: dom.start, end: dom.end };
     }
     return wholeFrameRange(frame);

@@ -13,17 +13,18 @@ import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import SlideStage from "../components/presentation/SlideStage.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
+import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
 import { downloadPresentation } from "../lib/presentation/download";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
-import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 import { cmToPx } from "../lib/core/units";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
 import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
+import { usePresentationEditing } from "./presentation/usePresentationEditing";
 
 const route = useRoute();
 const router = useRouter();
@@ -150,6 +151,17 @@ function selectSlide(index = 0) {
   }
 }
 
+// --- selection + text editing + toolbar (SPEC-081) -------------------------
+const stageEdit = usePresentationEditing({
+  model: presentation,
+  currentSlide,
+  record: slideUndo.record,
+  commit,
+  undo: slideUndo.undo,
+  redo: slideUndo.redo,
+  navigate: (delta) => selectSlide(currentIndex.value + delta),
+});
+
 // --- fit-to-workspace scaling ----------------------------------------------
 
 const stageContainer = useTemplateRef("stageContainer");
@@ -176,45 +188,21 @@ watch([presentation, currentSlide], () => {
   void nextTick(recomputeScale);
 });
 
-// --- global slide navigation (AC-48) ---------------------------------------
-
-function onGlobalKeydown(event = new KeyboardEvent("keydown")) {
-  // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z / Ctrl+Y drive the presentation undo stack
-  // (AC-40/41), ignoring events from inputs/dialogs (the SPEC-021 convention).
-  const shortcut = findShortcut(event);
-  if ((shortcut?.id === "edit.undo" || shortcut?.id === "edit.redo") && !isOutsideDocumentInput(event.target)) {
-    event.preventDefault();
-    if (shortcut.id === "edit.undo") {
-      slideUndo.undo();
-    } else {
-      slideUndo.redo();
-    }
-    return;
-  }
-  if (event.key !== "PageUp" && event.key !== "PageDown") {
-    return;
-  }
-  const target = event.target;
-  if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-    return;
-  }
-  event.preventDefault();
-  selectSlide(currentIndex.value + (event.key === "PageDown" ? 1 : -1));
-}
+// --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
 
 onMounted(() => {
   if (resizeObserver && stageContainer.value) {
     resizeObserver.observe(stageContainer.value);
   }
   window.addEventListener("resize", recomputeScale);
-  window.addEventListener("keydown", onGlobalKeydown);
+  window.addEventListener("keydown", stageEdit.onGlobalKeydown);
   void nextTick(recomputeScale);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   window.removeEventListener("resize", recomputeScale);
-  window.removeEventListener("keydown", onGlobalKeydown);
+  window.removeEventListener("keydown", stageEdit.onGlobalKeydown);
 });
 
 // --- download (own format + "Download a copy as…" the other) ---------------
@@ -351,6 +339,22 @@ function close() {
         </div>
       </header>
 
+      <PresentationToolbar
+        :state="stageEdit.editing.toolbarState.value ?? undefined"
+        :enabled="stageEdit.editing.toolbarEnabled.value"
+        :recent-colors="stageEdit.recentColors.value"
+        @bold="stageEdit.editing.toggleBold()"
+        @italic="stageEdit.editing.toggleItalic()"
+        @underline="stageEdit.editing.toggleUnderline()"
+        @font="stageEdit.editing.setFontFamily($event)"
+        @size="stageEdit.editing.setFontSize($event)"
+        @color="stageEdit.setColor($event)"
+        @align="stageEdit.editing.setAlign($event)"
+        @bullet="stageEdit.editing.toggleBulletCmd()"
+        @indent="stageEdit.editing.indent(1)"
+        @outdent="stageEdit.editing.indent(-1)"
+      />
+
       <div class="deck-body">
         <SlideFilmstrip
           :slides="presentation.slides"
@@ -376,6 +380,13 @@ function close() {
             :media="deckMedia"
             :scale="stageScale"
             :live-label="liveLabel"
+            :selected-frame-id="stageEdit.selection.selectedFrameId.value ?? undefined"
+            :editing-frame-id="stageEdit.editing.editingFrameId.value ?? undefined"
+            @frame-select="stageEdit.onFrameSelect"
+            @frame-start-edit="stageEdit.onStartEdit"
+            @edit-mounted="stageEdit.editing.registerHost"
+            @edit-unmounted="stageEdit.editing.registerHost(null)"
+            @surface-pointerdown="stageEdit.onSurfaceDeselect"
           />
           <div
             v-else

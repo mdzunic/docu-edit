@@ -123,6 +123,24 @@ export function markedParagraphs(frame: SlideFrame): { para: SlideParagraph; mar
   });
 }
 
+/** Whether a text frame renders its empty-placeholder prompt (SPEC-081): a
+ * placeholder (has a role) whose paragraphs are all empty. */
+export function isEmptyTextPlaceholder(frame: SlideFrame): boolean {
+  if (frame.kind !== "text" || frame.role === undefined) {
+    return false;
+  }
+  return frame.paragraphs.every((para) => para.runs.every((run) => run.text.length === 0));
+}
+
+/** The prompt an empty placeholder shows outside an editing session — never
+ * enters the model, the files, or the clipboard (AC-15/16). */
+export function placeholderPrompt(frame: SlideFrame): string {
+  if (frame.kind !== "text") {
+    return "";
+  }
+  return frame.role === "title" ? "Click to add title" : "Click to add text";
+}
+
 export function paragraphStyle(para: SlideParagraph): Record<string, string> {
   return {
     textAlign: para.align ?? "left",
