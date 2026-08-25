@@ -74,7 +74,7 @@ import { canonicalDateTimeFormatFromDocx } from "../fields";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
 import { yieldToMainThread } from "../core/idleScheduler";
-import { bytesToBase64Async } from "../opaque";
+import { bytesToBase64 } from "../opaque";
 import { blockText } from "../textEditing";
 import { ZipError, unzip } from "../core/zip";
 import { wordAttr, WORD_NAMESPACE, MATH_NAMESPACE } from "./xml";
@@ -91,7 +91,7 @@ import {
   type Relationship,
 } from "../core/xml";
 import { isFloatingDrawing } from "../drawingAnchors";
-import { fillPendingMediaData, parseDrawing, type ParsedDrawing } from "./drawing";
+import { fillPendingMediaDataSync, pendingMediaByteLength, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
 import { parseChartDrawing } from "./chart";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
@@ -2865,8 +2865,15 @@ export async function parseDocx(
   // `opaque` (the writer regenerates their relationships/content types from
   // `media` on every save, same-format or not) — header/footer parts
   // (SPEC-029) are excluded the same way, for the same reason.
+  // Each part that still needs base64: the raw byte length (to bound each
+  // encode chunk below) and the encode itself, run in the package's part
+  // order so `opaque` stays deterministic.
+  interface PendingEncode {
+    byteLength: number;
+    encode: () => void;
+  }
+  const pendingEncodes: PendingEncode[] = [];
   const opaque: OpaquePart[] = [];
-  const opaqueEncodes: Array<() => Promise<void>> = [];
   for (const [name, data] of parts) {
     if (
       name !== mainPartPath &&
@@ -2875,35 +2882,44 @@ export async function parseDocx(
       !mediaById.has(name) &&
       !consumedHeaderFooterParts.has(name)
     ) {
-      // Placeholder now, bytes encoded in the batched pass below — order in
-      // `opaque` stays the package's part order regardless of which encode
-      // resolves first.
+      // Placeholder now, bytes encoded in the chunked pass below.
       const part: OpaquePart = { name, data: "" };
       opaque.push(part);
-      opaqueEncodes.push(async () => {
-        part.data = await bytesToBase64Async(data);
+      pendingEncodes.push({
+        byteLength: data.length,
+        encode: () => {
+          part.data = bytesToBase64(data);
+        },
       });
     }
   }
+  for (const part of mediaById.values()) {
+    pendingEncodes.push({
+      byteLength: pendingMediaByteLength(part),
+      encode: () => fillPendingMediaDataSync(part),
+    });
+  }
 
   // The one deferred base64 pass for every preserved part and image any walk
-  // above collected — see parseDrawing/fillPendingMediaData: encoding per
+  // above collected — see parseDrawing/fillPendingMediaDataSync: encoding per
   // drawing put ~0.6s of the benchmark fixture's open inside the body walk.
-  // Batched CONCURRENTLY, not one awaited encode at a time: each
-  // FileReader-backed encode is a full round trip to the browser's
-  // background encoder, and 500 sequential round trips spent ~0.3s of the
-  // fixture's open just waiting between them (SPEC-047 AC-3). One real
-  // yield between batches keeps the main-thread half of each batch (Blob
-  // copies, result strings) a short task instead of one fused block
-  // (AC-16).
-  const pendingEncodes: Array<() => Promise<void>> = [...opaqueEncodes];
-  for (const part of mediaById.values()) {
-    pendingEncodes.push(() => fillPendingMediaData(part));
-  }
-  const ENCODE_BATCH = 48;
-  for (let start = 0; start < pendingEncodes.length; start += ENCODE_BATCH) {
-    await Promise.all(pendingEncodes.slice(start, start + ENCODE_BATCH).map((run) => run()));
-    if (start + ENCODE_BATCH < pendingEncodes.length) {
+  // Encoded SYNCHRONOUSLY here rather than through FileReader.readAsDataURL:
+  // a large `.docx` carries hundreds of small media parts, and one FileReader
+  // round trip per part costs more in scheduling than `btoa` spends on the
+  // bytes — on the benchmark fixture the round-trip pass measured ~2x the
+  // synchronous one, and its per-part latency is exactly what a loaded gate
+  // host inflates (SPEC-047 AC-3). To keep AC-16's 150ms main-thread-block
+  // budget, the encodes run in byte-bounded chunks with one real yield
+  // between them: CHUNK_BYTES of source bytes per chunk keeps each `btoa`
+  // run a short task (~6 MB encodes well under the budget on the calibrated
+  // container) instead of one fused block over the whole package.
+  const CHUNK_BYTES = 6 * 1024 * 1024;
+  let chunkBytes = 0;
+  for (let i = 0; i < pendingEncodes.length; i++) {
+    pendingEncodes[i].encode();
+    chunkBytes += pendingEncodes[i].byteLength;
+    if (chunkBytes >= CHUNK_BYTES && i < pendingEncodes.length - 1) {
+      chunkBytes = 0;
       await yieldToMainThread();
     }
   }
