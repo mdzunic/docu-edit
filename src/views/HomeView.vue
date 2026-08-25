@@ -41,6 +41,7 @@ import {
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
 import { instantiateTemplate } from "../lib/templateStore";
 import { createDocument } from "../lib/documentModel";
+import { createBlankPresentation } from "../lib/presentation/slides";
 
 const router = useRouter();
 const { addToast } = useToasts();
@@ -58,12 +59,15 @@ const tier = useTier();
 const compact = computed(() => tier.value === "compact");
 const headerActionsMenuOpen = ref(false);
 const HEADER_OVERFLOW_ACTIONS = [
+  { id: "new-presentation", label: "New presentation", testid: "new-presentation" },
   { id: "new-from-template", label: "New from template…", testid: "new-from-template" },
   { id: "open-document", label: "Open document", testid: "open-document" },
 ];
 function runHeaderAction(id = "") {
   headerActionsMenuOpen.value = false;
-  if (id === "new-from-template") {
+  if (id === "new-presentation") {
+    createNewPresentation();
+  } else if (id === "new-from-template") {
     openTemplateGallery();
   } else if (id === "open-document") {
     pickFile();
@@ -236,6 +240,13 @@ const showGallery = ref(false);
 function createNewDocument() {
   const doc = getOrCreateDocument(crypto.randomUUID());
   router.push(`/doc/${doc.id}`);
+}
+// A blank deck (SPEC-080): stored via storePresentation, carrying "pptx" from
+// birth, then straight to the presentation view.
+function createNewPresentation() {
+  const model = createBlankPresentation();
+  storePresentation(model);
+  router.push(`/slides/${model.id}`);
 }
 function openTemplateGallery() {
   showGallery.value = true;
@@ -415,6 +426,12 @@ onMounted(async () => {
             New document
           </UiButton>
           <template v-if="!compact">
+            <UiButton
+              data-testid="new-presentation"
+              @click="createNewPresentation"
+            >
+              New presentation
+            </UiButton>
             <UiButton
               data-testid="new-from-template"
               @click="openTemplateGallery"

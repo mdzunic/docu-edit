@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import HomeView from "./HomeView.vue";
-import { getDocument } from "../lib/documentStore";
+import { getDocument, getPresentation } from "../lib/documentStore";
 import { DEFAULT_TITLE } from "../lib/documentModel";
+import { DEFAULT_PRESENTATION_TITLE } from "../lib/presentation/model";
 import { routes } from "../router";
 
 function mountHome() {
@@ -49,6 +50,21 @@ describe("HomeView", () => {
     expect(router.currentRoute.value.path).toMatch(/^\/doc\/.+/);
     const id = router.currentRoute.value.params.id as string;
     expect(getDocument(id)?.title).toBe(DEFAULT_TITLE);
+  });
+
+  it("stores a blank deck and navigates to /slides/:id on 'New presentation' (SPEC-080 AC-1)", async () => {
+    const { wrapper, router } = mountHome();
+    const button = wrapper.get('[data-testid="new-presentation"]');
+    expect(button.text()).toBe("New presentation");
+    await button.trigger("click");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toMatch(/^\/slides\/.+/);
+    const id = router.currentRoute.value.params.id as string;
+    const model = getPresentation(id);
+    expect(model?.title).toBe(DEFAULT_PRESENTATION_TITLE);
+    expect(model?.format).toBe("pptx");
+    expect(model?.slides).toHaveLength(1);
   });
 
   it("'New from template…' opens the template gallery, offering 'Blank document' alongside templates (SPEC-046 AC-1)", async () => {

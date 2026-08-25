@@ -7,19 +7,23 @@
 // of preparation-milestone records. It still redirects a text-document id to
 // /doc/:id (DocumentView does the reverse). Runtime declarations, not
 // defineProps<{...}>() generics — espree lints .vue scripts.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import SlideStage from "../components/presentation/SlideStage.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import { useTheme } from "../composables/useTheme";
-import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
+import { useToasts } from "../composables/useToasts";
+import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
 import { downloadPresentation } from "../lib/presentation/download";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
+import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 import { cmToPx } from "../lib/core/units";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
+import { usePresentationUndo } from "./presentation/usePresentationUndo";
+import { useSlideCommands } from "./presentation/useSlideCommands";
 
 const route = useRoute();
 const router = useRouter();
@@ -41,6 +45,60 @@ function initialModel() {
 const presentation = shallowRef(initialModel());
 const currentIndex = ref(0);
 
+const { addToast } = useToasts();
+
+// --- structural commands + undo (SPEC-080) ---------------------------------
+
+/** Re-render the shallowRef and persist write-through after a mutation. The
+ * selection is clamped in case a delete dropped it past the tail. */
+function commit() {
+  const model = presentation.value;
+  if (!model) {
+    return;
+  }
+  if (currentIndex.value > model.slides.length - 1) {
+    currentIndex.value = Math.max(0, model.slides.length - 1);
+  }
+  // A fresh array reference so the filmstrip/stage props re-render (commands
+  // splice in place); the model object identity is kept so the store record
+  // and undo snapshots stay in step.
+  model.slides = model.slides.slice();
+  touchDocument(model.id);
+  triggerRef(presentation);
+  void nextTick(recomputeScale);
+}
+
+const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
+const canUndo = slideUndo.canUndo;
+const canRedo = slideUndo.canRedo;
+const slideCommands = useSlideCommands({
+  model: presentation,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+});
+
+function addSlideAction() {
+  slideCommands.add(currentIndex.value);
+}
+function onFilmstripCommand(payload = { action: "", index: 0 }) {
+  const { action, index } = payload;
+  if (action === "new") {
+    slideCommands.add(index);
+  } else if (action === "duplicate") {
+    slideCommands.duplicate(index);
+  } else if (action === "delete") {
+    slideCommands.remove(index);
+  } else if (action === "move-up") {
+    slideCommands.moveUp(index);
+  } else if (action === "move-down") {
+    slideCommands.moveDown(index);
+  }
+}
+function onFilmstripReorder(payload = { from: 0, to: 0 }) {
+  slideCommands.reorder(payload.from, payload.to);
+}
+
 async function loadPresentation() {
   // A text document's id belongs to the word processor — hand it over.
   if (documentKindOf(presentationId.value) === "text") {
@@ -61,6 +119,7 @@ async function loadPresentation() {
   }
   presentation.value = model;
   currentIndex.value = 0;
+  slideUndo.reset(); // the undo stack is per-open-view (AC-45)
   void nextTick(recomputeScale);
 }
 
@@ -120,6 +179,18 @@ watch([presentation, currentSlide], () => {
 // --- global slide navigation (AC-48) ---------------------------------------
 
 function onGlobalKeydown(event = new KeyboardEvent("keydown")) {
+  // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z / Ctrl+Y drive the presentation undo stack
+  // (AC-40/41), ignoring events from inputs/dialogs (the SPEC-021 convention).
+  const shortcut = findShortcut(event);
+  if ((shortcut?.id === "edit.undo" || shortcut?.id === "edit.redo") && !isOutsideDocumentInput(event.target)) {
+    event.preventDefault();
+    if (shortcut.id === "edit.undo") {
+      slideUndo.undo();
+    } else {
+      slideUndo.redo();
+    }
+    return;
+  }
   if (event.key !== "PageUp" && event.key !== "PageDown") {
     return;
   }
@@ -146,9 +217,26 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onGlobalKeydown);
 });
 
+// --- download (own format + "Download a copy as…" the other) ---------------
+
+const downloadMenuOpen = ref(false);
+const otherFormat = computed(() => (presentation.value?.format === "odp" ? "pptx" : "odp"));
+const otherFormatLabel = computed(() => presentationFormatLabel(otherFormat.value));
+
 function download() {
   if (presentation.value) {
     void downloadPresentation(presentation.value);
+  }
+}
+async function downloadCopy() {
+  downloadMenuOpen.value = false;
+  const model = presentation.value;
+  if (!model) {
+    return;
+  }
+  const { droppedObjects } = await downloadPresentation(model, otherFormat.value);
+  if (droppedObjects > 0) {
+    addToast(`${droppedObjects} object${droppedObjects === 1 ? "" : "s"} couldn't be converted`);
   }
 }
 
@@ -196,11 +284,63 @@ function close() {
         </div>
         <div class="deck-actions">
           <UiButton
-            data-testid="presentation-download"
-            @click="download"
+            variant="ghost"
+            data-testid="presentation-undo"
+            :disabled="!canUndo"
+            aria-label="Undo"
+            @click="slideUndo.undo()"
           >
-            Download
+            Undo
           </UiButton>
+          <UiButton
+            variant="ghost"
+            data-testid="presentation-redo"
+            :disabled="!canRedo"
+            aria-label="Redo"
+            @click="slideUndo.redo()"
+          >
+            Redo
+          </UiButton>
+          <div class="download-split">
+            <UiButton
+              data-testid="presentation-download"
+              @click="download"
+            >
+              Download
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              class="download-caret"
+              data-testid="presentation-download-menu"
+              aria-haspopup="menu"
+              :aria-expanded="downloadMenuOpen"
+              aria-label="More download options"
+              @click="downloadMenuOpen = !downloadMenuOpen"
+            >
+              ▾
+            </UiButton>
+            <div
+              v-if="downloadMenuOpen"
+              class="download-menu"
+              role="menu"
+              data-testid="presentation-download-menu-popup"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                class="download-menu-item"
+                data-testid="download-copy-as"
+                @click="downloadCopy"
+              >
+                Download a copy as {{ otherFormatLabel }}…
+              </button>
+            </div>
+            <div
+              v-if="downloadMenuOpen"
+              class="menu-backdrop"
+              @click="downloadMenuOpen = false"
+            />
+          </div>
           <UiButton
             variant="ghost"
             data-testid="presentation-close"
@@ -219,6 +359,9 @@ function close() {
           :media="deckMedia"
           :current-index="currentIndex"
           @select="selectSlide"
+          @add="addSlideAction"
+          @command="onFilmstripCommand"
+          @reorder="onFilmstripReorder"
         />
         <div
           ref="stageContainer"
@@ -234,6 +377,19 @@ function close() {
             :scale="stageScale"
             :live-label="liveLabel"
           />
+          <div
+            v-else
+            class="empty-stage"
+            data-testid="presentation-empty"
+          >
+            <h3>This deck has no slides</h3>
+            <UiButton
+              data-testid="presentation-empty-add"
+              @click="addSlideAction"
+            >
+              Add slide
+            </UiButton>
+          </div>
         </div>
       </div>
     </div>
@@ -300,6 +456,64 @@ function close() {
 .deck-actions {
   display: flex;
   gap: var(--space-3);
+  align-items: center;
+}
+
+.download-split {
+  position: relative;
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.download-caret {
+  padding-inline: var(--space-2);
+}
+
+.download-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 40;
+  min-width: 16rem;
+  padding: var(--space-1);
+  background: var(--surface-raised);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.download-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.download-menu-item:hover,
+.download-menu-item:focus-visible {
+  background: var(--surface-sunken);
+  outline: none;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.empty-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .deck-body {

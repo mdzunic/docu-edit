@@ -172,3 +172,32 @@ export function filmstripLabel(slide: Slide, index: number, total: number): stri
 export function filmstripThumbScale(widthCm: number, thumbWidthPx: number): number {
   return thumbWidthPx / Math.max(1, cmToPx(widthCm));
 }
+
+// --- filmstrip menu / drag DOM helpers (SPEC-080) --------------------------
+// The .vue script is espree-linted (no TS casts/generics), so the typed DOM
+// queries the context menu needs live here.
+
+/** Focuses the first element matching `selector` inside `container`. */
+export function focusSelector(container: Element | null | undefined, selector: string): void {
+  const el = container?.querySelector(selector);
+  if (el instanceof HTMLElement) {
+    el.focus();
+  }
+}
+
+/** The focusable menu-item buttons inside a rendered menu, in DOM order. */
+export function menuButtons(container: Element | null | undefined): HTMLElement[] {
+  const nodes = container ? Array.from(container.querySelectorAll('[role="menuitem"]')) : [];
+  return nodes.filter((node): node is HTMLElement => node instanceof HTMLElement);
+}
+
+/** A viewport anchor point just inside an element (for a keyboard-opened
+ * menu), or the origin when it can't be found. */
+export function anchorPoint(container: Element | null | undefined, selector: string): { x: number; y: number } {
+  const el = container?.querySelector(selector);
+  if (el instanceof HTMLElement) {
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + 24, y: rect.bottom };
+  }
+  return { x: 0, y: 0 };
+}
