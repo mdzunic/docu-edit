@@ -188,11 +188,15 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       el.addEventListener("input", onInput);
       el.addEventListener("keydown", onKeydown);
       el.addEventListener("paste", onPaste);
+      el.addEventListener("copy", onCopy);
+      el.addEventListener("cut", onCut);
       el.ownerDocument.addEventListener("selectionchange", onSelectionChange);
       detachHost = () => {
         el.removeEventListener("input", onInput);
         el.removeEventListener("keydown", onKeydown);
         el.removeEventListener("paste", onPaste);
+        el.removeEventListener("copy", onCopy);
+        el.removeEventListener("cut", onCut);
         el.ownerDocument.removeEventListener("selectionchange", onSelectionChange);
       };
       renderAndFocus(pendingSelectAll);
@@ -267,6 +271,26 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     deps.record("Paste");
     suppressInput = true;
     insertPlainText(host.value, text);
+    suppressInput = false;
+    syncModelFromDom();
+  }
+
+  /** Cut/copy put PLAIN text on the clipboard (AC-14) — the styled DOM is never
+   * written, so a paste elsewhere carries no slide formatting; the empty-
+   * placeholder prompt lives outside the host, so it can never be copied. */
+  function onCopy(event: ClipboardEvent): void {
+    const text = host.value?.ownerDocument.getSelection()?.toString() ?? "";
+    if (!event.clipboardData) return;
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+  }
+  function onCut(event: ClipboardEvent): void {
+    if (!host.value || !editingFrame.value) return;
+    onCopy(event);
+    closeBurst();
+    deps.record("Cut");
+    suppressInput = true;
+    host.value.ownerDocument.getSelection()?.deleteFromDocument();
     suppressInput = false;
     syncModelFromDom();
   }
