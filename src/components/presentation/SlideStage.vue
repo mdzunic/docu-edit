@@ -172,8 +172,8 @@ const previewStyle = computed(() => {
 
 .draw-preview {
   position: absolute;
-  border: 1px dashed var(--accent, #3b82f6);
-  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+  border: var(--border-width) dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   pointer-events: none;
 }
 

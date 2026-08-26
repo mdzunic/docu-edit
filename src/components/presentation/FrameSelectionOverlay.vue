@@ -103,7 +103,7 @@ function onOverlayDblclick(event = new MouseEvent("dblclick")) {
 
 .guide {
   position: absolute;
-  background: var(--accent, #3b82f6);
+  background: var(--accent);
   opacity: 0.9;
 }
 
@@ -121,7 +121,7 @@ function onOverlayDblclick(event = new MouseEvent("dblclick")) {
 
 .sel-box {
   position: absolute;
-  outline: 1px solid var(--accent, #3b82f6);
+  outline: var(--border-width) solid var(--accent);
   pointer-events: none;
 }
 
@@ -129,10 +129,12 @@ function onOverlayDblclick(event = new MouseEvent("dblclick")) {
   position: absolute;
   width: 10px;
   height: 10px;
-  margin: -5px;
-  background: #fff;
-  border: 1px solid var(--accent, #3b82f6);
-  border-radius: 1px;
+  /* translate centres the handle on its corner/edge point (no length token
+     needed for the -50% offset). */
+  transform: translate(-50%, -50%);
+  background: var(--surface-raised);
+  border: var(--border-width) solid var(--accent);
+  border-radius: var(--radius-sm);
   pointer-events: auto;
   touch-action: none;
 }
