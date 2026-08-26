@@ -17,12 +17,14 @@
 //
 // Ratchet ledger:
 //   2026-08-25  560  SPEC-080 — first budget (view at 542 lines)
+//   2026-08-26  550  SPEC-086 — extracted useSlideRender (commit/refresh) to make
+//                    room for the Animations panel wiring (view at 543 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 560;
+const LINE_BUDGET = 550;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
