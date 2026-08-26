@@ -1,0 +1,66 @@
+// SPEC-084 — the deck header's playback-entry actions (the download pair is
+// covered by SPEC-080's view spec). Present starts at the current slide, is
+// gated on a non-empty deck, has the Cmd/Ctrl+Shift+Return shortcut, and the
+// `?return` handoff reselects the slide the play view was showing.
+import { describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
+import type { Router, RouteLocationNormalizedLoaded } from "vue-router";
+import { useDeckActions } from "./useDeckActions";
+import type { PresentationModel } from "../../lib/presentation/model";
+
+function harness(opts: { slides?: number; current?: number; query?: Record<string, string> } = {}) {
+  const push = vi.fn();
+  const router = { push } as unknown as Router;
+  const route = { query: opts.query ?? {} } as unknown as RouteLocationNormalizedLoaded;
+  const model = ref<PresentationModel | null>({ format: "pptx" } as PresentationModel);
+  const actions = useDeckActions({
+    model,
+    presentationId: ref("deck-1"),
+    currentIndex: ref(opts.current ?? 0),
+    slideTotal: ref(opts.slides ?? 3),
+    router,
+    route,
+    reportError: vi.fn(),
+  });
+  return { actions, push };
+}
+
+describe("useDeckActions playback entry", () => {
+  it("canPresent is false only for an empty deck (AC-2)", () => {
+    expect(harness({ slides: 0 }).actions.canPresent.value).toBe(false);
+    expect(harness({ slides: 1 }).actions.canPresent.value).toBe(true);
+  });
+
+  it("present() starts playback at the current 1-based slide (AC-1)", () => {
+    const { actions, push } = harness({ current: 2 });
+    actions.present();
+    expect(push).toHaveBeenCalledWith("/slides/deck-1/present/3");
+  });
+
+  it("present() is a no-op on an empty deck", () => {
+    const { actions, push } = harness({ slides: 0 });
+    actions.present();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("Cmd/Ctrl+Shift+Return triggers present, other combos do not (AC-1)", () => {
+    const { actions, push } = harness({ current: 0 });
+    const evt = new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true });
+    const prevent = vi.spyOn(evt, "preventDefault");
+    actions.onPresentShortcut(evt);
+    expect(push).toHaveBeenCalledWith("/slides/deck-1/present/1");
+    expect(prevent).toHaveBeenCalled();
+
+    push.mockClear();
+    actions.onPresentShortcut(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true })); // no modifier
+    actions.onPresentShortcut(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true })); // no shift
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("returnIndex reads and clamps the ?return handoff (AC-35)", () => {
+    expect(harness({ query: {} }).actions.returnIndex()).toBe(0); // no handoff → first
+    expect(harness({ query: { return: "3" } }).actions.returnIndex()).toBe(2); // 1-based → 0-based
+    expect(harness({ slides: 3, query: { return: "99" } }).actions.returnIndex()).toBe(2); // clamp high
+    expect(harness({ query: { return: "0" } }).actions.returnIndex()).toBe(0); // clamp low
+  });
+});
