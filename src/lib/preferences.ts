@@ -80,6 +80,9 @@ export interface Preferences {
   /** Whether the presentation editor's speaker-notes panel is expanded
    * (SPEC-083). Per-device, default collapsed. */
   presentationNotesOpen: boolean;
+  /** Whether the presentation editor's slide-transition panel is expanded
+   * (SPEC-085). Per-device, default collapsed. */
+  presentationTransitionsOpen: boolean;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -138,6 +141,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   defaultDownloadFormat: "source",
   showConversionReport: true,
   presentationNotesOpen: false,
+  presentationTransitionsOpen: false,
 };
 
 // --- validators -------------------------------------------------------------
@@ -199,6 +203,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   defaultDownloadFormat: oneOf<"defaultDownloadFormat">(["source", "docx", "odt"]),
   showConversionReport: isBoolean,
   presentationNotesOpen: isBoolean,
+  presentationTransitionsOpen: isBoolean,
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

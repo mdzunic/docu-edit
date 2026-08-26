@@ -70,6 +70,7 @@ const DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const FO_NS = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const SVG_NS = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const PRESENTATION_NS = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
+const SMIL_NS = "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0";
 const MANIFEST_NS = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 
 const encoder = new TextEncoder();
@@ -136,7 +137,10 @@ function rebuildContentXml(model: PresentationModel, envelope: { prefix: string;
   const registry = new StyleRegistry();
   // A source that (pathologically) already uses `de-`-prefixed names cannot
   // collide with a generated one — seed the counters past every such name.
-  registry.seedFrom(envelope.prefix + envelope.suffix + model.slides.map((s) => s.sourceXml ?? "").join(""));
+  // The same string doubles as the lookup source for an original drawing-page
+  // style's fill/background when a transition mints its replacement (AC-11).
+  const styleSource = envelope.prefix + envelope.suffix + model.slides.map((s) => s.sourceXml ?? "").join("");
+  registry.seedFrom(styleSource);
   let lastMaster = "Default";
   const pages = model.slides.map((slide) => {
     if (slide.sourceXml) {
@@ -155,7 +159,7 @@ function rebuildContentXml(model: PresentationModel, envelope: { prefix: string;
       : undefined;
     const master = preservedMaster ?? lastMaster;
     lastMaster = master;
-    return serializePage(slide, registry, usedNames, master);
+    return serializePage(slide, registry, usedNames, master, styleSource);
   });
   const content = envelope.prefix + pages.join("") + envelope.suffix;
   return registry.hasStyles() ? spliceAutomaticStyles(content, registry.xml()) : content;
@@ -203,7 +207,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}"` +
     ` xmlns:draw="${DRAW_NS}" xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:xlink="http://www.w3.org/1999/xlink"` +
-    ` xmlns:presentation="${PRESENTATION_NS}" office:version="1.2">` +
+    ` xmlns:presentation="${PRESENTATION_NS}" xmlns:smil="${SMIL_NS}" office:version="1.2">` +
     `<office:automatic-styles></office:automatic-styles>` +
     `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
     `</office:document-content>`;

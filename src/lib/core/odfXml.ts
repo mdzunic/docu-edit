@@ -27,6 +27,10 @@ export const META_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:meta:1.0";
 export const NUMBER_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
 /** Presentations (`.odp`) — `office:presentation`, `presentation:class`. */
 export const PRESENTATION_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
+/** SMIL-compatible animation/transition attributes (SPEC-085) —
+ * `smil:type`/`smil:subtype`/`smil:direction`/`smil:dur` on a page's
+ * `style:drawing-page-properties`. */
+export const SMIL_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0";
 
 /** Reads an `office:*` attribute regardless of the bound prefix. */
 export function officeAttr(el: Element, localName: string): string | null {
@@ -73,6 +77,11 @@ export function xlinkAttr(el: Element, localName: string): string | null {
 /** Reads a `presentation:*` attribute regardless of the bound prefix. */
 export function presentationAttr(el: Element, localName: string): string | null {
   return el.getAttributeNS(PRESENTATION_NAMESPACE, localName);
+}
+
+/** Reads a `smil:*` attribute regardless of the bound prefix. */
+export function smilAttr(el: Element, localName: string): string | null {
+  return el.getAttributeNS(SMIL_NAMESPACE, localName);
 }
 
 // --- ODF measured-value parsers (SPEC-079's move from odf/units.ts) ---------

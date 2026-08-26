@@ -27,12 +27,14 @@ import {
   odfLengthToCm,
   odfLengthToPt,
   presentationAttr,
+  smilAttr,
   styleAttr,
   svgAttr,
   xlinkAttr,
 } from "../../core/odfXml";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
 import type { ShapeGeometry } from "../../core/shapes";
+import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
 import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
@@ -88,6 +90,7 @@ interface StyleEntry {
 class StyleResolver {
   private readonly styles = new Map<string, StyleEntry>();
   private readonly cache = new Map<string, RunProps>();
+  private readonly drawingPageTransitions = new Map<string, OdpTransitionAttrs>();
 
   add(styleEl: Element): void {
     const name = styleAttr(styleEl, "name");
@@ -109,7 +112,23 @@ class StyleResolver {
     if (graphicProps) {
       entry.graphic = readGraphicProps(graphicProps);
     }
+    if (styleAttr(styleEl, "family") === "drawing-page") {
+      const dpProps = firstChildElement(styleEl, STYLE_NAMESPACE, "drawing-page-properties");
+      if (dpProps) {
+        this.drawingPageTransitions.set(name, readDrawingPageTransition(dpProps));
+      }
+    }
     this.styles.set(name, entry);
+  }
+
+  /** The transition attributes carried by a page's drawing-page style, or
+   * undefined when the style declares no `smil:type` (a plain page). */
+  drawingPageTransition(name: string | null | undefined): OdpTransitionAttrs | undefined {
+    if (!name) {
+      return undefined;
+    }
+    const attrs = this.drawingPageTransitions.get(name);
+    return attrs && attrs.smilType ? attrs : undefined;
   }
 
   private resolveGraphic(name: string | null | undefined): GraphicProps {
@@ -219,6 +238,27 @@ function readGraphicProps(props: Element): GraphicProps {
   const widthCm = odfLengthToCm(svgAttr(props, "stroke-width"));
   if (widthCm !== undefined) graphic.strokeWidthPt = (widthCm / 2.54) * 72;
   return graphic;
+}
+
+/** Reads a page's `style:drawing-page-properties` transition attributes into
+ * the format-neutral bag `readOdpTransition` maps (SPEC-085). */
+function readDrawingPageTransition(props: Element): OdpTransitionAttrs {
+  const attrs: OdpTransitionAttrs = {};
+  const smilType = smilAttr(props, "type");
+  if (smilType) attrs.smilType = smilType;
+  const smilSubtype = smilAttr(props, "subtype");
+  if (smilSubtype) attrs.smilSubtype = smilSubtype;
+  const smilDirection = smilAttr(props, "direction");
+  if (smilDirection) attrs.smilDirection = smilDirection;
+  const smilDur = smilAttr(props, "dur");
+  if (smilDur) attrs.smilDur = smilDur;
+  const speed = presentationAttr(props, "transition-speed");
+  if (speed) attrs.transitionSpeed = speed;
+  const transitionType = presentationAttr(props, "transition-type");
+  if (transitionType) attrs.transitionType = transitionType;
+  const duration = presentationAttr(props, "duration");
+  if (duration) attrs.presentationDuration = duration;
+  return attrs;
 }
 
 function mergeProps(base: RunProps, over: RunProps): RunProps {
@@ -726,6 +766,20 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
   }
   if (anim.length > 0) {
     preserved["anim"] = anim.join("");
+  }
+  // Slide transition (SPEC-085): the page's drawing-page style carries the smil
+  // attributes. A subset combination becomes the modelled field; an
+  // out-of-subset one leaves the field unset and marks the honest
+  // "original transition kept" state (its bytes survive via the untouched-page
+  // path, or via the retained `draw:style-name` when the page rebuilds).
+  const transitionAttrs = ctx.styles.drawingPageTransition(drawAttr(page, "style-name"));
+  if (transitionAttrs) {
+    const transition = readOdpTransition(transitionAttrs);
+    if (transition) {
+      slide.transition = transition;
+    } else {
+      preserved["draw:transition"] = "1";
+    }
   }
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
