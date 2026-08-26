@@ -14,7 +14,7 @@
 //     rels, [Content_Types].xml), copy every untouched slide part and every
 //     unmodelled part byte-verbatim, skip deleted slides' parts, and append
 //     new/duplicated slide parts. The normative rules live in SPEC-080.
-import { decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
 import { cmToEmu } from "../../core/units";
 import {
   escapeXmlAttribute,
@@ -26,9 +26,12 @@ import {
 } from "../../core/xml";
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
-import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide } from "../model";
+import type { MediaPart } from "../../core/media";
+import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide, type SlideFrame } from "../model";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { serializeSlideXml } from "./serialize";
+
+const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
 export { PPTX_MIME_TYPE } from "./reader";
 
@@ -88,22 +91,164 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
 }
 
 /** Rebuilds only the dirty slides' own parts, in place; every other part
- * (structural parts, untouched slides, the dirty slides' `.rels`) is copied
- * byte-verbatim. */
+ * (structural parts, untouched slides) is copied byte-verbatim. A dirty slide
+ * that gained an inserted image also has its `.rels` re-emitted (with the new
+ * image relationship spliced in), the media part added under `ppt/media/`, and
+ * the Content-Types extension default added if missing (SPEC-082). */
 function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
+  const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
+  const media = planMedia(model, parts, contentTypesXml);
   const rebuilt = new Map<string, Uint8Array>();
   for (const slide of model.slides) {
     if (slide.dirty && slide.partName && parts.has(slide.partName)) {
-      const rels = slideRelsOf(slide.partName, parts);
+      const relsPath = relsPathFor(slide.partName);
+      const relsXml = decode(parts.get(relsPath) ?? encode(""));
+      const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
+      const newRels = linkImageRels(slide, rels, slide.partName);
       rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName)));
+      if (newRels.length > 0) {
+        rebuilt.set(relsPath, encode(appendRelationships(relsXml, newRels)));
+      }
     }
   }
-  return [...parts].map(([name, data]) => ({ name, data: rebuilt.get(name) ?? data }));
+  const entries: ZipEntryInput[] = [];
+  for (const [name, data] of parts) {
+    if (rebuilt.has(name)) {
+      entries.push({ name, data: rebuilt.get(name)! });
+    } else if (media.override.has(name)) {
+      entries.push({ name, data: media.override.get(name)! });
+    } else if (name === "[Content_Types].xml" && media.defaults) {
+      entries.push({ name, data: encode(spliceContentDefaults(decode(data), media.defaults)) });
+    } else {
+      entries.push({ name, data });
+    }
+  }
+  entries.push(...media.appended);
+  return entries;
 }
 
-function slideRelsOf(slidePartName: string, parts: Map<string, Uint8Array>): Map<string, Relationship> {
-  const relsBytes = parts.get(relsPathFor(slidePartName));
-  return relsBytes ? parseRelationships(decode(relsBytes)) : new Map();
+// --- inserted media (SPEC-082) ---------------------------------------------
+
+/** Every media part referenced by an ImageFrame anywhere in the deck (groups
+ * descended), from `model.media` — the writers' source of truth for inserted
+ * image parts. */
+function referencedMedia(model: PresentationModel): MediaPart[] {
+  const used = new Set<string>();
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "image") {
+        used.add(frame.mediaId);
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  for (const slide of model.slides) {
+    walk(slide.frames);
+  }
+  return (model.media ?? []).filter((part) => used.has(part.mediaId));
+}
+
+interface MediaPlan {
+  /** Package parts already present, overridden with the model's media bytes
+   * (a media part takes precedence over an `opaque` twin). */
+  override: Map<string, Uint8Array>;
+  /** Media parts not yet in the package, to append (`ppt/media/…`). */
+  appended: ZipEntryInput[];
+  /** Content-Types `<Default>` entries for image extensions not yet declared,
+   * to splice before the first `<Override>`; "" when none are missing. */
+  defaults: string;
+}
+
+/** Plans how the deck's referenced media rides in the package: which parts to
+ * override in place, which to append, and which Content-Types defaults are
+ * missing (AC-47). `contentTypesXml` is the package's current
+ * `[Content_Types].xml` (""/from-scratch when it does not exist yet). */
+function planMedia(model: PresentationModel, parts: Map<string, Uint8Array>, contentTypesXml: string): MediaPlan {
+  const override = new Map<string, Uint8Array>();
+  const appended: ZipEntryInput[] = [];
+  const extToType = new Map<string, string>();
+  for (const part of referencedMedia(model)) {
+    const bytes = base64ToBytes(part.data);
+    if (parts.has(part.mediaId)) {
+      override.set(part.mediaId, bytes);
+    } else {
+      appended.push({ name: part.mediaId, data: bytes });
+    }
+    const ext = part.mediaId.slice(part.mediaId.lastIndexOf(".") + 1).toLowerCase();
+    if (ext) {
+      extToType.set(ext, part.contentType);
+    }
+  }
+  let defaults = "";
+  for (const [ext, contentType] of extToType) {
+    if (!new RegExp(`<Default\\s+Extension="${ext}"`, "i").test(contentTypesXml)) {
+      defaults += `<Default Extension="${ext}" ContentType="${contentType}"/>`;
+    }
+  }
+  return { override, appended, defaults };
+}
+
+/** Adds image relationships to `rels` for any ImageFrame whose media is not
+ * yet resolvable in it (a freshly inserted image), minting ids after the
+ * highest existing one. Mutates `rels`; returns the new relationships (empty
+ * when the slide gained none). */
+function linkImageRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
+  const resolved = new Set<string>();
+  let maxId = 0;
+  for (const rel of rels.values()) {
+    maxId = Math.max(maxId, relIdNumber(rel.id));
+    if (rel.type === IMAGE_REL) {
+      resolved.add(resolvePartPath(slidePartName, rel.target));
+    }
+  }
+  const added: Relationship[] = [];
+  const seen = new Set<string>();
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "image") {
+        if (!resolved.has(frame.mediaId) && !seen.has(frame.mediaId)) {
+          seen.add(frame.mediaId);
+          maxId += 1;
+          const rel: Relationship = { id: `rId${maxId}`, type: IMAGE_REL, target: relativeTarget(slidePartName, frame.mediaId) };
+          rels.set(rel.id, rel);
+          added.push(rel);
+        }
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  walk(slide.frames);
+  return added;
+}
+
+/** The `.rels` XML of a slide with `newRels` appended before `</Relationships>`
+ * — splicing keeps every existing relationship byte-verbatim (TargetMode and
+ * all), unlike re-serialising the parsed map. */
+function appendRelationships(relsXml: string, newRels: Relationship[]): string {
+  if (newRels.length === 0) {
+    return relsXml;
+  }
+  const additions = newRels
+    .map((rel) => `<Relationship Id="${rel.id}" Type="${rel.type}" Target="${escapeXmlAttribute(rel.target)}"/>`)
+    .join("");
+  if (/<\/Relationships>/.test(relsXml)) {
+    return relsXml.replace(/<\/Relationships>/, `${additions}</Relationships>`);
+  }
+  return `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${additions}</Relationships>`;
+}
+
+/** Splices Content-Types `<Default>` entries before the first `<Override>` (or
+ * `</Types>` when there is none) — schema-correct order. */
+function spliceContentDefaults(contentTypesXml: string, defaults: string): string {
+  if (defaults.length === 0) {
+    return contentTypesXml;
+  }
+  if (/<Override/.test(contentTypesXml)) {
+    return contentTypesXml.replace(/<Override/, `${defaults}<Override`);
+  }
+  return contentTypesXml.replace(/<\/Types>/, `${defaults}</Types>`);
 }
 
 // --- shared slide serialisation --------------------------------------------
@@ -128,10 +273,12 @@ function slideRelsXml(layoutTarget: string): string {
 function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInput[] {
   const slidePaths = model.slides.map((_, index) => `ppt/slides/slide${index + 1}.xml`);
 
+  const mediaDefaults = mediaContentDefaults(referencedMedia(model));
   const contentTypes =
     `${XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` +
+    mediaDefaults +
     `<Override PartName="/ppt/presentation.xml" ContentType="${PPTX_MAIN_CONTENT_TYPE}"/>` +
     slidePaths.map((path) => `<Override PartName="/${path}" ContentType="${SLIDE_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
@@ -181,13 +328,33 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     { name: "ppt/theme/theme1.xml", data: encode(THEME_XML) },
   ];
   model.slides.forEach((slide, index) => {
-    entries.push({ name: slidePaths[index], data: encode(slideXml(slide)) });
+    const slidePath = slidePaths[index];
+    const rels = new Map<string, Relationship>();
+    rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: "../slideLayouts/slideLayout1.xml" });
+    const imageRels = linkImageRels(slide, rels, slidePath);
+    entries.push({ name: slidePath, data: encode(slideXml(slide, rels, slidePath)) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
-      data: encode(slideRelsXml("../slideLayouts/slideLayout1.xml")),
+      data: encode(appendRelationships(slideRelsXml("../slideLayouts/slideLayout1.xml"), imageRels)),
     });
   });
+  for (const part of referencedMedia(model)) {
+    entries.push({ name: part.mediaId, data: base64ToBytes(part.data) });
+  }
   return entries;
+}
+
+/** Content-Types `<Default>` entries for the extensions a media list uses,
+ * de-duplicated by extension. */
+function mediaContentDefaults(media: MediaPart[]): string {
+  const byExt = new Map<string, string>();
+  for (const part of media) {
+    const ext = part.mediaId.slice(part.mediaId.lastIndexOf(".") + 1).toLowerCase();
+    if (ext) {
+      byExt.set(ext, part.contentType);
+    }
+  }
+  return [...byExt].map(([ext, contentType]) => `<Default Extension="${ext}" ContentType="${contentType}"/>`).join("");
 }
 
 // --- substitution path -----------------------------------------------------
@@ -310,20 +477,28 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   // for removed parts; everything else byte-verbatim. A dirty slide re-emitted
   // under its own name (kind "verbatim") already has an override — only genuinely
   // new part names are added.
+  const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
+  const media = planMedia(model, parts, contentTypesXml);
   const addedSlidePaths = emitted.filter((entry) => entry.kind !== "verbatim").map((entry) => entry.emitName);
-  const rebuiltContentTypes = rebuildContentTypes(
-    decode(parts.get("[Content_Types].xml") ?? encode("")),
-    addedSlidePaths,
-    [...removed],
+  const rebuiltContentTypes = spliceContentDefaults(
+    rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]),
+    media.defaults,
   );
 
-  // A dirty slide kept under its own part name is rebuilt in place (its rels
-  // stay verbatim); an untouched one re-emits byte-verbatim.
+  // A dirty slide kept under its own part name is rebuilt in place; one that
+  // gained an inserted image also has its `.rels` re-emitted with the new image
+  // relationship spliced in. An untouched slide re-emits byte-verbatim.
   const rebuiltOwn = new Map<string, Uint8Array>();
   for (const entry of emitted) {
     if (entry.kind === "verbatim" && entry.slide.dirty) {
-      const rels = slideRelsOf(entry.emitName, parts);
+      const relsPath = relsPathFor(entry.emitName);
+      const relsXml = decode(parts.get(relsPath) ?? encode(""));
+      const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
+      const newRels = linkImageRels(entry.slide, rels, entry.emitName);
       rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
+      if (newRels.length > 0) {
+        rebuiltOwn.set(relsPath, encode(appendRelationships(relsXml, newRels)));
+      }
     }
   }
 
@@ -342,7 +517,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     } else if (name === "[Content_Types].xml") {
       entries.push({ name, data: encode(rebuiltContentTypes) });
     } else {
-      entries.push({ name, data: rebuiltOwn.get(name) ?? data });
+      entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
     }
   }
   for (const entry of emitted) {
@@ -352,23 +527,31 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     const relsName = relsPathFor(entry.emitName);
     if (entry.kind === "duplicate" && entry.sourceName) {
       // A duplicated-then-edited slide is rebuilt from the model; its rels are
-      // still the source's (carried, ids intact). An unedited duplicate copies
-      // the source part's bytes verbatim (AC-33).
+      // still the source's (carried, ids intact) plus any inserted image. An
+      // unedited duplicate copies the source part's bytes verbatim (AC-33).
       const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
-      const rels = sourceRelsBytes ? parseRelationships(decode(sourceRelsBytes)) : new Map<string, Relationship>();
+      const sourceRelsXml = sourceRelsBytes ? decode(sourceRelsBytes) : "";
+      const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
+      const newRels = entry.slide.dirty ? linkImageRels(entry.slide, rels, entry.emitName) : [];
       const xml = entry.slide.dirty
         ? encode(slideXml(entry.slide, rels, entry.emitName))
         : parts.get(entry.sourceName)!;
       entries.push({ name: entry.emitName, data: xml });
       if (sourceRelsBytes) {
-        entries.push({ name: relsName, data: sourceRelsBytes });
+        entries.push({ name: relsName, data: encode(appendRelationships(sourceRelsXml, newRels)) });
+      } else if (newRels.length > 0) {
+        entries.push({ name: relsName, data: encode(appendRelationships("", newRels)) });
       }
     } else {
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath));
-      entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide, new Map(), entry.emitName)) });
-      entries.push({ name: relsName, data: encode(slideRelsXml(layoutTarget)) });
+      const rels = new Map<string, Relationship>();
+      rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
+      const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
+      entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide, rels, entry.emitName)) });
+      entries.push({ name: relsName, data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)) });
     }
   }
+  entries.push(...media.appended);
   return entries;
 }
 

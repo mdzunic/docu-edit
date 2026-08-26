@@ -34,6 +34,14 @@ export type SlideFill =
   | { type: "solid"; color: string }
   | { type: "none" };
 
+/** A frame's outline (border): a solid colour and a point width. Shapes have
+ * carried one since SPEC-079; SPEC-082 lets text boxes and images take one
+ * too (their style popovers edit stroke), so it is a shared type. */
+export interface FrameStroke {
+  color: string;
+  widthPt: number;
+}
+
 /** One run of text with its EFFECTIVE formatting already resolved (the run's
  * own properties, else the shape/placeholder/theme chain). Absent optional
  * fields render with the renderer's defaults noted below. */
@@ -79,11 +87,13 @@ export interface TextFrame extends SlideFrameBase {
   phIdx?: number;
   paragraphs: SlideParagraph[];
   fill?: SlideFill; // frame background; absent = none
+  stroke?: FrameStroke; // frame border; absent = none (SPEC-082)
 }
 
 export interface ImageFrame extends SlideFrameBase {
   kind: "image";
   mediaId: string; // key into model.media
+  stroke?: FrameStroke; // frame border; absent = none (SPEC-082)
 }
 
 export interface ShapeFrame extends SlideFrameBase {
@@ -91,7 +101,7 @@ export interface ShapeFrame extends SlideFrameBase {
   geometry: ShapeGeometry; // core/shapes id, e.g. "rect", "ellipse"
   adjustments?: number[]; // core/shapeCatalogue fractions
   fill?: SlideFill;
-  stroke?: { color: string; widthPt: number };
+  stroke?: FrameStroke;
   paragraphs?: SlideParagraph[]; // shape text, centred per bodyPr default
 }
 

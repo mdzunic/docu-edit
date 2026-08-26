@@ -394,7 +394,10 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
     const href = xlinkAttr(image, "href");
     const partPath = href ? normaliseHref(href) : undefined;
     if (partPath && collectMedia(partPath, ctx)) {
-      return { ...base, kind: "image", mediaId: partPath };
+      const out: SlideFrame = { ...base, kind: "image", mediaId: partPath };
+      const stroke = ctx.styles.stroke(drawAttr(frame, "style-name"));
+      if (stroke) out.stroke = stroke;
+      return out;
     }
     return foreignAt(frame, base, "Media");
   }
@@ -409,6 +412,10 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
     const paragraphs = parseTextBox(textBox, role, ctx.styles);
     const out: SlideFrame = { ...base, kind: "text", paragraphs };
     if (role) out.role = role;
+    const fill = graphicFillColor(frame, ctx);
+    if (fill) out.fill = { type: "solid", color: fill };
+    const stroke = ctx.styles.stroke(drawAttr(frame, "style-name"));
+    if (stroke) out.stroke = stroke;
     return out;
   }
   return foreignAt(frame, base, "Object");

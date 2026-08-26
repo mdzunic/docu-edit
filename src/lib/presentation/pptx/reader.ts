@@ -446,6 +446,8 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
     if (phIdx !== undefined) frame.phIdx = Number(phIdx);
     const fill = fillOf(spPr, ctx);
     if (fill) frame.fill = fill;
+    const stroke = strokeOf(spPr, ctx);
+    if (stroke) frame.stroke = stroke;
     return frame;
   }
 
@@ -457,6 +459,8 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
     const frame: SlideFrame = { ...base, kind: "text", paragraphs };
     const fill = fillOf(spPr, ctx);
     if (fill) frame.fill = fill;
+    const stroke = strokeOf(spPr, ctx);
+    if (stroke) frame.stroke = stroke;
     return frame;
   }
   if (geometry) {
@@ -503,7 +507,10 @@ function parsePic(pic: Element, ctx: SlideContext): SlideFrame {
   if (rel && rel.type === IMAGE_RELATIONSHIP) {
     const partPath = resolvePartPath(ctx.slidePartPath, rel.target);
     if (ctx.media.has(partPath)) {
-      return { ...base, kind: "image", mediaId: partPath };
+      const frame: SlideFrame = { ...base, kind: "image", mediaId: partPath };
+      const stroke = strokeOf(spPr, ctx);
+      if (stroke) frame.stroke = stroke;
+      return frame;
     }
   }
   return foreignFrame(pic, base, "Media");
