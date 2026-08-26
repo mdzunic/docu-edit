@@ -27,6 +27,8 @@ const props = defineProps({
   recentColors: { type: Array, default: () => [] },
   /** Whether the slide-transition panel is open (SPEC-085). */
   transitionOpen: { type: Boolean, default: false },
+  /** Whether the animations panel is open (SPEC-086). */
+  animateOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -41,6 +43,7 @@ const emit = defineEmits([
   "indent",
   "outdent",
   "transition-toggle",
+  "animate-toggle",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -249,6 +252,16 @@ onBeforeUnmount(() => observer?.disconnect());
         @click="emit('transition-toggle')"
       >
         Transition
+      </button>
+      <button
+        type="button"
+        class="tb-toggle"
+        data-testid="slides-animate-toggle"
+        aria-label="Animate"
+        :aria-pressed="animateOpen"
+        @click="emit('animate-toggle')"
+      >
+        Animate
       </button>
     </div>
 

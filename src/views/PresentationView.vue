@@ -7,7 +7,7 @@
 // of preparation-milestone records. It still redirects a text-document id to
 // /doc/:id (DocumentView does the reverse). Runtime declarations, not
 // defineProps<{...}>() generics — espree lints .vue scripts.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
@@ -18,10 +18,12 @@ import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
 import DeckActions from "../components/presentation/DeckActions.vue";
 import NotesPanel from "../components/presentation/NotesPanel.vue";
 import TransitionsPanel from "../components/presentation/TransitionsPanel.vue";
+import AnimationsPanel from "../components/presentation/AnimationsPanel.vue";
+import AnimationStageLayer from "../components/presentation/AnimationStageLayer.vue";
 import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
-import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
+import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
 import { cmToPx } from "../lib/core/units";
@@ -31,6 +33,8 @@ import { useSlideCommands } from "./presentation/useSlideCommands";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
 import { useTransitions } from "./presentation/useTransitions";
+import { useAnimations } from "./presentation/useAnimations";
+import { useSlideRender } from "./presentation/useSlideRender";
 import { useDeckActions } from "./presentation/useDeckActions";
 
 const route = useRoute();
@@ -57,52 +61,9 @@ const { addToast } = useToasts();
 
 // --- structural commands + undo (SPEC-080) ---------------------------------
 
-/** Re-render the shallowRef and persist write-through after a mutation. The
- * selection is clamped in case a delete dropped it past the tail. */
-function commit() {
-  const model = presentation.value;
-  if (!model) {
-    return;
-  }
-  if (currentIndex.value > model.slides.length - 1) {
-    currentIndex.value = Math.max(0, model.slides.length - 1);
-  }
-  // A fresh array reference so the filmstrip/stage props re-render (commands
-  // splice in place); the model object identity is kept so the store record
-  // and undo snapshots stay in step.
-  bumpCurrentSlide();
-  model.slides = model.slides.slice();
-  // A fresh media reference too, so the stage's media resolver rebuilds and a
-  // just-inserted image resolves and renders immediately (AC-8).
-  if (model.media) {
-    model.media = model.media.slice();
-  }
-  touchDocument(model.id);
-  triggerRef(presentation);
-  void nextTick(recomputeScale);
-}
-
-/** The slide model is plain (non-reactive) behind a shallowRef, so an in-place
- * frame mutation (move/resize/style) is invisible to the renderer unless the
- * slide and its frames get fresh object identities — the same trick SPEC-081's
- * text editing uses (bumpFrame). Replaces the current slide + its frames so the
- * stage re-renders their geometry/style. */
-function bumpCurrentSlide() {
-  const model = presentation.value;
-  const slide = model?.slides[currentIndex.value];
-  if (!model || !slide) return;
-  model.slides[currentIndex.value] = { ...slide, frames: slide.frames.map((frame) => ({ ...frame })) };
-}
-
-/** Re-render the stage without persisting — the live preview during a drag or
- * resize gesture; `commit` persists once on release (SPEC-082). */
-function refresh() {
-  const model = presentation.value;
-  if (!model) return;
-  bumpCurrentSlide();
-  model.slides = model.slides.slice();
-  triggerRef(presentation);
-}
+// The re-render/persist trio lives in a composable (SPEC-086 extraction) so the
+// view stays within its size budget; it owns the shallowRef re-identification.
+const { commit, refresh } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => recomputeScale() });
 
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
 const canUndo = slideUndo.canUndo;
@@ -232,6 +193,17 @@ const transitions = useTransitions({
   commit,
 });
 
+// --- frame animations (SPEC-086) -------------------------------------------
+const animations = useAnimations({
+  model: presentation,
+  currentSlide,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+  selectedFrameId: stageEdit.selection.selectedFrameId,
+  selectFrame: stageEdit.selection.select,
+});
+
 // --- fit-to-workspace scaling ----------------------------------------------
 
 const stageContainer = useTemplateRef("stageContainer");
@@ -337,7 +309,9 @@ onBeforeUnmount(() => {
         :enabled="stageEdit.editing.toolbarEnabled.value"
         :recent-colors="stageEdit.recentColors.value"
         :transition-open="transitions.open.value"
+        :animate-open="animations.open.value"
         @transition-toggle="transitions.toggle()"
+        @animate-toggle="animations.toggle()"
         @bold="stageEdit.editing.toggleBold()"
         @italic="stageEdit.editing.toggleItalic()"
         @underline="stageEdit.editing.toggleUnderline()"
@@ -416,6 +390,15 @@ onBeforeUnmount(() => {
                 Add slide
               </UiButton>
             </div>
+            <AnimationStageLayer
+              v-if="animations.open.value && currentSlide"
+              :controller="animations"
+              :slide="currentSlide"
+              :width-cm="presentation.slideWidthCm"
+              :height-cm="presentation.slideHeightCm"
+              :media="deckMedia"
+              :scale="stageScale"
+            />
             <SlideTransitionLayer
               v-if="transitions.previewState.value"
               class="stage-preview"
@@ -438,6 +421,11 @@ onBeforeUnmount(() => {
           <TransitionsPanel
             v-if="transitions.open.value && currentSlide"
             :controller="transitions"
+            :slide-number="currentIndex + 1"
+          />
+          <AnimationsPanel
+            v-if="animations.open.value && currentSlide"
+            :controller="animations"
             :slide-number="currentIndex + 1"
           />
         </div>

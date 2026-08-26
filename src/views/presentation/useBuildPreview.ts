@@ -10,7 +10,7 @@
 // (AC-24) works.
 import { ref } from "vue";
 import type { Slide } from "../../lib/presentation/model";
-import { groupTimeline, isFrameHiddenAt, slideBuildGroups } from "../../lib/presentation/buildPlayback";
+import { groupTimeline, isFrameHiddenAt, slideBuildCount, slideBuildGroups } from "../../lib/presentation/buildPlayback";
 import { fromStyle, settledStyle, toStyle, transitionFor } from "../../components/presentation/animationStyles";
 
 type StyleMap = Record<string, Record<string, string>>;
@@ -91,5 +91,27 @@ export function useBuildPreview() {
     clearTimers();
   }
 
-  return { frameStyles, settle, playGroup, stop };
+  /** Auto-plays every build group of a slide in sequence (the editor "Play"
+   * preview, AC-11): hides unbuilt frames, then plays each group with a short
+   * pause between, and calls `onFinished` after the last group settles. */
+  function autoplay(slide: Slide, reducedMotion: boolean, onFinished: () => void): void {
+    clearTimers();
+    settle(slide, 0);
+    const groups = slideBuildCount(slide);
+    let index = 0;
+    const step = (): void => {
+      if (index >= groups) {
+        timers.push(window.setTimeout(onFinished, 800));
+        return;
+      }
+      const groupIndex = index;
+      index += 1;
+      playGroup(slide, groupIndex, reducedMotion, () => {
+        timers.push(window.setTimeout(step, 500));
+      });
+    };
+    timers.push(window.setTimeout(step, 400));
+  }
+
+  return { frameStyles, settle, playGroup, autoplay, stop };
 }
