@@ -67,8 +67,17 @@ export function useAnimations(deps: AnimationsDeps) {
     setPreference("presentationAnimationsOpen", !open.value);
   }
 
-  const animations = computed<SlideAnimation[]>(() => deps.currentSlide.value?.animations ?? []);
+  // A fresh array each time the current slide re-identifies (commit bumps the
+  // slide object), so the panel's derived computeds re-evaluate — the model is
+  // plain data behind a shallowRef, so an in-place field edit is invisible
+  // unless a dependency identity changes (the same trick the stage uses).
+  const animations = computed<SlideAnimation[]>(() => (deps.currentSlide.value?.animations ?? []).slice());
   const selectedIndex = ref(0);
+  /** The selected animation, read through the fresh array so field getters that
+   * depend on `animations.value` re-evaluate after every edit. */
+  function at(index: number): SlideAnimation | undefined {
+    return animations.value[index];
+  }
 
   function frameName(frameId: string): string {
     const frame = deps.currentSlide.value?.frames.find((f) => f.id === frameId);
@@ -92,20 +101,27 @@ export function useAnimations(deps: AnimationsDeps) {
     animations.value.map((a, index) => ({ index, number: index + 1, frameId: a.frameId })),
   );
 
-  const selected = computed<SlideAnimation | null>(() => animations.value[selectedIndex.value] ?? null);
-  const hasSelection = computed(() => selected.value !== null);
-  const selectedEffect = computed<AnimationEffect | "">(() => selected.value?.effect ?? "");
+  const selected = computed<SlideAnimation | null>(() => at(selectedIndex.value) ?? null);
+  const hasSelection = computed(() => at(selectedIndex.value) !== undefined);
+  const selectedEffect = computed<AnimationEffect | "">(() => at(selectedIndex.value)?.effect ?? "");
   const selectedTrigger = computed<AnimationTrigger>(() =>
-    selected.value ? effectiveTrigger(animations.value, selectedIndex.value) : "click",
+    at(selectedIndex.value) ? effectiveTrigger(animations.value, selectedIndex.value) : "click",
   );
-  const selectedDirection = computed<TransitionDirection>(() => selected.value?.direction ?? "left");
-  const directionEnabled = computed(() => !!selected.value && usesAnimationDirection(selected.value.effect));
+  const selectedDirection = computed<TransitionDirection>(() => at(selectedIndex.value)?.direction ?? "left");
+  const directionEnabled = computed(() => {
+    const a = at(selectedIndex.value);
+    return !!a && usesAnimationDirection(a.effect);
+  });
   // Row 1 always behaves as click (AC-3) — its trigger control is locked.
   const triggerLocked = computed(() => selectedIndex.value === 0);
-  const durationSeconds = computed(() =>
-    selected.value ? effectiveAnimationDurationMs(selected.value) / 1000 : 0.5,
-  );
-  const delaySeconds = computed(() => (selected.value ? effectiveAnimationDelayMs(selected.value) / 1000 : 0));
+  const durationSeconds = computed(() => {
+    const a = at(selectedIndex.value);
+    return a ? effectiveAnimationDurationMs(a) / 1000 : 0.5;
+  });
+  const delaySeconds = computed(() => {
+    const a = at(selectedIndex.value);
+    return a ? effectiveAnimationDelayMs(a) / 1000 : 0;
+  });
 
   const canMoveUp = computed(() => hasSelection.value && selectedIndex.value > 0);
   const canMoveDown = computed(() => hasSelection.value && selectedIndex.value < animations.value.length - 1);
