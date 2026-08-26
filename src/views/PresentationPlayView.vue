@@ -19,8 +19,10 @@ import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
 import { cmToPx } from "../lib/core/units";
 import { slideOutline } from "../lib/presentation/slideModel";
+import { slideBuildCount } from "../lib/presentation/buildPlayback";
 import { playbackActionForKey } from "../lib/presentation/playbackKeys";
 import { usePlayback } from "./presentation/usePlayback";
+import { useBuildPreview } from "./presentation/useBuildPreview";
 
 const route = useRoute();
 const router = useRouter();
@@ -54,8 +56,31 @@ function routeStartIndex() {
   const n = Number(route.params.n ?? 1);
   return Number.isFinite(n) ? n - 1 : 0; // usePlayback clamps out-of-range
 }
-const playback = usePlayback({ slideCount, reducedMotion, start: routeStartIndex() });
+function buildCountAt(index = 0) {
+  const slide = presentation.value?.slides[index];
+  return slide ? slideBuildCount(slide) : 0;
+}
+const playback = usePlayback({ slideCount, reducedMotion, start: routeStartIndex(), buildCountAt });
 const currentSlide = computed(() => presentation.value?.slides[playback.current.value.slideIndex] ?? null);
+
+// --- build playback (SPEC-086): frames hidden until their build plays --------
+const buildPreview = useBuildPreview();
+watch(
+  () => playback.current.value,
+  (cur, prev) => {
+    const slide = currentSlide.value;
+    if (!slide) return;
+    buildPreview.stop();
+    if (!prev || cur.slideIndex !== prev.slideIndex || cur.buildIndex <= prev.buildIndex) {
+      // A new slide, or a backward/jump landing: settle to the target instantly
+      // (back lands fully-built — AC-22).
+      buildPreview.settle(slide, cur.buildIndex);
+      return;
+    }
+    // A forward build step on the same slide: animate the group that just began.
+    buildPreview.playGroup(slide, cur.buildIndex - 1, reducedMotion.value);
+  },
+);
 const deckTitle = computed(() => presentation.value?.title ?? "Slide show");
 const counterLabel = computed(() => `${playback.current.value.slideIndex + 1} / ${slideCount.value}`);
 const announce = computed(() => {
@@ -108,6 +133,9 @@ async function loadPresentation() {
   if (model) {
     playback.goTo(routeStartIndex()); // clamp the deep-link n into range
     syncUrl(); // reflect the clamp even when the index did not change (AC-5)
+    if (currentSlide.value) {
+      buildPreview.settle(currentSlide.value, playback.current.value.buildIndex); // hide unbuilt frames (AC-20)
+    }
     scheduleAutoAdvance(); // the starting slide may itself auto-advance (AC-17)
     void nextTick(() => {
       recomputeScale();
@@ -180,6 +208,7 @@ function exit() {
   exiting = true;
   clearAutoAdvance();
   clearTransition();
+  buildPreview.stop();
   releaseFullscreen();
   const index = playback.atEnd.value ? Math.max(0, slideCount.value - 1) : playback.current.value.slideIndex;
   void router.replace({ path: `/slides/${presentationId.value}`, query: { return: String(index + 1) } });
@@ -214,10 +243,14 @@ function advanceStep() {
     exit();
     return;
   }
+  const fromIndex = playback.current.value.slideIndex;
   const fromSlide = currentSlide.value;
   playback.advance();
   if (playback.atEnd.value) {
     return; // advanced onto the end screen — no transition
+  }
+  if (playback.current.value.slideIndex === fromIndex) {
+    return; // a build advanced on the same slide (SPEC-086) — the build watcher animates it
   }
   const toSlide = currentSlide.value;
   if (toSlide && toSlide.transition && transitionAnimates(toSlide.transition, reducedMotion.value, !!fromSlide)) {
@@ -346,6 +379,7 @@ onBeforeUnmount(() => {
   motionQuery?.removeEventListener("change", onMotionChange);
   if (idleTimer) clearTimeout(idleTimer);
   clearAutoAdvance();
+  buildPreview.stop();
 });
 </script>
 
@@ -398,6 +432,7 @@ onBeforeUnmount(() => {
       :media="presentation.media ?? []"
       :scale="stageScale"
       :interactive="false"
+      :frame-styles="buildPreview.frameStyles.value"
     />
 
     <div

@@ -36,6 +36,10 @@ const props = defineProps({
   /** False for the filmstrip thumbnails: their frames render read-only, with
    * no selection chrome, focus, test hooks or pointer handling. */
   interactive: { type: Boolean, default: true },
+  /** SPEC-086 playback: per-frame inline styles (by frame id) the build engine
+   * layers on during a show/preview. Absent in the editor (frames fully
+   * visible, AC-25). */
+  frameStyles: { type: Object, default: () => ({}) },
 });
 
 const emit = defineEmits([
@@ -119,6 +123,7 @@ const previewStyle = computed(() => {
         :editing="frame.id === editingFrameId"
         :armed="armed"
         :top-level="interactive"
+        :play-style="frameStyles[frame.id] || null"
         @select="(id) => emit('frame-select', id)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @frame-pointerdown="(id, event) => emit('frame-pointerdown', id, event)"

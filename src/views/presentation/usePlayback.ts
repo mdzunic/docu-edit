@@ -27,6 +27,10 @@ export interface UsePlaybackDeps {
    * pipeline exposes it to SPEC-085/086 (this spec has no motion to reduce,
    * but the plumbing must exist). Defaults to a never-reduced ref. */
   reducedMotion?: Ref<boolean>;
+  /** How many build groups slide `i` has (SPEC-086). Advance walks these before
+   * moving to the next slide; back lands on a slide fully-built. Absent = a
+   * deck with no builds (every slide reports 0), preserving SPEC-084 behaviour. */
+  buildCountAt?: (slideIndex: number) => number;
   /** The starting slide index (0-based); clamped into range. */
   start?: number;
 }
@@ -43,6 +47,9 @@ export interface UsePlayback {
 export function usePlayback(deps: UsePlaybackDeps): UsePlayback {
   const reducedMotion = deps.reducedMotion ?? ref(false);
 
+  function buildCount(slideIndex: number): number {
+    return deps.buildCountAt ? Math.max(0, deps.buildCountAt(slideIndex)) : 0;
+  }
   function lastIndex(): number {
     return Math.max(0, deps.slideCount.value - 1);
   }
@@ -54,28 +61,34 @@ export function usePlayback(deps: UsePlaybackDeps): UsePlayback {
   const current = ref<PlaybackStep>({ slideIndex: clampIndex(deps.start ?? 0), buildIndex: 0 });
   const atEnd = ref(false);
 
-  /** Next build on the slide (none in this spec), else next slide, else the end
+  /** Next build group on the slide (SPEC-086), else next slide, else the end
    * screen. Idempotent once `atEnd` — the view turns a further advance into an
    * exit. */
   function advance(): void {
     if (atEnd.value) return;
-    if (current.value.slideIndex >= lastIndex()) {
+    const { slideIndex, buildIndex } = current.value;
+    if (buildIndex < buildCount(slideIndex)) {
+      current.value = { slideIndex, buildIndex: buildIndex + 1 };
+      return;
+    }
+    if (slideIndex >= lastIndex()) {
       atEnd.value = true;
       return;
     }
-    current.value = { slideIndex: current.value.slideIndex + 1, buildIndex: 0 };
+    current.value = { slideIndex: slideIndex + 1, buildIndex: 0 };
   }
 
-  /** Previous slide, fully built (builds collapse on back). From the end screen
-   * it steps back onto the last slide rather than exiting. */
+  /** Previous slide, landed fully-built (builds collapse on back — SPEC-084's
+   * rule, AC-22). From the end screen it steps back onto the last slide. */
   function back(): void {
     if (atEnd.value) {
       atEnd.value = false;
-      current.value = { slideIndex: lastIndex(), buildIndex: 0 };
+      current.value = { slideIndex: lastIndex(), buildIndex: buildCount(lastIndex()) };
       return;
     }
     if (current.value.slideIndex <= 0) return;
-    current.value = { slideIndex: current.value.slideIndex - 1, buildIndex: 0 };
+    const prev = current.value.slideIndex - 1;
+    current.value = { slideIndex: prev, buildIndex: buildCount(prev) };
   }
 
   /** Jump straight to a slide (Home/End, number-then-Enter), clearing the end

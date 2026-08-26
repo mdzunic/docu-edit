@@ -63,6 +63,39 @@ describe("usePlayback step machine", () => {
     expect(p.current.value.slideIndex).toBe(1);
   });
 
+  it("advance walks a slide's build groups before moving on (SPEC-086)", () => {
+    // slide 0 has 2 build groups, slide 1 has 1, slide 2 has none.
+    const counts = [2, 1, 0];
+    const p = usePlayback({ slideCount: ref(3), buildCountAt: (i) => counts[i], start: 0 });
+    p.advance(); // build 1 of slide 0
+    expect(p.current.value).toEqual({ slideIndex: 0, buildIndex: 1 });
+    p.advance(); // build 2 of slide 0
+    expect(p.current.value).toEqual({ slideIndex: 0, buildIndex: 2 });
+    p.advance(); // builds done → slide 1
+    expect(p.current.value).toEqual({ slideIndex: 1, buildIndex: 0 });
+    p.advance(); // build 1 of slide 1
+    expect(p.current.value).toEqual({ slideIndex: 1, buildIndex: 1 });
+    p.advance(); // → slide 2 (no builds)
+    expect(p.current.value).toEqual({ slideIndex: 2, buildIndex: 0 });
+    p.advance(); // → end
+    expect(p.atEnd.value).toBe(true);
+  });
+
+  it("back lands the previous slide fully-built (AC-22)", () => {
+    const counts = [3, 2];
+    const p = usePlayback({ slideCount: ref(2), buildCountAt: (i) => counts[i], start: 1 });
+    p.back();
+    expect(p.current.value).toEqual({ slideIndex: 0, buildIndex: 3 }); // fully built
+    // From the end screen, back lands the last slide fully built.
+    const q = usePlayback({ slideCount: ref(2), buildCountAt: (i) => counts[i], start: 1 });
+    q.advance();
+    q.advance();
+    q.advance(); // exhaust slide 1's 2 builds then → end
+    expect(q.atEnd.value).toBe(true);
+    q.back();
+    expect(q.current.value).toEqual({ slideIndex: 1, buildIndex: 2 });
+  });
+
   it("exposes reduced-motion reactively (SPEC-085/086 plumbing)", () => {
     const reducedMotion = ref(false);
     const p = usePlayback({ slideCount: ref(3), reducedMotion });
