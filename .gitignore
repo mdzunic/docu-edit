@@ -4,6 +4,7 @@ dist/
 *.log
 test-results/
 playwright-report/
+demo-results/
 blob-report/
 .vite/
 coverage/
