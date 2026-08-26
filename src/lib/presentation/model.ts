@@ -52,6 +52,31 @@ export interface SlideTransition {
   advanceAfterMs?: number;
 }
 
+/** The frame animation effects this editor models (SPEC-086) — a deliberate
+ * subset of entrance/exit builds with clean equivalents in PowerPoint's
+ * `p:timing` and Impress's `anim:*` trees. `lib/presentation/animations.ts`
+ * (the grouping/retargeting rules) and the per-format `timing.ts`/`anim.ts`
+ * modules (the wire mappings) are the normative source. */
+export type AnimationEffect = "appear" | "fadeIn" | "flyIn" | "wipeIn" | "zoomIn" | "fadeOut" | "flyOut";
+
+/** How an animation begins relative to its predecessor in play order. */
+export type AnimationTrigger = "click" | "withPrevious" | "afterPrevious";
+
+/** One frame animation, targeting a frame by its minted `SlideFrame.id`
+ * (SPEC-082, never serialised — the wire mappings resolve it to each format's
+ * shape id). Order in `Slide.animations` is play order. */
+export interface SlideAnimation {
+  frameId: string;
+  effect: AnimationEffect;
+  /** flyIn/flyOut/wipeIn only; default "left". "left" means the motion
+   *  originates at the LEFT edge: fly-in enters from the left, fly-out exits
+   *  toward the left, wipe reveals starting at the left. */
+  direction?: TransitionDirection;
+  trigger: AnimationTrigger;
+  durationMs?: number; // default 500, range 100–5000
+  delayMs?: number; // default 0, range 0–10000
+}
+
 /** A resolved frame/background fill. Only the two forms this spec renders —
  * a solid colour and "no fill"; gradients resolve to their first stop's
  * colour and image/pattern fills to white before they reach here. */
@@ -174,6 +199,15 @@ export interface Slide {
    *  transition (distinguished by `preserved`); an explicit hard cut the user
    *  chose is `{ type: "none" }`. See `lib/presentation/transitions.ts`. */
   transition?: SlideTransition;
+  /** The slide's frame animations in play order (SPEC-086): a modelled subset
+   *  the readers populate from the wire mappings and the writers serialise.
+   *  Absent means either a plain slide OR preserved out-of-subset timing
+   *  (distinguished by `preserved["p:timing"]`/`preserved["anim"]`) — a slide
+   *  whose timing this editor can't model keeps `animations` unset and its
+   *  source verbatim. A present (even empty) array is the modelled state: the
+   *  writers emit it and drop the preserved timing. See
+   *  `lib/presentation/animations.ts`. */
+  animations?: SlideAnimation[];
   /** pptx: this slide's part path ("ppt/slides/slide2.xml"); ties the
    *  model slide to its verbatim part in `opaque`. Absent for .odp and
    *  (later) from-scratch slides. */

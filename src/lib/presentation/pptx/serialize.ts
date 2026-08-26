@@ -20,6 +20,7 @@ import type {
   TextFrame,
 } from "../model";
 import { writePptxTransition } from "../transitions";
+import { writePptxTiming } from "./timing";
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -58,6 +59,17 @@ export function serializeSlideXml(
 ): string {
   const rootAttrs = slide.preserved?.["@root"] ?? STANDARD_ROOT_ATTRS;
   let nextId = 2; // p:cNvPr id=1 is the group scaffold.
+  // Map each rebuilt frame to the `p:cNvPr id` the shapes get (2,3,… in
+  // z-order, minted only for the text/shape/image frames the serialiser
+  // rebuilds — group/foreign frames re-emit verbatim and consume no id), so
+  // the timing's `p:spTgt spid` references match (SPEC-086 wire ids).
+  const spidFor = new Map<string, number>();
+  for (const frame of slide.frames) {
+    if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image") {
+      spidFor.set(frame.id, nextId++);
+    }
+  }
+  nextId = 2;
   const shapes = slide.frames
     .map((frame) => frameXml(frame, () => nextId++, rels, slidePartPath))
     .join("");
@@ -67,7 +79,12 @@ export function serializeSlideXml(
   // present — the reader drops the source XML when it maps the transition);
   // otherwise re-emit the preserved (out-of-subset) transition verbatim.
   const transition = slide.transition ? writePptxTransition(slide.transition) : (slide.preserved?.["p:transition"] ?? "");
-  const timing = slide.preserved?.["p:timing"] ?? "";
+  // Modelled animations win over any preserved timing (never both — the reader
+  // drops the source when it models them); a present (even empty) `animations`
+  // is the modelled state, so preserved timing is never re-emitted alongside.
+  const timing = slide.animations !== undefined
+    ? writePptxTiming(slide.animations, (id) => spidFor.get(id))
+    : (slide.preserved?.["p:timing"] ?? "");
   const extLst = slide.preserved?.["p:extLst"] ?? "";
   return (
     `${XML_DECL}<p:sld${rootAttrs}>` +

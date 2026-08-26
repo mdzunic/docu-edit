@@ -13,6 +13,9 @@
 //      explicitly-positioned themed ellipse, an image, a group of two rects
 //      and a table (a foreign frame) — the geometry/inheritance/media slide.
 import { zip } from "../../core/zipWriter";
+import { writePptxTiming } from "../pptx/timing";
+import { writeOdpAnim } from "../odp/anim";
+import type { SlideAnimation } from "../model";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -706,6 +709,216 @@ export async function buildOdpTransitionsFixtureBytes(): Promise<Uint8Array> {
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-meta xmlns:office="${ODF_OFFICE_NS}" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2">` +
     `<office:meta><dc:title>Transitions fixture</dc:title></office:meta></office:document-meta>`;
+  const manifest =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
+    `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.presentation"/>` +
+    `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
+    `</manifest:manifest>`;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.presentation"), store: true },
+    { name: "content.xml", data: encoder.encode(content) },
+    { name: "styles.xml", data: encoder.encode(styleParts) },
+    { name: "meta.xml", data: encoder.encode(meta) },
+    { name: "META-INF/manifest.xml", data: encoder.encode(manifest) },
+  ]);
+}
+
+// ============================================================================
+// SPEC-086 animation fixtures
+// ============================================================================
+// Compact `.pptx`/`.odp` decks exercising all three animation paths: a plain
+// slide with a body placeholder + a shape (no timing — the e2e's authoring
+// target), a slide carrying the canonical `p:timing`/`anim:*` forms (canonical
+// read-back), and a slide with a deliberately exotic timing tree the reader can
+// only preserve, not model (AC-29).
+
+/** The animations the canonical fixture slide is expected to parse to (frame
+ * ids are minted on read, so callers compare without them). */
+export const EXPECTED_FIXTURE_ANIMATIONS: Omit<SlideAnimation, "frameId">[] = [
+  { effect: "fadeIn", trigger: "click" },
+  { effect: "flyIn", direction: "right", trigger: "afterPrevious", durationMs: 800 },
+];
+
+/** The canonical `p:timing` referencing the body (cNvPr id 3) and shape (id 4). */
+export const PPTX_CANONICAL_TIMING = writePptxTiming(
+  [
+    { frameId: "3", effect: "fadeIn", trigger: "click" },
+    { frameId: "4", effect: "flyIn", direction: "right", trigger: "afterPrevious", durationMs: 800 },
+  ],
+  (id) => Number(id),
+);
+
+/** An out-of-subset `p:timing` (an emphasis preset the table doesn't map) — the
+ * reader preserves it whole. */
+const PPTX_EXOTIC_TIMING =
+  `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>` +
+  `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>` +
+  `<p:par><p:cTn presetID="8" presetClass="emph" nodeType="clickEffect"><p:childTnLst>` +
+  `<p:animEffect><p:cBhvr><p:cTn dur="500"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cBhvr></p:animEffect>` +
+  `</p:childTnLst></p:cTn></p:par>` +
+  `</p:childTnLst></p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`;
+
+function pptxAnimSlide(shapes: string, timing = ""): string {
+  return (
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sld xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
+    shapes +
+    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>${timing}</p:sld>`
+  );
+}
+
+/** Title + body + a rect shape; body is id 3, shape id 4 (the timing targets). */
+function pptxAnimShapes(title: string): string {
+  return (
+    pptxSp(2, "Title", { type: "title" }, [`<a:r><a:t>${title}</a:t></a:r>`], xfrm(2, 1, 29, 3)) +
+    pptxSp(3, "Body", { type: "body" }, ["<a:r><a:t>Body line</a:t></a:r>"], xfrm(2, 5, 20, 8)) +
+    `<p:sp><p:nvSpPr><p:cNvPr id="4" name="Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr>${xfrm(24, 5, 6, 4)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p><a:r><a:t>Shape text</a:t></a:r></a:p></p:txBody></p:sp>`
+  );
+}
+
+/** A minimal `.pptx` with a plain body+shape slide (e2e authoring target), a
+ * canonical-timing slide, and an exotic-timing slide (SPEC-086 AC-29). */
+export async function buildPptxAnimationsFixtureBytes(): Promise<Uint8Array> {
+  const slides = [
+    pptxAnimSlide(pptxAnimShapes("Animate me")),
+    pptxAnimSlide(pptxAnimShapes("Canonical"), PPTX_CANONICAL_TIMING),
+    pptxAnimSlide(pptxSp(2, "Title", { type: "title" }, ["<a:r><a:t>Exotic</a:t></a:r>"], xfrm(2, 1, 29, 3)), PPTX_EXOTIC_TIMING),
+  ];
+  const n = slides.length;
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>` +
+    slides.map((_, i) => `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join("") +
+    `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
+    `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>` +
+    `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
+    `</Types>`;
+  const rootRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>` +
+    `</Relationships>`;
+  const sldIds = slides.map((_, i) => `<p:sldId id="${256 + i}" r:id="rId${i + 2}"/>`).join("");
+  const presentation =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}">` +
+    `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
+    `<p:sldIdLst>${sldIds}</p:sldIdLst>` +
+    `<p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
+  const presentationRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>` +
+    slides.map((_, i) => `<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`).join("") +
+    `<Relationship Id="rId${n + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>` +
+    `</Relationships>`;
+  const slideMaster =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sldMaster xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
+    `<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>` +
+    `<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>`;
+  const slideMasterRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
+    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>` +
+    `</Relationships>`;
+  const slideLayout1 =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sldLayout xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}" type="obj"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
+    `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
+  const layout1Rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>` +
+    `</Relationships>`;
+  const entry = (name: string, text: string) => ({ name, data: encoder.encode(text) });
+  const parts = [
+    entry("[Content_Types].xml", contentTypes),
+    entry("_rels/.rels", rootRels),
+    entry("ppt/presentation.xml", presentation),
+    entry("ppt/_rels/presentation.xml.rels", presentationRels),
+    entry("ppt/slideMasters/slideMaster1.xml", slideMaster),
+    entry("ppt/slideMasters/_rels/slideMaster1.xml.rels", slideMasterRels),
+    entry("ppt/slideLayouts/slideLayout1.xml", slideLayout1),
+    entry("ppt/slideLayouts/_rels/slideLayout1.xml.rels", layout1Rels),
+    entry("ppt/theme/theme1.xml", PPTX_THEME),
+  ];
+  slides.forEach((xml, i) => {
+    parts.push(entry(`ppt/slides/slide${i + 1}.xml`, xml));
+    parts.push(entry(`ppt/slides/_rels/slide${i + 1}.xml.rels`, SLIDE_RELS));
+  });
+  return zip(parts);
+}
+
+/** The canonical odp `anim:*` referencing the body (de-f1) and shape (de-f2). */
+const ODP_CANONICAL_ANIM = writeOdpAnim(
+  [
+    { frameId: "de-f1", effect: "fadeIn", trigger: "click" },
+    { frameId: "de-f2", effect: "flyIn", direction: "right", trigger: "afterPrevious", durationMs: 800 },
+  ],
+  (id) => id,
+);
+
+/** An out-of-subset odp `anim:*` (an emphasis preset the table doesn't map). */
+const ODP_EXOTIC_ANIM =
+  `<anim:par xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0"` +
+  ` xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0"` +
+  ` presentation:node-type="timing-root"><anim:seq presentation:node-type="main-sequence">` +
+  `<anim:par smil:begin="next"><anim:par smil:begin="0s">` +
+  `<anim:par presentation:node-type="on-click" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-spin" smil:begin="0s">` +
+  `<anim:animate smil:targetElement="de-f1"/></anim:par>` +
+  `</anim:par></anim:par></anim:seq></anim:par>`;
+
+/** Title + body (de-f1) + rect shape (de-f2). */
+function odpAnimFrames(title: string): string {
+  return (
+    odpFrame("title", [title], geom(2, 1, 29, 3)) +
+    `<draw:frame presentation:class="body" xml:id="de-f1" draw:id="de-f1"${geom(2, 5, 20, 8)}><draw:text-box><text:p>Body line</text:p></draw:text-box></draw:frame>` +
+    `<draw:rect xml:id="de-f2" draw:id="de-f2"${geom(24, 5, 6, 4)}><draw:text-box><text:p>Shape text</text:p></draw:text-box></draw:rect>`
+  );
+}
+
+/** A minimal `.odp` twin of the animation fixture (SPEC-086 AC-29). */
+export async function buildOdpAnimationsFixtureBytes(): Promise<Uint8Array> {
+  const pages = [
+    `<draw:page draw:name="page1">${odpAnimFrames("Animate me")}</draw:page>`,
+    `<draw:page draw:name="page2">${odpAnimFrames("Canonical")}${ODP_CANONICAL_ANIM}</draw:page>`,
+    `<draw:page draw:name="page3">${odpFrame("title", ["Exotic"], geom(2, 1, 29, 3))}${ODP_EXOTIC_ANIM}</draw:page>`,
+  ].join("");
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-content xmlns:office="${ODF_OFFICE_NS}" xmlns:style="${ODF_STYLE_NS}" xmlns:text="${ODF_TEXT_NS}"` +
+    ` xmlns:draw="${ODF_DRAW_NS}" xmlns:fo="${ODF_FO_NS}" xmlns:svg="${ODF_SVG_NS}"` +
+    ` xmlns:presentation="${ODF_PRESENTATION_NS}" office:version="1.2">` +
+    `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
+    `</office:document-content>`;
+  const styleParts =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-styles xmlns:office="${ODF_OFFICE_NS}" xmlns:style="${ODF_STYLE_NS}" xmlns:fo="${ODF_FO_NS}"` +
+    ` xmlns:svg="${ODF_SVG_NS}" xmlns:draw="${ODF_DRAW_NS}" xmlns:presentation="${ODF_PRESENTATION_NS}" office:version="1.2">` +
+    `<office:automatic-styles>` +
+    `<style:page-layout style:name="PL1"><style:page-layout-properties fo:page-width="33.867cm" fo:page-height="19.05cm"/></style:page-layout>` +
+    `</office:automatic-styles>` +
+    `<office:master-styles><style:master-page style:name="Default" style:page-layout-name="PL1">` +
+    `<draw:frame presentation:class="body"${geom(2, 5, 20, 8)}><draw:text-box/></draw:frame>` +
+    `</style:master-page></office:master-styles>` +
+    `</office:document-styles>`;
+  const meta =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-meta xmlns:office="${ODF_OFFICE_NS}" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2">` +
+    `<office:meta><dc:title>Animations fixture</dc:title></office:meta></office:document-meta>`;
   const manifest =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +

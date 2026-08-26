@@ -53,6 +53,7 @@ import {
 } from "../model";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
 import { readPptxTransition } from "../transitions";
+import { readPptxTiming } from "./timing";
 
 export class PptxOpenError extends Error {}
 
@@ -980,6 +981,9 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
   const cSld = pChild(slideRoot, "cSld");
   const spTree = cSld && pChild(cSld, "spTree");
   const frames: SlideFrame[] = [];
+  // `p:cNvPr id` → minted frame id, so a `p:timing`'s `p:spTgt spid` resolves
+  // back to the frame it targets (SPEC-086).
+  const frameForSpid = new Map<string, string>();
   if (spTree) {
     for (const child of Array.from(spTree.children)) {
       if (child.namespaceURI !== P_NAMESPACE) {
@@ -988,6 +992,10 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
       const frame = parseShapeTreeChild(child, ctx);
       if (frame) {
         frames.push(frame);
+        const spid = firstCNvPrId(child);
+        if (spid) {
+          frameForSpid.set(spid, frame.id);
+        }
       }
     }
   }
@@ -1007,6 +1015,17 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
     if (transition) {
       slide.transition = transition;
       delete preserved["p:transition"];
+    }
+  }
+  // A canonical (or PowerPoint-authored equivalent) `p:timing` whose targets all
+  // resolve becomes the modelled `animations`; its source XML is then dropped
+  // from `preserved`. Anything out of subset stays preserved verbatim (AC-4).
+  if (preserved["p:timing"]) {
+    const timingEl = pChild(slideRoot, "timing");
+    const animations = timingEl ? readPptxTiming(timingEl, (spid) => frameForSpid.get(spid)) : undefined;
+    if (animations) {
+      slide.animations = animations;
+      delete preserved["p:timing"];
     }
   }
   if (Object.keys(preserved).length > 0) {
@@ -1079,6 +1098,13 @@ function resolveChain(slidePath: string, slideRels: Map<string, Relationship>, d
  * `p:sld` attribute string (under `@root`, so its `xmlns`/`showMasterSp`/…
  * survive), plus `p:bg`, `p:transition`, `p:timing`, `p:clrMapOvr`,
  * `p:extLst`. Keyed by element name. */
+/** A shape-tree child's own `p:cNvPr id` (the first `p:cNvPr` in it — a group's
+ * own precedes its children's), used to resolve `p:timing` targets (SPEC-086).*/
+function firstCNvPrId(child: Element): string | undefined {
+  const list = child.getElementsByTagNameNS(P_NAMESPACE, "cNvPr");
+  return list.length > 0 ? list[0].getAttribute("id") ?? undefined : undefined;
+}
+
 function collectPreserved(slideRoot: Element): Record<string, string> {
   const preserved: Record<string, string> = {};
   const rootAttrs = Array.from(slideRoot.attributes)

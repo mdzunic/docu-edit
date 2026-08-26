@@ -1,0 +1,66 @@
+// The slide-stage re-render/persist plumbing, lifted out of PresentationView so
+// the view stays a wiring hub within its size budget. The presentation model is
+// plain (non-reactive) data behind a shallowRef, so an in-place mutation (a
+// structural command, a frame move, a style change) is invisible to the
+// renderer until the slide and its frames get fresh object identities. These
+// three helpers own that trick: `bumpCurrentSlide` re-identifies the current
+// slide, `refresh` re-renders without persisting (mid-gesture), and `commit`
+// re-renders AND persists write-through. Every editing composable in the view
+// (undo, slide/frame commands, notes, transitions, animations) shares them.
+import { nextTick, triggerRef, type Ref, type ShallowRef } from "vue";
+import type { PresentationModel } from "../../lib/presentation/model";
+import { touchDocument } from "../../lib/documentStore";
+
+export interface SlideRenderDeps {
+  model: ShallowRef<PresentationModel | null>;
+  currentIndex: Ref<number>;
+  /** Recompute the fit-to-workspace scale after a commit (a deleted slide can
+   * change the surface). */
+  recomputeScale: () => void;
+}
+
+export function useSlideRender(deps: SlideRenderDeps) {
+  /** Replaces the current slide + its frames with fresh object identities so
+   * the stage re-renders their geometry/style (the shallowRef trick). */
+  function bumpCurrentSlide(): void {
+    const model = deps.model.value;
+    const slide = model?.slides[deps.currentIndex.value];
+    if (!model || !slide) return;
+    model.slides[deps.currentIndex.value] = { ...slide, frames: slide.frames.map((frame) => ({ ...frame })) };
+  }
+
+  /** Re-render the stage without persisting — the live preview during a drag or
+   * resize gesture; `commit` persists once on release. */
+  function refresh(): void {
+    const model = deps.model.value;
+    if (!model) return;
+    bumpCurrentSlide();
+    model.slides = model.slides.slice();
+    triggerRef(deps.model);
+  }
+
+  /** Re-render the shallowRef and persist write-through after a mutation. The
+   * selection is clamped in case a delete dropped it past the tail. */
+  function commit(): void {
+    const model = deps.model.value;
+    if (!model) return;
+    if (deps.currentIndex.value > model.slides.length - 1) {
+      deps.currentIndex.value = Math.max(0, model.slides.length - 1);
+    }
+    // A fresh array reference so the filmstrip/stage props re-render (commands
+    // splice in place); the model object identity is kept so the store record
+    // and undo snapshots stay in step.
+    bumpCurrentSlide();
+    model.slides = model.slides.slice();
+    // A fresh media reference too, so the stage's media resolver rebuilds and a
+    // just-inserted image resolves and renders immediately.
+    if (model.media) {
+      model.media = model.media.slice();
+    }
+    touchDocument(model.id);
+    triggerRef(deps.model);
+    void nextTick(deps.recomputeScale);
+  }
+
+  return { commit, refresh, bumpCurrentSlide };
+}

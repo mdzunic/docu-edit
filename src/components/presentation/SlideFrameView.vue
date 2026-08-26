@@ -43,6 +43,10 @@ const props = defineProps({
   /** True while an insertion tool is armed: frames ignore pointer-down so the
    * draw gesture on the surface underneath is not stolen as a move. */
   armed: { type: Boolean, default: false },
+  /** SPEC-086 playback: an inline style (opacity/transform/clip-path/transition)
+   * layered onto the frame's position during a build preview/show. Null in the
+   * editor, where frames always render fully visible (AC-25). */
+  playStyle: { type: Object, default: null },
 });
 
 const emit = defineEmits(["select", "start-edit", "frame-pointerdown", "edit-mounted", "edit-unmounted"]);
@@ -132,7 +136,7 @@ watch(() => props.frame, paint, { deep: true });
     v-if="kind === 'text'"
     class="frame text-frame"
     :class="{ 'is-selected': selected, 'is-editing': editing }"
-    :style="{ ...position, background: textFill }"
+    :style="[{ ...position, background: textFill }, playStyle]"
     :data-testid="testId"
     :role="role"
     :aria-label="ariaName"
@@ -185,7 +189,7 @@ watch(() => props.frame, paint, { deep: true });
     v-else-if="kind === 'image'"
     class="frame"
     :class="{ 'is-selected': selected }"
-    :style="position"
+    :style="[position, playStyle]"
     :data-testid="testId"
     :role="role"
     :aria-label="ariaName"
@@ -205,7 +209,7 @@ watch(() => props.frame, paint, { deep: true });
     v-else-if="kind === 'shape'"
     class="frame shape-frame"
     :class="{ 'is-selected': selected }"
-    :style="position"
+    :style="[position, playStyle]"
     :data-testid="testId"
     :role="role"
     :aria-label="ariaName"
@@ -241,7 +245,7 @@ watch(() => props.frame, paint, { deep: true });
     v-else-if="kind === 'group'"
     class="frame group-frame"
     :class="{ 'is-selected': selected }"
-    :style="position"
+    :style="[position, playStyle]"
     :data-testid="testId"
     :role="role"
     :aria-label="ariaName"
@@ -263,7 +267,7 @@ watch(() => props.frame, paint, { deep: true });
     v-else-if="foreignVisible"
     class="frame foreign-frame"
     :class="{ 'is-selected': selected }"
-    :style="position"
+    :style="[position, playStyle]"
     :data-testid="testId"
     :role="role"
     :aria-label="ariaName"

@@ -83,6 +83,9 @@ export interface Preferences {
   /** Whether the presentation editor's slide-transition panel is expanded
    * (SPEC-085). Per-device, default collapsed. */
   presentationTransitionsOpen: boolean;
+  /** Whether the presentation editor's animations panel is expanded
+   * (SPEC-086). Per-device, default collapsed. */
+  presentationAnimationsOpen: boolean;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -142,6 +145,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   showConversionReport: true,
   presentationNotesOpen: false,
   presentationTransitionsOpen: false,
+  presentationAnimationsOpen: false,
 };
 
 // --- validators -------------------------------------------------------------
@@ -204,6 +208,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   showConversionReport: isBoolean,
   presentationNotesOpen: isBoolean,
   presentationTransitionsOpen: isBoolean,
+  presentationAnimationsOpen: isBoolean,
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

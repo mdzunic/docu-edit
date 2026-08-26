@@ -16,6 +16,7 @@ import { pxToCm } from "../core/units";
 import { extensionForContentType, type MediaPart } from "../core/media";
 import { LINE_GEOMETRIES, type ShapeGeometry } from "../core/shapes";
 import { markSlideEdited } from "./text";
+import { removeAnimationsForFrame } from "./animations";
 import type {
   FrameStroke,
   ImageFrame,
@@ -349,6 +350,9 @@ export function deleteFrame(model: PresentationModel, slideIndex: number, frameI
     return null;
   }
   slide.frames.splice(index, 1);
+  // Drop any animations that targeted the removed frame (SPEC-086 AC-18); undo
+  // restores both because the undo stack snapshots the whole slide.
+  slide.animations = removeAnimationsForFrame(slide.animations, frameId);
   touch(model, slide);
   const neighbour = slide.frames[index - 1] ?? slide.frames[index] ?? null;
   return neighbour ? neighbour.id : null;
