@@ -35,6 +35,11 @@ const EXEMPT_FILES = new Set([
   // show looks the same in light and dark) — document-content, not app chrome,
   // the same exemption as the slide renderer above.
   "views/PresentationPlayView.vue",
+  // SPEC-085's transition layer: two stacked slide stages animated over the
+  // same theme-independent black letterbox (uncovered push regions and
+  // Preview's "from black" read against `#000` by mandate) — document-content,
+  // the same exemption as the playback surface and slide renderer above.
+  "components/presentation/SlideTransitionLayer.vue",
   "components/DocTocBlock.vue",
   "components/DocTofBlock.vue",
   "components/DocHeadingToggle.vue",
