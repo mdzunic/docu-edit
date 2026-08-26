@@ -65,10 +65,23 @@ function commit() {
   // A fresh array reference so the filmstrip/stage props re-render (commands
   // splice in place); the model object identity is kept so the store record
   // and undo snapshots stay in step.
+  bumpCurrentSlide();
   model.slides = model.slides.slice();
   touchDocument(model.id);
   triggerRef(presentation);
   void nextTick(recomputeScale);
+}
+
+/** The slide model is plain (non-reactive) behind a shallowRef, so an in-place
+ * frame mutation (move/resize/style) is invisible to the renderer unless the
+ * slide and its frames get fresh object identities — the same trick SPEC-081's
+ * text editing uses (bumpFrame). Replaces the current slide + its frames so the
+ * stage re-renders their geometry/style. */
+function bumpCurrentSlide() {
+  const model = presentation.value;
+  const slide = model?.slides[currentIndex.value];
+  if (!model || !slide) return;
+  model.slides[currentIndex.value] = { ...slide, frames: slide.frames.map((frame) => ({ ...frame })) };
 }
 
 /** Re-render the stage without persisting — the live preview during a drag or
@@ -76,6 +89,7 @@ function commit() {
 function refresh() {
   const model = presentation.value;
   if (!model) return;
+  bumpCurrentSlide();
   model.slides = model.slides.slice();
   triggerRef(presentation);
 }

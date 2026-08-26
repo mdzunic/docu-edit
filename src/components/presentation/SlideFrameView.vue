@@ -40,6 +40,9 @@ const props = defineProps({
   /** False for a group's children, which render read-only (no selection,
    * focus or test hooks) until ungroup promotes them (SPEC-082). */
   topLevel: { type: Boolean, default: true },
+  /** True while an insertion tool is armed: frames ignore pointer-down so the
+   * draw gesture on the surface underneath is not stolen as a move. */
+  armed: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["select", "start-edit", "frame-pointerdown", "edit-mounted", "edit-unmounted"]);
@@ -97,8 +100,9 @@ function onFrameDblclick(event = new MouseEvent("dblclick")) {
 
 function onFramePointerdown(event = new PointerEvent("pointerdown")) {
   // Begin a move drag (SPEC-082); the manipulation composable selects and
-  // captures. Editing sessions and group children opt out.
-  if (props.editing || !props.topLevel) return;
+  // captures. Editing sessions, group children, and armed insertion (which
+  // draws on the surface below) opt out.
+  if (props.editing || !props.topLevel || props.armed) return;
   emit("frame-pointerdown", frame.value.id, event);
 }
 

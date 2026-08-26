@@ -33,6 +33,9 @@ const props = defineProps({
   drawPreview: { type: Object, default: null },
   /** Whether an insertion tool is armed (the surface shows a crosshair). */
   armed: { type: Boolean, default: false },
+  /** False for the filmstrip thumbnails: their frames render read-only, with
+   * no selection chrome, focus, test hooks or pointer handling. */
+  interactive: { type: Boolean, default: true },
 });
 
 const emit = defineEmits([
@@ -114,6 +117,8 @@ const previewStyle = computed(() => {
         :resolve-media="resolveMedia"
         :selected="frame.id === selectedFrameId"
         :editing="frame.id === editingFrameId"
+        :armed="armed"
+        :top-level="interactive"
         @select="(id) => emit('frame-select', id)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @frame-pointerdown="(id, event) => emit('frame-pointerdown', id, event)"

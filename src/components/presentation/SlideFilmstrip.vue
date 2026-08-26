@@ -242,6 +242,7 @@ function announceMove(from = 0, to = 0) {
             :height-cm="heightCm"
             :media="media"
             :scale="scale"
+            :interactive="false"
           />
         </div>
         <button

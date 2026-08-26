@@ -127,7 +127,11 @@ export function useFrameInsertion(deps: FrameInsertionDeps) {
     deps.commit();
     disarm();
     if (tool.kind === "textbox" && id) {
-      deps.startEditing(id);
+      // Defer the editing session past the placing click's own focus handling:
+      // clicking the (non-focusable) surface blurs the active element, so a
+      // contenteditable focused synchronously here would lose focus the moment
+      // the click completes (AC-12).
+      setTimeout(() => deps.startEditing(id), 0);
     }
   }
 
