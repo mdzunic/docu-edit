@@ -19,6 +19,7 @@ import {
   type SlideFrame,
   type TextFrame,
 } from "./model";
+import { retargetAnimations } from "./animations";
 
 /** cm rounded to 3 decimals — a hair finer than the eye and far coarser than
  * the EMU/ODF length precision the writers round to, so a placeholder's
@@ -104,12 +105,15 @@ export function addSlide(model: PresentationModel, afterIndex: number): number {
 }
 
 /** Re-mints every frame's id (and group children's) so a duplicated slide's
- * frames are independent selection/undo targets (AC-30). */
-function remintFrameIds(frames: SlideFrame[]): void {
+ * frames are independent selection/undo targets (AC-30), recording each
+ * old→new id in `idMap` so animation targets can follow (SPEC-086 AC-19). */
+function remintFrameIds(frames: SlideFrame[], idMap: Map<string, string>): void {
   for (const frame of frames) {
-    frame.id = crypto.randomUUID();
+    const next = crypto.randomUUID();
+    idMap.set(frame.id, next);
+    frame.id = next;
     if (frame.kind === "group") {
-      remintFrameIds(frame.children);
+      remintFrameIds(frame.children, idMap);
     }
   }
 }
@@ -128,7 +132,10 @@ export function duplicateSlide(model: PresentationModel, index: number): number 
   }
   const copy: Slide = structuredClone(source);
   copy.id = crypto.randomUUID();
-  remintFrameIds(copy.frames);
+  const idMap = new Map<string, string>();
+  remintFrameIds(copy.frames, idMap);
+  // Keep the copy's animations, retargeted onto its fresh frame ids (AC-19).
+  copy.animations = retargetAnimations(copy.animations, idMap);
   model.slides.splice(index + 1, 0, copy);
   model.structureDirty = true;
   return index + 1;

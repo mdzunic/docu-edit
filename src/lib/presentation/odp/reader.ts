@@ -35,6 +35,9 @@ import {
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
 import type { ShapeGeometry } from "../../core/shapes";
 import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
+import { readOdpAnim } from "./anim";
+
+const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
@@ -737,10 +740,17 @@ function splitContentEnvelope(content: string): { prefix: string; suffix: string
 
 function parsePage(page: Element, ctx: OdpContext): Slide {
   const frames: SlideFrame[] = [];
+  // wire id (`xml:id`/`draw:id`) → minted frame id, so an `anim:*` tree's
+  // `smil:targetElement` resolves back to the frame it targets (SPEC-086).
+  const frameForWire = new Map<string, string>();
   for (const child of Array.from(page.children)) {
     const frame = parseFrameChild(child, ctx);
     if (frame) {
       frames.push(frame);
+      const wireId = child.getAttributeNS(XML_NAMESPACE, "id") ?? drawAttr(child, "id");
+      if (wireId) {
+        frameForWire.set(wireId, frame.id);
+      }
     }
   }
   const slide: Slide = { id: crypto.randomUUID(), frames, sourceXml: serializeElement(page) };
@@ -751,7 +761,7 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
   if (pageAttrs) {
     preserved["@page"] = pageAttrs;
   }
-  const anim: string[] = [];
+  const animEls: Element[] = [];
   for (const child of Array.from(page.children)) {
     if (child.namespaceURI === PRESENTATION_NS && child.localName === "notes") {
       // SPEC-083: notes move from `preserved` into the modelled field — the
@@ -761,11 +771,19 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
         slide.notes = notes;
       }
     } else if (isAnimationElement(child)) {
-      anim.push(serializeElement(child));
+      animEls.push(child);
     }
   }
-  if (anim.length > 0) {
-    preserved["anim"] = anim.join("");
+  // A canonical (or Impress-authored equivalent) `anim:*` tree whose targets all
+  // resolve becomes the modelled `animations`; anything out of subset stays
+  // preserved verbatim (AC-4).
+  if (animEls.length > 0) {
+    const animations = readOdpAnim(animEls, (wireId) => frameForWire.get(wireId));
+    if (animations) {
+      slide.animations = animations;
+    } else {
+      preserved["anim"] = animEls.map((el) => serializeElement(el)).join("");
+    }
   }
   // Slide transition (SPEC-085): the page's drawing-page style carries the smil
   // attributes. A subset combination becomes the modelled field; an

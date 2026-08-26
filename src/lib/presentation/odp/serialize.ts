@@ -27,6 +27,7 @@ import type {
   TextFrame,
 } from "../model";
 import { odpTransitionProps } from "../transitions";
+import { writeOdpAnim } from "./anim";
 
 const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
   title: "title",
@@ -212,9 +213,26 @@ export function serializePage(
     const styleName = registry.drawingPageStyle(odpTransitionProps(slide.transition), baseProps);
     attrs = setDrawStyleName(attrs, styleName);
   }
-  const frames = slide.frames.map((frame) => frameXml(frame, registry)).join("");
+  // When the page carries modelled animations, its animatable frames get a
+  // deterministic wire id (`de-f{n}` in z-order among text/shape/image frames)
+  // on both `xml:id` and `draw:id` so the `anim:*` tree's `smil:targetElement`
+  // can reference them (SPEC-086). Untouched/animation-free pages emit no ids,
+  // so their bytes stay verbatim.
+  const wireIdFor = new Map<string, string>();
+  if (slide.animations !== undefined) {
+    let n = 1;
+    for (const frame of slide.frames) {
+      if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image") {
+        wireIdFor.set(frame.id, `de-f${n++}`);
+      }
+    }
+  }
+  const frames = slide.frames.map((frame) => frameXml(frame, registry, wireIdFor.get(frame.id))).join("");
   const notes = notesXml(slide.notes);
-  const anim = slide.preserved?.["anim"] ?? "";
+  // Modelled animations win over any preserved timing (never both).
+  const anim = slide.animations !== undefined
+    ? writeOdpAnim(slide.animations, (id) => wireIdFor.get(id))
+    : (slide.preserved?.["anim"] ?? "");
   return `<draw:page${attrs}>${frames}${notes}${anim}</draw:page>`;
 }
 
@@ -290,14 +308,21 @@ function uniqueName(base: string, used: Set<string>): string {
   return candidate;
 }
 
-function frameXml(frame: Slide["frames"][number], registry: StyleRegistry): string {
+/** The `xml:id`/`draw:id` attribute string for a frame with a wire id, "" when
+ * it has none (SPEC-086 — group/foreign frames re-emit verbatim and never
+ * receive one, and animations never target them). */
+function idAttrs(wireId: string | undefined): string {
+  return wireId ? ` xml:id="${wireId}" draw:id="${wireId}"` : "";
+}
+
+function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireId?: string): string {
   switch (frame.kind) {
     case "text":
-      return textFrameXml(frame, registry);
+      return textFrameXml(frame, registry, wireId);
     case "shape":
-      return shapeFrameXml(frame, registry);
+      return shapeFrameXml(frame, registry, wireId);
     case "image":
-      return imageFrameXml(frame, registry);
+      return imageFrameXml(frame, registry, wireId);
     case "group":
     case "foreign":
       return frame.xml; // verbatim (AC-39)
@@ -315,20 +340,20 @@ function geomAttrs(frame: Slide["frames"][number]): string {
   return `${geom}${transform}`;
 }
 
-function textFrameXml(frame: TextFrame, registry: StyleRegistry): string {
+function textFrameXml(frame: TextFrame, registry: StyleRegistry, wireId?: string): string {
   const cls = frame.role ? ROLE_TO_CLASS[frame.role] : undefined;
   const classAttr = cls ? ` presentation:class="${cls}"` : "";
   const styleName = registry.graphicStyle({ fill: frame.fill, stroke: frame.stroke });
   const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
   const body = frame.paragraphs.map((para) => paragraphXml(para, registry)).join("");
-  return `<draw:frame${classAttr}${styleAttr}${geomAttrs(frame)}><draw:text-box>${body}</draw:text-box></draw:frame>`;
+  return `<draw:frame${classAttr}${idAttrs(wireId)}${styleAttr}${geomAttrs(frame)}><draw:text-box>${body}</draw:text-box></draw:frame>`;
 }
 
-function imageFrameXml(frame: ImageFrame, registry: StyleRegistry): string {
+function imageFrameXml(frame: ImageFrame, registry: StyleRegistry, wireId?: string): string {
   const styleName = registry.graphicStyle({ stroke: frame.stroke });
   const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
   return (
-    `<draw:frame${styleAttr}${geomAttrs(frame)}>` +
+    `<draw:frame${idAttrs(wireId)}${styleAttr}${geomAttrs(frame)}>` +
     `<draw:image xlink:href="${escapeXmlAttribute(frame.mediaId)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
     `</draw:frame>`
   );
@@ -347,22 +372,23 @@ function runXml(run: SlideRun, registry: StyleRegistry): string {
   return styleName ? `<text:span text:style-name="${styleName}">${text}</text:span>` : text;
 }
 
-function shapeFrameXml(frame: ShapeFrame, registry: StyleRegistry): string {
+function shapeFrameXml(frame: ShapeFrame, registry: StyleRegistry, wireId?: string): string {
   const styleName = registry.graphicStyle({ fill: frame.fill, stroke: frame.stroke });
   const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
+  const ids = idAttrs(wireId);
   const geom = geomAttrs(frame);
   const text = frame.paragraphs && frame.paragraphs.length > 0
     ? `<draw:text-box>${frame.paragraphs.map((p) => paragraphXml(p, registry)).join("")}</draw:text-box>`
     : "";
   if (frame.geometry === "rect") {
-    return `<draw:rect${styleAttr}${geom}>${text}</draw:rect>`;
+    return `<draw:rect${ids}${styleAttr}${geom}>${text}</draw:rect>`;
   }
   if (frame.geometry === "ellipse") {
-    return `<draw:ellipse${styleAttr}${geom}>${text}</draw:ellipse>`;
+    return `<draw:ellipse${ids}${styleAttr}${geom}>${text}</draw:ellipse>`;
   }
   const drawType = GEOMETRY_TO_DRAW_TYPE[frame.geometry] ?? "non-primitive";
   return (
-    `<draw:custom-shape${styleAttr}${geom}>${text}` +
+    `<draw:custom-shape${ids}${styleAttr}${geom}>${text}` +
     `<draw:enhanced-geometry draw:type="${escapeXmlAttribute(drawType)}"/></draw:custom-shape>`
   );
 }
