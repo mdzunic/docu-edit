@@ -50,6 +50,10 @@ test("Present the deck, walk it to the end screen, and exit to the last slide", 
   await expect
     .poll(() => counter.evaluate((el) => getComputedStyle(el.closest(".play-hud") as HTMLElement).opacity))
     .toBe("1");
+  // The counter must be light-on-dark so it is legible against the black stage.
+  await expect
+    .poll(() => counter.evaluate((el) => getComputedStyle(el).color))
+    .toBe("rgb(255, 255, 255)");
 
   // Jump to the last slide, then one advance shows the end screen.
   await page.keyboard.press("End");
@@ -60,6 +64,10 @@ test("Present the deck, walk it to the end screen, and exit to the last slide", 
   const endScreen = page.getByTestId("play-end-screen");
   await expect(endScreen).toBeVisible();
   await expect(endScreen).toContainText("End of slide show");
+  // The end-screen text must be light-on-dark so it is legible against the black stage.
+  await expect
+    .poll(() => endScreen.evaluate((el) => getComputedStyle(el).color))
+    .toBe("rgb(255, 255, 255)");
 
   // One more advance exits playback: back on the editor with slide 4 selected.
   await page.keyboard.press("ArrowRight");

@@ -408,7 +408,7 @@ onBeforeUnmount(() => {
 }
 
 .end-screen {
-  color: var(--text-inverse);
+  color: #fff;
   background: #000;
   font-size: var(--text-xl);
   font-weight: var(--weight-medium);
@@ -435,7 +435,7 @@ onBeforeUnmount(() => {
 }
 
 .hud-counter {
-  color: var(--text-inverse);
+  color: #fff;
   background: color-mix(in srgb, #000 55%, transparent);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-3);
@@ -452,7 +452,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--radius-full, 999px);
   background: color-mix(in srgb, #000 55%, transparent);
-  color: var(--text-inverse);
+  color: #fff;
   font-size: var(--text-xl);
   line-height: 1;
   cursor: pointer;
