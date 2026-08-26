@@ -11,6 +11,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SlideStage from "../components/presentation/SlideStage.vue";
+import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
+import { emptyTwoStageView, transitionAnimates } from "../components/presentation/transitionStyles";
 import UiButton from "../components/ui/UiButton.vue";
 import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
@@ -63,6 +65,28 @@ const announce = computed(() => {
   return `Slide ${playback.current.value.slideIndex + 1} of ${slideCount.value} — ${title}`;
 });
 
+// --- auto-advance (AC-17): a slide with advanceAfterMs schedules a forward
+// step; any navigation (which changes the index) or exit reschedules/clears it.
+// Declared before the load invocation below so the setup-time load can call it.
+let autoAdvanceTimer = 0;
+function clearAutoAdvance() {
+  if (autoAdvanceTimer) {
+    clearTimeout(autoAdvanceTimer);
+    autoAdvanceTimer = 0;
+  }
+}
+function scheduleAutoAdvance() {
+  clearAutoAdvance();
+  const ms = currentSlide.value?.transition?.advanceAfterMs;
+  if (typeof ms === "number" && ms > 0 && !playback.atEnd.value) {
+    autoAdvanceTimer = window.setTimeout(() => {
+      autoAdvanceTimer = 0;
+      advanceStep();
+    }, ms);
+  }
+}
+watch([() => playback.current.value.slideIndex, () => playback.atEnd.value], scheduleAutoAdvance);
+
 // --- load (mirrors PresentationView: text id redirects, legacy upgrades) ----
 async function loadPresentation() {
   if (documentKindOf(presentationId.value) === "text") {
@@ -84,6 +108,7 @@ async function loadPresentation() {
   if (model) {
     playback.goTo(routeStartIndex()); // clamp the deep-link n into range
     syncUrl(); // reflect the clamp even when the index did not change (AC-5)
+    scheduleAutoAdvance(); // the starting slide may itself auto-advance (AC-17)
     void nextTick(() => {
       recomputeScale();
       enterFullscreen();
@@ -153,21 +178,59 @@ function onFullscreenChange() {
 function exit() {
   if (exiting) return;
   exiting = true;
+  clearAutoAdvance();
+  clearTransition();
   releaseFullscreen();
   const index = playback.atEnd.value ? Math.max(0, slideCount.value - 1) : playback.current.value.slideIndex;
   void router.replace({ path: `/slides/${presentationId.value}`, query: { return: String(index + 1) } });
 }
 
+// --- transitions (SPEC-085) -------------------------------------------------
+// A forward step between slides plays the INCOMING slide's transition as two
+// stacked stages; backward steps and jumps are instant (AC-13/14). An advance
+// input arriving mid-transition completes the in-flight transition instantly
+// (snap to the plain incoming stage) AND then applies the advance itself — the
+// animation is collapsed, not left running and not queued behind a second one
+// (AC-15). `advanceOnClick` is never consulted here: in-editor playback always
+// advances (the presenter escape hatch, AC-18).
+const transitionView = shallowRef(emptyTwoStageView());
+function clearTransition() {
+  transitionView.value = null;
+}
+function onTransitionDone() {
+  clearTransition();
+}
+
 // --- advance / navigation ---------------------------------------------------
 function advanceStep() {
+  if (transitionView.value) {
+    // Complete the in-flight transition instantly, then fall through to apply
+    // this input as the next advance — the input is honoured (never dropped),
+    // but only one animation is ever live, so bursts collapse rather than
+    // queue a second advance (AC-15).
+    clearTransition();
+  }
   if (playback.atEnd.value) {
     exit();
     return;
   }
+  const fromSlide = currentSlide.value;
   playback.advance();
+  if (playback.atEnd.value) {
+    return; // advanced onto the end screen — no transition
+  }
+  const toSlide = currentSlide.value;
+  if (toSlide && toSlide.transition && transitionAnimates(toSlide.transition, reducedMotion.value, !!fromSlide)) {
+    transitionView.value = { outgoing: fromSlide, incoming: toSlide, transition: toSlide.transition };
+  }
 }
 function backStep() {
+  clearTransition();
   playback.back();
+}
+function jumpTo(index = 0) {
+  clearTransition();
+  playback.goTo(index);
 }
 
 // --- keyboard (window-level while mounted) ----------------------------------
@@ -205,7 +268,7 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
     event.preventDefault();
     const target = Number(digitBuffer);
     digitBuffer = "";
-    playback.goTo(target - 1);
+    jumpTo(target - 1);
     return;
   }
   const action = playbackActionForKey(event.key);
@@ -214,8 +277,8 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   digitBuffer = "";
   if (action === "advance") advanceStep();
   else if (action === "back") backStep();
-  else if (action === "first") playback.goTo(0);
-  else if (action === "last") playback.goTo(slideCount.value - 1);
+  else if (action === "first") jumpTo(0);
+  else if (action === "last") jumpTo(slideCount.value - 1);
 }
 
 // --- pointer / touch: click advances, horizontal swipe navigates ------------
@@ -282,6 +345,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("fullscreenchange", onFullscreenChange);
   motionQuery?.removeEventListener("change", onMotionChange);
   if (idleTimer) clearTimeout(idleTimer);
+  clearAutoAdvance();
 });
 </script>
 
@@ -314,8 +378,20 @@ onBeforeUnmount(() => {
     @pointerup="onPointerUp"
     @pointermove="onPointerMove"
   >
+    <SlideTransitionLayer
+      v-if="presentation && transitionView && !playback.atEnd.value"
+      :outgoing="transitionView.outgoing ?? undefined"
+      :incoming="transitionView.incoming"
+      :transition="transitionView.transition"
+      :width-cm="presentation.slideWidthCm"
+      :height-cm="presentation.slideHeightCm"
+      :media="presentation.media ?? []"
+      :scale="stageScale"
+      :reduced-motion="reducedMotion"
+      @done="onTransitionDone"
+    />
     <SlideStage
-      v-if="presentation && currentSlide && !playback.atEnd.value"
+      v-else-if="presentation && currentSlide && !playback.atEnd.value"
       :slide="currentSlide"
       :width-cm="presentation.slideWidthCm"
       :height-cm="presentation.slideHeightCm"

@@ -15,8 +15,10 @@ import SlideStage from "../components/presentation/SlideStage.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
-import PresentationDownloadButton from "../components/presentation/PresentationDownloadButton.vue";
+import DeckActions from "../components/presentation/DeckActions.vue";
 import NotesPanel from "../components/presentation/NotesPanel.vue";
+import TransitionsPanel from "../components/presentation/TransitionsPanel.vue";
+import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
@@ -28,6 +30,7 @@ import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
+import { useTransitions } from "./presentation/useTransitions";
 import { useDeckActions } from "./presentation/useDeckActions";
 
 const route = useRoute();
@@ -220,6 +223,15 @@ const notes = useNotes({
   commit,
 });
 
+// --- slide transitions (SPEC-085) ------------------------------------------
+const transitions = useTransitions({
+  model: presentation,
+  currentSlide,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+});
+
 // --- fit-to-workspace scaling ----------------------------------------------
 
 const stageContainer = useTemplateRef("stageContainer");
@@ -304,62 +316,28 @@ onBeforeUnmount(() => {
             · {{ formatName }}
           </p>
         </div>
-        <div class="deck-actions">
-          <UiButton
-            variant="ghost"
-            data-testid="presentation-undo"
-            :disabled="!canUndo"
-            aria-label="Undo"
-            @click="slideUndo.undo()"
-          >
-            Undo
-          </UiButton>
-          <UiButton
-            variant="ghost"
-            data-testid="presentation-redo"
-            :disabled="!canRedo"
-            aria-label="Redo"
-            @click="slideUndo.redo()"
-          >
-            Redo
-          </UiButton>
-          <UiButton
-            variant="ghost"
-            class="notes-toggle"
-            data-testid="slides-notes-toggle"
-            :aria-pressed="notes.open.value"
-            @click="notes.toggle()"
-          >
-            Notes
-          </UiButton>
-          <UiButton
-            variant="primary"
-            data-testid="slides-present"
-            :disabled="!deckActions.canPresent.value"
-            :title="deckActions.canPresent.value ? 'Start slideshow' : 'Add a slide to present'"
-            @click="deckActions.present()"
-          >
-            Present
-          </UiButton>
-          <PresentationDownloadButton
-            :other-format-label="deckActions.otherFormatLabel.value"
-            @download="deckActions.download()"
-            @download-copy="deckActions.downloadCopy()"
-          />
-          <UiButton
-            variant="ghost"
-            data-testid="presentation-close"
-            @click="deckActions.close()"
-          >
-            Close
-          </UiButton>
-        </div>
+        <DeckActions
+          :can-undo="canUndo"
+          :can-redo="canRedo"
+          :notes-open="notes.open.value"
+          :can-present="deckActions.canPresent.value"
+          :other-format-label="deckActions.otherFormatLabel.value"
+          @undo="slideUndo.undo()"
+          @redo="slideUndo.redo()"
+          @toggle-notes="notes.toggle()"
+          @present="deckActions.present()"
+          @download="deckActions.download()"
+          @download-copy="deckActions.downloadCopy()"
+          @close="deckActions.close()"
+        />
       </header>
 
       <PresentationToolbar
         :state="stageEdit.editing.toolbarState.value ?? undefined"
         :enabled="stageEdit.editing.toolbarEnabled.value"
         :recent-colors="stageEdit.recentColors.value"
+        :transition-open="transitions.open.value"
+        @transition-toggle="transitions.toggle()"
         @bold="stageEdit.editing.toggleBold()"
         @italic="stageEdit.editing.toggleItalic()"
         @underline="stageEdit.editing.toggleUnderline()"
@@ -438,12 +416,29 @@ onBeforeUnmount(() => {
                 Add slide
               </UiButton>
             </div>
+            <SlideTransitionLayer
+              v-if="transitions.previewState.value"
+              class="stage-preview"
+              :outgoing="transitions.previewState.value.outgoing"
+              :incoming="transitions.previewState.value.incoming"
+              :transition="transitions.previewState.value.transition"
+              :width-cm="presentation.slideWidthCm"
+              :height-cm="presentation.slideHeightCm"
+              :media="deckMedia"
+              :scale="stageScale"
+              @done="transitions.onPreviewDone()"
+            />
           </div>
           <NotesPanel
             v-if="notes.open.value && currentSlide"
             :value="notes.notesText.value"
             :slide-number="currentIndex + 1"
             @input="notes.onInput"
+          />
+          <TransitionsPanel
+            v-if="transitions.open.value && currentSlide"
+            :controller="transitions"
+            :slide-number="currentIndex + 1"
           />
         </div>
       </div>
@@ -508,10 +503,13 @@ onBeforeUnmount(() => {
   font-size: var(--text-sm);
 }
 
-.deck-actions {
+.stage-preview {
+  position: absolute;
+  inset: 0;
   display: flex;
-  gap: var(--space-3);
   align-items: center;
+  justify-content: center;
+  z-index: 5;
 }
 
 .empty-stage {

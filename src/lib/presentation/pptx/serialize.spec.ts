@@ -92,6 +92,24 @@ describe("serializeSlideXml — preserved XML placement", () => {
       last = at;
     }
   });
+
+  it("emits a modelled transition in schema position (SPEC-085 AC-11)", () => {
+    const slide = textSlide([titleFrame([{ runs: [{ text: "x" }] }])]);
+    slide.transition = { type: "push", direction: "left", durationMs: 1000 };
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).toContain(`<p:transition spd="slow"><p:push dir="l"/></p:transition>`);
+    expect(xml.indexOf("<p:clrMapOvr>")).toBeLessThan(xml.indexOf("<p:transition"));
+  });
+
+  it("prefers the modelled transition over a preserved one (never both)", () => {
+    const slide = textSlide([titleFrame([{ runs: [{ text: "x" }] }])], {
+      "p:transition": `<p:transition><p:morph/></p:transition>`,
+    });
+    slide.transition = { type: "fade", durationMs: 600 };
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).toContain(`<p:transition spd="med"><p:fade/></p:transition>`);
+    expect(xml).not.toContain("p:morph");
+  });
 });
 
 describe("serializeSlideXml — foreign, group, image", () => {

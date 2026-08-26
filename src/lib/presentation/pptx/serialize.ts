@@ -19,6 +19,7 @@ import type {
   SlideRun,
   TextFrame,
 } from "../model";
+import { writePptxTransition } from "../transitions";
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -62,7 +63,10 @@ export function serializeSlideXml(
     .join("");
   const bg = slide.preserved?.["p:bg"] ?? "";
   const clrMapOvr = slide.preserved?.["p:clrMapOvr"] ?? `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>`;
-  const transition = slide.preserved?.["p:transition"] ?? "";
+  // A modelled transition wins over any preserved one (they are never both
+  // present — the reader drops the source XML when it maps the transition);
+  // otherwise re-emit the preserved (out-of-subset) transition verbatim.
+  const transition = slide.transition ? writePptxTransition(slide.transition) : (slide.preserved?.["p:transition"] ?? "");
   const timing = slide.preserved?.["p:timing"] ?? "";
   const extLst = slide.preserved?.["p:extLst"] ?? "";
   return (

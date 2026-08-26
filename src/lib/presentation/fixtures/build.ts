@@ -533,3 +533,192 @@ export async function buildOdpFixtureBytes(): Promise<Uint8Array> {
     { name: "META-INF/manifest.xml", data: encoder.encode(manifest) },
   ]);
 }
+
+// ============================================================================
+// SPEC-085 per-effect transition fixtures
+// ============================================================================
+// Compact `.pptx`/`.odp` decks whose slides each carry one mapped transition
+// (plus a final out-of-subset one), so the reader specs can assert that
+// Impress/PowerPoint-authored markup parses to the expected model (AC-21) and
+// the round-trip specs have real source bytes to preserve (AC-22).
+
+interface ExpectedTransition {
+  title: string;
+  xml: string; // pptx p:transition markup / odp drawing-page-properties attrs
+  expected: { type: string; direction?: string; durationMs?: number } | null; // null = out of subset
+}
+
+const PPTX_TRANSITION_ROWS: ExpectedTransition[] = [
+  { title: "Fade", xml: `<p:transition spd="med"><p:fade/></p:transition>`, expected: { type: "fade", durationMs: 600 } },
+  { title: "Push", xml: `<p:transition spd="fast"><p:push dir="l"/></p:transition>`, expected: { type: "push", direction: "left", durationMs: 300 } },
+  { title: "Wipe", xml: `<p:transition spd="slow"><p:wipe dir="u"/></p:transition>`, expected: { type: "wipe", direction: "up", durationMs: 1000 } },
+  { title: "Cover", xml: `<p:transition spd="med"><p:cover dir="r"/></p:transition>`, expected: { type: "cover", direction: "right", durationMs: 600 } },
+  { title: "Uncover", xml: `<p:transition spd="med"><p:pull dir="d"/></p:transition>`, expected: { type: "uncover", direction: "down", durationMs: 600 } },
+  { title: "Split", xml: `<p:transition spd="med"><p:split orient="horz" dir="out"/></p:transition>`, expected: { type: "split", durationMs: 600 } },
+  { title: "Morph", xml: `<p:transition spd="med"><p:morph/></p:transition>`, expected: null },
+];
+
+/** The model each transition-fixture slide is expected to parse to (null =
+ * out of subset, i.e. `slide.transition` unset + preserved). */
+export const EXPECTED_TRANSITIONS = PPTX_TRANSITION_ROWS.map((row) => row.expected);
+export const TRANSITION_FIXTURE_TITLES = PPTX_TRANSITION_ROWS.map((row) => row.title);
+
+function pptxTransitionSlide(title: string, transitionXml: string): string {
+  return (
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sld xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
+    pptxSp(2, "Title", { type: "title" }, [`<a:r><a:t>${title}</a:t></a:r>`], xfrm(2, 2, 29, 3)) +
+    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>${transitionXml}</p:sld>`
+  );
+}
+
+/** A minimal, structurally real `.pptx` with one slide per mapped transition
+ * (SPEC-085 AC-22). Shares one blank layout/master/theme; each slide carries
+ * its `p:transition` in schema position. */
+export async function buildPptxTransitionsFixtureBytes(): Promise<Uint8Array> {
+  const n = PPTX_TRANSITION_ROWS.length;
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>` +
+    PPTX_TRANSITION_ROWS.map((_, i) => `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join("") +
+    `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
+    `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>` +
+    `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
+    `</Types>`;
+  const rootRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>` +
+    `</Relationships>`;
+  const sldIds = PPTX_TRANSITION_ROWS.map((_, i) => `<p:sldId id="${256 + i}" r:id="rId${i + 2}"/>`).join("");
+  const presentation =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}">` +
+    `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
+    `<p:sldIdLst>${sldIds}</p:sldIdLst>` +
+    `<p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
+  const presentationRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>` +
+    PPTX_TRANSITION_ROWS.map((_, i) => `<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`).join("") +
+    `<Relationship Id="rId${n + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>` +
+    `</Relationships>`;
+  const slideMaster =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sldMaster xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
+    `<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>` +
+    `<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>`;
+  const slideMasterRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
+    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>` +
+    `</Relationships>`;
+  const slideLayout1 =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sldLayout xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}" type="blank"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
+    `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
+  const layout1Rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>` +
+    `</Relationships>`;
+
+  const entry = (name: string, text: string) => ({ name, data: encoder.encode(text) });
+  const parts = [
+    entry("[Content_Types].xml", contentTypes),
+    entry("_rels/.rels", rootRels),
+    entry("ppt/presentation.xml", presentation),
+    entry("ppt/_rels/presentation.xml.rels", presentationRels),
+    entry("ppt/slideMasters/slideMaster1.xml", slideMaster),
+    entry("ppt/slideMasters/_rels/slideMaster1.xml.rels", slideMasterRels),
+    entry("ppt/slideLayouts/slideLayout1.xml", slideLayout1),
+    entry("ppt/slideLayouts/_rels/slideLayout1.xml.rels", layout1Rels),
+    entry("ppt/theme/theme1.xml", PPTX_THEME),
+  ];
+  PPTX_TRANSITION_ROWS.forEach((row, i) => {
+    parts.push(entry(`ppt/slides/slide${i + 1}.xml`, pptxTransitionSlide(row.title, row.xml)));
+    parts.push(entry(`ppt/slides/_rels/slide${i + 1}.xml.rels`, SLIDE_RELS));
+  });
+  return zip(parts);
+}
+
+const ODF_SMIL_NS = "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0";
+
+// The drawing-page-properties attributes each odp transition slide carries.
+const ODP_TRANSITION_PROPS: string[] = [
+  `smil:type="fade" smil:subtype="crossfade" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+  `smil:type="pushWipe" smil:subtype="fromRight" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+  `smil:type="barWipe" smil:subtype="topToBottom" smil:direction="reverse" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+  `smil:type="slideWipe" smil:subtype="fromLeft" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+  `smil:type="slideWipe" smil:subtype="fromTop" smil:direction="reverse" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+  `smil:type="barnDoorWipe" smil:subtype="horizontal" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+  `smil:type="spiralWipe" smil:subtype="clockwiseTop" smil:dur="PT0.8S" presentation:transition-type="manual"`,
+];
+
+/** The odp model each transition-fixture page parses to (durations are 800ms
+ * here, unlike the pptx twin's spd buckets). */
+export const EXPECTED_ODP_TRANSITIONS = [
+  { type: "fade", durationMs: 800 },
+  { type: "push", direction: "left", durationMs: 800 },
+  { type: "wipe", direction: "up", durationMs: 800 },
+  { type: "cover", direction: "right", durationMs: 800 },
+  { type: "uncover", direction: "down", durationMs: 800 },
+  { type: "split", durationMs: 800 },
+  null,
+];
+
+/** A minimal `.odp` with one page per mapped transition, each carrying a
+ * `de-fixture-dpN` drawing-page automatic style with the smil attributes
+ * (SPEC-085 AC-22). */
+export async function buildOdpTransitionsFixtureBytes(): Promise<Uint8Array> {
+  const styles = ODP_TRANSITION_PROPS.map(
+    (props, i) => `<style:style style:name="fdp${i + 1}" style:family="drawing-page"><style:drawing-page-properties ${props}/></style:style>`,
+  ).join("");
+  const pages = PPTX_TRANSITION_ROWS.map(
+    (row, i) => `<draw:page draw:name="page${i + 1}" draw:style-name="fdp${i + 1}">${odpFrame("title", [row.title], geom(2, 2, 29, 3))}</draw:page>`,
+  ).join("");
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-content xmlns:office="${ODF_OFFICE_NS}" xmlns:style="${ODF_STYLE_NS}" xmlns:text="${ODF_TEXT_NS}"` +
+    ` xmlns:draw="${ODF_DRAW_NS}" xmlns:fo="${ODF_FO_NS}" xmlns:svg="${ODF_SVG_NS}"` +
+    ` xmlns:presentation="${ODF_PRESENTATION_NS}" xmlns:smil="${ODF_SMIL_NS}" office:version="1.2">` +
+    `<office:automatic-styles>${styles}</office:automatic-styles>` +
+    `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
+    `</office:document-content>`;
+  const styleParts =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-styles xmlns:office="${ODF_OFFICE_NS}" xmlns:style="${ODF_STYLE_NS}" xmlns:fo="${ODF_FO_NS}"` +
+    ` xmlns:svg="${ODF_SVG_NS}" xmlns:draw="${ODF_DRAW_NS}" xmlns:presentation="${ODF_PRESENTATION_NS}" office:version="1.2">` +
+    `<office:automatic-styles>` +
+    `<style:page-layout style:name="PL1"><style:page-layout-properties fo:page-width="33.867cm" fo:page-height="19.05cm"/></style:page-layout>` +
+    `</office:automatic-styles>` +
+    `<office:master-styles><style:master-page style:name="Default" style:page-layout-name="PL1"/></office:master-styles>` +
+    `</office:document-styles>`;
+  const meta =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-meta xmlns:office="${ODF_OFFICE_NS}" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2">` +
+    `<office:meta><dc:title>Transitions fixture</dc:title></office:meta></office:document-meta>`;
+  const manifest =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
+    `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.presentation"/>` +
+    `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
+    `</manifest:manifest>`;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.presentation"), store: true },
+    { name: "content.xml", data: encoder.encode(content) },
+    { name: "styles.xml", data: encoder.encode(styleParts) },
+    { name: "meta.xml", data: encoder.encode(meta) },
+    { name: "META-INF/manifest.xml", data: encoder.encode(manifest) },
+  ]);
+}

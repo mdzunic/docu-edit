@@ -25,6 +25,8 @@ const props = defineProps({
   enabled: { type: Boolean, default: false },
   /** Recently applied text colours, for the colour picker. */
   recentColors: { type: Array, default: () => [] },
+  /** Whether the slide-transition panel is open (SPEC-085). */
+  transitionOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -38,6 +40,7 @@ const emit = defineEmits([
   "bullet",
   "indent",
   "outdent",
+  "transition-toggle",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -236,6 +239,19 @@ onBeforeUnmount(() => observer?.disconnect());
       </div>
     </Teleport>
 
+    <div class="tb-group tb-slide-actions">
+      <button
+        type="button"
+        class="tb-toggle"
+        data-testid="slides-transition-toggle"
+        aria-label="Transition"
+        :aria-pressed="transitionOpen"
+        @click="emit('transition-toggle')"
+      >
+        Transition
+      </button>
+    </div>
+
     <div
       v-show="compact"
       class="tb-group tb-overflow"
@@ -320,6 +336,14 @@ onBeforeUnmount(() => observer?.disconnect());
 .tb-toggle:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.tb-slide-actions {
+  margin-inline-start: auto;
+}
+
+.tb-slide-actions .tb-toggle {
+  width: auto;
 }
 
 .tb-overflow {

@@ -27,6 +27,31 @@ export type PresentationFormat = "pptx" | "odp";
  * a placeholder (vs. a free text box). */
 export type PlaceholderRole = "title" | "subtitle" | "body" | "other";
 
+/** The animated slide-transition effects this editor models (SPEC-085) — the
+ * deliberate subset that maps cleanly across pptx and odp. `"none"` (an
+ * explicit hard cut) is a separate, fully-set model value, distinct from an
+ * absent `Slide.transition`. `lib/presentation/transitions.ts` is the
+ * normative source for the wire mappings. */
+export type TransitionType = "fade" | "push" | "wipe" | "cover" | "uncover" | "split";
+export type TransitionDirection = "left" | "right" | "up" | "down";
+
+export interface SlideTransition {
+  /** `"none"` = an explicit hard cut the user chose (still a set value). */
+  type: TransitionType | "none";
+  /** Movement/reveal direction of the incoming content; defaults per type:
+   *  push/wipe/cover/uncover → left; fade/split/none ignore it (split is
+   *  always horizontal-out). "left" = the incoming slide travels leftward
+   *  (enters from the right edge), matching PowerPoint's `dir="l"`. */
+  direction?: TransitionDirection;
+  /** 100..5000; absent = 600 (`DEFAULT_TRANSITION_DURATION_MS`). */
+  durationMs?: number;
+  /** Absent = true. Only `false` is stored (the presenter escape hatch keeps
+   *  in-editor playback advancing regardless — see SPEC-085 AC-18). */
+  advanceOnClick?: false;
+  /** Absent = no auto-advance; else advance this slide after N ms. */
+  advanceAfterMs?: number;
+}
+
 /** A resolved frame/background fill. Only the two forms this spec renders —
  * a solid colour and "no fill"; gradients resolve to their first stop's
  * colour and image/pattern fills to white before they reach here. */
@@ -143,6 +168,12 @@ export interface Slide {
    *  change rebuilds just the notes-slide part while the slide part stays
    *  byte-verbatim (pptx AC). Odp rebuilds the whole page either way. */
   notesDirty?: true;
+  /** The slide's animated entrance transition (SPEC-085): a modelled subset
+   *  value the readers populate from the wire mappings and the writers
+   *  serialise. Absent means either a plain slide OR a preserved out-of-subset
+   *  transition (distinguished by `preserved`); an explicit hard cut the user
+   *  chose is `{ type: "none" }`. See `lib/presentation/transitions.ts`. */
+  transition?: SlideTransition;
   /** pptx: this slide's part path ("ppt/slides/slide2.xml"); ties the
    *  model slide to its verbatim part in `opaque`. Absent for .odp and
    *  (later) from-scratch slides. */

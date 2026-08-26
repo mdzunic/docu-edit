@@ -26,6 +26,7 @@ import type {
   SlideRun,
   TextFrame,
 } from "../model";
+import { odpTransitionProps } from "../transitions";
 
 const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
   title: "title",
@@ -49,12 +50,15 @@ export class StyleRegistry {
   private readonly paraStyles: string[] = [];
   private readonly textStyles: string[] = [];
   private readonly graphicStyles: string[] = [];
+  private readonly drawingPageStyles: string[] = [];
   private readonly paraCache = new Map<string, string>();
   private readonly textCache = new Map<string, string>();
   private readonly graphicCache = new Map<string, string>();
+  private readonly drawingPageCache = new Map<string, string>();
   private pCount = 0;
   private tCount = 0;
   private gCount = 0;
+  private dpCount = 0;
 
   /** Advances every counter past any `de-`-prefixed names already present in
    * `source`, so a (pathological) source using the reserved prefix cannot
@@ -70,6 +74,7 @@ export class StyleRegistry {
     this.pCount = maxOf("P");
     this.tCount = maxOf("T");
     this.gCount = maxOf("G");
+    this.dpCount = maxOf("DP");
   }
 
   paragraphStyle(para: SlideParagraph): string | undefined {
@@ -134,14 +139,35 @@ export class StyleRegistry {
     return name;
   }
 
+  /** Mints (or reuses) a `de-DP{n}` drawing-page style carrying a transition's
+   * smil/presentation attributes plus the copied fill/background of the page's
+   * original drawing-page style, so setting a transition never disturbs the
+   * background (SPEC-085). `baseProps` is the filtered original property string
+   * ("" for a page that had none). Returns the minted style name. */
+  drawingPageStyle(smilProps: string, baseProps: string): string {
+    const props = [baseProps, smilProps].filter((p) => p.length > 0).join(" ");
+    const cached = this.drawingPageCache.get(props);
+    if (cached) {
+      return cached;
+    }
+    const name = `de-DP${++this.dpCount}`;
+    this.drawingPageCache.set(props, name);
+    this.drawingPageStyles.push(
+      `<style:style style:name="${name}" style:family="drawing-page"><style:drawing-page-properties ${props}/></style:style>`,
+    );
+    return name;
+  }
+
   hasStyles(): boolean {
-    return this.paraStyles.length + this.textStyles.length + this.graphicStyles.length > 0;
+    return (
+      this.paraStyles.length + this.textStyles.length + this.graphicStyles.length + this.drawingPageStyles.length > 0
+    );
   }
 
   /** The generated `<style:style>` elements, to splice before
    * `</office:automatic-styles>`. */
   xml(): string {
-    return [...this.paraStyles, ...this.textStyles, ...this.graphicStyles].join("");
+    return [...this.paraStyles, ...this.textStyles, ...this.graphicStyles, ...this.drawingPageStyles].join("");
   }
 }
 
@@ -163,6 +189,7 @@ export function serializePage(
   registry: StyleRegistry,
   usedNames: Set<string>,
   master: string,
+  styleSource = "",
 ): string {
   let attrs = slide.preserved?.["@page"];
   if (attrs) {
@@ -176,10 +203,62 @@ export function serializePage(
     const name = uniqueName("page", usedNames);
     attrs = ` draw:name="${escapeXmlAttribute(name)}" draw:master-page-name="${escapeXmlAttribute(master)}"`;
   }
+  // A modelled transition mints a fresh drawing-page style (copying the
+  // original style's fill/background) and repoints `draw:style-name` at it, so
+  // the replaced original's smil attributes never re-emit (SPEC-085 AC-11).
+  if (slide.transition) {
+    const originalStyle = drawAttr(attrs, "draw:style-name");
+    const baseProps = originalStyle ? drawingPageBaseProps(styleSource, originalStyle) : "";
+    const styleName = registry.drawingPageStyle(odpTransitionProps(slide.transition), baseProps);
+    attrs = setDrawStyleName(attrs, styleName);
+  }
   const frames = slide.frames.map((frame) => frameXml(frame, registry)).join("");
   const notes = notesXml(slide.notes);
   const anim = slide.preserved?.["anim"] ?? "";
   return `<draw:page${attrs}>${frames}${notes}${anim}</draw:page>`;
+}
+
+/** Sets/replaces `draw:style-name` in a page's attribute string. */
+function setDrawStyleName(attrs: string, styleName: string): string {
+  if (/draw:style-name="[^"]*"/.test(attrs)) {
+    return attrs.replace(/draw:style-name="[^"]*"/, `draw:style-name="${styleName}"`);
+  }
+  return `${attrs} draw:style-name="${styleName}"`;
+}
+
+/** The fill/background properties of the drawing-page style named `styleName`
+ * in `source`, with any transition (smil/presentation-transition/duration)
+ * attributes stripped — what the minted style copies so a transition edit
+ * leaves the background untouched. "" when the style is not found. */
+function drawingPageBaseProps(source: string, styleName: string): string {
+  const escaped = styleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const styleRe = new RegExp(
+    `<style:style\\b[^>]*style:name="${escaped}"[^>]*>([\\s\\S]*?)</style:style>`,
+  );
+  const styleMatch = styleRe.exec(source);
+  const inner = styleMatch
+    ? styleMatch[1]
+    : new RegExp(`<style:style\\b[^>]*style:name="${escaped}"[^>]*/>`).test(source)
+      ? ""
+      : "";
+  const propsMatch = /<style:drawing-page-properties\b([^>]*?)\/?>/.exec(inner);
+  if (!propsMatch) {
+    return "";
+  }
+  const kept: string[] = [];
+  for (const attr of propsMatch[1].matchAll(/([\w-]+:[\w-]+)="([^"]*)"/g)) {
+    const name = attr[1];
+    if (
+      name.startsWith("smil:") ||
+      name === "presentation:transition-type" ||
+      name === "presentation:transition-speed" ||
+      name === "presentation:duration"
+    ) {
+      continue; // drop the transition being replaced
+    }
+    kept.push(`${name}="${attr[2]}"`);
+  }
+  return kept.join(" ");
 }
 
 /** A page's `presentation:notes` regenerated from the model's speaker notes

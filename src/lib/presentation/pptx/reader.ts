@@ -52,6 +52,7 @@ import {
   type SlideRun,
 } from "../model";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
+import { readPptxTransition } from "../transitions";
 
 export class PptxOpenError extends Error {}
 
@@ -997,6 +998,17 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
     slide.background = background;
   }
   const preserved = collectPreserved(slideRoot);
+  // A subset transition becomes the modelled field; its source XML is then
+  // dropped from `preserved` so it is never emitted twice. An out-of-subset
+  // transition stays in `preserved` untouched (SPEC-085 AC-2/AC-3).
+  if (preserved["p:transition"]) {
+    const transitionEl = pChild(slideRoot, "transition");
+    const transition = transitionEl ? readPptxTransition(transitionEl) : undefined;
+    if (transition) {
+      slide.transition = transition;
+      delete preserved["p:transition"];
+    }
+  }
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
   }
