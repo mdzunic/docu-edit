@@ -97,3 +97,58 @@ test("add animations, build them in playback, and round-trip the panel", async (
   await expect(rows.nth(0)).toContainText("Fade in");
   await expect(rows.nth(1)).toContainText("Fly in");
 });
+
+test("an advance mid-build completes the current group instantly and holds (AC-24)", async ({ page }) => {
+  await openFixture(page);
+  const deckId = page.url().match(/\/slides\/([^/?]+)/)?.[1] ?? "";
+  expect(deckId).not.toBe("");
+
+  await openPanel(page);
+  const workspace = page.getByTestId("stage-workspace");
+
+  // Body fades in on click over a long 5s window so the first advance is caught
+  // with the group still animating.
+  await workspace.getByText("Body line").click();
+  await page.getByTestId("animation-add").click();
+  await expect(page.getByTestId("animation-row")).toHaveCount(1);
+  await page.getByTestId("animation-duration").fill("5");
+
+  // The shape flies in after the body — but only after a 10s delay, so the click
+  // group stays in flight for well over ten seconds. This makes the mid-build
+  // window deterministic: a second advance during it cannot race the settle.
+  await workspace.getByText("Shape text").click();
+  await page.getByTestId("animation-add").click();
+  await expect(page.getByTestId("animation-row")).toHaveCount(2);
+  await page.getByTestId("animation-effect").selectOption("flyIn");
+  await page.getByTestId("animation-direction").selectOption("left");
+  await page.getByTestId("animation-trigger").selectOption("afterPrevious");
+  await page.getByTestId("animation-delay").fill("10");
+
+  // Present from slide 1; both animated frames start hidden.
+  await page.getByTestId("slides-present").click();
+  await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
+  const play = page.getByTestId("presentation-play");
+  const stage = play.getByTestId("slide-stage");
+  await expect(stage.getByText("Body line")).toBeHidden();
+  await expect(stage.getByText("Shape text")).toBeHidden();
+
+  // First advance starts the click group building. The after-previous shape is
+  // still hidden (its 10s delay has not elapsed) — the group is mid-build.
+  await page.keyboard.press("ArrowRight");
+  await expect(stage.getByText("Shape text")).toBeHidden();
+  await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
+
+  // AC-24: an advance arriving mid-build completes the group INSTANTLY — the
+  // shape snaps straight to its rest state without waiting out the 10s delay —
+  // and HOLDS on the slide rather than walking on to the next one.
+  await page.keyboard.press("ArrowRight");
+  await expect(stage.getByText("Body line")).toBeVisible();
+  await expect(stage.getByText("Shape text")).toBeVisible();
+  const shapeFrame = stage.locator(".frame").filter({ hasText: "Shape text" });
+  await expect(shapeFrame).toHaveCSS("transform", "none");
+  await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
+
+  // Only once the group is fully built does a further advance move on.
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/2$`));
+});
