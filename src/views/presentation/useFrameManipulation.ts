@@ -97,23 +97,34 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
 
   // --- move (pointer drag) --------------------------------------------------
 
+  // A pointer travels at least this far (cm) before a press counts as a drag
+  // rather than a click — so a click/double-click that selects or opens a text
+  // session is never swallowed by pointer capture (the reason we do NOT capture
+  // the pointer up front).
+  const DRAG_ENGAGE_CM = (3 * 2.54) / 96;
+
   function onFramePointerDown(frameId: string, event: PointerEvent): void {
     if (deps.isEditing()) return;
     const frame = frameById(frameId);
     const model = deps.model.value;
     const start = pointerCm(event);
     if (!frame || !model || !start) return;
-    event.stopPropagation();
     deps.selection.select(frameId);
 
     const origin: FrameRect = { xCm: frame.xCm, yCm: frame.yCm, widthCm: frame.widthCm, heightCm: frame.heightCm };
     let recorded = false;
-    dragging.value = true;
-    (event.target as HTMLElement | null)?.setPointerCapture?.(event.pointerId);
+    let engaged = false;
 
     const onMove = (move: PointerEvent): void => {
       const now = pointerCm(move);
       if (!now) return;
+      if (!engaged) {
+        if (Math.abs(now.xCm - start.xCm) < DRAG_ENGAGE_CM && Math.abs(now.yCm - start.yCm) < DRAG_ENGAGE_CM) {
+          return;
+        }
+        engaged = true;
+        dragging.value = true;
+      }
       if (!recorded) {
         deps.record(`Move ${frameNoun(frame)}`);
         recorded = true;
@@ -146,10 +157,10 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
 
     const origin: FrameRect = { xCm: frame.xCm, yCm: frame.yCm, widthCm: frame.widthCm, heightCm: frame.heightCm };
     // Images keep aspect by default (Shift frees); other frames keep aspect
-    // only while Shift is held (AC-22/23).
+    // only while Shift is held (AC-22/23). Tracked via window listeners (no
+    // pointer capture, matching the move gesture).
     let recorded = false;
     dragging.value = true;
-    (event.target as HTMLElement | null)?.setPointerCapture?.(event.pointerId);
 
     const onMove = (move: PointerEvent): void => {
       const now = pointerCm(move);

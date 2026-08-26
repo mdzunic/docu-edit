@@ -132,6 +132,7 @@ const previewStyle = computed(() => {
         :width-cm="widthCm"
         :height-cm="heightCm"
         @handle-pointerdown="(handle, event) => emit('handle-pointerdown', selectedFrameId, handle, event)"
+        @edit-request="(point) => emit('frame-start-edit', selectedFrameId, point)"
       />
       <div
         v-if="previewStyle"

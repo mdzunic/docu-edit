@@ -140,23 +140,36 @@ export function useFrameInsertion(deps: FrameInsertionDeps) {
   async function insertImageFile(file: File): Promise<void> {
     const model = deps.model.value;
     if (!model) return;
+    const contentType = file.type;
+    if (!(PRESENTATION_IMAGE_MIME_TYPES as readonly string[]).includes(contentType)) {
+      deps.reportError("That file isn't a supported image (PNG, JPEG, GIF or WebP).");
+      return;
+    }
+    let buffer: Uint8Array;
     try {
-      const buffer = new Uint8Array(await file.arrayBuffer());
-      const contentType = file.type || "image/png";
-      const natural = decodeImageDimensions(buffer, contentType);
-      const media: MediaPart = { mediaId: "", contentType, data: bytesToBase64(buffer) };
-      const rect = insertImageRect(model, natural);
-      deps.record("Insert image");
-      const id = insertImageFrame(model, deps.currentIndex.value, media, rect);
-      if (!id) {
-        deps.reportError("That image couldn't be inserted.");
-        return;
-      }
-      deps.selection.select(id);
-      deps.commit();
+      buffer = new Uint8Array(await file.arrayBuffer());
     } catch {
       deps.reportError("That image couldn't be read.");
+      return;
     }
+    const natural = decodeImageDimensions(buffer, contentType);
+    // A format we can decode (PNG/JPEG/GIF) that yields no dimensions is
+    // corrupt — reject it and change nothing (AC-9). WebP has no in-repo
+    // decoder, so an undecodable webp still inserts at the fallback fit box.
+    if (!natural && contentType !== "image/webp") {
+      deps.reportError("That image is broken or unreadable.");
+      return;
+    }
+    const media: MediaPart = { mediaId: "", contentType, data: bytesToBase64(buffer) };
+    const rect = insertImageRect(model, natural);
+    deps.record("Insert image");
+    const id = insertImageFrame(model, deps.currentIndex.value, media, rect);
+    if (!id) {
+      deps.reportError("That image couldn't be inserted.");
+      return;
+    }
+    deps.selection.select(id);
+    deps.commit();
   }
 
   return {

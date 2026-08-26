@@ -18,7 +18,7 @@ const props = defineProps({
   heightCm: { type: Number, required: true },
 });
 
-const emit = defineEmits(["handle-pointerdown"]);
+const emit = defineEmits(["handle-pointerdown", "edit-request"]);
 
 const frame = computed(() => asSlideFrame(props.frame));
 
@@ -42,6 +42,13 @@ const CURSORS = {
 
 function onHandleDown(handle = "nw", event = new PointerEvent("pointerdown")) {
   emit("handle-pointerdown", handle, event);
+}
+
+// A double-click on the selection chrome (over a text frame's edge, where a
+// handle would otherwise swallow it) still opens a text-editing session at the
+// click point — the parent decides whether the frame is editable.
+function onOverlayDblclick(event = new MouseEvent("dblclick")) {
+  emit("edit-request", { x: event.clientX, y: event.clientY });
 }
 </script>
 
@@ -79,7 +86,9 @@ function onHandleDown(handle = "nw", event = new PointerEvent("pointerdown")) {
         :style="{ cursor: CURSORS[h] }"
         :data-handle="h"
         data-testid="resize-handle"
+        @mousedown.stop
         @pointerdown="onHandleDown(h, $event)"
+        @dblclick="onOverlayDblclick($event)"
       />
     </div>
   </div>

@@ -288,9 +288,15 @@ watch(() => props.frame, paint, { deep: true });
 }
 
 .text-frame.is-editing,
-.text-frame.is-selected,
-.frame.is-selected {
+.text-frame.is-selected {
   cursor: text;
+}
+
+/* Non-text frames show a move cursor when selected (AC-16); a text box keeps
+   its text cursor so a click drops the caret. */
+.shape-frame.is-selected,
+.frame.is-selected:not(.text-frame) {
+  cursor: move;
 }
 
 .text-frame.is-editing {
