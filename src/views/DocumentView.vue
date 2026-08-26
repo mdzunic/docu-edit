@@ -377,6 +377,7 @@ import {
 } from "../lib/undoHistory";
 import { findShortcut, isOutsideDocumentInput } from "../lib/shortcuts";
 import { applyTrackChanges } from "../lib/trackChangesDiff";
+import { remapSelectionThroughTracking } from "../lib/trackChangesRemap";
 import { isMacPlatform } from "../lib/core/platform";
 
 const route = useRoute();
@@ -1283,10 +1284,9 @@ function applyEdit(
   // accept/reject commands themselves, whose result IS the final state a
   // reviewer chose, not a new edit to re-diff.
   if (before && !options.skipTrackChanges && isRecording()) {
-    result = {
-      model: applyTrackChanges(before, result.model, trackChangesAuthorName.value, new Date().toISOString()),
-      selection: result.selection,
-    };
+    const tracked = applyTrackChanges(before, result.model, trackChangesAuthorName.value, new Date().toISOString());
+    // The command's selection is in untracked coordinates; retained deletions shift offsets (trackChangesRemap.ts).
+    result = { model: tracked, selection: remapSelectionThroughTracking(result.model, tracked, result.selection) };
   }
   // SPEC-055 AC-15/16: reordering captioned objects renumbers in the same undo step.
   result = { model: renumberCaptions(result.model), selection: result.selection };

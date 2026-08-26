@@ -530,3 +530,43 @@ test("tracked deletions are excluded from the word count and from find results (
   await page.getByTestId("find-query").fill("alpha");
   await expect(page.getByTestId("find-count")).toHaveText(/0/);
 });
+
+test("typing a replacement over a selection keystroke-by-keystroke stays one clean redline pair, and Accept all commits it (AC-4, AC-7)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await seedParagraph(page, "Opens .docx and more");
+  await toggleRecording(page);
+
+  await content(page).click();
+  await page.keyboard.press(LINE_START);
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press("Shift+ArrowRight"); // select "Opens"
+  }
+  // The per-keystroke delay matters: each character is its own edit event,
+  // exactly like a person typing. The first keystroke replaces the selection
+  // (one tracked deletion + one insertion); every later keystroke must land
+  // after the previous insertion — the regression was the caret staying
+  // inside the resurrected strike, scattering the insertions into it.
+  await page.keyboard.type("Round-trips", { delay: 42 });
+
+  await expect(content(page)).toContainText("OpensRound-trips .docx and more");
+  await expect(content(page).getByText("Opens", { exact: true })).toHaveCSS(
+    "text-decoration-line",
+    /line-through/,
+  );
+  await expect(content(page).getByText("Round-trips", { exact: true })).toHaveCSS(
+    "text-decoration-line",
+    /underline/,
+  );
+
+  // Exactly one deletion + one insertion in the review pane — not a scatter
+  // of interleaved marks.
+  await openTrackChangesPane(page);
+  await expect(pane(page).locator(".track-change-item")).toHaveCount(2);
+
+  await pane(page).getByTestId("track-changes-accept-all").click();
+  await expect(content(page)).toContainText("Round-trips .docx and more");
+  await expect(content(page)).not.toContainText("Opens");
+  await expect(pane(page).locator(".track-change-item")).toHaveCount(0);
+});
