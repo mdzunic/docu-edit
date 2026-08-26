@@ -1137,8 +1137,8 @@ function handleScroll() {
   scrollHooks.forEach((cb) => cb());
 }
 
-// Zoom moves every measured overlay just as a scroll does — policy in useOverlayRemeasure.
-const { remeasureDrawingHandles } = useOverlayRemeasure({ ...editorContext, scrollHooks, remeasureShapeHandles, remeasureImageHandles, remeasureChartHandles });
+// Zoom/resize move every measured overlay just as a scroll does — policy in useOverlayRemeasure.
+const { remeasureDrawingHandles } = useOverlayRemeasure({ ...editorContext, scrollHooks, remeasureShapeHandles, remeasureImageHandles, remeasureChartHandles, clearTableHover: () => (tableHover.value = null) });
 
 function handleSelectionChange() {
   const root = contentRoot.value;

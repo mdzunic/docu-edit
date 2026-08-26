@@ -482,3 +482,54 @@ test("a multi-paragraph fixture cell renders both paragraphs (AC-28)", async ({ 
   await expect(paragraphs.nth(0)).toHaveText("First line");
   await expect(paragraphs.nth(1)).toHaveText("Second line");
 });
+
+test("hover handles drop on a zoom relayout instead of latching stale geometry, and re-arm at the new zoom (AC-20, AC-21 regression)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Intro paragraph up top.");
+  await page.keyboard.press("Enter");
+  await insertViaPicker(page, 3, 4);
+  await cellParagraph(page, 0, 0).click();
+  await page.keyboard.type("cell");
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.type("Below the table there is more text.");
+  // A second page makes fit-page tile the pages side by side — the relayout
+  // that used to leave the stale hover box latched over unrelated content
+  // (the pointer's content-frame position kept landing inside the old
+  // withinHandleBand box, so the handles could not be dismissed).
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("break-page").click();
+  await page.keyboard.type("Page two text lives here.");
+
+  // Arm the hover at 100%. Raw mouse moves throughout: the handles' own
+  // actionability is not under test, and hover() would inherit unrelated
+  // overlay interception issues.
+  await page.locator("table.doc-table").scrollIntoViewIfNeeded();
+  const armBox = (await cellParagraph(page, 0, 0).boundingBox())!;
+  await page.mouse.move(armBox.x + 10, armBox.y + 5, { steps: 3 });
+  await expect(page.getByTestId("table-handles")).toBeVisible();
+
+  // The fit-page relayout must drop the hover, not keep painting it stale.
+  await page.getByTestId("zoom-percent").click();
+  await page.getByTestId("zoom-fit-page").click();
+  await expect(page.getByTestId("table-handles")).toBeHidden();
+
+  // A fresh hover at the new zoom re-arms with correct geometry: the
+  // column-0 delete handle sits over the table's horizontal span, just
+  // above its top edge.
+  await page.locator("table.doc-table").scrollIntoViewIfNeeded();
+  const cellBox = (await cellParagraph(page, 0, 0).boundingBox())!;
+  await page.mouse.move(cellBox.x + 5, cellBox.y + 3, { steps: 3 });
+  await expect(page.getByTestId("table-handles")).toBeVisible();
+  const tableBox = (await page.locator("table.doc-table").boundingBox())!;
+  const dot = (await page.getByTestId("table-handle-delete-col-0").boundingBox())!;
+  expect(dot.x + dot.width / 2).toBeGreaterThan(tableBox.x - 2);
+  expect(dot.x + dot.width / 2).toBeLessThan(tableBox.x + tableBox.width + 2);
+  expect(Math.abs(dot.y + dot.height - tableBox.y)).toBeLessThan(30);
+
+  // And dismissal still works at the new zoom: far-away page-2 text is well
+  // outside the (fresh) handle band.
+  const far = (await content(page).getByText("Page two text").boundingBox())!;
+  await page.mouse.move(far.x + 20, far.y + 5, { steps: 4 });
+  await expect(page.getByTestId("table-handles")).toBeHidden();
+});

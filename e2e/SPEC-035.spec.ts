@@ -353,3 +353,64 @@ test("language round-trips through a .docx save and reopen, reflected in the sta
   const lang = await content(page).locator("span").first().getAttribute("lang");
   expect(lang).toBe("de-DE");
 });
+
+test("underlines stay registered with their words when a side pane opens (AC-1)", async ({ page }) => {
+  await createDocument(page);
+  await typeBody(page, "Thiss word is wrng here");
+  await waitForStableUnderlines(page, 2);
+
+  /** Worst |Δleft|/|Δtop| between each underline's box and its own word's
+   * real glyph box (measured via a Range over the content's text) — ~0 when
+   * the overlay is registered with the text, and half a page width once the
+   * pane has re-centered the page under stale rects. */
+  const misalignment = (): Promise<number> =>
+    page.evaluate(() => {
+      const root = document.querySelector('[data-testid="document-content"]');
+      if (!root) {
+        return Number.POSITIVE_INFINITY;
+      }
+      let worst = 0;
+      for (const el of Array.from(document.querySelectorAll('[data-testid="spell-underline"]'))) {
+        const word = el.getAttribute("data-word") ?? "";
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node: Text | null = null;
+        while (walker.nextNode()) {
+          const candidate = walker.currentNode as Text;
+          if (candidate.data.includes(word)) {
+            node = candidate;
+            break;
+          }
+        }
+        if (!node) {
+          return Number.POSITIVE_INFINITY;
+        }
+        const index = node.data.indexOf(word);
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + word.length);
+        const wordBox = range.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        worst = Math.max(worst, Math.abs(box.left - wordBox.left), Math.abs(box.top - wordBox.top));
+      }
+      return worst;
+    });
+
+  // Registered before the pane opens…
+  expect(await misalignment()).toBeLessThanOrEqual(2);
+
+  // …then the comments pane narrows the workspace and the page re-centers.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-comments-pane").click();
+  await expect(page.getByTestId("comments-pane")).toBeVisible();
+
+  // The re-measure is idle-scheduled off the resize; poll until the
+  // underlines line back up. Without the resize trigger they sat at the old
+  // page origin indefinitely (the user-visible displacement bug).
+  await expect.poll(misalignment, { timeout: 5000 }).toBeLessThanOrEqual(2);
+
+  // And closing the pane re-registers them the same way.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-comments-pane").click();
+  await expect(page.getByTestId("comments-pane")).toBeHidden();
+  await expect.poll(misalignment, { timeout: 5000 }).toBeLessThanOrEqual(2);
+});
