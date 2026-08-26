@@ -16,6 +16,7 @@ import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
 import PresentationDownloadButton from "../components/presentation/PresentationDownloadButton.vue";
+import NotesPanel from "../components/presentation/NotesPanel.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
@@ -27,6 +28,7 @@ import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
 import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
+import { useNotes } from "./presentation/useNotes";
 
 const route = useRoute();
 const router = useRouter();
@@ -195,6 +197,15 @@ const stageEdit = usePresentationEditing({
   reportError: (message) => addToast(message),
 });
 
+// --- speaker notes (SPEC-083) ----------------------------------------------
+const notes = useNotes({
+  model: presentation,
+  currentSlide,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+});
+
 // --- fit-to-workspace scaling ----------------------------------------------
 
 const stageContainer = useTemplateRef("stageContainer");
@@ -229,6 +240,7 @@ onMounted(() => {
   }
   window.addEventListener("resize", recomputeScale);
   window.addEventListener("keydown", stageEdit.onGlobalKeydown);
+  window.addEventListener("keydown", notes.onGlobalKeydown);
   void nextTick(recomputeScale);
 });
 
@@ -236,6 +248,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   window.removeEventListener("resize", recomputeScale);
   window.removeEventListener("keydown", stageEdit.onGlobalKeydown);
+  window.removeEventListener("keydown", notes.onGlobalKeydown);
 });
 
 // --- download (own format + "Download a copy as…" the other) ---------------
@@ -320,6 +333,15 @@ function close() {
           >
             Redo
           </UiButton>
+          <UiButton
+            variant="ghost"
+            class="notes-toggle"
+            data-testid="slides-notes-toggle"
+            :aria-pressed="notes.open.value"
+            @click="notes.toggle()"
+          >
+            Notes
+          </UiButton>
           <PresentationDownloadButton
             :other-format-label="otherFormatLabel"
             @download="download"
@@ -375,47 +397,55 @@ function close() {
           @command="onFilmstripCommand"
           @reorder="onFilmstripReorder"
         />
-        <div
-          ref="stageContainer"
-          class="stage-workspace"
-          data-testid="stage-workspace"
-        >
-          <SlideStage
-            v-if="currentSlide"
-            :slide="currentSlide"
-            :width-cm="presentation.slideWidthCm"
-            :height-cm="presentation.slideHeightCm"
-            :media="deckMedia"
-            :scale="stageScale"
-            :live-label="liveLabel"
-            :selected-frame-id="stageEdit.selection.selectedFrameId.value ?? undefined"
-            :editing-frame-id="stageEdit.editing.editingFrameId.value ?? undefined"
-            :guides="stageEdit.manipulation.guides.value"
-            :draw-preview="stageEdit.insertion.preview.value ?? undefined"
-            :armed="stageEdit.insertion.isArmed.value"
-            @frame-select="stageEdit.onFrameSelect"
-            @frame-start-edit="stageEdit.onStartEdit"
-            @frame-pointerdown="stageEdit.onFramePointerDown"
-            @handle-pointerdown="stageEdit.onHandlePointerDown"
-            @edit-mounted="stageEdit.editing.registerHost"
-            @edit-unmounted="stageEdit.editing.registerHost(null)"
-            @surface-pointerdown="stageEdit.onSurfaceDeselect"
-            @surface-draw="stageEdit.onSurfaceDraw"
-            @surface-mounted="stageEdit.registerSurface"
-          />
+        <div class="stage-column">
           <div
-            v-else
-            class="empty-stage"
-            data-testid="presentation-empty"
+            ref="stageContainer"
+            class="stage-workspace"
+            data-testid="stage-workspace"
           >
-            <h3>This deck has no slides</h3>
-            <UiButton
-              data-testid="presentation-empty-add"
-              @click="addSlideAction"
+            <SlideStage
+              v-if="currentSlide"
+              :slide="currentSlide"
+              :width-cm="presentation.slideWidthCm"
+              :height-cm="presentation.slideHeightCm"
+              :media="deckMedia"
+              :scale="stageScale"
+              :live-label="liveLabel"
+              :selected-frame-id="stageEdit.selection.selectedFrameId.value ?? undefined"
+              :editing-frame-id="stageEdit.editing.editingFrameId.value ?? undefined"
+              :guides="stageEdit.manipulation.guides.value"
+              :draw-preview="stageEdit.insertion.preview.value ?? undefined"
+              :armed="stageEdit.insertion.isArmed.value"
+              @frame-select="stageEdit.onFrameSelect"
+              @frame-start-edit="stageEdit.onStartEdit"
+              @frame-pointerdown="stageEdit.onFramePointerDown"
+              @handle-pointerdown="stageEdit.onHandlePointerDown"
+              @edit-mounted="stageEdit.editing.registerHost"
+              @edit-unmounted="stageEdit.editing.registerHost(null)"
+              @surface-pointerdown="stageEdit.onSurfaceDeselect"
+              @surface-draw="stageEdit.onSurfaceDraw"
+              @surface-mounted="stageEdit.registerSurface"
+            />
+            <div
+              v-else
+              class="empty-stage"
+              data-testid="presentation-empty"
             >
-              Add slide
-            </UiButton>
+              <h3>This deck has no slides</h3>
+              <UiButton
+                data-testid="presentation-empty-add"
+                @click="addSlideAction"
+              >
+                Add slide
+              </UiButton>
+            </div>
           </div>
+          <NotesPanel
+            v-if="notes.open.value && currentSlide"
+            :value="notes.notesText.value"
+            :slide-number="currentIndex + 1"
+            @input="notes.onInput"
+          />
         </div>
       </div>
     </div>
@@ -506,8 +536,16 @@ function close() {
   max-height: 100%;
 }
 
+.stage-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .stage-workspace {
   position: relative;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   display: flex;

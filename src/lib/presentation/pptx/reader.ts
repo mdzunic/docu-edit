@@ -73,6 +73,7 @@ const SLIDE_LAYOUT_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocum
 const SLIDE_MASTER_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
 const THEME_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const NOTES_SLIDE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 const CORE_PROPERTIES_RELATIONSHIP =
   "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 const CUSTOM_PROPERTIES_RELATIONSHIP =
@@ -745,6 +746,56 @@ function backgroundOf(
   return undefined;
 }
 
+/** Strips trailing wholly-empty paragraphs from a notes list, returning
+ * `undefined` when nothing text-bearing remains (`[]` is never produced). */
+function trimNotes(paragraphs: string[]): string[] | undefined {
+  const trimmed = paragraphs.slice();
+  while (trimmed.length > 0 && trimmed[trimmed.length - 1].length === 0) {
+    trimmed.pop();
+  }
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** The plain-text speaker notes of a slide (SPEC-083, AC-2/4): follow the
+ * slide's `notesSlide` relationship, read the `p:sp` whose `p:ph type="body"`
+ * — each `a:p` maps to one entry (runs joined, formatting flattened) — and
+ * drop trailing empty paragraphs. Undefined when there is no notes part or its
+ * body carries no text; other shapes (slide-image placeholder, headers) are
+ * ignored. */
+function readNotes(
+  slideRels: Map<string, Relationship>,
+  slidePath: string,
+  parseDoc: (path: string) => Document | undefined,
+): string[] | undefined {
+  const rel = Array.from(slideRels.values()).find((r) => r.type === NOTES_SLIDE_RELATIONSHIP);
+  if (!rel) {
+    return undefined;
+  }
+  const notesRoot = parseDoc(resolvePartPath(slidePath, rel.target))?.documentElement;
+  if (!notesRoot) {
+    return undefined;
+  }
+  const cSld = pChild(notesRoot, "cSld");
+  const spTree = cSld && pChild(cSld, "spTree");
+  if (!spTree) {
+    return undefined;
+  }
+  for (const sp of childElements(spTree, P_NAMESPACE, "sp")) {
+    const nvSpPr = pChild(sp, "nvSpPr");
+    const nvPr = nvSpPr && pChild(nvSpPr, "nvPr");
+    const ph = nvPr && pChild(nvPr, "ph");
+    if (!ph || ph.getAttribute("type") !== "body") {
+      continue;
+    }
+    const txBody = pChild(sp, "txBody");
+    if (!txBody) {
+      return undefined;
+    }
+    return trimNotes(childrenA(txBody, "p").map((p) => p.textContent ?? ""));
+  }
+  return undefined;
+}
+
 interface ChainDocs {
   layoutRoot?: Element;
   masterRoot?: Element;
@@ -948,6 +999,10 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
   const preserved = collectPreserved(slideRoot);
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
+  }
+  const notes = readNotes(slideRels, slidePath, deps.parseDoc);
+  if (notes) {
+    slide.notes = notes;
   }
   return slide;
 }

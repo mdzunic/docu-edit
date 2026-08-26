@@ -30,6 +30,7 @@ import type { MediaPart } from "../../core/media";
 import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide, type SlideFrame } from "../model";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { serializeSlideXml } from "./serialize";
+import { applyNotesContentTypes, planNotes } from "./notesWriter";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -75,7 +76,8 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
   }
   const parts = decodedPartBytes(model.opaque);
   const anyDirty = model.slides.some((slide) => slide.dirty === true);
-  if (!model.structureDirty && !anyDirty) {
+  const anyNotes = model.slides.some((slide) => slide.notesDirty === true);
+  if (!model.structureDirty && !anyDirty && !anyNotes) {
     // Nothing changed — re-emit verbatim (AC-51).
     const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
     return { bytes };
@@ -111,15 +113,56 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       }
     }
   }
+
+  // Notes surgery (SPEC-083): the slide part itself stays byte-verbatim when
+  // only notes changed — only the notes-slide parts (and their machinery) move.
+  const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
+  const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
+  const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
+  const notes = planNotes({
+    model,
+    parts,
+    slidePartFor: (slide) => (slide.partName && parts.has(slide.partName) ? slide.partName : undefined),
+    slideRelsXml: (slide) => {
+      const relsPath = relsPathFor(slide.partName!);
+      const fromRebuilt = rebuilt.get(relsPath);
+      if (fromRebuilt) {
+        return decode(fromRebuilt);
+      }
+      const orig = parts.get(relsPath);
+      return orig ? decode(orig) : "";
+    },
+    presPath,
+    presXml: decode(parts.get(presPath) ?? encode("")),
+    presRelsXml: decode(parts.get(relsPathFor(presPath)) ?? encode("")),
+    contentTypesXml,
+  });
+
+  let combinedContentTypes = applyNotesContentTypes(contentTypesXml, notes);
+  if (media.defaults) {
+    combinedContentTypes = spliceContentDefaults(combinedContentTypes, media.defaults);
+  }
+
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
-    if (rebuilt.has(name)) {
+    if (notes.removed.has(name)) {
+      continue;
+    }
+    if (name === "[Content_Types].xml") {
+      entries.push({ name, data: encode(combinedContentTypes) });
+    } else if (notes.parts.has(name)) {
+      entries.push({ name, data: notes.parts.get(name)! });
+    } else if (rebuilt.has(name)) {
       entries.push({ name, data: rebuilt.get(name)! });
     } else if (media.override.has(name)) {
       entries.push({ name, data: media.override.get(name)! });
-    } else if (name === "[Content_Types].xml" && media.defaults) {
-      entries.push({ name, data: encode(spliceContentDefaults(decode(data), media.defaults)) });
     } else {
+      entries.push({ name, data });
+    }
+  }
+  // New notes parts (notes-slide, its rels, a created notes master + rels).
+  for (const [name, data] of notes.parts) {
+    if (!parts.has(name)) {
       entries.push({ name, data });
     }
   }
@@ -237,6 +280,13 @@ function appendRelationships(relsXml: string, newRels: Relationship[]): string {
     return relsXml.replace(/<\/Relationships>/, `${additions}</Relationships>`);
   }
   return `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${additions}</Relationships>`;
+}
+
+/** `relsXml` with any notesSlide relationship removed. A duplicated slide must
+ * not inherit the SOURCE's notesSlide target (that would make two model slides
+ * share one on-disk notes part); the notes planner mints the duplicate its own. */
+function stripNotesSlideRel(relsXml: string): string {
+  return relsXml.replace(new RegExp(`<Relationship\\b[^>]*\\bType="${NOTES_SLIDE_REL}"[^>]*/>`, "g"), "");
 }
 
 /** Splices Content-Types `<Default>` entries before the first `<Override>` (or
@@ -502,53 +552,129 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     }
   }
 
-  // Assemble: iterate opaque parts in order, substituting the three structural
-  // parts, rebuilding dirty own-name slides, and skipping removed parts; then
-  // append new/duplicated slide parts.
-  const entries: ZipEntryInput[] = [];
-  for (const [name, data] of parts) {
-    if (removed.has(name)) {
-      continue;
-    }
-    if (name === presPath) {
-      entries.push({ name, data: encode(rebuiltPresXml) });
-    } else if (name === presRelsPath) {
-      entries.push({ name, data: encode(rebuiltPresRels) });
-    } else if (name === "[Content_Types].xml") {
-      entries.push({ name, data: encode(rebuiltContentTypes) });
-    } else {
-      entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
-    }
-  }
+  // Precompute the emitted bytes and base `.rels` XML for every slide emitted
+  // under a fresh part (added & duplicated slides), so the notes planner sees
+  // the exact rels the writer will emit and can splice a notesSlide rel in. A
+  // duplicate inherits the source's rels; any notesSlide relationship there
+  // points at the SOURCE's notes part, so it is stripped and the planner mints
+  // the duplicate its own part (two model slides never share one notes part).
+  const baseSlideParts = new Map<string, Uint8Array>();
+  const baseSlideRels = new Map<string, string>();
   for (const entry of emitted) {
     if (entry.kind === "verbatim") {
       continue;
     }
     const relsName = relsPathFor(entry.emitName);
     if (entry.kind === "duplicate" && entry.sourceName) {
-      // A duplicated-then-edited slide is rebuilt from the model; its rels are
-      // still the source's (carried, ids intact) plus any inserted image. An
-      // unedited duplicate copies the source part's bytes verbatim (AC-33).
       const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
-      const sourceRelsXml = sourceRelsBytes ? decode(sourceRelsBytes) : "";
+      const sourceRelsXml = sourceRelsBytes ? stripNotesSlideRel(decode(sourceRelsBytes)) : "";
       const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
       const newRels = entry.slide.dirty ? linkImageRels(entry.slide, rels, entry.emitName) : [];
       const xml = entry.slide.dirty
         ? encode(slideXml(entry.slide, rels, entry.emitName))
         : parts.get(entry.sourceName)!;
-      entries.push({ name: entry.emitName, data: xml });
+      baseSlideParts.set(entry.emitName, xml);
       if (sourceRelsBytes) {
-        entries.push({ name: relsName, data: encode(appendRelationships(sourceRelsXml, newRels)) });
+        baseSlideRels.set(relsName, appendRelationships(sourceRelsXml, newRels));
       } else if (newRels.length > 0) {
-        entries.push({ name: relsName, data: encode(appendRelationships("", newRels)) });
+        baseSlideRels.set(relsName, appendRelationships("", newRels));
       }
     } else {
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath));
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
       const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
-      entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide, rels, entry.emitName)) });
-      entries.push({ name: relsName, data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)) });
+      baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
+      baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
+    }
+  }
+
+  // Notes surgery (SPEC-083) for EVERY model slide whose notes changed — the
+  // notes parts move while a verbatim slide part stays byte-verbatim, and a
+  // freshly-emitted (added/duplicated) slide gets its own notes part too. A
+  // created notes master splices into the already-rebuilt presentation.xml.
+  const emitNameBySlide = new Map<Slide, string>();
+  const freshSlides = new Set<Slide>();
+  for (const entry of emitted) {
+    emitNameBySlide.set(entry.slide, entry.emitName);
+    if (entry.kind !== "verbatim") {
+      freshSlides.add(entry.slide);
+    }
+  }
+  const notes = planNotes({
+    model,
+    parts,
+    freshSlides,
+    slidePartFor: (slide) => emitNameBySlide.get(slide),
+    slideRelsXml: (slide) => {
+      const path = emitNameBySlide.get(slide);
+      if (!path) {
+        return "";
+      }
+      const relsPath = relsPathFor(path);
+      const own = rebuiltOwn.get(relsPath);
+      if (own) {
+        return decode(own);
+      }
+      const base = baseSlideRels.get(relsPath);
+      if (base !== undefined) {
+        return base;
+      }
+      const orig = parts.get(relsPath);
+      return orig ? decode(orig) : "";
+    },
+    presPath,
+    presXml: rebuiltPresXml,
+    presRelsXml: rebuiltPresRels,
+    contentTypesXml: rebuiltContentTypes,
+  });
+  const finalPresXml = notes.parts.get(presPath) ? decode(notes.parts.get(presPath)!) : rebuiltPresXml;
+  const finalPresRels = notes.parts.get(presRelsPath) ? decode(notes.parts.get(presRelsPath)!) : rebuiltPresRels;
+  const finalContentTypes = applyNotesContentTypes(rebuiltContentTypes, notes);
+
+  // Assemble: iterate opaque parts in order, substituting the three structural
+  // parts, rebuilding dirty own-name slides, and skipping removed parts; then
+  // append new/duplicated slide parts.
+  const entries: ZipEntryInput[] = [];
+  for (const [name, data] of parts) {
+    if (removed.has(name) || notes.removed.has(name)) {
+      continue;
+    }
+    if (name === presPath) {
+      entries.push({ name, data: encode(finalPresXml) });
+    } else if (name === presRelsPath) {
+      entries.push({ name, data: encode(finalPresRels) });
+    } else if (name === "[Content_Types].xml") {
+      entries.push({ name, data: encode(finalContentTypes) });
+    } else if (notes.parts.has(name)) {
+      entries.push({ name, data: notes.parts.get(name)! });
+    } else {
+      entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
+    }
+  }
+  const emittedFresh = new Set<string>();
+  for (const entry of emitted) {
+    if (entry.kind === "verbatim") {
+      continue;
+    }
+    const relsName = relsPathFor(entry.emitName);
+    // The slide part was precomputed above (bytes copied verbatim for an
+    // unedited duplicate, serialised from the model otherwise).
+    entries.push({ name: entry.emitName, data: baseSlideParts.get(entry.emitName)! });
+    emittedFresh.add(entry.emitName);
+    // Its rels: the notes planner's version (a notesSlide rel spliced in) wins
+    // over the base rels; a slide with neither has no rels part.
+    const relsData = notes.parts.get(relsName) ?? (baseSlideRels.has(relsName) ? encode(baseSlideRels.get(relsName)!) : undefined);
+    if (relsData) {
+      entries.push({ name: relsName, data: relsData });
+      emittedFresh.add(relsName);
+    }
+  }
+  // New notes parts (notes-slide, its rels, a created notes master + rels) not
+  // already emitted above with the fresh slide parts.
+  for (const [name, data] of notes.parts) {
+    if (!parts.has(name) && !emittedFresh.has(name)) {
+      entries.push({ name, data });
     }
   }
   entries.push(...media.appended);

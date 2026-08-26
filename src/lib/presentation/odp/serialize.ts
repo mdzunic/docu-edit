@@ -177,9 +177,28 @@ export function serializePage(
     attrs = ` draw:name="${escapeXmlAttribute(name)}" draw:master-page-name="${escapeXmlAttribute(master)}"`;
   }
   const frames = slide.frames.map((frame) => frameXml(frame, registry)).join("");
-  const notes = slide.preserved?.["presentation:notes"] ?? "";
+  const notes = notesXml(slide.notes);
   const anim = slide.preserved?.["anim"] ?? "";
   return `<draw:page${attrs}>${frames}${notes}${anim}</draw:page>`;
+}
+
+/** A page's `presentation:notes` regenerated from the model's speaker notes
+ * (SPEC-083, AC-16): a fixed-geometry `draw:frame presentation:class="notes"`
+ * whose text-box carries one `text:p` per entry (formatting flat). Omitted
+ * entirely when the slide has no notes (AC-25). */
+function notesXml(notes: string[] | undefined): string {
+  if (!notes || notes.length === 0) {
+    return "";
+  }
+  const paragraphs = notes
+    .map((line) => (line.length > 0 ? `<text:p>${escapeXmlText(line)}</text:p>` : `<text:p/>`))
+    .join("");
+  return (
+    `<presentation:notes>` +
+    `<draw:frame presentation:class="notes" svg:x="1.5cm" svg:y="13cm" svg:width="16cm" svg:height="9cm">` +
+    `<draw:text-box>${paragraphs}</draw:text-box></draw:frame>` +
+    `</presentation:notes>`
+  );
 }
 
 function uniqueName(base: string, used: Set<string>): string {

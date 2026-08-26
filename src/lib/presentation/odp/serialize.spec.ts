@@ -19,19 +19,28 @@ describe("serializePage", () => {
     expect(xml).toContain(`draw:name="page3"`);
   });
 
-  it("re-emits preserved notes and anim inside the page (AC-38)", () => {
+  it("regenerates presentation:notes from the model before preserved anim (SPEC-083, AC-16/38)", () => {
     const slide: Slide = {
       id: "s",
       frames: [],
+      notes: ["First note", "Second note"],
       preserved: {
         "@page": ` draw:name="p1"`,
-        "presentation:notes": `<presentation:notes/>`,
         anim: `<anim:par/>`,
       },
     };
     const xml = serializePage(slide, new StyleRegistry(), new Set(), "Default");
-    expect(xml).toContain(`<presentation:notes/></draw:page>`.replace("</draw:page>", ""));
-    expect(xml.indexOf("<anim:par/>")).toBeGreaterThan(xml.indexOf("<presentation:notes/>"));
+    expect(xml).toContain(`<presentation:notes>`);
+    expect(xml).toContain(`presentation:class="notes"`);
+    expect(xml).toContain(`<text:p>First note</text:p><text:p>Second note</text:p>`);
+    // Notes come before the preserved anim, which comes before </draw:page>.
+    expect(xml.indexOf("<presentation:notes>")).toBeLessThan(xml.indexOf("<anim:par/>"));
+  });
+
+  it("omits presentation:notes when the slide has none (SPEC-083, AC-25)", () => {
+    const slide: Slide = { id: "s", frames: [], preserved: { "@page": ` draw:name="p1"` } };
+    const xml = serializePage(slide, new StyleRegistry(), new Set(), "Default");
+    expect(xml).not.toContain("presentation:notes");
   });
 
   it("emits a text run's marks as a generated de-T text style", () => {

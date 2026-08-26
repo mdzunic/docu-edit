@@ -129,11 +129,20 @@ export interface Slide {
   id: string; // minted at read, never serialised
   frames: SlideFrame[]; // z-order, back to front
   background?: SlideFill; // effective (inheritance resolved)
+  /** Speaker notes as plain paragraphs (SPEC-083): pptx from the notes-slide
+   *  part's body placeholder, odp from the page's `presentation:notes` frame,
+   *  both with formatting flattened and trailing empty paragraphs stripped.
+   *  Absent when the slide has none — `[]` is never stored or produced. */
+  notes?: string[];
   /** Set by any command that changes this slide's own content or properties
    *  (SPEC-081+ set it; this spec's new/duplicated slides are born without
    *  partName/sourceXml instead). Dirty slides are rebuilt by the writers;
    *  clean ones re-emit verbatim (SPEC-080). */
   dirty?: true;
+  /** Set by a notes edit (SPEC-083) — distinct from `dirty` so a notes-only
+   *  change rebuilds just the notes-slide part while the slide part stays
+   *  byte-verbatim (pptx AC). Odp rebuilds the whole page either way. */
+  notesDirty?: true;
   /** pptx: this slide's part path ("ppt/slides/slide2.xml"); ties the
    *  model slide to its verbatim part in `opaque`. Absent for .odp and
    *  (later) from-scratch slides. */
