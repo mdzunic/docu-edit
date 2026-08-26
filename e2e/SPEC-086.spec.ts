@@ -69,7 +69,7 @@ test("add animations, build them in playback, and round-trip the panel", async (
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
 
   // The build settles: the flown-in shape comes to rest (no residual transform).
-  const shapeFrame = stage.getByTestId("slide-frame").filter({ hasText: "Shape text" });
+  const shapeFrame = stage.locator(".frame").filter({ hasText: "Shape text" });
   await expect(shapeFrame).toHaveCSS("transform", "none");
 
   // Advance again — now that the group has fully built, this moves to the next
