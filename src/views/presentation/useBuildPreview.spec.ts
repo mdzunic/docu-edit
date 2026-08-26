@@ -79,4 +79,33 @@ describe("useBuildPreview", () => {
     vi.runAllTimers();
     expect(hidden(p.frameStyles.value, "b")).toBe(false);
   });
+
+  it("complete() snaps the in-flight group done and holds — the last group does not advance (AC-24)", () => {
+    const p = useBuildPreview();
+    const s = slide(ANIMS); // a single click group (fadeIn + afterPrevious)
+    p.playGroup(s, 0, false);
+    vi.advanceTimersByTime(10); // still animating: b (afterPrevious) not shown yet
+    expect(p.playing.value).toBe(true);
+    expect(hidden(p.frameStyles.value, "b")).toBe(true);
+
+    // A mid-build advance completes the group instantly and holds on the slide.
+    expect(p.complete()).toBe(true);
+    expect(p.playing.value).toBe(false);
+    expect(hidden(p.frameStyles.value, "a")).toBe(false);
+    expect(hidden(p.frameStyles.value, "b")).toBe(false);
+
+    // No pending timers remain to fire a further settle/advance.
+    vi.runAllTimers();
+    expect(hidden(p.frameStyles.value, "b")).toBe(false);
+  });
+
+  it("complete() is a no-op with nothing in flight — a settled slide advances normally (AC-24)", () => {
+    const p = useBuildPreview();
+    const s = slide(ANIMS);
+    p.playGroup(s, 0, false);
+    vi.runAllTimers(); // group fully settled
+    expect(p.playing.value).toBe(false);
+    // No group in flight → the input is not consumed by the build engine.
+    expect(p.complete()).toBe(false);
+  });
 });

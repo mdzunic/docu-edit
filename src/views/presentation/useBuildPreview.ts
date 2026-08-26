@@ -25,7 +25,12 @@ function nextFrame(cb: () => void): void {
 
 export function useBuildPreview() {
   const frameStyles = ref<StyleMap>({});
+  const playing = ref(false);
   let timers: number[] = [];
+  // The settled state a currently-animating group resolves to (its slide and the
+  // group count shown once it finishes). Held so a mid-build input can snap
+  // straight to it (AC-24).
+  let pending: { slide: Slide; groupsPlayed: number } | null = null;
 
   function clearTimers(): void {
     for (const t of timers) {
@@ -55,6 +60,8 @@ export function useBuildPreview() {
    * Reduced motion skips straight to the settled after-state (AC-23). */
   function playGroup(slide: Slide, groupIndex: number, reducedMotion: boolean, onDone?: () => void): void {
     clearTimers();
+    playing.value = false;
+    pending = null;
     const groups = slideBuildGroups(slide);
     if (groupIndex < 0 || groupIndex >= groups.length) {
       settle(slide, Math.max(0, groupIndex));
@@ -67,6 +74,8 @@ export function useBuildPreview() {
       return;
     }
     settle(slide, groupIndex);
+    playing.value = true;
+    pending = { slide, groupsPlayed: groupIndex + 1 };
     const { entries, totalMs } = groupTimeline(groups[groupIndex]);
     for (const entry of entries) {
       const a = entry.animation;
@@ -82,13 +91,31 @@ export function useBuildPreview() {
     timers.push(
       window.setTimeout(() => {
         settle(slide, groupIndex + 1);
+        playing.value = false;
+        pending = null;
         onDone?.();
       }, totalMs + 40),
     );
   }
 
+  /** Snap an in-flight build group to its completed state and hold there
+   * (AC-24): a play-time input arriving mid-build finishes the current group
+   * instantly rather than walking on to the next group or slide. Returns whether
+   * a group was actually in flight — the caller consumes the input only then. */
+  function complete(): boolean {
+    if (!playing.value || !pending) return false;
+    const { slide, groupsPlayed } = pending;
+    clearTimers();
+    playing.value = false;
+    pending = null;
+    settle(slide, groupsPlayed);
+    return true;
+  }
+
   function stop(): void {
     clearTimers();
+    playing.value = false;
+    pending = null;
   }
 
   /** Auto-plays every build group of a slide in sequence (the editor "Play"
@@ -113,5 +140,5 @@ export function useBuildPreview() {
     timers.push(window.setTimeout(step, 400));
   }
 
-  return { frameStyles, settle, playGroup, autoplay, stop };
+  return { frameStyles, playing, settle, playGroup, complete, autoplay, stop };
 }

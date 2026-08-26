@@ -68,7 +68,13 @@ test("add animations, build them in playback, and round-trip the panel", async (
   await expect(stage.getByText("Shape text")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
 
-  // Advance again moves to the next slide.
+  // The build settles: the flown-in shape comes to rest (no residual transform).
+  const shapeFrame = stage.getByTestId("slide-frame").filter({ hasText: "Shape text" });
+  await expect(shapeFrame).toHaveCSS("transform", "none");
+
+  // Advance again — now that the group has fully built, this moves to the next
+  // slide. (A mid-build advance instead completes the group and holds — AC-24,
+  // covered in the useBuildPreview unit suite.)
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/2$`));
 

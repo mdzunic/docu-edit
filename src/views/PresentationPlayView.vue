@@ -239,6 +239,12 @@ function advanceStep() {
     // queue a second advance (AC-15).
     clearTransition();
   }
+  // A build group animating on the current slide (SPEC-086): the first advance
+  // snaps it to its completed state and holds — unlike a transition it does NOT
+  // then walk on to the next group or slide (AC-24). The next advance proceeds.
+  if (buildPreview.complete()) {
+    return;
+  }
   if (playback.atEnd.value) {
     exit();
     return;
