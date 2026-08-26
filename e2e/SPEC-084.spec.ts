@@ -28,9 +28,10 @@ test("Present the deck, walk it to the end screen, and exit to the last slide", 
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
   const play = page.getByTestId("presentation-play");
   await expect(play).toBeVisible();
+  const stage = play.getByTestId("slide-stage");
 
   // Slide 1 content renders through the SPEC-079 stage…
-  await expect(play.getByText("Quarterly Review")).toBeVisible();
+  await expect(stage.getByText("Quarterly Review")).toBeVisible();
   // …with no app chrome (no editor view, toolbar or filmstrip).
   await expect(page.getByTestId("presentation-view")).toHaveCount(0);
   await expect(page.getByTestId("slide-filmstrip")).toHaveCount(0);
@@ -39,7 +40,7 @@ test("Present the deck, walk it to the end screen, and exit to the last slide", 
   // Advance to slide 2 — the URL tracks it.
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/2$`));
-  await expect(play.getByText("Ship presentations MVP")).toBeVisible();
+  await expect(stage.getByText("Ship presentations MVP")).toBeVisible();
 
   // The slide counter reads "2 / 4" and fades in on pointer movement.
   await page.mouse.move(120, 120);
@@ -53,7 +54,7 @@ test("Present the deck, walk it to the end screen, and exit to the last slide", 
   // Jump to the last slide, then one advance shows the end screen.
   await page.keyboard.press("End");
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/4$`));
-  await expect(play.getByText("Extras")).toBeVisible();
+  await expect(stage.getByText("Extras")).toBeVisible();
 
   await page.keyboard.press("ArrowRight");
   const endScreen = page.getByTestId("play-end-screen");
