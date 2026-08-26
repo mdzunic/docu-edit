@@ -1,7 +1,7 @@
 // SPEC-085 — playback transition rendering layered onto SPEC-084. A forward
 // step between slides plays the incoming slide's transition (two stacked
 // stages); backward steps are instant; an input mid-transition completes it
-// without a second advance; auto-advance schedules and cleans up. The idb seam
+// then applies as the next advance; auto-advance schedules and cleans up. The idb seam
 // is mocked so the store runs in-memory (mirrors PresentationPlayView.spec.ts).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
@@ -68,17 +68,21 @@ describe("PresentationPlayView transitions", () => {
     expect(wrapper.findAll('[data-testid="slide-stage"]').length).toBe(2);
   });
 
-  it("completes a transition instantly on a second input, with no double-advance (AC-15)", async () => {
+  it("completes the in-flight transition then applies the input as the next advance (AC-15)", async () => {
     const deck = await deckWithTransitions();
     const { wrapper } = await mountAt(`/slides/${deck.id}/present/1`, deck);
-    key("ArrowRight");
+    key("ArrowRight"); // → slide 2, push transition begins
     await flushPromises();
     expect(wrapper.find(LAYER).exists()).toBe(true);
-    key("ArrowRight"); // completes the in-flight transition, consumes the input
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("2 / 4");
+    key("ArrowRight"); // completes the push instantly, then advances to slide 3
     await flushPromises();
-    expect(wrapper.find(LAYER).exists()).toBe(false);
-    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("2 / 4"); // still slide 2
-    expect(wrapper.find('[data-testid="slide-stage"]').exists()).toBe(true); // plain stage
+    // The input is honoured (not dropped): we reach slide 3, exactly one step on
+    // from the settled slide 2 — no queued double-advance skips a slide.
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("3 / 4");
+    // The push is gone; slide 3's fade is the only live animation.
+    const layer = wrapper.get(LAYER);
+    expect(layer.attributes("data-effect")).toBe("fade");
   });
 
   it("makes backward steps instant, with no transition (AC-14)", async () => {

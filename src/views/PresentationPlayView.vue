@@ -187,9 +187,10 @@ function exit() {
 
 // --- transitions (SPEC-085) -------------------------------------------------
 // A forward step between slides plays the INCOMING slide's transition as two
-// stacked stages; backward steps and jumps are instant (AC-13/14). An in-flight
-// transition is completed instantly by clearing it — snapping to the plain
-// incoming stage — so an input mid-transition never queues a second advance
+// stacked stages; backward steps and jumps are instant (AC-13/14). An advance
+// input arriving mid-transition completes the in-flight transition instantly
+// (snap to the plain incoming stage) AND then applies the advance itself — the
+// animation is collapsed, not left running and not queued behind a second one
 // (AC-15). `advanceOnClick` is never consulted here: in-editor playback always
 // advances (the presenter escape hatch, AC-18).
 const transitionView = shallowRef(emptyTwoStageView());
@@ -203,10 +204,11 @@ function onTransitionDone() {
 // --- advance / navigation ---------------------------------------------------
 function advanceStep() {
   if (transitionView.value) {
-    // The in-flight transition IS the pending advance — complete it, consume
-    // the input (no double-advance).
+    // Complete the in-flight transition instantly, then fall through to apply
+    // this input as the next advance — the input is honoured (never dropped),
+    // but only one animation is ever live, so bursts collapse rather than
+    // queue a second advance (AC-15).
     clearTransition();
-    return;
   }
   if (playback.atEnd.value) {
     exit();

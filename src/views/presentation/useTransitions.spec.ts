@@ -97,6 +97,19 @@ describe("preserved-replacement confirmation (AC-8)", () => {
     expect(model.value!.slides[0].preserved?.["p:transition"]).toBeDefined();
     expect(record).not.toHaveBeenCalled();
   });
+
+  it("bumps formNonce on cancel so the panel re-syncs its vetoed control (AC-8)", () => {
+    const { controller } = harness([
+      slide({ preserved: { "p:transition": "<p:transition><p:morph/></p:transition>" } }),
+    ]);
+    const before = controller.formNonce.value;
+    controller.setEffect("fade"); // vetoed → confirmation pending, model untouched
+    expect(controller.formNonce.value).toBe(before); // pending change alone doesn't remount
+    controller.cancelReplace();
+    // The model stayed unset, so the effect list needs a forced remount to snap
+    // the just-clicked radio back to None — a bumped nonce drives that key change.
+    expect(controller.formNonce.value).toBe(before + 1);
+  });
 });
 
 describe("Apply to all (AC-9/AC-10)", () => {

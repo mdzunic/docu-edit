@@ -63,96 +63,104 @@ function onAutoSeconds(event = new Event("change")) {
     data-testid="slides-transition-panel"
     :aria-label="`Transition for slide ${slideNumber}`"
   >
-    <fieldset
-      class="effect-list"
-      data-testid="transition-effect"
+    <!-- Keyed on formNonce so a change the user made in the DOM but then
+         cancelled (a moved radio / typed input) is force-remounted back to the
+         model, which stays unset (AC-8). -->
+    <div
+      :key="c.formNonce.value"
+      class="transition-controls"
     >
-      <legend>Effect</legend>
-      <label
-        v-for="effect in EFFECTS"
-        :key="effect.value"
-        class="effect-option"
+      <fieldset
+        class="effect-list"
+        data-testid="transition-effect"
       >
-        <input
-          type="radio"
-          name="transition-effect"
-          :value="effect.value"
-          :data-testid="`transition-effect-${effect.value}`"
-          :checked="c.selectedType.value === effect.value"
-          @change="onEffect(effect.value)"
+        <legend>Effect</legend>
+        <label
+          v-for="effect in EFFECTS"
+          :key="effect.value"
+          class="effect-option"
         >
-        <span>{{ effect.label }}</span>
+          <input
+            type="radio"
+            name="transition-effect"
+            :value="effect.value"
+            :data-testid="`transition-effect-${effect.value}`"
+            :checked="c.selectedType.value === effect.value"
+            @change="onEffect(effect.value)"
+          >
+          <span>{{ effect.label }}</span>
+        </label>
+        <p
+          v-if="c.isPreserved.value"
+          class="preserved-note"
+          data-testid="transition-preserved-note"
+        >
+          Original transition kept — this editor can't show it.
+        </p>
+      </fieldset>
+
+      <label class="field">
+        <span>Direction</span>
+        <select
+          data-testid="transition-direction"
+          :disabled="!c.directionEnabled.value"
+          :value="c.direction.value"
+          @change="onDirection"
+        >
+          <option
+            v-for="d in DIRECTIONS"
+            :key="d.value"
+            :value="d.value"
+          >
+            {{ d.label }}
+          </option>
+        </select>
       </label>
-      <p
-        v-if="c.isPreserved.value"
-        class="preserved-note"
-        data-testid="transition-preserved-note"
-      >
-        Original transition kept — this editor can't show it.
-      </p>
-    </fieldset>
 
-    <label class="field">
-      <span>Direction</span>
-      <select
-        data-testid="transition-direction"
-        :disabled="!c.directionEnabled.value"
-        :value="c.direction.value"
-        @change="onDirection"
-      >
-        <option
-          v-for="d in DIRECTIONS"
-          :key="d.value"
-          :value="d.value"
+      <label class="field">
+        <span>Duration (seconds)</span>
+        <input
+          type="number"
+          data-testid="transition-duration"
+          min="0.1"
+          max="5"
+          step="0.1"
+          :value="c.durationSeconds.value"
+          @change="onDuration"
         >
-          {{ d.label }}
-        </option>
-      </select>
-    </label>
+      </label>
 
-    <label class="field">
-      <span>Duration (seconds)</span>
-      <input
-        type="number"
-        data-testid="transition-duration"
-        min="0.1"
-        max="5"
-        step="0.1"
-        :value="c.durationSeconds.value"
-        @change="onDuration"
-      >
-    </label>
-
-    <label class="check">
-      <input
-        type="checkbox"
-        data-testid="transition-advance-click"
-        :checked="c.advanceOnClick.value"
-        @change="onAdvanceClick"
-      >
-      <span>Advance on click</span>
-    </label>
-
-    <div class="auto-advance">
       <label class="check">
         <input
           type="checkbox"
-          data-testid="transition-advance-auto"
-          :checked="c.autoAdvanceEnabled.value"
-          @change="onAutoToggle"
+          data-testid="transition-advance-click"
+          :checked="c.advanceOnClick.value"
+          @change="onAdvanceClick"
         >
-        <span>Auto-advance after</span>
+        <span>Advance on click</span>
       </label>
-      <input
-        type="number"
-        data-testid="transition-advance-auto-seconds"
-        min="0"
-        step="0.1"
-        :disabled="!c.autoAdvanceEnabled.value"
-        :value="c.autoAdvanceSeconds.value"
-        @change="onAutoSeconds"
-      >
-      <span>s</span>
+
+      <div class="auto-advance">
+        <label class="check">
+          <input
+            type="checkbox"
+            data-testid="transition-advance-auto"
+            :checked="c.autoAdvanceEnabled.value"
+            @change="onAutoToggle"
+          >
+          <span>Auto-advance after</span>
+        </label>
+        <input
+          type="number"
+          data-testid="transition-advance-auto-seconds"
+          min="0"
+          step="0.1"
+          :disabled="!c.autoAdvanceEnabled.value"
+          :value="c.autoAdvanceSeconds.value"
+          @change="onAutoSeconds"
+        >
+        <span>s</span>
+      </div>
     </div>
 
     <p class="helper">

@@ -70,6 +70,13 @@ export function useTransitions(deps: TransitionsDeps) {
 
   // --- confirmation state ----------------------------------------------------
   const pendingReplace = shallowRef<{ label: string; next: SlideTransition } | null>(null);
+  // Bumped whenever a change is vetoed-and-cancelled. The panel keys its
+  // controls on this so their one-way `:checked`/`:value` bindings are
+  // force-remounted back to the (unchanged) model — a native radio/input the
+  // user moved before cancelling would otherwise stay visually stuck on the
+  // rejected value while the model reads unset (AC-8: "cancelling changes
+  // nothing").
+  const formNonce = ref(0);
   /** > 0 while the batched Apply-to-all confirmation is shown; the count of
    * slides whose original transition would be replaced. */
   const pendingApplyAllCount = ref(0);
@@ -113,6 +120,9 @@ export function useTransitions(deps: TransitionsDeps) {
   }
   function cancelReplace(): void {
     pendingReplace.value = null;
+    // The model stayed unset, so the vetoed control won't re-render on its own;
+    // force the panel to snap its DOM back to the model (AC-8).
+    formNonce.value += 1;
   }
 
   // --- field commands --------------------------------------------------------
@@ -222,6 +232,7 @@ export function useTransitions(deps: TransitionsDeps) {
     autoAdvanceEnabled,
     autoAdvanceSeconds,
     canApplyAll,
+    formNonce,
     pendingReplace,
     pendingApplyAllCount,
     setEffect,
