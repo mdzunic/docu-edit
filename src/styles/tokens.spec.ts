@@ -30,6 +30,11 @@ const EXEMPT_FILES = new Set([
   // colours, geometry in px that mirrors the model, the neutral foreign
   // placeholder box — exactly the document-content/canvas exemption above.
   "components/presentation/SlideFrameView.vue",
+  // SPEC-084's playback surface: the slideshow's letterbox and end screen are
+  // theme-independent black by mandate (`background: #000` explicit, so the
+  // show looks the same in light and dark) — document-content, not app chrome,
+  // the same exemption as the slide renderer above.
+  "views/PresentationPlayView.vue",
   "components/DocTocBlock.vue",
   "components/DocTofBlock.vue",
   "components/DocHeadingToggle.vue",
