@@ -4,6 +4,7 @@ import {
   asRowBoundaries,
   valueFromVerticalPosition,
   verticalMarkerPositionCm,
+  verticalRulerAnchor,
   rulerTicks,
   rulerTickScheme,
 } from "../lib/verticalRuler";
@@ -20,10 +21,15 @@ import { asMeasurementUnit, CM_PER_PX, formatLength, fromCm, roundForDisplay } f
 // (AC-1, AC-15) without the component doing any scaling of its own.
 const props = defineProps({
   pageHeightCm: { type: Number, required: true },
-  /** The page width, used only to sit the ruler just left of the page: the
-   * `.pages` container is the full column with the page centred in it, so the
-   * ruler centres on the page too (AC-1). */
+  /** The page width — the centred-page FALLBACK anchor's input, used only
+   * until a real `pageLeftPx` measurement exists (AC-1). */
   pageWidthCm: { type: Number, required: true },
+  /** The first page's measured unscaled left offset inside `.pages`, or NaN
+   * before any measurement. The strip anchors to the page's real position:
+   * the zoomed-out page grid tiles pages side by side, where the old
+   * centred-page assumption painted the ruler over page 1's content — and
+   * its drag strip then swallowed the clicks underneath (AC-1). */
+  pageLeftPx: { type: Number, default: Number.NaN },
   marginTopCm: { type: Number, required: true },
   marginBottomCm: { type: Number, required: true },
   /** Header band distance from the page's top edge (SPEC-029). */
@@ -64,15 +70,16 @@ const STRIP_WIDTH_REM = 1.5;
 const STRIP_GAP_REM = 0.25;
 
 /** The inline geometry: the page-height extent, the zoom the cross-axis
- * sizes divide by, and the left offset that seats the strip's right edge one
- * gutter left of the page (the `.pages` column centres the page, so the strip
- * anchors at 50 % and shifts left by half the page width plus its own width
- * and gap). */
+ * sizes divide by, and the horizontal anchor that seats the strip's right
+ * edge one gutter left of the FIRST PAGE — by its measured offset when one
+ * exists, else by the centred-page formula paired with the stylesheet's
+ * `left: 50%` (see verticalRulerAnchor). */
 const rootStyle = computed(() => {
   const zoom = props.zoom > 0 ? props.zoom : 1;
+  const stripCss = `${(STRIP_WIDTH_REM + STRIP_GAP_REM) / zoom}rem`;
   return {
     height: `${props.pageHeightCm}cm`,
-    marginLeft: `calc(-${props.pageWidthCm / 2}cm - ${(STRIP_WIDTH_REM + STRIP_GAP_REM) / zoom}rem)`,
+    ...verticalRulerAnchor(props.pageLeftPx, props.pageWidthCm, stripCss),
     "--ruler-zoom": String(zoom),
   };
 });

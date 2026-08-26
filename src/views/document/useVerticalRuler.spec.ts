@@ -36,6 +36,7 @@ function harness() {
     zoom: ref(1),
     getCaret: () => ({ section: 0, block: 0, offset: 0 }),
     onScroll: () => {},
+    pageRef: ref<Element | null>(null),
     paragraphSelection: () => bodySelection,
     getCaretSectionIndex: () => 0,
     activeHeaderFooter: ref(null),

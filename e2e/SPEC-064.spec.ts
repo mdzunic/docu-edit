@@ -382,3 +382,39 @@ test("the top-margin marker is keyboard-operable and announces its value (AC-13,
   // aria-valuetext reads the marker name and its value in the display unit.
   await expect(m).toHaveAttribute("aria-valuetext", /Top margin, .* centimetres/);
 });
+
+test("the ruler anchors to page 1 — not the container centre — when zoomed-out pages tile side by side (AC-1 regression)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Intro paragraph up top here.");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Second line of body text.");
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("break-page").click();
+  await page.keyboard.type("Page two text lives here.");
+
+  // Fit-page tiles the two pages side by side: page 1 sits in the LEFT grid
+  // cell, so the old "50% of .pages minus half a page width" anchor painted
+  // the ruler strip over page 1's content — and its draggable strip then
+  // swallowed every click underneath.
+  await page.getByTestId("zoom-percent").click();
+  await page.getByTestId("zoom-fit-page").click();
+
+  const ruler = page.getByTestId("document-vertical-ruler");
+  await expect(ruler).toBeVisible();
+  await expect(async () => {
+    const rulerBox = (await ruler.boundingBox())!;
+    const pageBox = (await page.getByTestId("document-page").first().boundingBox())!;
+    // The strip sits fully in the gutter, hugging page 1's left edge.
+    const gap = pageBox.x - (rulerBox.x + rulerBox.width);
+    expect(gap).toBeGreaterThanOrEqual(0);
+    expect(gap).toBeLessThanOrEqual(16);
+  }).toPass({ timeout: 5000 });
+
+  // The click the displaced strip used to intercept must land: Playwright's
+  // actionability check fails on an intercepting overlay, so a plain click
+  // succeeding IS the regression assertion.
+  await content(page).locator(".doc-paragraph", { hasText: "Intro paragraph" }).first().click();
+});

@@ -58,6 +58,7 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
     zoom,
     getCaret,
     onScroll,
+    pageRef,
     paragraphSelection,
     getCaretSectionIndex,
     activeHeaderFooter,
@@ -122,10 +123,32 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
     tableRows.value = boundaries;
   }
 
+  // --- first-page anchor (AC-1) ---------------------------------------------
+  const pageLeftPx = ref(Number.NaN);
+
+  /** Measures the first page's unscaled left offset inside `.pages`. The
+   * strip anchors to the page's real position rather than assuming it is
+   * centred: the zoomed-out grid tiles pages side by side, and the centred
+   * assumption painted the ruler over page 1's content there — with its
+   * drag strip swallowing the clicks underneath. NaN (no page yet) falls
+   * back to the centred formula in verticalRulerAnchor. */
+  function measurePageOffset() {
+    const firstPage = (pageRef.value as HTMLElement | null)?.querySelector('[data-testid="document-page"]');
+    pageLeftPx.value = firstPage ? clientToContentPx(firstPage.getBoundingClientRect().left, 0).x : Number.NaN;
+  }
+
+  function measureGeometry() {
+    measureRows();
+    measurePageOffset();
+  }
+
   // A caret move (no edit) or any edit can change which rows are shown; both
-  // must re-measure after the DOM settles. Scroll shifts every rect too.
-  watch([caretPosition, doc], () => measureRows(), { flush: "post" });
-  onScroll(measureRows);
+  // must re-measure after the DOM settles. Scroll shifts every rect too, and
+  // the scroll hooks also re-fire on zoom changes and container resizes
+  // (useOverlayRemeasure) — exactly the moments the page grid re-tiles and
+  // the first page's offset moves.
+  watch([caretPosition, doc], () => measureGeometry(), { flush: "post", immediate: true });
+  onScroll(measureGeometry);
 
   // Its own per-document flag (View → Vertical ruler; View → Rulers sets both
   // flags at once), and print layout only (AC-8).
@@ -137,6 +160,7 @@ export function useVerticalRuler(deps: VerticalRulerDeps) {
   const verticalRulerProps = computed(() => ({
     pageHeightCm: pageHeightCm.value,
     pageWidthCm: pageWidthCm.value,
+    pageLeftPx: pageLeftPx.value,
     marginTopCm: marginTopCm.value,
     marginBottomCm: marginBottomCm.value,
     headerDistanceCm: headerDistanceCm.value,

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   valueFromVerticalPosition,
   verticalMarkerPositionCm,
+  verticalRulerAnchor,
   rulerTicks,
   rulerTickScheme,
   type VerticalRulerContext,
@@ -124,5 +125,24 @@ describe("valueFromVerticalPosition (SPEC-064 AC-2a, AC-3a/3b)", () => {
 
   it("clamps a negative drag to zero", () => {
     expect(valueFromVerticalPosition("header", -5, ctx()).valueCm).toBe(0);
+  });
+});
+
+describe("verticalRulerAnchor (AC-1 grid regression)", () => {
+  it("anchors to the measured first-page offset when one exists", () => {
+    expect(verticalRulerAnchor(64, 21, "2rem")).toEqual({
+      left: "64px",
+      marginLeft: "calc(-1 * 2rem)",
+    });
+  });
+
+  it("supports a zero offset (page flush with the container)", () => {
+    expect(verticalRulerAnchor(0, 21, "2rem").left).toBe("0px");
+  });
+
+  it("falls back to the centred-page formula (stylesheet left: 50%) without a measurement", () => {
+    const style = verticalRulerAnchor(Number.NaN, 21, "2rem");
+    expect(style.left).toBeUndefined();
+    expect(style.marginLeft).toBe("calc(-10.5cm - 2rem)");
   });
 });

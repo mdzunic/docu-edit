@@ -181,3 +181,22 @@ export function valueFromVerticalPosition(
       return { kind: "footerDistanceCm", valueCm: clamp(snapStep(ctx.pageHeightCm - position), 0, ctx.pageHeightCm) };
   }
 }
+
+/** The strip's inline horizontal anchoring (AC-1). With a measured unscaled
+ * left offset for the first page (a finite `pageLeftPx`), the strip's right
+ * edge sits one `stripCss` (its width plus the page gutter, as a CSS length)
+ * left of that page — correct under every page layout, including the
+ * zoomed-out grid that tiles pages side by side, where page 1 is NOT centred
+ * in `.pages`. Without a measurement (first paint, no page rendered yet) it
+ * falls back to the historical centred-page formula, which pairs with the
+ * stylesheet's `left: 50%`. */
+export function verticalRulerAnchor(
+  pageLeftPx: number,
+  pageWidthCm: number,
+  stripCss: string,
+): Record<string, string> {
+  if (Number.isFinite(pageLeftPx)) {
+    return { left: `${pageLeftPx}px`, marginLeft: `calc(-1 * ${stripCss})` };
+  }
+  return { marginLeft: `calc(-${pageWidthCm / 2}cm - ${stripCss})` };
+}
