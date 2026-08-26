@@ -42,7 +42,8 @@ What lives here, by area:
   `autosaveScheduler.ts`, `versionCadenceScheduler.ts`, `editLock.ts`,
   `platform.ts`, `colors.ts`, `commentIdentity.ts`, `menuBar.ts`,
   `fileReader.ts` (File → ArrayBuffer), `arrayWindow.ts`
-  (reference-equality array windowing for diff engines).
+  (reference-equality array windowing for diff engines), `motion.ts`
+  (`prefersReducedMotion`/`motionBaseMs` — the `--motion-base` token reads).
 
 Known candidates deliberately not (yet) extracted: `textMetrics.ts`'s wrap
 engine (typed against `Paragraph`/`RunFormatting`), the pagination engine,

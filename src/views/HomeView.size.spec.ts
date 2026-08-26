@@ -17,12 +17,14 @@
 //
 // Ratchet ledger:
 //   2026-08-24  751  Library module extraction (1,476 -> 651)
+//   2026-08-26  672  LibraryGrid/StateMessage/HeaderActions extraction (677 -> 572)
+//   2026-08-26  610  LibraryDialogs + motion helpers extraction (572 -> 510)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 751;
+const LINE_BUDGET = 610;
 
 describe("HomeView size budget", () => {
   it(`HomeView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

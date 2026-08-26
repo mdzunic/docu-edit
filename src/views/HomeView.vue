@@ -13,24 +13,20 @@ import { useToasts } from "../composables/useToasts";
 import { useLibrary } from "../composables/useLibrary";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
-import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog.vue";
-import RenameDialog from "../components/RenameDialog.vue";
-import TemplateGalleryDialog from "../components/TemplateGalleryDialog.vue";
-import CommandPalette from "../components/CommandPalette.vue";
-import RowMenu from "../components/library/RowMenu.vue";
-import LibraryCard from "../components/library/LibraryCard.vue";
 import LibraryControls from "./library/LibraryControls.vue";
 import LibraryEmptyState from "./library/LibraryEmptyState.vue";
+import LibraryDialogs from "./library/LibraryDialogs.vue";
+import LibraryGrid from "./library/LibraryGrid.vue";
+import LibraryHeaderActions from "./library/LibraryHeaderActions.vue";
 import LibraryList from "./library/LibraryList.vue";
 import LibrarySelectionBar from "./library/LibrarySelectionBar.vue";
+import LibraryStateMessage from "./library/LibraryStateMessage.vue";
 import LibraryStoragePanel from "./library/LibraryStoragePanel.vue";
 import LibraryTrash from "./library/LibraryTrash.vue";
-import { useTier } from "../composables/useResponsiveTier";
 import { openAnyDocumentFile } from "../lib/openDocument";
 import { editorPathFor, OPEN_FILE_ACCEPT } from "../lib/documentKinds";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { COMMANDS, loadRecentCommands, pushRecentCommand } from "../lib/commandCatalogue";
-import { libraryRowMenuItems } from "../lib/libraryMenu";
 import {
   getOrCreateDocument,
   initLibrary,
@@ -42,6 +38,8 @@ import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
 import { instantiateTemplate } from "../lib/templateStore";
 import { createDocument } from "../lib/documentModel";
 import { createBlankPresentation } from "../lib/presentation/slides";
+import { useTier } from "../composables/useResponsiveTier";
+import { motionBaseMs, prefersReducedMotion } from "../lib/core/motion";
 
 const router = useRouter();
 const { addToast } = useToasts();
@@ -52,30 +50,14 @@ useTheme();
 
 const lib = useLibrary();
 
-// SPEC-068 AC-38 — at the compact tier the library's three header actions
-// collapse to one primary action (New document) plus an overflow menu holding
-// the rest; the cards reflow to one column (CSS) and search stays visible.
+// SPEC-068 AC-38 — at the compact tier the library's header actions collapse
+// to one primary action (New document) plus an overflow menu; that component
+// owns the menu state, HomeView only supplies the tier flag.
 const tier = useTier();
 const compact = computed(() => tier.value === "compact");
-const headerActionsMenuOpen = ref(false);
-const HEADER_OVERFLOW_ACTIONS = [
-  { id: "new-presentation", label: "New presentation", testid: "new-presentation" },
-  { id: "new-from-template", label: "New from template…", testid: "new-from-template" },
-  { id: "open-document", label: "Open document", testid: "open-document" },
-];
-function runHeaderAction(id = "") {
-  headerActionsMenuOpen.value = false;
-  if (id === "new-presentation") {
-    createNewPresentation();
-  } else if (id === "new-from-template") {
-    openTemplateGallery();
-  } else if (id === "open-document") {
-    pickFile();
-  }
-}
 
-const fileInput = useTemplateRef("fileInput");
 const openError = ref("");
+const dialogs = useTemplateRef("dialogs");
 
 // main.ts awaits initLibrary() before mounting, so the store is hydrated here in
 // the running app; the refresh-on-init matters only when the view is mounted
@@ -279,13 +261,9 @@ function chooseTemplateFile(doc = createDocument("")) {
 }
 function pickFile() {
   openError.value = "";
-  fileInput.value?.click();
+  dialogs.value?.pick();
 }
-async function handleFileChosen() {
-  const file = fileInput.value?.files?.[0];
-  if (fileInput.value) {
-    fileInput.value.value = "";
-  }
+async function handleFileChosen(file = null) {
   if (!file) {
     return;
   }
@@ -340,21 +318,6 @@ function runLibraryCommand(id = "") {
 // --- SPEC-060 returning highlight ----------------------------------------
 
 const highlightId = ref("");
-
-function prefersReducedMotion() {
-  return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-function motionBaseMs() {
-  const raw = getComputedStyle(document.documentElement).getPropertyValue("--motion-base").trim();
-  const value = parseFloat(raw);
-  if (!Number.isFinite(value)) {
-    return 200;
-  }
-  return raw.endsWith("ms") ? value : value * 1000;
-}
 
 onMounted(async () => {
   const closedId = window.history.state?.closedDocId;
@@ -427,43 +390,12 @@ onMounted(async () => {
     >
       <LibraryControls :lib="lib">
         <template #actions>
-          <UiButton
-            variant="primary"
-            data-testid="new-document"
-            @click="createNewDocument"
-          >
-            New document
-          </UiButton>
-          <template v-if="!compact">
-            <UiButton
-              data-testid="new-presentation"
-              @click="createNewPresentation"
-            >
-              New presentation
-            </UiButton>
-            <UiButton
-              data-testid="new-from-template"
-              @click="openTemplateGallery"
-            >
-              New from template…
-            </UiButton>
-            <UiButton
-              data-testid="open-document"
-              @click="pickFile"
-            >
-              Open document
-            </UiButton>
-          </template>
-          <RowMenu
-            v-else
-            :open="headerActionsMenuOpen"
-            label="More actions"
-            :items="HEADER_OVERFLOW_ACTIONS"
-            button-testid="library-actions-overflow"
-            menu-testid="library-actions-overflow-menu"
-            @toggle="headerActionsMenuOpen = !headerActionsMenuOpen"
-            @close="headerActionsMenuOpen = false"
-            @select="runHeaderAction"
+          <LibraryHeaderActions
+            :compact="compact"
+            @new-document="createNewDocument"
+            @new-presentation="createNewPresentation"
+            @new-from-template="openTemplateGallery"
+            @open-document="pickFile"
           />
         </template>
       </LibraryControls>
@@ -478,29 +410,16 @@ onMounted(async () => {
       <!-- Storage usage (AC-47..50). -->
       <LibraryStoragePanel :lib="lib" />
 
-      <!-- No results (AC-54..56). -->
-      <div
+      <!-- No results (AC-54..56) / empty-with-trash note. -->
+      <LibraryStateMessage
         v-if="lib.noResults.value"
-        class="state-message no-results"
-        data-testid="no-results"
-      >
-        <p>No documents match your search or filters.</p>
-        <UiButton
-          data-testid="clear-filters"
-          @click="lib.clearFilters()"
-        >
-          Clear search and filters
-        </UiButton>
-      </div>
-
-      <!-- Library empty but trash has documents. -->
-      <div
+        no-results
+        @clear-filters="lib.clearFilters()"
+      />
+      <LibraryStateMessage
         v-else-if="lib.libraryEmpty.value"
-        class="state-message"
-        data-testid="library-empty"
-      >
-        <p>Your library is empty. {{ lib.trashCount.value }} document(s) in the trash.</p>
-      </div>
+        :trash-count="lib.trashCount.value"
+      />
 
       <!-- List view (AC-1). -->
       <LibraryList
@@ -517,88 +436,51 @@ onMounted(async () => {
       />
 
       <!-- Grid view (AC-1, AC-3..7). -->
-      <div
+      <LibraryGrid
         v-else
-        class="library-grid"
-        role="grid"
-        data-testid="library-grid"
+        :lib="lib"
+        :menu-for="menuFor"
+        :highlight-id="highlightId"
+        @open="openDocument"
+        @select-modifiers="onSelectModifiers($event.id, { shift: $event.shift, ctrlOrMeta: $event.ctrlOrMeta })"
         @keydown="handleContentKeydown"
-      >
-        <LibraryCard
-          v-for="(entry, index) in lib.visible.value"
-          :key="entry.id"
-          :entry="entry"
-          :search="lib.search.value"
-          :now="lib.now.value"
-          :selected="lib.isSelected(entry.id)"
-          :focused="lib.rowTabindex(entry.id, index) === 0"
-          :menu-open="menuFor === entry.id"
-          :highlight="entry.id === highlightId"
-          :menu-items="libraryRowMenuItems(entry.starred)"
-          @open="openDocument"
-          @select="onSelectModifiers($event.id, { shift: $event.shift, ctrlOrMeta: $event.ctrlOrMeta })"
-          @toggle-check="lib.toggleSelection"
-          @toggle-star="lib.toggleStar"
-          @menu-toggle="toggleMenu"
-          @menu-close="closeMenu"
-          @menu-select="onMenuSelect"
-          @focus="lib.focusedId.value = $event"
-        />
-      </div>
+        @menu-toggle="toggleMenu"
+        @menu-close="closeMenu"
+        @menu-select="onMenuSelect"
+        @focus="lib.focusedId.value = $event"
+      />
     </div>
 
     <!-- Shared across every branch. -->
-    <input
-      ref="fileInput"
-      type="file"
-      :accept="openFileAccept"
-      data-testid="open-document-input"
-      class="visually-hidden"
-      @change="handleFileChosen"
-    >
-    <p
-      v-if="openError"
-      class="open-error"
-      role="alert"
-      data-testid="open-document-error"
-    >
-      {{ openError }}
-    </p>
-    <RenameDialog
-      v-if="renameFor"
-      :current-title="renameTarget"
-      @save="applyRename"
-      @cancel="renameFor = ''"
-    />
-    <ConfirmDeleteDialog
-      v-if="permanentDeleteFor"
-      :document-title="permanentDeleteTitle"
-      kind="document permanently"
-      @confirm="confirmPermanentDelete"
-      @cancel="permanentDeleteFor = ''"
-    />
-    <ConfirmDeleteDialog
-      v-else-if="confirmingEmptyTrash"
-      :document-title="`${lib.trashCount.value} document(s) in the trash`"
-      kind="everything in the trash"
-      @confirm="confirmEmptyTrash"
-      @cancel="confirmingEmptyTrash = false"
-    />
-    <TemplateGalleryDialog
-      v-if="showGallery"
-      @choose-blank="chooseBlankDocument"
-      @choose-builtin="chooseBuiltinTemplate"
-      @choose-user="chooseUserTemplate"
-      @choose-file="chooseTemplateFile"
-      @close="showGallery = false"
-    />
-    <CommandPalette
-      v-if="commandPaletteOpen"
-      :commands="libraryCommands"
-      :common-ids="libraryCommandIds"
-      :recent-ids="paletteRecentIds"
-      @run="runLibraryCommand"
-      @dismiss="commandPaletteOpen = false"
+    <LibraryDialogs
+      ref="dialogs"
+      :open-file-accept="openFileAccept"
+      :open-error="openError"
+      :rename-for="renameFor"
+      :rename-target="renameTarget"
+      :permanent-delete-for="permanentDeleteFor"
+      :permanent-delete-title="permanentDeleteTitle"
+      :confirming-empty-trash="confirmingEmptyTrash"
+      :trash-count="lib.trashCount.value"
+      :show-gallery="showGallery"
+      :command-palette-open="commandPaletteOpen"
+      :library-commands="libraryCommands"
+      :library-command-ids="libraryCommandIds"
+      :palette-recent-ids="paletteRecentIds"
+      @rename-save="applyRename"
+      @rename-cancel="renameFor = ''"
+      @permanent-delete-confirm="confirmPermanentDelete"
+      @permanent-delete-cancel="permanentDeleteFor = ''"
+      @empty-trash-confirm="confirmEmptyTrash"
+      @empty-trash-cancel="confirmingEmptyTrash = false"
+      @template-choose-blank="chooseBlankDocument"
+      @template-choose-builtin="chooseBuiltinTemplate"
+      @template-choose-user="chooseUserTemplate"
+      @template-choose-file="chooseTemplateFile"
+      @template-close="showGallery = false"
+      @command-run="runLibraryCommand"
+      @command-dismiss="commandPaletteOpen = false"
+      @file-chosen="handleFileChosen"
     />
   </AppShell>
 </template>
@@ -624,54 +506,5 @@ onMounted(async () => {
   max-width: 64rem;
   margin: 0 auto;
   padding: var(--space-7) var(--space-5);
-}
-
-.state-message {
-  padding: var(--space-7) var(--space-5);
-  text-align: center;
-  color: var(--text-secondary);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.no-results {
-  border: var(--border-width) dashed var(--border-default);
-  border-radius: var(--radius-md);
-}
-
-.library-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-  gap: var(--space-5);
-}
-
-/* SPEC-068 AC-37 — the compact tier (<640px, matching useResponsiveTier):
-   cards reflow to a single column. The search box's own full-width row
-   lives with it in LibraryControls. */
-@media (max-width: 639.98px) {
-  .library-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: calc(-1 * var(--border-width));
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.open-error {
-  margin: var(--space-4) auto 0;
-  color: var(--text-danger);
-  max-width: 32rem;
-  text-align: center;
 }
 </style>
