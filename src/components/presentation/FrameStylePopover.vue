@@ -74,7 +74,7 @@ function toggleStroke() {
         :value="fillColor"
         aria-label="Fill colour"
         data-testid="style-fill-color"
-        @input="setFillColor"
+        @change="setFillColor"
       >
       <button
         type="button"
@@ -103,7 +103,7 @@ function toggleStroke() {
         :value="strokeColor"
         aria-label="Stroke colour"
         data-testid="style-stroke-color"
-        @input="setStrokeColor"
+        @change="setStrokeColor"
       >
       <input
         type="number"
