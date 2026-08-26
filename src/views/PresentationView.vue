@@ -20,7 +20,6 @@ import NotesPanel from "../components/presentation/NotesPanel.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
-import { downloadPresentation } from "../lib/presentation/download";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
 import { cmToPx } from "../lib/core/units";
@@ -29,6 +28,7 @@ import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
+import { useDeckActions } from "./presentation/useDeckActions";
 
 const route = useRoute();
 const router = useRouter();
@@ -151,19 +151,12 @@ async function loadPresentation() {
     }
   }
   presentation.value = model;
-  currentIndex.value = 0;
+  // Reselect the slide the play view was showing on exit (SPEC-084 `?return`),
+  // else the first slide.
+  currentIndex.value = deckActions.returnIndex();
   slideUndo.reset(); // the undo stack is per-open-view (AC-45)
   void nextTick(recomputeScale);
 }
-
-// main.ts awaits initLibrary() before mounting, so the store is hydrated in
-// the running app; re-syncing after it resolves matters only when the view is
-// mounted directly (tests) — the same pattern HomeView uses.
-void loadPresentation();
-void initLibrary().then(loadPresentation);
-watch(presentationId, () => {
-  void loadPresentation();
-});
 
 const title = computed(() => presentation.value?.title ?? "No document");
 const badge = computed(() => (presentation.value ? formatBadgeLabel(presentation.value.format) : ""));
@@ -182,6 +175,27 @@ function selectSlide(index = 0) {
     currentIndex.value = index;
   }
 }
+
+// --- deck header actions: download + playback entry (SPEC-080/084) ---------
+const deckActions = useDeckActions({
+  model: presentation,
+  presentationId,
+  currentIndex,
+  slideTotal,
+  router,
+  route,
+  reportError: (message) => addToast(message),
+});
+
+// main.ts awaits initLibrary() before mounting, so the store is hydrated in
+// the running app; re-syncing after it resolves matters only when the view is
+// mounted directly (tests) — the same pattern HomeView uses. These run after
+// deckActions is defined so loadPresentation's return-selection read is safe.
+void loadPresentation();
+void initLibrary().then(loadPresentation);
+watch(presentationId, () => {
+  void loadPresentation();
+});
 
 // --- selection + text editing + toolbar (SPEC-081) -------------------------
 const stageEdit = usePresentationEditing({
@@ -241,6 +255,7 @@ onMounted(() => {
   window.addEventListener("resize", recomputeScale);
   window.addEventListener("keydown", stageEdit.onGlobalKeydown);
   window.addEventListener("keydown", notes.onGlobalKeydown);
+  window.addEventListener("keydown", deckActions.onPresentShortcut);
   void nextTick(recomputeScale);
 });
 
@@ -249,34 +264,9 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", recomputeScale);
   window.removeEventListener("keydown", stageEdit.onGlobalKeydown);
   window.removeEventListener("keydown", notes.onGlobalKeydown);
+  window.removeEventListener("keydown", deckActions.onPresentShortcut);
 });
 
-// --- download (own format + "Download a copy as…" the other) ---------------
-
-const otherFormat = computed(() => (presentation.value?.format === "odp" ? "pptx" : "odp"));
-const otherFormatLabel = computed(() => presentationFormatLabel(otherFormat.value));
-
-function download() {
-  if (presentation.value) {
-    void downloadPresentation(presentation.value);
-  }
-}
-async function downloadCopy() {
-  const model = presentation.value;
-  if (!model) {
-    return;
-  }
-  const { droppedObjects } = await downloadPresentation(model, otherFormat.value);
-  if (droppedObjects > 0) {
-    addToast(`${droppedObjects} object${droppedObjects === 1 ? "" : "s"} couldn't be converted`);
-  }
-}
-
-function close() {
-  // Mirrors the editor's close (useFileActions): the library scrolls to and
-  // highlights the row that was just closed (SPEC-060).
-  router.push({ path: "/", state: { closedDocId: presentationId.value } });
-}
 </script>
 
 <template>
@@ -342,15 +332,24 @@ function close() {
           >
             Notes
           </UiButton>
+          <UiButton
+            variant="primary"
+            data-testid="slides-present"
+            :disabled="!deckActions.canPresent.value"
+            :title="deckActions.canPresent.value ? 'Start slideshow' : 'Add a slide to present'"
+            @click="deckActions.present()"
+          >
+            Present
+          </UiButton>
           <PresentationDownloadButton
-            :other-format-label="otherFormatLabel"
-            @download="download"
-            @download-copy="downloadCopy"
+            :other-format-label="deckActions.otherFormatLabel.value"
+            @download="deckActions.download()"
+            @download-copy="deckActions.downloadCopy()"
           />
           <UiButton
             variant="ghost"
             data-testid="presentation-close"
-            @click="close"
+            @click="deckActions.close()"
           >
             Close
           </UiButton>

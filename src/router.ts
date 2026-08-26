@@ -34,6 +34,17 @@ export const routes: RouteRecordRaw[] = [
     },
   },
   {
+    // SPEC-084: full-screen, chrome-free slideshow playback (1-based `n`). The
+    // kind guard mirrors /slides/:id's so a text id hands off to /doc/:id.
+    path: "/slides/:id/present/:n",
+    name: "slides-present",
+    component: () => import("./views/PresentationPlayView.vue"),
+    beforeEnter: (to) => {
+      const id = String(to.params.id ?? "");
+      return documentKindOf(id) === "text" ? `/doc/${id}` : true;
+    },
+  },
+  {
     path: "/open",
     name: "open-from-url",
     component: () => import("./views/OpenFromUrlView.vue"),

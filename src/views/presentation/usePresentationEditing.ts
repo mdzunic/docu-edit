@@ -8,6 +8,7 @@ import type { PresentationModel, Slide, SlideFill } from "../../lib/presentation
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
 import { setFrameFill, setFrameStroke } from "../../lib/presentation/frames";
+import { advanceKeys, backKeys } from "../../lib/presentation/playbackKeys";
 import type { FrameStroke } from "../../lib/presentation/model";
 import { useFrameSelection } from "./useFrameSelection";
 import { useSlideTextEditing, type CaretPoint } from "./useSlideTextEditing";
@@ -170,9 +171,15 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
         return;
       }
     }
-    if (event.key === "PageUp" || event.key === "PageDown") {
+    // PageUp/PageDown stay editor-side (SPEC-084 keeps the richer map in the
+    // play view), but read the shared playback table so the two maps cannot
+    // drift — if PageDown/PageUp ever left advanceKeys/backKeys, this breaks.
+    if (event.key === "PageDown" && advanceKeys.includes(event.key)) {
       event.preventDefault();
-      deps.navigate(event.key === "PageDown" ? 1 : -1);
+      deps.navigate(1);
+    } else if (event.key === "PageUp" && backKeys.includes(event.key)) {
+      event.preventDefault();
+      deps.navigate(-1);
     }
   }
 
