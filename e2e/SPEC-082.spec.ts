@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PNG = join(here, "fixtures", "fixture-image.png");
+const FIXTURE_PPTX = join(here, "fixtures", "mini-deck.pptx");
 
 // SPEC-082 — slide objects: from a blank deck, insert a text box and type in
 // it, draw a shape, nudge it, send it to back, insert an image via the picker,
@@ -101,6 +102,40 @@ test("insert a text box, a shape and an image; nudge, restack, round-trip", asyn
   const imageCy = image.y + image.height / 2;
   expect(Math.abs(imageCx - (stage.x + stage.width / 2))).toBeLessThan(stage.width * 0.1);
   expect(Math.abs(imageCy - (stage.y + stage.height / 2))).toBeLessThan(stage.height * 0.1);
+});
+
+test("select and ungroup a deck's group whose grpSpPr carries no own xfrm (AC-31/32)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(FIXTURE_PPTX);
+  await expect(page).toHaveURL(/\/slides\/.+/);
+  await expect(page.getByTestId("presentation-view")).toBeVisible();
+
+  // Slide 3 carries a plain text box plus 'Group 3', whose <p:grpSpPr/> has no
+  // xfrm of its own; the reader must derive the group's box from the union of
+  // its children (AC-31) or clicking where the group is drawn selects nothing.
+  await page.getByTestId("filmstrip-slide").nth(2).click();
+  const stage = page.getByTestId("stage-workspace");
+  await expect(stage.getByRole("group", { name: "Group" })).toHaveCount(1);
+
+  // Click the group's rendered content to select it; the Ungroup control only
+  // appears for a group selection.
+  await stage.getByText("Grouped note").click();
+  await expect(page.getByTestId("ungroup-button")).toBeVisible();
+
+  // The selection chrome is sized from the group's own box; without the
+  // union-of-children fallback that box is 0×0 and the group is unusable — no
+  // visible handles, no move/resize target (AC-31).
+  const selBox = await stage.getByTestId("frame-selection").boundingBox();
+  if (!selBox) throw new Error("no selection box");
+  expect(selBox.width).toBeGreaterThan(1);
+  expect(selBox.height).toBeGreaterThan(1);
+
+  // Ungroup promotes the child in place: the group vanishes, its text survives,
+  // and the selection is now a non-group child (so Ungroup disappears) (AC-32).
+  await page.getByTestId("ungroup-button").click();
+  await expect(stage.getByRole("group", { name: "Group" })).toHaveCount(0);
+  await expect(stage).toContainText("Grouped note");
+  await expect(page.getByTestId("ungroup-button")).toHaveCount(0);
 });
 
 async function downloadTo(page: Page, name: string): Promise<string> {

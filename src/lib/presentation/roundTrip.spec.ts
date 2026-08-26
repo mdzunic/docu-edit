@@ -279,6 +279,17 @@ describe("SPEC-079 frame model", () => {
     expect(table.noBounds).toBeUndefined();
   });
 
+  it("gives a group without its own xfrm a union-of-children hit box (AC-31)", async () => {
+    // Slide 3's 'Group 3' has an empty <p:grpSpPr/>; without a fallback its box
+    // is 0×0 and unselectable. Its sole child text box sits at (2,10,20,3).
+    const slide3 = (await pptxSlides())[2];
+    const group = slide3.frames.find((f) => f.kind === "group") as GroupFrame;
+    expect(group).toBeDefined();
+    expect(group.widthCm).toBeGreaterThan(0);
+    expect(group.heightCm).toBeGreaterThan(0);
+    expectGeomClose(geomOf(group), [2, 10, 20, 3]);
+  });
+
   it("upgrades a preparation-milestone record on re-parse (AC-54/56/57)", async () => {
     const fresh = await readPresentationBytes(await buildPptxFixtureBytes(), "pptx", "Legacy deck");
     // Simulate the prep milestone's stored shape: outline slides, no slideWidthCm.
