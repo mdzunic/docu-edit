@@ -148,6 +148,18 @@ describe("notes round trip (AC-26)", () => {
     expect(reopened.slides[0].notes).toEqual(["Edited odp note"]);
   });
 
+  it("pptx: a notes edit alongside a structural change round-trips both (AC-15/26)", async () => {
+    const { addSlide } = await import("./slides");
+    const model = modelFrom(await parsePptx(await buildPptxFixtureBytes()), "pptx");
+    model.slides[0].notes = ["Structural + notes"];
+    model.slides[0].notesDirty = true;
+    addSlide(model, 0); // sets structureDirty → the substitution path
+    const { bytes } = await writePptx(model);
+    const reopened = await parsePptx(bytes);
+    expect(reopened.slides.length).toBe(5);
+    expect(reopened.slides[0].notes).toEqual(["Structural + notes"]);
+  });
+
   it("a deck whose notes were never touched re-emits its notes parts byte-verbatim (AC-27)", async () => {
     const original = await buildPptxFixtureBytes();
     const before = await pptxParts(original);

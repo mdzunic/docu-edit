@@ -58,7 +58,9 @@ test("read, edit and round-trip speaker notes across slides", async ({ page }) =
   await expect(page).toHaveURL(/\/slides\/.+/);
   await expect(page.getByTestId("presentation-view")).toBeVisible();
 
-  await page.getByTestId("slides-notes-toggle").click();
+  // The open/collapsed choice persists per device, so the reopened deck shows
+  // the panel already expanded (no re-toggle needed).
+  await expect(page.getByTestId("slides-notes-panel")).toBeVisible();
   await expect(editor(page)).toHaveValue("Rehearsed opener\nWatch the clock");
   await page.getByTestId("filmstrip-slide").nth(1).click();
   await expect(editor(page)).toHaveValue("First note for slide two");
