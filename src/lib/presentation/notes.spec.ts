@@ -160,6 +160,39 @@ describe("notes round trip (AC-26)", () => {
     expect(reopened.slides[0].notes).toEqual(["Structural + notes"]);
   });
 
+  it("pptx: notes typed on a newly-added slide round-trip (AC-17/26)", async () => {
+    const { addSlide } = await import("./slides");
+    const model = modelFrom(await parsePptx(await buildPptxFixtureBytes()), "pptx");
+    const at = addSlide(model, model.slides.length - 1); // new last slide
+    model.slides[at].notes = ["Note on the new slide"];
+    model.slides[at].notesDirty = true;
+    const { bytes } = await writePptx(model);
+    const after = await pptxParts(bytes);
+    // A notes-slide part + Content-Types override were minted for the new slide.
+    const notesParts = [...after.keys()].filter((n) => /notesSlides\/notesSlide\d+\.xml$/.test(n));
+    expect(notesParts.length).toBe(2); // fixture's slide1 + the new slide
+    const reopened = await parsePptx(bytes);
+    expect(reopened.slides.length).toBe(5);
+    expect(reopened.slides[at].notes).toEqual(["Note on the new slide"]);
+  });
+
+  it("pptx: a duplicated slide's edited notes get their own part, not the source's (AC-26)", async () => {
+    const { duplicateSlide } = await import("./slides");
+    const model = modelFrom(await parsePptx(await buildPptxFixtureBytes()), "pptx");
+    // Slide 1 has notes in the fixture; duplicate it and edit the copy's notes.
+    const at = duplicateSlide(model, 0);
+    model.slides[at].notes = ["Only on the copy"];
+    model.slides[at].notesDirty = true;
+    const { bytes } = await writePptx(model);
+    const after = await pptxParts(bytes);
+    const reopened = await parsePptx(bytes);
+    // Source keeps its own notes; the copy carries the edited notes — separate parts.
+    expect(reopened.slides[0].notes).toEqual(FIXTURE_NOTES);
+    expect(reopened.slides[at].notes).toEqual(["Only on the copy"]);
+    const notesParts = [...after.keys()].filter((n) => /notesSlides\/notesSlide\d+\.xml$/.test(n));
+    expect(notesParts.length).toBe(2);
+  });
+
   it("a deck whose notes were never touched re-emits its notes parts byte-verbatim (AC-27)", async () => {
     const original = await buildPptxFixtureBytes();
     const before = await pptxParts(original);

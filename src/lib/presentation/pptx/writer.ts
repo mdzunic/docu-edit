@@ -282,6 +282,13 @@ function appendRelationships(relsXml: string, newRels: Relationship[]): string {
   return `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${additions}</Relationships>`;
 }
 
+/** `relsXml` with any notesSlide relationship removed. A duplicated slide must
+ * not inherit the SOURCE's notesSlide target (that would make two model slides
+ * share one on-disk notes part); the notes planner mints the duplicate its own. */
+function stripNotesSlideRel(relsXml: string): string {
+  return relsXml.replace(new RegExp(`<Relationship\\b[^>]*\\bType="${NOTES_SLIDE_REL}"[^>]*/>`, "g"), "");
+}
+
 /** Splices Content-Types `<Default>` entries before the first `<Override>` (or
  * `</Types>` when there is none) — schema-correct order. */
 function spliceContentDefaults(contentTypesXml: string, defaults: string): string {
@@ -545,21 +552,62 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     }
   }
 
-  // Notes surgery (SPEC-083) for verbatim-named slides whose notes changed —
-  // the notes parts move while the slide part stays verbatim. A created notes
-  // master splices into the already-rebuilt presentation.xml / its rels.
-  const emitNameVerbatim = new Map<Slide, string>();
+  // Precompute the emitted bytes and base `.rels` XML for every slide emitted
+  // under a fresh part (added & duplicated slides), so the notes planner sees
+  // the exact rels the writer will emit and can splice a notesSlide rel in. A
+  // duplicate inherits the source's rels; any notesSlide relationship there
+  // points at the SOURCE's notes part, so it is stripped and the planner mints
+  // the duplicate its own part (two model slides never share one notes part).
+  const baseSlideParts = new Map<string, Uint8Array>();
+  const baseSlideRels = new Map<string, string>();
   for (const entry of emitted) {
     if (entry.kind === "verbatim") {
-      emitNameVerbatim.set(entry.slide, entry.emitName);
+      continue;
+    }
+    const relsName = relsPathFor(entry.emitName);
+    if (entry.kind === "duplicate" && entry.sourceName) {
+      const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
+      const sourceRelsXml = sourceRelsBytes ? stripNotesSlideRel(decode(sourceRelsBytes)) : "";
+      const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
+      const newRels = entry.slide.dirty ? linkImageRels(entry.slide, rels, entry.emitName) : [];
+      const xml = entry.slide.dirty
+        ? encode(slideXml(entry.slide, rels, entry.emitName))
+        : parts.get(entry.sourceName)!;
+      baseSlideParts.set(entry.emitName, xml);
+      if (sourceRelsBytes) {
+        baseSlideRels.set(relsName, appendRelationships(sourceRelsXml, newRels));
+      } else if (newRels.length > 0) {
+        baseSlideRels.set(relsName, appendRelationships("", newRels));
+      }
+    } else {
+      const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath));
+      const rels = new Map<string, Relationship>();
+      rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
+      const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
+      baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
+      baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
+    }
+  }
+
+  // Notes surgery (SPEC-083) for EVERY model slide whose notes changed — the
+  // notes parts move while a verbatim slide part stays byte-verbatim, and a
+  // freshly-emitted (added/duplicated) slide gets its own notes part too. A
+  // created notes master splices into the already-rebuilt presentation.xml.
+  const emitNameBySlide = new Map<Slide, string>();
+  const freshSlides = new Set<Slide>();
+  for (const entry of emitted) {
+    emitNameBySlide.set(entry.slide, entry.emitName);
+    if (entry.kind !== "verbatim") {
+      freshSlides.add(entry.slide);
     }
   }
   const notes = planNotes({
     model,
     parts,
-    slidePartFor: (slide) => emitNameVerbatim.get(slide),
+    freshSlides,
+    slidePartFor: (slide) => emitNameBySlide.get(slide),
     slideRelsXml: (slide) => {
-      const path = emitNameVerbatim.get(slide);
+      const path = emitNameBySlide.get(slide);
       if (!path) {
         return "";
       }
@@ -567,6 +615,10 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const own = rebuiltOwn.get(relsPath);
       if (own) {
         return decode(own);
+      }
+      const base = baseSlideRels.get(relsPath);
+      if (base !== undefined) {
+        return base;
       }
       const orig = parts.get(relsPath);
       return orig ? decode(orig) : "";
@@ -600,40 +652,28 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
     }
   }
+  const emittedFresh = new Set<string>();
   for (const entry of emitted) {
     if (entry.kind === "verbatim") {
       continue;
     }
     const relsName = relsPathFor(entry.emitName);
-    if (entry.kind === "duplicate" && entry.sourceName) {
-      // A duplicated-then-edited slide is rebuilt from the model; its rels are
-      // still the source's (carried, ids intact) plus any inserted image. An
-      // unedited duplicate copies the source part's bytes verbatim (AC-33).
-      const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
-      const sourceRelsXml = sourceRelsBytes ? decode(sourceRelsBytes) : "";
-      const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
-      const newRels = entry.slide.dirty ? linkImageRels(entry.slide, rels, entry.emitName) : [];
-      const xml = entry.slide.dirty
-        ? encode(slideXml(entry.slide, rels, entry.emitName))
-        : parts.get(entry.sourceName)!;
-      entries.push({ name: entry.emitName, data: xml });
-      if (sourceRelsBytes) {
-        entries.push({ name: relsName, data: encode(appendRelationships(sourceRelsXml, newRels)) });
-      } else if (newRels.length > 0) {
-        entries.push({ name: relsName, data: encode(appendRelationships("", newRels)) });
-      }
-    } else {
-      const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath));
-      const rels = new Map<string, Relationship>();
-      rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-      const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
-      entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide, rels, entry.emitName)) });
-      entries.push({ name: relsName, data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)) });
+    // The slide part was precomputed above (bytes copied verbatim for an
+    // unedited duplicate, serialised from the model otherwise).
+    entries.push({ name: entry.emitName, data: baseSlideParts.get(entry.emitName)! });
+    emittedFresh.add(entry.emitName);
+    // Its rels: the notes planner's version (a notesSlide rel spliced in) wins
+    // over the base rels; a slide with neither has no rels part.
+    const relsData = notes.parts.get(relsName) ?? (baseSlideRels.has(relsName) ? encode(baseSlideRels.get(relsName)!) : undefined);
+    if (relsData) {
+      entries.push({ name: relsName, data: relsData });
+      emittedFresh.add(relsName);
     }
   }
-  // New notes parts (notes-slide, its rels, a created notes master + rels).
+  // New notes parts (notes-slide, its rels, a created notes master + rels) not
+  // already emitted above with the fresh slide parts.
   for (const [name, data] of notes.parts) {
-    if (!parts.has(name)) {
+    if (!parts.has(name) && !emittedFresh.has(name)) {
       entries.push({ name, data });
     }
   }

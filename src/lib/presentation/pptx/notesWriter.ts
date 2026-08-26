@@ -50,6 +50,12 @@ export interface NotesPlanInput {
   /** The emitted slide-part path for a model slide, or undefined to skip it
    * (a slide with no part cannot host a notes part in this path). */
   slidePartFor: (slide: Slide) => string | undefined;
+  /** Slides emitted under a FRESH part this save (added or duplicated). Their
+   * notes must be materialised into their own notes part even when they are not
+   * `notesDirty` — a duplicate carries copied `notes` but its inherited rels
+   * point at the SOURCE's notes part, so the caller strips that relationship and
+   * the planner mints a new one here (two model slides never share one part). */
+  freshSlides?: Set<Slide>;
   /** The slide's effective `.rels` XML the caller will emit (post image-rel
    * splicing), or "" when it has none yet. */
   slideRelsXml: (slide: Slide) => string;
@@ -156,7 +162,13 @@ export function planNotes(input: NotesPlanInput): NotesPlan {
     contentTypeRemovals: [],
     touched: false,
   };
-  const dirtySlides = model.slides.filter((slide) => slide.notesDirty === true);
+  // Work every slide whose notes changed, plus every freshly-emitted slide that
+  // carries notes (an added/duplicated slide gets its own notes part even when
+  // it was never edited, so its notes are not lost / not shared with a source).
+  const fresh = input.freshSlides ?? new Set<Slide>();
+  const dirtySlides = model.slides.filter(
+    (slide) => slide.notesDirty === true || (fresh.has(slide) && slide.notes !== undefined && slide.notes.length > 0),
+  );
   if (dirtySlides.length === 0) {
     return plan;
   }
