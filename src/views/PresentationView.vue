@@ -14,6 +14,8 @@ import UiButton from "../components/ui/UiButton.vue";
 import SlideStage from "../components/presentation/SlideStage.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
+import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
+import PresentationDownloadButton from "../components/presentation/PresentationDownloadButton.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation, touchDocument } from "../lib/documentStore";
@@ -67,6 +69,15 @@ function commit() {
   touchDocument(model.id);
   triggerRef(presentation);
   void nextTick(recomputeScale);
+}
+
+/** Re-render the stage without persisting — the live preview during a drag or
+ * resize gesture; `commit` persists once on release (SPEC-082). */
+function refresh() {
+  const model = presentation.value;
+  if (!model) return;
+  model.slides = model.slides.slice();
+  triggerRef(presentation);
 }
 
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
@@ -155,11 +166,14 @@ function selectSlide(index = 0) {
 const stageEdit = usePresentationEditing({
   model: presentation,
   currentSlide,
+  currentIndex,
   record: slideUndo.record,
   commit,
+  refresh,
   undo: slideUndo.undo,
   redo: slideUndo.redo,
   navigate: (delta) => selectSlide(currentIndex.value + delta),
+  reportError: (message) => addToast(message),
 });
 
 // --- fit-to-workspace scaling ----------------------------------------------
@@ -207,7 +221,6 @@ onBeforeUnmount(() => {
 
 // --- download (own format + "Download a copy as…" the other) ---------------
 
-const downloadMenuOpen = ref(false);
 const otherFormat = computed(() => (presentation.value?.format === "odp" ? "pptx" : "odp"));
 const otherFormatLabel = computed(() => presentationFormatLabel(otherFormat.value));
 
@@ -217,7 +230,6 @@ function download() {
   }
 }
 async function downloadCopy() {
-  downloadMenuOpen.value = false;
   const model = presentation.value;
   if (!model) {
     return;
@@ -289,46 +301,11 @@ function close() {
           >
             Redo
           </UiButton>
-          <div class="download-split">
-            <UiButton
-              data-testid="presentation-download"
-              @click="download"
-            >
-              Download
-            </UiButton>
-            <UiButton
-              variant="ghost"
-              class="download-caret"
-              data-testid="presentation-download-menu"
-              aria-haspopup="menu"
-              :aria-expanded="downloadMenuOpen"
-              aria-label="More download options"
-              @click="downloadMenuOpen = !downloadMenuOpen"
-            >
-              ▾
-            </UiButton>
-            <div
-              v-if="downloadMenuOpen"
-              class="download-menu"
-              role="menu"
-              data-testid="presentation-download-menu-popup"
-            >
-              <button
-                type="button"
-                role="menuitem"
-                class="download-menu-item"
-                data-testid="download-copy-as"
-                @click="downloadCopy"
-              >
-                Download a copy as {{ otherFormatLabel }}…
-              </button>
-            </div>
-            <div
-              v-if="downloadMenuOpen"
-              class="menu-backdrop"
-              @click="downloadMenuOpen = false"
-            />
-          </div>
+          <PresentationDownloadButton
+            :other-format-label="otherFormatLabel"
+            @download="download"
+            @download-copy="downloadCopy"
+          />
           <UiButton
             variant="ghost"
             data-testid="presentation-close"
@@ -353,6 +330,18 @@ function close() {
         @bullet="stageEdit.editing.toggleBulletCmd()"
         @indent="stageEdit.editing.indent(1)"
         @outdent="stageEdit.editing.indent(-1)"
+      />
+
+      <SlideInsertBar
+        :selected-frame="stageEdit.selection.selectedFrame.value ?? undefined"
+        :armed-kind="stageEdit.insertion.armed.value?.kind ?? ''"
+        @insert-text-box="stageEdit.insertion.armTextBox()"
+        @insert-shape="stageEdit.insertion.armShape($event)"
+        @insert-image="stageEdit.insertion.insertImageFile($event)"
+        @arrange="stageEdit.manipulation.arrange($event)"
+        @ungroup="stageEdit.manipulation.ungroup()"
+        @set-fill="stageEdit.setFill($event)"
+        @set-stroke="stageEdit.setStroke($event)"
       />
 
       <div class="deck-body">
@@ -382,11 +371,18 @@ function close() {
             :live-label="liveLabel"
             :selected-frame-id="stageEdit.selection.selectedFrameId.value ?? undefined"
             :editing-frame-id="stageEdit.editing.editingFrameId.value ?? undefined"
+            :guides="stageEdit.manipulation.guides.value"
+            :draw-preview="stageEdit.insertion.preview.value ?? undefined"
+            :armed="stageEdit.insertion.isArmed.value"
             @frame-select="stageEdit.onFrameSelect"
             @frame-start-edit="stageEdit.onStartEdit"
+            @frame-pointerdown="stageEdit.onFramePointerDown"
+            @handle-pointerdown="stageEdit.onHandlePointerDown"
             @edit-mounted="stageEdit.editing.registerHost"
             @edit-unmounted="stageEdit.editing.registerHost(null)"
             @surface-pointerdown="stageEdit.onSurfaceDeselect"
+            @surface-draw="stageEdit.onSurfaceDraw"
+            @surface-mounted="stageEdit.registerSurface"
           />
           <div
             v-else
@@ -468,58 +464,6 @@ function close() {
   display: flex;
   gap: var(--space-3);
   align-items: center;
-}
-
-.download-split {
-  position: relative;
-  display: flex;
-  gap: var(--space-1);
-  align-items: center;
-}
-
-.download-caret {
-  padding-inline: var(--space-2);
-}
-
-.download-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + var(--space-1));
-  z-index: 40;
-  min-width: 16rem;
-  padding: var(--space-1);
-  background: var(--surface-raised);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-2);
-}
-
-.download-menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.download-menu-item:hover {
-  background: var(--surface-sunken);
-}
-
-.download-menu-item:focus-visible {
-  background: var(--surface-sunken);
-  outline: var(--border-width) solid var(--focus-ring);
-  outline-offset: calc(-1 * var(--border-width));
-}
-
-.menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 39;
 }
 
 .empty-stage {
