@@ -9,6 +9,7 @@ import { mediaDataUri, type MediaPart } from "../../lib/core/media";
 import type { Slide, SlideFrame, SlideParagraph, SlideRun } from "../../lib/presentation/model";
 import { slideOutline } from "../../lib/presentation/slideModel";
 import type { ShapeVisual } from "../../lib/core/shapes";
+import { shapeDefinition } from "../../lib/core/shapeCatalogue";
 
 /** pt → px at 96/72, the ratio the text editor uses. */
 const PT_TO_PX = 96 / 72;
@@ -65,6 +66,29 @@ export function foreignLabel(frame: SlideFrame): string {
 }
 export function groupChildren(frame: SlideFrame): SlideFrame[] {
   return frame.kind === "group" ? frame.children : [];
+}
+
+/** The accessible name a top-level frame is exposed under (AC-52): "Image",
+ * "Text box", the catalogue shape name, "Group", or a foreign label. */
+export function frameAccessibleName(frame: SlideFrame): string {
+  switch (frame.kind) {
+    case "image":
+      return "Image";
+    case "group":
+      return "Group";
+    case "foreign":
+      return frame.label || "Object";
+    case "shape":
+      return shapeDefinition(frame.geometry)?.label ?? "Shape";
+    default:
+      return frame.role ? "Placeholder" : "Text box";
+  }
+}
+
+/** A frame's ARIA role: `group` for shapes/images/groups/foreign boxes; text
+ * frames keep SPEC-081's text semantics (no group role, AC-51). */
+export function frameRole(frame: SlideFrame): string | undefined {
+  return frame.kind === "text" ? undefined : "group";
 }
 
 // --- positioning & fills ----------------------------------------------------

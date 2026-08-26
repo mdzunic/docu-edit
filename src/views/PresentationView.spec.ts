@@ -217,8 +217,10 @@ describe("PresentationView text editing (SPEC-081)", () => {
   // read-only (no selection/editing wiring).
   const stage = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
     wrapper.get('[data-testid="stage-workspace"]');
+  // SPEC-082 unified every frame kind under data-testid="slide-frame"; a
+  // blank deck's frames are all text placeholders, so this still returns them.
   const frames = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
-    stage(wrapper).findAll('[data-testid="slide-text-frame"]');
+    stage(wrapper).findAll('[data-testid="slide-frame"]');
 
   it("shows an empty-placeholder prompt by role, outside editing (AC-15)", async () => {
     const { wrapper } = await mountWith(createBlankPresentation());

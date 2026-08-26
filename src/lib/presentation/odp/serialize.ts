@@ -15,7 +15,17 @@
 // Framework-free; imports only presentation siblings and src/lib/core.
 import { GEOMETRY_TO_DRAW_TYPE } from "../../core/drawingMl";
 import { escapeXmlAttribute, escapeXmlText } from "../../core/xml";
-import type { PlaceholderRole, ShapeFrame, Slide, SlideParagraph, SlideRun, TextFrame } from "../model";
+import type {
+  FrameStroke,
+  ImageFrame,
+  PlaceholderRole,
+  ShapeFrame,
+  Slide,
+  SlideFill,
+  SlideParagraph,
+  SlideRun,
+  TextFrame,
+} from "../model";
 
 const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
   title: "title",
@@ -103,13 +113,13 @@ export class StyleRegistry {
     return name;
   }
 
-  graphicStyle(frame: ShapeFrame): string | undefined {
+  graphicStyle(style: { fill?: SlideFill; stroke?: FrameStroke }): string | undefined {
     const props: string[] = [];
-    if (frame.fill?.type === "solid") props.push(`draw:fill="solid" draw:fill-color="${escapeXmlAttribute(frame.fill.color)}"`);
-    else if (frame.fill?.type === "none") props.push(`draw:fill="none"`);
-    if (frame.stroke) {
+    if (style.fill?.type === "solid") props.push(`draw:fill="solid" draw:fill-color="${escapeXmlAttribute(style.fill.color)}"`);
+    else if (style.fill?.type === "none") props.push(`draw:fill="none"`);
+    if (style.stroke) {
       props.push(
-        `draw:stroke="solid" svg:stroke-color="${escapeXmlAttribute(frame.stroke.color)}" svg:stroke-width="${(frame.stroke.widthPt / 72 * 2.54).toFixed(3)}cm"`,
+        `draw:stroke="solid" svg:stroke-color="${escapeXmlAttribute(style.stroke.color)}" svg:stroke-width="${(style.stroke.widthPt / 72 * 2.54).toFixed(3)}cm"`,
       );
     }
     if (props.length === 0) return undefined;
@@ -189,7 +199,7 @@ function frameXml(frame: Slide["frames"][number], registry: StyleRegistry): stri
     case "shape":
       return shapeFrameXml(frame, registry);
     case "image":
-      return `<draw:frame${geomAttrs(frame)}><draw:image xlink:href="${escapeXmlAttribute(frame.mediaId)}"/></draw:frame>`;
+      return imageFrameXml(frame, registry);
     case "group":
     case "foreign":
       return frame.xml; // verbatim (AC-39)
@@ -210,8 +220,20 @@ function geomAttrs(frame: Slide["frames"][number]): string {
 function textFrameXml(frame: TextFrame, registry: StyleRegistry): string {
   const cls = frame.role ? ROLE_TO_CLASS[frame.role] : undefined;
   const classAttr = cls ? ` presentation:class="${cls}"` : "";
+  const styleName = registry.graphicStyle({ fill: frame.fill, stroke: frame.stroke });
+  const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
   const body = frame.paragraphs.map((para) => paragraphXml(para, registry)).join("");
-  return `<draw:frame${classAttr}${geomAttrs(frame)}><draw:text-box>${body}</draw:text-box></draw:frame>`;
+  return `<draw:frame${classAttr}${styleAttr}${geomAttrs(frame)}><draw:text-box>${body}</draw:text-box></draw:frame>`;
+}
+
+function imageFrameXml(frame: ImageFrame, registry: StyleRegistry): string {
+  const styleName = registry.graphicStyle({ stroke: frame.stroke });
+  const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
+  return (
+    `<draw:frame${styleAttr}${geomAttrs(frame)}>` +
+    `<draw:image xlink:href="${escapeXmlAttribute(frame.mediaId)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    `</draw:frame>`
+  );
 }
 
 function paragraphXml(para: SlideParagraph, registry: StyleRegistry): string {
@@ -228,7 +250,7 @@ function runXml(run: SlideRun, registry: StyleRegistry): string {
 }
 
 function shapeFrameXml(frame: ShapeFrame, registry: StyleRegistry): string {
-  const styleName = registry.graphicStyle(frame);
+  const styleName = registry.graphicStyle({ fill: frame.fill, stroke: frame.stroke });
   const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
   const geom = geomAttrs(frame);
   const text = frame.paragraphs && frame.paragraphs.length > 0

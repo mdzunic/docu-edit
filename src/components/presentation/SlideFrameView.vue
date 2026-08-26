@@ -24,6 +24,8 @@ import {
   runStyle,
   shapeVisualOf,
   textFrameFill,
+  frameAccessibleName,
+  frameRole,
 } from "./slideRender";
 
 const props = defineProps({
@@ -35,12 +37,24 @@ const props = defineProps({
    * these — group children render read-only. */
   selected: { type: Boolean, default: false },
   editing: { type: Boolean, default: false },
+  /** False for a group's children, which render read-only (no selection,
+   * focus or test hooks) until ungroup promotes them (SPEC-082). */
+  topLevel: { type: Boolean, default: true },
+  /** True while an insertion tool is armed: frames ignore pointer-down so the
+   * draw gesture on the surface underneath is not stolen as a move. */
+  armed: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["select", "start-edit", "edit-mounted", "edit-unmounted"]);
+const emit = defineEmits(["select", "start-edit", "frame-pointerdown", "edit-mounted", "edit-unmounted"]);
 
 const frame = computed(() => asSlideFrame(props.frame));
 const kind = computed(() => frame.value.kind);
+// AC-51/52/53: each top-level frame is a focusable element with a role, an
+// accessible name and the `slide-frame` test id; children carry none.
+const testId = computed(() => (props.topLevel ? "slide-frame" : undefined));
+const role = computed(() => (props.topLevel ? frameRole(frame.value) : undefined));
+const ariaName = computed(() => (props.topLevel ? frameAccessibleName(frame.value) : undefined));
+const tabIndex = computed(() => (props.topLevel ? 0 : undefined));
 const position = computed(() => framePositionStyle(frame.value));
 const paragraphs = computed(() => markedParagraphs(frame.value));
 const textFill = computed(() => textFrameFill(frame.value));
@@ -84,6 +98,14 @@ function onFrameDblclick(event = new MouseEvent("dblclick")) {
   emit("start-edit", frame.value.id, { x: event.clientX, y: event.clientY });
 }
 
+function onFramePointerdown(event = new PointerEvent("pointerdown")) {
+  // Begin a move drag (SPEC-082); the manipulation composable selects and
+  // captures. Editing sessions, group children, and armed insertion (which
+  // draws on the surface below) opt out.
+  if (props.editing || !props.topLevel || props.armed) return;
+  emit("frame-pointerdown", frame.value.id, event);
+}
+
 function paint() {
   const el = canvasEl.value;
   const visual = shapeVisualOf(frame.value);
@@ -111,9 +133,13 @@ watch(() => props.frame, paint, { deep: true });
     class="frame text-frame"
     :class="{ 'is-selected': selected, 'is-editing': editing }"
     :style="{ ...position, background: textFill }"
-    data-testid="slide-text-frame"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
     @mousedown="onFrameMousedown"
     @dblclick="onFrameDblclick"
+    @pointerdown="onFramePointerdown"
   >
     <!-- Editing session: an empty contenteditable the editing composable owns -->
     <div
@@ -152,17 +178,6 @@ watch(() => props.frame, paint, { deep: true });
         >{{ run.text }}</span>
       </div>
     </template>
-    <div
-      v-if="selected && !editing"
-      class="selection-box"
-      aria-hidden="true"
-    >
-      <span
-        v-for="h in 8"
-        :key="h"
-        :class="`handle handle-${h}`"
-      />
-    </div>
   </div>
 
   <!-- Image frame -->
@@ -171,24 +186,18 @@ watch(() => props.frame, paint, { deep: true });
     class="frame"
     :class="{ 'is-selected': selected }"
     :style="position"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
     @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
   >
     <img
       class="frame-image"
       :src="imgSrc"
       alt=""
     >
-    <div
-      v-if="selected"
-      class="selection-box"
-      aria-hidden="true"
-    >
-      <span
-        v-for="h in 8"
-        :key="h"
-        :class="`handle handle-${h}`"
-      />
-    </div>
   </div>
 
   <!-- Shape frame -->
@@ -197,24 +206,17 @@ watch(() => props.frame, paint, { deep: true });
     class="frame shape-frame"
     :class="{ 'is-selected': selected }"
     :style="position"
-    data-testid="slide-shape-frame"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
     @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
   >
     <canvas
       ref="canvasEl"
       class="shape-canvas"
     />
-    <div
-      v-if="selected"
-      class="selection-box"
-      aria-hidden="true"
-    >
-      <span
-        v-for="h in 8"
-        :key="h"
-        :class="`handle handle-${h}`"
-      />
-    </div>
     <div
       v-if="paragraphs.length > 0"
       class="shape-text"
@@ -238,14 +240,21 @@ watch(() => props.frame, paint, { deep: true });
   <div
     v-else-if="kind === 'group'"
     class="frame group-frame"
+    :class="{ 'is-selected': selected }"
     :style="position"
-    data-testid="slide-group-frame"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
+    @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
   >
     <SlideFrameView
       v-for="child in children"
       :key="child.id"
       :frame="child"
       :resolve-media="resolveMedia"
+      :top-level="false"
     />
   </div>
 
@@ -255,21 +264,14 @@ watch(() => props.frame, paint, { deep: true });
     class="frame foreign-frame"
     :class="{ 'is-selected': selected }"
     :style="position"
-    data-testid="slide-foreign-frame"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
     @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
   >
     <span class="foreign-label">{{ foreignText }}</span>
-    <div
-      v-if="selected"
-      class="selection-box"
-      aria-hidden="true"
-    >
-      <span
-        v-for="h in 8"
-        :key="h"
-        :class="`handle handle-${h}`"
-      />
-    </div>
   </div>
 </template>
 
@@ -286,9 +288,15 @@ watch(() => props.frame, paint, { deep: true });
 }
 
 .text-frame.is-editing,
-.text-frame.is-selected,
-.frame.is-selected {
+.text-frame.is-selected {
   cursor: text;
+}
+
+/* Non-text frames show a move cursor when selected (AC-16); a text box keeps
+   its text cursor so a click drops the caret. */
+.shape-frame.is-selected,
+.frame.is-selected:not(.text-frame) {
+  cursor: move;
 }
 
 .text-frame.is-editing {

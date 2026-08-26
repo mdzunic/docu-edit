@@ -14,7 +14,7 @@ const FIXTURE = join(here, "fixtures", "mini-deck.pptx");
 
 /** The text frames on the MAIN stage (not the filmstrip thumbnails). */
 function stageFrames(page: Page) {
-  return page.getByTestId("stage-workspace").getByTestId("slide-text-frame");
+  return page.getByTestId("stage-workspace").getByTestId("slide-frame");
 }
 
 async function openFixture(page: Page): Promise<void> {

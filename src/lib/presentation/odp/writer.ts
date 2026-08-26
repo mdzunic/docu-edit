@@ -16,12 +16,50 @@
 //     `draw:name` uniqued, new pages generated markup. META-INF/manifest.xml
 //     is spliced only when parts were added/removed (never, this spec — pages
 //     live inside content.xml).
-import { decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
 import { buildMetaXml } from "../../core/odfMeta";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
-import { DEFAULT_PRESENTATION_TITLE, type PresentationModel } from "../model";
+import type { MediaPart } from "../../core/media";
+import { escapeXmlAttribute } from "../../core/xml";
+import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type SlideFrame } from "../model";
 import { ODP_MIMETYPE } from "./reader";
 import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
+
+/** Every media part referenced by an ImageFrame anywhere in the deck (groups
+ * descended), from `model.media` — the writer's source of truth for inserted
+ * `Pictures/…` parts (SPEC-082). */
+function referencedMedia(model: PresentationModel): MediaPart[] {
+  const used = new Set<string>();
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "image") {
+        used.add(frame.mediaId);
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  for (const slide of model.slides) {
+    walk(slide.frames);
+  }
+  return (model.media ?? []).filter((part) => used.has(part.mediaId));
+}
+
+/** Splices `<manifest:file-entry>` rows for any media part not already
+ * declared, before `</manifest:manifest>` (AC-49). */
+function spliceManifest(manifestXml: string, media: MediaPart[]): string {
+  const additions = media
+    .filter((part) => !manifestXml.includes(`manifest:full-path="${part.mediaId}"`))
+    .map(
+      (part) =>
+        `<manifest:file-entry manifest:full-path="${escapeXmlAttribute(part.mediaId)}" manifest:media-type="${escapeXmlAttribute(part.contentType)}"/>`,
+    )
+    .join("");
+  if (additions.length === 0) {
+    return manifestXml;
+  }
+  return manifestXml.replace(/<\/manifest:manifest>/, `${additions}</manifest:manifest>`);
+}
 
 export { ODP_MIMETYPE };
 
@@ -62,18 +100,34 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   const rebuiltContent =
     structural && model.odpContentEnvelope ? encode(rebuildContentXml(model, model.odpContentEnvelope)) : undefined;
 
+  // Inserted images: model.media is the source of truth (overrides an opaque
+  // twin), new `Pictures/…` parts are appended, and the manifest gains their
+  // entries (AC-49). Only touched when an image was actually inserted.
+  const media = structural ? referencedMedia(model) : [];
+  const mediaBytes = new Map(media.map((part) => [part.mediaId, base64ToBytes(part.data)]));
+  const appended = media.filter((part) => !parts.has(part.mediaId));
+
   for (const [name, data] of parts) {
     if (name === "mimetype") {
       continue;
     }
     if (name === "content.xml" && rebuiltContent) {
       entries.push({ name, data: rebuiltContent });
+    } else if (name === "META-INF/manifest.xml" && appended.length > 0) {
+      entries.push({ name, data: encode(spliceManifest(decoder.decode(data), appended)) });
+    } else if (mediaBytes.has(name)) {
+      entries.push({ name, data: mediaBytes.get(name)! });
     } else {
       entries.push({ name, data });
     }
   }
+  for (const part of appended) {
+    entries.push({ name: part.mediaId, data: mediaBytes.get(part.mediaId)! });
+  }
   return { bytes: await zip(entries) };
 }
+
+const decoder = new TextDecoder("utf-8");
 
 // --- substitution: rebuild content.xml from the page envelope --------------
 
@@ -170,6 +224,13 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
 
   const meta = buildMetaXml({ title: model.title }, modified);
 
+  const media = referencedMedia(model);
+  const mediaEntries = media
+    .map(
+      (part) =>
+        `<manifest:file-entry manifest:full-path="${escapeXmlAttribute(part.mediaId)}" manifest:media-type="${escapeXmlAttribute(part.contentType)}"/>`,
+    )
+    .join("");
   const manifest =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<manifest:manifest xmlns:manifest="${MANIFEST_NS}" manifest:version="1.2">` +
@@ -177,13 +238,18 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
     `<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>` +
     `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
+    mediaEntries +
     `</manifest:manifest>`;
 
-  return [
+  const entries: ZipEntryInput[] = [
     { name: "mimetype", data: encode(ODP_MIMETYPE), store: true },
     { name: "content.xml", data: encode(content) },
     { name: "styles.xml", data: encode(styles) },
     { name: "meta.xml", data: encode(meta) },
     { name: "META-INF/manifest.xml", data: encode(manifest) },
   ];
+  for (const part of media) {
+    entries.push({ name: part.mediaId, data: base64ToBytes(part.data) });
+  }
+  return entries;
 }

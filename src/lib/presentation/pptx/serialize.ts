@@ -116,6 +116,12 @@ function fillXml(fill: SlideFill | undefined): string {
   return `<a:solidFill><a:srgbClr val="${hex(fill.color)}"/></a:solidFill>`;
 }
 
+/** A frame's `a:ln` outline, or "" for none. */
+function strokeXml(stroke: { color: string; widthPt: number } | undefined): string {
+  if (!stroke) return "";
+  return `<a:ln w="${Math.round(stroke.widthPt * 12700)}"><a:solidFill><a:srgbClr val="${hex(stroke.color)}"/></a:solidFill></a:ln>`;
+}
+
 // --- text frame ------------------------------------------------------------
 
 function textFrameXml(frame: TextFrame, id: number): string {
@@ -127,7 +133,7 @@ function textFrameXml(frame: TextFrame, id: number): string {
   const nvSpPr =
     `<p:nvSpPr><p:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"/>` +
     `<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>${ph}</p:nvPr></p:nvSpPr>`;
-  const spPr = `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml(frame.fill)}</p:spPr>`;
+  const spPr = `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml(frame.fill)}${strokeXml(frame.stroke)}</p:spPr>`;
   return `<p:sp>${nvSpPr}${spPr}${txBodyXml(frame.paragraphs)}</p:sp>`;
 }
 
@@ -175,13 +181,10 @@ function runXml(run: SlideRun): string {
 
 function shapeFrameXml(frame: ShapeFrame, id: number): string {
   const prst = GEOMETRY_TO_PRST[frame.geometry] ?? "rect";
-  const stroke = frame.stroke
-    ? `<a:ln w="${Math.round(frame.stroke.widthPt * 12700)}"><a:solidFill><a:srgbClr val="${hex(frame.stroke.color)}"/></a:solidFill></a:ln>`
-    : "";
   const nvSpPr =
     `<p:nvSpPr><p:cNvPr id="${id}" name="Shape ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`;
   const spPr =
-    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>${fillXml(frame.fill)}${stroke}</p:spPr>`;
+    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>${fillXml(frame.fill)}${strokeXml(frame.stroke)}</p:spPr>`;
   const txBody = frame.paragraphs && frame.paragraphs.length > 0 ? txBodyXml(frame.paragraphs) : "";
   return `<p:sp>${nvSpPr}${spPr}${txBody}</p:sp>`;
 }
@@ -199,7 +202,7 @@ function imageFrameXml(
   return (
     `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="Picture ${id}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
     `<p:blipFill>${blip}<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
-    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
+    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${strokeXml(frame.stroke)}</p:spPr></p:pic>`
   );
 }
 

@@ -446,6 +446,8 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
     if (phIdx !== undefined) frame.phIdx = Number(phIdx);
     const fill = fillOf(spPr, ctx);
     if (fill) frame.fill = fill;
+    const stroke = strokeOf(spPr, ctx);
+    if (stroke) frame.stroke = stroke;
     return frame;
   }
 
@@ -457,6 +459,8 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
     const frame: SlideFrame = { ...base, kind: "text", paragraphs };
     const fill = fillOf(spPr, ctx);
     if (fill) frame.fill = fill;
+    const stroke = strokeOf(spPr, ctx);
+    if (stroke) frame.stroke = stroke;
     return frame;
   }
   if (geometry) {
@@ -503,7 +507,10 @@ function parsePic(pic: Element, ctx: SlideContext): SlideFrame {
   if (rel && rel.type === IMAGE_RELATIONSHIP) {
     const partPath = resolvePartPath(ctx.slidePartPath, rel.target);
     if (ctx.media.has(partPath)) {
-      return { ...base, kind: "image", mediaId: partPath };
+      const frame: SlideFrame = { ...base, kind: "image", mediaId: partPath };
+      const stroke = strokeOf(spPr, ctx);
+      if (stroke) frame.stroke = stroke;
+      return frame;
     }
   }
   return foreignFrame(pic, base, "Media");
@@ -551,7 +558,6 @@ function parseGrpSp(grp: Element, ctx: SlideContext): SlideFrame {
   const mapping = grpSpPr ? parseGroupChildMapping(grpSpPr) : undefined;
   const groupXfrm = grpSpPr ? parseXfrm(firstA(grpSpPr, "xfrm")) : undefined;
   const groupGeom = geometryFor(groupXfrm, undefined, undefined, undefined, ctx);
-  const base = frameBase(groupGeom);
   const children: SlideFrame[] = [];
   for (const child of Array.from(grp.children)) {
     if (child.namespaceURI !== P_NAMESPACE) {
@@ -562,7 +568,30 @@ function parseGrpSp(grp: Element, ctx: SlideContext): SlideFrame {
       children.push(mapping ? mapChildFrame(frame, mapping) : frame);
     }
   }
+  // A group missing its own xfrm (e.g. an empty `<p:grpSpPr/>`) yields 0×0
+  // geometry and an unclickable hit box; fall back to the children's union in
+  // slide space, matching the ODP reader (AC-31).
+  const geom =
+    groupXfrm?.xEmu === undefined || groupXfrm?.cxEmu === undefined
+      ? { ...unionBounds(children), rotationDeg: groupGeom.rotationDeg }
+      : groupGeom;
+  const base = frameBase(geom);
   return { ...base, kind: "group", children, xml: serializeElement(grp) };
+}
+
+/** Union of child frames' axis-aligned bounds in slide space, in cm. Used as a
+ * group's own box when its `grpSpPr` carries no usable `xfrm` (AC-31). */
+function unionBounds(
+  frames: SlideFrame[],
+): { xCm: number; yCm: number; widthCm: number; heightCm: number } {
+  if (frames.length === 0) {
+    return { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 };
+  }
+  const minX = Math.min(...frames.map((f) => f.xCm));
+  const minY = Math.min(...frames.map((f) => f.yCm));
+  const maxX = Math.max(...frames.map((f) => f.xCm + f.widthCm));
+  const maxY = Math.max(...frames.map((f) => f.yCm + f.heightCm));
+  return { xCm: minX, yCm: minY, widthCm: maxX - minX, heightCm: maxY - minY };
 }
 
 /** Applies a group's child mapping to a fully-parsed child frame's own

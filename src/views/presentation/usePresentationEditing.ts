@@ -4,11 +4,16 @@
 // stage's global keyboard (undo/redo, slide navigation, Tab/Shift+Tab frame
 // cycling, Enter-to-edit, Escape) + the toolbar's recent-colour memory.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import type { PresentationModel, Slide } from "../../lib/presentation/model";
+import type { PresentationModel, Slide, SlideFill } from "../../lib/presentation/model";
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
+import { setFrameFill, setFrameStroke } from "../../lib/presentation/frames";
+import type { FrameStroke } from "../../lib/presentation/model";
 import { useFrameSelection } from "./useFrameSelection";
 import { useSlideTextEditing, type CaretPoint } from "./useSlideTextEditing";
+import { useFrameInsertion } from "./useFrameInsertion";
+import { useFrameManipulation } from "./useFrameManipulation";
+import type { ResizeHandle } from "./stageMath";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return (
@@ -20,12 +25,18 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export interface PresentationEditingDeps {
   model: Ref<PresentationModel | null>;
   currentSlide: ComputedRef<Slide | null>;
+  /** The current slide's index (the frame commands' target). */
+  currentIndex: Ref<number>;
   record: (label?: string) => void;
   commit: () => void;
+  /** Re-render the stage without persisting — live drag/resize preview. */
+  refresh: () => void;
   undo: () => void;
   redo: () => void;
   /** Move the current slide by `delta` (PageUp/PageDown). */
   navigate: (delta: number) => void;
+  /** Surface a broken/unreadable image (AC-9). */
+  reportError: (message: string) => void;
 }
 
 export function usePresentationEditing(deps: PresentationEditingDeps) {
@@ -37,6 +48,65 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     record: deps.record,
     commit: deps.commit,
   });
+
+  // The stage surface element, registered by SlideStage, shared by the
+  // insertion + manipulation gestures for client→cm conversion.
+  const surfaceEl = ref<HTMLElement | null>(null);
+  const surface = (): HTMLElement | null => surfaceEl.value;
+
+  const insertion = useFrameInsertion({
+    model: deps.model,
+    currentSlide: deps.currentSlide,
+    currentIndex: deps.currentIndex,
+    selection,
+    surface,
+    record: deps.record,
+    commit: deps.commit,
+    startEditing: (id) => editing.startEditing(id),
+    reportError: deps.reportError,
+  });
+
+  const manipulation = useFrameManipulation({
+    model: deps.model,
+    currentSlide: deps.currentSlide,
+    currentIndex: deps.currentIndex,
+    selection,
+    isEditing: () => editing.editingFrameId.value !== null,
+    surface,
+    record: deps.record,
+    refresh: deps.refresh,
+    commit: deps.commit,
+  });
+
+  function registerSurface(el: HTMLElement | null): void {
+    surfaceEl.value = el;
+  }
+
+  // --- style popover commands (one undo entry per commit, AC-42) ------------
+  function withSelected(label: string, apply: (model: PresentationModel, index: number, id: string) => void): void {
+    const model = deps.model.value;
+    const id = selection.selectedFrameId.value;
+    if (!model || !id) return;
+    deps.record(label);
+    apply(model, deps.currentIndex.value, id);
+    deps.commit();
+  }
+  function setFill(fill: SlideFill): void {
+    withSelected("Fill", (model, index, id) => setFrameFill(model, index, id, fill));
+  }
+  function setStroke(stroke: FrameStroke | null): void {
+    withSelected("Stroke", (model, index, id) => setFrameStroke(model, index, id, stroke));
+  }
+
+  function onSurfaceDraw(event: PointerEvent): void {
+    insertion.onSurfacePointerDown(event);
+  }
+  function onFramePointerDown(id: string, event: PointerEvent): void {
+    manipulation.onFramePointerDown(id, event);
+  }
+  function onHandlePointerDown(id: string, handle: ResizeHandle, event: PointerEvent): void {
+    manipulation.onHandlePointerDown(id, handle, event);
+  }
 
   const recentColors = ref<string[]>(loadRecentColors());
 
@@ -72,6 +142,9 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     if (editing.editingFrameId.value) return;
     if (isTypingTarget(event.target)) return;
 
+    // SPEC-082 manipulation keys (nudge / delete / duplicate / ungroup).
+    if (manipulation.onKeydown(event)) return;
+
     if (event.key === "Tab" && selection.selectedFrameId.value !== null) {
       event.preventDefault();
       selection.cycle(event.shiftKey ? -1 : 1);
@@ -85,10 +158,17 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
       }
       return;
     }
-    if (event.key === "Escape" && selection.selectedFrameId.value !== null) {
-      event.preventDefault();
-      selection.clear();
-      return;
+    if (event.key === "Escape") {
+      if (insertion.isArmed.value) {
+        event.preventDefault();
+        insertion.disarm();
+        return;
+      }
+      if (selection.selectedFrameId.value !== null) {
+        event.preventDefault();
+        selection.clear();
+        return;
+      }
     }
     if (event.key === "PageUp" || event.key === "PageDown") {
       event.preventDefault();
@@ -99,11 +179,19 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
   return {
     selection,
     editing,
+    insertion,
+    manipulation,
     recentColors: computed(() => recentColors.value),
     onFrameSelect,
     onStartEdit,
     onSurfaceDeselect,
+    onSurfaceDraw,
+    onFramePointerDown,
+    onHandlePointerDown,
+    registerSurface,
     setColor,
+    setFill,
+    setStroke,
     onGlobalKeydown,
   };
 }
