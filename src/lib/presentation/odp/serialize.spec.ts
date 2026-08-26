@@ -74,6 +74,61 @@ describe("serializePage", () => {
     const xml = serializePage(slide, new StyleRegistry(), new Set(), "Default");
     expect(xml).toContain(`a &amp; b &lt; c`);
   });
+
+  it("mints a drawing-page style for a transition and repoints draw:style-name (SPEC-085)", () => {
+    const registry = new StyleRegistry();
+    const slide: Slide = {
+      id: "s",
+      frames: [],
+      transition: { type: "push", direction: "left", durationMs: 600 },
+      preserved: { "@page": ` draw:name="p1" draw:style-name="dp1"` },
+    };
+    const xml = serializePage(slide, registry, new Set(), "Default");
+    expect(xml).toContain(`draw:style-name="de-DP1"`);
+    expect(xml).not.toContain(`draw:style-name="dp1"`);
+    const styles = registry.xml();
+    expect(styles).toContain(`style:family="drawing-page"`);
+    expect(styles).toContain(`smil:type="pushWipe" smil:subtype="fromRight"`);
+    expect(styles).toContain(`smil:dur="PT0.6S"`);
+  });
+
+  it("copies the original drawing-page fill/background into the minted style, dropping the old transition (SPEC-085)", () => {
+    const registry = new StyleRegistry();
+    const source =
+      `<style:style style:name="dp1" style:family="drawing-page">` +
+      `<style:drawing-page-properties draw:fill="solid" draw:fill-color="#123456" smil:type="spiralWipe" presentation:transition-type="automatic" presentation:duration="PT5S"/>` +
+      `</style:style>`;
+    const slide: Slide = {
+      id: "s",
+      frames: [],
+      transition: { type: "fade", durationMs: 600 },
+      preserved: { "@page": ` draw:name="p1" draw:style-name="dp1"` },
+    };
+    serializePage(slide, registry, new Set(), "Default", source);
+    const styles = registry.xml();
+    // The fill/background is carried over…
+    expect(styles).toContain(`draw:fill="solid"`);
+    expect(styles).toContain(`draw:fill-color="#123456"`);
+    // …the replaced transition's smil attrs are NOT (only the new fade's are).
+    expect(styles).not.toContain(`spiralWipe`);
+    expect(styles).toContain(`smil:type="fade"`);
+  });
+
+  it("mints a fresh drawing-page style even for explicit none, so a replaced transition is dropped", () => {
+    const registry = new StyleRegistry();
+    const source =
+      `<style:style style:name="dp1" style:family="drawing-page">` +
+      `<style:drawing-page-properties smil:type="spiralWipe"/></style:style>`;
+    const slide: Slide = {
+      id: "s",
+      frames: [],
+      transition: { type: "none" },
+      preserved: { "@page": ` draw:name="p1" draw:style-name="dp1"` },
+    };
+    const xml = serializePage(slide, registry, new Set(), "Default", source);
+    expect(xml).toContain(`draw:style-name="de-DP1"`);
+    expect(registry.xml()).not.toContain("spiralWipe"); // original transition dropped
+  });
 });
 
 describe("seedFrom / spliceAutomaticStyles", () => {

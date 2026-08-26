@@ -3,13 +3,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// SPEC-085 — slide transitions. Open the pptx fixture, set Push/Left/1s on
-// slide 1 through the Transition panel (Apply-to-all NOT used), Present, and
-// confirm advancing to slide 2 shows movement (an intermediate transform
-// sampled via page.evaluate, then a settled final state). Exit, download,
-// reopen and confirm the panel round-trips the transition (pptx duration
-// quantises 1s → the "med" bucket, still 1s here as the model keeps exact ms
-// until reopen; slow/med/fast map back to 1000/600/300 so 1s survives).
+// SPEC-085 — slide transitions. Open the pptx fixture, set Push/Left/1s through
+// the Transition panel (Apply-to-all NOT used), Present, and confirm advancing
+// between slides shows movement (an intermediate transform sampled via
+// page.evaluate, then a settled final state). Exit, download, reopen and
+// confirm the panel round-trips the transition (1s → pptx "slow" bucket →
+// 1000ms on reopen, so 1s survives).
+//
+// A slide's transition plays as THAT slide is entered (the PowerPoint-aligned
+// model the Reference mandates and AC-13's six sub-criteria restate), and the
+// first slide's own entrance is out of scope — so the 1→2 step animates slide
+// 2's transition. This spec sets Push/Left/1s on BOTH slide 1 (the round-trip
+// subject named by AC-23) and slide 2 (so the observed 1→2 step moves), setting
+// each per-slide rather than via the Apply-to-all button.
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PPTX = join(here, "fixtures", "mini-deck.pptx");
 
@@ -21,8 +27,6 @@ async function openFixture(page: Page, file = FIXTURE_PPTX): Promise<void> {
 }
 
 async function setPushLeftOneSecond(page: Page): Promise<void> {
-  await page.getByTestId("slides-transition-toggle").click();
-  await expect(page.getByTestId("slides-transition-panel")).toBeVisible();
   await page.getByTestId("transition-effect-push").check();
   await page.getByTestId("transition-direction").selectOption("left");
   await page.getByTestId("transition-duration").fill("1");
@@ -34,8 +38,16 @@ test("set a transition, see movement in playback, and round-trip it", async ({ p
   const deckId = page.url().match(/\/slides\/([^/?]+)/)?.[1] ?? "";
   expect(deckId).not.toBe("");
 
+  await page.getByTestId("slides-transition-toggle").click();
+  await expect(page.getByTestId("slides-transition-panel")).toBeVisible();
+
+  // Set Push/Left/1s on slide 1 (the round-trip subject) — Apply-to-all NOT used.
   await setPushLeftOneSecond(page);
-  // Apply-to-all is deliberately NOT clicked (only slide 1 gets the transition).
+  // …and on slide 2, so the observed 1→2 step animates (incoming-slide model).
+  await page.getByTestId("filmstrip-slide").nth(1).click();
+  await setPushLeftOneSecond(page);
+  // Back to slide 1 so Present starts there.
+  await page.getByTestId("filmstrip-slide").nth(0).click();
 
   // Present from slide 1.
   await page.getByTestId("slides-present").click();
