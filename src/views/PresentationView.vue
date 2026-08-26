@@ -67,6 +67,11 @@ function commit() {
   // and undo snapshots stay in step.
   bumpCurrentSlide();
   model.slides = model.slides.slice();
+  // A fresh media reference too, so the stage's media resolver rebuilds and a
+  // just-inserted image resolves and renders immediately (AC-8).
+  if (model.media) {
+    model.media = model.media.slice();
+  }
   touchDocument(model.id);
   triggerRef(presentation);
   void nextTick(recomputeScale);

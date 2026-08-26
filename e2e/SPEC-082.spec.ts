@@ -75,7 +75,10 @@ test("insert a text box, a shape and an image; nudge, restack, round-trip", asyn
   // --- image: insert the fixture PNG through the picker ---------------------
   await page.getByTestId("slides-image-input").setInputFiles(FIXTURE_PNG);
   await expect(stageFrames(page)).toHaveCount(before + 3);
-  await expect(page.getByRole("group", { name: "Image" })).toBeVisible();
+  const imageGroup = page.getByTestId("stage-workspace").getByRole("group", { name: "Image" });
+  await expect(imageGroup).toBeVisible();
+  // Renders immediately: the <img> resolves to a data URI without a reload (AC-8).
+  await expect(imageGroup.locator("img")).toHaveAttribute("src", /^data:image\//);
 
   // --- download, re-open, verify the three frames + stacking + position -----
   const file = await downloadTo(page, "spec082-deck.pptx");
