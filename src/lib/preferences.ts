@@ -77,6 +77,9 @@ export interface Preferences {
   keepVersionHistory: boolean;
   defaultDownloadFormat: DownloadFormatPreference;
   showConversionReport: boolean;
+  /** Whether the presentation editor's speaker-notes panel is expanded
+   * (SPEC-083). Per-device, default collapsed. */
+  presentationNotesOpen: boolean;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -134,6 +137,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   keepVersionHistory: true,
   defaultDownloadFormat: "source",
   showConversionReport: true,
+  presentationNotesOpen: false,
 };
 
 // --- validators -------------------------------------------------------------
@@ -194,6 +198,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   keepVersionHistory: isBoolean,
   defaultDownloadFormat: oneOf<"defaultDownloadFormat">(["source", "docx", "odt"]),
   showConversionReport: isBoolean,
+  presentationNotesOpen: isBoolean,
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

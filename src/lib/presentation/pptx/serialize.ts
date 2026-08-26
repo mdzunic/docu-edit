@@ -79,6 +79,43 @@ export function serializeSlideXml(
   );
 }
 
+// --- notes-slide part (SPEC-083) -------------------------------------------
+
+const NOTES_ROOT_ATTRS = ` xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"`;
+
+/** Serialises a slide's speaker notes to a `.pptx` notes-slide part
+ * (`p:notes`): the fixed scaffold — a slide-image placeholder (`p:ph
+ * type="sldImg"`, ignored on read) and the body placeholder (`p:ph type="body"
+ * idx="1"`) carrying one `a:p` per notes entry (single run, no explicit rPr,
+ * so formatting is flat). Geometry is the default `p:notesSz`
+ * (6858000×9144000 EMU) with a body placeholder inset by ~1.32cm margins. */
+export function serializeNotesSlideXml(notes: string[]): string {
+  const sldImg =
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/>` +
+    `<p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr>` +
+    `<p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="685800" y="685800"/><a:ext cx="5486400" cy="3086100"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>`;
+  const body =
+    notes.length > 0
+      ? notes.map((line) => (line.length > 0 ? `<a:p><a:r><a:t>${escapeXmlText(line)}</a:t></a:r></a:p>` : `<a:p/>`)).join("")
+      : `<a:p/>`;
+  const bodySp =
+    `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/>` +
+    `<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>` +
+    `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="685800" y="3884613"/><a:ext cx="5486400" cy="4127500"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:lstStyle/>${body}</p:txBody></p:sp>`;
+  return (
+    `${XML_DECL}<p:notes${NOTES_ROOT_ATTRS}><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
+    sldImg +
+    bodySp +
+    `</p:spTree></p:cSld></p:notes>`
+  );
+}
+
 function frameXml(
   frame: SlideFrame,
   mintId: () => number,

@@ -663,16 +663,35 @@ export async function parseOdp(
 function splitContentEnvelope(content: string): { prefix: string; suffix: string; pageSources: string[] } {
   const closeIdx = content.lastIndexOf("</office:presentation>");
   const suffixStart = closeIdx >= 0 ? closeIdx : content.length;
-  const firstPage = content.indexOf("<draw:page");
-  if (firstPage < 0 || firstPage >= suffixStart) {
+  // `<draw:page` must start a `draw:page` element, NOT `<draw:page-thumbnail`
+  // (which a `presentation:notes` block carries): only accept it when followed
+  // by a name-terminating character.
+  const isPageStart = (at: number): boolean => {
+    const after = content["<draw:page".length + at];
+    return after === " " || after === ">" || after === "/" || after === "\t" || after === "\n" || after === "\r";
+  };
+  const nextPage = (from: number): number => {
+    for (let idx = content.indexOf("<draw:page", from); idx !== -1; idx = content.indexOf("<draw:page", idx + 1)) {
+      if (idx >= suffixStart) {
+        return -1;
+      }
+      if (isPageStart(idx)) {
+        return idx;
+      }
+    }
+    return -1;
+  };
+  const firstPage = nextPage(0);
+  if (firstPage < 0) {
     return { prefix: content.slice(0, suffixStart), suffix: content.slice(suffixStart), pageSources: [] };
   }
-  const region = content.slice(firstPage, suffixStart);
   const starts: number[] = [];
-  for (let idx = region.indexOf("<draw:page"); idx !== -1; idx = region.indexOf("<draw:page", idx + 1)) {
+  for (let idx = firstPage; idx !== -1; idx = nextPage(idx + 1)) {
     starts.push(idx);
   }
-  const pageSources = starts.map((start, i) => region.slice(start, i + 1 < starts.length ? starts[i + 1] : region.length));
+  const pageSources = starts.map((start, i) =>
+    content.slice(start, i + 1 < starts.length ? starts[i + 1] : suffixStart),
+  );
   return { prefix: content.slice(0, firstPage), suffix: content.slice(suffixStart), pageSources };
 }
 
@@ -695,7 +714,12 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
   const anim: string[] = [];
   for (const child of Array.from(page.children)) {
     if (child.namespaceURI === PRESENTATION_NS && child.localName === "notes") {
-      preserved["presentation:notes"] = serializeElement(child);
+      // SPEC-083: notes move from `preserved` into the modelled field — the
+      // reader parses the notes text-box rather than retaining it opaquely.
+      const notes = readOdpNotes(child);
+      if (notes) {
+        slide.notes = notes;
+      }
     } else if (isAnimationElement(child)) {
       anim.push(serializeElement(child));
     }
@@ -707,6 +731,29 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
     slide.preserved = preserved;
   }
   return slide;
+}
+
+/** The plain-text speaker notes of a page (SPEC-083, AC-3/4): the
+ * `draw:frame presentation:class="notes"` inside `presentation:notes`; its
+ * `draw:text-box` paragraphs map to entries with formatting flattened
+ * (`draw:page-thumbnail` is ignored). Trailing empty paragraphs are dropped;
+ * `undefined` when nothing text-bearing remains. */
+function readOdpNotes(notesEl: Element): string[] | undefined {
+  for (const frame of Array.from(notesEl.getElementsByTagNameNS(DRAW_NAMESPACE, "frame"))) {
+    if (presentationAttr(frame, "class") !== "notes") {
+      continue;
+    }
+    const textBox = firstChildElement(frame, DRAW_NAMESPACE, "text-box");
+    if (!textBox) {
+      return undefined;
+    }
+    const paragraphs = Array.from(textBox.getElementsByTagNameNS(TEXT_NAMESPACE, "p")).map((p) => p.textContent ?? "");
+    while (paragraphs.length > 0 && paragraphs[paragraphs.length - 1].length === 0) {
+      paragraphs.pop();
+    }
+    return paragraphs.length > 0 ? paragraphs : undefined;
+  }
+  return undefined;
 }
 
 /** Whether an element is one of a page's animation children (`anim:*`) the

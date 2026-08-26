@@ -75,6 +75,37 @@ const SLIDE_RELS =
   `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
   `</Relationships>`;
 
+// Slide 1 references the shared layout AND its notes-slide part (SPEC-083), so
+// the reader follows the notesSlide relationship to the notes body.
+const SLIDE1_RELS =
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+  `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
+  `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/>` +
+  `</Relationships>`;
+
+// A notes-slide part: a slide-image placeholder (ignored on read) and the body
+// placeholder carrying slide 1's notes, one with a bold run (flattened) and a
+// trailing empty paragraph (stripped) — pinning AC-2/4.
+const NOTES_SLIDE1 =
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  `<p:notes xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
+  `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
+  `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>` +
+  `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+  `<p:spPr/><p:txBody><a:bodyPr/>` +
+  `<a:p><a:r><a:rPr lang="en-US" b="1"/><a:t>Open with the Q3 highlight</a:t></a:r></a:p>` +
+  `<a:p><a:r><a:t>Pause before the revenue chart</a:t></a:r></a:p>` +
+  `<a:p/>` +
+  `</p:txBody></p:sp>` +
+  `</p:spTree></p:cSld></p:notes>`;
+
+const NOTES_SLIDE1_RELS =
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+  `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide1.xml"/>` +
+  `</Relationships>`;
+
 // Slide 4 references layout2 (which carries the inheritance-source title
 // placeholder) and the shared image part.
 const SLIDE4_RELS =
@@ -139,6 +170,12 @@ export const FIXTURE_SLIDE4_GEOMETRY: [number, number, number, number][] = [
 
 export const FIXTURE_DECK_TITLE = "Deck fixture";
 export const FIXTURE_DECK_AUTHOR = "Fixture Author";
+
+/** Slide 1's speaker notes (SPEC-083) — identical across both fixture formats
+ * so the reader specs pin extraction to exact strings. Each source carries a
+ * trailing empty paragraph the readers must strip (AC-4) and inline formatting
+ * the readers must flatten (AC). */
+export const FIXTURE_NOTES = ["Open with the Q3 highlight", "Pause before the revenue chart"];
 
 /** The themed ellipse's resolved fill (accent1 + lumMod 60% + lumOff 40% =
  * PowerPoint's "Lighter 40%"). */
@@ -228,6 +265,7 @@ export async function buildPptxFixtureBytes(): Promise<Uint8Array> {
     `<Override PartName="/ppt/slides/slide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>` +
     `<Override PartName="/ppt/slides/slide3.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>` +
     `<Override PartName="/ppt/slides/slide4.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>` +
+    `<Override PartName="/ppt/notesSlides/notesSlide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>` +
     `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
     `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>` +
     `<Override PartName="/ppt/slideLayouts/slideLayout2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>` +
@@ -331,7 +369,9 @@ export async function buildPptxFixtureBytes(): Promise<Uint8Array> {
     entry("ppt/presentation.xml", presentation),
     entry("ppt/_rels/presentation.xml.rels", presentationRels),
     entry("ppt/slides/slide1.xml", slide1),
-    entry("ppt/slides/_rels/slide1.xml.rels", SLIDE_RELS),
+    entry("ppt/slides/_rels/slide1.xml.rels", SLIDE1_RELS),
+    entry("ppt/notesSlides/notesSlide1.xml", NOTES_SLIDE1),
+    entry("ppt/notesSlides/_rels/notesSlide1.xml.rels", NOTES_SLIDE1_RELS),
     entry("ppt/slides/slide2.xml", slide2),
     entry("ppt/slides/_rels/slide2.xml.rels", SLIDE_RELS),
     entry("ppt/slides/slide3.xml", slide3),
@@ -381,10 +421,23 @@ export async function buildOdpFixtureBytes(): Promise<Uint8Array> {
   // The twin's slides 1-3 carry the same slide-space geometry as the .pptx
   // twin so both formats render legibly (AC-42/63/65); slide 4 alone leaves a
   // placeholder geometry-less to exercise the master-page fallback (AC-21).
+  // Slide 1 carries speaker notes (SPEC-083): a page-thumbnail (ignored on
+  // read), the notes frame with a styled span (flattened) and a trailing empty
+  // paragraph (stripped) — pinning AC-3/4.
+  const page1Notes =
+    `<presentation:notes>` +
+    `<draw:page-thumbnail${geom(1, 1, 10, 7.5)}/>` +
+    `<draw:frame presentation:class="notes"${geom(1.5, 13, 16, 9)}><draw:text-box>` +
+    `<text:p>Open with the Q3 highlight</text:p>` +
+    `<text:p><text:span text:style-name="T1">Pause before the revenue chart</text:span></text:p>` +
+    `<text:p/>` +
+    `</draw:text-box></draw:frame>` +
+    `</presentation:notes>`;
   const page1 =
     `<draw:page draw:name="page1">` +
     odpFrame("title", ["Quarterly Review"], geom(2, 6, 29, 3)) +
     odpFrame("subtitle", ["FY26 results and outlook"], geom(2, 10, 29, 2)) +
+    page1Notes +
     `</draw:page>`;
   const page2 =
     `<draw:page draw:name="page2">` +

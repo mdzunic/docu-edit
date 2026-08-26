@@ -30,6 +30,7 @@ import type { MediaPart } from "../../core/media";
 import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide, type SlideFrame } from "../model";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { serializeSlideXml } from "./serialize";
+import { applyNotesContentTypes, planNotes } from "./notesWriter";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -75,7 +76,8 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
   }
   const parts = decodedPartBytes(model.opaque);
   const anyDirty = model.slides.some((slide) => slide.dirty === true);
-  if (!model.structureDirty && !anyDirty) {
+  const anyNotes = model.slides.some((slide) => slide.notesDirty === true);
+  if (!model.structureDirty && !anyDirty && !anyNotes) {
     // Nothing changed — re-emit verbatim (AC-51).
     const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
     return { bytes };
@@ -111,15 +113,56 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       }
     }
   }
+
+  // Notes surgery (SPEC-083): the slide part itself stays byte-verbatim when
+  // only notes changed — only the notes-slide parts (and their machinery) move.
+  const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
+  const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
+  const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
+  const notes = planNotes({
+    model,
+    parts,
+    slidePartFor: (slide) => (slide.partName && parts.has(slide.partName) ? slide.partName : undefined),
+    slideRelsXml: (slide) => {
+      const relsPath = relsPathFor(slide.partName!);
+      const fromRebuilt = rebuilt.get(relsPath);
+      if (fromRebuilt) {
+        return decode(fromRebuilt);
+      }
+      const orig = parts.get(relsPath);
+      return orig ? decode(orig) : "";
+    },
+    presPath,
+    presXml: decode(parts.get(presPath) ?? encode("")),
+    presRelsXml: decode(parts.get(relsPathFor(presPath)) ?? encode("")),
+    contentTypesXml,
+  });
+
+  let combinedContentTypes = applyNotesContentTypes(contentTypesXml, notes);
+  if (media.defaults) {
+    combinedContentTypes = spliceContentDefaults(combinedContentTypes, media.defaults);
+  }
+
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
-    if (rebuilt.has(name)) {
+    if (notes.removed.has(name)) {
+      continue;
+    }
+    if (name === "[Content_Types].xml") {
+      entries.push({ name, data: encode(combinedContentTypes) });
+    } else if (notes.parts.has(name)) {
+      entries.push({ name, data: notes.parts.get(name)! });
+    } else if (rebuilt.has(name)) {
       entries.push({ name, data: rebuilt.get(name)! });
     } else if (media.override.has(name)) {
       entries.push({ name, data: media.override.get(name)! });
-    } else if (name === "[Content_Types].xml" && media.defaults) {
-      entries.push({ name, data: encode(spliceContentDefaults(decode(data), media.defaults)) });
     } else {
+      entries.push({ name, data });
+    }
+  }
+  // New notes parts (notes-slide, its rels, a created notes master + rels).
+  for (const [name, data] of notes.parts) {
+    if (!parts.has(name)) {
       entries.push({ name, data });
     }
   }
@@ -502,20 +545,57 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     }
   }
 
+  // Notes surgery (SPEC-083) for verbatim-named slides whose notes changed —
+  // the notes parts move while the slide part stays verbatim. A created notes
+  // master splices into the already-rebuilt presentation.xml / its rels.
+  const emitNameVerbatim = new Map<Slide, string>();
+  for (const entry of emitted) {
+    if (entry.kind === "verbatim") {
+      emitNameVerbatim.set(entry.slide, entry.emitName);
+    }
+  }
+  const notes = planNotes({
+    model,
+    parts,
+    slidePartFor: (slide) => emitNameVerbatim.get(slide),
+    slideRelsXml: (slide) => {
+      const path = emitNameVerbatim.get(slide);
+      if (!path) {
+        return "";
+      }
+      const relsPath = relsPathFor(path);
+      const own = rebuiltOwn.get(relsPath);
+      if (own) {
+        return decode(own);
+      }
+      const orig = parts.get(relsPath);
+      return orig ? decode(orig) : "";
+    },
+    presPath,
+    presXml: rebuiltPresXml,
+    presRelsXml: rebuiltPresRels,
+    contentTypesXml: rebuiltContentTypes,
+  });
+  const finalPresXml = notes.parts.get(presPath) ? decode(notes.parts.get(presPath)!) : rebuiltPresXml;
+  const finalPresRels = notes.parts.get(presRelsPath) ? decode(notes.parts.get(presRelsPath)!) : rebuiltPresRels;
+  const finalContentTypes = applyNotesContentTypes(rebuiltContentTypes, notes);
+
   // Assemble: iterate opaque parts in order, substituting the three structural
   // parts, rebuilding dirty own-name slides, and skipping removed parts; then
   // append new/duplicated slide parts.
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
-    if (removed.has(name)) {
+    if (removed.has(name) || notes.removed.has(name)) {
       continue;
     }
     if (name === presPath) {
-      entries.push({ name, data: encode(rebuiltPresXml) });
+      entries.push({ name, data: encode(finalPresXml) });
     } else if (name === presRelsPath) {
-      entries.push({ name, data: encode(rebuiltPresRels) });
+      entries.push({ name, data: encode(finalPresRels) });
     } else if (name === "[Content_Types].xml") {
-      entries.push({ name, data: encode(rebuiltContentTypes) });
+      entries.push({ name, data: encode(finalContentTypes) });
+    } else if (notes.parts.has(name)) {
+      entries.push({ name, data: notes.parts.get(name)! });
     } else {
       entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
     }
@@ -549,6 +629,12 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
       entries.push({ name: entry.emitName, data: encode(slideXml(entry.slide, rels, entry.emitName)) });
       entries.push({ name: relsName, data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)) });
+    }
+  }
+  // New notes parts (notes-slide, its rels, a created notes master + rels).
+  for (const [name, data] of notes.parts) {
+    if (!parts.has(name)) {
+      entries.push({ name, data });
     }
   }
   entries.push(...media.appended);
