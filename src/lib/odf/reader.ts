@@ -76,6 +76,7 @@ import {
 } from "../core/lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
 import { parseShapeElement } from "./shape";
+import { parseConnectorElement, resolveOdfConnectorAttachments, stampOdfConnectorTargetId } from "./connector";
 import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
@@ -1259,6 +1260,10 @@ function parseBodyTextBlockOrSplit(
       (child.localName === "custom-shape" || child.localName === "line") &&
       parseShapeElement(child, ctx.contentDoc, ctx.stylesDoc, shapeTextCtx) !== null,
   );
+  // SPEC-070: a draw:connector splits the paragraph the same way a shape does.
+  const hasConnector = Array.from(el.children).some(
+    (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "connector",
+  );
   // A chart frame always becomes a (possibly placeholder) Chart block —
   // unlike image/shape, parseChartFrame never returns null just because the
   // embedded chart's type is outside "Chart catalogue" (see its own doc
@@ -1270,7 +1275,7 @@ function parseBodyTextBlockOrSplit(
     (frame) =>
       firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined && !isFormulaFrame(frame, ctx.parts),
   );
-  if (!hasImage && !hasShape && !hasChart) {
+  if (!hasImage && !hasShape && !hasChart && !hasConnector) {
     return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
   }
 
@@ -1348,6 +1353,16 @@ function parseBodyTextBlockOrSplit(
         if (parsedShape) {
           flush();
           blocks.push(parsedShape.shape);
+          stampOdfConnectorTargetId(frameEl, parsedShape.shape);
+          continue;
+        }
+      }
+      if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "connector") {
+        const parsedConnector = parseConnectorElement(frameEl, ctx.contentDoc, ctx.stylesDoc);
+        if (parsedConnector) {
+          flush();
+          blocks.push(parsedConnector.connector);
+          stampOdfConnectorTargetId(frameEl, parsedConnector.connector);
           continue;
         }
       }
@@ -2747,6 +2762,10 @@ export async function parseOdt(
       properties.unsupportedCustomProperties = unsupportedCustomProperties;
     }
   }
+
+  // SPEC-070: resolve draw:start-shape/draw:end-shape references to target
+  // block indices now every drawing's draw:id is known.
+  resolveOdfConnectorAttachments({ sections });
 
   const result: ParsedOdtDocument = {
     sections,

@@ -8,6 +8,7 @@
 import {
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isShape,
   isTable,
@@ -94,7 +95,7 @@ export function collectNoteRefs(model: DocumentModel, kind: NoteKind): NoteRefLo
         }
         continue;
       }
-      if (isImage(target) || isShape(target) || isChart(target) || isBreak(target) || isToc(target) || isTof(target)) {
+      if (isImage(target) || isShape(target) || isChart(target) || isConnector(target) || isBreak(target) || isToc(target) || isTof(target)) {
         continue;
       }
       collectParagraphRefs(target, kind, section, block, undefined, refs);

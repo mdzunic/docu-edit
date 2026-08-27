@@ -308,12 +308,18 @@ function textBoxXml(shape: Shape, ctx: OdfShapeTextWriteContext): string {
  * `draw:line` (Line/Arrow) — the shape-flavoured sibling of drawing.ts's
  * drawFrameXml. `styleName` is this shape's own generated graphic style
  * (see shapeGraphicStyleXml). */
-export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTextWriteContext): string {
+export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTextWriteContext, drawId?: string): string {
   const anchorType = shape.wrap === "inline" ? "as-char" : "paragraph";
   const descXml = shape.altText ? `<svg:desc>${escapeXmlAttribute(shape.altText)}</svg:desc>` : "";
   const groupAttr = shape.groupOrdinal !== undefined ? ` de:group="${shape.groupOrdinal}"` : "";
   const rotationAttr = shape.rotationDeg ? ` de:rotation="${shape.rotationDeg}"` : "";
   const deXmlns = groupAttr || rotationAttr ? ` xmlns:de="${DE_NAMESPACE}"` : "";
+  // SPEC-070: a shape referenced by a connector's draw:start-shape/end-shape
+  // carries the matching draw:id (also as xml:id, which ODF requires as the
+  // canonical id) so the reference resolves on reopen.
+  const idAttr = drawId
+    ? ` xmlns:xml="http://www.w3.org/XML/1998/namespace" draw:id="${escapeXmlAttribute(drawId)}" xml:id="${escapeXmlAttribute(drawId)}"`
+    : "";
   const xCm = shape.wrap !== "inline" ? shape.offsetXCm ?? 0 : undefined;
   const yCm = shape.wrap !== "inline" ? shape.offsetYCm ?? 0 : undefined;
   const posAttrs = xCm !== undefined && yCm !== undefined ? ` svg:x="${cmToOdfLength(xCm)}" svg:y="${cmToOdfLength(yCm)}"` : "";
@@ -321,7 +327,7 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
   if (LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml) {
     const markerAttr = shape.geometry === "arrow" ? ' draw:marker-end="Arrow" draw:marker-end-width="0.3cm"' : "";
     return (
-      `<draw:line${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
+      `<draw:line${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${idAttr}${deXmlns}${groupAttr}${rotationAttr}` +
       ` svg:x1="${cmToOdfLength(xCm ?? 0)}" svg:y1="${cmToOdfLength(yCm ?? 0)}"` +
       ` svg:x2="${cmToOdfLength((xCm ?? 0) + shape.widthCm)}" svg:y2="${cmToOdfLength((yCm ?? 0) + shape.heightCm)}"` +
       `${markerAttr}>` +
@@ -337,7 +343,7 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
   const geometryXml =
     shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"${modifiersAttr}/>`;
   return (
-    `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${deXmlns}${groupAttr}${rotationAttr}` +
+    `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${idAttr}${deXmlns}${groupAttr}${rotationAttr}` +
     `${posAttrs} svg:width="${cmToOdfLength(shape.widthCm)}" svg:height="${cmToOdfLength(shape.heightCm)}">` +
     descXml +
     textBoxXml(shape, ctx) +

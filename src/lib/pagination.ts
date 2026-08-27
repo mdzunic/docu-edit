@@ -10,6 +10,7 @@
 import {
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isShape,
   isTable,
@@ -196,7 +197,7 @@ interface Frame {
 }
 
 function paragraphOf(block: Block): Paragraph | null {
-  return isTable(block) || isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block) || isTof(block) ? null : block;
+  return isTable(block) || isImage(block) || isShape(block) || isChart(block) || isConnector(block) || isBreak(block) || isToc(block) || isTof(block) ? null : block;
 }
 
 /** The rendered height (px) of a block's `[startLine, endLine)` slice —
@@ -633,7 +634,7 @@ export function estimateMetrics(
   if (isBreak(block)) {
     return { contentWidthPx, heightPx: 0, marginTopPx: 0, marginBottomPx: 0, lines: [], estimated: true };
   }
-  if (isImage(block) || isShape(block) || isChart(block)) {
+  if (isImage(block) || isShape(block) || isChart(block) || isConnector(block)) {
     return {
       contentWidthPx,
       heightPx: block.heightCm * PX_PER_CM,

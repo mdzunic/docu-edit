@@ -106,6 +106,7 @@ import { CONTENT_TYPE_BY_EXTENSION } from "../core/media";
 import { planAnchoredDrawings } from "../drawingAnchors";
 import { drawingXml } from "./drawing";
 import { shapeDrawingXml } from "./shape";
+import { connectorDrawingXml, connectorParagraphXml, connectorTargetIds } from "./connector";
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
 import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";
 import {
@@ -843,6 +844,48 @@ function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWrit
   return `<w:p><w:r>${drawing}</w:r></w:p>`;
 }
 
+/** SPEC-070: pre-computes the `wp:docPr/@id` every drawing block will be
+ * written under, in the exact order the body emission loop assigns them
+ * (`docPrId++` per drawing, document order, absorbed drawings counted at their
+ * anchor paragraph's slot). A connector reads this to name its attachment
+ * targets, which may be emitted after it. Keyed `${section}:${block}`. */
+function planDocPrIds(model: DocumentModel): Map<string, number> {
+  const map = new Map<string, number>();
+  let id = 1;
+  const isIdBearingDrawing = (block: Block): boolean =>
+    block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "connector";
+  const isAbsorbable = (block: Block): boolean =>
+    block.type === "shape" || block.type === "chart" || block.type === "connector";
+  for (let s = 0; s < model.sections.length; s++) {
+    const blocks = model.sections[s].blocks;
+    const plan = planAnchoredDrawings(blocks);
+    for (let i = 0; i < blocks.length; i++) {
+      if (plan.absorbed.has(i)) {
+        continue;
+      }
+      const block = blocks[i];
+      if (isIdBearingDrawing(block)) {
+        map.set(`${s}:${i}`, id++);
+      } else if (block.type === "paragraph") {
+        const entry = plan.byParagraph.get(i);
+        if (entry) {
+          for (const di of entry.leading) {
+            if (isAbsorbable(blocks[di])) {
+              map.set(`${s}:${di}`, id++);
+            }
+          }
+          for (const di of entry.trailing) {
+            if (isAbsorbable(blocks[di])) {
+              map.set(`${s}:${di}`, id++);
+            }
+          }
+        }
+      }
+    }
+  }
+  return map;
+}
+
 /** A Chart block (SPEC-052): the chart-flavoured sibling of
  * imageParagraphXml/shapeParagraphXml — one paragraph holding one run
  * holding the `w:drawing` (see chart.ts's chartDrawingXml). Returns "" when
@@ -1526,10 +1569,10 @@ function headerFooterPartXml(
       if (block.type === "image") {
         return imageParagraphXml(block, plan.mediaPlan, docPrId++);
       }
-      if (block.type === "shape" || block.type === "chart") {
-        // A drawn shape/chart (SPEC-051/SPEC-052) is a body-level feature;
-        // one is never inserted into a header/footer, but the Block union
-        // covers it structurally the same way a TOC does below.
+      if (block.type === "shape" || block.type === "chart" || block.type === "connector") {
+        // A drawn shape/chart/connector (SPEC-051/052/070) is a body-level
+        // feature; one is never inserted into a header/footer, but the Block
+        // union covers it structurally the same way a TOC does below.
         return "";
       }
       if (block.type === "break") {
@@ -1669,7 +1712,7 @@ function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<
           if (block.type === "table") {
             return tableXml(block, includeOpaque, inlineCtx, () => undefined);
           }
-          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "break" || block.type === "toc" || block.type === "tof") {
+          if (block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "connector" || block.type === "break" || block.type === "toc" || block.type === "tof") {
             // A note body holds paragraphs (and its first block must, to
             // carry the reference marker); images/shapes/charts/breaks/TOCs
             // have no valid per-note serialisation, so they are omitted here
@@ -2033,6 +2076,12 @@ function* documentBlockXml(
     commentIds: commentsPlan.commentIds,
     changeIds: new Map(),
   };
+  // SPEC-070: a connector's a:stCxn/a:endCxn must name the docPr id its
+  // attached shape will be written under. Pre-compute every drawing's docPr
+  // id in the exact order the emission loop below assigns them (`${section}:
+  // ${block}` → id), so a connector can look up an attachment target that is
+  // emitted after it.
+  const docPrIdByBlock = planDocPrIds(model);
   let docPrId = 1;
   for (let sectionIndex = 0; sectionIndex < model.sections.length; sectionIndex++) {
     const section = model.sections[sectionIndex];
@@ -2075,6 +2124,10 @@ function* documentBlockXml(
           const chartEntry = chartPlan.planFor(sectionIndex, drawingIndex);
           return chartEntry ? `<w:r>${chartDrawingXml(drawing, chartEntry.relId, docPrId++)}</w:r>` : "";
         }
+        if (drawing.type === "connector") {
+          const ids = connectorTargetIds(sectionIndex, drawing, docPrIdByBlock);
+          return `<w:r>${connectorDrawingXml(drawing, docPrId++, ids)}</w:r>`;
+        }
         return "";
       };
       return { leading: entry.leading.map(runXml).join(""), trailing: entry.trailing.map(runXml).join("") };
@@ -2108,6 +2161,8 @@ function* documentBlockXml(
           yield imageParagraphXml(block, mediaPlan, docPrId++);
         } else if (block.type === "shape") {
           yield shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++);
+        } else if (block.type === "connector") {
+          yield connectorParagraphXml(block, docPrId++, connectorTargetIds(sectionIndex, block, docPrIdByBlock));
         } else if (block.type === "chart") {
           yield chartParagraphXml(block, chartPlan, sectionIndex, i, docPrId++);
         } else if (block.type === "break") {
@@ -2264,7 +2319,7 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
           ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
           : [block];
       for (const paragraph of paragraphs) {
-        if (paragraph.styleId) {
+        if (paragraph.type === "paragraph" && paragraph.styleId) {
           referencedIds.add(paragraph.styleId);
         }
       }

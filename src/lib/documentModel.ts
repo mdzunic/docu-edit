@@ -2159,7 +2159,7 @@ export function forEachParagraph(
             });
           });
         });
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isConnector(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
         visit(block, { section: sectionIndex, block: blockIndex });
       }
     });

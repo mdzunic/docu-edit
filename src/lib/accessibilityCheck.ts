@@ -13,6 +13,7 @@
 import {
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isShape,
   isTable,
@@ -555,15 +556,16 @@ export function buildAccessibilityScanTargets(model: DocumentModel): Accessibili
         targets.push({ kind: "shape", address: { section: sectionIndex, block: blockIndex }, shape: block });
       } else if (isChart(block)) {
         targets.push({ kind: "chart", address: { section: sectionIndex, block: blockIndex }, chart: block });
-      } else if (isBreak(block) || isToc(block) || isTof(block)) {
-        // Nothing to check.
+      } else if (isConnector(block) || isBreak(block) || isToc(block) || isTof(block)) {
+        // Nothing to check (a connector carries alt text but is not part of
+        // this spec's image/shape alt-text audit).
       } else {
         const next = section.blocks[blockIndex + 1];
         targets.push({
           kind: "paragraph",
           address: { section: sectionIndex, block: blockIndex },
           paragraph: block,
-          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isBreak(next) && !isToc(next) && !isTof(next) ? next : undefined,
+          topLevelNext: next && !isTable(next) && !isImage(next) && !isShape(next) && !isChart(next) && !isConnector(next) && !isBreak(next) && !isToc(next) && !isTof(next) ? next : undefined,
         });
       }
     });

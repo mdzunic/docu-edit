@@ -175,7 +175,18 @@ export function parseShapeDrawing(
   }
   const prstGeom = firstChildElement(spPr, A_NAMESPACE, "prstGeom");
   const prst = prstGeom?.getAttribute("prst") ?? "";
-  const geometry = PRST_TO_GEOMETRY[prst];
+  let geometry = PRST_TO_GEOMETRY[prst];
+  // SPEC-070 "Untangling the arrow preset": a `prst="line"` carrying an
+  // `a:tailEnd` is the model's `arrow` (a line with an end arrowhead). The
+  // legacy `straightConnector1` → `arrow` mapping stays in PRST_TO_GEOMETRY
+  // for documents saved before this change.
+  if (geometry === "line") {
+    const lnEl = firstChildElement(spPr, A_NAMESPACE, "ln");
+    const tailEnd = lnEl ? firstChildElement(lnEl, A_NAMESPACE, "tailEnd") : undefined;
+    if (tailEnd && tailEnd.getAttribute("type") !== "none") {
+      geometry = "arrow";
+    }
+  }
 
   const xfrm = firstChildElement(spPr, A_NAMESPACE, "xfrm");
   const rotAttr = xfrm?.getAttribute("rot");
@@ -278,18 +289,23 @@ function dashXml(dash: ShapeOutline["dash"]): string {
   return "";
 }
 
-function outlineXml(outline: ShapeOutline | undefined): string {
+/** The outline `a:ln`. `tailEnd` (SPEC-070 "Untangling the arrow preset") adds
+ * an `<a:tailEnd type="triangle"/>` so the model's `arrow` geometry — written
+ * as `prst="line"` — reads back as an arrow rather than a plain line. */
+function outlineXml(outline: ShapeOutline | undefined, tailEnd?: string): string {
+  const tail = tailEnd ? `<a:tailEnd type="${tailEnd}"/>` : "";
   if (!outline) {
-    return "<a:ln><a:noFill/></a:ln>";
+    return `<a:ln>${tail || "<a:noFill/>"}</a:ln>`;
   }
   const color = cssColorToOoxml(outline.color);
   if (!color) {
-    return "<a:ln><a:noFill/></a:ln>";
+    return `<a:ln>${tail || "<a:noFill/>"}</a:ln>`;
   }
   return (
     `<a:ln w="${ptToEmu(outline.widthPt)}">` +
     `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>` +
     dashXml(outline.dash) +
+    tail +
     "</a:ln>"
   );
 }
@@ -345,7 +361,13 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
     (groupAttr ? ` xmlns:de="${DE_NAMESPACE}"${groupAttr}` : "") +
     "/>";
 
-  const prst = shape.unsupportedGeometryXml ? undefined : GEOMETRY_TO_PRST[shape.geometry];
+  // SPEC-070: the model's `arrow` is "a line with an end arrowhead", not a
+  // connector preset — it writes as `prst="line"` plus an `a:tailEnd`, the
+  // same representation `.odt` already uses. `straightConnector1` is no longer
+  // written (its read-only compatibility mapping stays in PRST_TO_GEOMETRY so
+  // documents this app already saved still open as arrows).
+  const isArrow = shape.geometry === "arrow" && !shape.unsupportedGeometryXml;
+  const prst = shape.unsupportedGeometryXml ? undefined : isArrow ? "line" : GEOMETRY_TO_PRST[shape.geometry];
   const geomXml = shape.unsupportedGeometryXml ?? `<a:prstGeom prst="${prst}">${avLstXml(shape)}</a:prstGeom>`;
   const rotAttr = shape.rotationDeg ? ` rot="${degToOoxmlRot(shape.rotationDeg)}"` : "";
   const isLine = LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml;
@@ -355,7 +377,7 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
     `<a:xfrm${rotAttr}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     geomXml +
     (isLine ? "" : fillXml(shape.fill)) +
-    outlineXml(shape.outline) +
+    outlineXml(shape.outline, isArrow ? "triangle" : undefined) +
     "</wps:spPr>";
 
   const wsp =

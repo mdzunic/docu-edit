@@ -10,6 +10,7 @@ import {
   createDefaultStyles,
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isShape,
   isTable,
@@ -386,6 +387,28 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           }
           continue;
         }
+        if (isConnector(blockAt)) {
+          // SPEC-070 AC-16/AC-32: a connector converts cleanly between formats
+          // (its own preset + attachment refs). The one lossy case is an
+          // endpoint attached to a *non-shape* drawing saved to `.odt`, whose
+          // `draw:start-shape`/`draw:end-shape` needs a `draw:id` the ODF
+          // writer only mints for shapes — that attachment drops to
+          // free-floating and is reported. `.docx` (`wp:docPr/@id`) can name
+          // any drawing target, so a cross-format `.odt → .docx` reports
+          // nothing.
+          if (source !== target && target === "odt") {
+            for (const attachment of [blockAt.startAttachment, blockAt.endAttachment]) {
+              if (!attachment) {
+                continue;
+              }
+              const targetBlock = section.blocks[attachment.target.block];
+              if (targetBlock && !isShape(targetBlock)) {
+                dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
+              }
+            }
+          }
+          continue;
+        }
         if (target === "odt" && isTable(blockAt)) {
           // SPEC-039 AC-19: a table/row/cell property change (a merge/split,
           // a border/shading/padding/height/width/alignment edit) has no
@@ -657,7 +680,7 @@ function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
         }
         return;
       }
-      if (isImage(block) || isShape(block) || isChart(block) || isBreak(block)) {
+      if (isImage(block) || isShape(block) || isChart(block) || isConnector(block) || isBreak(block)) {
         return;
       }
       checkParagraph(block, paragraphNumber);
@@ -991,7 +1014,7 @@ export function withoutDropped(source: DocumentModel, dropped: DropRecord[]): Do
             paragraphs.push(...cell.blocks);
           }
         }
-      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isConnector(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
         paragraphs.push(block);
       }
     }
