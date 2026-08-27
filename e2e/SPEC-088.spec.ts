@@ -67,12 +67,17 @@ test("export a deck to self-contained HTML and drive it offline", async ({ page 
   await exportHtml(page, true, fileOn);
 
   // --- drive the notes-off file straight from file:// ----------------------
+  // The notes-off export omits the #notes aside entirely, so the viewer must
+  // never touch it during navigation; capture any uncaught page error so a
+  // regression there fails the run.
   const network: string[] = [];
+  const pageErrors: string[] = [];
   page.on("request", (req) => {
     if (!req.url().startsWith("file:")) {
       network.push(req.url());
     }
   });
+  page.on("pageerror", (err) => pageErrors.push(err.message));
   const urlOff = pathToFileURL(fileOff).href;
   await page.goto(urlOff);
 
@@ -98,8 +103,13 @@ test("export a deck to self-contained HTML and drive it offline", async ({ page 
     .not.toBe("");
   await expect(page.locator("#s2")).toBeVisible();
 
-  // Not a single network request was made while driving the file.
+  // Navigation on the notes-off file must sync the hash (a null #notes deref
+  // used to throw before syncHash ran, leaving the hash empty).
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#2");
+
+  // Not a single network request — nor an uncaught error — while driving it.
   expect(network).toEqual([]);
+  expect(pageErrors).toEqual([]);
 
   // A #2 deep-link reload lands on slide 2.
   await page.goto(`${urlOff}#2`);

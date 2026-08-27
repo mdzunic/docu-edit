@@ -539,7 +539,7 @@ function scheduleAuto(){clearAuto();if(mode!=="playing")return;
 function showOnly(index){for(var i=0;i<N;i++){var on=i===index;sections[i].classList.toggle("current",on);
   sections[i].setAttribute("aria-hidden",on?"false":"true");if(on)sections[i].removeAttribute("inert");else sections[i].setAttribute("inert","");}}
 function updateUI(){hud.textContent=(state.slide+1)+" / "+N;live.textContent="Slide "+(state.slide+1)+" of "+N;
- if(!notesEl.hasAttribute("hidden"))renderNote();}
+ if(notesEl&&!notesEl.hasAttribute("hidden"))renderNote();}
 function renderNote(){if(!hasNotes)return;var blocks=notesBody?notesBody.children:[];
  for(var i=0;i<blocks.length;i++){blocks[i].style.display=(parseInt(blocks[i].getAttribute("data-index"),10)===state.slide)?"block":"none";}}
 function land(index,build){showOnly(index);settle(sections[index],build);state.slide=index;state.build=build;mode="playing";
