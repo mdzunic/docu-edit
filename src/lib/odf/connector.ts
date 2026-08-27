@@ -12,7 +12,7 @@ import { isConnector } from "../documentModel";
 import type { ArrowheadKind, ShapeOutline } from "../core/shapes";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
-import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, drawAttr, styleAttr, svgAttr, textAttr } from "../core/odfXml";
+import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, drawAttr, svgAttr, textAttr } from "../core/odfXml";
 
 const DE_NAMESPACE = "urn:docu-edit:shape";
 const SHAPE_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}"`;

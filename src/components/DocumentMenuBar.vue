@@ -96,6 +96,7 @@ const emit = defineEmits([
   "insert-section-break",
   "insert-note",
   "shape-pick",
+  "connector-pick",
   "chart-pick",
   "multilevel-preset",
   "insert-image-file",
@@ -540,6 +541,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <ShapeGallery
         v-if="!compact"
         @pick="emit('shape-pick', $event)"
+        @pick-connector="emit('connector-pick', $event)"
       />
       <MenuItem
         v-else

@@ -42,7 +42,7 @@ import {
   releaseAnchorOrdinal,
   resolveAnchorBlockIndex,
 } from "./drawingAnchors";
-import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
+import { blockLength, clampCaret } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { DEFAULT_DRAWING_POSITION } from "./shapes";
 
@@ -159,7 +159,6 @@ export function resolveConnectorEndpoints(
   connector: Connector,
 ): { start: ConnectorEndpoint; end: ConnectorEndpoint } {
   const origin = { x: connector.offsetXCm ?? 0, y: connector.offsetYCm ?? 0 };
-  const rawStart = { x: origin.x + connector.start.xCm, y: origin.y + connector.start.yCm };
   const rawEnd = { x: origin.x + connector.end.xCm, y: origin.y + connector.end.yCm };
   const start = resolveEndpoint(section, connector, "start", rawEnd);
   const end = resolveEndpoint(section, connector, "end", start.point);

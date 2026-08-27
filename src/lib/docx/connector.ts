@@ -7,7 +7,7 @@
 // exact endpoint coordinates ride in our own `de:` extension namespace so a
 // free end round-trips precisely (Word reads the box corners, ignoring the
 // unknown attributes).
-import type { Block, Connector, ConnectorKind, DocumentModel, Section } from "../documentModel";
+import type { Block, Connector, ConnectorKind, Section } from "../documentModel";
 import { isConnector } from "../documentModel";
 import type { ArrowheadKind, ShapeOutline } from "../core/shapes";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";

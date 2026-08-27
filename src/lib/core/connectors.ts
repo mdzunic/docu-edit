@@ -188,9 +188,6 @@ export interface RoutedPath {
   controls?: [Point, Point];
 }
 
-/** How far a stub leaves a site before the elbow turns, as a fraction of the
- * distance between the endpoints (clamped so tiny connectors still turn). */
-const STUB_FRACTION = 0.5;
 
 /** Routes a connector between two resolved endpoints. Pure: geometry in,
  * points out ("Routing").
