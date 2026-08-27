@@ -16,6 +16,7 @@ import {
   type NewConnector,
 } from "./connectors";
 import { deleteShape, insertShape } from "./shapes";
+import { collectDropRecords } from "./opaque";
 import { caretSelection, type ModelSelection } from "./commands";
 import {
   createDocument,
@@ -224,6 +225,33 @@ describe("inserting a shape shifts attachment indices", () => {
     expect(connector.endAttachment).toBeDefined();
     expect(shapeIndices).toContain(connector.startAttachment!.target.block);
     expect(shapeIndices).toContain(connector.endAttachment!.target.block);
+  });
+});
+
+describe("cross-format unexpressible attachment (AC-32)", () => {
+  it("reports a shapeGeometry DropRecord for a connector attached to a non-shape on .odt save", () => {
+    const image = { type: "image" as const, mediaId: "m1", naturalWidthPx: 10, naturalHeightPx: 10, widthCm: 3, heightCm: 3, wrap: "square" as const };
+    const connector: Connector = {
+      type: "connector",
+      kind: "straight",
+      widthCm: 5,
+      heightCm: 2,
+      wrap: "square",
+      start: { xCm: 0, yCm: 0 },
+      end: { xCm: 5, yCm: 2 },
+      startAttachment: { target: { block: 0 }, site: 1 },
+    };
+    const model = doc(image, connector);
+    model.format = "docx";
+    const dropped = collectDropRecords(model, "odt");
+    expect(dropped.some((d) => d.kind === "shapeGeometry")).toBe(true);
+  });
+
+  it("does not report a drop for a connector attached to a shape (both formats express it)", () => {
+    const { model } = attachedFixture();
+    model.format = "docx";
+    const dropped = collectDropRecords(model, "odt");
+    expect(dropped.some((d) => d.kind === "shapeGeometry")).toBe(false);
   });
 });
 
