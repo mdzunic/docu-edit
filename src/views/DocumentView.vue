@@ -31,6 +31,7 @@ import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
 import ConnectorOverlay from "../components/ConnectorOverlay.vue";
+import ConnectorToolbar from "../components/ConnectorToolbar.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
@@ -3570,6 +3571,18 @@ function handleMenuCommand(id = "") {
               @select="connectors.selectConnector"
               @endpoint-drag="connectors.startEndpointDrag"
               @adjust-drag="connectors.startAdjustDrag"
+            />
+            <ConnectorToolbar
+              v-if="connectors.selectedConnector.value"
+              :connector="connectors.selectedConnector.value"
+              :style="connectors.connectorToolbarStyle.value"
+              @set-kind="connectors.setKind"
+              @set-outline="connectors.setOutline"
+              @set-arrowheads="connectors.setArrowheads"
+              @set-wrap="connectors.setWrap"
+              @set-alt-text="connectors.setAltText"
+              @set-z-order="connectors.setZOrder"
+              @delete="connectors.removeSelectedConnector"
             />
             <ShapeDrawPreview
               v-if="drawPreview"

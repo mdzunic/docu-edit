@@ -96,6 +96,33 @@ test.describe("SPEC-070 — connectors", () => {
     expect(d2).not.toBe(d1);
   });
 
+  test("a selected connector shows handles and a formatting toolbar; kind and delete work (AC-15..21)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    await insertShape(page, "rect", 520, 260);
+    await armConnector(page, "straight");
+    await clickCenter(page, drawings(page).nth(0));
+    await clickCenter(page, drawings(page).nth(1));
+    await expect(connectors(page)).toHaveCount(1);
+
+    // Select the connector by clicking its line — handles and toolbar appear.
+    const box = await boxOf(connectors(page).first());
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByTestId("connector-toolbar")).toBeVisible();
+    await expect(page.getByTestId("connector-handle-start")).toBeVisible();
+    await expect(page.getByTestId("connector-handle-end")).toBeVisible();
+
+    // Change the kind to elbow → an orthogonal path (mid handle appears).
+    await page.getByTestId("connector-kind").selectOption("elbow");
+    await expect(page.getByTestId("connector-handle-mid")).toBeVisible();
+
+    // Delete removes it.
+    await page.getByTestId("connector-delete").click();
+    await expect(connectors(page)).toHaveCount(0);
+  });
+
   test("hovering a shape while drawing reveals its connection sites (AC-4)", async ({ page }) => {
     await createDocument(page);
     await content(page).click({ position: { x: 20, y: 20 } });

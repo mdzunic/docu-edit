@@ -595,8 +595,10 @@ export function reorderShapeZ(
   command: ZOrderCommand,
 ): CommandResult {
   const next = cloneContainers(model);
-  const shape = shapeAt(next, location);
-  if (!shape) {
+  // Any drawing (shape/image/chart/connector, SPEC-070) can be re-ordered —
+  // the block just has to exist and be a drawing.
+  const targetBlock = next.sections[location.section]?.blocks[location.block];
+  if (!isShape(targetBlock) && !isImage(targetBlock) && !isChart(targetBlock) && !isConnector(targetBlock)) {
     return { model: next, selection };
   }
   const drawings = allDrawings(next).sort((a, b) => zOrderOf(a.block) - zOrderOf(b.block));

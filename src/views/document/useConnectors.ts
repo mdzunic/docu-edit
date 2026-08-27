@@ -45,6 +45,7 @@ import {
   type ConnectorLocation,
   type NewConnector,
 } from "../../lib/connectors";
+import { reorderShapeZ, type ZOrderCommand } from "../../lib/shapes";
 import { measureImageGeometry } from "../../lib/caretGeometry";
 import { caretSelection } from "../../lib/commands";
 import type { ConnectorRender, SiteHint } from "../../lib/connectorOverlay";
@@ -602,6 +603,29 @@ export function useConnectors(deps: ConnectorsDeps) {
     applyConnectorEdit((model, before) => setConnectorAltText(model, before, location, text), "connector alt text");
   }
 
+  function setZOrder(command: ZOrderCommand | string) {
+    const location = selected.value;
+    if (!location) {
+      return;
+    }
+    applyConnectorEdit((model, before) => reorderShapeZ(model, before, location, command as ZOrderCommand), "connector z-order");
+  }
+
+  /** The formatting toolbar's position — centred above the selected
+   * connector's endpoints, in the overlay's page-relative px frame. */
+  const connectorToolbarStyle = computed(() => {
+    const location = selected.value;
+    const render = location
+      ? renders.value.find((r) => r.location.section === location.section && r.location.block === location.block)
+      : undefined;
+    if (!render) {
+      return { display: "none" };
+    }
+    const midX = (render.a.x + render.b.x) / 2;
+    const topY = Math.min(render.a.y, render.b.y);
+    return { left: `${midX}px`, top: `${Math.max(0, topY - 46)}px` };
+  });
+
   function removeSelectedConnector() {
     const location = selected.value;
     if (!location) {
@@ -643,6 +667,8 @@ export function useConnectors(deps: ConnectorsDeps) {
     setArrowheads,
     setWrap,
     setAltText,
+    setZOrder,
+    connectorToolbarStyle,
     removeSelectedConnector,
   };
 }
