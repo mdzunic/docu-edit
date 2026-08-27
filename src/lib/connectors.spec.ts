@@ -207,6 +207,12 @@ describe("deleting a shape freezes its connectors (AC-11)", () => {
     expect(connector.endAttachment).toBeDefined(); // end still attached
     // The end target shifted from block 1 to block 0.
     expect(connector.endAttachment?.target.block).toBe(0);
+    // The detached start freezes at shape0's LAST routed position (right-mid
+    // (4,1)) — not at shape1's site, which shifted into the deleted slot. A
+    // freeze against the post-splice blocks would land it at (14,1).
+    const origin = { x: connector.offsetXCm ?? 0, y: connector.offsetYCm ?? 0 };
+    expect(origin.x + connector.start.xCm).toBeCloseTo(4, 6);
+    expect(origin.y + connector.start.yCm).toBeCloseTo(1, 6);
   });
 });
 

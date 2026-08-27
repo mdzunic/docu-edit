@@ -33,7 +33,11 @@ import {
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { LINE_GEOMETRIES } from "./core/shapes";
-import { reindexSectionAfterDelete, reindexSectionAfterInsert } from "./connectors";
+import {
+  freezeConnectorsAttachedTo,
+  reindexSectionAfterDelete,
+  reindexSectionAfterInsert,
+} from "./connectors";
 import {
   MIN_SHAPE_SIZE_CM,
   normalizeRotationDeg,
@@ -498,14 +502,22 @@ export function deleteShape(
   if (!shape) {
     return { model: next, selection };
   }
-  const blocks = next.sections[location.section].blocks;
+  // AC-11: freeze connectors attached to this shape BEFORE removing it, so
+  // each affected endpoint detaches at its true last routed position —
+  // resolved against the pre-splice blocks, where the shape still exists.
+  // Freezing after the splice would re-resolve the still-stale target index
+  // against whichever drawing shifted into the deleted slot, snapping the
+  // detached endpoint onto a neighbouring shape.
+  const frozen = freezeConnectorsAttachedTo(next.sections[location.section], location.block);
+  next.sections[location.section] = frozen;
+  const blocks = frozen.blocks;
   blocks.splice(location.block, 1);
   // A paragraph carries anchorOrdinal only while it anchors something
   // (SPEC-078's release rule); the deleted shape may have been the last
   // referrer.
   releaseAnchorOrdinal(next, shape.anchorOrdinal);
-  // AC-11: connectors attached to the deleted shape detach and freeze at
-  // their last routed position; survivors shift with the block indices.
+  // Survivors shift with the block indices; the just-frozen endpoints no
+  // longer reference the removed block, so the delete mapping's -1 is a no-op.
   reindexSectionAfterDelete(next, location.section, location.block, 1);
   const afterBlocks = next.sections[location.section].blocks;
   if (afterBlocks.length === 0) {
