@@ -5,7 +5,8 @@
 import { DEFAULT_LANGUAGE } from "./core/language";
 import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
 import type { OpaquePart } from "./core/packageParts";
-import type { ShapeGeometry, ShapeOutline } from "./core/shapes";
+import type { ArrowheadKind, ShapeGeometry, ShapeOutline } from "./core/shapes";
+import type { ConnectorKind } from "./core/connectors";
 import type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
 import type { MeasurementUnit } from "./core/units";
 import type { Margins, PageSize } from "./core/pageSetup";
@@ -1013,6 +1014,72 @@ export function asImageWrapMode(value: string): ImageWrapMode {
   return value as ImageWrapMode;
 }
 
+// --- connectors (SPEC-070) --------------------------------------------------
+
+export type { ConnectorKind } from "./core/connectors";
+
+/** One endpoint's binding to a shape and one of its nine connection sites
+ * ("Connection sites"). Held as a *position* — the target's block index
+ * within the section (SPEC-057's flat containment, never an id: see
+ * IGNORED_KEYS in lib/equality.ts) — so `equalStructural` compares it and
+ * every block-reordering edit re-indexes it (see reindexAttachments). */
+export interface ConnectorAttachment {
+  /** Index of the attached drawing block within the connector's section.
+   * `path` is reserved for a future nested-group container model; today's
+   * grouping is flat (`groupOrdinal`), so it is left unset. */
+  target: { block: number; path?: number[] };
+  /** Which connection site, 0-8 per "Connection sites". */
+  site: number;
+}
+
+/** A connector drawing block (SPEC-070): a line that *remembers what it is
+ * attached to*. Its painted geometry is always derived — from its
+ * attachments where it has them, from `start`/`end` where it does not — so
+ * moving/resizing/rotating an attached shape re-routes it with no stored
+ * second source of truth. An anchored drawing like any other (wrap, z-order,
+ * alt text via `DrawingPlacement`); it can join a group, where its
+ * attachments resolve within the group. */
+export interface Connector extends DrawingPlacement {
+  type: "connector";
+  kind: ConnectorKind;
+  /** Endpoints in cm, relative to the connector's own placement box — always
+   * present, and always the truth when an end is unattached. When an end IS
+   * attached, they are the last routed position, kept so a detached-by-
+   * deletion endpoint has somewhere to be and a reader that ignores
+   * attachment still draws the right line. */
+  start: { xCm: number; yCm: number };
+  end: { xCm: number; yCm: number };
+  startAttachment?: ConnectorAttachment;
+  endAttachment?: ConnectorAttachment;
+  /** Routing adjustment for elbow/curved kinds: the fraction (0-1) along the
+   * connector at which the middle segment sits. Absent means 0.5. */
+  adjustments?: number[];
+  outline?: ShapeOutline;
+  startArrow?: ArrowheadKind;
+  /** Defaults to "triangle" when absent (an arrow at the end). */
+  endArrow?: ArrowheadKind;
+  /** Pending tracked insertion/deletion of this connector block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+}
+
+/** Whether a block is a connector — the isShape-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts). */
+export function isConnector(block: Block | undefined): block is Connector {
+  return block?.type === "connector";
+}
+
+/** Typed pass-through for a Connector arriving as a runtime-declared Object
+ * prop (espree bars the type annotation — see asShape for the same pattern). */
+export function asConnector(value: unknown): Connector {
+  return value as Connector;
+}
+
+/** Typed pass-through for a connector kind coming from a `.vue` template's
+ * plain string (same espree constraint as asShapeGeometry). */
+export function asConnectorKind(value: string): ConnectorKind {
+  return value as ConnectorKind;
+}
+
 /** Whether a block is an image — the isTable-style narrowing helper (also
  * usable from espree-parsed `.vue` scripts, which cannot write the type
  * predicate themselves). */
@@ -1551,7 +1618,8 @@ export type Block =
   | TableOfContents
   | TableOfFigures
   | Shape
-  | Chart;
+  | Chart
+  | Connector;
 
 /** A section groups block-level content; documents have one or more. A
  * section boundary IS the section break (SPEC-028): inserting a section

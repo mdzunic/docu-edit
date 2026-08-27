@@ -118,6 +118,12 @@ export interface ShapeOutline {
   dash: "solid" | "dash" | "dot";
 }
 
+/** A line-end decoration (SPEC-070 "Arrowheads"). `.docx` writes it as
+ * `a:headEnd`/`a:tailEnd @type`, `.odt` as `draw:marker-start`/
+ * `draw:marker-end` referencing a standard marker name. Introduced here for
+ * connectors; SPEC-073 extends it to plain lines and shape outlines. */
+export type ArrowheadKind = "none" | "triangle" | "open" | "stealth" | "diamond" | "oval";
+
 /** Typed pass-through for a shape geometry coming from a `.vue` template's
  * plain string (espree bars the annotation in `.vue` scripts). */
 export function asShapeGeometry(value: string): ShapeGeometry {
