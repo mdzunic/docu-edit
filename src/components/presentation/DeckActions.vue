@@ -22,6 +22,7 @@ const emit = defineEmits([
   "present",
   "download",
   "download-copy",
+  "export-html",
   "close",
 ]);
 </script>
@@ -68,6 +69,7 @@ const emit = defineEmits([
       :other-format-label="otherFormatLabel"
       @download="emit('download')"
       @download-copy="emit('download-copy')"
+      @export-html="emit('export-html')"
     />
     <UiButton
       variant="ghost"

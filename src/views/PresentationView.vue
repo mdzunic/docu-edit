@@ -16,6 +16,7 @@ import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
 import DeckActions from "../components/presentation/DeckActions.vue";
+import HtmlExportOptionsDialog from "../components/presentation/HtmlExportOptionsDialog.vue";
 import NotesPanel from "../components/presentation/NotesPanel.vue";
 import TransitionsPanel from "../components/presentation/TransitionsPanel.vue";
 import AnimationsPanel from "../components/presentation/AnimationsPanel.vue";
@@ -151,9 +152,8 @@ const deckActions = useDeckActions({
   reportError: (message) => addToast(message),
 });
 
-// main.ts awaits initLibrary() before mounting, so the store is hydrated in
-// the running app; re-syncing after it resolves matters only when the view is
-// mounted directly (tests) — the same pattern HomeView uses. These run after
+// main.ts awaits initLibrary() before mounting, so re-syncing after it resolves
+// matters only when the view is mounted directly (tests). These run after
 // deckActions is defined so loadPresentation's return-selection read is safe.
 void loadPresentation();
 void initLibrary().then(loadPresentation);
@@ -300,6 +300,7 @@ onBeforeUnmount(() => {
           @present="deckActions.present()"
           @download="deckActions.download()"
           @download-copy="deckActions.downloadCopy()"
+          @export-html="deckActions.openHtmlExport()"
           @close="deckActions.close()"
         />
       </header>
@@ -431,6 +432,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+    <HtmlExportOptionsDialog
+      v-if="deckActions.htmlDialogOpen.value"
+      @confirm="deckActions.confirmHtmlExport($event)"
+      @cancel="deckActions.cancelHtmlExport()"
+    />
   </AppShell>
 </template>
 
