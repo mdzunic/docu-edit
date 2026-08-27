@@ -291,6 +291,17 @@ function componentFor(entry = noRenderEntries()[0]) {
   user-select: none;
 }
 
+/* A connector's in-flow anchor (SPEC-070): a zero-height origin box whose
+   top-left the connector overlay measures. Never visible itself — the
+   connector's line is painted by the page-level overlay. */
+.doc-connector-anchor {
+  display: block;
+  height: 0;
+  overflow: visible;
+  position: relative;
+  user-select: none;
+}
+
 .marks-on .doc-break {
   height: auto;
   overflow: visible;

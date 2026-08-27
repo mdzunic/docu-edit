@@ -631,10 +631,12 @@ export function estimateMetrics(
 ): BlockMetrics {
   const fontPx = (fontSizePt * 96) / 72;
   const lineHeight = fontPx * 1.4;
-  if (isBreak(block)) {
+  if (isBreak(block) || isConnector(block)) {
+    // A connector (SPEC-070) has no in-flow footprint — its geometry is
+    // painted by the page-level overlay, and its anchor box is height:0.
     return { contentWidthPx, heightPx: 0, marginTopPx: 0, marginBottomPx: 0, lines: [], estimated: true };
   }
-  if (isImage(block) || isShape(block) || isChart(block) || isConnector(block)) {
+  if (isImage(block) || isShape(block) || isChart(block)) {
     return {
       contentWidthPx,
       heightPx: block.heightCm * PX_PER_CM,
