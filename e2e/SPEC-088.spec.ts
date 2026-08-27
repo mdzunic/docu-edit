@@ -86,6 +86,9 @@ test("export a deck to self-contained HTML and drive it offline", async ({ page 
   await expect(page.locator("#s1").getByText("Body line")).toBeVisible();
   await expect(page.locator("#s1")).toBeVisible();
   await expect(page.locator("#s2")).toBeHidden();
+  // Let the build fully settle so the next input advances rather than just
+  // completing the in-flight build (a mid-build input completes it — AC-37).
+  await page.waitForTimeout(700);
 
   // The next advance plays the transition to slide 2: the incoming section
   // carries an inline transform mid-flight (an intermediate state), then settles.

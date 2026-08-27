@@ -71,19 +71,19 @@ describe("useDeckActions playback entry", () => {
   });
 });
 
-describe("useDeckActions HTML export (SPEC-088)", () => {
-  function deck(): PresentationModel {
-    return {
-      kind: "presentation",
-      id: "deck-1",
-      title: "My Deck",
-      format: "pptx",
-      slideWidthCm: 25.4,
-      slideHeightCm: 14.29,
-      slides: [{ id: "s1", frames: [], notes: ["a note"] }],
-    };
-  }
+function deck(): PresentationModel {
+  return {
+    kind: "presentation",
+    id: "deck-1",
+    title: "My Deck",
+    format: "pptx",
+    slideWidthCm: 25.4,
+    slideHeightCm: 14.29,
+    slides: [{ id: "s1", frames: [], notes: ["a note"] }],
+  };
+}
 
+describe("useDeckActions HTML export (SPEC-088)", () => {
   function exportHarness(model: PresentationModel | null) {
     triggerBlobDownload.mockClear();
     return useDeckActions({
