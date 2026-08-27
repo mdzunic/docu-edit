@@ -813,3 +813,143 @@ export function resolvedShapeAdjustments(geometry: ShapeGeometry, stored?: reado
     return Math.min(spec.max, Math.max(spec.min, value));
   });
 }
+
+// --- SVG path geometry (SPEC-088) -------------------------------------------
+// A DOM-free `d` string for a shape's outline, so the HTML exporter can draw a
+// shape as an inline <svg><path> from the SAME ShapeDefinition outline the
+// canvas painter (core/shapeCanvas) consumes — polygon geometries become M/L/Z
+// paths, ellipse and the rounded-rectangle cases their arc equivalents, holes
+// (donut, frame) additional even-odd subpaths, lines a corner-to-corner
+// segment. Kept in core beside the catalogue (not shapeGeometry.ts, which
+// imports this module) so it has no import cycle; the maths it needs
+// (roundRect radius, rounded-callout outline) is small and reproduced here.
+
+/** Rounds a coordinate to at most 3 decimals for a compact, deterministic path
+ * string (float dust like -1e-15 collapses to 0). */
+function svgNum(value: number): string {
+  const rounded = Math.round(value * 1000) / 1000;
+  return String(Object.is(rounded, -0) ? 0 : rounded);
+}
+
+/** A closed polygon (already in px) as an `M/L…Z` path. */
+function polygonPathD(points: ShapeOutlinePath): string {
+  if (points.length === 0) {
+    return "";
+  }
+  const [first, ...rest] = points;
+  const parts = [`M ${svgNum(first.x)} ${svgNum(first.y)}`];
+  for (const p of rest) {
+    parts.push(`L ${svgNum(p.x)} ${svgNum(p.y)}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+function scaleOutline(outline: ShapeOutlinePath, widthPx: number, heightPx: number): ShapeOutlinePath {
+  return outline.map((p) => ({ x: p.x * widthPx, y: p.y * heightPx }));
+}
+
+/** A full ellipse inscribed in the box, as two SVG arcs (matching the canvas's
+ * `ctx.ellipse`). */
+function ellipsePathD(widthPx: number, heightPx: number): string {
+  const rx = Math.max(0, widthPx / 2);
+  const ry = Math.max(0, heightPx / 2);
+  const cy = heightPx / 2;
+  return (
+    `M 0 ${svgNum(cy)} ` +
+    `A ${svgNum(rx)} ${svgNum(ry)} 0 1 0 ${svgNum(widthPx)} ${svgNum(cy)} ` +
+    `A ${svgNum(rx)} ${svgNum(ry)} 0 1 0 0 ${svgNum(cy)} Z`
+  );
+}
+
+/** A rounded rectangle with quarter-circle corners (matching the canvas's
+ * `roundRectPath`): `radiusFraction` of the shorter side, clamped to half. */
+function roundRectPathD(widthPx: number, heightPx: number, radiusFraction: number): string {
+  const base = Math.min(widthPx, heightPx) * radiusFraction;
+  const r = Math.max(0, Math.min(base, widthPx / 2, heightPx / 2));
+  const a = (x: number, y: number) => `A ${svgNum(r)} ${svgNum(r)} 0 0 1 ${svgNum(x)} ${svgNum(y)}`;
+  return [
+    `M ${svgNum(r)} 0`,
+    `L ${svgNum(widthPx - r)} 0`,
+    a(widthPx, r),
+    `L ${svgNum(widthPx)} ${svgNum(heightPx - r)}`,
+    a(widthPx - r, heightPx),
+    `L ${svgNum(r)} ${svgNum(heightPx)}`,
+    a(0, heightPx - r),
+    `L 0 ${svgNum(r)}`,
+    a(r, 0),
+    "Z",
+  ].join(" ");
+}
+
+// The rounded-callout body/tail fractions — the same constants
+// core/shapeGeometry.ts walks its outline with (kept in sync; the wedge tail's
+// straight edges come from the catalogue's own CALLOUT_BODY/ROUND_TAIL above).
+const ROUND_CALLOUT_BODY = CALLOUT_BODY;
+const ROUND_CALLOUT_TAIL = ROUND_TAIL;
+
+/** `wedgeRoundRectCallout` as arcs (matching the canvas's `roundedCalloutPath`):
+ * a rounded-rectangle body whose bottom edge detours into the sharp tail. */
+function roundedCalloutPathD(widthPx: number, heightPx: number): string {
+  const body = heightPx * ROUND_CALLOUT_BODY;
+  const radius = Math.max(
+    0,
+    Math.min(
+      Math.min(widthPx, body) * 0.1667,
+      ROUND_CALLOUT_TAIL.left * widthPx,
+      (1 - ROUND_CALLOUT_TAIL.right) * widthPx,
+      widthPx / 2,
+      body / 2,
+    ),
+  );
+  const arc = (x: number, y: number) => `A ${svgNum(radius)} ${svgNum(radius)} 0 0 1 ${svgNum(x)} ${svgNum(y)}`;
+  return [
+    `M ${svgNum(radius)} 0`,
+    `L ${svgNum(widthPx - radius)} 0`,
+    arc(widthPx, radius),
+    `L ${svgNum(widthPx)} ${svgNum(body - radius)}`,
+    arc(widthPx - radius, body),
+    `L ${svgNum(ROUND_CALLOUT_TAIL.right * widthPx)} ${svgNum(body)}`,
+    `L ${svgNum(ROUND_CALLOUT_TAIL.tip * widthPx)} ${svgNum(heightPx)}`,
+    `L ${svgNum(ROUND_CALLOUT_TAIL.left * widthPx)} ${svgNum(body)}`,
+    `L ${svgNum(radius)} ${svgNum(body)}`,
+    arc(0, body - radius),
+    `L 0 ${svgNum(radius)}`,
+    arc(radius, 0),
+    "Z",
+  ].join(" ");
+}
+
+/** The SVG path `d` for a shape's outline, in pixels, at the given resolved-or-
+ * raw adjustments — the exporter's equivalent of `paintShape`'s canvas path.
+ * Polygon geometries return `M/L…Z`; `ellipse` and the rounded-rectangle
+ * cases return arc equivalents; holes (donut/frame) are appended as extra
+ * subpaths (fill with `fill-rule="evenodd"`); lines return a corner-to-corner
+ * segment. Returns "" for a geometry with no catalogue definition. */
+export function shapeSvgPath(
+  geometry: ShapeGeometry,
+  widthPx: number,
+  heightPx: number,
+  adjustments?: readonly number[],
+): string {
+  const def = shapeDefinition(geometry);
+  if (def?.isLine) {
+    return `M 0 0 L ${svgNum(widthPx)} ${svgNum(heightPx)}`;
+  }
+  if (geometry === "ellipse") {
+    return ellipsePathD(widthPx, heightPx);
+  }
+  const resolved = resolvedShapeAdjustments(geometry, adjustments);
+  if (geometry === "roundRect" || geometry === "flowChartAlternateProcess") {
+    return roundRectPathD(widthPx, heightPx, resolved[0] ?? 0.1667);
+  }
+  if (geometry === "wedgeRoundRectCallout") {
+    return roundedCalloutPathD(widthPx, heightPx);
+  }
+  if (!def) {
+    return "";
+  }
+  const main = polygonPathD(scaleOutline(def.outline(resolved), widthPx, heightPx));
+  const holes = (def.holes?.(resolved) ?? []).map((hole) => polygonPathD(scaleOutline(hole, widthPx, heightPx)));
+  return [main, ...holes].filter((d) => d.length > 0).join(" ");
+}

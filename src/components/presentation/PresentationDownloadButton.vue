@@ -12,12 +12,17 @@ defineProps({
   otherFormatLabel: { type: String, default: "" },
 });
 
-const emit = defineEmits(["download", "download-copy"]);
+const emit = defineEmits(["download", "download-copy", "export-html"]);
 const menuOpen = ref(false);
 
 function downloadCopy() {
   menuOpen.value = false;
   emit("download-copy");
+}
+
+function exportHtml() {
+  menuOpen.value = false;
+  emit("export-html");
 }
 </script>
 
@@ -54,6 +59,15 @@ function downloadCopy() {
         @click="downloadCopy"
       >
         Download a copy as {{ otherFormatLabel }}…
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        class="download-menu-item"
+        data-testid="presentation-export-html"
+        @click="exportHtml"
+      >
+        Export to HTML (.html)…
       </button>
     </div>
     <div

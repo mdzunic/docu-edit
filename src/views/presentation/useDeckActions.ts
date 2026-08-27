@@ -5,11 +5,15 @@
 // its Cmd/Ctrl+Shift+Return shortcut, and the return-selection handoff the play
 // view writes back via a `?return` query. Framework state (the model, the
 // current index) comes in as refs; nothing here renders.
-import { computed, type Ref } from "vue";
+import { computed, ref, type Ref } from "vue";
 import type { Router, RouteLocationNormalizedLoaded } from "vue-router";
 import { downloadPresentation } from "../../lib/presentation/download";
+import { exportPresentationHtml, htmlFileName } from "../../lib/presentation/htmlExport";
+import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { presentationFormatLabel } from "../../lib/format";
 import type { PresentationModel, PresentationFormat } from "../../lib/presentation/model";
+
+const HTML_MIME_TYPE = "text/html;charset=utf-8";
 
 export interface UseDeckActionsDeps {
   model: Ref<PresentationModel | null>;
@@ -38,6 +42,29 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
     if (droppedObjects > 0) {
       deps.reportError(`${droppedObjects} object${droppedObjects === 1 ? "" : "s"} couldn't be converted`);
     }
+  }
+
+  // --- HTML export (SPEC-088) -----------------------------------------------
+  // The pre-export options dialog opens on the menu item; the actual serialise
+  // + download happens on confirm, from the model + media alone.
+  const htmlDialogOpen = ref(false);
+
+  function openHtmlExport(): void {
+    if (deps.model.value && deps.model.value.slides.length > 0) {
+      htmlDialogOpen.value = true;
+    }
+  }
+
+  function cancelHtmlExport(): void {
+    htmlDialogOpen.value = false;
+  }
+
+  function confirmHtmlExport(options: { includeNotes: boolean }): void {
+    htmlDialogOpen.value = false;
+    const model = deps.model.value;
+    if (!model || model.slides.length === 0) return;
+    const html = exportPresentationHtml(model, { includeNotes: options.includeNotes });
+    triggerBlobDownload(new TextEncoder().encode(html), htmlFileName(model.title), HTML_MIME_TYPE);
   }
 
   function close(): void {
@@ -75,6 +102,10 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
     otherFormatLabel,
     download,
     downloadCopy,
+    htmlDialogOpen,
+    openHtmlExport,
+    cancelHtmlExport,
+    confirmHtmlExport,
     close,
     canPresent,
     present,

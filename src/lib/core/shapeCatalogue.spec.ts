@@ -11,6 +11,7 @@ import {
   resolvedShapeAdjustments,
   shapeAdjustmentDefaults,
   shapeDefinition,
+  shapeSvgPath,
 } from "./shapeCatalogue";
 import { LINE_GEOMETRIES, MIN_SHAPE_SIZE_CM, SHAPE_CATALOGUE } from "./shapes";
 import { scalePolygon, shapePolygon, type Point } from "./shapeGeometry";
@@ -126,5 +127,45 @@ describe("adjustment codec", () => {
 
   it("leaves a geometry with no declared adjustments empty", () => {
     expect(resolvedShapeAdjustments("rect")).toEqual([]);
+  });
+});
+
+describe("shapeSvgPath (SPEC-088)", () => {
+  it("emits an M/L…Z polygon path for a rectangle at pixel scale", () => {
+    expect(shapeSvgPath("rect", 100, 50)).toBe("M 0 0 L 100 0 L 100 50 L 0 50 Z");
+  });
+
+  it("emits a triangle's three vertices", () => {
+    expect(shapeSvgPath("triangle", 100, 80)).toBe("M 50 0 L 100 80 L 0 80 Z");
+  });
+
+  it("emits arc commands for an ellipse (no polygon representation)", () => {
+    const d = shapeSvgPath("ellipse", 200, 100);
+    expect(d).toContain("A ");
+    expect(d.startsWith("M 0 50")).toBe(true);
+    expect(d).toContain("A 100 50 0 1 0 200 50");
+  });
+
+  it("rounds a rounded rectangle's corners with arcs sized to the shorter side", () => {
+    const d = shapeSvgPath("roundRect", 120, 60);
+    // default corner radius 0.1667 * min(120,60) = 10.002
+    expect(d).toContain("A 10.002 10.002");
+    expect(d.startsWith("M 10.002 0")).toBe(true);
+    expect(d.trim().endsWith("Z")).toBe(true);
+  });
+
+  it("appends holes as extra subpaths for a donut", () => {
+    const d = shapeSvgPath("donut", 100, 100);
+    // Two Z-terminated subpaths: the outer ring and the inner hole.
+    expect(d.match(/Z/g)?.length).toBe(2);
+  });
+
+  it("returns a corner-to-corner segment for a line", () => {
+    expect(shapeSvgPath("line", 80, 40)).toBe("M 0 0 L 80 40");
+  });
+
+  it("honours a stored adjustment for a parametric polygon (parallelogram slant)", () => {
+    const d = shapeSvgPath("parallelogram", 100, 100, [0.4]);
+    expect(d).toBe("M 40 0 L 100 0 L 60 100 L 0 100 Z");
   });
 });
