@@ -150,7 +150,7 @@ function onAltText(event = new Event("input")) {
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+  box-shadow: var(--shadow-2);
   white-space: nowrap;
 }
 
