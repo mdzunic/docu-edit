@@ -28,29 +28,41 @@ const WRAPS = ["square", "topAndBottom", "behind", "infront"];
 const model = computed(() => asConnector(props.connector));
 const outline = computed(() => model.value.outline ?? { color: "#2e5395", widthPt: 1, dash: "solid" });
 
+/** The value of an input/select event target, or "" (instanceof narrowing —
+ * the `.vue` script's espree parser bars a TS `as` cast). */
+function valueOf(event = new Event("input")) {
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) {
+    return target.value;
+  }
+  return "";
+}
 function emitOutline(patch = {}) {
   emit("set-outline", { ...outline.value, ...patch });
 }
+function onKind(event = new Event("change")) {
+  emit("set-kind", valueOf(event));
+}
 function onColor(event = new Event("input")) {
-  emitOutline({ color: (event.target as HTMLInputElement).value });
+  emitOutline({ color: valueOf(event) });
 }
 function onWidth(event = new Event("input")) {
-  emitOutline({ widthPt: Number((event.target as HTMLInputElement).value) || 1 });
+  emitOutline({ widthPt: Number(valueOf(event)) || 1 });
 }
 function onDash(event = new Event("change")) {
-  emitOutline({ dash: (event.target as HTMLSelectElement).value });
+  emitOutline({ dash: valueOf(event) });
 }
 function onStartArrow(event = new Event("change")) {
-  emit("set-arrowheads", { startArrow: (event.target as HTMLSelectElement).value });
+  emit("set-arrowheads", { startArrow: valueOf(event) });
 }
 function onEndArrow(event = new Event("change")) {
-  emit("set-arrowheads", { endArrow: (event.target as HTMLSelectElement).value });
+  emit("set-arrowheads", { endArrow: valueOf(event) });
 }
 function onWrap(event = new Event("change")) {
-  emit("set-wrap", (event.target as HTMLSelectElement).value);
+  emit("set-wrap", valueOf(event));
 }
 function onAltText(event = new Event("input")) {
-  emit("set-alt-text", (event.target as HTMLInputElement).value);
+  emit("set-alt-text", valueOf(event));
 }
 </script>
 
@@ -66,7 +78,7 @@ function onAltText(event = new Event("input")) {
       <select
         data-testid="connector-kind"
         :value="model.kind"
-        @change="emit('set-kind', ($event.target as HTMLSelectElement).value)"
+        @change="onKind"
       >
         <option v-for="k in KINDS" :key="k" :value="k">{{ k }}</option>
       </select>
