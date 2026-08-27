@@ -70,7 +70,10 @@ function previewPath(from = noDrawFrom(), to = noDrawPoint()) {
         markerHeight="7"
         orient="auto-start-reverse"
       >
-        <path d="M0 0 L10 5 L0 10 z" fill="context-stroke" />
+        <path
+          d="M0 0 L10 5 L0 10 z"
+          fill="context-stroke"
+        />
       </marker>
       <marker
         id="conn-arrow-start"
@@ -81,7 +84,10 @@ function previewPath(from = noDrawFrom(), to = noDrawPoint()) {
         markerHeight="7"
         orient="auto-start-reverse"
       >
-        <path d="M0 0 L10 5 L0 10 z" fill="context-stroke" />
+        <path
+          d="M0 0 L10 5 L0 10 z"
+          fill="context-stroke"
+        />
       </marker>
     </defs>
     <g

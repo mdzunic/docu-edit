@@ -80,7 +80,11 @@ function onAltText(event = new Event("input")) {
         :value="model.kind"
         @change="onKind"
       >
-        <option v-for="k in KINDS" :key="k" :value="k">{{ k }}</option>
+        <option
+          v-for="k in KINDS"
+          :key="k"
+          :value="k"
+        >{{ k }}</option>
       </select>
     </label>
     <input
@@ -107,9 +111,15 @@ function onAltText(event = new Event("input")) {
       aria-label="Line dash"
       @change="onDash"
     >
-      <option value="solid">solid</option>
-      <option value="dash">dash</option>
-      <option value="dot">dot</option>
+      <option value="solid">
+        solid
+      </option>
+      <option value="dash">
+        dash
+      </option>
+      <option value="dot">
+        dot
+      </option>
     </select>
     <select
       data-testid="connector-start-arrow"
@@ -117,7 +127,13 @@ function onAltText(event = new Event("input")) {
       aria-label="Start arrowhead"
       @change="onStartArrow"
     >
-      <option v-for="a in ARROWHEADS" :key="a" :value="a">{{ a }}</option>
+      <option
+        v-for="a in ARROWHEADS"
+        :key="a"
+        :value="a"
+      >
+        {{ a }}
+      </option>
     </select>
     <select
       data-testid="connector-end-arrow"
@@ -125,7 +141,13 @@ function onAltText(event = new Event("input")) {
       aria-label="End arrowhead"
       @change="onEndArrow"
     >
-      <option v-for="a in ARROWHEADS" :key="a" :value="a">{{ a }}</option>
+      <option
+        v-for="a in ARROWHEADS"
+        :key="a"
+        :value="a"
+      >
+        {{ a }}
+      </option>
     </select>
     <select
       data-testid="connector-wrap"
@@ -133,10 +155,30 @@ function onAltText(event = new Event("input")) {
       aria-label="Wrap"
       @change="onWrap"
     >
-      <option v-for="w in WRAPS" :key="w" :value="w">{{ w }}</option>
+      <option
+        v-for="w in WRAPS"
+        :key="w"
+        :value="w"
+      >
+        {{ w }}
+      </option>
     </select>
-    <button type="button" data-testid="connector-front" title="Bring to front" @click="emit('set-z-order', 'front')">⤒</button>
-    <button type="button" data-testid="connector-back" title="Send to back" @click="emit('set-z-order', 'back')">⤓</button>
+    <button
+      type="button"
+      data-testid="connector-front"
+      title="Bring to front"
+      @click="emit('set-z-order', 'front')"
+    >
+      ⤒
+    </button>
+    <button
+      type="button"
+      data-testid="connector-back"
+      title="Send to back"
+      @click="emit('set-z-order', 'back')"
+    >
+      ⤓
+    </button>
     <input
       type="text"
       class="connector-toolbar-alt"
@@ -146,7 +188,14 @@ function onAltText(event = new Event("input")) {
       aria-label="Alt text"
       @input="onAltText"
     >
-    <button type="button" data-testid="connector-delete" title="Delete connector" @click="emit('delete')">🗑</button>
+    <button
+      type="button"
+      data-testid="connector-delete"
+      title="Delete connector"
+      @click="emit('delete')"
+    >
+      🗑
+    </button>
   </div>
 </template>
 
