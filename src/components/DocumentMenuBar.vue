@@ -787,6 +787,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :disabled="!editable"
         @select="emit('command', 'format.tabs')"
       />
+      <MenuItem
+        label="Edit points"
+        testid="format-menu-edit-points"
+        :disabled="!editable"
+        @select="emit('command', 'format.edit-points')"
+      />
       <!-- Format painter keeps its double-click-to-lock gesture
            (SPEC-020 AC-14): data-menu-keep-open holds the menu open
            across the click/click/dblclick sequence, and its armed state

@@ -35,6 +35,7 @@ import {
   DEFAULT_DRAWING_POSITION,
   deleteShape,
   duplicateShape,
+  convertShapeToFreeform,
   ensureShapeTextFrame,
   freshGroupOrdinal,
   groupBoundingBoxCm,
@@ -53,6 +54,7 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setShapePath,
   setShapePosition,
   setShapeRotation,
   setShapeSize,
@@ -88,8 +90,19 @@ import {
   catmullRomPath,
   drawnShapeBox,
   polylinePath,
+  presetToPath,
 } from "../../lib/core/shapeDraw";
-import { pathToSvgD, simplifyPolyline } from "../../lib/core/shapePath";
+import { pathToSvgD, simplifyPolyline, type ShapePath } from "../../lib/core/shapePath";
+import {
+  deleteVertex,
+  moveControl,
+  moveVertexTo,
+  nudgeVertex,
+  pathVertices,
+  renormaliseAfterEdit,
+  splitSegmentAfter,
+  toggleVertexSmooth,
+} from "../../lib/core/pointEdit";
 import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
@@ -435,6 +448,16 @@ export function useShapes(deps: ShapesDeps) {
   const freeformCursor = ref<Point | null>(null);
   let freeformScribbling = false;
   let freeformListening = false;
+
+  /** SPEC-071 point-edit mode: the shape under edit, a live working copy of
+   * its path (previewed by the overlay; the model is committed once on
+   * exit), and the selected vertex. */
+  const pointEditLocation = ref<ShapeLocation | null>(null);
+  const pointEditPath = ref<ShapePath | null>(null);
+  const pointEditSelectedVertex = ref(0);
+  let pointEditPrevSelection: ShapeLocation | null = null;
+  let pointEditDrag: { kind: "vertex" | "in" | "out"; index: number } | null = null;
+  let pointEditListening = false;
 
   let resizeDrag: {
     location: ShapeLocation;
@@ -1871,6 +1894,349 @@ export function useShapes(deps: ShapesDeps) {
     return pathToSvgD(preview, pxPerCm, pxPerCm);
   });
 
+  // --- point-edit mode (SPEC-071) -----------------------------------------
+
+  /** Whether "Edit points" can act on the current selection: a shape with a
+   * path already, or a preset whose outline can produce one (AC-14; a line
+   * or unsupported geometry has nothing to edit). */
+  function canEditPoints(): boolean {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    if (!model || !location) {
+      return false;
+    }
+    const shape = shapeAt(model, location);
+    if (!shape || shape.unsupportedGeometryXml !== undefined || isSelectionSealed(shape)) {
+      return false;
+    }
+    return !!shape.path || !!presetToPath(shape.geometry, shape.adjustments);
+  }
+
+  const pointEditActive = computed(() => pointEditLocation.value !== null);
+
+  /** Enters point-edit mode (AC-14). A preset is first converted to a
+   * freeform path as its own "convert to freeform" undo entry (AC-15); a
+   * shape that already has a path is entered directly (AC-16). */
+  function enterPointEditMode() {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    if (!model || !location) {
+      return;
+    }
+    const shape = shapeAt(model, location);
+    if (!shape || shape.unsupportedGeometryXml !== undefined || isSelectionSealed(shape)) {
+      return;
+    }
+    if (!shape.path) {
+      // A separate undo entry, independently undoable from the edits (AC-15).
+      applyShapeEdit((m, sel, loc) => convertShapeToFreeform(m, sel, loc), "convert to freeform");
+    }
+    const convertedModel = doc.value;
+    const converted = convertedModel ? shapeAt(convertedModel, location) : null;
+    if (!converted?.path) {
+      return;
+    }
+    pointEditPrevSelection = location;
+    pointEditLocation.value = location;
+    pointEditPath.value = clonePath(converted.path);
+    pointEditSelectedVertex.value = 0;
+    if (!pointEditListening) {
+      pointEditListening = true;
+      window.addEventListener("keydown", handlePointEditKey, true);
+    }
+    void nextTick().then(remeasureShapeHandles);
+  }
+
+  function clonePath(path: ShapePath): ShapePath {
+    return {
+      subpaths: path.subpaths.map((s) => ({ steps: s.steps.map((step) => ({ ...step })), closed: s.closed })),
+      smooth: path.smooth ? [...path.smooth] : undefined,
+    };
+  }
+
+  /** Leaves point-edit mode, committing the whole session as one "edit
+   * points" undo entry with the box renormalised (AC-22/AC-23), or deleting
+   * the shape when its path emptied (AC-21). Restores the prior selection. */
+  function exitPointEditMode(commit = true) {
+    const location = pointEditLocation.value;
+    const path = pointEditPath.value;
+    stopPointEditListeners();
+    pointEditLocation.value = null;
+    pointEditPath.value = null;
+    pointEditDrag = null;
+    if (!location) {
+      return;
+    }
+    if (commit) {
+      if (!path) {
+        // Every subpath went (AC-21): delete the shape.
+        applyShapeEdit((m, sel) => deleteShape(m, sel, location), "edit points");
+      } else {
+        const model = doc.value;
+        const shape = model ? shapeAt(model, location) : null;
+        if (shape) {
+          const { path: fitted, offset, scale } = renormaliseAfterEdit(path);
+          const box = {
+            widthCm: shape.widthCm * (scale.x || 1),
+            heightCm: shape.heightCm * (scale.y || 1),
+            offsetXCm: (shape.offsetXCm ?? 0) + offset.x * shape.widthCm,
+            offsetYCm: (shape.offsetYCm ?? 0) + offset.y * shape.heightCm,
+          };
+          applyShapeEdit((m, sel, loc) => setShapePath(m, sel, loc, fitted, box), "edit points");
+        }
+      }
+    }
+    shapeSelection.value = pointEditPrevSelection;
+    pointEditPrevSelection = null;
+    void nextTick().then(remeasureShapeHandles);
+  }
+
+  function stopPointEditListeners() {
+    if (pointEditListening) {
+      pointEditListening = false;
+      window.removeEventListener("keydown", handlePointEditKey, true);
+    }
+    window.removeEventListener("mousemove", handlePointEditMove);
+    window.removeEventListener("mouseup", finishPointEditDrag);
+  }
+
+  /** The edited outline as an SVG `d` in the shape's local px (the overlay
+   * scales/rotates it to sit on the shape). */
+  const pointEditOutlineD = computed(() => {
+    const path = pointEditPath.value;
+    const geometry = shapeHandles.value;
+    if (!path || !geometry) {
+      return null;
+    }
+    return pathToSvgD(path, geometry.width, geometry.height);
+  });
+
+  /** The vertex handles for the overlay: each with its screen style, whether
+   * it is a corner or smooth (square vs circle, AC-19) and whether selected. */
+  function pointEditVertexList(): { index: number; smooth: boolean; selected: boolean; style: Record<string, string> }[] {
+    const path = pointEditPath.value;
+    const geometry = shapeHandles.value;
+    if (!path || !geometry) {
+      return [];
+    }
+    const rotationDeg = selectedShapeRotationDeg();
+    return pathVertices(path).map((v) => {
+      const p = rotatePoint(
+        { x: geometry.width * v.point.x, y: geometry.height * v.point.y },
+        geometry.width,
+        geometry.height,
+        rotationDeg,
+      );
+      return {
+        index: v.index,
+        smooth: v.smooth,
+        selected: v.index === pointEditSelectedVertex.value,
+        style: { left: `${geometry.left + p.x - HANDLE_SIZE / 2}px`, top: `${geometry.top + p.y - HANDLE_SIZE / 2}px` },
+      };
+    });
+  }
+
+  /** Control-point handles + leader lines for the selected vertex and its
+   * neighbours (AC-18/AC-19). */
+  function pointEditControlList(): {
+    index: number;
+    which: "in" | "out";
+    dot: Record<string, string>;
+    line: Record<string, string>;
+  }[] {
+    const path = pointEditPath.value;
+    const geometry = shapeHandles.value;
+    if (!path || !geometry) {
+      return [];
+    }
+    const rotationDeg = selectedShapeRotationDeg();
+    const vertices = pathVertices(path);
+    const selected = pointEditSelectedVertex.value;
+    const shown = new Set([selected, selected - 1, selected + 1]);
+    const toScreen = (fx: number, fy: number): Point =>
+      rotatePoint({ x: geometry.width * fx, y: geometry.height * fy }, geometry.width, geometry.height, rotationDeg);
+    const out: { index: number; which: "in" | "out"; dot: Record<string, string>; line: Record<string, string> }[] = [];
+    for (const v of vertices) {
+      if (!shown.has(v.index)) {
+        continue;
+      }
+      const anchor = toScreen(v.point.x, v.point.y);
+      for (const [which, ctrl] of [
+        ["in", v.incoming],
+        ["out", v.outgoing],
+      ] as const) {
+        if (!ctrl) {
+          continue;
+        }
+        const c = toScreen(ctrl.x, ctrl.y);
+        out.push({
+          index: v.index,
+          which,
+          dot: { left: `${geometry.left + c.x - 4}px`, top: `${geometry.top + c.y - 4}px` },
+          line: leaderLineStyle(geometry.left + anchor.x, geometry.top + anchor.y, geometry.left + c.x, geometry.top + c.y),
+        });
+      }
+    }
+    return out;
+  }
+
+  function leaderLineStyle(x1: number, y1: number, x2: number, y2: number): Record<string, string> {
+    const length = Math.hypot(x2 - x1, y2 - y1);
+    const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+    return {
+      left: `${x1}px`,
+      top: `${y1}px`,
+      width: `${length}px`,
+      transform: `rotate(${angle}deg)`,
+    };
+  }
+
+  function selectPointEditVertex(index = 0) {
+    pointEditSelectedVertex.value = index;
+  }
+
+  function startPointEditVertexDrag(event: MouseEvent, index = 0) {
+    if (!pointEditPath.value) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    pointEditSelectedVertex.value = index;
+    pointEditDrag = { kind: "vertex", index };
+    window.addEventListener("mousemove", handlePointEditMove);
+    window.addEventListener("mouseup", finishPointEditDrag);
+  }
+
+  function startPointEditControlDrag(event: MouseEvent, index = 0, which = "out") {
+    if (!pointEditPath.value) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    pointEditSelectedVertex.value = index;
+    pointEditDrag = { kind: which === "in" ? "in" : "out", index };
+    window.addEventListener("mousemove", handlePointEditMove);
+    window.addEventListener("mouseup", finishPointEditDrag);
+  }
+
+  function handlePointEditMove(event: MouseEvent) {
+    const drag = pointEditDrag;
+    const path = pointEditPath.value;
+    if (!drag || !path) {
+      return;
+    }
+    const fraction = pointerAdjustFraction(event.clientX, event.clientY);
+    if (!fraction) {
+      return;
+    }
+    if (drag.kind === "vertex") {
+      pointEditPath.value = moveVertexTo(path, drag.index, fraction);
+    } else {
+      pointEditPath.value = moveControl(path, drag.index, drag.kind, fraction);
+    }
+  }
+
+  function finishPointEditDrag() {
+    pointEditDrag = null;
+    window.removeEventListener("mousemove", handlePointEditMove);
+    window.removeEventListener("mouseup", finishPointEditDrag);
+  }
+
+  /** Double-click a vertex toggles it corner/smooth (AC-17). */
+  function togglePointEditVertex(index = 0) {
+    if (!pointEditPath.value) {
+      return;
+    }
+    pointEditSelectedVertex.value = index;
+    pointEditPath.value = toggleVertexSmooth(pointEditPath.value, index);
+  }
+
+  /** The overlay frame: the shape's box + rotation and the live outline `d`
+   * (in the shape's local px), so the overlay paints the edited outline and
+   * lays its handles over the same rotated box. */
+  const pointEditFrame = computed(() => {
+    const g = shapeHandles.value;
+    const d = pointEditOutlineD.value;
+    if (!g || d === null) {
+      return null;
+    }
+    return { left: g.left, top: g.top, width: g.width, height: g.height, rotationDeg: selectedShapeRotationDeg(), d };
+  });
+
+  /** Click on a segment adds a vertex there (AC-17): splits the segment
+   * leaving the vertex nearest the click. */
+  function pointEditSplitAtPointer(event: MouseEvent) {
+    const path = pointEditPath.value;
+    const fraction = pointerAdjustFraction(event.clientX, event.clientY);
+    if (!path || !fraction) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    let best = 0;
+    let bestDist = Infinity;
+    for (const v of pathVertices(path)) {
+      const d = Math.hypot(v.point.x - fraction.x, v.point.y - fraction.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = v.index;
+      }
+    }
+    pointEditPath.value = splitSegmentAfter(path, best, 0.5);
+  }
+
+  function deleteSelectedVertex() {
+    const path = pointEditPath.value;
+    if (!path) {
+      return;
+    }
+    const next = deleteVertex(path, pointEditSelectedVertex.value);
+    if (next === null) {
+      exitPointEditMode(true);
+      return;
+    }
+    pointEditPath.value = next;
+    pointEditSelectedVertex.value = Math.max(0, Math.min(pointEditSelectedVertex.value, pathVertices(next).length - 1));
+  }
+
+  function handlePointEditKey(event: KeyboardEvent) {
+    const path = pointEditPath.value;
+    const location = pointEditLocation.value;
+    if (!path || !location) {
+      return;
+    }
+    const vertices = pathVertices(path);
+    const count = vertices.length;
+    const shape = doc.value ? shapeAt(doc.value, location) : null;
+    const widthCm = shape?.widthCm || 1;
+    const heightCm = shape?.heightCm || 1;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      exitPointEditMode(true);
+    } else if (event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      const step = event.shiftKey ? -1 : 1;
+      pointEditSelectedVertex.value = ((pointEditSelectedVertex.value + step) % count + count) % count;
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePointEditVertex(pointEditSelectedVertex.value);
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteSelectedVertex();
+    } else if (event.key.startsWith("Arrow")) {
+      event.preventDefault();
+      event.stopPropagation();
+      const stepCm = event.shiftKey ? 0.1 : 0.01;
+      const dx = (event.key === "ArrowLeft" ? -stepCm : event.key === "ArrowRight" ? stepCm : 0) / widthCm;
+      const dy = (event.key === "ArrowUp" ? -stepCm : event.key === "ArrowDown" ? stepCm : 0) / heightCm;
+      pointEditPath.value = nudgeVertex(path, pointEditSelectedVertex.value, dx, dy);
+    }
+  }
+
   function insertTextBoxAction() {
     armShapeDraw("textbox");
     // A text box has a fixed default size, so it inserts immediately at the
@@ -1958,6 +2324,21 @@ export function useShapes(deps: ShapesDeps) {
     handleFreeformPick,
     startFreeformGesture,
     disarmFreeform,
+    pointEdit: {
+      active: pointEditActive,
+      location: pointEditLocation,
+      frame: pointEditFrame,
+      canEdit: canEditPoints,
+      enter: enterPointEditMode,
+      exit: exitPointEditMode,
+      vertices: pointEditVertexList,
+      controls: pointEditControlList,
+      select: selectPointEditVertex,
+      onVertexDown: startPointEditVertexDrag,
+      onVertexToggle: togglePointEditVertex,
+      onControlDown: startPointEditControlDrag,
+      onSegmentDown: pointEditSplitAtPointer,
+    },
     insertTextBoxAction,
     freshGroupOrdinal: () => (doc.value ? freshGroupOrdinal(doc.value) : 1),
     moveGroup,

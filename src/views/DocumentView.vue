@@ -31,6 +31,7 @@ import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
 import FreeformDrawPreview from "../components/FreeformDrawPreview.vue";
+import PointEditOverlay from "../components/PointEditOverlay.vue";
 import ConnectorOverlay from "../components/ConnectorOverlay.vue";
 import ConnectorToolbar from "../components/ConnectorToolbar.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
@@ -800,8 +801,7 @@ const {
   handleShapePick,
   disarmShapeDraw,
   startShapeDraw,
-  drawFreeformTool, freeformPreviewD,
-  handleFreeformPick, startFreeformGesture,
+  drawFreeformTool, freeformPreviewD, handleFreeformPick, startFreeformGesture, pointEdit,
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
 
@@ -2391,9 +2391,7 @@ const {
   ...editorContext,
   cellSelection,
   tableHover,
-  drawGeometry,
-  startShapeDraw,
-  drawFreeformTool, startFreeformGesture,
+  drawGeometry, startShapeDraw, drawFreeformTool, startFreeformGesture, pointEditActive: pointEdit.active, exitPointEdit: pointEdit.exit,
   handleShapeSelect,
   handleShapeEditText,
   shapeAtClientPoint,
@@ -3198,7 +3196,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["format.import-styles", openImportDialog],
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
-  ["format.columns", openColumnsDialog],
+  ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
   ["format.multilevel-define-list", openDefineList],
   ["format.text-color", openTextColorMenu],
@@ -3599,6 +3597,7 @@ function handleMenuCommand(id = "") {
               :height="drawPreview.height"
             />
             <FreeformDrawPreview v-if="freeformPreviewD" :d="freeformPreviewD" />
+            <PointEditOverlay v-if="pointEdit.frame.value" class="print-exclude" :controller="pointEdit" />
             <div
               ref="contentRoot"
               class="document-content"
@@ -4045,6 +4044,7 @@ function handleMenuCommand(id = "") {
         @options="openShapePosition"
         @delete="handleShapeDelete"
         @duplicate="handleShapeDuplicate"
+        @edit-points="pointEdit.enter"
       />
     </ContextualToolbar>
     <ContextualToolbar
