@@ -206,15 +206,15 @@ const reportText = computed(() => (c.report.value ? reportHeadline(c.report.valu
 .gallery-title {
   flex: 1;
   margin: 0;
-  font-size: var(--text-lg, 1.125rem);
+  font-size: var(--text-lg);
 }
 .gallery-close {
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: var(--text-md);
   line-height: 1;
-  padding: var(--space-1, 0.25rem);
+  padding: var(--space-1);
 }
 .layout-list {
   list-style: none;
@@ -222,7 +222,7 @@ const reportText = computed(() => (c.report.value ? reportHeadline(c.report.valu
   padding: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-  gap: var(--space-3, 0.75rem);
+  gap: var(--space-3);
 }
 .layout-list-item {
   margin: 0;
@@ -230,45 +230,45 @@ const reportText = computed(() => (c.report.value ? reportHeadline(c.report.valu
 .layout-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1, 0.25rem);
+  gap: var(--space-1);
   width: 100%;
-  padding: var(--space-2, 0.5rem);
-  border: 2px solid var(--border, #d0d0d0);
-  border-radius: var(--radius-md, 6px);
-  background: var(--surface, #fff);
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
   cursor: pointer;
   text-align: left;
 }
 .layout-card--selected {
-  border-color: var(--accent, #2563eb);
+  border-color: var(--border-strong);
 }
 .layout-card:focus-visible {
-  outline: 2px solid var(--accent, #2563eb);
-  outline-offset: 2px;
+  outline: var(--border-width) solid var(--border-strong);
+  outline-offset: var(--space-1);
 }
 .layout-card-thumb {
   display: block;
-  border: 1px solid var(--border, #e0e0e0);
+  border: var(--border-width) solid var(--border-subtle);
   overflow: hidden;
 }
 .layout-card-name {
-  font-weight: 600;
-  font-size: var(--text-sm, 0.875rem);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-sm);
 }
 .layout-card-new-badge {
-  font-size: var(--text-xs, 0.75rem);
-  color: var(--text-muted, #666);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 .layout-report {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2, 0.5rem);
-  margin-top: var(--space-3, 0.75rem);
-  padding: var(--space-2, 0.5rem);
-  background: var(--surface-2, #f4f4f5);
-  border-radius: var(--radius-md, 6px);
-  font-size: var(--text-sm, 0.875rem);
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
 }
 .layout-reset[aria-disabled="true"] {
   opacity: 0.5;
