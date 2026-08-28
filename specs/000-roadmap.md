@@ -389,7 +389,6 @@ for the word processor (SPEC-115).
 | Document protection, read-only enforcement, encryption | Never specced |
 | Slide layouts picker and master editing | SPEC-080's out of scope (new slides are title+body only) |
 | Tables and charts on slides (beyond foreign-frame preservation) | SPEC-079 renders placeholders only |
-| Slide size setup dialog | SPEC-080's out of scope |
 | Presenter view — notes, next slide, timer | SPEC-083/084 both name it |
 | Slide sorter / grid view, copy-paste of slides across decks | SPEC-080's out of scope |
 | Per-paragraph text builds, emphasis effects, motion paths | SPEC-086's out of scope |
