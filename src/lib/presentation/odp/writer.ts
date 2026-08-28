@@ -102,8 +102,9 @@ function objectForRole(role: PlaceholderRole): string {
 }
 
 /** One authored `<style:presentation-page-layout>` for a catalogue entry with
- * no counterpart in the deck's styles.xml (SPEC-089 AC-16). */
-function authorPageLayoutStyle(name: string, layout: SlideLayout): string {
+ * no counterpart in the deck's styles.xml (SPEC-089 AC-16). Exported so the
+ * layout golden asserts the splice reproduces LAYOUT_GOLDEN's markup. */
+export function authorPageLayoutStyle(name: string, layout: SlideLayout): string {
   const placeholders = layout.slots
     .map(
       (slot: LayoutSlot) =>
