@@ -30,7 +30,9 @@ import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
-import ShapeAdjustHandles from "../components/ShapeAdjustHandles.vue";
+import ConnectorOverlay from "../components/ConnectorOverlay.vue";
+import ConnectorToolbar from "../components/ConnectorToolbar.vue";
+import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -92,6 +94,7 @@ import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
+import { useConnectors } from "./document/useConnectors";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
 import { useTextSelectionToolbar } from "./document/useTextSelectionToolbar";
@@ -628,6 +631,10 @@ const { scrollModelCaretIntoView, keepCaretVisible } = useCaretScroll({
 // hoisted declarations (defined further down this file), so referencing
 // them here — before the composables that call them — is safe; the getters
 // wrap plain variables that must be read live, never snapshotted.
+// SPEC-070: late-bound connector re-route hook (assigned once useConnectors
+// is created below), so a shape drag re-routes its connectors live.
+let remeasureConnectorsFn = () => {};
+
 const editorContext = {
   doc,
   documentId,
@@ -653,6 +660,7 @@ const editorContext = {
   zoom,
   clientToContentPx: zoomView.clientToContentPx,
   contentPxToClient: zoomView.contentPxToClient,
+  onDrawingGeometryChanged: () => remeasureConnectorsFn(),
 };
 
 // The format painter (SPEC-020) lives in useFormatPainter; handleSelectionChange
@@ -793,6 +801,13 @@ const {
   startShapeDraw,
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
+
+// --- connectors (SPEC-070) --------------------------------------------------
+// Two-click draw, live-measured overlay geometry, handles and formatting. One
+// namespace (not destructured) to hold DocumentView's line budget.
+const connectors = useConnectors({ ...editorContext });
+const remeasureConnectors = connectors.remeasureConnectors;
+remeasureConnectorsFn = remeasureConnectors;
 
 // --- charts (SPEC-052) -------------------------------------------------------
 // Chart selection/handles/toolbar, insertion at the caret and the data
@@ -1138,7 +1153,7 @@ function handleScroll() {
 }
 
 // Zoom/resize move every measured overlay just as a scroll does — policy in useOverlayRemeasure.
-const { remeasureDrawingHandles } = useOverlayRemeasure({ ...editorContext, scrollHooks, remeasureShapeHandles, remeasureImageHandles, remeasureChartHandles, clearTableHover: () => (tableHover.value = null) });
+const { remeasureDrawingHandles } = useOverlayRemeasure({ ...editorContext, scrollHooks, remeasureShapeHandles, remeasureImageHandles, remeasureChartHandles, remeasureConnectors, clearTableHover: () => (tableHover.value = null) });
 
 function handleSelectionChange() {
   const root = contentRoot.value;
@@ -2379,6 +2394,9 @@ const {
   handleShapeEditText,
   shapeAtClientPoint,
   clearShapeSelection,
+  handleConnectorMouseDown: connectors.handleConnectorMouseDown,
+  handleConnectorMouseMove: connectors.handleConnectorMouseMove,
+  clearConnectorSelection: connectors.clearConnectorSelection,
   startShapeMove,
   handleChartSelect,
   handleChartEditData,
@@ -2771,6 +2789,7 @@ watch(doc, () => {
   if (propertiesOpen.value) {
     void refreshStatisticsStats();
   }
+  void nextTick().then(remeasureConnectors); // SPEC-070: re-route on any edit
 });
 
 // Every markDirty() call site also feeds the version-history cadence timer
@@ -3342,6 +3361,7 @@ function handleMenuCommand(id = "") {
         @insert-section-break="handleInsertSectionBreak"
         @insert-note="handleInsertNote"
         @shape-pick="handleShapePick"
+        @connector-pick="connectors.armConnectorDraw"
         @chart-pick="handleChartPick"
         @multilevel-preset="handleMultilevelPreset"
         @insert-image-file="insertImageFileWithAutoCaption"
@@ -3527,36 +3547,42 @@ function handleMenuCommand(id = "") {
                 @mousedown="startImageResize($event, handle)"
               />
             </div>
-            <div
-              v-if="shapeHandles"
-              class="shape-handles print-exclude"
-              data-testid="shape-handles"
-            >
-              <div
-                v-for="handle in IMAGE_HANDLES"
-                :key="handle"
-                class="shape-resize-handle"
-                :data-testid="`shape-resize-${handle}`"
-                :style="shapeHandleStyle(handle)"
-                @mousedown="startShapeResize($event, handle)"
-              />
-              <div
-                class="shape-rotation-handle"
-                data-testid="shape-rotation-handle"
-                :style="rotationHandleStyle()"
-                @mousedown="startShapeRotate($event)"
-              />
-              <ShapeAdjustHandles
-                :handles="adjustmentHandleList()"
-                @adjust-start="startShapeAdjust"
-                @adjust-keydown="handleAdjustmentKeydown"
-              />
-            </div>
+            <ShapeHandlesOverlay
+              :geometry="shapeHandles || undefined"
+              :adjustment-handles="adjustmentHandleList()"
+              :handle-style="shapeHandleStyle"
+              :rotation-style="rotationHandleStyle"
+              @resize-start="startShapeResize"
+              @rotate-start="startShapeRotate"
+              @adjust-start="startShapeAdjust"
+              @adjust-keydown="handleAdjustmentKeydown"
+            />
             <div
               v-if="shapeAnchorMarker"
               class="shape-anchor-marker print-exclude"
               data-testid="shape-anchor-marker"
               :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
+            />
+            <ConnectorOverlay
+              :renders="connectors.connectorRenders.value"
+              :hover-sites="connectors.hoverSites.value || undefined"
+              :draw-from="connectors.drawFrom.value || undefined"
+              :draw-pointer="connectors.drawPointer.value || undefined"
+              @select="connectors.selectConnector"
+              @endpoint-drag="connectors.startEndpointDrag"
+              @adjust-drag="connectors.startAdjustDrag"
+            />
+            <ConnectorToolbar
+              v-if="connectors.selectedConnector.value"
+              :connector="connectors.selectedConnector.value"
+              :style="connectors.connectorToolbarStyle.value"
+              @set-kind="connectors.setKind"
+              @set-outline="connectors.setOutline"
+              @set-arrowheads="connectors.setArrowheads"
+              @set-wrap="connectors.setWrap"
+              @set-alt-text="connectors.setAltText"
+              @set-z-order="connectors.setZOrder"
+              @delete="connectors.removeSelectedConnector"
             />
             <ShapeDrawPreview
               v-if="drawPreview"
@@ -4481,42 +4507,10 @@ function handleMenuCommand(id = "") {
    while selected rather than on hover — AC-20). The position/size numeric
    dialogs remain the fallback where a drag is impractical. */
 @media (pointer: coarse) {
-  .image-resize-handle,
-  .shape-resize-handle,
-  .shape-rotation-handle {
+  .image-resize-handle {
     width: 20px;
     height: 20px;
   }
-}
-
-/* The selected shape's eight resize handles plus rotation handle (SPEC-051
-   AC-10, AC-16) — same overlay convention as .image-handles. */
-.shape-handles {
-  position: absolute;
-  inset: 0;
-  /* Above .shape-toolbar (z-index: 30): any overlap the wrapping toolbar
-     lands in (a shape near the viewport top, where it flips below) must
-     leave the handles clickable, not merely visible — a covered rotation
-     handle never receives its drag (AC-16, AC-38). */
-  z-index: 31;
-  pointer-events: none;
-}
-
-.shape-resize-handle,
-.shape-rotation-handle {
-  position: absolute;
-  pointer-events: auto;
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--accent);
-  border-radius: 2px;
-  background: var(--surface-base);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
-}
-
-.shape-rotation-handle {
-  border-radius: 50%;
-  cursor: grab;
 }
 
 /* The anchor marker (SPEC-051 AC-27): a small flag at the start of the

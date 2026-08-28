@@ -49,6 +49,7 @@ import type {
   Section,
   SectionColumns,
   Shape,
+  Connector,
   Table,
   TableCell,
   TableRow,
@@ -103,6 +104,7 @@ import { ODT_MIMETYPE } from "./reader";
 import { planAnchoredDrawings } from "../drawingAnchors";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
 import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
+import { connectorElementXml, connectorGraphicStyleXml, odfDrawId } from "./connector";
 import { chartFrameXml } from "./chart";
 import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
 import { formulaFrameXml, formulaObjectDirsInManifest } from "./formula";
@@ -548,6 +550,9 @@ interface AutomaticStyles {
    * shared across shapes (fill/outline/wrap all vary per shape), so this
    * always mints a fresh name. */
   shapeStyleNameFor(shape: Shape): string;
+  /** A connector's own graphic-family style (SPEC-070) — like a shape's, never
+   * shared across connectors (stroke/markers/wrap vary), so it mints fresh. */
+  connectorStyleNameFor(connector: Connector): string;
   /** The `number:date-style`/`number:time-style` name for a supported
    * SPEC-053 date/time format, minting and registering it on first use so a
    * `text:date`/`text:time` field can reference it (`style:data-style-name`).
@@ -606,7 +611,7 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
         }
         continue;
       }
-      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "tof" || block.type === "chart") {
+      if (block.type === "image" || block.type === "break" || block.type === "toc" || block.type === "tof" || block.type === "chart" || block.type === "connector") {
         continue;
       }
       if (block.type === "shape") {
@@ -886,6 +891,12 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
     shapeStyleNameFor(shape: Shape): string {
       const name = claimName("shfr", "");
       defs.push(shapeGraphicStyleXml(name, shape));
+      return name;
+    },
+
+    connectorStyleNameFor(connector: Connector): string {
+      const name = claimName("cnfr", "");
+      defs.push(connectorGraphicStyleXml(name, connector));
       return name;
     },
   };
@@ -1810,15 +1821,19 @@ function shapeParagraphXml(
   styles: AutomaticStyles,
   includeOpaque: boolean,
   styleOptions?: ParagraphStyleOptions,
+  drawId?: string,
 ): string {
   const wrapperName = styleOptions
     ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, styleOptions)
     : undefined;
   const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
   const styleName = styles.shapeStyleNameFor(shape);
-  const element = shapeElementXml(shape, styleName, {
-    paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque),
-  });
+  const element = shapeElementXml(
+    shape,
+    styleName,
+    { paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque) },
+    drawId,
+  );
   return `<text:p${wrapperAttr}>${element}</text:p>`;
 }
 
@@ -2022,6 +2037,22 @@ export function buildContentXml(
   // style, so the break is held pending until that paragraph is reached.
   let pendingBreak: BreakKind | undefined;
   model.sections.forEach((section, sectionIndex) => {
+    // SPEC-070: block indices any connector in this section attaches to — those
+    // shapes are written with a draw:id so the connector's draw:start-shape/
+    // draw:end-shape reference resolves on reopen.
+    const connectorTargets = new Set<number>();
+    for (const block of section.blocks) {
+      if (block.type === "connector") {
+        if (block.startAttachment) {
+          connectorTargets.add(block.startAttachment.target.block);
+        }
+        if (block.endAttachment) {
+          connectorTargets.add(block.endAttachment.target.block);
+        }
+      }
+    }
+    const drawIdFor = (blockIndex: number): string | undefined =>
+      connectorTargets.has(blockIndex) ? odfDrawId(sectionIndex, blockIndex) : undefined;
     // SPEC-028 AC-33: every section after the first switches to its own
     // master page via style:master-page-name on its first paragraph's
     // automatic style — in ODF that reference IS the section break (page
@@ -2084,12 +2115,34 @@ export function buildContentXml(
         anchoredPlan.byParagraph.delete(paragraphIndex);
       }
     }
+    // ODF's draw:start-shape/end-shape can only glue to a shape (the ODF
+    // writer mints a draw:id for shapes, not images/charts); a connector
+    // attached to a non-shape drawing writes no ref and renders free — the
+    // lossy case collectPackageDropRecords reports (SPEC-070 AC-32).
+    const shapeTargetId = (blockIndex: number | undefined): string | undefined => {
+      if (blockIndex === undefined) {
+        return undefined;
+      }
+      return section.blocks[blockIndex]?.type === "shape" ? odfDrawId(sectionIndex, blockIndex) : undefined;
+    };
+    const connectorElementFor = (connector: Connector, drawingIndex: number): string =>
+      connectorElementXml(connector, styles.connectorStyleNameFor(connector), {
+        self: drawIdFor(drawingIndex),
+        start: connector.startAttachment ? shapeTargetId(connector.startAttachment.target.block) : undefined,
+        end: connector.endAttachment ? shapeTargetId(connector.endAttachment.target.block) : undefined,
+      });
     const anchoredElementXml = (drawingIndex: number): string => {
       const drawing = blocks[drawingIndex];
       if (drawing.type === "shape") {
-        return shapeElementXml(drawing, styles.shapeStyleNameFor(drawing), {
-          paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque),
-        });
+        return shapeElementXml(
+          drawing,
+          styles.shapeStyleNameFor(drawing),
+          { paragraphXml: (paragraph) => paragraphXml(paragraph, styles, includeOpaque) },
+          drawIdFor(drawingIndex),
+        );
+      }
+      if (drawing.type === "connector") {
+        return connectorElementFor(drawing, drawingIndex);
       }
       if (drawing.type === "chart") {
         const chartEntry = chartPlan.planFor(sectionIndex, drawingIndex);
@@ -2131,7 +2184,19 @@ export function buildContentXml(
         // paragraph via anchoredElementXml; a pending break/master rides on
         // to the next emitted paragraph untaken.
         if (!anchoredPlan.absorbed.has(i)) {
-          blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions()));
+          blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions(), drawIdFor(i)));
+        }
+        i++;
+        continue;
+      }
+      if (block.type === "connector") {
+        if (!anchoredPlan.absorbed.has(i)) {
+          const options = takeStyleOptions();
+          const wrapperName = options
+            ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, options)
+            : undefined;
+          const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
+          blockXml.push(`<text:p${wrapperAttr}>${connectorElementFor(block, i)}</text:p>`);
         }
         i++;
         continue;
@@ -2575,6 +2640,9 @@ function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
     },
     shapeStyleNameFor(): string {
       throw new Error("shapes are not supported in header/footer content (SPEC-029)");
+    },
+    connectorStyleNameFor(): string {
+      throw new Error("connectors are not supported in header/footer content (SPEC-029)");
     },
   };
 }

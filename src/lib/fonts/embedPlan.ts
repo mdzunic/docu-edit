@@ -8,6 +8,7 @@
 import {
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isShape,
   isToc,
@@ -74,7 +75,7 @@ export function collectFontUsage(model: DocumentModel): StyleUsage[] {
   const defaultFamily = model.defaultStyles.fontFamily;
   for (const section of model.sections) {
     for (const block of section.blocks) {
-      if (isImage(block) || isShape(block) || isChart(block) || isBreak(block) || isToc(block) || isTof(block)) {
+      if (isImage(block) || isShape(block) || isChart(block) || isConnector(block) || isBreak(block) || isToc(block) || isTof(block)) {
         continue;
       }
       const paragraphs =

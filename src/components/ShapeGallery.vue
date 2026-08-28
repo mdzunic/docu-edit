@@ -17,7 +17,16 @@ import { asShapeGeometry, LINE_GEOMETRIES } from "../lib/core/shapes";
 import { SHAPE_DEFINITIONS } from "../lib/core/shapeCatalogue";
 import { SHAPE_ICON_SIZE, shapeIconPath } from "../lib/core/shapeIcons";
 
-defineEmits(["pick"]);
+defineEmits(["pick", "pick-connector"]);
+
+// SPEC-070: the three connector kinds shown in their own "Connectors" group.
+// Connectors are a distinct block type (not a ShapeGeometry), so they are
+// listed explicitly rather than derived from SHAPE_DEFINITIONS.
+const CONNECTOR_KINDS = [
+  { kind: "straight", label: "Straight connector", d: "M2 2 L22 22" },
+  { kind: "elbow", label: "Elbow connector", d: "M2 2 L2 12 L22 12 L22 22" },
+  { kind: "curved", label: "Curved connector", d: "M2 2 C2 16 22 8 22 22" },
+];
 
 // Groups in "The expanded catalogue" order. No type annotation here (the
 // .vue script's espree parser bars TS syntax — see the header); ShapeGroup
@@ -103,6 +112,41 @@ function iconClass(geometry = "rect") {
               <path
                 :class="iconClass(item.geometry)"
                 :d="iconPath(item.geometry)"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div
+        v-if="!query.trim()"
+        class="shape-gallery-group"
+        data-testid="connector-gallery-group"
+      >
+        <div class="shape-gallery-group-label">
+          Connectors
+        </div>
+        <div class="shape-gallery-items">
+          <button
+            v-for="conn in CONNECTOR_KINDS"
+            :key="conn.kind"
+            type="button"
+            class="shape-gallery-item"
+            :data-testid="`connector-gallery-${conn.kind}`"
+            :title="conn.label"
+            :aria-label="conn.label"
+            @mousedown.prevent
+            @click="$emit('pick-connector', conn.kind)"
+          >
+            <svg
+              class="shape-gallery-icon"
+              :viewBox="ICON_VIEWBOX"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                class="shape-gallery-icon-line"
+                fill="none"
+                :d="conn.d"
               />
             </svg>
           </button>

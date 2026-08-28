@@ -65,7 +65,7 @@ export interface RenderEntry {
   key: string;
   /** The v-memo array: every value the entry's DOM depends on. */
   memo: unknown[];
-  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "break" | "toc" | "tof" | "marker";
+  kind: "paragraph" | "table" | "image" | "shape" | "chart" | "connector" | "break" | "toc" | "tof" | "marker";
   /** Element tag for paragraph/break/marker entries ("p", "h2", "div"). */
   tag?: string;
   className?: string;
@@ -188,16 +188,21 @@ export function asPageColumns(value: unknown): PageColumns | null {
 export function hoistFloatingDrawingEntries(entries: RenderEntry[], model: DocumentModel): RenderEntry[] {
   let result: RenderEntry[] | null = null;
   for (const entry of entries) {
-    if (entry.kind !== "shape" && entry.kind !== "chart") {
+    if (entry.kind !== "shape" && entry.kind !== "chart" && entry.kind !== "connector") {
       continue;
     }
     const section = entry.sectionProp;
     const blockIndex = entry.blockIndexProp;
-    if (section === undefined || blockIndex === undefined || !isFloatingDrawing(entry.blockProp)) {
+    if (section === undefined || blockIndex === undefined) {
       continue;
     }
     const blocks = model.sections[section]?.blocks;
     if (!blocks) {
+      continue;
+    }
+    // A connector entry carries no blockProp (it renders as a bare anchor
+    // div); resolve its block from the model. Shape/chart entries carry it.
+    if (!isFloatingDrawing(entry.blockProp ?? blocks[blockIndex])) {
       continue;
     }
     const anchorIndex = resolveAnchorBlockIndex(blocks, blockIndex);

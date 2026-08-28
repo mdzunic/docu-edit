@@ -30,6 +30,8 @@ interface OverlayRemeasureDeps extends Pick<EditorContext, "zoom" | "pageRef" | 
   remeasureShapeHandles: () => void;
   remeasureImageHandles: () => void;
   remeasureChartHandles: () => void;
+  /** SPEC-070: re-measures the connector overlay after a layout move. */
+  remeasureConnectors: () => void;
   /** Drops the table hover handles (SPEC-022 AC-20/21). Unlike the
    * selection-driven drawing handles, the hover geometry cannot be
    * re-measured here — whether the pointer is still over the table is
@@ -48,6 +50,7 @@ export function useOverlayRemeasure(deps: OverlayRemeasureDeps) {
     deps.remeasureShapeHandles();
     deps.remeasureImageHandles();
     deps.remeasureChartHandles();
+    deps.remeasureConnectors();
   }
 
   function remeasureOverlays(): void {

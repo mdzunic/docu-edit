@@ -131,6 +131,11 @@ export interface EditorContext {
    * coordinates for a position: fixed overlay outside the transform subtree
    * (SPEC-063 AC-22, AC-57). */
   contentPxToClient: (contentX: number, contentY: number) => { x: number; y: number };
+  /** SPEC-070: called whenever a drawing's on-screen geometry changes mid-
+   * gesture (a shape move/resize/rotate drag), so the connector overlay
+   * re-routes live with no commit. Optional — composables that do not drive
+   * connectors leave it unset. */
+  onDrawingGeometryChanged?: () => void;
 }
 
 /** The header/footer editing bridge shared by composables whose features

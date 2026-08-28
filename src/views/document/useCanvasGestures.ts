@@ -53,6 +53,14 @@ export interface CanvasGesturesDeps extends EditorContext {
   handleShapeEditText: (section?: number, block?: number) => void;
   shapeAtClientPoint: (clientX: number, clientY: number) => ShapeLocation | null;
   clearShapeSelection: () => void;
+  // --- from useConnectors (SPEC-070) ----------------------------------------
+  /** Consumes a mousedown when a connector kind is armed (two-click draw);
+   * returns true when it handled the event. */
+  handleConnectorMouseDown: (event: MouseEvent) => boolean;
+  /** Tracks the pointer for the draw rubber band and site hints. */
+  handleConnectorMouseMove: (event: MouseEvent) => void;
+  /** Clears any connector selection (a plain canvas click deselects). */
+  clearConnectorSelection: () => void;
   startShapeMove: (event: MouseEvent, location: ShapeLocation) => void;
   // --- from useCharts (SPEC-052) --------------------------------------------
   handleChartSelect: (section?: number, block?: number) => void;
@@ -99,6 +107,9 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     handleShapeEditText,
     shapeAtClientPoint,
     clearShapeSelection,
+    handleConnectorMouseDown,
+    handleConnectorMouseMove,
+    clearConnectorSelection,
     startShapeMove,
     handleChartSelect,
     handleChartEditData,
@@ -211,6 +222,15 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     if (event.button !== 0) {
       return;
     }
+    // Connector draw mode (SPEC-070 AC-3): a gallery pick armed a connector
+    // kind, so this mousedown places an endpoint. Takes precedence over every
+    // other canvas behaviour, like shape draw mode below.
+    if (handleConnectorMouseDown(event)) {
+      return;
+    }
+    // A plain canvas click (not on the connector overlay, which stops
+    // propagation) deselects any selected connector.
+    clearConnectorSelection();
     // Draw mode (SPEC-051 AC-3, AC-4): a gallery pick armed drawGeometry, so
     // this mousedown draws the shape instead of doing anything else the
     // canvas would normally do with a click.
@@ -323,6 +343,10 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
    * (AC-15). The DOM text selection is collapsed away — the highlighted cells
    * are the selection's presentation (AC-16). */
   function handleCanvasMouseMove(event = new MouseEvent("mousemove")) {
+    // SPEC-070: track the pointer for the connector draw rubber band and the
+    // connection-site hints (a no-op unless a kind is armed / an endpoint is
+    // being dragged).
+    handleConnectorMouseMove(event);
     const origin = cellDragOrigin;
     if (!origin || (event.buttons & 1) === 0) {
       return;

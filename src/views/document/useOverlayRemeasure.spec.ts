@@ -38,6 +38,7 @@ function mount(pageRef: Ref<Element | null>, zoom = ref(1)) {
   const remeasureShapeHandles = vi.fn();
   const remeasureImageHandles = vi.fn();
   const remeasureChartHandles = vi.fn();
+  const remeasureConnectors = vi.fn();
   const clearTableHover = vi.fn();
   const unmountCallbacks: Array<() => void> = [];
   const scope = effectScope();
@@ -50,6 +51,7 @@ function mount(pageRef: Ref<Element | null>, zoom = ref(1)) {
       remeasureShapeHandles,
       remeasureImageHandles,
       remeasureChartHandles,
+      remeasureConnectors,
       clearTableHover,
     });
   });

@@ -9,6 +9,7 @@
 import {
   cloneContainers,
   isChart,
+  isConnector,
   isImage,
   isShape,
   splitParagraphAt,
@@ -16,6 +17,7 @@ import {
   type Chart,
   type DocumentModel,
   type DrawingPlacement,
+  type Connector,
   type Image,
   type ImageWrapMode,
   type Paragraph,
@@ -31,6 +33,12 @@ import {
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { LINE_GEOMETRIES } from "./core/shapes";
+import {
+  freezeConnectorsAttachedTo,
+  reindexSectionAfterDelete,
+  reindexSectionAfterInsert,
+  reindexSectionAfterMove,
+} from "./connectors";
 import {
   MIN_SHAPE_SIZE_CM,
   normalizeRotationDeg,
@@ -207,6 +215,8 @@ export function insertShape(
     }
   }
   blocks.splice(at.block, 1, ...replacement);
+  // A shape insert shifts the block indices connectors attach by (SPEC-070).
+  reindexSectionAfterInsert(next, at.section, at.block, replacement.length - 1);
   const shapeIndex = at.block + shapeBlockOffset;
   const landing: CaretPosition = { section: at.section, block: shapeIndex + 1, offset: 0 };
   return { model: next, selection: caretSelection(landing) };
@@ -493,16 +503,28 @@ export function deleteShape(
   if (!shape) {
     return { model: next, selection };
   }
-  const blocks = next.sections[location.section].blocks;
+  // AC-11: freeze connectors attached to this shape BEFORE removing it, so
+  // each affected endpoint detaches at its true last routed position —
+  // resolved against the pre-splice blocks, where the shape still exists.
+  // Freezing after the splice would re-resolve the still-stale target index
+  // against whichever drawing shifted into the deleted slot, snapping the
+  // detached endpoint onto a neighbouring shape.
+  const frozen = freezeConnectorsAttachedTo(next.sections[location.section], location.block);
+  next.sections[location.section] = frozen;
+  const blocks = frozen.blocks;
   blocks.splice(location.block, 1);
   // A paragraph carries anchorOrdinal only while it anchors something
   // (SPEC-078's release rule); the deleted shape may have been the last
   // referrer.
   releaseAnchorOrdinal(next, shape.anchorOrdinal);
-  if (blocks.length === 0) {
-    blocks.push(emptyParagraph());
+  // Survivors shift with the block indices; the just-frozen endpoints no
+  // longer reference the removed block, so the delete mapping's -1 is a no-op.
+  reindexSectionAfterDelete(next, location.section, location.block, 1);
+  const afterBlocks = next.sections[location.section].blocks;
+  if (afterBlocks.length === 0) {
+    afterBlocks.push(emptyParagraph());
   }
-  const landing = Math.min(location.block, blocks.length - 1);
+  const landing = Math.min(location.block, afterBlocks.length - 1);
   return {
     model: next,
     selection: caretSelection({ section: location.section, block: landing, offset: 0 }),
@@ -517,14 +539,14 @@ export function deleteShape(
  * duplicate of it. */
 interface DrawingRef {
   location: ShapeLocation;
-  block: Shape | Image | Chart;
+  block: Shape | Image | Chart | Connector;
 }
 
 function allDrawings(model: DocumentModel): DrawingRef[] {
   const drawings: DrawingRef[] = [];
   model.sections.forEach((section, sectionIndex) => {
     section.blocks.forEach((block, blockIndex) => {
-      if (isShape(block) || isImage(block) || isChart(block)) {
+      if (isShape(block) || isImage(block) || isChart(block) || isConnector(block)) {
         drawings.push({ location: { section: sectionIndex, block: blockIndex }, block });
       }
     });
@@ -564,6 +586,7 @@ export function duplicateShape(
   delete (copy as { groupOrdinal?: number }).groupOrdinal;
   const blocks = next.sections[location.section].blocks;
   blocks.splice(location.block + 1, 0, copy);
+  reindexSectionAfterInsert(next, location.section, location.block + 1, 1);
   return {
     model: next,
     selection: caretSelection({ section: location.section, block: location.block + 1, offset: 0 }),
@@ -585,8 +608,10 @@ export function reorderShapeZ(
   command: ZOrderCommand,
 ): CommandResult {
   const next = cloneContainers(model);
-  const shape = shapeAt(next, location);
-  if (!shape) {
+  // Any drawing (shape/image/chart/connector, SPEC-070) can be re-ordered —
+  // the block just has to exist and be a drawing.
+  const targetBlock = next.sections[location.section]?.blocks[location.block];
+  if (!isShape(targetBlock) && !isImage(targetBlock) && !isChart(targetBlock) && !isConnector(targetBlock)) {
     return { model: next, selection };
   }
   const drawings = allDrawings(next).sort((a, b) => zOrderOf(a.block) - zOrderOf(b.block));
@@ -608,7 +633,7 @@ export function reorderShapeZ(
   const [moved] = reordered.splice(index, 1);
   reordered.splice(targetIndex, 0, moved);
   reordered.forEach((d, i) => {
-    const updated: Shape | Image | Chart = { ...d.block };
+    const updated: Shape | Image | Chart | Connector = { ...d.block };
     updated.zOrder = i;
     next.sections[d.location.section].blocks.splice(d.location.block, 1, updated);
   });
@@ -642,10 +667,10 @@ export function groupShapes(
   const ordinal = freshGroupOrdinal(next);
   for (const location of locations) {
     const block = next.sections[location.section]?.blocks[location.block];
-    if (!isShape(block) && !isImage(block) && !isChart(block)) {
+    if (!isShape(block) && !isImage(block) && !isChart(block) && !isConnector(block)) {
       continue;
     }
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | Connector = { ...block };
     updated.groupOrdinal = ordinal;
     if (updated.wrap === "inline") {
       updated.wrap = "square";
@@ -671,7 +696,7 @@ export function ungroupShapes(
     if (block.groupOrdinal !== groupOrdinal) {
       continue;
     }
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | Connector = { ...block };
     delete updated.groupOrdinal;
     next.sections[location.section].blocks.splice(location.block, 1, updated);
   }
@@ -743,7 +768,7 @@ export function resizeGroup(
 ): CommandResult {
   const next = cloneContainers(model);
   for (const { location, block } of groupMembers(next, groupOrdinal)) {
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | Connector = { ...block };
     updated.widthCm = Math.max(MIN_SHAPE_SIZE_CM, updated.widthCm * sx);
     updated.heightCm = Math.max(0, updated.heightCm * sy);
     updated.offsetXCm = (updated.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm) * sx;
@@ -765,7 +790,7 @@ export function rotateGroup(
 ): CommandResult {
   const next = cloneContainers(model);
   for (const { location, block } of groupMembers(next, groupOrdinal)) {
-    const updated: Shape | Image | Chart = { ...block };
+    const updated: Shape | Image | Chart | Connector = { ...block };
     const normalized = normalizeRotationDeg((block.rotationDeg ?? 0) + deltaDeg);
     if (normalized === 0) {
       delete updated.rotationDeg;
@@ -869,6 +894,13 @@ export function reanchorShape(
   // convention insertShape/insertImage use for a floating object.
   const insertAt = targetBlock + 1;
   targetBlocks.splice(insertAt, 0, updated);
+  // A re-anchor is a block move — the shape leaves `location.block` and lands
+  // at `insertAt` — so a connector attached to it (or to any block it passed
+  // over) must follow the new indices, or it re-routes to a stale target and
+  // collapses to a zero-length line on drop (AC-7). candidateParagraphsFor
+  // only ever produces spans in `location.section`, so the move stays within
+  // one section and the whole re-index is local to it.
+  reindexSectionAfterMove(next, location.section, location.block, insertAt);
   // The updated shape already carries the new ordinal, so releasing the old
   // one is a no-op unless this shape really was its last referrer (and when
   // old === new, the shape itself keeps the pairing alive).

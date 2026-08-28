@@ -93,6 +93,7 @@ import {
 import { isFloatingDrawing } from "../drawingAnchors";
 import { fillPendingMediaDataSync, pendingMediaByteLength, parseDrawing, type ParsedDrawing } from "./drawing";
 import { parseShapeDrawing } from "./shape";
+import { parseConnectorDrawing, resolveDocxConnectorAttachments, stampConnectorTargetId } from "./connector";
 import { parseChartDrawing } from "./chart";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
 import {
@@ -765,6 +766,29 @@ function shapeRunDrawing(
   return parsed?.shape ?? null;
 }
 
+/** The single `w:drawing` child of a run (the caller has already confirmed it
+ * is one via imageRunDrawing/shapeRunDrawing/etc.) — used to stamp the
+ * drawing's `wp:docPr/@id` onto its parsed block for connector resolution. */
+function drawingElementOf(rEl: Element): Element {
+  return Array.from(rEl.children).find(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "drawing",
+  ) as Element;
+}
+
+/** A `w:r` whose only content is one `w:drawing` holding a `wps:cxnSp`
+ * (SPEC-070) — the connector-flavoured sibling of shapeRunDrawing. Null for
+ * every other run. A `wps:cxnSp` reads as a Connector, never a Shape. */
+function connectorRunDrawing(rEl: Element): { connector: import("../documentModel").Connector; drawing: Element } | null {
+  const contentChildren = Array.from(rEl.children).filter(
+    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
+  );
+  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+    return null;
+  }
+  const parsed = parseConnectorDrawing(contentChildren[0]);
+  return parsed ? { connector: parsed.connector, drawing: contentChildren[0] } : null;
+}
+
 /** A `w:r` whose only content is one `w:drawing` holding a `c:chart`
  * reference (SPEC-052) — the chart-flavoured sibling of imageRunDrawing/
  * shapeRunDrawing. Null for every other run, which keeps falling through to
@@ -1132,6 +1156,7 @@ function parseBodyParagraphBlocks(
   const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
   const hasShapeRun = runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
   const hasChartRun = runElements.some((r) => chartRunDrawing(r, ctx) !== null);
+  const hasConnectorRun = runElements.some((r) => connectorRunDrawing(r) !== null);
   // A typed w:br in an otherwise-modelled run splits the paragraph the same
   // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
   // of that run's verbatim XML — splitting an unmodelled run could not
@@ -1139,7 +1164,7 @@ function parseBodyParagraphBlocks(
   const hasBreakRun = runElements.some(
     (r) => !runHasUnmodelledContent(r) && runHasTypedBreak(r),
   );
-  if (!hasImageRun && !hasShapeRun && !hasChartRun && !hasBreakRun) {
+  if (!hasImageRun && !hasShapeRun && !hasChartRun && !hasConnectorRun && !hasBreakRun) {
     return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog, links)], media: [] };
   }
 
@@ -1171,6 +1196,7 @@ function parseBodyParagraphBlocks(
       if (parsed) {
         flush();
         blocks.push(parsed.image);
+        stampConnectorTargetId(drawingElementOf(child), parsed.image);
         media.push(parsed.media);
         continue;
       }
@@ -1178,12 +1204,23 @@ function parseBodyParagraphBlocks(
       if (shape) {
         flush();
         blocks.push(shape);
+        stampConnectorTargetId(drawingElementOf(child), shape);
+        continue;
+      }
+      // SPEC-070: a wps:cxnSp reads as a Connector, before the chart/opaque
+      // fallbacks (its own graphicData uri is the same as a shape's).
+      const connectorRun = connectorRunDrawing(child);
+      if (connectorRun) {
+        flush();
+        blocks.push(connectorRun.connector);
+        stampConnectorTargetId(connectorRun.drawing, connectorRun.connector);
         continue;
       }
       const chart = chartRunDrawing(child, ctx);
       if (chart) {
         flush();
         blocks.push(chart);
+        stampConnectorTargetId(drawingElementOf(child), chart);
         continue;
       }
       if (isCommentReferenceRun(child)) {
@@ -2939,6 +2976,11 @@ export async function parseDocx(
       properties.unsupportedCustomProperties = unsupportedCustomProperties;
     }
   }
+
+  // SPEC-070: resolve every connector's a:stCxn/a:endCxn id references to the
+  // target's block index now that every section's blocks (and their docPr
+  // ids) are known.
+  resolveDocxConnectorAttachments({ sections });
 
   const result: ParsedDocxDocument = {
     sections,

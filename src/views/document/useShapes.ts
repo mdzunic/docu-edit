@@ -143,6 +143,7 @@ export function useShapes(deps: ShapesDeps) {
     zoom,
     clientToContentPx,
     contentPxToClient,
+    onDrawingGeometryChanged,
   } = deps;
 
   const shapeSelection = ref<ShapeLocation | null>(null);
@@ -1153,6 +1154,8 @@ export function useShapes(deps: ShapesDeps) {
       // the box they are sizing, not sit at the size it started.
       remeasureShapeHandles();
     }
+    // SPEC-070: re-route any connector attached to this shape, live.
+    onDrawingGeometryChanged?.();
   }
 
   function finishShapeResize() {
@@ -1307,6 +1310,8 @@ export function useShapes(deps: ShapesDeps) {
       // dragged; it comes back on release, repositioned (finishShapeMove's
       // remeasureShapeHandles).
       movingShape.value = true;
+      // SPEC-070: re-route any connector attached to this shape, live.
+      onDrawingGeometryChanged?.();
     }
   }
 
@@ -1429,6 +1434,8 @@ export function useShapes(deps: ShapesDeps) {
       (model, selection) => setShapeRotation(model, selection, drag.location, next),
       "rotate shape",
     );
+    // SPEC-070: re-route any connector attached to this shape, live.
+    onDrawingGeometryChanged?.();
   }
 
   function finishShapeRotate() {

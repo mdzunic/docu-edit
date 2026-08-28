@@ -9,10 +9,12 @@
 // belongs to (the `[para, d1, d2]` ambiguity this spec exists to kill).
 import {
   isChart,
+  isConnector,
   isImage,
   isShape,
   type Block,
   type Chart,
+  type Connector,
   type DocumentModel,
   type Paragraph,
   type Shape,
@@ -21,8 +23,8 @@ import {
 /** A Shape/Chart that sits outside the text flow — the blocks that carry an
  * anchor pairing. Image floats too but has no anchor-relative offsets to
  * measure, so it never pairs (SPEC-078's out of scope). */
-export function isFloatingDrawing(block: Block | undefined): block is Shape | Chart {
-  return (isShape(block) || isChart(block)) && block.wrap !== "inline";
+export function isFloatingDrawing(block: Block | undefined): block is Shape | Chart | Connector {
+  return (isShape(block) || isChart(block) || isConnector(block)) && block.wrap !== "inline";
 }
 
 /** Any drawing block — what the adjacency fallback walks over: in

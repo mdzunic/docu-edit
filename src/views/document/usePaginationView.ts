@@ -18,6 +18,7 @@ import {
   createEmptyHeaderFooterContent,
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isMergeChipField,
   isShape,
@@ -85,6 +86,7 @@ export interface FlatEntry {
   isImage: boolean;
   isShape: boolean;
   isChart: boolean;
+  isConnector: boolean;
   isToc: boolean;
   isTof: boolean;
   imageSrc: string;
@@ -319,6 +321,29 @@ function renderEntryFor(
       drawingIndex: flatEntry.isShape || flatEntry.isChart ? flatEntry.drawingIndex : undefined,
       column,
       trackChangesDisplayMode: deps.trackChangesDisplayMode.value,
+    } as RenderEntry;
+  }
+  if (flatEntry.isConnector) {
+    // SPEC-070: a connector renders as a zero-footprint anchor (like a
+    // floating shape's) — the visible SVG path is painted by the page-level
+    // connector overlay (useConnectors), which measures this anchor's origin.
+    return {
+      key: flatEntry.key,
+      memo: [block, flatEntry.section, flatEntry.blockIndex, column],
+      kind: "connector",
+      // Zero-footprint anchor entry, shaped exactly like a break: no blockProp
+      // (so componentFor's plain <div> never stringifies a block into an
+      // attribute) and no runs. Its data-section/data-block let useConnectors
+      // measure its page origin; sectionProp/blockIndexProp let
+      // hoistFloatingDrawingEntries pair it with its anchor paragraph.
+      tag: "div",
+      className: "doc-connector-anchor",
+      uneditable: true,
+      dataSection: flatEntry.section,
+      dataBlock: flatEntry.blockIndex,
+      sectionProp: flatEntry.section,
+      blockIndexProp: flatEntry.blockIndex,
+      column,
     } as RenderEntry;
   }
   if (flatEntry.isToc) {
@@ -954,6 +979,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         const image = isImage(block);
         const shape = isShape(block);
         const chart = isChart(block);
+        const connector = isConnector(block);
         const toc = isToc(block);
         const tof = isTof(block);
         const cellSel =
@@ -978,6 +1004,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           isImage: image,
           isShape: shape,
           isChart: chart,
+          isConnector: connector,
           isToc: toc,
           isTof: tof,
           imageSrc: image ? mediaSrc(deps.doc.value, block) : "",

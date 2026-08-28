@@ -10,6 +10,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   isBreak,
   isChart,
+  isConnector,
   isImage,
   isShape,
   isTable,
@@ -200,6 +201,12 @@ function renderBlock(
   if (isChart(block)) {
     // Charts have no Markdown representation (SPEC-052 is out of SPEC-050's
     // scope) — dropped the same way a shape is.
+    listCounters.length = 0;
+    return null;
+  }
+  if (isConnector(block)) {
+    // Connectors (SPEC-070) have no Markdown representation — dropped the
+    // same way a shape/chart is.
     listCounters.length = 0;
     return null;
   }
