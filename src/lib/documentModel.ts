@@ -6,6 +6,7 @@ import { DEFAULT_LANGUAGE } from "./core/language";
 import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
 import type { OpaquePart } from "./core/packageParts";
 import type { ArrowheadKind, ShapeGeometry, ShapeOutline } from "./core/shapes";
+import type { ShapePath } from "./core/shapePath";
 import type { ConnectorKind } from "./core/connectors";
 import type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
 import type { MeasurementUnit } from "./core/units";
@@ -992,6 +993,14 @@ export interface Shape extends DrawingPlacement {
    * geometry edited. A cross-format save of a shape with this field set
    * cannot carry it and reports a `"shapeGeometry"` DropRecord (AC-61). */
   unsupportedGeometryXml?: string;
+  /** A custom outline (SPEC-071). When present it is the shape's geometry,
+   * and `geometry` is only a bounding-box stand-in (`"rect"`), the same
+   * convention `unsupportedGeometryXml` uses — it takes precedence over
+   * `geometry` for rendering, hit-testing and serialization. Round-trips as
+   * `a:custGeom` (.docx) and `draw:enhanced-path` (.odt). Mutually exclusive
+   * with `unsupportedGeometryXml`: a shape whose path we modelled has nothing
+   * to preserve, and a preserved shape has no path to edit. */
+  path?: ShapePath;
 }
 
 /** Whether a block is a shape — the isTable-style narrowing helper (also
