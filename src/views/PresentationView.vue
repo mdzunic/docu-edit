@@ -7,27 +7,25 @@
 // of preparation-milestone records. It still redirects a text-document id to
 // /doc/:id (DocumentView does the reverse). Runtime declarations, not
 // defineProps<{...}>() generics — espree lints .vue scripts.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
-import SlideStage from "../components/presentation/SlideStage.vue";
+import SlideStageArea from "../components/presentation/SlideStageArea.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
 import DeckActions from "../components/presentation/DeckActions.vue";
 import HtmlExportOptionsDialog from "../components/presentation/HtmlExportOptionsDialog.vue";
+import LayoutGalleryDialog from "../components/presentation/LayoutGalleryDialog.vue";
 import NotesPanel from "../components/presentation/NotesPanel.vue";
 import TransitionsPanel from "../components/presentation/TransitionsPanel.vue";
 import AnimationsPanel from "../components/presentation/AnimationsPanel.vue";
-import AnimationStageLayer from "../components/presentation/AnimationStageLayer.vue";
-import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
-import { cmToPx } from "../lib/core/units";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
 import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
@@ -35,6 +33,7 @@ import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
 import { useTransitions } from "./presentation/useTransitions";
 import { useAnimations } from "./presentation/useAnimations";
+import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useDeckActions } from "./presentation/useDeckActions";
 
@@ -64,7 +63,9 @@ const { addToast } = useToasts();
 
 // The re-render/persist trio lives in a composable (SPEC-086 extraction) so the
 // view stays within its size budget; it owns the shallowRef re-identification.
-const { commit, refresh } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => recomputeScale() });
+// SlideStageArea owns the fit scaling now (SPEC-089) and recomputes reactively
+// from the current slide + deck size, so the render trio needs no scale hook.
+const { commit, refresh } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => {} });
 
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
 const canUndo = slideUndo.canUndo;
@@ -83,8 +84,14 @@ function onFilmstripCommand(payload = { action: "", index: 0 }) {
   const { action, index } = payload;
   if (action === "new") {
     slideCommands.add(index);
+  } else if (action === "new-with-layout") {
+    selectSlide(index);
+    layouts.openForNew();
   } else if (action === "duplicate") {
     slideCommands.duplicate(index);
+  } else if (action === "layout") {
+    selectSlide(index);
+    layouts.openForChange();
   } else if (action === "delete") {
     slideCommands.remove(index);
   } else if (action === "move-up") {
@@ -120,7 +127,6 @@ async function loadPresentation() {
   // else the first slide.
   currentIndex.value = deckActions.returnIndex();
   slideUndo.reset(); // the undo stack is per-open-view (AC-45)
-  void nextTick(recomputeScale);
 }
 
 const title = computed(() => presentation.value?.title ?? "No document");
@@ -204,48 +210,32 @@ const animations = useAnimations({
   selectFrame: stageEdit.selection.select,
 });
 
-// --- fit-to-workspace scaling ----------------------------------------------
-
-const stageContainer = useTemplateRef("stageContainer");
-const stageScale = ref(1);
-const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recomputeScale) : null;
-
-function recomputeScale() {
-  const container = stageContainer.value;
-  const model = presentation.value;
-  if (!container || !model) {
-    return;
-  }
-  const availableW = container.clientWidth;
-  const availableH = container.clientHeight;
-  const surfaceW = cmToPx(model.slideWidthCm);
-  const surfaceH = cmToPx(model.slideHeightCm);
-  if (surfaceW <= 0 || surfaceH <= 0 || availableW <= 0 || availableH <= 0) {
-    return;
-  }
-  stageScale.value = Math.min(availableW / surfaceW, availableH / surfaceH);
-}
-
-watch([presentation, currentSlide], () => {
-  void nextTick(recomputeScale);
+// --- slide layouts + Reset slide (SPEC-089) --------------------------------
+const layouts = useSlideLayouts({
+  model: presentation,
+  currentSlide,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+  addSlide: slideCommands.add,
 });
+function toggleLayout() {
+  if (layouts.open.value) {
+    layouts.close();
+  } else {
+    layouts.openForChange();
+  }
+}
 
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
 
 onMounted(() => {
-  if (resizeObserver && stageContainer.value) {
-    resizeObserver.observe(stageContainer.value);
-  }
-  window.addEventListener("resize", recomputeScale);
   window.addEventListener("keydown", stageEdit.onGlobalKeydown);
   window.addEventListener("keydown", notes.onGlobalKeydown);
   window.addEventListener("keydown", deckActions.onPresentShortcut);
-  void nextTick(recomputeScale);
 });
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  window.removeEventListener("resize", recomputeScale);
   window.removeEventListener("keydown", stageEdit.onGlobalKeydown);
   window.removeEventListener("keydown", notes.onGlobalKeydown);
   window.removeEventListener("keydown", deckActions.onPresentShortcut);
@@ -311,8 +301,10 @@ onBeforeUnmount(() => {
         :recent-colors="stageEdit.recentColors.value"
         :transition-open="transitions.open.value"
         :animate-open="animations.open.value"
+        :layout-open="layouts.open.value"
         @transition-toggle="transitions.toggle()"
         @animate-toggle="animations.toggle()"
+        @layout-toggle="toggleLayout()"
         @bold="stageEdit.editing.toggleBold()"
         @italic="stageEdit.editing.toggleItalic()"
         @underline="stageEdit.editing.toggleUnderline()"
@@ -350,69 +342,17 @@ onBeforeUnmount(() => {
           @reorder="onFilmstripReorder"
         />
         <div class="stage-column">
-          <div
-            ref="stageContainer"
-            class="stage-workspace"
-            data-testid="stage-workspace"
-          >
-            <SlideStage
-              v-if="currentSlide"
-              :slide="currentSlide"
-              :width-cm="presentation.slideWidthCm"
-              :height-cm="presentation.slideHeightCm"
-              :media="deckMedia"
-              :scale="stageScale"
-              :live-label="liveLabel"
-              :selected-frame-id="stageEdit.selection.selectedFrameId.value ?? undefined"
-              :editing-frame-id="stageEdit.editing.editingFrameId.value ?? undefined"
-              :guides="stageEdit.manipulation.guides.value"
-              :draw-preview="stageEdit.insertion.preview.value ?? undefined"
-              :armed="stageEdit.insertion.isArmed.value"
-              @frame-select="stageEdit.onFrameSelect"
-              @frame-start-edit="stageEdit.onStartEdit"
-              @frame-pointerdown="stageEdit.onFramePointerDown"
-              @handle-pointerdown="stageEdit.onHandlePointerDown"
-              @edit-mounted="stageEdit.editing.registerHost"
-              @edit-unmounted="stageEdit.editing.registerHost(null)"
-              @surface-pointerdown="stageEdit.onSurfaceDeselect"
-              @surface-draw="stageEdit.onSurfaceDraw"
-              @surface-mounted="stageEdit.registerSurface"
-            />
-            <div
-              v-else
-              class="empty-stage"
-              data-testid="presentation-empty"
-            >
-              <h3>This deck has no slides</h3>
-              <UiButton
-                data-testid="presentation-empty-add"
-                @click="addSlideAction"
-              >
-                Add slide
-              </UiButton>
-            </div>
-            <AnimationStageLayer
-              v-if="animations.open.value && currentSlide"
-              :controller="animations"
-              :slide="currentSlide"
-              :width-cm="presentation.slideWidthCm"
-              :height-cm="presentation.slideHeightCm"
-              :media="deckMedia"
-              :scale="stageScale"
-            />
-            <SlideTransitionLayer
-              v-if="transitions.previewState.value"
-              class="stage-preview"
-              :outgoing="transitions.previewState.value.outgoing"
-              :incoming="transitions.previewState.value.incoming"
-              :transition="transitions.previewState.value.transition"
-              :width-cm="presentation.slideWidthCm"
-              :height-cm="presentation.slideHeightCm"
-              :media="deckMedia"
-              :scale="stageScale"
-              @done="transitions.onPreviewDone()"
-            />
-          </div>
+          <SlideStageArea
+            :current-slide="currentSlide ?? undefined"
+            :width-cm="presentation.slideWidthCm"
+            :height-cm="presentation.slideHeightCm"
+            :media="deckMedia"
+            :live-label="liveLabel"
+            :stage-edit="stageEdit"
+            :animations="animations"
+            :transitions="transitions"
+            @add="addSlideAction"
+          />
           <NotesPanel
             v-if="notes.open.value && currentSlide"
             :value="notes.notesText.value"
@@ -436,6 +376,11 @@ onBeforeUnmount(() => {
       v-if="deckActions.htmlDialogOpen.value"
       @confirm="deckActions.confirmHtmlExport($event)"
       @cancel="deckActions.cancelHtmlExport()"
+    />
+    <LayoutGalleryDialog
+      v-if="layouts.open.value"
+      :controller="layouts"
+      :slide-number="currentIndex + 1"
     />
   </AppShell>
 </template>
@@ -497,24 +442,6 @@ onBeforeUnmount(() => {
   font-size: var(--text-sm);
 }
 
-.stage-preview {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 5;
-}
-
-.empty-stage {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--text-secondary);
-  text-align: center;
-}
-
 .deck-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -532,18 +459,5 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.stage-workspace {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-5);
-  background: var(--surface-sunken);
-  overflow: hidden;
 }
 </style>

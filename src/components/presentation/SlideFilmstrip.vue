@@ -27,7 +27,9 @@ const THUMB_WIDTH_PX = 168;
 
 const MENU_ITEMS = [
   { action: "new", label: "New slide", testid: "slide-menu-new" },
+  { action: "new-with-layout", label: "New slide with layout…", testid: "slide-menu-new-with-layout" },
   { action: "duplicate", label: "Duplicate slide", testid: "slide-menu-duplicate" },
+  { action: "layout", label: "Change layout…", testid: "slide-menu-layout" },
   { action: "delete", label: "Delete slide", testid: "slide-menu-delete" },
   { action: "move-up", label: "Move up", testid: "slide-menu-move-up" },
   { action: "move-down", label: "Move down", testid: "slide-menu-move-down" },
