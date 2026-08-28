@@ -24,7 +24,7 @@ import {
   RELATIONSHIPS_NAMESPACE,
   type Relationship,
 } from "../../core/xml";
-import { buildCorePropertiesXml } from "../../core/opcProperties";
+import { buildCorePropertiesXml, type CorePropertiesInput } from "../../core/opcProperties";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { MediaPart } from "../../core/media";
 import {
@@ -85,19 +85,23 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
   const parts = decodedPartBytes(model.opaque);
   const anyDirty = model.slides.some((slide) => slide.dirty === true);
   const anyNotes = model.slides.some((slide) => slide.notesDirty === true);
-  if (!model.structureDirty && !anyDirty && !anyNotes) {
+  const deckDirty = model.deckDirty === true;
+  if (!model.structureDirty && !deckDirty && !anyDirty && !anyNotes) {
     // Nothing changed — re-emit verbatim (AC-51).
     const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
     return { bytes };
   }
-  if (!model.structureDirty) {
+  if (!model.structureDirty && !deckDirty) {
     // Text-only edits: substitute each dirty slide's own part in place —
     // presentation.xml, its rels and [Content_Types].xml stay byte-verbatim,
     // and every untouched slide/unmodelled part is copied through (SPEC-081
     // Dirtying: a text edit does not rebuild the structural parts).
     return { bytes: await zip(buildTextEditSubstitution(model, parts)) };
   }
-  return { bytes: await zip(buildSubstitution(model, parts)) };
+  // A deck-level change (size / first slide number / metadata, SPEC-090) rides
+  // the substitution path too: it rebuilds presentation.xml (p:sldSz +
+  // firstSlideNum) and docProps/core.xml.
+  return { bytes: await zip(buildSubstitution(model, parts, options.modified ?? new Date())) };
 }
 
 /** Rebuilds only the dirty slides' own parts, in place; every other part
@@ -401,14 +405,15 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `</Relationships>`;
 
   const sldIdLst = model.slides.map((_, index) => `<p:sldId id="${256 + index}" r:id="${slideRelIds[index]}"/>`).join("");
+  const firstSlideNumAttr = model.firstSlideNumber !== undefined ? ` firstSlideNum="${model.firstSlideNumber}"` : "";
   const presentation =
-    `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}">` +
+    `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"${firstSlideNumAttr}>` +
     `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
     `<p:sldIdLst>${sldIdLst}</p:sldIdLst>` +
     `<p:sldSz cx="${cmToEmu(model.slideWidthCm)}" cy="${cmToEmu(model.slideHeightCm)}"/>` +
     `<p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
 
-  const core = buildCorePropertiesXml({ title: model.title }, modified);
+  const core = buildCorePropertiesXml(coreInputFor(model), modified);
 
   // The master lists six layouts (rId1..rId6), theme at rId7.
   const masterLayoutIdLst =
@@ -501,11 +506,17 @@ function relativeTarget(fromPart: string, toPart: string): string {
   return [...up, ...toSegments.slice(i)].join("/");
 }
 
-function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
+function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>, modified: Date = new Date()): ZipEntryInput[] {
   // Locate the presentation part through the root relationships.
   const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
   const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
   const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
+  // A deck-level change (SPEC-090) rewrites the slide size + first-slide-number
+  // in presentation.xml and rebuilds docProps/core.xml from the deck metadata.
+  const deckDirty = model.deckDirty === true;
+  const coreRel = [...rootRels.values()].find((rel) => rel.type === CORE_PROPERTIES_REL);
+  const corePath = coreRel ? resolvePartPath("", coreRel.target) : undefined;
+  const deckCoreXml = deckDirty && corePath ? buildCorePropertiesXml(coreInputFor(model), modified) : undefined;
   const presRelsPath = relsPathFor(presPath);
   const origPresXml = decode(parts.get(presPath) ?? encode(""));
   const origPresRels = parseRelationships(decode(parts.get(presRelsPath) ?? encode("")));
@@ -590,9 +601,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     .join("");
   const rebuiltPresRels = `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${keptRelXml}${slideRelXml}</Relationships>`;
 
-  // Rebuild presentation.xml: splice a fresh p:sldIdLst (ids re-minted 256…).
+  // Rebuild presentation.xml: splice a fresh p:sldIdLst (ids re-minted 256…),
+  // then (deck-level change only) the slide size and first-slide-number origin.
   const sldIdLstInner = emitted.map((entry, index) => `<p:sldId id="${256 + index}" r:id="${entry.relId}"/>`).join("");
-  const rebuiltPresXml = spliceSldIdLst(origPresXml, `<p:sldIdLst>${sldIdLstInner}</p:sldIdLst>`);
+  let rebuiltPresXml = spliceSldIdLst(origPresXml, `<p:sldIdLst>${sldIdLstInner}</p:sldIdLst>`);
+  if (deckDirty) {
+    rebuiltPresXml = spliceSldSz(rebuiltPresXml, model);
+    rebuiltPresXml = applyFirstSlideNum(rebuiltPresXml, model.firstSlideNumber);
+  }
 
   // Rebuild [Content_Types].xml: add overrides for added slides, drop overrides
   // for removed parts; everything else byte-verbatim. A dirty slide re-emitted
@@ -718,6 +734,10 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       entries.push({ name, data: encode(finalPresRels) });
     } else if (name === "[Content_Types].xml") {
       entries.push({ name, data: encode(finalContentTypes) });
+    } else if (name === corePath && deckCoreXml) {
+      // docProps/core.xml rebuilt from the deck metadata (SPEC-090); app.xml
+      // and custom.xml stay byte-verbatim.
+      entries.push({ name, data: encode(deckCoreXml) });
     } else if (notes.parts.has(name)) {
       entries.push({ name, data: notes.parts.get(name)! });
     } else if (plan.masterXml.has(name)) {
@@ -989,6 +1009,57 @@ function spliceSldIdLst(xml: string, replacement: string): string {
     return xml.replace(re, replacement);
   }
   return xml.replace(/(<p:sldSz)/, `${replacement}$1`);
+}
+
+/** The docProps/core.xml input for the deck's metadata — the deck's `properties`
+ * with `title` falling back to the app-bar title (SPEC-090). Shared by the
+ * from-scratch and substitution paths so both emit the same shape. */
+function coreInputFor(model: PresentationModel): CorePropertiesInput {
+  const props = model.properties ?? {};
+  return {
+    title: props.title ?? model.title,
+    subject: props.subject,
+    author: props.author,
+    lastModifiedBy: props.lastModifiedBy,
+    keywords: props.keywords,
+    comments: props.comments,
+    created: props.created,
+    extraFields: props.extraFields,
+  };
+}
+
+/** Rewrites `<p:sldSz>`'s `cx`/`cy` (whole EMU) in place, keeping its other
+ * attributes and the surrounding bytes; inserts one before `<p:notesSz` (else
+ * `</p:presentation>`) when the deck has none. `p:notesSz` is never touched —
+ * PowerPoint sizes notes pages independently (SPEC-090). */
+function spliceSldSz(presXml: string, model: PresentationModel): string {
+  const cx = cmToEmu(model.slideWidthCm);
+  const cy = cmToEmu(model.slideHeightCm);
+  if (/<p:sldSz\b/.test(presXml)) {
+    return presXml.replace(/<p:sldSz\b[^>]*\/?>/, (tag) => {
+      let out = tag;
+      out = /\bcx="[^"]*"/.test(out) ? out.replace(/\bcx="[^"]*"/, `cx="${cx}"`) : out.replace(/<p:sldSz/, `<p:sldSz cx="${cx}"`);
+      out = /\bcy="[^"]*"/.test(out) ? out.replace(/\bcy="[^"]*"/, `cy="${cy}"`) : out.replace(/<p:sldSz/, `<p:sldSz cy="${cy}"`);
+      return out;
+    });
+  }
+  const element = `<p:sldSz cx="${cx}" cy="${cy}"/>`;
+  if (presXml.includes("<p:notesSz")) {
+    return presXml.replace("<p:notesSz", `${element}<p:notesSz`);
+  }
+  return presXml.replace("</p:presentation>", `${element}</p:presentation>`);
+}
+
+/** Sets (or removes) `firstSlideNum` on the `p:presentation` start tag — set
+ * when the deck has a non-default origin, removed when absent (SPEC-090). */
+function applyFirstSlideNum(presXml: string, firstSlideNumber: number | undefined): string {
+  return presXml.replace(/<p:presentation\b[^>]*>/, (tag) => {
+    let out = tag.replace(/\s+firstSlideNum="[^"]*"/, "");
+    if (firstSlideNumber !== undefined) {
+      out = out.replace(/\s*>$/, ` firstSlideNum="${firstSlideNumber}">`);
+    }
+    return out;
+  });
 }
 
 function rebuildContentTypes(xml: string, addedSlidePaths: string[], removedPaths: string[]): string {

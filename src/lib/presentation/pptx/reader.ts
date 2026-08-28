@@ -876,6 +876,12 @@ export async function parsePptx(
   const slideWidthCm = sldSz ? emuToCm(Number(sldSz.getAttribute("cx"))) : DEFAULT_SLIDE_WIDTH_CM;
   const slideHeightCm = sldSz ? emuToCm(Number(sldSz.getAttribute("cy"))) : DEFAULT_SLIDE_HEIGHT_CM;
 
+  // Slide-number origin (SPEC-090): `firstSlideNum` on the p:presentation start
+  // tag; absent or 1 means the deck counts from 1.
+  const firstSlideNumRaw = mainDoc.documentElement.getAttribute("firstSlideNum");
+  const firstSlideNumParsed = firstSlideNumRaw !== null && firstSlideNumRaw !== "" ? Number(firstSlideNumRaw) : NaN;
+  const firstSlideNumber = Number.isInteger(firstSlideNumParsed) ? firstSlideNumParsed : undefined;
+
   const mainRels = relsFor(info.mainPartPath);
 
   // Collect every media part up-front, keyed by its own path (AC-31/32).
@@ -939,7 +945,7 @@ export async function parsePptx(
     opaque.push({ name, data: await bytesToBase64Async(partBytes) });
   }
 
-  return { slides, layouts, slideWidthCm, slideHeightCm, media: [...media.values()], opaque, properties };
+  return { slides, layouts, slideWidthCm, slideHeightCm, firstSlideNumber, media: [...media.values()], opaque, properties };
 }
 
 interface BuildDeps {

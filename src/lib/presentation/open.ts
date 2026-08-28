@@ -51,6 +51,10 @@ export function assemblePresentation(
     layouts: parsed.layouts,
     opaque: parsed.opaque,
   };
+  if (parsed.firstSlideNumber !== undefined && parsed.firstSlideNumber !== 1) {
+    // Only a non-default origin is stored (SPEC-090); absent = counts from 1.
+    model.firstSlideNumber = parsed.firstSlideNumber;
+  }
   if (parsed.media.length > 0) {
     model.media = parsed.media;
   }
