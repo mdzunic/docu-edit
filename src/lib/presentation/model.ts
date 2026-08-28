@@ -77,6 +77,53 @@ export interface SlideAnimation {
   delayMs?: number; // default 0, range 0–10000
 }
 
+/** The slide-layout kinds this editor recognises (SPEC-089), a closed union
+ * mapped from pptx `p:sldLayout/@type` and classified from odp page-layout
+ * slots. Anything outside the set — a custom pptx layout, an Impress page
+ * layout with an unrecognised placeholder object — classifies `"other"` and is
+ * still offered and applied unchanged. `lib/presentation/layouts.ts` is the
+ * normative source for classification and apply/reset. */
+export type SlideLayoutKind =
+  | "title"
+  | "titleAndBody"
+  | "sectionHeader"
+  | "twoContent"
+  | "titleOnly"
+  | "blank"
+  | "other";
+
+/** One placeholder slot of a `SlideLayout`: a role plus the geometry (cm) a
+ * slide's matching placeholder snaps to when the layout is applied. `phType`/
+ * `phIdx` carry the pptx `p:ph` `@type`/`@idx` written back verbatim; ODF has
+ * no `p:ph idx`, so both are left undefined on odp-derived slots. */
+export interface LayoutSlot {
+  role: PlaceholderRole;
+  phType?: string;
+  phIdx?: number;
+  xCm: number;
+  yCm: number;
+  widthCm: number;
+  heightCm: number;
+}
+
+/** One entry in a deck's read-derived layout catalogue (SPEC-089). Plain
+ * serialisable data per this file's rule, so `JSON.parse(JSON.stringify(model))`
+ * still `toEqual`s the model. */
+export interface SlideLayout {
+  /** Deterministic, deck-stable, survives save → reopen. pptx: the absolute
+   *  layout part path; odp: `${master}::${pageLayout}`; synthesised:
+   *  `standard:{kind}`. Never a UUID and never named `id` (equalStructural's
+   *  IGNORED_KEYS drops `"id"`). */
+  key: string;
+  kind: SlideLayoutKind;
+  /** The deck's own name for the layout, shown on the gallery card. */
+  name: string;
+  /** The layout's placeholder slots, in document order; `[]` for `"blank"`. */
+  slots: LayoutSlot[];
+  /** odp `draw:master-page-name` / pptx master part path the layout hangs off. */
+  masterName?: string;
+}
+
 /** A resolved frame/background fill. Only the two forms this spec renders —
  * a solid colour and "no fill"; gradients resolve to their first stop's
  * colour and image/pattern fills to white before they reach here. */
@@ -208,6 +255,12 @@ export interface Slide {
    *  writers emit it and drop the preserved timing. See
    *  `lib/presentation/animations.ts`. */
   animations?: SlideAnimation[];
+  /** The catalogue key (`PresentationModel.layouts[].key`) of the layout this
+   *  slide uses (SPEC-089). Set at read from the source layout relationship /
+   *  page-layout reference, and by `applySlideLayout`. A `layoutKey` naming no
+   *  catalogue entry resolves to `undefined` and is left alone on save — never
+   *  repaired, never dropped. */
+  layoutKey?: string;
   /** pptx: this slide's part path ("ppt/slides/slide2.xml"); ties the
    *  model slide to its verbatim part in `opaque`. Absent for .odp and
    *  (later) from-scratch slides. */
@@ -234,6 +287,12 @@ export interface PresentationModel {
   title: string;
   format: PresentationFormat;
   slides: Slide[];
+  /** The deck's read-derived layout catalogue (SPEC-089), in package order
+   * with every master's layouts flattened and de-duplicated by `key`. Absent
+   * means a deck stored before SPEC-089 (re-derived on the next open); `[]`
+   * means a package with no layout parts (the gallery falls back to the
+   * synthesised standard set). */
+  layouts?: SlideLayout[];
   /** The slide surface size, in centimetres (pptx `p:sldSz`, odp master page
    * `fo:page-width`/`fo:page-height`); the stage's aspect ratio. */
   slideWidthCm: number;
@@ -281,6 +340,9 @@ export const DEFAULT_SLIDE_HEIGHT_CM = 19.05;
  * side's `ParsedDocxDocument`/`ParsedOdtDocument` vs `assembleDocumentModel`. */
 export interface ParsedPresentation {
   slides: Slide[];
+  /** The deck's read-derived layout catalogue (SPEC-089); `[]` when the
+   * package carries no layout parts. */
+  layouts: SlideLayout[];
   slideWidthCm: number;
   slideHeightCm: number;
   /** Image bytes referenced by the slides' `ImageFrame`s. */

@@ -19,12 +19,14 @@
 //   2026-08-25  560  SPEC-080 — first budget (view at 542 lines)
 //   2026-08-26  550  SPEC-086 — extracted useSlideRender (commit/refresh) to make
 //                    room for the Animations panel wiring (view at 543 lines)
+//   2026-08-28  525  SPEC-089 — extracted SlideStageArea (.stage-workspace) to
+//                    pay for the layout gallery wiring (view at 511 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 550;
+const LINE_BUDGET = 525;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

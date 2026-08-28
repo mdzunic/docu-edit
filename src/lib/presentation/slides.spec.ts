@@ -125,6 +125,14 @@ describe("stripRetention", () => {
     expect(model.opaque).toBeDefined();
     expect(model.slides[0].partName).toBeDefined();
   });
+
+  it("keeps layouts and layoutKey — the catalogue is model data, not retention (SPEC-089 AC-21)", async () => {
+    const model = await readPresentationBytes(await buildPptxFixtureBytes(), "pptx", "Deck");
+    expect((model.layouts?.length ?? 0)).toBeGreaterThan(0);
+    const stripped = stripRetention(model);
+    expect(stripped.layouts).toEqual(model.layouts);
+    expect(stripped.slides[0].layoutKey).toBe(model.slides[0].layoutKey);
+  });
 });
 
 describe("unconvertibleFrameCount", () => {

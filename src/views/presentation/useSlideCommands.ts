@@ -17,7 +17,9 @@ export interface SlideCommandsDeps {
 }
 
 export interface SlideCommands {
-  add: (afterIndex?: number) => void;
+  /** Inserts a new slide after `afterIndex`; with `layoutKey` the slide is born
+   * from that catalogue layout's slots (SPEC-089), else SPEC-080's title+body. */
+  add: (afterIndex?: number, layoutKey?: string) => void;
   duplicate: (index?: number) => void;
   remove: (index?: number) => void;
   moveUp: (index?: number) => void;
@@ -37,7 +39,8 @@ export function useSlideCommands(deps: SlideCommandsDeps): SlideCommands {
   }
 
   return {
-    add: (afterIndex = deps.currentIndex.value) => run("New slide", (model) => addSlide(model, afterIndex)),
+    add: (afterIndex = deps.currentIndex.value, layoutKey?: string) =>
+      run("New slide", (model) => addSlide(model, afterIndex, layoutKey)),
     duplicate: (index = deps.currentIndex.value) => run("Duplicate slide", (model) => duplicateSlide(model, index)),
     remove: (index = deps.currentIndex.value) => run("Delete slide", (model) => deleteSlide(model, index)),
     moveUp: (index = deps.currentIndex.value) => run("Move slide up", (model) => moveSlide(model, index, index - 1)),

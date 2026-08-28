@@ -48,6 +48,7 @@ export function assemblePresentation(
     slides: parsed.slides,
     slideWidthCm: parsed.slideWidthCm,
     slideHeightCm: parsed.slideHeightCm,
+    layouts: parsed.layouts,
     opaque: parsed.opaque,
   };
   if (parsed.media.length > 0) {

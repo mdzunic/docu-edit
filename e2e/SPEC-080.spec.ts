@@ -33,13 +33,17 @@ test("create a deck, manage slides, undo a delete, and round-trip the download",
   await expect(thumbs).toHaveCount(3);
 
   // Reorder by keyboard: open the current thumbnail's menu with the Menu key,
-  // arrow down to "Move up", and activate it. Still 3 slides.
+  // arrow down to "Move up", and activate it. Still 3 slides. The menu opens
+  // focused on "New slide"; SPEC-089 inserted "New slide with layout…" and
+  // "Change layout…", so "Move up" now sits five items down.
   await page.getByTestId("slide-filmstrip").click();
   await page.getByTestId("slide-filmstrip").focus();
   await page.keyboard.press("ContextMenu");
   await expect(page.getByTestId("slide-context-menu")).toBeVisible();
-  await page.keyboard.press("ArrowDown"); // Duplicate
-  await page.keyboard.press("ArrowDown"); // Delete
+  await page.keyboard.press("ArrowDown"); // New slide with layout…
+  await page.keyboard.press("ArrowDown"); // Duplicate slide
+  await page.keyboard.press("ArrowDown"); // Change layout…
+  await page.keyboard.press("ArrowDown"); // Delete slide
   await page.keyboard.press("ArrowDown"); // Move up
   await page.keyboard.press("Enter");
   await expect(thumbs).toHaveCount(3);

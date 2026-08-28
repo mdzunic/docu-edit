@@ -36,7 +36,9 @@ describe("SlideFilmstrip management", () => {
     const wrapper = mountStrip();
     await wrapper.findAll('[data-testid="presentation-slide-menu"]')[0].trigger("click");
     expect(wrapper.find('[data-testid="slide-context-menu"]').exists()).toBe(true);
-    expect(wrapper.findAll('[data-testid="slide-context-menu"] [role="menuitem"]')).toHaveLength(5);
+    // Seven items: new / new-with-layout / duplicate / change-layout / delete /
+    // move-up / move-down (SPEC-089 added the two layout entries).
+    expect(wrapper.findAll('[data-testid="slide-context-menu"] [role="menuitem"]')).toHaveLength(7);
   });
 
   it("drag-reorders with a visible drop indicator (AC-38)", async () => {

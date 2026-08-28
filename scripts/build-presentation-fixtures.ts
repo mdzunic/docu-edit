@@ -10,6 +10,8 @@ import {
   buildOdpFixtureBytes,
   buildPptxAnimationsFixtureBytes,
   buildPptxFixtureBytes,
+  buildSpec089OdpFixtureBytes,
+  buildSpec089PptxFixtureBytes,
 } from "../src/lib/presentation/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -24,9 +26,15 @@ const animPptx = await buildPptxAnimationsFixtureBytes();
 writeFileSync(join(fixturesDir, "spec086-animations.pptx"), animPptx);
 const animOdp = await buildOdpAnimationsFixtureBytes();
 writeFileSync(join(fixturesDir, "spec086-animations.odp"), animOdp);
+// SPEC-089 layout catalogue fixtures.
+const layoutsPptx = await buildSpec089PptxFixtureBytes();
+writeFileSync(join(fixturesDir, "spec089-layouts.pptx"), layoutsPptx);
+const layoutsOdp = await buildSpec089OdpFixtureBytes();
+writeFileSync(join(fixturesDir, "spec089-layouts.odp"), layoutsOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
-    `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B)`,
+    `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
+    `spec089-layouts.pptx (${layoutsPptx.byteLength}B), spec089-layouts.odp (${layoutsOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

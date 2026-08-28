@@ -29,6 +29,8 @@ const props = defineProps({
   transitionOpen: { type: Boolean, default: false },
   /** Whether the animations panel is open (SPEC-086). */
   animateOpen: { type: Boolean, default: false },
+  /** Whether the layout gallery is open (SPEC-089). */
+  layoutOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -44,6 +46,7 @@ const emit = defineEmits([
   "outdent",
   "transition-toggle",
   "animate-toggle",
+  "layout-toggle",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -262,6 +265,16 @@ onBeforeUnmount(() => observer?.disconnect());
         @click="emit('animate-toggle')"
       >
         Animate
+      </button>
+      <button
+        type="button"
+        class="tb-toggle"
+        data-testid="slides-layout-toggle"
+        aria-label="Layout"
+        :aria-pressed="layoutOpen"
+        @click="emit('layout-toggle')"
+      >
+        Layout
       </button>
     </div>
 

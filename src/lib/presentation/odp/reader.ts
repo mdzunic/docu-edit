@@ -41,13 +41,16 @@ const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
+  type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
   type Slide,
   type SlideFrame,
+  type SlideLayout,
   type SlideParagraph,
   type SlideRun,
 } from "../model";
+import { classifyLayout } from "../layouts";
 
 export class OdpOpenError extends Error {}
 
@@ -654,6 +657,11 @@ export async function parseOdp(
   const contentText = decodeUtf8(contentBytes);
   const { prefix, suffix, pageSources } = splitContentEnvelope(contentText);
 
+  // The read-derived layout catalogue (SPEC-089 AC-2/3), keyed
+  // `${master}::${pageLayout}` (or `${master}::` for a page naming no layout).
+  const pageLayoutStyles = indexPageLayoutStyles(stylesDoc, contentDoc);
+  const layoutsByKey = new Map<string, SlideLayout>();
+
   const slides: Slide[] = [];
   let pageIndex = 0;
   for (const child of Array.from(presentation.children)) {
@@ -662,10 +670,12 @@ export async function parseOdp(
       if (pageSources[pageIndex] !== undefined) {
         slide.sourceXml = pageSources[pageIndex];
       }
+      deriveOdpLayout(child, slide, ctx, pageLayoutStyles, layoutsByKey);
       slides.push(slide);
       pageIndex += 1;
     }
   }
+  const layouts = [...layoutsByKey.values()];
 
   // Document properties from meta.xml.
   const metaBytes = parts.get("meta.xml");
@@ -688,6 +698,7 @@ export async function parseOdp(
 
   return {
     slides,
+    layouts,
     slideWidthCm: widthCm,
     slideHeightCm: heightCm,
     media: [...media.values()],
@@ -875,6 +886,107 @@ function buildMasterPlaceholders(stylesDoc: Document | undefined): Map<string, G
     }
   }
   return map;
+}
+
+/** Indexes every `style:presentation-page-layout` by its `style:name`
+ * (SPEC-089 AC-3), across styles.xml and content.xml automatic styles. */
+function indexPageLayoutStyles(stylesDoc: Document | undefined, contentDoc: Document): Map<string, Element> {
+  const map = new Map<string, Element>();
+  for (const doc of [stylesDoc, contentDoc]) {
+    if (!doc) {
+      continue;
+    }
+    for (const el of Array.from(doc.documentElement.getElementsByTagNameNS(STYLE_NAMESPACE, "presentation-page-layout"))) {
+      const name = styleAttr(el, "name");
+      if (name && !map.has(name)) {
+        map.set(name, el);
+      }
+    }
+  }
+  return map;
+}
+
+/** The `LayoutSlot[]` a `style:presentation-page-layout` declares (ODF 1.2
+ * §9.6.2): one per `presentation:placeholder` child — role from
+ * `roleOf(presentation:object)`, geometry from svg:x/y/width/height in cm,
+ * `phType`/`phIdx` left undefined (ODF has no `p:ph idx`). */
+function odpSlotsFromPageLayout(styleEl: Element): LayoutSlot[] {
+  const slots: LayoutSlot[] = [];
+  for (const ph of Array.from(styleEl.getElementsByTagNameNS(PRESENTATION_NS, "placeholder"))) {
+    const object = presentationAttr(ph, "object");
+    const geom = geometryOf(ph);
+    slots.push({
+      role: roleOf(object) ?? "other",
+      xCm: geom?.xCm ?? 0,
+      yCm: geom?.yCm ?? 0,
+      widthCm: geom?.widthCm ?? 0,
+      heightCm: geom?.heightCm ?? 0,
+    });
+  }
+  return slots;
+}
+
+/** The `LayoutSlot[]` a page's own placeholder `draw:frame`s imply, for a page
+ * that names no page-layout style (SPEC-089 AC-3): each direct-child
+ * `draw:frame presentation:class` with a resolvable role, geometry from its own
+ * box (or the master placeholder fallback). */
+function odpSlotsFromPage(page: Element, ctx: OdpContext): LayoutSlot[] {
+  const slots: LayoutSlot[] = [];
+  for (const child of Array.from(page.children)) {
+    if (child.namespaceURI !== DRAW_NAMESPACE || child.localName !== "frame") {
+      continue;
+    }
+    const cls = presentationAttr(child, "class");
+    const role = roleOf(cls);
+    if (!role) {
+      continue;
+    }
+    const geom = geometryOf(child) ?? (cls ? ctx.masterPh.get(cls) : undefined);
+    slots.push({
+      role,
+      xCm: geom?.xCm ?? 0,
+      yCm: geom?.yCm ?? 0,
+      widthCm: geom?.widthCm ?? 0,
+      heightCm: geom?.heightCm ?? 0,
+    });
+  }
+  return slots;
+}
+
+/** Derives one page's layout catalogue entry and assigns the slide's
+ * `layoutKey` (SPEC-089 AC-2/3): a referenced `style:presentation-page-layout`
+ * keyed `${master}::${pageLayout}`, else a synthetic entry keyed `${master}::`
+ * classified from the page's own placeholder frames. Registers the entry in
+ * `byKey` (first page per key wins its slots). */
+function deriveOdpLayout(
+  page: Element,
+  slide: Slide,
+  ctx: OdpContext,
+  pageLayoutStyles: Map<string, Element>,
+  byKey: Map<string, SlideLayout>,
+): void {
+  const master = drawAttr(page, "master-page-name") ?? "";
+  const pageLayoutName = presentationAttr(page, "presentation-page-layout-name");
+  if (pageLayoutName) {
+    const key = `${master}::${pageLayoutName}`;
+    slide.layoutKey = key;
+    if (!byKey.has(key)) {
+      const styleEl = pageLayoutStyles.get(pageLayoutName);
+      const slots = styleEl ? odpSlotsFromPageLayout(styleEl) : [];
+      const layout: SlideLayout = { key, kind: classifyLayout(undefined, slots), name: pageLayoutName, slots };
+      if (master) layout.masterName = master;
+      byKey.set(key, layout);
+    }
+    return;
+  }
+  const key = `${master}::`;
+  slide.layoutKey = key;
+  if (!byKey.has(key)) {
+    const slots = odpSlotsFromPage(page, ctx);
+    const layout: SlideLayout = { key, kind: classifyLayout(undefined, slots), name: master || "Default", slots };
+    if (master) layout.masterName = master;
+    byKey.set(key, layout);
+  }
 }
 
 /** The slide size from the master page's `style:page-layout`

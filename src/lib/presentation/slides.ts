@@ -20,6 +20,7 @@ import {
   type TextFrame,
 } from "./model";
 import { retargetAnimations } from "./animations";
+import { newSlideFramesForLayout } from "./layouts";
 
 /** cm rounded to 3 decimals — a hair finer than the eye and far coarser than
  * the EMU/ODF length precision the writers round to, so a placeholder's
@@ -85,19 +86,25 @@ export function createBlankPresentation(): PresentationModel {
   };
 }
 
-/** A new title + body slide, per the Reference geometry (title x 8% y 8%
- * w 84% h 16%; body x 8% y 30% w 84% h 60%), inserted AFTER `afterIndex`.
- * Returns the new slide's index (which becomes current). */
-export function addSlide(model: PresentationModel, afterIndex: number): number {
+/** A new slide inserted AFTER `afterIndex`. Without `layoutKey`, a title + body
+ * slide per the Reference geometry (title x 8% y 8% w 84% h 16%; body x 8% y 30%
+ * w 84% h 60%) — SPEC-080's unchanged behaviour. With a `layoutKey` naming a
+ * catalogue entry (SPEC-089 AC-8), the slide is born with one empty `TextFrame`
+ * per slot of that layout and its `layoutKey` set. Returns the new slide's index
+ * (which becomes current). */
+export function addSlide(model: PresentationModel, afterIndex: number, layoutKey?: string): number {
   const w = model.slideWidthCm;
   const h = model.slideHeightCm;
-  const slide: Slide = {
-    id: crypto.randomUUID(),
-    frames: [
-      placeholder("title", "title", undefined, 0.08, 0.08, 0.84, 0.16, w, h),
-      placeholder("body", "body", 1, 0.08, 0.3, 0.84, 0.6, w, h),
-    ],
-  };
+  const layout = layoutKey ? (model.layouts ?? []).find((l) => l.key === layoutKey) : undefined;
+  const slide: Slide = layout
+    ? { id: crypto.randomUUID(), frames: newSlideFramesForLayout(layout), layoutKey: layout.key }
+    : {
+        id: crypto.randomUUID(),
+        frames: [
+          placeholder("title", "title", undefined, 0.08, 0.08, 0.84, 0.16, w, h),
+          placeholder("body", "body", 1, 0.08, 0.3, 0.84, 0.6, w, h),
+        ],
+      };
   const at = Math.min(Math.max(afterIndex + 1, 0), model.slides.length);
   model.slides.splice(at, 0, slide);
   model.structureDirty = true;

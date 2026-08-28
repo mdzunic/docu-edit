@@ -27,7 +27,15 @@ import {
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { MediaPart } from "../../core/media";
-import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type Slide, type SlideFrame } from "../model";
+import {
+  DEFAULT_PRESENTATION_TITLE,
+  type LayoutSlot,
+  type PresentationModel,
+  type Slide,
+  type SlideFrame,
+  type SlideLayout,
+} from "../model";
+import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStandardLayouts } from "../layouts";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { serializeSlideXml } from "./serialize";
 import { applyNotesContentTypes, planNotes } from "./notesWriter";
@@ -100,6 +108,12 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
 function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
+  const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
+  const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
+  const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
+  // Layout changes (SPEC-089): a slide whose layoutKey differs from its source
+  // .rels has only that .rels repointed; a synthesised layout is authored once.
+  const plan = planLayouts(model, parts, presPath);
   const rebuilt = new Map<string, Uint8Array>();
   for (const slide of model.slides) {
     if (slide.dirty && slide.partName && parts.has(slide.partName)) {
@@ -108,17 +122,15 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
       const newRels = linkImageRels(slide, rels, slide.partName);
       rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName)));
-      if (newRels.length > 0) {
-        rebuilt.set(relsPath, encode(appendRelationships(relsXml, newRels)));
+      const outRels = relsForLayoutChange(slide, slide.partName, relsXml, newRels, plan);
+      if (outRels !== undefined) {
+        rebuilt.set(relsPath, encode(outRels));
       }
     }
   }
 
   // Notes surgery (SPEC-083): the slide part itself stays byte-verbatim when
   // only notes changed — only the notes-slide parts (and their machinery) move.
-  const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
-  const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
-  const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
   const notes = planNotes({
     model,
     parts,
@@ -142,6 +154,7 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
   if (media.defaults) {
     combinedContentTypes = spliceContentDefaults(combinedContentTypes, media.defaults);
   }
+  combinedContentTypes = spliceLayoutOverrides(combinedContentTypes, plan.overrides);
 
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
@@ -154,6 +167,10 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       entries.push({ name, data: notes.parts.get(name)! });
     } else if (rebuilt.has(name)) {
       entries.push({ name, data: rebuilt.get(name)! });
+    } else if (plan.masterXml.has(name)) {
+      entries.push({ name, data: encode(plan.masterXml.get(name)!) });
+    } else if (plan.masterRelsXml.has(name)) {
+      entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
     } else if (media.override.has(name)) {
       entries.push({ name, data: media.override.get(name)! });
     } else {
@@ -162,6 +179,12 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
   }
   // New notes parts (notes-slide, its rels, a created notes master + rels).
   for (const [name, data] of notes.parts) {
+    if (!parts.has(name)) {
+      entries.push({ name, data });
+    }
+  }
+  // Authored layout parts + their .rels (SPEC-089 AC-14).
+  for (const [name, data] of plan.newParts) {
     if (!parts.has(name)) {
       entries.push({ name, data });
     }
@@ -320,8 +343,30 @@ function slideRelsXml(layoutTarget: string): string {
 
 // --- from-scratch package --------------------------------------------------
 
+/** The standard-set index a from-scratch slide references: its `layoutKey` when
+ * it names a standard layout, else the kind inferred from its placeholder roles
+ * (so a title+body slide references the Title-and-Content layout). */
+function standardLayoutIndexForSlide(slide: Slide): number {
+  if (slide.layoutKey) {
+    const named = STANDARD_LAYOUTS.findIndex((d) => standardLayoutKey(d.kind) === slide.layoutKey);
+    if (named >= 0) {
+      return named;
+    }
+  }
+  const slots: LayoutSlot[] = slide.frames
+    .filter((f): f is Slide["frames"][number] & { kind: "text" } => f.kind === "text" && f.role !== undefined)
+    .map((f) => ({ role: f.role!, xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 }));
+  const kind = classifyFromSlots(slots);
+  const inferred = STANDARD_LAYOUTS.findIndex((d) => d.kind === kind);
+  return inferred >= 0 ? inferred : 0;
+}
+
 function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInput[] {
   const slidePaths = model.slides.map((_, index) => `ppt/slides/slide${index + 1}.xml`);
+  // The minimal standard set (SPEC-089 AC-17): slideLayout1..6, in the Reference
+  // table order (title/obj/secHead/twoObj/titleOnly/blank), at the deck size.
+  const standardLayouts = synthesiseStandardLayouts(model.slideWidthCm, model.slideHeightCm);
+  const layoutPaths = standardLayouts.map((_, i) => `ppt/slideLayouts/slideLayout${i + 1}.xml`);
 
   const mediaDefaults = mediaContentDefaults(referencedMedia(model));
   const contentTypes =
@@ -332,7 +377,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<Override PartName="/ppt/presentation.xml" ContentType="${PPTX_MAIN_CONTENT_TYPE}"/>` +
     slidePaths.map((path) => `<Override PartName="/${path}" ContentType="${SLIDE_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
-    `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>` +
+    layoutPaths.map((path) => `<Override PartName="/${path}" ContentType="${SLIDE_LAYOUT_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
     `</Types>`;
@@ -365,27 +410,50 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
 
   const core = buildCorePropertiesXml({ title: model.title }, modified);
 
+  // The master lists six layouts (rId1..rId6), theme at rId7.
+  const masterLayoutIdLst =
+    `<p:sldLayoutIdLst>` +
+    standardLayouts.map((_, i) => `<p:sldLayoutId id="${2147483649 + i}" r:id="rId${i + 1}"/>`).join("") +
+    `</p:sldLayoutIdLst>`;
+  const masterXml = SLIDE_MASTER_XML.replace(
+    /<p:sldLayoutIdLst>.*?<\/p:sldLayoutIdLst>/,
+    masterLayoutIdLst,
+  );
+  const masterRels =
+    `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
+    standardLayouts
+      .map((_, i) => `<Relationship Id="rId${i + 1}" Type="${SLIDE_LAYOUT_REL}" Target="../slideLayouts/slideLayout${i + 1}.xml"/>`)
+      .join("") +
+    `<Relationship Id="rId${standardLayouts.length + 1}" Type="${THEME_REL}" Target="../theme/theme1.xml"/>` +
+    `</Relationships>`;
+
   const entries: ZipEntryInput[] = [
     { name: "[Content_Types].xml", data: encode(contentTypes) },
     { name: "_rels/.rels", data: encode(rootRels) },
     { name: "docProps/core.xml", data: encode(core) },
     { name: "ppt/presentation.xml", data: encode(presentation) },
     { name: "ppt/_rels/presentation.xml.rels", data: encode(presentationRels) },
-    { name: "ppt/slideMasters/slideMaster1.xml", data: encode(SLIDE_MASTER_XML) },
-    { name: "ppt/slideMasters/_rels/slideMaster1.xml.rels", data: encode(SLIDE_MASTER_RELS) },
-    { name: "ppt/slideLayouts/slideLayout1.xml", data: encode(SLIDE_LAYOUT_XML) },
-    { name: "ppt/slideLayouts/_rels/slideLayout1.xml.rels", data: encode(SLIDE_LAYOUT_RELS) },
+    { name: "ppt/slideMasters/slideMaster1.xml", data: encode(masterXml) },
+    { name: "ppt/slideMasters/_rels/slideMaster1.xml.rels", data: encode(masterRels) },
     { name: "ppt/theme/theme1.xml", data: encode(THEME_XML) },
   ];
+  standardLayouts.forEach((layout, i) => {
+    entries.push({ name: layoutPaths[i], data: encode(authorLayoutXml(layout)) });
+    entries.push({
+      name: relsPathFor(layoutPaths[i]),
+      data: encode(authorLayoutRels(layoutPaths[i], "ppt/slideMasters/slideMaster1.xml")),
+    });
+  });
   model.slides.forEach((slide, index) => {
     const slidePath = slidePaths[index];
+    const layoutTarget = `../slideLayouts/slideLayout${standardLayoutIndexForSlide(slide) + 1}.xml`;
     const rels = new Map<string, Relationship>();
-    rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: "../slideLayouts/slideLayout1.xml" });
+    rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
     const imageRels = linkImageRels(slide, rels, slidePath);
     entries.push({ name: slidePath, data: encode(slideXml(slide, rels, slidePath)) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
-      data: encode(appendRelationships(slideRelsXml("../slideLayouts/slideLayout1.xml"), imageRels)),
+      data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)),
     });
   });
   for (const part of referencedMedia(model)) {
@@ -441,6 +509,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   const presRelsPath = relsPathFor(presPath);
   const origPresXml = decode(parts.get(presPath) ?? encode(""));
   const origPresRels = parseRelationships(decode(parts.get(presRelsPath) ?? encode("")));
+  // Layout changes (SPEC-089): resolve every referenced layoutKey to a part
+  // (existing or authored) and repoint/author accordingly.
+  const plan = planLayouts(model, parts, presPath);
 
   // The original slide parts (by their relationship targets).
   const origSlidePaths = new Set<string>();
@@ -530,9 +601,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
   const addedSlidePaths = emitted.filter((entry) => entry.kind !== "verbatim").map((entry) => entry.emitName);
-  const rebuiltContentTypes = spliceContentDefaults(
-    rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]),
-    media.defaults,
+  const rebuiltContentTypes = spliceLayoutOverrides(
+    spliceContentDefaults(rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]), media.defaults),
+    plan.overrides,
   );
 
   // A dirty slide kept under its own part name is rebuilt in place; one that
@@ -546,8 +617,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
       const newRels = linkImageRels(entry.slide, rels, entry.emitName);
       rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
-      if (newRels.length > 0) {
-        rebuiltOwn.set(relsPath, encode(appendRelationships(relsXml, newRels)));
+      const outRels = relsForLayoutChange(entry.slide, entry.emitName, relsXml, newRels, plan);
+      if (outRels !== undefined) {
+        rebuiltOwn.set(relsPath, encode(outRels));
       }
     }
   }
@@ -580,7 +652,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
         baseSlideRels.set(relsName, appendRelationships("", newRels));
       }
     } else {
-      const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath));
+      const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath, plan));
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
       const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
@@ -648,6 +720,10 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       entries.push({ name, data: encode(finalContentTypes) });
     } else if (notes.parts.has(name)) {
       entries.push({ name, data: notes.parts.get(name)! });
+    } else if (plan.masterXml.has(name)) {
+      entries.push({ name, data: encode(plan.masterXml.get(name)!) });
+    } else if (plan.masterRelsXml.has(name)) {
+      entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
     } else {
       entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
     }
@@ -677,6 +753,12 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       entries.push({ name, data });
     }
   }
+  // Authored layout parts + their .rels (SPEC-089 AC-14).
+  for (const [name, data] of plan.newParts) {
+    if (!parts.has(name) && !emittedFresh.has(name)) {
+      entries.push({ name, data });
+    }
+  }
   entries.push(...media.appended);
   return entries;
 }
@@ -684,6 +766,183 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
 function relIdNumber(id: string): number {
   const match = /(\d+)$/.exec(id);
   return match ? Number(match[1]) : 0;
+}
+
+// ── Layout catalogue writing (SPEC-089) ────────────────────────────────────
+const SLIDE_LAYOUT_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml";
+
+/** The `p:sldLayout/@type` for a modelled kind when authoring a missing layout
+ * part, from the standard table; unknown kinds fall back to `obj`. */
+function pptxTypeForKind(kind: string): string {
+  return STANDARD_LAYOUTS.find((d) => d.kind === kind)?.pptxType ?? "obj";
+}
+
+/** The absolute layout part a slide's `.rels` currently targets. */
+function currentLayoutTarget(relsXml: string, slidePartName: string): string | undefined {
+  if (!relsXml) {
+    return undefined;
+  }
+  const rel = [...parseRelationships(relsXml).values()].find((r) => r.type === SLIDE_LAYOUT_REL);
+  return rel ? resolvePartPath(slidePartName, rel.target) : undefined;
+}
+
+/** Rewrites ONLY the slideLayout relationship's `Target` to point at
+ * `newLayoutPath`, keeping every other relationship byte-identical (AC-13). */
+function repointLayoutRel(relsXml: string, slidePartName: string, newLayoutPath: string): string {
+  const target = escapeXmlAttribute(relativeTarget(slidePartName, newLayoutPath));
+  return relsXml.replace(/<Relationship\b[^>]*Type="[^"]*\/slideLayout"[^>]*\/>/, (el) =>
+    el.replace(/Target="[^"]*"/, `Target="${target}"`),
+  );
+}
+
+/** One authored placeholder `p:sp` for a layout slot. */
+function authorLayoutPlaceholder(slot: LayoutSlot, id: number): string {
+  const ph = `<p:ph${slot.phType ? ` type="${escapeXmlAttribute(slot.phType)}"` : ""}${slot.phIdx !== undefined ? ` idx="${slot.phIdx}"` : ""}/>`;
+  const xfrm =
+    `<a:xfrm><a:off x="${cmToEmu(slot.xCm)}" y="${cmToEmu(slot.yCm)}"/>` +
+    `<a:ext cx="${cmToEmu(slot.widthCm)}" cy="${cmToEmu(slot.heightCm)}"/></a:xfrm>`;
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Placeholder ${id}"/><p:cNvSpPr/><p:nvPr>${ph}</p:nvPr></p:nvSpPr>` +
+    `<p:spPr>${xfrm}</p:spPr><p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`
+  );
+}
+
+/** A whole authored `p:sldLayout` part for a catalogue entry with no counterpart. */
+function authorLayoutXml(layout: SlideLayout): string {
+  const shapes = layout.slots.map((slot, i) => authorLayoutPlaceholder(slot, i + 2)).join("");
+  return (
+    `${XML_DECL}<p:sldLayout xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}" type="${pptxTypeForKind(layout.kind)}" preserve="1">` +
+    `<p:cSld name="${escapeXmlAttribute(layout.name)}"><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
+    shapes +
+    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`
+  );
+}
+
+function authorLayoutRels(layoutPath: string, masterPath: string): string {
+  return (
+    `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
+    `<Relationship Id="rId1" Type="${SLIDE_MASTER_REL}" Target="${escapeXmlAttribute(relativeTarget(layoutPath, masterPath))}"/>` +
+    `</Relationships>`
+  );
+}
+
+/** The first slide master's absolute part path, via presentation.xml.rels. */
+function firstMasterPath(parts: Map<string, Uint8Array>, presPath: string): string | undefined {
+  const rels = parseRelationships(decode(parts.get(relsPathFor(presPath)) ?? encode("")));
+  const rel = [...rels.values()].find((r) => r.type === SLIDE_MASTER_REL);
+  return rel ? resolvePartPath(presPath, rel.target) : undefined;
+}
+
+/** The whole-writer plan for layout changes: resolving every referenced
+ * `layoutKey` to a part path (existing or freshly authored), the authored parts,
+ * the Content-Types overrides they need, and the master edits (a `p:sldLayoutId`
+ * spliced into `p:sldLayoutIdLst` and a matching master `.rels` relationship).
+ * A deck whose layouts were untouched produces an empty-effect plan. */
+interface LayoutPlan {
+  pathForKey: Map<string, string>;
+  newParts: Map<string, Uint8Array>;
+  overrides: string[];
+  masterXml: Map<string, string>;
+  masterRelsXml: Map<string, string>;
+}
+
+function planLayouts(model: PresentationModel, parts: Map<string, Uint8Array>, presPath: string): LayoutPlan {
+  const plan: LayoutPlan = {
+    pathForKey: new Map(),
+    newParts: new Map(),
+    overrides: [],
+    masterXml: new Map(),
+    masterRelsXml: new Map(),
+  };
+  const anyLayout = [...parts.keys()].find((n) => /\/slideLayouts\/slideLayout\d+\.xml$/.test(n));
+  const layoutDir = anyLayout
+    ? anyLayout.split("/").slice(0, -1).join("/")
+    : `${presPath.split("/").slice(0, -1).join("/")}/slideLayouts`;
+  let maxN = 0;
+  for (const name of parts.keys()) {
+    const m = /\/slideLayout(\d+)\.xml$/.exec(name);
+    if (m) {
+      maxN = Math.max(maxN, Number(m[1]));
+    }
+  }
+  const masterPath = firstMasterPath(parts, presPath);
+  const keys = new Set<string>();
+  for (const slide of model.slides) {
+    if (slide.layoutKey) {
+      keys.add(slide.layoutKey);
+    }
+  }
+  for (const key of keys) {
+    if (parts.has(key)) {
+      plan.pathForKey.set(key, key);
+      continue;
+    }
+    const entry = (model.layouts ?? []).find((l) => l.key === key);
+    if (!entry || !masterPath) {
+      continue; // unknown key or masterless deck: never repaired (AC-1).
+    }
+    maxN += 1;
+    const path = `${layoutDir}/slideLayout${maxN}.xml`;
+    plan.newParts.set(path, encode(authorLayoutXml(entry)));
+    plan.newParts.set(relsPathFor(path), encode(authorLayoutRels(path, masterPath)));
+    plan.overrides.push(`<Override PartName="/${path}" ContentType="${SLIDE_LAYOUT_CONTENT_TYPE}"/>`);
+    plan.pathForKey.set(key, path);
+
+    // Splice the layout into the master: a new relationship + a p:sldLayoutId.
+    const masterRelsPath = relsPathFor(masterPath);
+    const masterRels = plan.masterRelsXml.get(masterRelsPath) ?? decode(parts.get(masterRelsPath) ?? encode(""));
+    const relIds = [...parseRelationships(masterRels).values()].map((r) => relIdNumber(r.id));
+    const nextRid = `rId${(relIds.length ? Math.max(...relIds) : 0) + 1}`;
+    const layoutRelXml = `<Relationship Id="${nextRid}" Type="${SLIDE_LAYOUT_REL}" Target="${escapeXmlAttribute(relativeTarget(masterPath, path))}"/>`;
+    plan.masterRelsXml.set(
+      masterRelsPath,
+      /<\/Relationships>/.test(masterRels)
+        ? masterRels.replace(/<\/Relationships>/, `${layoutRelXml}</Relationships>`)
+        : `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${layoutRelXml}</Relationships>`,
+    );
+
+    const masterXml = plan.masterXml.get(masterPath) ?? decode(parts.get(masterPath) ?? encode(""));
+    const existingIds = [...masterXml.matchAll(/<p:sldLayoutId id="(\d+)"/g)].map((m) => Number(m[1]));
+    const nextId = (existingIds.length ? Math.max(...existingIds) : 2147483648) + 1;
+    const idXml = `<p:sldLayoutId id="${nextId}" r:id="${nextRid}"/>`;
+    plan.masterXml.set(
+      masterPath,
+      /<\/p:sldLayoutIdLst>/.test(masterXml)
+        ? masterXml.replace(/<\/p:sldLayoutIdLst>/, `${idXml}</p:sldLayoutIdLst>`)
+        : masterXml.replace(/<p:sldLayoutIdLst\/>/, `<p:sldLayoutIdLst>${idXml}</p:sldLayoutIdLst>`),
+    );
+  }
+  return plan;
+}
+
+/** Splices layout Content-Types overrides before `</Types>` (authored layouts). */
+function spliceLayoutOverrides(contentTypesXml: string, overrides: string[]): string {
+  if (overrides.length === 0) {
+    return contentTypesXml;
+  }
+  return contentTypesXml.replace(/<\/Types>/, `${overrides.join("")}</Types>`);
+}
+
+/** The `.rels` bytes for a dirty slide whose `layoutKey` changed: repointed at
+ * the plan's target, with image relationships appended. Returns undefined when
+ * nothing changed. */
+function relsForLayoutChange(
+  slide: Slide,
+  slidePartName: string,
+  relsXml: string,
+  newImageRels: { id: string; type: string; target: string }[],
+  plan: LayoutPlan,
+): string | undefined {
+  let out = relsXml;
+  const desired = slide.layoutKey ? plan.pathForKey.get(slide.layoutKey) : undefined;
+  if (desired && currentLayoutTarget(relsXml, slidePartName) !== desired) {
+    out = repointLayoutRel(out, slidePartName, desired);
+  }
+  if (newImageRels.length > 0) {
+    out = appendRelationships(out, newImageRels);
+  }
+  return out === relsXml ? undefined : out;
 }
 
 /** The layout part a new slide references (AC-27): the current slide's layout
@@ -695,7 +954,16 @@ function resolveLayoutPath(
   parts: Map<string, Uint8Array>,
   slidesDir: string,
   presPath: string,
+  plan: LayoutPlan,
 ): string {
+  // SPEC-089: a slide that names a layout honours it (existing or authored),
+  // ahead of the nearest-preceding-slide heuristic.
+  if (entry.slide.layoutKey) {
+    const path = plan.pathForKey.get(entry.slide.layoutKey);
+    if (path) {
+      return path;
+    }
+  }
   const index = model.slides.indexOf(entry.slide);
   for (let i = index - 1; i >= 0; i--) {
     const neighbour = model.slides[i];
@@ -747,22 +1015,6 @@ const SLIDE_MASTER_XML =
   `<p:bodyStyle><a:lvl1pPr><a:defRPr sz="1800"><a:latin typeface="+mn-lt"/></a:defRPr></a:lvl1pPr></p:bodyStyle>` +
   `<p:otherStyle><a:lvl1pPr><a:defRPr sz="1800"/></a:lvl1pPr></p:otherStyle>` +
   `</p:txStyles></p:sldMaster>`;
-
-const SLIDE_MASTER_RELS =
-  `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
-  `<Relationship Id="rId1" Type="${SLIDE_LAYOUT_REL}" Target="../slideLayouts/slideLayout1.xml"/>` +
-  `<Relationship Id="rId2" Type="${THEME_REL}" Target="../theme/theme1.xml"/>` +
-  `</Relationships>`;
-
-const SLIDE_LAYOUT_XML =
-  `${XML_DECL}<p:sldLayout xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}" type="blank" preserve="1"><p:cSld name="Blank"><p:spTree>` +
-  `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
-  `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
-
-const SLIDE_LAYOUT_RELS =
-  `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
-  `<Relationship Id="rId1" Type="${SLIDE_MASTER_REL}" Target="../slideMasters/slideMaster1.xml"/>` +
-  `</Relationships>`;
 
 const THEME_XML =
   `${XML_DECL}<a:theme xmlns:a="${A_NS}" name="Office Theme"><a:themeElements>` +

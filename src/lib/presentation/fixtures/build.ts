@@ -15,6 +15,7 @@
 import { zip } from "../../core/zipWriter";
 import { writePptxTiming } from "../pptx/timing";
 import { writeOdpAnim } from "../odp/anim";
+import { GOLDEN_PAGE_LAYOUT_NAMES, LAYOUT_GOLDEN } from "../odp/layoutGolden";
 import type { SlideAnimation } from "../model";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -931,6 +932,207 @@ export async function buildOdpAnimationsFixtureBytes(): Promise<Uint8Array> {
     { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.presentation"), store: true },
     { name: "content.xml", data: encoder.encode(content) },
     { name: "styles.xml", data: encoder.encode(styleParts) },
+    { name: "meta.xml", data: encoder.encode(meta) },
+    { name: "META-INF/manifest.xml", data: encoder.encode(manifest) },
+  ]);
+}
+
+// ============================================================================
+// SPEC-089 layout catalogue fixtures
+// ============================================================================
+// A `.pptx` carrying the six standard layouts (title/obj/secHead/twoObj/
+// titleOnly/blank) plus one exotic `type="cust"` layout (the "other" path), two
+// slides — one referencing the title layout, one with NO layout reference at
+// all — so the gallery, apply/reset and the no-reference fallback are all
+// exercised. The `.odp` twin is built from odp/layoutGolden.ts's LAYOUT_GOLDEN.
+
+interface Spec089Ph {
+  type: string;
+  idx?: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+interface Spec089Layout {
+  type: string;
+  name: string;
+  phs: Spec089Ph[];
+}
+
+const SPEC089_LAYOUTS: Spec089Layout[] = [
+  { type: "title", name: "Title Slide", phs: [
+    { type: "ctrTitle", x: 2, y: 6, w: 29, h: 3 }, { type: "subTitle", idx: 1, x: 2, y: 10, w: 29, h: 2 } ] },
+  { type: "obj", name: "Title and Content", phs: [
+    { type: "title", x: 2, y: 1, w: 29, h: 3 }, { type: "body", idx: 1, x: 2, y: 5, w: 29, h: 12 } ] },
+  { type: "secHead", name: "Section Header", phs: [
+    { type: "title", x: 2, y: 8, w: 29, h: 4 }, { type: "body", idx: 1, x: 2, y: 13, w: 29, h: 3 } ] },
+  { type: "twoObj", name: "Two Content", phs: [
+    { type: "title", x: 2, y: 1, w: 29, h: 3 }, { type: "body", idx: 1, x: 2, y: 5, w: 13, h: 12 }, { type: "body", idx: 2, x: 17, y: 5, w: 13, h: 12 } ] },
+  { type: "titleOnly", name: "Title Only", phs: [{ type: "title", x: 2, y: 1, w: 29, h: 3 }] },
+  { type: "blank", name: "Blank", phs: [] },
+  // The exotic layout pins the "other" classification path (AC-5/19).
+  { type: "cust", name: "Custom Panel", phs: [{ type: "title", x: 2, y: 1, w: 29, h: 3 }, { type: "body", idx: 1, x: 2, y: 5, w: 29, h: 12 }] },
+];
+
+function spec089LayoutPh(ph: Spec089Ph, id: number): string {
+  const phAttr = `type="${ph.type}"${ph.idx !== undefined ? ` idx="${ph.idx}"` : ""}`;
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="PH ${id}"/><p:cNvSpPr/><p:nvPr><p:ph ${phAttr}/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr>${xfrm(ph.x, ph.y, ph.w, ph.h)}</p:spPr><p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`
+  );
+}
+function spec089LayoutXml(layout: Spec089Layout): string {
+  const shapes = layout.phs.map((ph, i) => spec089LayoutPh(ph, i + 2)).join("");
+  return (
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sldLayout xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}" type="${layout.type}" preserve="1"><p:cSld name="${layout.name}"><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
+    shapes +
+    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`
+  );
+}
+
+/** A `.pptx` with six standard layouts + one exotic, two slides (one with a
+ * layout, one with no layout reference). */
+export async function buildSpec089PptxFixtureBytes(): Promise<Uint8Array> {
+  const n = SPEC089_LAYOUTS.length;
+  const layoutRelsToMaster =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>` +
+    `</Relationships>`;
+  // Slide 1 references the title layout; slide 2 has no slideLayout relationship.
+  const slide1 = pptxSlideXml(
+    pptxSp(2, "Title 1", { type: "ctrTitle" }, ["<a:r><a:t>Welcome</a:t></a:r>"], xfrm(2, 6, 29, 3)) +
+      pptxSp(3, "Subtitle 2", { type: "subTitle", idx: "1" }, ["<a:r><a:t>Layouts fixture</a:t></a:r>"], xfrm(2, 10, 29, 2)),
+  );
+  const slide1Rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
+    `</Relationships>`;
+  const slide2 = pptxSlideXml(
+    pptxSp(2, "TextBox 1", undefined, ["<a:r><a:t>No layout here</a:t></a:r>"], xfrm(2, 2, 24, 4)),
+  );
+  const slide2Rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `</Relationships>`;
+
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>` +
+    `<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>` +
+    `<Override PartName="/ppt/slides/slide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>` +
+    `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
+    SPEC089_LAYOUTS.map((_, i) => `<Override PartName="/ppt/slideLayouts/slideLayout${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>`).join("") +
+    `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
+    `</Types>`;
+  const rootRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>` +
+    `</Relationships>`;
+  const presentation =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}">` +
+    `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
+    `<p:sldIdLst><p:sldId id="256" r:id="rId2"/><p:sldId id="257" r:id="rId3"/></p:sldIdLst>` +
+    `<p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
+  const presentationRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>` +
+    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>` +
+    `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>` +
+    `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>` +
+    `</Relationships>`;
+  const master =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<p:sldMaster xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
+    `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
+    `<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>` +
+    `<p:sldLayoutIdLst>` +
+    SPEC089_LAYOUTS.map((_, i) => `<p:sldLayoutId id="${2147483649 + i}" r:id="rId${i + 1}"/>`).join("") +
+    `</p:sldLayoutIdLst></p:sldMaster>`;
+  const masterRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    SPEC089_LAYOUTS.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${i + 1}.xml"/>`).join("") +
+    `<Relationship Id="rId${n + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>` +
+    `</Relationships>`;
+
+  const entry = (name: string, text: string) => ({ name, data: encoder.encode(text) });
+  const parts = [
+    entry("[Content_Types].xml", contentTypes),
+    entry("_rels/.rels", rootRels),
+    entry("ppt/presentation.xml", presentation),
+    entry("ppt/_rels/presentation.xml.rels", presentationRels),
+    entry("ppt/slides/slide1.xml", slide1),
+    entry("ppt/slides/_rels/slide1.xml.rels", slide1Rels),
+    entry("ppt/slides/slide2.xml", slide2),
+    entry("ppt/slides/_rels/slide2.xml.rels", slide2Rels),
+    entry("ppt/slideMasters/slideMaster1.xml", master),
+    entry("ppt/slideMasters/_rels/slideMaster1.xml.rels", masterRels),
+    entry("ppt/theme/theme1.xml", PPTX_THEME),
+  ];
+  SPEC089_LAYOUTS.forEach((layout, i) => {
+    parts.push(entry(`ppt/slideLayouts/slideLayout${i + 1}.xml`, spec089LayoutXml(layout)));
+    parts.push(entry(`ppt/slideLayouts/_rels/slideLayout${i + 1}.xml.rels`, layoutRelsToMaster));
+  });
+  return zip(parts);
+}
+
+/** The `.odp` twin, its layout styles built from LAYOUT_GOLDEN (AC-19): three
+ * pages referencing AL-title/AL-two/AL-exotic and one page with no layout
+ * reference. */
+export async function buildSpec089OdpFixtureBytes(): Promise<Uint8Array> {
+  const page = (name: string, layout: string | null, cls: string, text: string): string =>
+    `<draw:page draw:name="${name}" draw:master-page-name="Default"${layout ? ` presentation:presentation-page-layout-name="${layout}"` : ""}>` +
+    odpFrame(cls, [text], geom(2, 6, 29, 3)) +
+    `</draw:page>`;
+  const pages =
+    page("page1", GOLDEN_PAGE_LAYOUT_NAMES[0], "title", "Title layout") +
+    page("page2", GOLDEN_PAGE_LAYOUT_NAMES[1], "title", "Two content layout") +
+    page("page3", GOLDEN_PAGE_LAYOUT_NAMES[2], "title", "Exotic layout") +
+    page("page4", null, "title", "No layout reference");
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-content xmlns:office="${ODF_OFFICE_NS}" xmlns:style="${ODF_STYLE_NS}" xmlns:text="${ODF_TEXT_NS}"` +
+    ` xmlns:draw="${ODF_DRAW_NS}" xmlns:fo="${ODF_FO_NS}" xmlns:svg="${ODF_SVG_NS}" xmlns:presentation="${ODF_PRESENTATION_NS}" office:version="1.2">` +
+    `<office:automatic-styles></office:automatic-styles>` +
+    `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
+    `</office:document-content>`;
+  const styles =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-styles xmlns:office="${ODF_OFFICE_NS}" xmlns:style="${ODF_STYLE_NS}" xmlns:text="${ODF_TEXT_NS}"` +
+    ` xmlns:draw="${ODF_DRAW_NS}" xmlns:fo="${ODF_FO_NS}" xmlns:svg="${ODF_SVG_NS}" xmlns:presentation="${ODF_PRESENTATION_NS}" office:version="1.2">` +
+    `<office:styles>${LAYOUT_GOLDEN}</office:styles>` +
+    `<office:automatic-styles>` +
+    `<style:page-layout style:name="PL1"><style:page-layout-properties fo:page-width="33.867cm" fo:page-height="19.05cm"/></style:page-layout>` +
+    `</office:automatic-styles>` +
+    `<office:master-styles><style:master-page style:name="Default" style:page-layout-name="PL1"/></office:master-styles>` +
+    `</office:document-styles>`;
+  const meta =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<office:document-meta xmlns:office="${ODF_OFFICE_NS}" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2">` +
+    `<office:meta><dc:title>Layouts fixture</dc:title></office:meta></office:document-meta>`;
+  const manifest =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
+    `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.presentation"/>` +
+    `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
+    `</manifest:manifest>`;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.presentation"), store: true },
+    { name: "content.xml", data: encoder.encode(content) },
+    { name: "styles.xml", data: encoder.encode(styles) },
     { name: "meta.xml", data: encoder.encode(meta) },
     { name: "META-INF/manifest.xml", data: encoder.encode(manifest) },
   ]);
