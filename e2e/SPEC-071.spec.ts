@@ -63,3 +63,44 @@ test.describe("SPEC-071 — freeform drawing", () => {
     await expect(drawings(page)).toHaveCount(1);
   });
 });
+
+test.describe("SPEC-071 — edit points", () => {
+  async function insertPreset(page: Page, geometry: string, x: number, y: number): Promise<void> {
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId(`shape-gallery-${geometry}`).click();
+    await content(page).click({ position: { x, y } });
+  }
+
+  test("Format -> Edit points converts a preset and shows vertex handles (AC-14, AC-15, AC-19)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertPreset(page, "triangle", 450, 250);
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await page.getByTestId("shape-edit-points-button").click();
+    await expect(page.getByTestId("point-edit-overlay")).toBeVisible();
+    // A triangle converts to a 3-vertex freeform.
+    await expect(page.getByTestId("point-edit-vertex-0")).toBeVisible();
+    await expect(page.getByTestId("point-edit-vertex-2")).toBeVisible();
+  });
+
+  test("dragging a vertex commits one edit and Escape exits (AC-17, AC-22)", async ({ page }) => {
+    await createDocument(page);
+    await insertPreset(page, "triangle", 450, 250);
+    await page.getByTestId("shape-edit-points-button").click();
+    const handle = page.getByTestId("point-edit-vertex-0");
+    const box = await handle.boundingBox();
+    if (!box) {
+      throw new Error("no vertex handle");
+    }
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y - 30, { steps: 8 });
+    await page.mouse.up();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("point-edit-overlay")).toHaveCount(0);
+    // The shape is still there, still a single drawing.
+    await expect(drawings(page)).toHaveCount(1);
+  });
+});
