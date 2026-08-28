@@ -194,4 +194,69 @@ test.describe("SPEC-070 — connectors", () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect(page.getByTestId("connector-site")).toHaveCount(9);
   });
+
+  test("resizing an attached shape re-routes its connector and it stays a real line (AC-8)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    await insertShape(page, "rect", 560, 260);
+    const shapeA = drawings(page).nth(0);
+    await armConnector(page, "straight");
+    await clickCenter(page, shapeA);
+    await clickCenter(page, drawings(page).nth(1));
+    await expect(connectors(page)).toHaveCount(1);
+    const d1 = (await connectors(page).first().getAttribute("d")) ?? "";
+
+    // Select shape A, then drag its SE resize handle outward.
+    const boxA = await boxOf(shapeA);
+    await page.mouse.click(boxA.x + boxA.width * 0.3, boxA.y + boxA.height * 0.3);
+    const se = boxA.x + boxA.width;
+    const sey = boxA.y + boxA.height;
+    await page.mouse.move(se, sey);
+    await page.mouse.down();
+    await page.mouse.move(se + 60, sey + 60, { steps: 6 });
+    await page.mouse.up();
+
+    // The path changed (re-routed) and remains a real, non-degenerate line —
+    // resize must not collapse the attachment.
+    const d2 = (await connectors(page).first().getAttribute("d")) ?? "";
+    expect(d2).not.toBe(d1);
+    const { a, b } = endpointsOfPath(d2);
+    expect(Math.hypot(b[0] - a[0], b[1] - a[1])).toBeGreaterThan(20);
+  });
+
+  test("releasing on empty canvas leaves that endpoint free; moving the shape re-routes only the attached end (AC-6)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    const shapeA = drawings(page).nth(0);
+
+    // Draw from shape A's centre to an empty point on the canvas.
+    await armConnector(page, "straight");
+    await clickCenter(page, shapeA);
+    const canvas = await boxOf(content(page));
+    const freeX = canvas.x + 700;
+    const freeY = canvas.y + 300;
+    await page.mouse.click(freeX, freeY);
+    await expect(connectors(page)).toHaveCount(1);
+
+    // start = attached to shape A, end = free at the clicked point.
+    const before = endpointsOfPath((await connectors(page).first().getAttribute("d")) ?? "");
+
+    // Move shape A down: the attached start follows it, the free end stays put.
+    const boxA = await boxOf(shapeA);
+    await page.mouse.move(boxA.x + boxA.width / 2, boxA.y + boxA.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(boxA.x + boxA.width / 2, boxA.y + boxA.height / 2 + 100, { steps: 6 });
+    await page.mouse.up();
+
+    const after = endpointsOfPath((await connectors(page).first().getAttribute("d")) ?? "");
+    // Attached start moved appreciably…
+    expect(Math.abs(after.a[1] - before.a[1])).toBeGreaterThan(40);
+    // …while the free end stayed at its point.
+    expect(Math.abs(after.b[0] - before.b[0])).toBeLessThan(5);
+    expect(Math.abs(after.b[1] - before.b[1])).toBeLessThan(5);
+  });
 });
