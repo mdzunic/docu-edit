@@ -456,6 +456,10 @@ export function useShapes(deps: ShapesDeps) {
   const pointEditPath = ref<ShapePath | null>(null);
   const pointEditSelectedVertex = ref(0);
   let pointEditPrevSelection: ShapeLocation | null = null;
+  // Serialised snapshot of the path as point-edit was entered, so a session
+  // that changes nothing commits nothing (no spurious undo step, no needless
+  // drop of a verbatim `pathSource`).
+  let pointEditOriginalJson: string | null = null;
   let pointEditDrag: { kind: "vertex" | "in" | "out"; index: number } | null = null;
   let pointEditListening = false;
 
@@ -1939,6 +1943,7 @@ export function useShapes(deps: ShapesDeps) {
     pointEditPrevSelection = location;
     pointEditLocation.value = location;
     pointEditPath.value = clonePath(converted.path);
+    pointEditOriginalJson = JSON.stringify(converted.path);
     pointEditSelectedVertex.value = 0;
     if (!pointEditListening) {
       pointEditListening = true;
@@ -1960,14 +1965,19 @@ export function useShapes(deps: ShapesDeps) {
   function exitPointEditMode(commit = true) {
     const location = pointEditLocation.value;
     const path = pointEditPath.value;
+    const originalJson = pointEditOriginalJson;
     stopPointEditListeners();
     pointEditLocation.value = null;
     pointEditPath.value = null;
+    pointEditOriginalJson = null;
     pointEditDrag = null;
     if (!location) {
       return;
     }
-    if (commit) {
+    // A session that left the path untouched commits nothing: no spurious undo
+    // step, and the shape's verbatim `pathSource` (if any) is preserved.
+    const unchanged = path !== null && originalJson !== null && JSON.stringify(path) === originalJson;
+    if (commit && !unchanged) {
       if (!path) {
         // Every subpath went (AC-21): delete the shape.
         applyShapeEdit((m, sel) => deleteShape(m, sel, location), "edit points");
@@ -2192,6 +2202,10 @@ export function useShapes(deps: ShapesDeps) {
     }
     const next = deleteVertex(path, pointEditSelectedVertex.value);
     if (next === null) {
+      // Every subpath is gone (AC-21): null the path first so exitPointEditMode
+      // reads no path and takes its delete-the-shape branch instead of
+      // re-committing the stale outline.
+      pointEditPath.value = null;
       exitPointEditMode(true);
       return;
     }

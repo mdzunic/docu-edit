@@ -68,7 +68,13 @@ export function catmullRomPath(points: Point[], closed: boolean): ShapePath {
   if (closed) {
     steps.push({ op: "close" });
   }
-  return { subpaths: [{ steps, closed }], smooth: points.map(() => true) };
+  // `smooth` is parallel to on-curve vertex order (one entry per non-close
+  // step): the `move` plus one per cubic. A closed curve adds a closing cubic
+  // back to the start, so it has one more on-curve vertex than input points —
+  // the array must match or the trailing vertex reads as a corner in
+  // point-edit.
+  const vertexCount = 1 + last;
+  return { subpaths: [{ steps, closed }], smooth: Array.from({ length: vertexCount }, () => true) };
 }
 
 /** Converts a preset geometry to an equivalent freeform `path` (SPEC-071

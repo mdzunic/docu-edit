@@ -26,6 +26,7 @@ import {
   setShapeOutline,
   setShapePosition,
   setShapeRotation,
+  setShapePath,
   setShapeSize,
   setShapeWrap,
   shapeHasVisibleText,
@@ -367,6 +368,28 @@ describe("setShapeSize (AC-4..AC-8's resize handles / toolbar)", () => {
     const model = doc(paragraph("text"));
     const { model: next } = setShapeSize(model, selectionAt(0, 0), location, 8, 4);
     expect(blockText(next.sections[0].blocks[0])).toBe("text");
+  });
+});
+
+describe("setShapePath (SPEC-071 AC-22/AC-26)", () => {
+  const location: ShapeLocation = { section: 0, block: 0 };
+  const path: Shape["path"] = {
+    subpaths: [{ steps: [{ op: "move", x: 0, y: 0 }, { op: "line", x: 1, y: 1 }], closed: false }],
+  };
+
+  it("writes the edited path and its renormalised box onto the shape", () => {
+    const model = doc(shape(), paragraph(""));
+    const { model: next } = setShapePath(model, selectionAt(0, 0), location, path, { widthCm: 5, heightCm: 4 });
+    expect(shapeAt(next, location)).toMatchObject({ path, widthCm: 5, heightCm: 4, geometry: "rect" });
+  });
+
+  it("drops a stale pathSource so a same-format save serialises the edited path, not the original geometry", () => {
+    const model = doc(
+      shape({ pathSource: { format: "docx", xml: "<a:custGeom/>" } }),
+      paragraph(""),
+    );
+    const { model: next } = setShapePath(model, selectionAt(0, 0), location, path, { widthCm: 5, heightCm: 4 });
+    expect(shapeAt(next, location)?.pathSource).toBeUndefined();
   });
 });
 

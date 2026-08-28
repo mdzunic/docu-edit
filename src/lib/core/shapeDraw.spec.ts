@@ -38,6 +38,15 @@ describe("catmullRomPath (Curve / scribble smoothing)", () => {
     expect(p.subpaths[0].closed).toBe(true);
     expect(p.subpaths[0].steps.filter((s) => s.op === "cubic")).toHaveLength(4);
   });
+
+  it("gives a closed curve a smooth entry per on-curve vertex (incl. the closing cubic)", () => {
+    const p = catmullRomPath([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], true);
+    // move + 4 cubics = 5 on-curve vertices, so smooth is length 5 (not 4) and
+    // the trailing closing vertex is marked smooth, not a corner.
+    const onCurve = p.subpaths[0].steps.filter((s) => s.op !== "close").length;
+    expect(p.smooth).toHaveLength(onCurve);
+    expect(p.smooth).toEqual([true, true, true, true, true]);
+  });
 });
 
 describe("presetToPath (preset -> freeform, AC-15)", () => {

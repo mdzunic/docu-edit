@@ -307,6 +307,11 @@ export function setShapePath(
     widthCm: Math.max(MIN_SHAPE_SIZE_CM, box.widthCm),
     heightCm: Math.max(0, box.heightCm),
   };
+  // The user has edited the modelled path, so any verbatim `pathSource` XML
+  // reduced from arcs/quadratics on read is now stale: keeping it would make a
+  // same-format save re-emit the original outline and silently drop these
+  // edits (AC-22/AC-26). Drop it so the writer serialises the edited path.
+  delete updated.pathSource;
   if (box.offsetXCm !== undefined) {
     updated.offsetXCm = box.offsetXCm;
   }
