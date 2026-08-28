@@ -63,7 +63,7 @@ describe("pptx firstSlideNum (SPEC-090 AC-15)", () => {
 describe("pptx docProps/core.xml (SPEC-090 AC-20)", () => {
   it("rebuilds core.xml from the deck metadata on a deck change", async () => {
     const model = await openDeck();
-    applyDeckProperties(model, { ...(model.properties ?? {}), author: "Grace Hopper", subject: "Q3" });
+    applyDeckProperties(model, { ...model.properties, author: "Grace Hopper", subject: "Q3" });
     const core = partText(await writtenParts(model), "docProps/core.xml");
     expect(core).toContain("Grace Hopper");
     expect(core).toContain("Q3");

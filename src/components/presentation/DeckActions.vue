@@ -19,6 +19,7 @@ const emit = defineEmits([
   "undo",
   "redo",
   "toggle-notes",
+  "deck-setup",
   "present",
   "download",
   "download-copy",
@@ -55,6 +56,13 @@ const emit = defineEmits([
       @click="emit('toggle-notes')"
     >
       Notes
+    </UiButton>
+    <UiButton
+      variant="ghost"
+      data-testid="presentation-deck-setup"
+      @click="emit('deck-setup')"
+    >
+      Deck setup…
     </UiButton>
     <UiButton
       variant="primary"

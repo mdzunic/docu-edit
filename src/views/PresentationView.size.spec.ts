@@ -21,12 +21,14 @@
 //                    room for the Animations panel wiring (view at 543 lines)
 //   2026-08-28  525  SPEC-089 — extracted SlideStageArea (.stage-workspace) to
 //                    pay for the layout gallery wiring (view at 511 lines)
+//   2026-08-28  455  SPEC-090 — extracted DeckHeader (.deck-header) as the deck-
+//                    setup dialog + useDeckSetup wiring landed (view at 443 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 525;
+const LINE_BUDGET = 455;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

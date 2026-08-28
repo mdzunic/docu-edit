@@ -100,7 +100,7 @@ describe("odp page-layout size rewrite (SPEC-090 AC-16)", () => {
 describe("odp meta.xml (SPEC-090 AC-20)", () => {
   it("rebuilds meta.xml from the deck metadata on a deck change", async () => {
     const model = await openDeck();
-    applyDeckProperties(model, { ...(model.properties ?? {}), author: "Grace Hopper", subject: "Q3" });
+    applyDeckProperties(model, { ...model.properties, author: "Grace Hopper", subject: "Q3" });
     const meta = partText(await writtenParts(model), "meta.xml");
     expect(meta).toContain("Grace Hopper");
     expect(meta).toContain("Q3");

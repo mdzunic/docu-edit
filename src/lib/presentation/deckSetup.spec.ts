@@ -62,7 +62,6 @@ describe("applyDeckSize scale (SPEC-090)", () => {
     applyDeckSize(m, { widthCm: 25.4, heightCm: 19.05 }, "scale");
     const s = 25.4 / 33.867;
     const dx = (25.4 - 33.867 * s) / 2;
-    const dy = (19.05 - 19.05 * s) / 2;
     const g = m.slides[0].frames[0] as Extract<SlideFrame, { kind: "group" }>;
     // group own bounds carry dx/dy
     expect(g.xCm).toBeCloseTo(1 * s + dx, 3);

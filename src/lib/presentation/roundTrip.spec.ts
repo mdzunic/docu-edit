@@ -619,7 +619,7 @@ describe("SPEC-090: deck setup round-trip", () => {
     applyDeckSize(model, { widthCm: 25.4, heightCm: 19.05 }, "keep");
     setFirstSlideNumber(model, 3);
     applyDeckProperties(model, {
-      ...(model.properties ?? {}),
+      ...model.properties,
       title: "New Title",
       subject: "Subj",
       keywords: "kw",
@@ -653,7 +653,7 @@ describe("SPEC-090: deck setup round-trip", () => {
     applyDeckSize(model, { widthCm: 25.4, heightCm: 19.05 }, "keep");
     setFirstSlideNumber(model, 3);
     applyDeckProperties(model, {
-      ...(model.properties ?? {}),
+      ...model.properties,
       title: "New Title",
       subject: "Subj",
       keywords: "kw",
