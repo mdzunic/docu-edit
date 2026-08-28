@@ -123,6 +123,59 @@ test.describe("SPEC-070 — connectors", () => {
     await expect(connectors(page)).toHaveCount(0);
   });
 
+  test("rotating an attached shape re-routes its connector live (AC-9)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    await insertShape(page, "rect", 520, 260);
+    const shapeA = drawings(page).nth(0);
+    await armConnector(page, "straight");
+    await clickCenter(page, shapeA);
+    await clickCenter(page, drawings(page).nth(1));
+    await expect(connectors(page)).toHaveCount(1);
+    const d1 = (await connectors(page).first().getAttribute("d")) ?? "";
+
+    // Select shape A (near its top-left interior, clear of the line) and turn
+    // it 60° — its connection sites turn with it, so the connector re-routes.
+    const boxA = await boxOf(shapeA);
+    await page.mouse.click(boxA.x + boxA.width * 0.3, boxA.y + boxA.height * 0.3);
+    const rotation = page.getByTestId("shape-rotation");
+    await rotation.fill("60");
+    await rotation.dispatchEvent("change");
+
+    const d2 = (await connectors(page).first().getAttribute("d")) ?? "";
+    expect(d2).not.toBe(d1);
+  });
+
+  test("deleting a shape keeps its connector, freezing the freed end at its last position (AC-11)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    await insertShape(page, "rect", 520, 260);
+    const shapeA = drawings(page).nth(0);
+    await armConnector(page, "straight");
+    await clickCenter(page, shapeA);
+    await clickCenter(page, drawings(page).nth(1));
+    await expect(connectors(page)).toHaveCount(1);
+    // The freed end is the start (attached to shape A): record its y before.
+    const before = endpointsOfPath((await connectors(page).first().getAttribute("d")) ?? "");
+
+    // Select shape A and delete it via its toolbar.
+    const boxA = await boxOf(shapeA);
+    await page.mouse.click(boxA.x + boxA.width * 0.3, boxA.y + boxA.height * 0.3);
+    await page.getByTestId("shape-delete-button").click();
+    await expect(drawings(page)).toHaveCount(1);
+
+    // The connector is NOT deleted (AC-11), and its freed start endpoint stays
+    // put — it must not spring up to the connector's paragraph anchor at the
+    // page top (the pre-fix regression jumped it ~180px).
+    await expect(connectors(page)).toHaveCount(1);
+    const after = endpointsOfPath((await connectors(page).first().getAttribute("d")) ?? "");
+    expect(Math.abs(after.a[1] - before.a[1])).toBeLessThan(40);
+  });
+
   test("hovering a shape while drawing reveals its connection sites (AC-4)", async ({ page }) => {
     await createDocument(page);
     await content(page).click({ position: { x: 20, y: 20 } });

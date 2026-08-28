@@ -13,7 +13,10 @@ import { computed, ref, type Ref } from "vue";
 import type { EditorContext } from "./context";
 import {
   asConnectorKind,
+  isChart,
   isConnector,
+  isImage,
+  isShape,
   type Connector,
   type ConnectorKind,
   type DocumentModel,
@@ -53,6 +56,20 @@ import type { ConnectorRender, SiteHint } from "../../lib/connectorOverlay";
 export type { ConnectorRender, SiteHint } from "../../lib/connectorOverlay";
 
 const PX_PER_CM = 96 / 2.54;
+
+/** A free connector endpoint's page-relative px point. The model stores
+ * `start`/`end` relative to the connector's OFFSET origin (offsetXCm/
+ * offsetYCm), while the measured DOM origin is the connector's anchor (where
+ * section-space 0,0 paints), so the offset must be added back — the exact
+ * inverse of the section-space point setConnectorEndpoint stored. Omitting it
+ * snapped a frozen/dropped endpoint up by the connector's own offset (the
+ * AC-11 delete-freeze regression; also AC-6's free end). */
+function freeEndpointPx(origin: Point, connector: Connector, which: "start" | "end"): Point {
+  const free = which === "start" ? connector.start : connector.end;
+  const offX = connector.offsetXCm ?? 0;
+  const offY = connector.offsetYCm ?? 0;
+  return { x: origin.x + (offX + free.xCm) * PX_PER_CM, y: origin.y + (offY + free.yCm) * PX_PER_CM };
+}
 
 export interface ConnectorsDeps extends EditorContext {}
 
@@ -102,7 +119,22 @@ export function useConnectors(deps: ConnectorsDeps) {
     if (!geo) {
       return null;
     }
-    return { x: geo.left, y: geo.top, w: geo.width, h: geo.height };
+    // The `.doc-shape` proxy box stays axis-aligned (DocShapeBlock keeps it
+    // unrotated so every measurement/hit-test goes through an upright box), so
+    // the box's px w/h are the shape's true unrotated size. Carry the model
+    // rotation through so connectionSites rotates the sites about the centre —
+    // otherwise a rotated shape's connectors never re-route (AC-9).
+    return { x: geo.left, y: geo.top, w: geo.width, h: geo.height, rotationDeg: drawingRotationAt(location) };
+  }
+
+  /** The model rotation (whole degrees CW) of the drawing at `location`, or 0
+   * when it is absent or not a rotatable drawing. */
+  function drawingRotationAt(location: ConnectorLocation): number {
+    const block = doc.value?.sections[location.section]?.blocks[location.block];
+    if (block && (isShape(block) || isImage(block) || isChart(block))) {
+      return block.rotationDeg ?? 0;
+    }
+    return 0;
   }
 
   /** The page-relative px top-left of a connector's own anchor box (the
@@ -148,15 +180,13 @@ export function useConnectors(deps: ConnectorsDeps) {
       if (!origin) {
         return null;
       }
-      const free = which === "start" ? connector.start : connector.end;
-      return { point: { x: origin.x + free.xCm * PX_PER_CM, y: origin.y + free.yCm * PX_PER_CM } };
+      return { point: freeEndpointPx(origin, connector, which) };
     }
     const box = measureDrawingBox({ section: location.section, block: attachment.target.block });
     if (!box) {
       // Target not in DOM (or a stale index): fall back to the free position.
       const origin = measureConnectorOrigin(location);
-      const free = which === "start" ? connector.start : connector.end;
-      return origin ? { point: { x: origin.x + free.xCm * PX_PER_CM, y: origin.y + free.yCm * PX_PER_CM } } : null;
+      return origin ? { point: freeEndpointPx(origin, connector, which) } : null;
     }
     const site = clampSite(attachment.site);
     if (site === 8) {
@@ -197,8 +227,8 @@ export function useConnectors(deps: ConnectorsDeps) {
         const rawB = block.endAttachment
           ? measureDrawingBox({ section: sectionIndex, block: block.endAttachment.target.block })
           : null;
-        const guessA = rawA ? connectionSitePoint(rawA, clampSite(block.startAttachment!.site)) : { x: originGuess.x + block.start.xCm * PX_PER_CM, y: originGuess.y + block.start.yCm * PX_PER_CM };
-        const guessB = rawB ? connectionSitePoint(rawB, clampSite(block.endAttachment!.site)) : { x: originGuess.x + block.end.xCm * PX_PER_CM, y: originGuess.y + block.end.yCm * PX_PER_CM };
+        const guessA = rawA ? connectionSitePoint(rawA, clampSite(block.startAttachment!.site)) : freeEndpointPx(originGuess, block, "start");
+        const guessB = rawB ? connectionSitePoint(rawB, clampSite(block.endAttachment!.site)) : freeEndpointPx(originGuess, block, "end");
         const a = resolveEndpointPx(location, block, "start", guessB);
         const b = resolveEndpointPx(location, block, "end", a?.point ?? guessA);
         const a2 = resolveEndpointPx(location, block, "start", b?.point ?? guessB);

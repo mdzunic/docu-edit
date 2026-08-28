@@ -86,6 +86,18 @@ describe("resolveConnectorEndpoints", () => {
     expect(end.point).toEqual({ x: 20, y: 1 });
   });
 
+  it("re-routes when an attached shape rotates (AC-9)", () => {
+    const { section } = attachedFixture();
+    const connector = section.blocks[2] as Connector;
+    // shape0 is a 4×2 box at (0,0); its right-mid site (start, site 1) sits at
+    // (4,1). Rotating the box 90° CW about its centre (2,1) carries that site
+    // to (2,3) — so the derived start endpoint must move, not stay at (4,1).
+    (section.blocks[0] as Shape).rotationDeg = 90;
+    const { start } = resolveConnectorEndpoints(section, connector);
+    expect(start.point.x).toBeCloseTo(2, 6);
+    expect(start.point.y).toBeCloseTo(3, 6);
+  });
+
   it("falls back to the free position for a detached end", () => {
     const { section } = attachedFixture();
     const connector = section.blocks[2] as Connector;
