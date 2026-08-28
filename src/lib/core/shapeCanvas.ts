@@ -21,6 +21,7 @@ import {
   type Point,
 } from "./shapeGeometry";
 import { resolvedShapeAdjustments, shapeDefinition } from "./shapeCatalogue";
+import type { ShapePath } from "./shapePath";
 
 function applyOutline(ctx: CanvasRenderingContext2D, outline: ShapeOutline | undefined, widthPxPerPt: number): void {
   if (!outline) {
@@ -35,6 +36,35 @@ function polygonPath(ctx: CanvasRenderingContext2D, points: Point[]): void {
   ctx.beginPath();
   points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
   ctx.closePath();
+}
+
+/** Traces a `ShapePath`'s subpaths into `ctx` in real px, honouring each
+ * subpath's `closed` flag — the source of the real freeform outline
+ * (SPEC-071). Fill uses the non-zero winding rule the spec states. */
+function shapePathTrace(ctx: CanvasRenderingContext2D, path: ShapePath, widthPx: number, heightPx: number): void {
+  ctx.beginPath();
+  for (const subpath of path.subpaths) {
+    let started = false;
+    for (const step of subpath.steps) {
+      if (step.op === "move") {
+        ctx.moveTo(step.x * widthPx, step.y * heightPx);
+        started = true;
+      } else if (step.op === "line" && started) {
+        ctx.lineTo(step.x * widthPx, step.y * heightPx);
+      } else if (step.op === "cubic" && started) {
+        ctx.bezierCurveTo(
+          step.x1 * widthPx,
+          step.y1 * heightPx,
+          step.x2 * widthPx,
+          step.y2 * heightPx,
+          step.x * widthPx,
+          step.y * heightPx,
+        );
+      } else if (step.op === "close") {
+        ctx.closePath();
+      }
+    }
+  }
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, widthPx: number, heightPx: number, radiusFraction?: number): void {
@@ -142,6 +172,22 @@ export function paintShape(ctx: CanvasRenderingContext2D, shape: ShapeVisual, wi
     ctx.translate(cx, cy);
     ctx.rotate((shape.rotationDeg * Math.PI) / 180);
     ctx.translate(-cx, -cy);
+  }
+
+  // A path shape paints its real outline (SPEC-071), taking precedence over
+  // `geometry` and never falling to the dashed placeholder.
+  if (shape.path) {
+    shapePathTrace(ctx, shape.path, widthPx, heightPx);
+    if (shape.fill) {
+      ctx.fillStyle = shape.fill;
+      ctx.fill("nonzero");
+    }
+    if (shape.outline) {
+      applyOutline(ctx, shape.outline, PX_PER_PT);
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
   }
 
   if (shape.unsupportedGeometryXml !== undefined) {
