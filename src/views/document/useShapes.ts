@@ -569,6 +569,7 @@ export function useShapes(deps: ShapesDeps) {
         filled: !!shape.fill,
         hasText: shapeHasVisibleText(shape),
         outlineToleranceCm: HIT_TOLERANCE_CM,
+        path: shape.path,
       });
       if (hit) {
         return location;

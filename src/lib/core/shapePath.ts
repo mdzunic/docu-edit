@@ -317,6 +317,21 @@ export function simplifyPolyline(points: Point[], toleranceCm: number): Point[] 
   return points.filter((_, i) => keep[i]);
 }
 
+/** The flattened outline of the path's first subpath, in unit-square
+ *  fractions — used to build a CSS `clip-path: polygon(...)` for a filled
+ *  path shape's DOM proxy so a click in an empty corner passes through to
+ *  the shape beneath, the same role `shapePolygon` plays for a preset. A
+ *  polygon cannot express holes or disjoint subpaths, so only the first
+ *  subpath is used; that is the common single-outline freeform, and the
+ *  precise hit test (`pointInPath`) is the source of truth regardless. */
+export function pathToClipPolygon(path: ShapePath): Point[] {
+  const first = path.subpaths.find((s) => s.closed);
+  if (!first) {
+    return [];
+  }
+  return flattenSubpath(first, 1, 1);
+}
+
 // --- primitive reduction (SPEC-071 "Primitive reduction") -------------------
 //
 // The model carries only move/line/cubic/close. Both formats have primitives

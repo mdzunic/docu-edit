@@ -133,7 +133,7 @@ function wrapSpacerStyle() {
  * cosmetic). */
 function proxyStyle() {
   const shape = asShape(props.block);
-  const clip = shapeClipPath(shape.geometry, !!shape.fill);
+  const clip = shapeClipPath(shape.geometry, !!shape.fill, shape.path);
   // The selection frame reads its angle from here (see the stylesheet): the
   // proxy itself must stay unrotated, since it is the element every
   // measurement and hit test goes through. Untyped object literal per the
