@@ -21,7 +21,15 @@ import { buildMetaXml } from "../../core/odfMeta";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { MediaPart } from "../../core/media";
 import { escapeXmlAttribute } from "../../core/xml";
-import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type SlideFrame } from "../model";
+import {
+  DEFAULT_PRESENTATION_TITLE,
+  type LayoutSlot,
+  type PlaceholderRole,
+  type PresentationModel,
+  type SlideFrame,
+  type SlideLayout,
+} from "../model";
+import { classifyFromSlots, synthesiseStandardLayouts } from "../layouts";
 import { ODP_MIMETYPE } from "./reader";
 import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
 
@@ -76,6 +84,94 @@ const MANIFEST_NS = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 const encoder = new TextEncoder();
 const encode = (text: string): Uint8Array => encoder.encode(text);
 
+// ── Layout catalogue writing (SPEC-089) ────────────────────────────────────
+
+/** The `presentation:object` value an ODF page-layout placeholder carries for a
+ * role — the inverse of the reader's `roleOf`. */
+function objectForRole(role: PlaceholderRole): string {
+  switch (role) {
+    case "title":
+      return "title";
+    case "subtitle":
+      return "subtitle";
+    case "body":
+      return "outline";
+    default:
+      return "object";
+  }
+}
+
+/** One authored `<style:presentation-page-layout>` for a catalogue entry with
+ * no counterpart in the deck's styles.xml (SPEC-089 AC-16). */
+function authorPageLayoutStyle(name: string, layout: SlideLayout): string {
+  const placeholders = layout.slots
+    .map(
+      (slot: LayoutSlot) =>
+        `<presentation:placeholder presentation:object="${objectForRole(slot.role)}"` +
+        ` svg:x="${slot.xCm}cm" svg:y="${slot.yCm}cm" svg:width="${slot.widthCm}cm" svg:height="${slot.heightCm}cm"/>`,
+    )
+    .join("");
+  return `<style:presentation-page-layout style:name="${escapeXmlAttribute(name)}">${placeholders}</style:presentation-page-layout>`;
+}
+
+interface OdpLayoutPlan {
+  /** layoutKey → the `presentation:presentation-page-layout-name` to stamp. */
+  nameForKey: Map<string, string>;
+  /** Authored `<style:presentation-page-layout>` blocks for styles.xml. */
+  styleBlocks: string[];
+}
+
+/** Resolves each slide's `layoutKey` to a page-layout style name: an existing
+ * deck style (the `${master}::${pageLayout}` key's second half) is stamped
+ * as-is; a synthesised layout is authored once as `de-AL{n}` (SPEC-089). A
+ * page whose key names no layout (`${master}::`) is left unstamped. */
+function planOdpLayouts(model: PresentationModel): OdpLayoutPlan {
+  const nameForKey = new Map<string, string>();
+  const styleBlocks: string[] = [];
+  let authored = 0;
+  const keys = new Set<string>();
+  for (const slide of model.slides) {
+    if (slide.layoutKey) {
+      keys.add(slide.layoutKey);
+    }
+  }
+  for (const key of keys) {
+    if (key.startsWith("standard:")) {
+      const entry = (model.layouts ?? []).find((l) => l.key === key);
+      if (!entry) {
+        continue;
+      }
+      authored += 1;
+      const name = `de-AL${authored}`;
+      styleBlocks.push(authorPageLayoutStyle(name, entry));
+      nameForKey.set(key, name);
+      continue;
+    }
+    const sep = key.indexOf("::");
+    const pageLayout = sep >= 0 ? key.slice(sep + 2) : "";
+    if (pageLayout) {
+      nameForKey.set(key, pageLayout);
+    }
+  }
+  return { nameForKey, styleBlocks };
+}
+
+/** Splices authored page-layout styles before `</office:styles>` (SPEC-089
+ * AC-16); creates the `office:styles` container when the file lacks one. */
+function spliceOfficeStyles(stylesXml: string, blocks: string[]): string {
+  if (blocks.length === 0) {
+    return stylesXml;
+  }
+  const joined = blocks.join("");
+  if (/<\/office:styles>/.test(stylesXml)) {
+    return stylesXml.replace(/<\/office:styles>/, `${joined}</office:styles>`);
+  }
+  if (/<office:automatic-styles[ >]/.test(stylesXml)) {
+    return stylesXml.replace(/<office:automatic-styles[ >]/, (m) => `<office:styles>${joined}</office:styles>${m}`);
+  }
+  return stylesXml.replace(/<\/office:document-styles>/, `<office:styles>${joined}</office:styles></office:document-styles>`);
+}
+
 export function odpFileName(title: string): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : DEFAULT_PRESENTATION_TITLE}.odp`;
@@ -98,8 +194,18 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   const mimetype = parts.get("mimetype") ?? encode(ODP_MIMETYPE);
   const entries: ZipEntryInput[] = [{ name: "mimetype", data: mimetype, store: true }];
 
+  // Layout changes (SPEC-089): a layout change lives inside preserved["@page"];
+  // a synthesised layout also authors a styles.xml page-layout style. A deck
+  // whose layouts were untouched authors nothing, so styles.xml stays verbatim.
+  const layoutPlan = planOdpLayouts(model);
   const rebuiltContent =
-    structural && model.odpContentEnvelope ? encode(rebuildContentXml(model, model.odpContentEnvelope)) : undefined;
+    structural && model.odpContentEnvelope
+      ? encode(rebuildContentXml(model, model.odpContentEnvelope, layoutPlan))
+      : undefined;
+  const rebuiltStyles =
+    structural && layoutPlan.styleBlocks.length > 0 && parts.has("styles.xml")
+      ? encode(spliceOfficeStyles(decoder.decode(parts.get("styles.xml")!), layoutPlan.styleBlocks))
+      : undefined;
 
   // Inserted images: model.media is the source of truth (overrides an opaque
   // twin), new `Pictures/…` parts are appended, and the manifest gains their
@@ -114,6 +220,8 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
     }
     if (name === "content.xml" && rebuiltContent) {
       entries.push({ name, data: rebuiltContent });
+    } else if (name === "styles.xml" && rebuiltStyles) {
+      entries.push({ name, data: rebuiltStyles });
     } else if (name === "META-INF/manifest.xml" && appended.length > 0) {
       entries.push({ name, data: encode(spliceManifest(decoder.decode(data), appended)) });
     } else if (mediaBytes.has(name)) {
@@ -132,7 +240,11 @@ const decoder = new TextDecoder("utf-8");
 
 // --- substitution: rebuild content.xml from the page envelope --------------
 
-function rebuildContentXml(model: PresentationModel, envelope: { prefix: string; suffix: string }): string {
+function rebuildContentXml(
+  model: PresentationModel,
+  envelope: { prefix: string; suffix: string },
+  layoutPlan: OdpLayoutPlan = { nameForKey: new Map(), styleBlocks: [] },
+): string {
   const usedNames = new Set<string>();
   const registry = new StyleRegistry();
   // A source that (pathologically) already uses `de-`-prefixed names cannot
@@ -159,7 +271,8 @@ function rebuildContentXml(model: PresentationModel, envelope: { prefix: string;
       : undefined;
     const master = preservedMaster ?? lastMaster;
     lastMaster = master;
-    return serializePage(slide, registry, usedNames, master, styleSource);
+    const layoutName = slide.layoutKey ? layoutPlan.nameForKey.get(slide.layoutKey) : undefined;
+    return serializePage(slide, registry, usedNames, master, styleSource, layoutName);
   });
   const content = envelope.prefix + pages.join("") + envelope.suffix;
   return registry.hasStyles() ? spliceAutomaticStyles(content, registry.xml()) : content;
@@ -198,10 +311,40 @@ function uniqueName(base: string, used: Set<string>): string {
 
 // --- from-scratch package --------------------------------------------------
 
+/** The standard-set index a from-scratch page references: its `layoutKey` when
+ * it names a standard layout, else the kind inferred from its placeholder
+ * roles. */
+function standardIndexForSlide(slide: PresentationModel["slides"][number], standard: SlideLayout[]): number {
+  if (slide.layoutKey) {
+    const named = standard.findIndex((l) => l.key === slide.layoutKey);
+    if (named >= 0) {
+      return named;
+    }
+  }
+  const slots: LayoutSlot[] = slide.frames
+    .filter((f): f is SlideFrame & { kind: "text"; role: PlaceholderRole } => f.kind === "text" && f.role !== undefined)
+    .map((f) => ({ role: f.role, xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 }));
+  const kind = classifyFromSlots(slots);
+  const inferred = standard.findIndex((l) => l.kind === kind);
+  return inferred >= 0 ? inferred : 0;
+}
+
 function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInput[] {
   const used = new Set<string>();
   const registry = new StyleRegistry();
-  const pages = model.slides.map((slide) => serializePage(slide, registry, used, "Default")).join("");
+  // The minimal standard set (SPEC-089 AC-17): six page-layout styles in
+  // styles.xml, each page stamped with the one its content implies.
+  const standardLayouts = synthesiseStandardLayouts(model.slideWidthCm, model.slideHeightCm);
+  const layoutStyleNames = standardLayouts.map((_, i) => `de-AL${i + 1}`);
+  const pageLayoutStyles = standardLayouts
+    .map((layout, i) => authorPageLayoutStyle(layoutStyleNames[i], layout))
+    .join("");
+  const pages = model.slides
+    .map((slide) => {
+      const idx = standardIndexForSlide(slide, standardLayouts);
+      return serializePage(slide, registry, used, "Default", "", layoutStyleNames[idx]);
+    })
+    .join("");
 
   const base =
     `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -217,6 +360,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-styles xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:draw="${DRAW_NS}"` +
     ` xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:presentation="${PRESENTATION_NS}" office:version="1.2">` +
+    `<office:styles>${pageLayoutStyles}</office:styles>` +
     `<office:automatic-styles>` +
     `<style:page-layout style:name="PL1"><style:page-layout-properties fo:page-width="${model.slideWidthCm}cm"` +
     ` fo:page-height="${model.slideHeightCm}cm"/></style:page-layout>` +
