@@ -94,6 +94,11 @@ test.describe("SPEC-070 — connectors", () => {
 
     const d2 = (await connectors(page).first().getAttribute("d")) ?? "";
     expect(d2).not.toBe(d1);
+    // ...and it stays a real line after the drop, not a zero-length collapse:
+    // re-anchoring on release re-indexes the connector's attachment so it still
+    // resolves to the moved shape rather than a stale target (AC-7 regression).
+    const moved = endpointsOfPath(d2);
+    expect(Math.hypot(moved.b[0] - moved.a[0], moved.b[1] - moved.a[1])).toBeGreaterThan(80);
   });
 
   test("a selected connector shows handles and a formatting toolbar; kind and delete work (AC-15..21)", async ({ page }) => {

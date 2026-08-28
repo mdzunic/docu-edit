@@ -13,9 +13,10 @@ import {
   setConnectorKind,
   deleteMapping,
   insertMapping,
+  moveMapping,
   type NewConnector,
 } from "./connectors";
-import { deleteShape, insertShape } from "./shapes";
+import { deleteShape, insertShape, reanchorShape, type ParagraphSpan } from "./shapes";
 import { collectDropRecords } from "./opaque";
 import { caretSelection, type ModelSelection } from "./commands";
 import {
@@ -166,6 +167,53 @@ describe("reindexAttachments", () => {
   });
 });
 
+describe("reanchorShape keeps attached connectors routed (AC-7)", () => {
+  it("re-points a connector's attachment when its shape is re-anchored across a paragraph", () => {
+    // [P0, shapeA(block1), P1, connector(block3)->shapeA]. Dragging shapeA down
+    // past P1 re-anchors it: it is spliced out of block 1 and back in after P1,
+    // landing at block 2 — the connector must follow shapeA's new index or it
+    // routes to a stale target and collapses to a zero-length line on drop.
+    const a = shapeAtBox(0, 0); // 4×2 box, right-mid site (site 1) at (4,1)
+    const connector: Connector = {
+      type: "connector",
+      kind: "straight",
+      widthCm: 6,
+      heightCm: 2,
+      wrap: "square",
+      offsetXCm: 4,
+      offsetYCm: 0,
+      start: { xCm: 0, yCm: 1 },
+      end: { xCm: 6, yCm: 1 },
+      startAttachment: { target: { block: 1 }, site: 1 },
+      endArrow: "triangle",
+    };
+    const model = doc(paragraph("P0"), a, paragraph("P1"), connector);
+    const candidates: ParagraphSpan[] = [
+      { section: 0, block: 0, topCm: 0, bottomCm: 1 },
+      { section: 0, block: 2, topCm: 10, bottomCm: 11 },
+    ];
+    const { model: next } = reanchorShape(
+      model,
+      caretSelection({ section: 0, block: 1, offset: 0 }),
+      { section: 0, block: 1 },
+      candidates,
+      10.5,
+      0,
+    );
+    const blocks = next.sections[0].blocks;
+    // shapeA removed from index 1, lands after P1: [P0, P1, shapeA, connector].
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "paragraph", "shape", "connector"]);
+    const moved = blocks.find(isConnector) as Connector;
+    // The attachment now points at shapeA's new index (2), not the stale 1.
+    expect(moved.startAttachment?.target.block).toBe(2);
+    // ...and still resolves to shapeA's right-mid site (re-anchoring shifts
+    // the shape's offsetY by 10cm to keep it where it was dropped, carrying the
+    // site to y=-9), so the endpoint holds instead of collapsing.
+    const { start } = resolveConnectorEndpoints(next.sections[0], moved);
+    expect(start.point).toEqual({ x: 4, y: -9 });
+  });
+});
+
 describe("insert/delete mappings", () => {
   it("insertMapping shifts blocks at or after atBlock", () => {
     const m = insertMapping(1, 2, 4);
@@ -180,6 +228,28 @@ describe("insert/delete mappings", () => {
     expect(m.get(1)).toBe(-1);
     expect(m.get(2)).toBe(1);
     expect(m.get(3)).toBe(2);
+  });
+
+  it("moveMapping carries the moved block and shifts what it passes over", () => {
+    // Move the block at 1 to (post-removal) index 2 in a 4-block list.
+    const m = moveMapping(1, 2, 4);
+    expect(m.get(0)).toBeUndefined(); // before both src and dest: unchanged
+    expect(m.get(1)).toBe(2); // the moved block lands at its destination
+    expect(m.get(2)).toBe(1); // shifts down into the vacated slot
+    expect(m.get(3)).toBeUndefined(); // past the destination: unchanged
+  });
+
+  it("moveMapping shifts blocks up when a later block moves before them", () => {
+    // Move the block at 3 to index 0.
+    const m = moveMapping(3, 0, 4);
+    expect(m.get(3)).toBe(0);
+    expect(m.get(0)).toBe(1);
+    expect(m.get(1)).toBe(2);
+    expect(m.get(2)).toBe(3);
+  });
+
+  it("moveMapping is empty for a no-op move", () => {
+    expect(moveMapping(2, 2, 4).size).toBe(0);
   });
 });
 

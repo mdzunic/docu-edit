@@ -37,6 +37,7 @@ import {
   freezeConnectorsAttachedTo,
   reindexSectionAfterDelete,
   reindexSectionAfterInsert,
+  reindexSectionAfterMove,
 } from "./connectors";
 import {
   MIN_SHAPE_SIZE_CM,
@@ -893,6 +894,13 @@ export function reanchorShape(
   // convention insertShape/insertImage use for a floating object.
   const insertAt = targetBlock + 1;
   targetBlocks.splice(insertAt, 0, updated);
+  // A re-anchor is a block move — the shape leaves `location.block` and lands
+  // at `insertAt` — so a connector attached to it (or to any block it passed
+  // over) must follow the new indices, or it re-routes to a stale target and
+  // collapses to a zero-length line on drop (AC-7). candidateParagraphsFor
+  // only ever produces spans in `location.section`, so the move stays within
+  // one section and the whole re-index is local to it.
+  reindexSectionAfterMove(next, location.section, location.block, insertAt);
   // The updated shape already carries the new ordinal, so releasing the old
   // one is a no-op unless this shape really was its last referrer (and when
   // old === new, the shape itself keeps the pairing alive).

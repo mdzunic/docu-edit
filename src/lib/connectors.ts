@@ -264,6 +264,30 @@ export function deleteMapping(atBlock: number, count: number, blockCount: number
   return mapping;
 }
 
+/** The mapping for moving the single block at `src` to `insertAt` (an index in
+ * the post-removal list, the convention `Array.splice` uses) — a remove
+ * followed by a re-insert, so a connector attached to the moved block follows
+ * it and every block it passes over shifts by one. Used by re-anchoring, which
+ * splices a floating drawing out of its old position and back in beside its new
+ * anchor paragraph (AC-7: the connector must stay attached across that move). */
+export function moveMapping(src: number, insertAt: number, blockCount: number): BlockIndexMapping {
+  const mapping: BlockIndexMapping = new Map();
+  for (let i = 0; i < blockCount; i++) {
+    if (i === src) {
+      if (insertAt !== i) {
+        mapping.set(i, insertAt);
+      }
+      continue;
+    }
+    const afterRemoval = i < src ? i : i - 1;
+    const afterInsert = afterRemoval < insertAt ? afterRemoval : afterRemoval + 1;
+    if (afterInsert !== i) {
+      mapping.set(i, afterInsert);
+    }
+  }
+  return mapping;
+}
+
 /** Re-indexes a section in place after an INSERT of `delta` net blocks at
  * `atBlock` (the pre-splice `atBlock`). */
 export function reindexSectionAfterInsert(
@@ -294,6 +318,23 @@ export function reindexSectionAfterDelete(
   }
   const preCount = target.blocks.length + count;
   model.sections[section] = reindexAttachments(target, deleteMapping(atBlock, count, preCount));
+}
+
+/** Re-indexes a section in place after MOVING the single block at `src` to
+ * `insertAt` (post-removal index) — a connector attached to the moved block
+ * follows it, blocks it passed over shift by one. The block count is unchanged
+ * by a move, so it is read directly off the (already spliced) section. */
+export function reindexSectionAfterMove(
+  model: DocumentModel,
+  section: number,
+  src: number,
+  insertAt: number,
+): void {
+  const target = model.sections[section];
+  if (!target || src === insertAt) {
+    return;
+  }
+  model.sections[section] = reindexAttachments(target, moveMapping(src, insertAt, target.blocks.length));
 }
 
 /** Detaches and freezes every connector endpoint in `section` attached to
