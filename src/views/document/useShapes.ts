@@ -4,7 +4,7 @@
 // rotation-handle drag, keyboard nudge/duplicate, and z-order/grouping.
 // Mirrors useImages.ts's shape closely — see its own header comment for the
 // pattern this follows.
-import { nextTick, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   caretSelection,
   commitShapeModel,
@@ -82,6 +82,15 @@ import {
   unrotatePoint,
 } from "../../lib/core/shapeGeometry";
 import { adjustmentHandles, adjustmentValueFromPoint, nudgedAdjustments } from "../../lib/shapeAdjustHandles";
+import {
+  CLOSE_DISTANCE_CM,
+  SCRIBBLE_TOLERANCE_CM,
+  catmullRomPath,
+  drawnShapeBox,
+  polylinePath,
+} from "../../lib/core/shapeDraw";
+import { pathToSvgD, simplifyPolyline } from "../../lib/core/shapePath";
+import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
 import { LINE_GEOMETRIES, asShapeGeometry, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
@@ -91,6 +100,10 @@ import type { EditorContext } from "./context";
 
 function sameShapeLocation(a: ShapeLocation, b: ShapeLocation): boolean {
   return a.section === b.section && a.block === b.block;
+}
+
+function dist(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 const HANDLE_SIZE = 8;
@@ -411,6 +424,18 @@ export function useShapes(deps: ShapesDeps) {
     width: number;
     height: number;
   } | null>(null);
+  /** SPEC-071: the armed freeform tool, or null. Freeform/Curve place
+   * vertices click by click; Scribble samples a drag. */
+  const drawFreeformTool = ref<"freeform" | "curve" | "scribble" | null>(null);
+  /** Placed vertices (freeform/curve) or live samples (scribble), in
+   * page-relative model cm. */
+  const freeformPoints = ref<Point[]>([]);
+  /** The pointer's current page-cm position, for the rubber-band segment to
+   * the next click (freeform/curve). */
+  const freeformCursor = ref<Point | null>(null);
+  let freeformScribbling = false;
+  let freeformListening = false;
+
   let resizeDrag: {
     location: ShapeLocation;
     handle: string;
@@ -1646,6 +1671,206 @@ export function useShapes(deps: ShapesDeps) {
     return null;
   }
 
+  // --- freeform / curve / scribble drawing (SPEC-071) ---------------------
+
+  /** A pointer event's position in page-relative model cm — the space
+   * freeformPoints and currentAnchor both use. */
+  function pageCmPoint(event: MouseEvent): Point {
+    const p = clientToContentPx(event.clientX, event.clientY);
+    return { x: p.x * CM_PER_PX, y: p.y * CM_PER_PX };
+  }
+
+  /** "Insert → Freeform" pick (AC-6): arms a freeform tool, disarming any
+   * shape/connector draw and clearing selection so the canvas draws it. */
+  function handleFreeformPick(tool = "freeform") {
+    disarmShapeDraw();
+    clearShapeSelection();
+    drawFreeformTool.value = tool as "freeform" | "curve" | "scribble";
+    freeformPoints.value = [];
+    freeformCursor.value = null;
+  }
+
+  function disarmFreeform() {
+    stopFreeformListeners();
+    drawFreeformTool.value = null;
+    freeformPoints.value = [];
+    freeformCursor.value = null;
+    freeformScribbling = false;
+  }
+
+  function startFreeformListeners() {
+    if (freeformListening) {
+      return;
+    }
+    freeformListening = true;
+    window.addEventListener("mousemove", handleFreeformMove);
+    window.addEventListener("keydown", handleFreeformKey, true);
+    window.addEventListener("dblclick", handleFreeformDblClick, true);
+  }
+
+  function stopFreeformListeners() {
+    if (!freeformListening) {
+      return;
+    }
+    freeformListening = false;
+    window.removeEventListener("mousemove", handleFreeformMove);
+    window.removeEventListener("keydown", handleFreeformKey, true);
+    window.removeEventListener("dblclick", handleFreeformDblClick, true);
+    window.removeEventListener("mouseup", handleScribbleUp);
+  }
+
+  /** Canvas mousedown while a freeform tool is armed (routed from
+   * useCanvasGestures ahead of every other canvas behaviour). */
+  function startFreeformGesture(event: MouseEvent) {
+    if (!drawFreeformTool.value || !editable.value) {
+      return;
+    }
+    event.preventDefault();
+    const point = pageCmPoint(event);
+    if (drawFreeformTool.value === "scribble") {
+      freeformScribbling = true;
+      freeformPoints.value = [point];
+      startFreeformListeners();
+      window.addEventListener("mouseup", handleScribbleUp);
+      return;
+    }
+    // Freeform / Curve: place a vertex. A click within CLOSE_DISTANCE_CM of
+    // the origin (with at least two vertices) closes the subpath and ends
+    // the draw (AC-7).
+    const pts = freeformPoints.value;
+    if (pts.length >= 2 && dist(point, pts[0]) <= CLOSE_DISTANCE_CM) {
+      finishFreeform(true);
+      return;
+    }
+    // Ignore a duplicate placed on top of the last vertex (the second click
+    // of a double-click), so a dbl-click adds one vertex, not two.
+    if (pts.length > 0 && dist(point, pts[pts.length - 1]) < 0.01) {
+      return;
+    }
+    freeformPoints.value = [...pts, point];
+    freeformCursor.value = point;
+    startFreeformListeners();
+  }
+
+  function handleFreeformMove(event: MouseEvent) {
+    if (!drawFreeformTool.value) {
+      return;
+    }
+    const point = pageCmPoint(event);
+    if (freeformScribbling) {
+      freeformPoints.value = [...freeformPoints.value, point];
+    } else {
+      freeformCursor.value = point;
+    }
+  }
+
+  function handleScribbleUp() {
+    if (drawFreeformTool.value !== "scribble") {
+      return;
+    }
+    freeformScribbling = false;
+    finishFreeform(false);
+  }
+
+  function handleFreeformKey(event: KeyboardEvent) {
+    if (!drawFreeformTool.value) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      disarmFreeform();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      finishFreeform(false);
+    } else if (event.key === "Backspace") {
+      event.preventDefault();
+      event.stopPropagation();
+      const pts = freeformPoints.value;
+      if (pts.length <= 1) {
+        disarmFreeform();
+      } else {
+        freeformPoints.value = pts.slice(0, -1);
+      }
+    }
+  }
+
+  function handleFreeformDblClick(event: MouseEvent) {
+    if (!drawFreeformTool.value || drawFreeformTool.value === "scribble") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    finishFreeform(false);
+  }
+
+  /** Commits the drawn path as a single "draw freeform" undo entry (AC-12),
+   * or nothing when it has too few vertices (AC-7/AC-9). */
+  function finishFreeform(closed: boolean) {
+    const tool = drawFreeformTool.value;
+    let points = freeformPoints.value;
+    if (!tool) {
+      disarmFreeform();
+      return;
+    }
+    if (tool === "scribble") {
+      points = simplifyPolyline(points, SCRIBBLE_TOLERANCE_CM);
+    }
+    if (points.length < 2) {
+      disarmFreeform();
+      return;
+    }
+    const rawPath =
+      tool === "freeform" ? polylinePath(points, closed) : catmullRomPath(points, tool === "scribble" ? false : closed);
+    const { path, widthCm, heightCm, offset } = drawnShapeBox(rawPath);
+    const model = doc.value;
+    const anchorInfo = currentAnchor();
+    if (!model || !anchorInfo) {
+      disarmFreeform();
+      return;
+    }
+    const selection = caretSelection(anchorInfo.anchor);
+    const result = insertShape(model, selection, {
+      geometry: "rect",
+      widthCm,
+      heightCm,
+      offsetXCm: offset.x - anchorInfo.left,
+      offsetYCm: offset.y - anchorInfo.top,
+      outline: DEFAULT_NEW_SHAPE_OUTLINE,
+      // A closed freeform fills; an open one is outline-only (AC-13).
+      ...(closed && tool !== "scribble" ? { fill: DEFAULT_NEW_SHAPE_FILL } : {}),
+      path,
+    });
+    applyEdit(result, selection, "draw freeform");
+    disarmFreeform();
+    const inserted = shapeInsertedLocation(result.model, anchorInfo.anchor);
+    if (inserted) {
+      shapeSelection.value = inserted;
+      void nextTick().then(remeasureShapeHandles);
+    }
+  }
+
+  /** The in-flight freeform preview as an SVG `d` string in page px, or null
+   * when nothing is being drawn — the overlay strokes it live. */
+  const freeformPreviewD = computed(() => {
+    const tool = drawFreeformTool.value;
+    if (!tool) {
+      return null;
+    }
+    const pts =
+      tool === "scribble" || !freeformCursor.value ? freeformPoints.value : [...freeformPoints.value, freeformCursor.value];
+    if (pts.length < 1) {
+      return null;
+    }
+    if (pts.length === 1) {
+      return `M ${cmToPx(pts[0].x)} ${cmToPx(pts[0].y)}`;
+    }
+    const preview = tool === "curve" ? catmullRomPath(pts, false) : polylinePath(pts, false);
+    const pxPerCm = cmToPx(1);
+    return pathToSvgD(preview, pxPerCm, pxPerCm);
+  });
+
   function insertTextBoxAction() {
     armShapeDraw("textbox");
     // A text box has a fixed default size, so it inserts immediately at the
@@ -1728,6 +1953,11 @@ export function useShapes(deps: ShapesDeps) {
     disarmShapeDraw,
     startShapeDraw,
     finishShapeDraw,
+    drawFreeformTool,
+    freeformPreviewD,
+    handleFreeformPick,
+    startFreeformGesture,
+    disarmFreeform,
     insertTextBoxAction,
     freshGroupOrdinal: () => (doc.value ? freshGroupOrdinal(doc.value) : 1),
     moveGroup,

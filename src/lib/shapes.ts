@@ -143,6 +143,8 @@ export interface NewShape {
   fill?: string;
   outline?: ShapeOutline;
   text?: Shape["text"];
+  /** A custom outline (SPEC-071): a drawn freeform/curve/scribble. */
+  path?: Shape["path"];
 }
 
 /** Inserts a shape at the caret (AC-3..AC-9), splitting the caret's
@@ -181,6 +183,9 @@ export function insertShape(
   }
   if (spec.text !== undefined) {
     shape.text = spec.text;
+  }
+  if (spec.path !== undefined) {
+    shape.path = spec.path;
   }
 
   const replacement: Block[] = [];

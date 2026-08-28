@@ -30,6 +30,7 @@ import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
+import FreeformDrawPreview from "../components/FreeformDrawPreview.vue";
 import ConnectorOverlay from "../components/ConnectorOverlay.vue";
 import ConnectorToolbar from "../components/ConnectorToolbar.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
@@ -799,6 +800,8 @@ const {
   handleShapePick,
   disarmShapeDraw,
   startShapeDraw,
+  drawFreeformTool, freeformPreviewD,
+  handleFreeformPick, startFreeformGesture,
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
 
@@ -2390,6 +2393,7 @@ const {
   tableHover,
   drawGeometry,
   startShapeDraw,
+  drawFreeformTool, startFreeformGesture,
   handleShapeSelect,
   handleShapeEditText,
   shapeAtClientPoint,
@@ -3362,6 +3366,7 @@ function handleMenuCommand(id = "") {
         @insert-note="handleInsertNote"
         @shape-pick="handleShapePick"
         @connector-pick="connectors.armConnectorDraw"
+        @freeform-pick="handleFreeformPick"
         @chart-pick="handleChartPick"
         @multilevel-preset="handleMultilevelPreset"
         @insert-image-file="insertImageFileWithAutoCaption"
@@ -3593,6 +3598,7 @@ function handleMenuCommand(id = "") {
               :width="drawPreview.width"
               :height="drawPreview.height"
             />
+            <FreeformDrawPreview v-if="freeformPreviewD" :d="freeformPreviewD" />
             <div
               ref="contentRoot"
               class="document-content"

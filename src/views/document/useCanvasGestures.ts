@@ -49,6 +49,9 @@ export interface CanvasGesturesDeps extends EditorContext {
   /** The armed draw-mode geometry — read-only here; useShapes owns it. */
   drawGeometry: Readonly<Ref<ShapeGeometry | "textbox" | null>>;
   startShapeDraw: (event: MouseEvent) => void;
+  /** The armed freeform tool (SPEC-071) — read-only here; useShapes owns it. */
+  drawFreeformTool: Readonly<Ref<"freeform" | "curve" | "scribble" | null>>;
+  startFreeformGesture: (event: MouseEvent) => void;
   handleShapeSelect: (section?: number, block?: number, shiftKey?: boolean) => void;
   handleShapeEditText: (section?: number, block?: number) => void;
   shapeAtClientPoint: (clientX: number, clientY: number) => ShapeLocation | null;
@@ -103,6 +106,8 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     tableHover,
     drawGeometry,
     startShapeDraw,
+    drawFreeformTool,
+    startFreeformGesture,
     handleShapeSelect,
     handleShapeEditText,
     shapeAtClientPoint,
@@ -236,6 +241,12 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     // canvas would normally do with a click.
     if (drawGeometry.value) {
       startShapeDraw(event);
+      return;
+    }
+    // Freeform draw mode (SPEC-071 AC-6/AC-7): a Freeform gallery pick armed
+    // a tool, so this mousedown places a vertex or starts a scribble.
+    if (drawFreeformTool.value) {
+      startFreeformGesture(event);
       return;
     }
     // Clicking the body while a note is being edited leaves note editing
