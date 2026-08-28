@@ -82,6 +82,27 @@ test.describe("SPEC-071 — freeform drawing", () => {
     await content(page).click({ position: { x: 460, y: 260 } });
     await expect(page.getByTestId("shape-toolbar")).toBeVisible();
   });
+
+  test("an open freeform is hit-tested against its outline, not its bounding box (AC-24)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await armFreeform(page, "freeform");
+    // Same V: segments (400,200)->(520,320)->(640,220).
+    await content(page).click({ position: { x: 400, y: 200 } });
+    await content(page).click({ position: { x: 520, y: 320 } });
+    await content(page).dblclick({ position: { x: 640, y: 220 } });
+    await content(page).click({ position: { x: 40, y: 40 } });
+    await expect(page.getByTestId("shape-toolbar")).toHaveCount(0);
+    // A point inside the V's bounding box but far from either stroke segment
+    // (the empty gap above the V's notch): an unfilled path must NOT select
+    // here — proving the hit test follows the real outline, not the box.
+    await content(page).click({ position: { x: 520, y: 210 } });
+    await expect(page.getByTestId("shape-toolbar")).toHaveCount(0);
+    // ...while a point on the stroke does select.
+    await content(page).click({ position: { x: 460, y: 260 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+  });
 });
 
 test.describe("SPEC-071 — edit points", () => {
@@ -149,5 +170,39 @@ test.describe("SPEC-071 — edit points", () => {
       [cx, cy],
     );
     expect(topmost).toBe("point-edit-vertex-0");
+  });
+
+  test("dragging a vertex on a box corner edits the point, not the box (AC-17)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertPreset(page, "triangle", 450, 250);
+    await page.getByTestId("shape-edit-points-button").click();
+    await expect(page.getByTestId("point-edit-overlay")).toBeVisible();
+    const handle = page.getByTestId("point-edit-vertex-0");
+    const box = await handle.boundingBox();
+    if (!box) {
+      throw new Error("no vertex handle");
+    }
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    // This vertex sits on a corner of the shape's bounding box, exactly where a
+    // resize handle used to sit on top of it. Dragging it must move the vertex
+    // (committing an "edit points" undo) — before the fix it resized the box.
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 60, cy - 40, { steps: 10 });
+    await page.mouse.up();
+    // The vertex handle followed the drag rather than the box being resized.
+    const moved = await handle.boundingBox();
+    if (!moved) {
+      throw new Error("vertex handle vanished");
+    }
+    expect(Math.round(moved.x + moved.width / 2 - cx)).toBeGreaterThan(30);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("point-edit-overlay")).toHaveCount(0);
+    const undoLabel = await page.getByTestId("undo-button").getAttribute("aria-label");
+    expect(undoLabel).toContain("edit points");
+    expect(undoLabel).not.toContain("resize");
   });
 });
