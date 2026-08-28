@@ -177,6 +177,7 @@ describe("presentationFormatOf / assemblePresentation", () => {
 
     const withoutProperties = assemblePresentation("Bare", "pptx", {
       slides: [],
+      layouts: [],
       slideWidthCm: 33.867,
       slideHeightCm: 19.05,
       media: [],
