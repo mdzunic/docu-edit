@@ -20,7 +20,7 @@ async function openFixture(page: Page, file: string): Promise<void> {
 }
 
 async function stageAspect(page: Page): Promise<number> {
-  const box = await page.getByTestId("slide-stage").boundingBox();
+  const box = await page.getByTestId("stage-workspace").getByTestId("slide-stage").boundingBox();
   if (!box) throw new Error("no stage box");
   return box.width / box.height;
 }
