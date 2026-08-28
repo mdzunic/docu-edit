@@ -62,6 +62,26 @@ test.describe("SPEC-071 — freeform drawing", () => {
     await content(page).dblclick({ position: { x: 620, y: 200 } });
     await expect(drawings(page)).toHaveCount(1);
   });
+
+  test("an open freeform hit-tests along its stroke, not just at its vertices (AC-24)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await armFreeform(page, "freeform");
+    // A V: first segment (400,200)->(520,320), second (520,320)->(640,220).
+    await content(page).click({ position: { x: 400, y: 200 } });
+    await content(page).click({ position: { x: 520, y: 320 } });
+    await content(page).dblclick({ position: { x: 640, y: 220 } });
+    await expect(drawings(page)).toHaveCount(1);
+    // Deselect the freshly drawn (auto-selected) shape.
+    await content(page).click({ position: { x: 40, y: 40 } });
+    await expect(page.getByTestId("shape-toolbar")).toHaveCount(0);
+    // Click the exact midpoint of the first segment — on the stroke but deep
+    // in the shape's bounding-box interior, far from any vertex. Before the
+    // fix this only selected at the extreme vertices (the box edges).
+    await content(page).click({ position: { x: 460, y: 260 } });
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+  });
 });
 
 test.describe("SPEC-071 — edit points", () => {
@@ -102,5 +122,32 @@ test.describe("SPEC-071 — edit points", () => {
     await expect(page.getByTestId("point-edit-overlay")).toHaveCount(0);
     // The shape is still there, still a single drawing.
     await expect(drawings(page)).toHaveCount(1);
+  });
+
+  test("point-edit hides the box resize/rotation handles so a vertex handle is grabbable (AC-17)", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await insertPreset(page, "triangle", 450, 250);
+    // Resize/rotation handles are shown while the shape is merely selected.
+    await expect(page.getByTestId("shape-handles")).toBeVisible();
+    await page.getByTestId("shape-edit-points-button").click();
+    await expect(page.getByTestId("point-edit-overlay")).toBeVisible();
+    // In point-edit mode they are gone, so a vertex handle sitting on a box
+    // corner (every vertex of a converted triangle) is the topmost element at
+    // its own centre and receives the drag instead of a resize handle.
+    await expect(page.getByTestId("shape-handles")).toHaveCount(0);
+    const handle = page.getByTestId("point-edit-vertex-0");
+    const box = await handle.boundingBox();
+    if (!box) {
+      throw new Error("no vertex handle");
+    }
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const topmost = await page.evaluate(
+      ([x, y]) => document.elementFromPoint(x, y)?.getAttribute("data-testid") ?? "",
+      [cx, cy],
+    );
+    expect(topmost).toBe("point-edit-vertex-0");
   });
 });

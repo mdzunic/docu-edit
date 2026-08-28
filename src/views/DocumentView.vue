@@ -3550,8 +3550,13 @@ function handleMenuCommand(id = "") {
                 @mousedown="startImageResize($event, handle)"
               />
             </div>
+            <!-- In point-edit mode the vertex handles (PointEditOverlay) are the
+                 only draggable handles: hide the box resize/rotation handles so
+                 they never sit on top of a vertex handle and steal its drag
+                 (SPEC-071 AC-17 — a vertex on a box corner/edge is the common
+                 case for a converted preset). -->
             <ShapeHandlesOverlay
-              :geometry="shapeHandles || undefined"
+              :geometry="pointEdit.active.value ? undefined : shapeHandles || undefined"
               :adjustment-handles="adjustmentHandleList()"
               :handle-style="shapeHandleStyle"
               :rotation-style="rotationHandleStyle"
