@@ -1,6 +1,6 @@
 ---
 id: SPEC-000
-title: Product roadmap — word processor and presentations
+title: Product roadmap — word processor, presentations and media
 status: draft
 area: product
 ---
@@ -21,6 +21,18 @@ processor (see `docs/presentations-architecture.md`). Its preparation
 milestone (open, library, outline preview, byte-preserving save) shipped
 outside the numbered queue on 2026-08-24; SPEC-079 onward builds the editor
 on top of it.
+
+The third product (Phase 15): media — images and PDFs in the same library,
+at `/media/:id`, with the assembly workspace that merges them
+(SPEC-107–112). It is a third box on the same layering diagram: a
+`src/lib/media/` product layer over `src/lib/core`, meeting the other two
+only in the app layer. It deliberately does **not** render a PDF page —
+there is no rasteriser here and no dependency may be added to build one, so
+every surface that would want one says so and offers the browser's own
+viewer instead.
+
+Phase 16 is the first experimental phase: features behind a Labs flag, off
+by default, including the only place this application may talk to a model.
 
 Specs are ordered so each one is shippable on its own and builds on the ones
 before it. Later specs assume earlier ones are merged (`depends_on` in each
@@ -66,8 +78,20 @@ rejecting SPEC-007 as ambiguous:
    navigation semantics in `specs/084-slideshow-playback.md`; the
    transition model and wire mappings in
    `specs/085-slide-transitions.md`; the animation model and canonical
-   timing forms in `specs/086-slide-animations.md`. Nothing redefines
-   these.
+   timing forms in `specs/086-slide-animations.md`. On the media
+   side: the media kind, the `MediaModel` and the structural PDF reader
+   (`core/pdfDocument.ts`) are defined in
+   `specs/107-images-and-pdfs-in-the-library.md`; the sheet — page size,
+   margins, fit and the resolution ladder every assembled output lands on —
+   in `specs/108-the-assembly-sheet-page-size-and-margins.md`; the assembly
+   workspace and its layout engine in
+   `specs/109-combine-images-into-one-image.md`; the PDF writer half and
+   the merge contract in `specs/111-merge-pdfs-and-organise-pages.md`; the
+   image edit stack in `specs/112-edit-an-image.md`. And on the
+   experimental side: the Labs flag registry and the **only** module
+   permitted to make a model request are defined in
+   `specs/113-experimental-features-and-the-model-gateway.md`. Nothing
+   redefines these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -255,6 +279,72 @@ ready.
 | SPEC-087 | Import Apple Keynote presentations (.key) |
 | SPEC-088 | Export a presentation to HTML — self-contained, with transitions and animations |
 
+### Phase 14 — Presentation depth
+Written 2026-08-26 in one pass, after Phase 13 made the deck editable.
+Each closes a hole an earlier presentation spec named in its own "Out of
+scope": layouts and masters, deck setup, the two content objects a deck
+cannot do without, review and accessibility, and the two export surfaces.
+SPEC-089 comes first — the layout model is what the rest assign to.
+SPEC-104 additionally moves SPEC-034's PDF layer into `src/lib/core`.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-089 | Slide layouts — the layout catalogue, picker and Reset slide |
+| SPEC-090 | Slide size, orientation and deck setup |
+| SPEC-091 | Tables on slides — grid model, cell editing and both wire formats |
+| SPEC-092 | Charts on slides — render, insert and edit data |
+| SPEC-093 | Slide footers, slide numbers and dates |
+| SPEC-094 | Deck themes — colour and font schemes |
+| SPEC-095 | Slide media — audio and video frames |
+| SPEC-096 | Slide object depth — rotation, handles, multi-select, groups, align and distribute |
+| SPEC-097 | Slide text depth — lists, spacing, autofit and links |
+| SPEC-098 | Deck find and replace, and spell check on slides |
+| SPEC-099 | The slide sorter, deck sections and slide reuse |
+| SPEC-100 | Presenter view — notes, next slide and the second window |
+| SPEC-101 | Comments on slides — review threads, markers and both wire formats |
+| SPEC-102 | Deck accessibility — alt text, reading order and the checker |
+| SPEC-103 | Autosave, drafts and version history for presentations |
+| SPEC-104 | Export a deck to PDF, images and handouts |
+| SPEC-105 | Animation depth — paragraph builds, emphasis effects and motion paths |
+| SPEC-106 | Presentation generation API, and Markdown to slides |
+
+### Phase 15 — Images, PDFs and assembly
+The third product. A library that holds documents and decks but not the
+scan, the screenshot and the PDF beside them sends its user somewhere else
+for the most ordinary errands there are — combine these images, make this a
+PDF, merge these three, cover that account number.
+
+Order is load-bearing. SPEC-107 adds the kind and the structural PDF reader
+everything later parses with. SPEC-108 fixes the geometry once, so three
+merge specs spend one definition of "page size" rather than three. SPEC-109
+builds the assembly workspace; SPEC-110 adds pages and PDF output to it;
+SPEC-111 adds PDF sources and the merge. SPEC-112 is independent of the
+assembly chain and can be taken any time after SPEC-107.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-107 | Images and PDFs in the library |
+| SPEC-108 | The assembly sheet — page size, margins and fit |
+| SPEC-109 | Combine images into one image |
+| SPEC-110 | Assemble images into a PDF |
+| SPEC-111 | Merge PDFs, and organise their pages |
+| SPEC-112 | Edit an image |
+
+### Phase 16 — Experimental
+Two speculative features and the machinery that makes shipping them safe.
+SPEC-113 is the prerequisite for both: a Labs flag registry (everything off
+by default, an unflagged feature not even in the bundle) and the single
+audited module through which a model request may be made, with the consent
+and credential rules it obeys. Neither feature is worth shipping without
+it, and SPEC-114 uses only its flag half — library search makes no network
+request at all.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-113 | Experimental features — the flag registry and the model gateway |
+| SPEC-114 | Search inside the library (experimental) |
+| SPEC-115 | Design a presentation from a description (experimental) |
+
 ---
 
 ## Backlog — identified, not yet specced
@@ -262,6 +352,18 @@ Gaps found in the same review that produced Phases 9–11, listed so they are
 not rediscovered from scratch. Each names where it was deferred. None is a
 work order; a business person picking the next spec writes one of these
 first.
+
+**The presentation rows below were written before Phases 14–16 existed.**
+The slide-layout picker and masters, tables and charts on slides, slide size
+setup, presenter view, the slide sorter, per-paragraph builds, rotation and
+multi-select on slides, embedded audio and video, and deck export to PDF are
+now specced (SPEC-089–106); they are left here so the trail from "deferred
+by" to "specced by" stays readable, not because they are still open. New
+gaps this queue defers: rasterising a PDF page and everything that needs it
+(SPEC-107), OCR over a scanned page (SPEC-110), merging `/AcroForm` field
+trees and tagged-PDF structure trees (SPEC-111), image-editor depth beyond
+crop / rotate / adjust / annotate (SPEC-112), and any model-backed feature
+for the word processor (SPEC-115).
 
 | Gap | Deferred by |
 | --- | --- |
