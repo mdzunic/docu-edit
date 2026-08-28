@@ -75,7 +75,7 @@ defineProps({ controller: { type: Object, required: true } });
 
 .point-edit-outline path {
   fill: none;
-  stroke: var(--accent, #2e5395);
+  stroke: var(--accent);
   stroke-width: 1;
   pointer-events: stroke;
   cursor: copy;
@@ -84,7 +84,7 @@ defineProps({ controller: { type: Object, required: true } });
 .point-edit-leader {
   position: absolute;
   height: 0;
-  border-top: 1px solid var(--accent, #2e5395);
+  border-top: var(--border-width) solid var(--accent);
   transform-origin: left center;
   pointer-events: none;
   opacity: 0.6;
@@ -94,8 +94,8 @@ defineProps({ controller: { type: Object, required: true } });
 .point-edit-control {
   position: absolute;
   padding: 0;
-  background: var(--surface-base, #fff);
-  border: 1.5px solid var(--accent, #2e5395);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--accent);
   cursor: grab;
   pointer-events: auto;
 }
@@ -110,13 +110,13 @@ defineProps({ controller: { type: Object, required: true } });
 }
 
 .point-edit-vertex.is-selected {
-  background: var(--accent, #2e5395);
+  background: var(--accent);
 }
 
 .point-edit-control {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent, #2e5395);
+  background: var(--accent);
 }
 </style>

@@ -32,7 +32,7 @@ defineProps({ d: { type: String, required: true } });
 
 .freeform-draw-preview path {
   fill: none;
-  stroke: var(--accent, #2e5395);
+  stroke: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
