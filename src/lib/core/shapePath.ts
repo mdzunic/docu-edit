@@ -45,14 +45,6 @@ export const PATH_GRID = 21600;
  *  test paying for hundreds of segments. */
 const CUBIC_SAMPLES = 24;
 
-/** The end (on-curve) point of a step, or null for a `close`. */
-function stepEnd(step: PathStep): Point | null {
-  if (step.op === "close") {
-    return null;
-  }
-  return { x: step.x, y: step.y };
-}
-
 /** Every coordinate a step carries — anchors and control points — so bounds
  *  contain the curve's convex hull and never clip a control-heavy cubic. */
 function stepPoints(step: PathStep): Point[] {
@@ -294,7 +286,7 @@ export function simplifyPolyline(points: Point[], toleranceCm: number): Point[] 
   if (points.length <= 2) {
     return points.slice();
   }
-  const keep = new Array<boolean>(points.length).fill(false);
+  const keep = Array.from({ length: points.length }, () => false);
   keep[0] = true;
   keep[points.length - 1] = true;
   const stack: [number, number][] = [[0, points.length - 1]];

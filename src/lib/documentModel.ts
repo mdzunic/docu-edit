@@ -1001,6 +1001,17 @@ export interface Shape extends DrawingPlacement {
    * with `unsupportedGeometryXml`: a shape whose path we modelled has nothing
    * to preserve, and a preserved shape has no path to edit. */
   path?: ShapePath;
+  /** Present only when `path` was reduced from primitives the model does not
+   * carry — OOXML `a:arcTo`/`a:quadBezTo`, ODF `A`/`Q`/`T` (SPEC-071
+   * "Primitive reduction") — holding the verbatim source geometry XML and
+   * the format it came from. A same-format save re-emits it unchanged (no
+   * fidelity loss, no `DropRecord`); a cross-format save writes the converted
+   * cubics from `path` instead and reports a `"shapeGeometry"` `DropRecord`
+   * (AC-30). Absent for a path with no lost primitives (a drawn freeform, or
+   * a source already in move/line/cubic/close), which carries losslessly in
+   * both directions. The nested `xml` is canonicalised by `equalStructural`
+   * (it shares the XML-valued `xml` key). */
+  pathSource?: { format: "docx" | "odt"; xml: string };
 }
 
 /** Whether a block is a shape — the isTable-style narrowing helper (also

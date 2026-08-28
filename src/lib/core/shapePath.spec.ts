@@ -224,6 +224,12 @@ describe("mapPath", () => {
   });
 });
 
+/** Evaluate a cubic Bézier at `t` for one axis. */
+function bez(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const mt = 1 - t;
+  return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3;
+}
+
 describe("quadraticToCubic", () => {
   it("is the exact degree elevation of a quadratic", () => {
     const c = quadraticToCubic({ x: 0, y: 0 }, { x: 6, y: 12 }, { x: 12, y: 0 });
@@ -235,15 +241,9 @@ describe("quadraticToCubic", () => {
     expect(c.x).toBe(12);
     expect(c.y).toBe(0);
     // Midpoint of the quadratic equals the midpoint of the elevated cubic.
-    const quadMid = { x: 0.25 * 0 + 0.5 * 6 + 0.25 * 12, y: 0.25 * 0 + 0.5 * 12 + 0.25 * 0 };
-    const t = 0.5;
-    const mt = 1 - t;
-    const cubMidX =
-      mt * mt * mt * 0 + 3 * mt * mt * t * c.x1 + 3 * mt * t * t * c.x2 + t * t * t * c.x;
-    const cubMidY =
-      mt * mt * mt * 0 + 3 * mt * mt * t * c.y1 + 3 * mt * t * t * c.y2 + t * t * t * c.y;
-    expect(cubMidX).toBeCloseTo(quadMid.x);
-    expect(cubMidY).toBeCloseTo(quadMid.y);
+    const quadMid = { x: 0.5 * 6 + 0.25 * 12, y: 0.5 * 12 };
+    expect(bez(0, c.x1, c.x2, c.x, 0.5)).toBeCloseTo(quadMid.x);
+    expect(bez(0, c.y1, c.y2, c.y, 0.5)).toBeCloseTo(quadMid.y);
   });
 });
 
@@ -256,11 +256,10 @@ describe("arcToCubics", () => {
     // Endpoint at (0,1).
     expect(s.x).toBeCloseTo(0);
     expect(s.y).toBeCloseTo(1);
-    // Sample the midpoint (t=0.5); it should sit on the unit circle.
-    const t = 0.5;
-    const mt = 1 - t;
-    const x = mt * mt * mt * 1 + 3 * mt * mt * t * s.x1 + 3 * mt * t * t * s.x2 + t * t * t * s.x;
-    const y = mt * mt * mt * 0 + 3 * mt * mt * t * s.y1 + 3 * mt * t * t * s.y2 + t * t * t * s.y;
+    // Sample the midpoint (t=0.5); it should sit on the unit circle. The
+    // segment starts at (1,0).
+    const x = bez(1, s.x1, s.x2, s.x, 0.5);
+    const y = bez(0, s.y1, s.y2, s.y, 0.5);
     expect(Math.hypot(x, y)).toBeCloseTo(1, 3);
   });
 

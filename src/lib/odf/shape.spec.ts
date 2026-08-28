@@ -468,3 +468,65 @@ describe("shapeGraphicStyleXml", () => {
     expect(xml).toContain('style:parent-style-name="Graphics"');
   });
 });
+
+// --- custom geometry / paths (SPEC-071) -------------------------------------
+
+describe("path shapes round-trip through draw:enhanced-path (SPEC-071 AC-27)", () => {
+  const path = {
+    subpaths: [
+      {
+        steps: [
+          { op: "move" as const, x: 0, y: 1 },
+          { op: "line" as const, x: 1, y: 1 },
+          { op: "cubic" as const, x1: 0.75, y1: 0.5, x2: 0.25, y2: 0.5, x: 0.5, y: 0 },
+          { op: "close" as const },
+        ],
+        closed: true,
+      },
+    ],
+  };
+
+  it("emits a non-primitive enhanced-geometry with viewBox and enhanced-path", () => {
+    const xml = shapeElementXml(baseShape({ geometry: "rect", path, fill: "#00ff00" }), "gr1", writeCtx);
+    expect(xml).toContain('draw:type="non-primitive"');
+    expect(xml).toContain('svg:viewBox="0 0 21600 21600"');
+    expect(xml).toContain("draw:enhanced-path=");
+    expect(xml).toContain("N"); // trailing endpath terminator
+  });
+
+  it("reads back into an equal ShapePath, no unsupportedGeometryXml", () => {
+    const parsed = roundTrip(baseShape({ geometry: "rect", path, fill: "#00ff00" }));
+    expect(parsed?.shape.path).toEqual(path);
+    expect(parsed?.shape.unsupportedGeometryXml).toBeUndefined();
+    expect(parsed?.shape.geometry).toBe("rect");
+  });
+
+  it("converts a quadratic on read and preserves the source", () => {
+    const shapeXml =
+      `<draw:custom-shape xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}" xmlns:text="${TEXT_NAMESPACE}" ` +
+      `text:anchor-type="as-char" draw:style-name="gr1" svg:width="4cm" svg:height="4cm">` +
+      `<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="non-primitive" ` +
+      `draw:enhanced-path="M 0 0 Q 10800 21600 21600 0 Z N"/></draw:custom-shape>`;
+    const contentDoc = wrapDoc(shapeXml);
+    const shapeEl = contentDoc.documentElement.lastElementChild!;
+    const parsed = parseShapeElement(shapeEl, contentDoc, undefined, readCtx);
+    const steps = parsed?.shape.path?.subpaths[0].steps ?? [];
+    expect(steps[1].op).toBe("cubic");
+    expect(parsed?.shape.pathSource?.format).toBe("odt");
+    expect(parsed?.shape.unsupportedGeometryXml).toBeUndefined();
+  });
+
+  it("preserves a formula-driven enhanced path verbatim (no path modelled)", () => {
+    const shapeXml =
+      `<draw:custom-shape xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}" xmlns:text="${TEXT_NAMESPACE}" ` +
+      `text:anchor-type="as-char" draw:style-name="gr1" svg:width="4cm" svg:height="4cm">` +
+      `<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="non-primitive" ` +
+      `draw:enhanced-path="M 0 0 L ?f0 21600 N"><draw:equation draw:name="f0" draw:formula="0"/>` +
+      `</draw:enhanced-geometry></draw:custom-shape>`;
+    const contentDoc = wrapDoc(shapeXml);
+    const shapeEl = contentDoc.documentElement.lastElementChild!;
+    const parsed = parseShapeElement(shapeEl, contentDoc, undefined, readCtx);
+    expect(parsed?.shape.path).toBeUndefined();
+    expect(parsed?.shape.unsupportedGeometryXml).toContain("enhanced-geometry");
+  });
+});
