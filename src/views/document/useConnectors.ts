@@ -157,13 +157,11 @@ export function useConnectors(deps: ConnectorsDeps) {
     return { x: (rect.left - pageRect.left) / z, y: (rect.top - pageRect.top) / z };
   }
 
+  /** The box's four corners (sites 4,5,6,7) — honouring rotation, so a
+   * centre-site attachment clips against the rotated outline and re-routes
+   * when the shape turns (AC-9), not against an axis-aligned rectangle. */
   function rectPolygon(box: ConnectorBox): Point[] {
-    return [
-      { x: box.x, y: box.y },
-      { x: box.x + box.w, y: box.y },
-      { x: box.x + box.w, y: box.y + box.h },
-      { x: box.x, y: box.y + box.h },
-    ];
+    return [4, 5, 6, 7].map((corner) => connectionSitePoint(box, corner));
   }
 
   /** Resolves one endpoint of a connector to page-relative px, plus its
