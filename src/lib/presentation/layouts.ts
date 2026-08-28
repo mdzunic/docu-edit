@@ -348,7 +348,12 @@ export function applySlideLayout(model: PresentationModel, slideIndex: number, l
     slide.frames.splice(insertionIndex(slide), 0, ...created);
   }
 
-  const keptInPlace = slide.frames.filter((f) => !consumed.has(f.id) && !created.includes(f as TextFrame)).map((f) => f.id);
+  // Track created frames by id, not object identity: a reactive slide wraps the
+  // spliced frames in proxies, so `.includes(rawFrame)` would miss them.
+  const createdIds = new Set(created.map((f) => f.id));
+  const keptInPlace = slide.frames
+    .filter((f) => !consumed.has(f.id) && !createdIds.has(f.id))
+    .map((f) => f.id);
   slide.layoutKey = layoutKey;
   markSlideEdited(slide, model.format);
   return { applied: true, placed: consumed.size, created: created.length, keptInPlace };
