@@ -356,6 +356,11 @@ test.describe("SPEC-030 multi-column layout", () => {
   });
 
   test("text flows column-to-column then to the next page's first column (AC-9)", async ({ page }) => {
+    // Typing 140 lines through the full editor stack takes ~10s on a quiet
+    // factory container; on a loaded host it can exceed the 30s default and
+    // time out inside keyboard.type before any assertion runs. Same
+    // allowance as SPEC-017's and SPEC-028's typing-heavy setups.
+    test.setTimeout(120_000);
     await createDocument(page);
     await content(page).click();
     await page.keyboard.type(Array.from({ length: 140 }, (_, i) => `Line${i}`).join("\n"));
