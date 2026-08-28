@@ -43,15 +43,18 @@ import {
 import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
+  type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
   type Slide,
   type SlideFill,
   type SlideFrame,
+  type SlideLayout,
   type SlideParagraph,
   type SlideRun,
 } from "../model";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
+import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
 import { readPptxTiming } from "./timing";
 
@@ -109,8 +112,8 @@ function roleOf(type: string | undefined): PlaceholderRole {
 
 /** The (type+idx) key a placeholder inherits geometry/style by (AC-9): title
  * and ctrTitle share a key so a slide's `ctrTitle` still matches a layout's
- * `title`. */
-function phKey(type: string | undefined, idx: string | undefined): string {
+ * `title`. Exported for `layouts.ts`'s exact-match pass (SPEC-089). */
+export function phKey(type: string | undefined, idx: string | undefined): string {
   const normalisedType = type === "ctrTitle" ? "title" : type ?? "body";
   return `${normalisedType}#${idx ?? ""}`;
 }
@@ -878,6 +881,8 @@ export async function parsePptx(
   // Collect every media part up-front, keyed by its own path (AC-31/32).
   const media = new Map<string, MediaPart>();
 
+  const deps: BuildDeps = { readPart, parseDoc, relsFor, media, parts };
+
   const slides: Slide[] = [];
   const sldIdLst = pChild(mainDoc.documentElement, "sldIdLst");
   for (const sldId of sldIdLst ? childElements(sldIdLst, P_NAMESPACE, "sldId") : []) {
@@ -899,16 +904,11 @@ export async function parsePptx(
       slides.push({ id: crypto.randomUUID(), frames: [], partName: slidePath });
       continue;
     }
-    slides.push(
-      buildSlide(slideDoc, slidePath, {
-        readPart,
-        parseDoc,
-        relsFor,
-        media,
-        parts,
-      }),
-    );
+    slides.push(buildSlide(slideDoc, slidePath, deps));
   }
+
+  // The read-derived layout catalogue (SPEC-089 AC-2).
+  const layouts = buildLayoutCatalogue(mainDoc, mainRels, info.mainPartPath, slides, deps);
 
   // Document properties (SPEC-041), resolved through the root relationships.
   let properties: DocumentProperties = {};
@@ -939,7 +939,7 @@ export async function parsePptx(
     opaque.push({ name, data: await bytesToBase64Async(partBytes) });
   }
 
-  return { slides, slideWidthCm, slideHeightCm, media: [...media.values()], opaque, properties };
+  return { slides, layouts, slideWidthCm, slideHeightCm, media: [...media.values()], opaque, properties };
 }
 
 interface BuildDeps {
@@ -1001,6 +1001,12 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
   }
 
   const slide: Slide = { id: crypto.randomUUID(), frames, partName: slidePath };
+  // The slide's layout key is its layout part's absolute path (SPEC-089 AC-2),
+  // which the catalogue also keys by, so `layoutFor` resolves after re-parse.
+  const layoutRel = Array.from(slideRels.values()).find((r) => r.type === SLIDE_LAYOUT_RELATIONSHIP);
+  if (layoutRel) {
+    slide.layoutKey = resolvePartPath(slidePath, layoutRel.target);
+  }
   const background = backgroundOf(slideRoot, chain.layoutRoot, chain.masterRoot, ctx);
   if (background) {
     slide.background = background;
@@ -1041,6 +1047,112 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
 function layoutSpTree(root: Element): Element | undefined {
   const cSld = pChild(root, "cSld");
   return cSld ? pChild(cSld, "spTree") : undefined;
+}
+
+/** The `LayoutSlot[]` a `p:sldLayout` root declares: one per placeholder `p:sp`,
+ * with role from `p:ph@type`, verbatim `phType`/`phIdx`, and cm geometry from
+ * its own `a:xfrm` (SPEC-089 AC-2). Placeholders without an `a:xfrm` (geometry
+ * inherited from the master) contribute a zero-geometry slot. */
+function layoutSlotsFrom(layoutRoot: Element): LayoutSlot[] {
+  const spTree = layoutSpTree(layoutRoot);
+  if (!spTree) {
+    return [];
+  }
+  const slots: LayoutSlot[] = [];
+  for (const sp of childElements(spTree, P_NAMESPACE, "sp")) {
+    const nvSpPr = pChild(sp, "nvSpPr");
+    const nvPr = nvSpPr && pChild(nvSpPr, "nvPr");
+    const ph = nvPr && pChild(nvPr, "ph");
+    if (!ph) {
+      continue;
+    }
+    const phType = ph.getAttribute("type") ?? undefined;
+    const phIdx = ph.getAttribute("idx") ?? undefined;
+    const spPr = pChild(sp, "spPr");
+    const xfrm = parseXfrm(spPr ? firstA(spPr, "xfrm") : undefined);
+    const slot: LayoutSlot = {
+      role: roleOf(phType),
+      xCm: emuToCm(xfrm?.xEmu ?? 0),
+      yCm: emuToCm(xfrm?.yEmu ?? 0),
+      widthCm: emuToCm(xfrm?.cxEmu ?? 0),
+      heightCm: emuToCm(xfrm?.cyEmu ?? 0),
+    };
+    if (phType) slot.phType = phType;
+    if (phIdx !== undefined) slot.phIdx = Number(phIdx);
+    slots.push(slot);
+  }
+  return slots;
+}
+
+/** Parses one layout part into a `SlideLayout`, keyed by its absolute part
+ * path. Returns undefined when the part is missing/unparseable. */
+function layoutEntryFor(layoutPath: string, masterName: string | undefined, deps: BuildDeps): SlideLayout | undefined {
+  const root = deps.parseDoc(layoutPath)?.documentElement;
+  if (!root) {
+    return undefined;
+  }
+  const cSld = pChild(root, "cSld");
+  const name = cSld?.getAttribute("name") ?? layoutPath.split("/").pop() ?? layoutPath;
+  const type = root.getAttribute("type") ?? undefined;
+  const slots = layoutSlotsFrom(root);
+  const layout: SlideLayout = { key: layoutPath, kind: classifyLayout(type, slots), name, slots };
+  if (masterName) {
+    layout.masterName = masterName;
+  }
+  return layout;
+}
+
+/** Derives the deck's layout catalogue (SPEC-089 AC-2): every layout reached
+ * from a master's `p:sldLayoutIdLst` plus every layout a slide references,
+ * keyed by absolute part path and de-duplicated. Master order first, then any
+ * stray slide layout, so the gallery lists them deck-stably. */
+function buildLayoutCatalogue(
+  mainDoc: Document,
+  mainRels: Map<string, Relationship>,
+  mainPartPath: string,
+  slides: Slide[],
+  deps: BuildDeps,
+): SlideLayout[] {
+  const byKey = new Map<string, SlideLayout>();
+  const add = (layoutPath: string, masterName: string | undefined): void => {
+    if (byKey.has(layoutPath)) {
+      return;
+    }
+    const entry = layoutEntryFor(layoutPath, masterName, deps);
+    if (entry) {
+      byKey.set(layoutPath, entry);
+    }
+  };
+  // Every master's layouts, in master → sldLayoutIdLst order.
+  const sldMasterIdLst = pChild(mainDoc.documentElement, "sldMasterIdLst");
+  for (const sldMasterId of sldMasterIdLst ? childElements(sldMasterIdLst, P_NAMESPACE, "sldMasterId") : []) {
+    const relId = sldMasterId.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
+    const rel = relId ? mainRels.get(relId) : undefined;
+    if (!rel || rel.type !== SLIDE_MASTER_RELATIONSHIP) {
+      continue;
+    }
+    const masterPath = resolvePartPath(mainPartPath, rel.target);
+    const masterRoot = deps.parseDoc(masterPath)?.documentElement;
+    if (!masterRoot) {
+      continue;
+    }
+    const masterRels = deps.relsFor(masterPath);
+    const idLst = pChild(masterRoot, "sldLayoutIdLst");
+    for (const layoutId of idLst ? childElements(idLst, P_NAMESPACE, "sldLayoutId") : []) {
+      const lRelId = layoutId.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
+      const lRel = lRelId ? masterRels.get(lRelId) : undefined;
+      if (lRel && lRel.type === SLIDE_LAYOUT_RELATIONSHIP) {
+        add(resolvePartPath(masterPath, lRel.target), masterPath);
+      }
+    }
+  }
+  // Any layout a slide references that no master listed (defensive).
+  for (const slide of slides) {
+    if (slide.layoutKey && !byKey.has(slide.layoutKey)) {
+      add(slide.layoutKey, undefined);
+    }
+  }
+  return [...byKey.values()];
 }
 
 /** Copies this slide's referenced image parts into the shared media map. */

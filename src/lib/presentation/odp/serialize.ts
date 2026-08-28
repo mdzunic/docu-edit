@@ -191,6 +191,7 @@ export function serializePage(
   usedNames: Set<string>,
   master: string,
   styleSource = "",
+  layoutName?: string,
 ): string {
   let attrs = slide.preserved?.["@page"];
   if (attrs) {
@@ -203,6 +204,12 @@ export function serializePage(
   } else {
     const name = uniqueName("page", usedNames);
     attrs = ` draw:name="${escapeXmlAttribute(name)}" draw:master-page-name="${escapeXmlAttribute(master)}"`;
+  }
+  // A layout change rewrites the page's `presentation:presentation-page-layout-name`
+  // (adding it when absent), leaving `draw:master-page-name` untouched — layout
+  // and master are separate ODF axes (SPEC-089 AC-15).
+  if (layoutName !== undefined) {
+    attrs = setPresentationPageLayoutName(attrs, layoutName);
   }
   // A modelled transition mints a fresh drawing-page style (copying the
   // original style's fill/background) and repoints `draw:style-name` at it, so
@@ -242,6 +249,19 @@ function setDrawStyleName(attrs: string, styleName: string): string {
     return attrs.replace(/draw:style-name="[^"]*"/, `draw:style-name="${styleName}"`);
   }
   return `${attrs} draw:style-name="${styleName}"`;
+}
+
+/** Sets/replaces `presentation:presentation-page-layout-name` in a page's
+ * attribute string (SPEC-089 AC-15). Appended when absent. */
+function setPresentationPageLayoutName(attrs: string, layoutName: string): string {
+  const escaped = escapeXmlAttribute(layoutName);
+  if (/presentation:presentation-page-layout-name="[^"]*"/.test(attrs)) {
+    return attrs.replace(
+      /presentation:presentation-page-layout-name="[^"]*"/,
+      `presentation:presentation-page-layout-name="${escaped}"`,
+    );
+  }
+  return `${attrs} presentation:presentation-page-layout-name="${escaped}"`;
 }
 
 /** The fill/background properties of the drawing-page style named `styleName`

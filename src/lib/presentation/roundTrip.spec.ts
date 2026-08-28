@@ -177,6 +177,7 @@ describe("presentationFormatOf / assemblePresentation", () => {
 
     const withoutProperties = assemblePresentation("Bare", "pptx", {
       slides: [],
+      layouts: [],
       slideWidthCm: 33.867,
       slideHeightCm: 19.05,
       media: [],
@@ -560,5 +561,35 @@ describe("SPEC-081 edit → save → reopen fidelity", () => {
     expect(rt.paragraphs[0].runs[0].text).toBe("Edited Title");
     expect(rt.paragraphs[0].runs[0].bold).toBe(true);
     expect(slideOutline(reopened.slides[0]).title).toBe("Edited Title");
+  });
+});
+
+describe("SPEC-089: a layout change re-points one slide's .rels and leaves every other part verbatim", () => {
+  it("pptx: repoint slide1 to an existing layout — only slide1.xml + its .rels move", async () => {
+    const { applySlideLayout } = await import("./layouts");
+    const source = await buildPptxFixtureBytes();
+    const model = await readPresentationBytes(source, "pptx", "Deck");
+    applySlideLayout(model, 0, "ppt/slideLayouts/slideLayout2.xml");
+    const back = await writePptx(model);
+    const before = await unzip(source);
+    const after = await unzip(back.bytes);
+    // The layout parts, master, and Content-Types are untouched (no authoring).
+    for (const name of [
+      "[Content_Types].xml",
+      "ppt/slideMasters/slideMaster1.xml",
+      "ppt/slideLayouts/slideLayout1.xml",
+      "ppt/slideLayouts/slideLayout2.xml",
+      "ppt/slides/_rels/slide2.xml.rels",
+    ]) {
+      expect(equalBytes(before.get(name)!, after.get(name)!), name).toBe(true);
+    }
+    // slide1's .rels changed by exactly the layout Target.
+    const relsBefore = new TextDecoder().decode(before.get("ppt/slides/_rels/slide1.xml.rels")!);
+    const relsAfter = new TextDecoder().decode(after.get("ppt/slides/_rels/slide1.xml.rels")!);
+    expect(relsBefore).toContain("slideLayout1.xml");
+    expect(relsAfter).toContain("slideLayout2.xml");
+    // The reopened slide reports the new layout.
+    const reopened = await readPresentationBytes(back.bytes, "pptx", "Deck");
+    expect(reopened.slides[0].layoutKey).toBe("ppt/slideLayouts/slideLayout2.xml");
   });
 });
