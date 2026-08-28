@@ -213,6 +213,10 @@ export function parseShapeElement(
           : null;
       if (parsed) {
         path = parsed.path;
+        const smoothAttr = enhancedGeometry ? enhancedGeometry.getAttributeNS(DE_NAMESPACE, "smooth") : null;
+        if (smoothAttr) {
+          path.smooth = smoothAttr.split("").map((c) => c === "1");
+        }
         if (parsed.converted && enhancedGeometry) {
           pathSource = { format: "odt" as const, xml: new XMLSerializer().serializeToString(enhancedGeometry) };
         }
@@ -369,10 +373,14 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
   // A path shape writes as a non-primitive enhanced-geometry with a matching
   // @svg:viewBox on the shared 21600 grid (AC-27). A path reduced from arcs/
   // quadratics on read re-emits its verbatim source on a same-format save.
+  const smoothAttr =
+    shape.path?.smooth && shape.path.smooth.length > 0
+      ? ` xmlns:de="${DE_NAMESPACE}" de:smooth="${shape.path.smooth.map((b) => (b ? "1" : "0")).join("")}"`
+      : "";
   const geometryXml = shape.path
     ? shape.pathSource?.format === "odt"
       ? shape.pathSource.xml
-      : `<draw:enhanced-geometry svg:viewBox="${enhancedPathViewBox()}" draw:type="non-primitive" draw:enhanced-path="${escapeXmlAttribute(enhancedPathString(shape.path))}"/>`
+      : `<draw:enhanced-geometry${smoothAttr} svg:viewBox="${enhancedPathViewBox()}" draw:type="non-primitive" draw:enhanced-path="${escapeXmlAttribute(enhancedPathString(shape.path))}"/>`
     : (shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"${modifiersAttr}/>`);
   return (
     `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${idAttr}${deXmlns}${groupAttr}${rotationAttr}` +

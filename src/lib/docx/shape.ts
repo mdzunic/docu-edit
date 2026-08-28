@@ -244,13 +244,25 @@ function parseCustGeom(custGeom: Element): { path: ShapePath; converted: boolean
   if (subpaths.length === 0) {
     return null;
   }
-  return { path: { subpaths }, converted };
+  const path: ShapePath = { subpaths };
+  // Per-vertex smoothness is our own concept (SPEC-071) with no OOXML home,
+  // round-tripped through an ignored de: attribute so point-edit mode
+  // restores the right handles on reopen rather than inferring them.
+  const smoothAttr = custGeom.getAttributeNS(DE_NAMESPACE, "smooth");
+  if (smoothAttr) {
+    path.smooth = smoothAttr.split("").map((c) => c === "1");
+  }
+  return { path, converted };
 }
 
 /** Serializes a `ShapePath` as `a:custGeom` on the shared 21600 grid
  * (AC-26). `a:gdLst`/`a:ahLst`/`a:cxnLst` are deliberately not written. */
 export function custGeomXml(path: ShapePath): string {
   const g = PATH_GRID;
+  const smoothAttr =
+    path.smooth && path.smooth.length > 0
+      ? ` xmlns:de="${DE_NAMESPACE}" de:smooth="${path.smooth.map((b) => (b ? "1" : "0")).join("")}"`
+      : "";
   const pt = (x: number, y: number): string => `<a:pt x="${Math.round(x * g)}" y="${Math.round(y * g)}"/>`;
   let steps = "";
   for (const subpath of path.subpaths) {
@@ -266,7 +278,7 @@ export function custGeomXml(path: ShapePath): string {
       }
     }
   }
-  return `<a:custGeom><a:pathLst><a:path w="${g}" h="${g}">${steps}</a:path></a:pathLst></a:custGeom>`;
+  return `<a:custGeom${smoothAttr}><a:pathLst><a:path w="${g}" h="${g}">${steps}</a:path></a:pathLst></a:custGeom>`;
 }
 
 /** Parses a `w:drawing` element into a Shape, or null when it is not a
