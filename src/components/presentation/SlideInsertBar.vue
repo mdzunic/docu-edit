@@ -441,7 +441,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
 .table-grid-picker {
   display: grid;
   grid-template-columns: repeat(v-bind("PICKER_COLS.length"), 1.1rem);
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .grid-cell {
@@ -449,14 +449,14 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
   height: 1.1rem;
   padding: 0;
   border: var(--border-width) solid var(--border-subtle);
-  border-radius: 1px;
+  border-radius: var(--radius-sm);
   background: var(--surface-default);
   cursor: pointer;
 }
 
 .grid-cell.active {
-  background: var(--accent-soft, var(--accent, #3b82f6));
-  border-color: var(--accent, #3b82f6);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .table-grid-label {
@@ -476,7 +476,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
 .table-input-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
