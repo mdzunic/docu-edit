@@ -40,6 +40,15 @@ test("pptx: table renders, edits through the panel, and round-trips", async ({ p
   // The deliberately out-of-subset table stays a foreign box (AC-17c).
   await expect(stage.locator(".foreign-label")).toHaveText("Table");
 
+  // AC-19b: double-click a cell, type, and see the text — the same in-place
+  // text machinery SPEC-081 gives text frames, now editing a cell's paragraphs.
+  await stage.getByTestId("slide-table-cell-1-1").dblclick();
+  await expect(page.getByTestId("slide-table-cell-edit")).toBeVisible();
+  await page.keyboard.press("Control+a");
+  await page.keyboard.type("Growth");
+  await page.keyboard.press("Escape");
+  await expect(stage.getByTestId("slide-table-cell-1-1")).toContainText("Growth");
+
   // Select the table and open the Table panel.
   await stage.getByTestId("slide-table-cell-0-0").click();
   await page.getByTestId("slides-table-toggle").click();

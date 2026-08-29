@@ -39,6 +39,9 @@ const props = defineProps({
    * these — group children render read-only. */
   selected: { type: Boolean, default: false },
   editing: { type: Boolean, default: false },
+  /** SPEC-091: the {row,col} of the table cell in a session (null otherwise),
+   * so that cell's `<td>` renders the in-cell contenteditable host. */
+  editingCell: { type: Object, default: null },
   /** False for a group's children, which render read-only (no selection,
    * focus or test hooks) until ungroup promotes them (SPEC-082). */
   topLevel: { type: Boolean, default: true },
@@ -51,7 +54,15 @@ const props = defineProps({
   playStyle: { type: Object, default: null },
 });
 
-const emit = defineEmits(["select", "start-edit", "frame-pointerdown", "edit-mounted", "edit-unmounted"]);
+const emit = defineEmits([
+  "select",
+  "start-edit",
+  "start-edit-cell",
+  "cell-select",
+  "frame-pointerdown",
+  "edit-mounted",
+  "edit-unmounted",
+]);
 
 const frame = computed(() => asSlideFrame(props.frame));
 const kind = computed(() => frame.value.kind);
@@ -75,6 +86,49 @@ const promptText = computed(() => placeholderPrompt(frame.value));
 
 const canvasEl = useTemplateRef("canvasEl");
 const editHost = useTemplateRef("editHost");
+const tableFrameEl = useTemplateRef("tableFrameEl");
+
+// The in-cell contenteditable host is created/destroyed as the editing cell
+// changes (double-click, Enter, Tab between cells). Hand the freshly-mounted
+// host to the editing composable — the same edit-mounted/edit-unmounted
+// contract the text frame uses (SPEC-091 AC-6a).
+const editingCellKey = computed(() =>
+  kind.value === "table" && props.editing && props.editingCell
+    ? `${props.editingCell.row}:${props.editingCell.col}`
+    : null,
+);
+watch(editingCellKey, (key) => {
+  if (key) {
+    void nextTick(() => {
+      const el = tableFrameEl.value?.querySelector(".cell-edit");
+      if (el instanceof HTMLElement) emit("edit-mounted", el);
+    });
+  } else {
+    emit("edit-unmounted");
+  }
+});
+
+/** True for the one owner cell currently in an editing session. */
+function isEditingCell(cell = { rowIndex: 0, colIndex: 0 }) {
+  return (
+    props.editing &&
+    props.editingCell != null &&
+    props.editingCell.row === cell.rowIndex &&
+    props.editingCell.col === cell.colIndex
+  );
+}
+
+function onCellMousedown(row = 0, col = 0, event = new MouseEvent("mousedown")) {
+  // Anchor the panel/session on this cell and select the frame; stop here so a
+  // click inside the table never bubbles to the surface deselect (AC-9c).
+  event.stopPropagation();
+  emit("cell-select", frame.value.id, row, col);
+}
+
+function onCellDblclick(row = 0, col = 0, event = new MouseEvent("dblclick")) {
+  event.stopPropagation();
+  emit("start-edit-cell", frame.value.id, row, col, { x: event.clientX, y: event.clientY });
+}
 
 // The contenteditable host is created/destroyed with `editing`; hand it to the
 // editing composable (which populates it and attaches the caret) once mounted.
@@ -269,6 +323,7 @@ watch(() => props.frame, paint, { deep: true });
   <!-- Table frame: a real <table> with a colgroup and merged cells (AC-4) -->
   <div
     v-else-if="kind === 'table'"
+    ref="tableFrameEl"
     class="frame table-frame"
     :class="{ 'is-selected': selected }"
     :style="[position, playStyle]"
@@ -303,24 +358,37 @@ watch(() => props.frame, paint, { deep: true });
             :rowspan="cell.rowSpan"
             :style="cell.style"
             :data-testid="`slide-table-cell-${cell.rowIndex}-${cell.colIndex}`"
+            @mousedown="onCellMousedown(cell.rowIndex, cell.colIndex, $event)"
+            @dblclick="onCellDblclick(cell.rowIndex, cell.colIndex, $event)"
           >
+            <!-- Editing session: the same contenteditable host the text frame
+                 uses, owned by the editing composable (SPEC-091 AC-6a) -->
             <div
-              v-for="(entry, pi) in cell.paragraphs"
-              :key="pi"
-              class="paragraph"
-              :style="paragraphStyle(entry.para)"
-            >
-              <span
-                v-if="entry.marker"
-                class="bullet-marker"
-                aria-hidden="true"
-              >{{ entry.marker }} </span>
-              <span
-                v-for="(run, runIndex) in entry.para.runs"
-                :key="runIndex"
-                :style="runStyle(run)"
-              >{{ run.text }}</span>
-            </div>
+              v-if="isEditingCell(cell)"
+              class="ce-host cell-edit"
+              contenteditable="true"
+              spellcheck="false"
+              data-testid="slide-table-cell-edit"
+            />
+            <template v-else>
+              <div
+                v-for="(entry, pi) in cell.paragraphs"
+                :key="pi"
+                class="paragraph"
+                :style="paragraphStyle(entry.para)"
+              >
+                <span
+                  v-if="entry.marker"
+                  class="bullet-marker"
+                  aria-hidden="true"
+                >{{ entry.marker }} </span>
+                <span
+                  v-for="(run, runIndex) in entry.para.runs"
+                  :key="runIndex"
+                  :style="runStyle(run)"
+                >{{ run.text }}</span>
+              </div>
+            </template>
           </td>
         </tr>
       </tbody>
@@ -480,6 +548,16 @@ watch(() => props.frame, paint, { deep: true });
 .slide-table-cell {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* The in-cell editing host fills the cell and drops the text-frame flex/font
+   sizing so it inherits the cell's own type (SPEC-091 AC-6a). */
+.slide-table-cell .cell-edit {
+  flex: none;
+  min-height: 1em;
+  font-size: inherit;
+  outline: none;
+  cursor: text;
 }
 
 .table-frame.is-selected {

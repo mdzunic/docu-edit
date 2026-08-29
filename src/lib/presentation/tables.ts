@@ -668,6 +668,14 @@ export function setTableBandRows(frame: TableFrame, on: boolean): void {
 
 // --- navigation (AC-6b) -----------------------------------------------------
 
+/** Resolves a clicked slot to its owner (non-covered) cell address, so a click
+ * anywhere in a merged rectangle addresses one cell (AC-9c). Returns null when
+ * `(row, col)` is off the grid. */
+export function ownerCellAt(frame: TableFrame, row: number, col: number): { row: number; col: number } | null {
+  const owner = computeOwnerGrid(frame)[row]?.[col];
+  return owner ? { row: owner.originRow, col: owner.originCol } : null;
+}
+
 /** The owner cell address of the next non-covered cell in reading order, or
  * `null` when `(row, col)` is the last cell (the caller appends a row). Covered
  * slots are never a navigation target — a click anywhere in a merged rectangle

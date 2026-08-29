@@ -9,8 +9,16 @@
 //
 // Layering rule (presentation/boundary.spec.ts): imports only presentation
 // siblings and src/lib/core.
-import type { PresentationFormat, SlideParagraph, SlideRun, TextFrame } from "./model";
+import type { PresentationFormat, SlideParagraph, SlideRun } from "./model";
 import { paragraphText } from "./slideModel";
+
+/** The minimum a formatting command needs: a paragraph list to edit. A
+ * `TextFrame` satisfies it, and so does a `SlideTableCell` (SPEC-091 AC-6a) —
+ * so the exact same run/paragraph command layer edits a table cell's
+ * `paragraphs` unchanged. */
+export interface ParagraphOwner {
+  paragraphs: SlideParagraph[];
+}
 
 /** A caret/anchor inside a text frame: a paragraph index and a character
  * offset within that paragraph's concatenated run text. */
@@ -144,7 +152,7 @@ function clamp(value: number, lo: number, hi: number): number {
 
 /** Orders a range's endpoints so `start` is not after `end`, clamped to the
  * frame's paragraphs and each paragraph's length. */
-export function normalizeRange(frame: TextFrame, range: TextRange): TextRange {
+export function normalizeRange(frame: ParagraphOwner, range: TextRange): TextRange {
   const clampPoint = (point: TextPoint): TextPoint => {
     const para = clamp(point.para, 0, Math.max(0, frame.paragraphs.length - 1));
     const len = frame.paragraphs[para] ? paragraphText(frame.paragraphs[para]).length : 0;
@@ -161,7 +169,7 @@ export function normalizeRange(frame: TextFrame, range: TextRange): TextRange {
 
 /** A range covering the whole frame — every paragraph, every character. Used
  * when a command applies to a selected-but-not-edited frame (AC-25). */
-export function wholeFrameRange(frame: TextFrame): TextRange {
+export function wholeFrameRange(frame: ParagraphOwner): TextRange {
   const last = Math.max(0, frame.paragraphs.length - 1);
   const lastLen = frame.paragraphs[last] ? paragraphText(frame.paragraphs[last]).length : 0;
   return { start: { para: 0, offset: 0 }, end: { para: last, offset: lastLen } };
@@ -171,7 +179,7 @@ export function wholeFrameRange(frame: TextFrame): TextRange {
  * edges so the mark lands on exactly the covered characters. A collapsed range
  * changes nothing (the session tracks a pending format for the next keystroke,
  * out of this pure layer). Returns whether anything changed. */
-export function applyRunFormat(frame: TextFrame, range: TextRange, patch: RunFormatPatch): boolean {
+export function applyRunFormat(frame: ParagraphOwner, range: TextRange, patch: RunFormatPatch): boolean {
   const norm = normalizeRange(frame, range);
   let changed = false;
   for (let p = norm.start.para; p <= norm.end.para; p++) {
@@ -194,7 +202,7 @@ export function applyRunFormat(frame: TextFrame, range: TextRange, patch: RunFor
 /** Applies paragraph-level formatting (align/bullet/level) to every paragraph
  * a range touches. */
 export function applyParagraphFormat(
-  frame: TextFrame,
+  frame: ParagraphOwner,
   range: ParagraphRange,
   patch: ParagraphFormatPatch,
 ): void {
@@ -222,7 +230,7 @@ export function applyParagraphFormat(
 /** Toggles the disc bullet over a paragraph range: turns it OFF when every
  * paragraph in range already has a disc, otherwise turns it ON for all
  * (SPEC-081 writes "disc" only; numbered authoring is out of scope). */
-export function toggleBullet(frame: TextFrame, range: ParagraphRange): void {
+export function toggleBullet(frame: ParagraphOwner, range: ParagraphRange): void {
   const start = clamp(range.startPara, 0, Math.max(0, frame.paragraphs.length - 1));
   const end = clamp(range.endPara, 0, Math.max(0, frame.paragraphs.length - 1));
   let allDisc = true;
@@ -236,7 +244,7 @@ export function toggleBullet(frame: TextFrame, range: ParagraphRange): void {
 }
 
 /** Shifts every paragraph in a range by `delta` indent levels, clamped 0–8. */
-export function setIndentLevel(frame: TextFrame, range: ParagraphRange, delta: number): void {
+export function setIndentLevel(frame: ParagraphOwner, range: ParagraphRange, delta: number): void {
   const start = clamp(range.startPara, 0, Math.max(0, frame.paragraphs.length - 1));
   const end = clamp(range.endPara, 0, Math.max(0, frame.paragraphs.length - 1));
   for (let p = start; p <= end; p++) {
@@ -274,7 +282,7 @@ function fold<T>(current: FieldState<T> | "unset", value: T): FieldState<T> | "u
  * folded over every covered character, each paragraph field over every touched
  * paragraph (AC-24). A collapsed caret reads the character to its left (or the
  * run at the caret when at a paragraph start). */
-export function selectionFormatState(frame: TextFrame, range: TextRange): SelectionFormatState {
+export function selectionFormatState(frame: ParagraphOwner, range: TextRange): SelectionFormatState {
   const norm = normalizeRange(frame, range);
   let bold: FieldState<boolean> | "unset" = "unset";
   let italic: FieldState<boolean> | "unset" = "unset";

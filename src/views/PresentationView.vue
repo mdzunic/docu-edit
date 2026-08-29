@@ -221,6 +221,7 @@ const tables = useTables({
   selectedFrame: stageEdit.selection.selectedFrame,
   selectFrame: stageEdit.selection.select,
 });
+watch(stageEdit.editing.activeCell, (c) => c && tables.setCurrentCell(c.row, c.col)); // panel anchor = editing cell
 
 // --- slide layouts + Reset slide (SPEC-089) --------------------------------
 const layouts = useSlideLayouts({

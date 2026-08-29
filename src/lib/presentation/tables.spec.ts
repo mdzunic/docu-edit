@@ -12,6 +12,7 @@ import {
   insertTableRow,
   mergeCells,
   nextCellAddress,
+  ownerCellAt,
   prevCellAddress,
   scaleTableGrid,
   setCellFill,
@@ -252,5 +253,14 @@ describe("cell navigation (AC-6b)", () => {
   it("returns null before the first cell", () => {
     const t = makeTable(2, 2);
     expect(prevCellAddress(t, 0, 0)).toBeNull();
+  });
+
+  it("resolves a clicked slot to its owner cell (AC-9c)", () => {
+    const t = makeTable(2, 2);
+    mergeCells(t, range([0, 0], [0, 1])); // (0,1) is now covered by (0,0)
+    expect(ownerCellAt(t, 0, 0)).toEqual({ row: 0, col: 0 });
+    expect(ownerCellAt(t, 0, 1)).toEqual({ row: 0, col: 0 }); // covered → owner
+    expect(ownerCellAt(t, 1, 1)).toEqual({ row: 1, col: 1 });
+    expect(ownerCellAt(t, 5, 5)).toBeNull(); // off-grid
   });
 });

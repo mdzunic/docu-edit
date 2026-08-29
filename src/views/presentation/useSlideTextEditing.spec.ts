@@ -39,6 +39,52 @@ function setup(paragraphs: unknown = [{ runs: [{ text: "hi" }] }]) {
   return { editing, host, records, model };
 }
 
+function cell(text: string) {
+  return { paragraphs: [{ runs: [{ text }] }] };
+}
+function setupTable() {
+  const model = ref({
+    kind: "presentation",
+    id: "d",
+    title: "t",
+    format: "pptx",
+    slideWidthCm: 10,
+    slideHeightCm: 5,
+    slides: [
+      {
+        id: "s1",
+        frames: [
+          {
+            id: "t1",
+            kind: "table",
+            xCm: 0,
+            yCm: 0,
+            widthCm: 10,
+            heightCm: 5,
+            columnWidthsCm: [5, 5],
+            rows: [
+              { cells: [cell("A"), cell("B")] },
+              { cells: [cell("C"), cell("D")] },
+            ],
+          },
+        ],
+      },
+    ],
+  } as unknown as PresentationModel);
+  const currentSlide = computed(() => model.value.slides[0]);
+  const selection = useFrameSelection({ currentSlide });
+  const editing = useSlideTextEditing({
+    model,
+    currentSlide,
+    selection,
+    record: () => {},
+    commit: () => {},
+  });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  return { editing, host, model };
+}
+
 describe("undo-burst coalescing (AC-28/29)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {
@@ -87,6 +133,55 @@ describe("undo-burst coalescing (AC-28/29)", () => {
     const frame = model.value.slides[0].frames[0];
     expect(frame.kind === "text" && frame.paragraphs[0].runs[0].text).toBe("hello there");
     expect(model.value.slides[0].dirty).toBe(true);
+  });
+
+  it("edits a table cell through the same machinery (SPEC-091 AC-6a)", () => {
+    const { editing, host, model } = setupTable();
+    editing.startEditingCell("t1", 0, 1);
+    editing.registerHost(host);
+    // startEditing rendered the cell's own paragraph ("B") into the host.
+    expect(host.textContent).toBe("B");
+    host.innerHTML = "<div>Bravo</div>";
+    editing.onInput();
+    // Select the cell's text so the run-format command has a range to act on.
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    const sel = document.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    editing.toggleBold();
+    const table = model.value.slides[0].frames[0];
+    const cell = table.kind === "table" ? table.rows[0].cells[1] : null;
+    expect(cell?.paragraphs[0].runs.map((r) => r.text).join("")).toBe("Bravo");
+    expect(cell?.paragraphs[0].runs.every((r) => r.bold === true)).toBe(true);
+    // The unedited neighbour cell is untouched.
+    const other = table.kind === "table" ? table.rows[0].cells[0] : null;
+    expect(other?.paragraphs[0].runs[0].text).toBe("A");
+  });
+
+  it("Tab moves to the next non-covered cell (SPEC-091 AC-6b)", () => {
+    const { editing, host } = setupTable();
+    editing.startEditingCell("t1", 0, 0);
+    editing.registerHost(host);
+    editing.onKeydown(new KeyboardEvent("keydown", { key: "Tab" }));
+    expect(editing.editingCell.value).toEqual({ row: 0, col: 1 });
+  });
+
+  it("Tab in the last cell appends a row and lands in it (SPEC-091 AC-6b)", () => {
+    const { editing, host, model } = setupTable();
+    editing.startEditingCell("t1", 1, 1);
+    editing.registerHost(host);
+    editing.onKeydown(new KeyboardEvent("keydown", { key: "Tab" }));
+    const table = model.value.slides[0].frames[0];
+    expect(table.kind === "table" && table.rows.length).toBe(3);
+    expect(editing.editingCell.value).toEqual({ row: 2, col: 0 });
+  });
+
+  it("a single click anchors the active cell without starting a session (SPEC-091 AC-9c)", () => {
+    const { editing } = setupTable();
+    editing.focusCell("t1", 1, 0);
+    expect(editing.activeCell.value).toEqual({ row: 1, col: 0 });
+    expect(editing.editingFrameId.value).toBeNull();
   });
 
   it("keeps bullets on the surviving lines when Enter adds a paragraph (AC-8/11)", () => {
