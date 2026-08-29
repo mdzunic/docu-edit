@@ -229,6 +229,44 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     expect(Math.abs(offsets[0].x - offsets[1].x)).toBeLessThan(cmToEmu(0.05));
   });
 
+  test("creation-drag snaps to alignment during the draw and clears the guide on release (AC-28,56)", async ({ page }) => {
+    await createDocument(page);
+    // An anchor whose left edge the new shape's creation drag will line up with.
+    await insertShapeAt(page, "rect", 360, 220);
+    await expect(drawings(page)).toHaveCount(1);
+    const anchor = (await drawings(page).nth(0).boundingBox())!;
+
+    // Arm the rect tool, then draw a new shape by dragging — starting its left
+    // edge 5px shy of the anchor's left (inside the 8px snap threshold) and
+    // dragging right+down well past the click/drag threshold so it is a genuine
+    // creation drag (AC-28), not a plain click.
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-rect").click();
+    const startX = anchor.x - 5;
+    const startY = anchor.y + anchor.height + 60;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 120, startY + 90, { steps: 12 });
+
+    // While the left edges line up a guide is shown (AC-18/21).
+    const guides = page.getByTestId("drawing-guides");
+    await expect(guides).toBeVisible();
+    await expect(guides.locator(".drawing-guide").first()).toBeVisible();
+
+    await page.mouse.up();
+    // The creation-drag guide vanishes on release just like move/resize (AC-56):
+    // the regression this fix addresses left it stuck because finishShapeDraw's
+    // snap repopulated the guides after the pre-clear.
+    await expect(page.getByTestId("drawing-guides")).toHaveCount(0);
+    await expect(drawings(page)).toHaveCount(2);
+
+    // The drawn shape's left snapped onto the anchor's left (AC-28): the two
+    // left offsets differ by far less than the released 5px (~0.13cm).
+    const offsets = await readOffsetsEmu(page);
+    expect(offsets).toHaveLength(2);
+    expect(Math.abs(offsets[0].x - offsets[1].x)).toBeLessThan(cmToEmu(0.05));
+  });
+
   test("Format → Drawing → Align opens and runs by mouse click through the nested submenu (AC-12)", async ({ page }) => {
     await createDocument(page);
     // Push the anchor down the page so align-top has somewhere to move to.

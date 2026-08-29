@@ -1754,16 +1754,17 @@ export function useShapes(deps: ShapesDeps) {
   function finishShapeDraw(event: MouseEvent) {
     window.removeEventListener("mousemove", handleShapeDrawMove);
     window.removeEventListener("mouseup", finishShapeDraw);
-    clearDrawingGuides();
     const drag = drawDrag;
     const geometry = drawGeometry.value;
     drawDrag = null;
     drawPreview.value = null;
-    if (!drag || !geometry) {
-      return;
-    }
-    const now = drawBoxNow(drag, event, geometry);
-    if (!now) {
+    // Resolve the final box first: for a genuine creation drag drawBoxNow runs
+    // the snap, which repopulates the transient guides. Guides are release-only
+    // (AC-56), so clear them *after* that runs — clearing before, as the move
+    // path can, would leave the snap's fresh guides stuck on the page.
+    const now = drag && geometry ? drawBoxNow(drag, event, geometry) : null;
+    clearDrawingGuides();
+    if (!drag || !geometry || !now) {
       return;
     }
     const { isTextBox, geometry: realGeometry } = now;
