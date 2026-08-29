@@ -232,11 +232,13 @@ test.describe("drawing position dialog — tier gating (AC-12, AC-13, AC-42)", (
     }
     await page.getByTestId("shape-position-button").click();
     await expect(page.getByTestId("shape-position-dialog")).toBeVisible();
+    // The dialog applies live per field (SPEC-072 AC-43) — no OK button.
     await page.getByTestId("shape-position-width").fill("10");
-    await page.getByTestId("shape-position-apply").click();
+    await page.getByTestId("shape-position-width").press("Tab");
     await expect
       .poll(async () => (await drawing.boundingBox())?.width ?? 0)
       .toBeGreaterThan(before.width + 20);
+    await page.getByTestId("shape-position-done").click();
 
     // Medium tier: still enabled — this is the coarse-pointer fallback for a
     // handle drag the spec calls for (AC-42).
