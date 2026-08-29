@@ -32,6 +32,7 @@ const emit = defineEmits([
   "options",
   "delete",
   "duplicate",
+  "edit-points",
 ]);
 
 const WRAP_MODES = [
@@ -307,6 +308,15 @@ function onZOrderChange(event = new Event("change")) {
       @click="emit('options')"
     >
       Position &amp; size…
+    </UiButton>
+    <UiButton
+      variant="ghost"
+      data-testid="shape-edit-points-button"
+      title="Edit points"
+      @mousedown.prevent
+      @click="emit('edit-points')"
+    >
+      Edit points
     </UiButton>
     <UiButton
       variant="ghost"

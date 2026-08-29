@@ -17,12 +17,14 @@ import {
   roundedCalloutRadius,
   roundRectRadius,
   scalePolygon,
+  shapeClipPath,
   shapePolygon,
   unrotateDelta,
   unrotatePoint,
   type Point,
 } from "./shapeGeometry";
 import { LINE_GEOMETRIES, SHAPE_CATALOGUE, type ShapeGeometry } from "./shapes";
+import type { ShapePath } from "./shapePath";
 
 // Geometries with a real polygon representation: every catalogue geometry
 // except the two line geometries (a segment, not a region — see
@@ -765,5 +767,53 @@ describe("pointHitsShape — rotation", () => {
       const opts = { geometry: "rect" as ShapeGeometry, widthCm: 10, heightCm: 6, rotationDeg, filled: true, hasText: false, outlineToleranceCm: HIT_TOLERANCE_CM };
       expect(pointHitsShape({ x: 5, y: 3 }, opts)).toBe(true);
     }
+  });
+});
+
+describe("pointHitsShape — path (SPEC-071 AC-24)", () => {
+  const triangle: ShapePath = {
+    subpaths: [
+      {
+        steps: [
+          { op: "move", x: 0, y: 1 },
+          { op: "line", x: 1, y: 1 },
+          { op: "line", x: 0.5, y: 0 },
+          { op: "close" },
+        ],
+        closed: true,
+      },
+    ],
+  };
+
+  it("a filled path is hit inside its real outline, not in an empty corner", () => {
+    const opts = { geometry: "rect" as ShapeGeometry, widthCm: 10, heightCm: 10, filled: true, hasText: false, outlineToleranceCm: HIT_TOLERANCE_CM, path: triangle };
+    expect(pointHitsShape({ x: 5, y: 7 }, opts)).toBe(true); // inside triangle
+    expect(pointHitsShape({ x: 0.5, y: 0.5 }, opts)).toBe(false); // top-left empty corner
+  });
+
+  it("an unfilled path is hit only near its stroke", () => {
+    const opts = { geometry: "rect" as ShapeGeometry, widthCm: 10, heightCm: 10, filled: false, hasText: false, outlineToleranceCm: HIT_TOLERANCE_CM, path: triangle };
+    expect(pointHitsShape({ x: 5, y: 10 }, opts)).toBe(true); // on the bottom edge
+    expect(pointHitsShape({ x: 5, y: 7 }, opts)).toBe(false); // interior, no fill
+  });
+
+  it("the path takes precedence over geometry", () => {
+    // geometry says ellipse, but the path is the triangle: a point inside the
+    // triangle but outside the inscribed ellipse still hits.
+    const opts = { geometry: "ellipse" as ShapeGeometry, widthCm: 10, heightCm: 10, filled: true, hasText: false, outlineToleranceCm: HIT_TOLERANCE_CM, path: triangle };
+    expect(pointHitsShape({ x: 0.9, y: 9.5 }, opts)).toBe(true);
+  });
+});
+
+describe("shapeClipPath — path", () => {
+  it("returns a polygon clip for a filled path", () => {
+    const path: ShapePath = { subpaths: [{ steps: [{ op: "move", x: 0, y: 0 }, { op: "line", x: 1, y: 0 }, { op: "line", x: 1, y: 1 }, { op: "close" }], closed: true }] };
+    const clip = shapeClipPath("rect", true, path);
+    expect(clip).toMatch(/^polygon\(/);
+  });
+
+  it("returns null for an unfilled path", () => {
+    const path: ShapePath = { subpaths: [{ steps: [{ op: "move", x: 0, y: 0 }, { op: "line", x: 1, y: 1 }], closed: false }] };
+    expect(shapeClipPath("rect", false, path)).toBeNull();
   });
 });

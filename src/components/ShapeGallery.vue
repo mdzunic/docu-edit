@@ -17,7 +17,16 @@ import { asShapeGeometry, LINE_GEOMETRIES } from "../lib/core/shapes";
 import { SHAPE_DEFINITIONS } from "../lib/core/shapeCatalogue";
 import { SHAPE_ICON_SIZE, shapeIconPath } from "../lib/core/shapeIcons";
 
-defineEmits(["pick", "pick-connector"]);
+defineEmits(["pick", "pick-connector", "pick-freeform"]);
+
+// SPEC-071: the three freeform drawing tools, shown in their own "Freeform"
+// group. Like connectors these are not a ShapeGeometry (they produce a
+// path-bearing shape), so they are listed explicitly.
+const FREEFORM_TOOLS = [
+  { tool: "freeform", label: "Freeform", d: "M2 20 L8 4 L14 16 L22 6" },
+  { tool: "curve", label: "Curve", d: "M2 18 C6 2 16 2 22 18" },
+  { tool: "scribble", label: "Scribble", d: "M2 12 C4 4 8 20 12 12 C16 4 20 20 22 12" },
+];
 
 // SPEC-070: the three connector kinds shown in their own "Connectors" group.
 // Connectors are a distinct block type (not a ShapeGeometry), so they are
@@ -147,6 +156,41 @@ function iconClass(geometry = "rect") {
                 class="shape-gallery-icon-line"
                 fill="none"
                 :d="conn.d"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div
+        v-if="!query.trim()"
+        class="shape-gallery-group"
+        data-testid="freeform-gallery-group"
+      >
+        <div class="shape-gallery-group-label">
+          Freeform
+        </div>
+        <div class="shape-gallery-items">
+          <button
+            v-for="tool in FREEFORM_TOOLS"
+            :key="tool.tool"
+            type="button"
+            class="shape-gallery-item"
+            :data-testid="`freeform-gallery-${tool.tool}`"
+            :title="tool.label"
+            :aria-label="tool.label"
+            @mousedown.prevent
+            @click="$emit('pick-freeform', tool.tool)"
+          >
+            <svg
+              class="shape-gallery-icon"
+              :viewBox="ICON_VIEWBOX"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                class="shape-gallery-icon-line"
+                fill="none"
+                :d="tool.d"
               />
             </svg>
           </button>

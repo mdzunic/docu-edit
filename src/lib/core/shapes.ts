@@ -6,6 +6,7 @@
 // (anchoring, wrap, z-order, grouping, the editing commands) stays in
 // lib/shapes.ts and lib/documentModel.ts.
 import { SHAPE_DEFINITIONS } from "./shapeCatalogue";
+import type { ShapePath } from "./shapePath";
 
 /** The closed set of geometries the editor draws, resizes and round-trips
  * natively — the "expanded catalogue" of specs/069-shape-catalogue-expansion.md,
@@ -166,6 +167,9 @@ export interface ShapeVisual {
    * preservation, AC-60): the shape paints as a dashed placeholder at its
    * true bounds instead of `geometry`. */
   unsupportedGeometryXml?: string;
+  /** A custom outline (SPEC-071). When present it is painted instead of
+   * `geometry` — its real Bézier/line outline, never the placeholder. */
+  path?: ShapePath;
 }
 
 // --- drawing defaults and gesture arithmetic (SPEC-051 AC-4..AC-8) ----------

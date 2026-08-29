@@ -6,6 +6,7 @@ import { DEFAULT_LANGUAGE } from "./core/language";
 import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
 import type { OpaquePart } from "./core/packageParts";
 import type { ArrowheadKind, ShapeGeometry, ShapeOutline } from "./core/shapes";
+import type { ShapePath } from "./core/shapePath";
 import type { ConnectorKind } from "./core/connectors";
 import type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
 import type { MeasurementUnit } from "./core/units";
@@ -992,6 +993,25 @@ export interface Shape extends DrawingPlacement {
    * geometry edited. A cross-format save of a shape with this field set
    * cannot carry it and reports a `"shapeGeometry"` DropRecord (AC-61). */
   unsupportedGeometryXml?: string;
+  /** A custom outline (SPEC-071). When present it is the shape's geometry,
+   * and `geometry` is only a bounding-box stand-in (`"rect"`), the same
+   * convention `unsupportedGeometryXml` uses — it takes precedence over
+   * `geometry` for rendering, hit-testing and serialization. Round-trips as
+   * `a:custGeom` (.docx) and `draw:enhanced-path` (.odt). Mutually exclusive
+   * with `unsupportedGeometryXml`: a shape whose path we modelled has nothing
+   * to preserve, and a preserved shape has no path to edit. */
+  path?: ShapePath;
+  /** Present only when `path` was reduced from primitives the model does not
+   * carry — OOXML `a:arcTo`/`a:quadBezTo`, ODF `A`/`Q`/`T` (SPEC-071
+   * "Primitive reduction") — holding the verbatim source geometry XML and
+   * the format it came from. A same-format save re-emits it unchanged (no
+   * fidelity loss, no `DropRecord`); a cross-format save writes the converted
+   * cubics from `path` instead and reports a `"shapeGeometry"` `DropRecord`
+   * (AC-30). Absent for a path with no lost primitives (a drawn freeform, or
+   * a source already in move/line/cubic/close), which carries losslessly in
+   * both directions. The nested `xml` is canonicalised by `equalStructural`
+   * (it shares the XML-valued `xml` key). */
+  pathSource?: { format: "docx" | "odt"; xml: string };
 }
 
 /** Whether a block is a shape — the isTable-style narrowing helper (also

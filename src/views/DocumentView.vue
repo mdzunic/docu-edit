@@ -30,6 +30,8 @@ import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbar from "../components/ShapeToolbar.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
+import FreeformDrawPreview from "../components/FreeformDrawPreview.vue";
+import PointEditOverlay from "../components/PointEditOverlay.vue";
 import ConnectorOverlay from "../components/ConnectorOverlay.vue";
 import ConnectorToolbar from "../components/ConnectorToolbar.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
@@ -126,6 +128,7 @@ import { useVerticalRuler } from "./document/useVerticalRuler";
 import { useOutlinePane } from "./document/useOutlinePane";
 import { useSidePanel } from "./document/useSidePanel";
 import { useMergeFields } from "./document/useMergeFields";
+import { useInsertBreaks } from "./document/useInsertBreaks";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
 import { useZoomView } from "./document/useZoomView";
@@ -152,8 +155,6 @@ import {
   asTrackChangesDisplayMode,
   asPageNumberFormat,
   asParagraphBlock,
-  asBreakKind,
-  asSectionStart,
   createDocument,
   createEmptyHeaderFooterContent,
   isBreak,
@@ -312,7 +313,6 @@ import {
   insertLineBreak,
   insertNote,
   insertPageNumberCommand,
-  insertSectionBreak,
   insertText,
   isCollapsed,
   noCommandResult,
@@ -799,6 +799,7 @@ const {
   handleShapePick,
   disarmShapeDraw,
   startShapeDraw,
+  drawFreeformTool, freeformPreviewD, handleFreeformPick, startFreeformGesture, pointEdit,
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
 
@@ -2388,8 +2389,7 @@ const {
   ...editorContext,
   cellSelection,
   tableHover,
-  drawGeometry,
-  startShapeDraw,
+  drawGeometry, startShapeDraw, drawFreeformTool, startFreeformGesture, pointEditActive: pointEdit.active, exitPointEdit: pointEdit.exit,
   handleShapeSelect,
   handleShapeEditText,
   shapeAtClientPoint,
@@ -2917,33 +2917,8 @@ const { pagedViews } = usePaginationView({
 });
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
-function handleInsertBreak(kind = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(insertBreak(model, selection, asBreakKind(kind)), selection, "insert break");
-  root.focus();
-  void scrollModelCaretIntoView(caret, true);
-}
-
-function handleInsertSectionBreak(start = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    insertSectionBreak(model, selection, asSectionStart(start)),
-    selection,
-    "insert section break",
-  );
-  root.focus();
-  void scrollModelCaretIntoView(caret, true);
-}
+// Insert → Break / section break (SPEC-018) — wiring in useInsertBreaks.
+const { handleInsertBreak, handleInsertSectionBreak } = useInsertBreaks({ ...editorContext, paragraphSelection });
 
 // --- mail-merge fields (SPEC-046) -------------------------------------------
 // The attached data source, the field picker / merge-run dialogs' state and
@@ -3194,7 +3169,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["format.import-styles", openImportDialog],
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
-  ["format.columns", openColumnsDialog],
+  ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
   ["format.multilevel-define-list", openDefineList],
   ["format.text-color", openTextColorMenu],
@@ -3362,6 +3337,7 @@ function handleMenuCommand(id = "") {
         @insert-note="handleInsertNote"
         @shape-pick="handleShapePick"
         @connector-pick="connectors.armConnectorDraw"
+        @freeform-pick="handleFreeformPick"
         @chart-pick="handleChartPick"
         @multilevel-preset="handleMultilevelPreset"
         @insert-image-file="insertImageFileWithAutoCaption"
@@ -3547,8 +3523,13 @@ function handleMenuCommand(id = "") {
                 @mousedown="startImageResize($event, handle)"
               />
             </div>
+            <!-- In point-edit mode the vertex handles (PointEditOverlay) are the
+                 only draggable handles: hide the box resize/rotation handles so
+                 they never sit on top of a vertex handle and steal its drag
+                 (SPEC-071 AC-17 — a vertex on a box corner/edge is the common
+                 case for a converted preset). -->
             <ShapeHandlesOverlay
-              :geometry="shapeHandles || undefined"
+              :geometry="pointEdit.active.value ? undefined : shapeHandles || undefined"
               :adjustment-handles="adjustmentHandleList()"
               :handle-style="shapeHandleStyle"
               :rotation-style="rotationHandleStyle"
@@ -3593,6 +3574,8 @@ function handleMenuCommand(id = "") {
               :width="drawPreview.width"
               :height="drawPreview.height"
             />
+            <FreeformDrawPreview v-if="freeformPreviewD" :d="freeformPreviewD" />
+            <PointEditOverlay v-if="pointEdit.frame.value" class="print-exclude" :controller="pointEdit" />
             <div
               ref="contentRoot"
               class="document-content"
@@ -4039,6 +4022,7 @@ function handleMenuCommand(id = "") {
         @options="openShapePosition"
         @delete="handleShapeDelete"
         @duplicate="handleShapeDuplicate"
+        @edit-points="pointEdit.enter"
       />
     </ContextualToolbar>
     <ContextualToolbar

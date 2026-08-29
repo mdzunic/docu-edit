@@ -133,7 +133,7 @@ function wrapSpacerStyle() {
  * cosmetic). */
 function proxyStyle() {
   const shape = asShape(props.block);
-  const clip = shapeClipPath(shape.geometry, !!shape.fill);
+  const clip = shapeClipPath(shape.geometry, !!shape.fill, shape.path);
   // The selection frame reads its angle from here (see the stylesheet): the
   // proxy itself must stay unrotated, since it is the element every
   // measurement and hit test goes through. Untyped object literal per the
@@ -195,7 +195,7 @@ function textRectStyle() {
     <span
       v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
       class="doc-shape"
-      :class="{ 'doc-shape-selected': selected }"
+      :class="{ 'doc-shape-selected': selected, 'doc-shape-passthrough': proxyPassthrough() }"
       :style="shapeDisplayStyle(asShape(block))"
     >
       <canvas
@@ -328,8 +328,16 @@ function textRectStyle() {
 /* An unfilled, textless shape's proxy passes every click through to
    whatever's beneath (AC-11) — DocumentView's shapeAtClientPoint recovers
    the outline-tolerance click and dblclick-to-edit gesture natively lost
-   here (proxyPassthrough()'s own comment). */
-.doc-shape-proxy-passthrough {
+   here (proxyPassthrough()'s own comment). The `.doc-shape` box itself must
+   pass through too: it is the proxy's parent and, left pointer-events: auto,
+   swallows every interior click so the recovery (which alone runs the
+   outline-precise hit test) only fires for a click that misses the box
+   entirely — leaving an open Freeform/Curve/Scribble stroke selectable only
+   at its extreme vertices, never along its body (SPEC-071 AC-24). A passthrough
+   shape has no text frame (proxyPassthrough requires no visible text), so
+   nothing inside needs to stay clickable. */
+.doc-shape-proxy-passthrough,
+.doc-shape-passthrough {
   pointer-events: none;
 }
 

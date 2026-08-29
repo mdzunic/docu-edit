@@ -49,6 +49,13 @@ export interface CanvasGesturesDeps extends EditorContext {
   /** The armed draw-mode geometry — read-only here; useShapes owns it. */
   drawGeometry: Readonly<Ref<ShapeGeometry | "textbox" | null>>;
   startShapeDraw: (event: MouseEvent) => void;
+  /** The armed freeform tool (SPEC-071) — read-only here; useShapes owns it. */
+  drawFreeformTool: Readonly<Ref<"freeform" | "curve" | "scribble" | null>>;
+  startFreeformGesture: (event: MouseEvent) => void;
+  /** Point-edit mode (SPEC-071): active flag + commit-and-exit, so a click
+   * outside the overlay leaves the mode (AC-22). */
+  pointEditActive: Readonly<Ref<boolean>>;
+  exitPointEdit: (commit?: boolean) => void;
   handleShapeSelect: (section?: number, block?: number, shiftKey?: boolean) => void;
   handleShapeEditText: (section?: number, block?: number) => void;
   shapeAtClientPoint: (clientX: number, clientY: number) => ShapeLocation | null;
@@ -103,6 +110,10 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     tableHover,
     drawGeometry,
     startShapeDraw,
+    drawFreeformTool,
+    startFreeformGesture,
+    pointEditActive,
+    exitPointEdit,
     handleShapeSelect,
     handleShapeEditText,
     shapeAtClientPoint,
@@ -222,6 +233,13 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     if (event.button !== 0) {
       return;
     }
+    // Point-edit mode (SPEC-071 AC-22): a mousedown that reaches the canvas
+    // is outside the overlay (its handles/segment stop propagation), so it
+    // commits and leaves the mode, keeping the shape selected.
+    if (pointEditActive.value) {
+      exitPointEdit(true);
+      return;
+    }
     // Connector draw mode (SPEC-070 AC-3): a gallery pick armed a connector
     // kind, so this mousedown places an endpoint. Takes precedence over every
     // other canvas behaviour, like shape draw mode below.
@@ -236,6 +254,12 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     // canvas would normally do with a click.
     if (drawGeometry.value) {
       startShapeDraw(event);
+      return;
+    }
+    // Freeform draw mode (SPEC-071 AC-6/AC-7): a Freeform gallery pick armed
+    // a tool, so this mousedown places a vertex or starts a scribble.
+    if (drawFreeformTool.value) {
+      startFreeformGesture(event);
       return;
     }
     // Clicking the body while a note is being edited leaves note editing

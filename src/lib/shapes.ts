@@ -33,6 +33,7 @@ import {
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import { LINE_GEOMETRIES } from "./core/shapes";
+import { presetToPath } from "./core/shapeDraw";
 import {
   freezeConnectorsAttachedTo,
   reindexSectionAfterDelete,
@@ -143,6 +144,8 @@ export interface NewShape {
   fill?: string;
   outline?: ShapeOutline;
   text?: Shape["text"];
+  /** A custom outline (SPEC-071): a drawn freeform/curve/scribble. */
+  path?: Shape["path"];
 }
 
 /** Inserts a shape at the caret (AC-3..AC-9), splitting the caret's
@@ -181,6 +184,9 @@ export function insertShape(
   }
   if (spec.text !== undefined) {
     shape.text = spec.text;
+  }
+  if (spec.path !== undefined) {
+    shape.path = spec.path;
   }
 
   const replacement: Block[] = [];
@@ -256,6 +262,66 @@ export function ensureShapeTextFrame(
  * so a drag can never collapse a shape to nothing (a zero-height Line stays
  * allowed — that is a real horizontal line, not a collapsed shape; the
  * minimum itself is core/shapes.ts's MIN_SHAPE_SIZE_CM). */
+/** SPEC-071 AC-15: converts a preset shape to an equivalent freeform `path`
+ * (from SPEC-069's outline), leaving `geometry` a `"rect"` bounding-box
+ * stand-in and dropping the now-meaningless preset adjustments. A no-op for
+ * a shape that already has a path or has no closed outline (a line). */
+export function convertShapeToFreeform(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape || shape.path || shape.unsupportedGeometryXml !== undefined) {
+    return { model: next, selection };
+  }
+  const path = presetToPath(shape.geometry, shape.adjustments);
+  if (!path) {
+    return { model: next, selection };
+  }
+  const updated: Shape = { ...shape, geometry: "rect", path };
+  delete updated.adjustments;
+  replaceShape(next, location, updated);
+  return { model: next, selection };
+}
+
+/** SPEC-071 AC-22/AC-23: writes an edited `path` and its renormalised box
+ * back onto a shape as one command (the whole point-edit session's commit). */
+export function setShapePath(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+  path: Shape["path"],
+  box: { widthCm: number; heightCm: number; offsetXCm?: number; offsetYCm?: number },
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape) {
+    return { model: next, selection };
+  }
+  const updated: Shape = {
+    ...shape,
+    geometry: "rect",
+    path,
+    widthCm: Math.max(MIN_SHAPE_SIZE_CM, box.widthCm),
+    heightCm: Math.max(0, box.heightCm),
+  };
+  // The user has edited the modelled path, so any verbatim `pathSource` XML
+  // reduced from arcs/quadratics on read is now stale: keeping it would make a
+  // same-format save re-emit the original outline and silently drop these
+  // edits (AC-22/AC-26). Drop it so the writer serialises the edited path.
+  delete updated.pathSource;
+  if (box.offsetXCm !== undefined) {
+    updated.offsetXCm = box.offsetXCm;
+  }
+  if (box.offsetYCm !== undefined) {
+    updated.offsetYCm = box.offsetYCm;
+  }
+  replaceShape(next, location, updated);
+  return { model: next, selection };
+}
+
 export function setShapeSize(
   model: DocumentModel,
   selection: ModelSelection,

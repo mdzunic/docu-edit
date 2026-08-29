@@ -97,6 +97,7 @@ const emit = defineEmits([
   "insert-note",
   "shape-pick",
   "connector-pick",
+  "freeform-pick",
   "chart-pick",
   "multilevel-preset",
   "insert-image-file",
@@ -542,6 +543,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
         v-if="!compact"
         @pick="emit('shape-pick', $event)"
         @pick-connector="emit('connector-pick', $event)"
+        @pick-freeform="emit('freeform-pick', $event)"
       />
       <MenuItem
         v-else
@@ -784,6 +786,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         testid="format-menu-tabs"
         :disabled="!editable"
         @select="emit('command', 'format.tabs')"
+      />
+      <MenuItem
+        label="Edit points"
+        testid="format-menu-edit-points"
+        :disabled="!editable"
+        @select="emit('command', 'format.edit-points')"
       />
       <!-- Format painter keeps its double-click-to-lock gesture
            (SPEC-020 AC-14): data-menu-keep-open holds the menu open

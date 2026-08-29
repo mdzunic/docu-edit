@@ -5,6 +5,7 @@
 // has no 2D context) so it is unit-testable like every other lib module.
 import { LINE_GEOMETRIES, type ShapeGeometry } from "./shapes";
 import { shapeAdjustmentDefaults, shapeDefinition } from "./shapeCatalogue";
+import { distanceToPath, pathToClipPolygon, pointInPath, type ShapePath } from "./shapePath";
 
 export interface Point {
   x: number;
@@ -281,6 +282,9 @@ export interface ShapeHitOptions {
   /** 3pt (~0.106cm) hit tolerance for an unfilled shape's outline, in the
    * same units as widthCm/heightCm. */
   outlineToleranceCm: number;
+  /** A custom outline (SPEC-071). When present it is the shape's geometry:
+   * the hit test runs against the path's real outline, not `geometry`. */
+  path?: ShapePath;
 }
 
 /** "Selection and hit testing": whether a point (in the same units as
@@ -288,6 +292,18 @@ export interface ShapeHitOptions {
  * rotation) lands on the shape's *painted* region — never its bounding box. */
 export function pointHitsShape(point: Point, opts: ShapeHitOptions): boolean {
   const local = unrotatePoint(point, opts.widthCm, opts.heightCm, opts.rotationDeg ?? 0);
+
+  // A path shape hit-tests against its real outline (SPEC-071 AC-24), taking
+  // precedence over `geometry` exactly as it does for rendering.
+  if (opts.path) {
+    if (opts.filled && pointInPath(local, opts.path, opts.widthCm, opts.heightCm)) {
+      return true;
+    }
+    if (!opts.filled && distanceToPath(local, opts.path, opts.widthCm, opts.heightCm) <= opts.outlineToleranceCm) {
+      return true;
+    }
+    return opts.hasText && pointInPath(local, opts.path, opts.widthCm, opts.heightCm);
+  }
 
   if (LINE_GEOMETRIES.has(opts.geometry)) {
     const [a, b] = lineSegment(opts.widthCm, opts.heightCm);
@@ -346,7 +362,18 @@ export const HIT_TOLERANCE_CM = (3 * 2.54) / 72;
  * shape's own hit region is its outline/text — a coarser but harmless
  * simplification, see the implement summary) and for `"rect"`, whose clip
  * is the box itself. */
-export function shapeClipPath(geometry: ShapeGeometry, filled: boolean): string | null {
+export function shapeClipPath(geometry: ShapeGeometry, filled: boolean, path?: ShapePath): string | null {
+  if (path) {
+    if (!filled) {
+      return null;
+    }
+    const poly = pathToClipPolygon(path);
+    if (poly.length < 3) {
+      return null;
+    }
+    const points = poly.map((p) => `${(p.x * 100).toFixed(2)}% ${(p.y * 100).toFixed(2)}%`).join(", ");
+    return `polygon(${points})`;
+  }
   if (!filled || geometry === "rect" || LINE_GEOMETRIES.has(geometry)) {
     return null;
   }

@@ -362,6 +362,12 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           // save re-emits it unchanged and reports nothing.
           if (blockAt.unsupportedGeometryXml && source !== target) {
             dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
+          } else if (blockAt.path && blockAt.pathSource && blockAt.pathSource.format !== target) {
+            // A path reduced from arcs/quadratics on read (SPEC-071 AC-30):
+            // a same-format save re-emits the preserved source (no loss), but
+            // a cross-format save writes the converted cubics — a real, small
+            // fidelity loss we report rather than hide.
+            dropped.push(record("shapeGeometry", `paragraph ${paragraphNumber}`, target));
           } else if (source !== target) {
             // A catalogue geometry the target format has no clean equivalent
             // for: the writer emits the closest preset AND we report the drop

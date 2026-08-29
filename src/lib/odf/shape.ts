@@ -11,6 +11,7 @@ import {
   GEOMETRY_TO_DRAW_TYPE,
   DRAW_TYPE_TO_GEOMETRY as DRAW_TYPE_TO_GEOMETRY_TABLE,
 } from "../core/drawingMl";
+import { enhancedPathString, enhancedPathViewBox, parseEnhancedPath } from "../core/enhancedPath";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import {
@@ -167,6 +168,8 @@ export function parseShapeElement(
   let heightCm: number;
   let geometry: ShapeGeometry;
   let unsupportedGeometryXml: string | undefined;
+  let path: Shape["path"];
+  let pathSource: Shape["pathSource"];
   let adjustments: number[] = [];
 
   let lineOffsetXCm: number | undefined;
@@ -197,7 +200,29 @@ export function parseShapeElement(
     const mapped = drawType ? DRAW_TYPE_TO_GEOMETRY_TABLE[drawType] : undefined;
     geometry = mapped ?? "rect";
     if (!mapped) {
-      unsupportedGeometryXml = enhancedGeometry ? new XMLSerializer().serializeToString(enhancedGeometry) : "";
+      // A non-primitive enhanced-geometry with an @draw:enhanced-path is a
+      // path shape (SPEC-071 AC-5) — parse it and render its real outline,
+      // unless it is formula-driven or uses an unmodelled command, in which
+      // case it stays on SPEC-051's verbatim preservation path.
+      const enhancedPath = enhancedGeometry ? drawAttr(enhancedGeometry, "enhanced-path") : null;
+      const viewBox = enhancedGeometry ? svgAttr(enhancedGeometry, "viewBox") : null;
+      const vb = viewBox ? viewBox.trim().split(/\s+/).map(Number) : null;
+      const parsed =
+        enhancedPath && vb && vb.length === 4 && Number.isFinite(vb[2]) && Number.isFinite(vb[3])
+          ? parseEnhancedPath(enhancedPath, vb[2] - vb[0], vb[3] - vb[1])
+          : null;
+      if (parsed) {
+        path = parsed.path;
+        const smoothAttr = enhancedGeometry ? enhancedGeometry.getAttributeNS(DE_NAMESPACE, "smooth") : null;
+        if (smoothAttr) {
+          path.smooth = smoothAttr.split("").map((c) => c === "1");
+        }
+        if (parsed.converted && enhancedGeometry) {
+          pathSource = { format: "odt" as const, xml: new XMLSerializer().serializeToString(enhancedGeometry) };
+        }
+      } else {
+        unsupportedGeometryXml = enhancedGeometry ? new XMLSerializer().serializeToString(enhancedGeometry) : "";
+      }
     } else if (enhancedGeometry) {
       // draw:modifiers is a space-separated list of adjustment values in the
       // shape's coordinate space, normalised to fractions (SPEC-069 AC-6b).
@@ -214,7 +239,12 @@ export function parseShapeElement(
   }
 
   const shape: Shape = { type: "shape", geometry, widthCm, heightCm, wrap };
-  if (unsupportedGeometryXml !== undefined) {
+  if (path) {
+    shape.path = path;
+    if (pathSource) {
+      shape.pathSource = pathSource;
+    }
+  } else if (unsupportedGeometryXml !== undefined) {
     shape.unsupportedGeometryXml = unsupportedGeometryXml;
   }
   if (adjustments.length > 0) {
@@ -340,8 +370,18 @@ export function shapeElementXml(shape: Shape, styleName: string, ctx: OdfShapeTe
     shape.adjustments && shape.adjustments.length > 0
       ? ` draw:modifiers="${shape.adjustments.map(adjustmentToGuideValue).join(" ")}"`
       : "";
-  const geometryXml =
-    shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"${modifiersAttr}/>`;
+  // A path shape writes as a non-primitive enhanced-geometry with a matching
+  // @svg:viewBox on the shared 21600 grid (AC-27). A path reduced from arcs/
+  // quadratics on read re-emits its verbatim source on a same-format save.
+  const smoothAttr =
+    shape.path?.smooth && shape.path.smooth.length > 0
+      ? ` xmlns:de="${DE_NAMESPACE}" de:smooth="${shape.path.smooth.map((b) => (b ? "1" : "0")).join("")}"`
+      : "";
+  const geometryXml = shape.path
+    ? shape.pathSource?.format === "odt"
+      ? shape.pathSource.xml
+      : `<draw:enhanced-geometry${smoothAttr} svg:viewBox="${enhancedPathViewBox()}" draw:type="non-primitive" draw:enhanced-path="${escapeXmlAttribute(enhancedPathString(shape.path))}"/>`
+    : (shape.unsupportedGeometryXml ?? `<draw:enhanced-geometry draw:type="${GEOMETRY_TO_DRAW_TYPE[shape.geometry]}"${modifiersAttr}/>`);
   return (
     `<draw:custom-shape${SHAPE_XMLNS} text:anchor-type="${anchorType}" draw:style-name="${escapeXmlAttribute(styleName)}"${idAttr}${deXmlns}${groupAttr}${rotationAttr}` +
     `${posAttrs} svg:width="${cmToOdfLength(shape.widthCm)}" svg:height="${cmToOdfLength(shape.heightCm)}">` +

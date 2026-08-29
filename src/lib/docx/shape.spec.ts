@@ -485,3 +485,97 @@ describe("shapeDrawingXml round-trips through parseShapeDrawing", () => {
     expect(xml).toContain('prst="cube"');
   });
 });
+
+// --- custom geometry / paths (SPEC-071) -------------------------------------
+
+describe("path shapes round-trip through a:custGeom (SPEC-071 AC-26)", () => {
+  const path = {
+    subpaths: [
+      {
+        steps: [
+          { op: "move" as const, x: 0, y: 1 },
+          { op: "line" as const, x: 1, y: 1 },
+          { op: "cubic" as const, x1: 0.75, y1: 0.5, x2: 0.25, y2: 0.5, x: 0.5, y: 0 },
+          { op: "close" as const },
+        ],
+        closed: true,
+      },
+    ],
+  };
+
+  it("emits a:custGeom with moveTo/lnTo/cubicBezTo/close on a 21600 grid", () => {
+    const xml = shapeDrawingXml(baseShape({ geometry: "rect", path, fill: "#ff0000" }), 7, writeCtx);
+    expect(xml).toContain("<a:custGeom>");
+    expect(xml).toContain('<a:path w="21600" h="21600">');
+    expect(xml).toContain("<a:moveTo><a:pt");
+    expect(xml).toContain("<a:cubicBezTo><a:pt");
+    expect(xml).toContain("<a:close/>");
+    // The three lists the spec forbids alongside a modelled path.
+    expect(xml).not.toContain("<a:gdLst");
+    expect(xml).not.toContain("<a:ahLst");
+    expect(xml).not.toContain("<a:cxnLst");
+    expect(xml).not.toContain("<a:prstGeom");
+  });
+
+  it("reads back into an equal ShapePath, no unsupportedGeometryXml", () => {
+    const result = roundTrip(baseShape({ geometry: "rect", path, fill: "#ff0000" }));
+    expect(result?.shape.path).toEqual(path);
+    expect(result?.shape.unsupportedGeometryXml).toBeUndefined();
+    expect(result?.shape.geometry).toBe("rect");
+  });
+
+  it("converts a:quadBezTo to a cubic on read and preserves the source", () => {
+    const custGeom =
+      `<wps:wsp xmlns:wps="${WPS_NS}"><wps:cNvSpPr/><wps:spPr xmlns:a="${A_NS}">` +
+      `<a:xfrm><a:off x="0" y="0"/><a:ext cx="360000" cy="360000"/></a:xfrm>` +
+      `<a:custGeom><a:pathLst><a:path w="21600" h="21600">` +
+      `<a:moveTo><a:pt x="0" y="0"/></a:moveTo>` +
+      `<a:quadBezTo><a:pt x="10800" y="21600"/><a:pt x="21600" y="0"/></a:quadBezTo>` +
+      `<a:close/></a:path></a:pathLst></a:custGeom>` +
+      `</wps:spPr></wps:wsp>`;
+    const drawing = drawingElement(
+      `<w:drawing xmlns:wp="${WP_NS}"><wp:inline><wp:extent cx="360000" cy="360000"/>` +
+        `<wp:docPr id="1" name="s"/><a:graphic xmlns:a="${A_NS}">` +
+        `<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">${custGeom}</a:graphicData>` +
+        `</a:graphic></wp:inline></w:drawing>`,
+    );
+    const result = parseShapeDrawing(drawing, readCtx);
+    const steps = result?.shape.path?.subpaths[0].steps ?? [];
+    expect(steps[1].op).toBe("cubic");
+    // Exact degree-elevated control points: p0=(0,0), c=(0.5,1), p1=(1,0).
+    if (steps[1].op === "cubic") {
+      expect(steps[1].x1).toBeCloseTo(1 / 3);
+      expect(steps[1].y1).toBeCloseTo(2 / 3);
+    }
+    expect(result?.shape.pathSource?.format).toBe("docx");
+    expect(result?.shape.unsupportedGeometryXml).toBeUndefined();
+  });
+
+  it("re-emits the preserved source verbatim on a same-format save", () => {
+    const shape = baseShape({
+      geometry: "rect",
+      path,
+      pathSource: { format: "docx", xml: "<a:custGeom><a:pathLst><a:path w=\"21600\" h=\"21600\"><a:arcTo wR=\"1\" hR=\"1\" stAng=\"0\" swAng=\"5400000\"/></a:path></a:pathLst></a:custGeom>" },
+    });
+    const xml = shapeDrawingXml(shape, 7, writeCtx);
+    expect(xml).toContain("<a:arcTo");
+  });
+
+  it("preserves a guide-driven custGeom verbatim (no path modelled)", () => {
+    const custGeom =
+      `<wps:wsp xmlns:wps="${WPS_NS}"><wps:cNvSpPr/><wps:spPr xmlns:a="${A_NS}">` +
+      `<a:xfrm><a:off x="0" y="0"/><a:ext cx="360000" cy="360000"/></a:xfrm>` +
+      `<a:custGeom><a:gdLst><a:gd name="x" fmla="*/ w 1 2"/></a:gdLst><a:pathLst><a:path w="21600" h="21600">` +
+      `<a:moveTo><a:pt x="x" y="0"/></a:moveTo><a:close/></a:path></a:pathLst></a:custGeom>` +
+      `</wps:spPr></wps:wsp>`;
+    const drawing = drawingElement(
+      `<w:drawing xmlns:wp="${WP_NS}"><wp:inline><wp:extent cx="360000" cy="360000"/>` +
+        `<wp:docPr id="1" name="s"/><a:graphic xmlns:a="${A_NS}">` +
+        `<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">${custGeom}</a:graphicData>` +
+        `</a:graphic></wp:inline></w:drawing>`,
+    );
+    const result = parseShapeDrawing(drawing, readCtx);
+    expect(result?.shape.path).toBeUndefined();
+    expect(result?.shape.unsupportedGeometryXml).toContain("custGeom");
+  });
+});

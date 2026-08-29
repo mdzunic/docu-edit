@@ -114,6 +114,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: "format.clearFormatting", label: "Clear formatting", path: ["Format"], scope: "document", icon: "clear-formatting" },
   { id: "format.tabs", label: "Tabs…", path: ["Format"], scope: "document" },
   { id: "format.columns", label: "Columns", path: ["Format"], scope: "document" },
+  { id: "format.edit-points", label: "Edit points", path: ["Format"], scope: "document" },
   { id: "format.multilevel-link-headings", label: "Number headings 1–3", path: ["Format", "Multilevel list"], scope: "document", icon: "multilevel-list" },
   { id: "format.multilevel-define-list", label: "Define new list…", path: ["Format", "Multilevel list"], scope: "document", icon: "multilevel-list" },
   { id: "format.text-color", label: "Text colour", path: ["Format"], scope: "document", icon: "text-color", aliases: ["font color"] },

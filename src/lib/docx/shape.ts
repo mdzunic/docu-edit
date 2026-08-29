@@ -9,7 +9,8 @@ import type { ShapeOutline } from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
 import { adjustmentGuideName, adjustmentToGuideValue } from "../core/shapeCatalogue";
 import { GEOMETRY_TO_PRST, PRST_TO_GEOMETRY, parseAvLstAdjustments } from "../core/drawingMl";
-import { escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
+import { arcToCubics, PATH_GRID, quadraticToCubic, type PathStep, type ShapePath, type ShapeSubpath } from "../core/shapePath";
+import { childElements, escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
 
@@ -139,6 +140,147 @@ export interface ParsedShapeDrawing {
   shape: Shape;
 }
 
+// --- custom geometry (SPEC-071 `a:custGeom`) --------------------------------
+
+/** A single `a:pt` as a fraction of the path's own `w`/`h` extent, or null
+ * when the coordinate is a guide name rather than a number (a formula-driven
+ * custGeom the model cannot carry — the caller then preserves it verbatim). */
+function custPoint(el: Element | undefined, w: number, h: number): { x: number; y: number } | null {
+  if (!el) {
+    return null;
+  }
+  const x = Number(el.getAttribute("x"));
+  const y = Number(el.getAttribute("y"));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return { x: x / w, y: y / h };
+}
+
+/** Parses `a:custGeom/a:pathLst` into a `ShapePath` in 0..1 space, converting
+ * `a:arcTo`/`a:quadBezTo` to cubics (SPEC-071 "Primitive reduction"). Returns
+ * null — so the caller keeps the SPEC-008 preservation path — when the
+ * geometry references guides (formula-driven) or uses a command we do not
+ * model. `converted` is true when any arc/quadratic was reduced, so the
+ * caller can preserve the source XML for a lossless same-format save. */
+function parseCustGeom(custGeom: Element): { path: ShapePath; converted: boolean } | null {
+  const pathLst = firstChildElement(custGeom, A_NAMESPACE, "pathLst");
+  if (!pathLst) {
+    return null;
+  }
+  const subpaths: ShapeSubpath[] = [];
+  let converted = false;
+  for (const pathEl of childElements(pathLst, A_NAMESPACE, "path")) {
+    const w = Number(pathEl.getAttribute("w")) || PATH_GRID;
+    const h = Number(pathEl.getAttribute("h")) || PATH_GRID;
+    const steps: PathStep[] = [];
+    let cur = { x: 0, y: 0 };
+    let closed = false;
+    const cmds = Array.from(pathEl.children).filter((c) => c.namespaceURI === A_NAMESPACE);
+    for (const cmd of cmds) {
+      const pts = Array.from(cmd.children).filter((c) => c.namespaceURI === A_NAMESPACE && c.localName === "pt");
+      if (cmd.localName === "moveTo") {
+        const p = custPoint(pts[0], w, h);
+        if (!p) {
+          return null;
+        }
+        steps.push({ op: "move", x: p.x, y: p.y });
+        cur = p;
+      } else if (cmd.localName === "lnTo") {
+        const p = custPoint(pts[0], w, h);
+        if (!p) {
+          return null;
+        }
+        steps.push({ op: "line", x: p.x, y: p.y });
+        cur = p;
+      } else if (cmd.localName === "cubicBezTo") {
+        const c1 = custPoint(pts[0], w, h);
+        const c2 = custPoint(pts[1], w, h);
+        const end = custPoint(pts[2], w, h);
+        if (!c1 || !c2 || !end) {
+          return null;
+        }
+        steps.push({ op: "cubic", x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x: end.x, y: end.y });
+        cur = end;
+      } else if (cmd.localName === "quadBezTo") {
+        const c = custPoint(pts[0], w, h);
+        const end = custPoint(pts[1], w, h);
+        if (!c || !end) {
+          return null;
+        }
+        steps.push({ op: "cubic", ...quadraticToCubic(cur, c, end) });
+        cur = end;
+        converted = true;
+      } else if (cmd.localName === "arcTo") {
+        const wR = Number(cmd.getAttribute("wR"));
+        const hR = Number(cmd.getAttribute("hR"));
+        const stAng = Number(cmd.getAttribute("stAng"));
+        const swAng = Number(cmd.getAttribute("swAng"));
+        if (![wR, hR, stAng, swAng].every(Number.isFinite)) {
+          return null;
+        }
+        const rx = wR / w;
+        const ry = hR / h;
+        const start = (stAng / 60000) * (Math.PI / 180);
+        const sweep = (swAng / 60000) * (Math.PI / 180);
+        const cx = cur.x - rx * Math.cos(start);
+        const cy = cur.y - ry * Math.sin(start);
+        for (const seg of arcToCubics(cx, cy, rx, ry, start, sweep)) {
+          steps.push({ op: "cubic", ...seg });
+          cur = { x: seg.x, y: seg.y };
+        }
+        converted = true;
+      } else if (cmd.localName === "close") {
+        steps.push({ op: "close" });
+        closed = true;
+      } else {
+        return null;
+      }
+    }
+    if (steps.length > 0) {
+      subpaths.push({ steps, closed });
+    }
+  }
+  if (subpaths.length === 0) {
+    return null;
+  }
+  const path: ShapePath = { subpaths };
+  // Per-vertex smoothness is our own concept (SPEC-071) with no OOXML home,
+  // round-tripped through an ignored de: attribute so point-edit mode
+  // restores the right handles on reopen rather than inferring them.
+  const smoothAttr = custGeom.getAttributeNS(DE_NAMESPACE, "smooth");
+  if (smoothAttr) {
+    path.smooth = smoothAttr.split("").map((c) => c === "1");
+  }
+  return { path, converted };
+}
+
+/** Serializes a `ShapePath` as `a:custGeom` on the shared 21600 grid
+ * (AC-26). `a:gdLst`/`a:ahLst`/`a:cxnLst` are deliberately not written. */
+export function custGeomXml(path: ShapePath): string {
+  const g = PATH_GRID;
+  const smoothAttr =
+    path.smooth && path.smooth.length > 0
+      ? ` xmlns:de="${DE_NAMESPACE}" de:smooth="${path.smooth.map((b) => (b ? "1" : "0")).join("")}"`
+      : "";
+  const pt = (x: number, y: number): string => `<a:pt x="${Math.round(x * g)}" y="${Math.round(y * g)}"/>`;
+  let steps = "";
+  for (const subpath of path.subpaths) {
+    for (const step of subpath.steps) {
+      if (step.op === "move") {
+        steps += `<a:moveTo>${pt(step.x, step.y)}</a:moveTo>`;
+      } else if (step.op === "line") {
+        steps += `<a:lnTo>${pt(step.x, step.y)}</a:lnTo>`;
+      } else if (step.op === "cubic") {
+        steps += `<a:cubicBezTo>${pt(step.x1, step.y1)}${pt(step.x2, step.y2)}${pt(step.x, step.y)}</a:cubicBezTo>`;
+      } else {
+        steps += "<a:close/>";
+      }
+    }
+  }
+  return `<a:custGeom${smoothAttr}><a:pathLst><a:path w="${g}" h="${g}">${steps}</a:path></a:pathLst></a:custGeom>`;
+}
+
 /** Parses a `w:drawing` element into a Shape, or null when it is not a
  * single, recognisable `wps:wsp` this spec models — the caller's existing
  * SPEC-008 opaque-inline fallback then preserves it verbatim. */
@@ -234,8 +376,17 @@ export function parseShapeDrawing(
     heightCm: emuToCm(cy),
     wrap,
   };
-  if (!geometry) {
-    shape.unsupportedGeometryXml = serializeElement(prstGeom ?? spPr);
+  const custGeom = !geometry ? firstChildElement(spPr, A_NAMESPACE, "custGeom") : undefined;
+  const parsedPath = custGeom ? parseCustGeom(custGeom) : null;
+  if (parsedPath) {
+    // A modelled path renders its real outline (AC-4); geometry stays the
+    // "rect" bounding-box stand-in and nothing is preserved opaquely.
+    shape.path = parsedPath.path;
+    if (parsedPath.converted && custGeom) {
+      shape.pathSource = { format: "docx", xml: serializeElement(custGeom) };
+    }
+  } else if (!geometry) {
+    shape.unsupportedGeometryXml = serializeElement(prstGeom ?? custGeom ?? spPr);
   } else if (prstGeom) {
     const adjustments = parseAvLstAdjustments(prstGeom);
     if (adjustments.length > 0) {
@@ -366,11 +517,19 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
   // same representation `.odt` already uses. `straightConnector1` is no longer
   // written (its read-only compatibility mapping stays in PRST_TO_GEOMETRY so
   // documents this app already saved still open as arrows).
-  const isArrow = shape.geometry === "arrow" && !shape.unsupportedGeometryXml;
-  const prst = shape.unsupportedGeometryXml ? undefined : isArrow ? "line" : GEOMETRY_TO_PRST[shape.geometry];
-  const geomXml = shape.unsupportedGeometryXml ?? `<a:prstGeom prst="${prst}">${avLstXml(shape)}</a:prstGeom>`;
+  const isArrow = shape.geometry === "arrow" && !shape.unsupportedGeometryXml && !shape.path;
+  // A path shape writes as `a:custGeom` (AC-26). When its path was reduced
+  // from arcs/quadratics on read (`pathSource`) a same-format save re-emits
+  // the verbatim source unchanged, losing nothing; otherwise the model's
+  // move/line/cubic/close is written on the 21600 grid.
+  const prst = shape.unsupportedGeometryXml || shape.path ? undefined : isArrow ? "line" : GEOMETRY_TO_PRST[shape.geometry];
+  const geomXml = shape.path
+    ? shape.pathSource?.format === "docx"
+      ? shape.pathSource.xml
+      : custGeomXml(shape.path)
+    : (shape.unsupportedGeometryXml ?? `<a:prstGeom prst="${prst}">${avLstXml(shape)}</a:prstGeom>`);
   const rotAttr = shape.rotationDeg ? ` rot="${degToOoxmlRot(shape.rotationDeg)}"` : "";
-  const isLine = LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml;
+  const isLine = LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml && !shape.path;
 
   const spPr =
     "<wps:spPr>" +
