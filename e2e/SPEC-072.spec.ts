@@ -120,6 +120,77 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     expect(ys[1]).toBe(cmToEmu(5));
   });
 
+  test("single-drawing align-top moves it to the page content area, not its anchor paragraph (AC-2)", async ({ page }) => {
+    await createDocument(page);
+    // Push the anchor well down the page: a drawing inserted here anchors to a
+    // paragraph partway down, so aligning to the content area must move it UP to
+    // the top margin — not leave it at its anchor's own vertical position.
+    await content(page).click({ position: { x: 20, y: 20 } });
+    for (let i = 0; i < 12; i++) {
+      await page.keyboard.press("Enter");
+    }
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-rect").click();
+    await content(page).click({ position: { x: 300, y: 300 } });
+    await expect(drawings(page)).toHaveCount(1);
+
+    const marginTop = (await content(page).getByTestId("page-margin").first().boundingBox())!.y;
+    const beforeTop = (await drawings(page).nth(0).boundingBox())!.y;
+    // The drawing starts well below the content-area top (its anchor is ~12
+    // paragraphs down) — otherwise this test could not distinguish the fix.
+    expect(beforeTop - marginTop).toBeGreaterThan(30);
+
+    await clickDrawing(page, 0);
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await page.getByTestId("shape-align").selectOption("top");
+
+    // After align-top the drawing's top sits on the content-area top margin,
+    // regardless of where its anchor paragraph is down the page.
+    const afterTop = (await drawings(page).nth(0).boundingBox())!.y;
+    expect(Math.abs(afterTop - marginTop)).toBeLessThan(4);
+  });
+
+  test("resizing a drawing snaps its moving edge to another's and shows a guide (AC-27)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 340, 200);
+    await insertShapeAt(page, "rect", 340, 420);
+    await expect(drawings(page)).toHaveCount(2);
+
+    // Anchor's left edge at 6cm; the resizer starts at 2cm (3cm wide => right
+    // edge at 5cm). Growing its right edge toward 6cm should snap there (AC-27),
+    // giving an exact 4cm width.
+    await setPosition(page, 0, 6, 2);
+    await setPosition(page, 1, 2, 8);
+
+    await clickDrawing(page, 1);
+    await expect(page.getByTestId("shape-handles")).toBeVisible();
+    const anchorBox = (await drawings(page).nth(0).boundingBox())!;
+    const handleBox = (await page.getByTestId("shape-resize-se").boundingBox())!;
+    const startX = handleBox.x + handleBox.width / 2;
+    const startY = handleBox.y + handleBox.height / 2;
+    // Drag the SE handle so the right edge lands ~5px shy of the anchor's left
+    // edge — inside the 8px snap threshold but not yet aligned.
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(anchorBox.x - 5, startY, { steps: 12 });
+
+    const guides = page.getByTestId("drawing-guides");
+    await expect(guides).toBeVisible();
+    await expect(guides.locator(".drawing-guide").first()).toBeVisible();
+
+    await page.mouse.up();
+    // Guides vanish on release (AC-56).
+    await expect(page.getByTestId("drawing-guides")).toHaveCount(0);
+
+    // The right edge snapped to the anchor's left edge (6cm), so the resizer's
+    // width is exactly 6 − 2 = 4cm rather than the 5px-shy value.
+    await clickDrawing(page, 1);
+    await page.getByTestId("shape-position-button").click();
+    await expect(page.getByTestId("shape-position-dialog")).toBeVisible();
+    const width = Number(await page.getByTestId("shape-position-width").inputValue());
+    expect(Math.abs(width - 4)).toBeLessThan(0.1);
+  });
+
   test("dragging a drawing near another's centre shows a guide and snaps into alignment (AC-18,23,26,55,56)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 360, 220);
