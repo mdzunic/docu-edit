@@ -12,6 +12,7 @@ import { cmToEmu } from "../../core/units";
 import { escapeXmlAttribute, escapeXmlText, resolvePartPath, type Relationship } from "../../core/xml";
 import {
   DEFAULT_TABLE_CELL_PADDING_CM,
+  type ChartFrame,
   type ImageFrame,
   type ShapeFrame,
   type Slide,
@@ -33,6 +34,8 @@ const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const STANDARD_ROOT_ATTRS = ` xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"`;
 
 const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const CHART_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const DEFAULT_SIZE_PT = 18;
 const DEFAULT_COLOR = "#000000";
 
@@ -69,7 +72,7 @@ export function serializeSlideXml(
   // the timing's `p:spTgt spid` references match (SPEC-086 wire ids).
   const spidFor = new Map<string, number>();
   for (const frame of slide.frames) {
-    if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image" || frame.kind === "table") {
+    if (mintsCNvPr(frame)) {
       spidFor.set(frame.id, nextId++);
     }
   }
@@ -156,12 +159,60 @@ function frameXml(
       return imageFrameXml(frame, mintId(), rels, slidePartPath);
     case "table":
       return tableFrameXml(frame, mintId());
+    case "chart":
+      // An untouched chart re-emits its verbatim graphicFrame (byte-identical,
+      // AC-18/AC-19); a touched one emits the canonical graphicFrame against
+      // the chart part's relationship id (SPEC-092).
+      return frame.xml ?? serializeChartFrame(frame, mintId(), chartRelIdFor(frame, rels, slidePartPath) ?? "");
     case "group":
     case "foreign":
       return frame.xml; // re-emitted verbatim, in z-order (AC-35)
     default:
       return "";
   }
+}
+
+/** Whether a frame mints a `p:cNvPr id` when serialised (so the animation
+ * `spid` pre-pass reserves ids in the same order the real pass mints them). A
+ * chart that re-emits verbatim `xml` consumes no id, exactly like group/
+ * foreign. */
+function mintsCNvPr(frame: SlideFrame): boolean {
+  if (frame.kind === "chart") {
+    return !frame.xml;
+  }
+  return frame.kind === "text" || frame.kind === "shape" || frame.kind === "image" || frame.kind === "table";
+}
+
+/** The relationship id whose chart part is `frame.sourcePart`, or undefined
+ * (a chart created here whose rel the writer mints alongside its part). */
+function chartRelIdFor(frame: ChartFrame, rels: Map<string, Relationship>, slidePartPath: string): string | undefined {
+  if (!frame.sourcePart) {
+    return undefined;
+  }
+  for (const rel of rels.values()) {
+    if (rel.type === CHART_RELATIONSHIP && resolvePartPath(slidePartPath, rel.target) === frame.sourcePart) {
+      return rel.id;
+    }
+  }
+  return undefined;
+}
+
+/** The canonical `p:graphicFrame` for a touched chart (SPEC-092's Reference):
+ * a `p:nvGraphicFramePr` scaffold consuming one minted `p:cNvPr id`, a
+ * `p:xfrm` in EMU, and an `a:graphic/a:graphicData` holding `<c:chart r:id>`.
+ * `relId` is the slide relationship the writer wrote the chart part under. */
+export function serializeChartFrame(frame: ChartFrame, id: number, relId: string): string {
+  const rot = frame.rotationDeg ? ` rot="${Math.round(frame.rotationDeg * 60000)}"` : "";
+  return (
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Chart ${id}"/>` +
+    `<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr>` +
+    `<p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm${rot}><a:off x="${cmToEmu(frame.xCm)}" y="${cmToEmu(frame.yCm)}"/>` +
+    `<a:ext cx="${cmToEmu(frame.widthCm)}" cy="${cmToEmu(frame.heightCm)}"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="${C_NS}">` +
+    `<c:chart xmlns:c="${C_NS}" xmlns:r="${R_NS}" r:id="${escapeXmlAttribute(relId)}"/>` +
+    `</a:graphicData></a:graphic></p:graphicFrame>`
+  );
 }
 
 // --- xfrm / spPr -----------------------------------------------------------
