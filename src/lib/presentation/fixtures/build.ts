@@ -156,7 +156,9 @@ export const FIXTURE_FRAME_KINDS: string[][] = [
   ["text", "text"],
   ["text", "text"],
   ["text", "group"],
-  ["text", "text", "text", "shape", "image", "group", "foreign"],
+  // Slide 4's trailing graphicFrame/table:table is a modelled table (SPEC-091);
+  // before SPEC-091 it read as a foreign "Table" box.
+  ["text", "text", "text", "shape", "image", "group", "table"],
 ];
 
 /** Slide 4's per-frame geometry in cm ([x, y, w, h]), asserted equal across
@@ -169,7 +171,7 @@ export const FIXTURE_SLIDE4_GEOMETRY: [number, number, number, number][] = [
   [2, 15, 5, 3], // ellipse
   [25, 15, 4, 3], // image
   [8, 15, 5.5, 3], // group box (union of the two rects)
-  [16, 15, 8, 3], // table (foreign)
+  [16, 15, 8, 3], // table (modelled TableFrame, SPEC-091)
 ];
 
 export const FIXTURE_DECK_TITLE = "Deck fixture";

@@ -275,9 +275,15 @@ describe("SPEC-079 frame model", () => {
     expect(group.xml).toContain("grpSp"); // preserved verbatim for the writer
     // Child rects mapped into slide space (identity chOff/chExt here).
     expectGeomClose(geomOf(group.children[0]), [8, 15, 2.5, 3]);
-    const table = slide4.frames[6] as ForeignFrame;
-    expect(table.label).toBe("Table");
-    expect(table.noBounds).toBeUndefined();
+    // The trailing graphicFrame is a modelled TableFrame now (SPEC-091), not a
+    // foreign "Table" box: a 1×1 grid with the "Cell" text.
+    const table = slide4.frames[6];
+    expect(table.kind).toBe("table");
+    if (table.kind === "table") {
+      expect(table.columnWidthsCm).toHaveLength(1);
+      expect(table.rows).toHaveLength(1);
+      expect(table.rows[0].cells[0].paragraphs[0].runs[0].text).toBe("Cell");
+    }
   });
 
   it("gives a group without its own xfrm a union-of-children hit box (AC-31)", async () => {

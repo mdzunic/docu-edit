@@ -62,9 +62,11 @@ describe("odp table reader accepts flavoured variants (AC-16c)", () => {
 
 describe("odp table abort conditions map to undefined (AC-16d)", () => {
   const c = `<table:table-cell><text:p>x</text:p></table:table-cell>`;
-  it("aborts with no columns", () => {
-    const frame = `<draw:frame ${NS} svg:x="0cm" svg:y="0cm" svg:width="6cm" svg:height="2cm"><table:table><table:table-row>${c}</table:table-row></table:table></draw:frame>`;
-    expect(parseOdpTableFrameForTest(frame)).toBeUndefined();
+  it("tolerates missing table-column declarations by inferring the count", () => {
+    const frame = `<draw:frame ${NS} svg:x="0cm" svg:y="0cm" svg:width="6cm" svg:height="2cm"><table:table><table:table-row>${c}${c}</table:table-row></table:table></draw:frame>`;
+    const parsed = parseOdpTableFrameForTest(frame);
+    expect(parsed).toBeDefined();
+    expect(parsed!.columnWidthsCm).toHaveLength(2);
   });
   it("aborts with no rows", () => {
     const frame = `<draw:frame ${NS} svg:x="0cm" svg:y="0cm" svg:width="6cm" svg:height="2cm"><table:table><table:table-column/></table:table></draw:frame>`;

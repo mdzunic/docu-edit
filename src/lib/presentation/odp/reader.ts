@@ -627,7 +627,7 @@ function readRowStyle(styleName: string | undefined, ctx: OdpContext): { heightC
   return { heightCm: h, fullyModelled };
 }
 
-function parseOdpCells(row: Element, colCount: number, ctx: OdpContext): SlideTableCell[] | undefined {
+function parseOdpCells(row: Element, ctx: OdpContext): SlideTableCell[] {
   const cells: SlideTableCell[] = [];
   for (const el of Array.from(row.children)) {
     if (el.namespaceURI !== TABLE_NAMESPACE) {
@@ -649,7 +649,7 @@ function parseOdpCells(row: Element, colCount: number, ctx: OdpContext): SlideTa
       cells.push(cell);
     }
   }
-  return cells.length === colCount ? cells : undefined;
+  return cells;
 }
 
 /** Parses an in-subset `table:table` into a `TableFrame`, or `undefined` when
@@ -699,11 +699,7 @@ function parseOdpTable(
         case "table-row": {
           const styleName = tableAttr(el, "style-name") ?? undefined;
           const { heightCm, fullyModelled } = readRowStyle(styleName, ctx);
-          const cells = parseOdpCells(el, columnWidthsCm.length, ctx);
-          if (!cells) {
-            return false; // irregular row
-          }
-          const row: SlideTableRow = { cells };
+          const row: SlideTableRow = { cells: parseOdpCells(el, ctx) };
           if (heightCm !== undefined) row.heightCm = round3(heightCm);
           if (inHeader) row.isHeader = true;
           rows.push(row);
@@ -720,8 +716,23 @@ function parseOdpTable(
   if (!walk(table, false)) {
     return undefined;
   }
-  if (columnWidthsCm.length === 0 || rows.length === 0) {
+  if (rows.length === 0) {
     return undefined;
+  }
+  // With declared table-columns the grid must match them; with none (some
+  // producers omit them) infer the count from the first row and pad the widths
+  // with an equal share of the frame width (the modelled widths matter only
+  // once the table is edited).
+  let colCount = columnWidthsCm.length;
+  if (colCount === 0) {
+    colCount = rows[0].cells.length;
+    while (columnWidthsCm.length < colCount) {
+      columnWidthsCm.push(colCount > 0 ? round3(base.widthCm / colCount) : 0);
+      columnStyleNames.push(undefined);
+    }
+  }
+  if (colCount === 0 || rows.some((r) => r.cells.length !== colCount)) {
+    return undefined; // irregular grid (AC-3b)
   }
   const frame: TableFrame = {
     ...base,
