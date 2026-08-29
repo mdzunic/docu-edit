@@ -30,9 +30,29 @@ const props = defineProps({
   /** True when a captionable object (image/chart/table) is selected — shows
    * "Insert caption" (SPEC-055 AC-1). */
   captionAction: { type: Boolean, default: false },
+  /** True when a drawing is selected — shows the align/distribute section
+   * (SPEC-072 AC-14). */
+  drawingActions: { type: Boolean, default: false },
+  /** True when three or more drawings are selected, so Distribute applies. */
+  canDistributeDrawings: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "field-action", "caption-action", "dismiss"]);
+const emit = defineEmits(["cut", "copy", "paste", "table-action", "list-action", "field-action", "caption-action", "drawing-action", "dismiss"]);
+
+// The drawing align/distribute section (SPEC-072 AC-14). The key doubles as the
+// emitted action id (`drawing.<key>`) and the testid suffix.
+const DRAWING_ALIGN_ACTIONS = [
+  { key: "align-left", label: "Align left" },
+  { key: "align-center", label: "Align centre" },
+  { key: "align-right", label: "Align right" },
+  { key: "align-top", label: "Align top" },
+  { key: "align-middle", label: "Align middle" },
+  { key: "align-bottom", label: "Align bottom" },
+];
+const DRAWING_DISTRIBUTE_ACTIONS = [
+  { key: "distribute-horizontal", label: "Distribute horizontally" },
+  { key: "distribute-vertical", label: "Distribute vertically" },
+];
 
 // The field section's entries (SPEC-053 AC-13). The key doubles as the
 // emitted action id and testid suffix.
@@ -230,6 +250,35 @@ onBeforeUnmount(() => {
         role="menuitem"
         :data-testid="`context-menu-${action.key}`"
         @click="emit('list-action', action.key)"
+      >
+        <span>{{ action.label }}</span>
+      </button>
+    </template>
+    <template v-if="drawingActions">
+      <div
+        class="context-menu-separator"
+        role="separator"
+      />
+      <button
+        v-for="action in DRAWING_ALIGN_ACTIONS"
+        :key="action.key"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :data-testid="`context-menu-${action.key}`"
+        @click="emit('drawing-action', action.key)"
+      >
+        <span>{{ action.label }}</span>
+      </button>
+      <button
+        v-for="action in DRAWING_DISTRIBUTE_ACTIONS"
+        :key="action.key"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :data-testid="`context-menu-${action.key}`"
+        :disabled="!canDistributeDrawings"
+        @click="emit('drawing-action', action.key)"
       >
         <span>{{ action.label }}</span>
       </button>

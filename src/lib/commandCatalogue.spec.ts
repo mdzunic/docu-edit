@@ -41,12 +41,15 @@ function liveRegistryIds(): string[] {
   const theme = readFileSync(join(here, "../views/document/useThemeControls.ts"), "utf8");
   const fileActions = readFileSync(join(here, "../views/document/useFileActions.ts"), "utf8");
   const pageSetup = readFileSync(join(here, "../views/document/usePageSetupDialogs.ts"), "utf8");
+  const drawingArrange = readFileSync(join(here, "../views/document/useDrawingArrange.ts"), "utf8");
   const inline = tupleKeysInBlock(view, "const editorCommands = new Map([");
   const themeBlock = theme.slice(theme.indexOf("themeCommands"));
   const themeIds = [...themeBlock.matchAll(/\[\s*"([a-zA-Z][\w.-]*)"\s*,/g)].map((m) => m[1]);
   const exportIds = tupleKeysInBlock(fileActions, COMMAND_LIST_MARKER);
   const rulerIds = tupleKeysInBlock(pageSetup, COMMAND_LIST_MARKER);
-  return [...new Set([...inline, ...themeIds, ...exportIds, ...rulerIds])];
+  // SPEC-072 drawing align/distribute command ids (useDrawingArrange).
+  const arrangeIds = tupleKeysInBlock(drawingArrange, COMMAND_LIST_MARKER);
+  return [...new Set([...inline, ...themeIds, ...exportIds, ...rulerIds, ...arrangeIds])];
 }
 
 describe("COMMANDS completeness (SPEC-062 AC-31, AC-32)", () => {
