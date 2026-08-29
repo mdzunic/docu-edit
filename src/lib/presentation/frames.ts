@@ -99,6 +99,17 @@ function touch(model: PresentationModel, slide: Slide): void {
   markSlideEdited(slide, model.format);
 }
 
+/** A geometry change (move/resize/reorder/duplicate) invalidates a chart
+ * frame's verbatim source container — the serialiser must regenerate the
+ * `p:graphicFrame`/`draw:frame` at the new geometry — but it must NEVER set
+ * `edited`: the chart PART is untouched, so it still round-trips byte-identical
+ * (SPEC-092 AC-16a, D11). A no-op for every other frame kind. */
+function dropChartContainerXml(frame: SlideFrame): void {
+  if (frame.kind === "chart") {
+    delete frame.xml;
+  }
+}
+
 // --- insertion --------------------------------------------------------------
 
 function normaliseRect(rect: FrameRect): FrameRect {
@@ -308,6 +319,7 @@ export function moveFrame(
   frame.xCm += dxCm;
   frame.yCm += dyCm;
   clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
+  dropChartContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -329,6 +341,7 @@ export function setFramePosition(
   frame.xCm = xCm;
   frame.yCm = yCm;
   clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
+  dropChartContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -360,6 +373,7 @@ export function resizeFrame(
   frame.yCm = r3(rect.yCm);
   frame.widthCm = nextWidth;
   frame.heightCm = nextHeight;
+  dropChartContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -462,6 +476,10 @@ export function duplicateFrame(model: PresentationModel, slideIndex: number, fra
   copy.xCm = r3(frame.xCm + DUPLICATE_OFFSET_CM);
   copy.yCm = r3(frame.yCm + DUPLICATE_OFFSET_CM);
   clampToSlide(copy, model.slideWidthCm, model.slideHeightCm);
+  // A duplicated chart shares the source's `sourcePart` (legal — the writer
+  // mints a fresh part for the later claimant, D8) but its verbatim container
+  // now has the wrong geometry, so drop it (never `edited`; the part is intact).
+  dropChartContainerXml(copy);
   slide.frames.push(copy);
   touch(model, slide);
   return copy.id;
@@ -503,6 +521,7 @@ export function reorderFrame(
   }
   const [moved] = slide.frames.splice(from, 1);
   slide.frames.splice(to, 0, moved);
+  dropChartContainerXml(moved);
   touch(model, slide);
   return frameId;
 }
