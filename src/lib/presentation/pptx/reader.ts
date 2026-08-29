@@ -43,6 +43,7 @@ import {
 import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
+  DEFAULT_TABLE_CELL_PADDING_CM,
   type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
@@ -52,7 +53,11 @@ import {
   type SlideLayout,
   type SlideParagraph,
   type SlideRun,
+  type SlideTableCell,
+  type SlideTableRow,
+  type TableFrame,
 } from "../model";
+import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
@@ -522,7 +527,10 @@ function parsePic(pic: Element, ctx: SlideContext): SlideFrame {
   return foreignFrame(pic, base, "Media");
 }
 
-/** Parses a `p:graphicFrame` (table/chart/other) into a foreign frame. */
+/** Parses a `p:graphicFrame`: an in-subset DrawingML table (`a:tbl`) becomes a
+ * modelled `TableFrame` (SPEC-091 AC-2a); a chart, an out-of-subset table
+ * (AC-2b), or anything else stays a verbatim ForeignFrame — tables never
+ * half-parse. */
 function parseGraphicFrame(gf: Element, ctx: SlideContext): SlideFrame {
   const xfrm = parseXfrm(pChild(gf, "xfrm"));
   const geom = geometryFor(xfrm, undefined, undefined, undefined, ctx);
@@ -530,13 +538,305 @@ function parseGraphicFrame(gf: Element, ctx: SlideContext): SlideFrame {
   const graphic = firstA(gf, "graphic");
   const graphicData = graphic ? firstA(graphic, "graphicData") : undefined;
   const uri = graphicData?.getAttribute("uri") ?? "";
-  let label = "Object";
-  if (graphicData && firstA(graphicData, "tbl")) {
-    label = "Table";
-  } else if (uri.includes("chart")) {
-    label = "Chart";
+  const tbl = graphicData ? firstA(graphicData, "tbl") : undefined;
+  if (tbl) {
+    const table = parseTbl(tbl, base, gf, ctx);
+    if (table) {
+      return table;
+    }
+    return foreignFrame(gf, base, "Table"); // out of subset (AC-2b)
   }
+  const label = uri.includes("chart") ? "Chart" : "Object";
   return foreignFrame(gf, base, label);
+}
+
+const TRUE_ATTR = new Set(["1", "true", "on"]);
+
+function boolAttr(el: Element, name: string): boolean {
+  const v = el.getAttribute(name);
+  return v !== null && TRUE_ATTR.has(v);
+}
+
+/** One `a:lnL/R/T/B` edge → a modelled `BorderSide`, or undefined when absent
+ * (no explicit edge). A child `a:noFill` is the "none" style. */
+function parseBorderSide(ln: Element | undefined, color: ColorContext): BorderSide | undefined {
+  if (!ln) {
+    return undefined;
+  }
+  if (firstA(ln, "noFill")) {
+    return { style: "none", widthPt: 0, color: "#000000" };
+  }
+  const solidFill = firstA(ln, "solidFill");
+  const resolved = solidFill ? resolveFirstColor(solidFill, color) : undefined;
+  const w = ln.getAttribute("w");
+  const widthPt = w ? Number(w) / 12700 : 1;
+  const cmpd = ln.getAttribute("cmpd");
+  const dash = firstA(ln, "prstDash")?.getAttribute("val");
+  let style: BorderSide["style"] = "single";
+  if (cmpd === "dbl") {
+    style = "double";
+  } else if (dash === "dash") {
+    style = "dashed";
+  } else if (dash === "sysDot" || dash === "dot") {
+    style = "dotted";
+  }
+  return { style, widthPt, color: resolved ?? "#000000" };
+}
+
+/** Reads a cell's `a:tcPr` into the modelled fill / borders / padding / anchor,
+ * dropping the renderer defaults (0.13cm padding, top anchor) so a plain cell
+ * stays plain (AC-2a). */
+function applyTcPr(cell: SlideTableCell, tcPr: Element, ctx: SlideContext): void {
+  const anchor = tcPr.getAttribute("anchor");
+  if (anchor === "ctr") {
+    cell.verticalAlign = "center";
+  } else if (anchor === "b") {
+    cell.verticalAlign = "bottom";
+  }
+  const marL = tcPr.getAttribute("marL");
+  if (marL !== null) {
+    const cm = Math.round(emuToCm(Number(marL)) * 1000) / 1000;
+    if (Math.abs(cm - DEFAULT_TABLE_CELL_PADDING_CM) > 1e-6) {
+      cell.paddingCm = cm;
+    }
+  }
+  const borders: CellBorders = {};
+  const left = parseBorderSide(firstA(tcPr, "lnL"), ctx.color);
+  const right = parseBorderSide(firstA(tcPr, "lnR"), ctx.color);
+  const top = parseBorderSide(firstA(tcPr, "lnT"), ctx.color);
+  const bottom = parseBorderSide(firstA(tcPr, "lnB"), ctx.color);
+  if (left) borders.left = left;
+  if (right) borders.right = right;
+  if (top) borders.top = top;
+  if (bottom) borders.bottom = bottom;
+  if (Object.keys(borders).length > 0) {
+    cell.borders = borders;
+  }
+  if (firstA(tcPr, "noFill")) {
+    cell.fill = { type: "none" };
+  } else {
+    const solidFill = firstA(tcPr, "solidFill");
+    if (solidFill) {
+      const color = resolveFirstColor(solidFill, ctx.color);
+      if (color) {
+        cell.fill = { type: "solid", color };
+      }
+    }
+  }
+}
+
+/** Parses an in-subset `a:tbl` into a `TableFrame`, or `undefined` when it is
+ * out of subset per the enumerated abort list — a missing/empty grid, no rows,
+ * a row whose cells do not total the column count, or an inconsistent merge map
+ * (AC-2b). Unmodelled markup is preserved verbatim in pptxTblPr/pptxTcPr/
+ * pptxGraphicFramePr (AC-2c). */
+function parseTbl(
+  tbl: Element,
+  base: ReturnType<typeof frameBase>,
+  gf: Element,
+  ctx: SlideContext,
+): TableFrame | undefined {
+  const tblGrid = firstA(tbl, "tblGrid");
+  const gridCols = tblGrid ? childrenA(tblGrid, "gridCol") : [];
+  if (gridCols.length === 0) {
+    return undefined; // no columns
+  }
+  const columnWidthsCm = gridCols.map((col) => Math.round(emuToCm(Number(col.getAttribute("w") ?? "0")) * 1000) / 1000);
+  const colCount = columnWidthsCm.length;
+  const trs = childrenA(tbl, "tr");
+  if (trs.length === 0) {
+    return undefined; // no rows
+  }
+  const rows: SlideTableRow[] = [];
+  for (const tr of trs) {
+    const tcs = childrenA(tr, "tc");
+    if (tcs.length !== colCount) {
+      return undefined; // irregular grid (AC-2b)
+    }
+    const cells: SlideTableCell[] = tcs.map((tc) => {
+      if (boolAttr(tc, "hMerge") || boolAttr(tc, "vMerge")) {
+        return { paragraphs: [], covered: true };
+      }
+      const cell: SlideTableCell = { paragraphs: [] };
+      const txBody = firstA(tc, "txBody");
+      if (txBody) {
+        cell.paragraphs = parseTxBody(txBody, undefined, ctx);
+      }
+      const gridSpan = Number(tc.getAttribute("gridSpan") ?? "1");
+      const rowSpan = Number(tc.getAttribute("rowSpan") ?? "1");
+      if (gridSpan > 1) cell.colSpan = gridSpan;
+      if (rowSpan > 1) cell.rowSpan = rowSpan;
+      const tcPr = firstA(tc, "tcPr");
+      if (tcPr) {
+        applyTcPr(cell, tcPr, ctx);
+        if (!tcPrFullyModelled(tcPr)) {
+          cell.pptxTcPr = serializeElement(tcPr); // unmodelled markup survives (AC-2c)
+        }
+      }
+      return cell;
+    });
+    const row: SlideTableRow = { cells };
+    const h = tr.getAttribute("h");
+    if (h !== null) {
+      row.heightCm = Math.round(emuToCm(Number(h)) * 1000) / 1000;
+    }
+    rows.push(row);
+  }
+  const r3 = (v: number): number => Math.round(v * 1000) / 1000;
+  const frame: TableFrame = {
+    ...base,
+    xCm: r3(base.xCm),
+    yCm: r3(base.yCm),
+    widthCm: r3(base.widthCm),
+    heightCm: r3(base.heightCm),
+    kind: "table",
+    rows,
+    columnWidthsCm,
+  };
+  if (!isConsistentMergeGrid(frame)) {
+    return undefined; // inconsistent merges (AC-2b)
+  }
+  const tblPr = firstA(tbl, "tblPr");
+  if (tblPr) {
+    if (boolAttr(tblPr, "firstRow")) frame.firstRow = true;
+    if (boolAttr(tblPr, "bandRow")) frame.bandRow = true;
+    const styleId = firstA(tblPr, "tableStyleId")?.textContent ?? undefined;
+    if (styleId) frame.styleId = styleId;
+    if (!tblPrFullyModelled(tblPr)) {
+      frame.pptxTblPr = serializeElement(tblPr); // unmodelled look markup survives (AC-2c)
+    }
+  }
+  const nvGf = pChild(gf, "nvGraphicFramePr");
+  if (nvGf && !nvGfFullyModelled(nvGf)) {
+    frame.pptxGraphicFramePr = serializeElement(nvGf); // unmodelled non-visual props survive (AC-2c)
+  }
+  return frame;
+}
+
+// --- "fully modelled" predicates (SPEC-091) ---------------------------------
+// A verbatim string is captured ONLY when the source carries markup the model
+// does not represent — so a table this editor authored (or a fully-modelled
+// import) round-trips through the model with no preservation string, and the
+// golden reader test decodes to the clean model (AC-16b). The docxTcPr rule.
+
+function attrsWithin(el: Element, allowed: Set<string>): boolean {
+  return Array.from(el.attributes).every((a) => allowed.has(a.localName ?? a.name));
+}
+
+function aChildrenWithin(el: Element, allowed: Set<string>): boolean {
+  return Array.from(el.children).every(
+    (c) => c.namespaceURI === A_NAMESPACE && allowed.has(c.localName),
+  );
+}
+
+const MODELLED_TCPR_ATTRS = new Set(["marL", "marR", "marT", "marB", "anchor"]);
+const MODELLED_TCPR_CHILDREN = new Set(["lnL", "lnR", "lnT", "lnB", "solidFill", "noFill"]);
+const MODELLED_LN_ATTRS = new Set(["w", "cmpd", "cap", "algn"]);
+const MODELLED_LN_CHILDREN = new Set(["solidFill", "noFill", "prstDash"]);
+
+function lnFullyModelled(ln: Element): boolean {
+  if (!attrsWithin(ln, MODELLED_LN_ATTRS) || !aChildrenWithin(ln, MODELLED_LN_CHILDREN)) {
+    return false;
+  }
+  const solidFill = firstA(ln, "solidFill");
+  return !solidFill || aChildrenWithin(solidFill, new Set(["srgbClr"]));
+}
+
+function tcPrFullyModelled(tcPr: Element): boolean {
+  if (!attrsWithin(tcPr, MODELLED_TCPR_ATTRS)) {
+    return false;
+  }
+  const mar = ["marL", "marR", "marT", "marB"].map((a) => tcPr.getAttribute(a)).filter((v) => v !== null);
+  if (mar.length > 0 && (mar.length !== 4 || new Set(mar).size !== 1)) {
+    return false; // asymmetric padding is not representable by the uniform model
+  }
+  if (!aChildrenWithin(tcPr, MODELLED_TCPR_CHILDREN)) {
+    return false;
+  }
+  for (const child of Array.from(tcPr.children)) {
+    if (child.localName.startsWith("ln") && !lnFullyModelled(child)) {
+      return false;
+    }
+    if (child.localName === "solidFill" && !aChildrenWithin(child, new Set(["srgbClr"]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function tblPrFullyModelled(tblPr: Element): boolean {
+  return attrsWithin(tblPr, new Set(["firstRow", "bandRow"])) && aChildrenWithin(tblPr, new Set(["tableStyleId"]));
+}
+
+function nvGfFullyModelled(nvGf: Element): boolean {
+  for (const child of Array.from(nvGf.children)) {
+    if (child.namespaceURI !== P_NAMESPACE) {
+      return false;
+    }
+    if (child.localName === "cNvPr") {
+      if (!attrsWithin(child, new Set(["id", "name"])) || child.children.length > 0) {
+        return false;
+      }
+    } else if (child.localName === "cNvGraphicFramePr") {
+      for (const gc of Array.from(child.children)) {
+        if (gc.namespaceURI !== A_NAMESPACE || gc.localName !== "graphicFrameLocks" || !attrsWithin(gc, new Set(["noGrp"]))) {
+          return false;
+        }
+      }
+    } else if (child.localName === "nvPr") {
+      if (child.children.length > 0) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Whether every covered slot is under a spanning owner and every owner's span
+ * exactly covers its rectangle — the merge map the writer will reproduce. */
+function isConsistentMergeGrid(frame: TableFrame): boolean {
+  const grid = computeOwnerGrid(frame);
+  for (let r = 0; r < frame.rows.length; r++) {
+    for (let c = 0; c < frame.columnWidthsCm.length; c++) {
+      const owner = grid[r][c];
+      const isOwnerSlot = owner.originRow === r && owner.originCol === c;
+      const cell = frame.rows[r].cells[c];
+      if (isOwnerSlot === Boolean(cell.covered)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Test seam (SPEC-091 golden): parse a standalone `p:graphicFrame` table XML
+ * string into a `TableFrame` (or undefined when out of subset), through a
+ * minimal context — table cells carry explicit run properties, so no theme is
+ * needed. */
+export function parseTableGraphicFrameForTest(graphicFrameXml: string): TableFrame | undefined {
+  // A bare graphicFrame carries no xmlns (its slide root normally declares p/a);
+  // inject them when absent so the string parses standalone.
+  const xml = graphicFrameXml.includes("xmlns:p")
+    ? graphicFrameXml
+    : graphicFrameXml.replace(
+        "<p:graphicFrame>",
+        `<p:graphicFrame xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}">`,
+      );
+  const doc = parseXml(xml);
+  const gf = doc.documentElement;
+  const ctx: SlideContext = {
+    color: { scheme: {}, map: {} },
+    layoutPh: new Map(),
+    masterPh: new Map(),
+    txStyles: new Map(),
+    slideRels: new Map(),
+    slidePartPath: "",
+    media: new Map(),
+  };
+  const frame = parseGraphicFrame(gf, ctx);
+  return frame.kind === "table" ? frame : undefined;
 }
 
 /** Parses a `p:cxnSp` connector: a line/straight connector is a line shape,
