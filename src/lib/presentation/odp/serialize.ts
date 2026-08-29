@@ -27,7 +27,6 @@ import {
   type SlideParagraph,
   type SlideRun,
   type SlideTableCell,
-  type SlideTableRow,
   type TableFrame,
   type TextFrame,
 } from "../model";
