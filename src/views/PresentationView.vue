@@ -15,10 +15,9 @@ import SlideStageArea from "../components/presentation/SlideStageArea.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
+import SlideChartLayer from "../components/presentation/SlideChartLayer.vue";
 import DeckHeader from "../components/presentation/DeckHeader.vue";
-import DeckSetupDialog from "../components/presentation/DeckSetupDialog.vue";
-import HtmlExportOptionsDialog from "../components/presentation/HtmlExportOptionsDialog.vue";
-import LayoutGalleryDialog from "../components/presentation/LayoutGalleryDialog.vue";
+import PresentationDialogs from "../components/presentation/PresentationDialogs.vue";
 import SlidePanelStack from "../components/presentation/SlidePanelStack.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
@@ -33,6 +32,8 @@ import { useNotes } from "./presentation/useNotes";
 import { useTransitions } from "./presentation/useTransitions";
 import { useAnimations } from "./presentation/useAnimations";
 import { useTables } from "./presentation/useTables";
+import { useSlideCharts } from "./presentation/useSlideCharts";
+import { useFilmstripCommands } from "./presentation/useFilmstripCommands";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useDeckActions } from "./presentation/useDeckActions";
@@ -80,29 +81,6 @@ const slideCommands = useSlideCommands({
 
 function addSlideAction() {
   slideCommands.add(currentIndex.value);
-}
-function onFilmstripCommand(payload = { action: "", index: 0 }) {
-  const { action, index } = payload;
-  if (action === "new") {
-    slideCommands.add(index);
-  } else if (action === "new-with-layout") {
-    selectSlide(index);
-    layouts.openForNew();
-  } else if (action === "duplicate") {
-    slideCommands.duplicate(index);
-  } else if (action === "layout") {
-    selectSlide(index);
-    layouts.openForChange();
-  } else if (action === "delete") {
-    slideCommands.remove(index);
-  } else if (action === "move-up") {
-    slideCommands.moveUp(index);
-  } else if (action === "move-down") {
-    slideCommands.moveDown(index);
-  }
-}
-function onFilmstripReorder(payload = { from: 0, to: 0 }) {
-  slideCommands.reorder(payload.from, payload.to);
 }
 
 async function loadPresentation() {
@@ -223,6 +201,18 @@ const tables = useTables({
 });
 watch(stageEdit.editing.activeCell, (c) => c && tables.setCurrentCell(c.row, c.col)); // panel anchor = editing cell
 
+// --- chart editing (SPEC-092) ----------------------------------------------
+const charts = useSlideCharts({
+  model: presentation,
+  currentSlide,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+  selectedFrame: stageEdit.selection.selectedFrame,
+  selectFrame: stageEdit.selection.select,
+});
+stageEdit.setChartEditHandler(charts.openDataSheet); // double-click a chart → data sheet
+
 // --- slide layouts + Reset slide (SPEC-089) --------------------------------
 const layouts = useSlideLayouts({
   model: presentation,
@@ -239,6 +229,14 @@ function toggleLayout() {
     layouts.openForChange();
   }
 }
+
+// --- filmstrip structural commands (SPEC-080) ------------------------------
+const filmstrip = useFilmstripCommands({
+  commands: slideCommands,
+  selectSlide,
+  openLayoutForNew: layouts.openForNew,
+  openLayoutForChange: layouts.openForChange,
+});
 
 // --- deck setup: slide size, first slide number, metadata (SPEC-090) -------
 const deckSetup = useDeckSetup({
@@ -341,11 +339,14 @@ onBeforeUnmount(() => {
         @insert-shape="stageEdit.insertion.armShape($event)"
         @insert-image="stageEdit.insertion.insertImageFile($event)"
         @insert-table="(rows, cols) => stageEdit.insertion.insertTable(rows, cols)"
+        @insert-chart="charts.pickChartType($event)"
         @arrange="stageEdit.manipulation.arrange($event)"
         @ungroup="stageEdit.manipulation.ungroup()"
         @set-fill="stageEdit.setFill($event)"
         @set-stroke="stageEdit.setStroke($event)"
       />
+
+      <SlideChartLayer :controller="charts" />
 
       <div class="deck-body">
         <SlideFilmstrip
@@ -356,8 +357,8 @@ onBeforeUnmount(() => {
           :current-index="currentIndex"
           @select="selectSlide"
           @add="addSlideAction"
-          @command="onFilmstripCommand"
-          @reorder="onFilmstripReorder"
+          @command="filmstrip.onCommand"
+          @reorder="filmstrip.onReorder"
         />
         <div class="stage-column">
           <SlideStageArea
@@ -382,19 +383,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <HtmlExportOptionsDialog
-      v-if="deckActions.htmlDialogOpen.value"
-      @confirm="deckActions.confirmHtmlExport($event)"
-      @cancel="deckActions.cancelHtmlExport()"
-    />
-    <LayoutGalleryDialog
-      v-if="layouts.open.value"
-      :controller="layouts"
+    <PresentationDialogs
+      :deck-actions="deckActions"
+      :layouts="layouts"
+      :deck-setup="deckSetup"
       :slide-number="currentIndex + 1"
-    />
-    <DeckSetupDialog
-      v-if="deckSetup.isOpen.value"
-      :controller="deckSetup"
     />
   </AppShell>
 </template>

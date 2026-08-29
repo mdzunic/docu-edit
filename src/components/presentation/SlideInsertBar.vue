@@ -8,6 +8,7 @@
 // FrameStylePopover. Runtime prop/emit declarations per the espree constraint.
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import ShapeGallery from "../ShapeGallery.vue";
+import ChartGallery from "../ChartGallery.vue";
 import FrameStylePopover from "./FrameStylePopover.vue";
 import { asShapeGeometry } from "../../lib/core/shapes";
 import { asSlideFrame } from "./slideRender";
@@ -27,6 +28,7 @@ const emit = defineEmits([
   "insert-image",
   "insert-shape",
   "insert-table",
+  "insert-chart",
   "arrange",
   "ungroup",
   "set-fill",
@@ -46,6 +48,13 @@ const styleOpen = ref(false);
 function pickShape(geometry = "rect") {
   emit("insert-shape", asShapeGeometry(geometry));
   galleryOpen.value = false;
+}
+
+// --- chart gallery (SPEC-092 AC-13) ----------------------------------------
+const chartGalleryOpen = ref(false);
+function pickChart(chartType = "columnClustered") {
+  emit("insert-chart", chartType);
+  chartGalleryOpen.value = false;
 }
 
 // --- table picker (SPEC-091 AC-5) ------------------------------------------
@@ -254,6 +263,30 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           @click="tableOpen = false"
         />
       </div>
+      <div class="popover-host">
+        <button
+          type="button"
+          class="tb-btn"
+          aria-haspopup="menu"
+          :aria-expanded="chartGalleryOpen"
+          data-testid="insert-chart"
+          @click="chartGalleryOpen = !chartGalleryOpen"
+        >
+          Chart ▾
+        </button>
+        <div
+          v-if="chartGalleryOpen"
+          class="popover chart-gallery-popover"
+          data-testid="chart-gallery-popover"
+        >
+          <ChartGallery @pick="pickChart" />
+        </div>
+        <div
+          v-if="chartGalleryOpen"
+          class="popover-backdrop"
+          @click="chartGalleryOpen = false"
+        />
+      </div>
     </div>
 
     <!-- Secondary group: inline, or in the ⋯ menu when compact -->
@@ -432,6 +465,11 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
   width: 20rem;
   max-height: 22rem;
   overflow: auto;
+}
+
+.chart-gallery-popover {
+  width: max-content;
+  max-width: 26rem;
 }
 
 .table-popover {

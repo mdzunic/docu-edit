@@ -25,12 +25,16 @@
 //                    setup dialog + useDeckSetup wiring landed (view at 443 lines)
 //   2026-08-29  450  SPEC-091 — extracted SlidePanelStack (the four below-stage
 //                    panels) to pay for the useTables wiring (view at 448 lines)
+//   2026-08-29  445  SPEC-092 — extracted PresentationDialogs (the trailing modal
+//                    dialogs) and useFilmstripCommands (the filmstrip intent
+//                    dispatch) to pay for the useSlideCharts + SlideChartLayer
+//                    chart wiring (view at 442 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 450;
+const LINE_BUDGET = 445;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

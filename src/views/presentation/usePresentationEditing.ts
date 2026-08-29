@@ -114,6 +114,15 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
 
   const recentColors = ref<string[]>(loadRecentColors());
 
+  // Double-clicking a chart frame opens its data sheet instead of a text
+  // session (SPEC-092 AC-14). useSlideCharts registers the handler after the
+  // view builds it (it needs this composable's selection), so onStartEdit can
+  // route a chart's dblclick to it by frame kind without a construction cycle.
+  let chartEditHandler: ((id: string) => void) | null = null;
+  function setChartEditHandler(fn: (id: string) => void): void {
+    chartEditHandler = fn;
+  }
+
   function onFrameSelect(id: string): void {
     if (editing.editingFrameId.value && editing.editingFrameId.value !== id) {
       editing.stopEditing();
@@ -121,6 +130,11 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     selection.select(id);
   }
   function onStartEdit(id: string, point?: CaretPoint): void {
+    const frame = deps.currentSlide.value?.frames.find((f) => f.id === id);
+    if (frame?.kind === "chart") {
+      chartEditHandler?.(id);
+      return;
+    }
     editing.startEditing(id, false, point);
   }
   function onStartEditCell(id: string, row: number, col: number, point?: CaretPoint): void {
@@ -218,6 +232,7 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     setColor,
     setFill,
     setStroke,
+    setChartEditHandler,
     onGlobalKeydown,
   };
 }

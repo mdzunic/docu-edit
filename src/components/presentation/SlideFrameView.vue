@@ -174,7 +174,9 @@ function onFrameMousedown(event = new MouseEvent("mousedown")) {
 }
 
 function onFrameDblclick(event = new MouseEvent("dblclick")) {
-  if (frame.value.kind !== "text") return;
+  // A text frame opens a caret session; a chart frame opens its data sheet
+  // (SPEC-092 AC-14) — the parent's start-edit handler routes by frame kind.
+  if (frame.value.kind !== "text" && frame.value.kind !== "chart") return;
   event.stopPropagation();
   // Pass the click's viewport coordinates so the session drops the caret at the
   // click point rather than the end of the frame (AC-1).
