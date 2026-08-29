@@ -127,8 +127,16 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
     void nextTick().then(() => (contentRoot.value as HTMLElement | null)?.focus());
   }
 
-  /** Enters header/footer editing for the given page's band (AC-1, AC-2). */
-  function enterHeaderFooterEditing(pageIndex = 0, part = asHeaderFooterPart("header")) {
+  /** Enters header/footer editing for the given page's band (AC-1, AC-2).
+   * `initial` places the band's selection when the caller already knows where
+   * it belongs — the word a double-click selected; without it the caret goes
+   * to the start of the band, which is where every other entry point wants
+   * it. */
+  function enterHeaderFooterEditing(
+    pageIndex = 0,
+    part = asHeaderFooterPart("header"),
+    initial: ModelSelection | null = noSelection(),
+  ) {
     const model = doc.value;
     if (!model || !editable.value) {
       return;
@@ -144,22 +152,68 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
     getClearImageSelection()();
     getExitNoteEditing()();
     activeHeaderFooter.value = { sectionIndex: page.sectionIndex, part, kind, pageIndex };
-    hfCaret = { section: 0, block: 0, offset: 0 };
-    hfSelectionAnchor = noCaret();
+    hfCaret = initial ? initial.focus : { section: 0, block: 0, offset: 0 };
+    hfSelectionAnchor = initial && !isCollapsed(initial) ? initial.anchor : noCaret();
     void nextTick().then(() => {
       const root = hfRootEl();
-      if (root) {
-        root.focus();
-        setDomCaret(root, hfCaret ?? { section: 0, block: 0, offset: 0 });
+      if (!root) {
+        return;
+      }
+      root.focus();
+      const caret = hfCaret ?? { section: 0, block: 0, offset: 0 };
+      if (hfSelectionAnchor) {
+        setDomSelection(root, hfSelectionAnchor, caret);
+      } else {
+        setDomCaret(root, caret);
       }
     });
   }
 
-  function handleDblclickHeader(pageIndex = 0) {
-    enterHeaderFooterEditing(pageIndex, "header");
+  /** Whether the band on `pageIndex`/`part` is the one already being edited. */
+  function isLiveBand(pageIndex: number, part: string): boolean {
+    const active = activeHeaderFooter.value;
+    return !!active && active.pageIndex === pageIndex && active.part === part;
   }
-  function handleDblclickFooter(pageIndex = 0) {
-    enterHeaderFooterEditing(pageIndex, "footer");
+
+  /** The range a double-click's own word selection left in the band, read
+   * against the band element itself rather than `hfRootEl()`: on the click
+   * that *enters* the band the element is not editable yet, so it carries no
+   * `data-hf-editable`. Turning the band editable does not change the shape of
+   * its rendered entries, so positions read here stay valid afterwards. */
+  function bandSelection(band: EventTarget | null): ModelSelection | null {
+    if (!(band instanceof HTMLElement)) {
+      return noSelection();
+    }
+    const range = modelRangeFromSelection(band, document.getSelection());
+    if (!range) {
+      return noSelection();
+    }
+    return { anchor: range.start, focus: range.end };
+  }
+
+  /** A double-click on a band both enters it and — this is the browser's own
+   * gesture, already applied to the DOM by the time the event runs — selects
+   * the word under the pointer. Entering must therefore adopt that selection
+   * instead of collapsing to the band's start, and a double-click *inside* the
+   * band that is already live must not re-enter at all: re-entering would
+   * re-place the caret and wipe the word the user just selected. */
+  function handleDblclickBand(pageIndex: number, part: ActiveHeaderFooterTarget["part"], event?: MouseEvent) {
+    const selection = bandSelection(event?.currentTarget ?? null);
+    if (isLiveBand(pageIndex, part)) {
+      if (selection) {
+        hfCaret = selection.focus;
+        hfSelectionAnchor = isCollapsed(selection) ? noCaret() : selection.anchor;
+      }
+      return;
+    }
+    enterHeaderFooterEditing(pageIndex, part, selection);
+  }
+
+  function handleDblclickHeader(pageIndex = 0, event?: MouseEvent) {
+    handleDblclickBand(pageIndex, "header", event);
+  }
+  function handleDblclickFooter(pageIndex = 0, event?: MouseEvent) {
+    handleDblclickBand(pageIndex, "footer", event);
   }
   function handleDblclickBody() {
     exitHeaderFooterEditing();

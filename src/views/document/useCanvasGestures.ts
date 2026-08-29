@@ -532,6 +532,15 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     if (!inReadOnlyBand && event.target instanceof Node && root.contains(event.target)) {
       return;
     }
+    // A multi-click on a read-only band is the gesture that enters
+    // header/footer editing (SPEC-029 AC-1), and the browser has already
+    // resolved which word (or paragraph) it selects. Claiming the click for
+    // the body caret here would preventDefault that selection away, so the
+    // band would open with the caret parked at its start instead of the word
+    // under the pointer. Only the opening click still places the body caret.
+    if (inReadOnlyBand && event.detail > 1) {
+      return;
+    }
     const target = caretNearClientPoint(root, event.clientX, event.clientY);
     if (!target) {
       return;
