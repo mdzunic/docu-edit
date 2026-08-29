@@ -86,18 +86,15 @@ export interface Preferences {
   /** Whether the presentation editor's animations panel is expanded
    * (SPEC-086). Per-device, default collapsed. */
   presentationAnimationsOpen: boolean;
-<<<<<<< HEAD
+  /** Whether the presentation editor's table properties panel is expanded
+   * (SPEC-091). Per-device, default collapsed. */
+  presentationTableOpen: boolean;
   /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
   snapToGuides: boolean;
   /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
   snapToGrid: boolean;
   /** The snap-to-grid spacing in centimetres (SPEC-072). Default 0.25cm. */
   gridSpacingCm: number;
-=======
-  /** Whether the presentation editor's table properties panel is expanded
-   * (SPEC-091). Per-device, default collapsed. */
-  presentationTableOpen: boolean;
->>>>>>> refs/factory/base
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -158,13 +155,10 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationNotesOpen: false,
   presentationTransitionsOpen: false,
   presentationAnimationsOpen: false,
-<<<<<<< HEAD
+  presentationTableOpen: false,
   snapToGuides: true,
   snapToGrid: false,
   gridSpacingCm: 0.25,
-=======
-  presentationTableOpen: false,
->>>>>>> refs/factory/base
 };
 
 /** The snap-to-grid spacing bounds (SPEC-072): fine enough to be useful, never
@@ -233,16 +227,13 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationNotesOpen: isBoolean,
   presentationTransitionsOpen: isBoolean,
   presentationAnimationsOpen: isBoolean,
-<<<<<<< HEAD
+  presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,
   snapToGrid: isBoolean,
   gridSpacingCm: (raw) =>
     typeof raw === "number" && Number.isFinite(raw) && raw >= MIN_GRID_SPACING_CM && raw <= MAX_GRID_SPACING_CM
       ? raw
       : undefined,
-=======
-  presentationTableOpen: isBoolean,
->>>>>>> refs/factory/base
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

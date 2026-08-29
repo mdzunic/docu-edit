@@ -72,6 +72,7 @@ import {
 import {
   DEFAULT_NEW_SHAPE_FILL,
   DEFAULT_NEW_SHAPE_OUTLINE,
+  DRAW_DRAG_THRESHOLD_CM,
   drawGestureBox,
   normalizeRotationDeg,
   type NudgeDirection,
@@ -1670,17 +1671,29 @@ export function useShapes(deps: ShapesDeps) {
     // matches the pointer at any zoom (SPEC-063 AC-24).
     const startPoint = clientToContentPx(drag.startClientX, drag.startClientY);
     const nowPoint = clientToContentPx(event.clientX, event.clientY);
+    const startXCm = startPoint.x * CM_PER_PX;
+    const startYCm = startPoint.y * CM_PER_PX;
+    const nowXCm = nowPoint.x * CM_PER_PX;
+    const nowYCm = nowPoint.y * CM_PER_PX;
     const box = drawGestureBox(
       realGeometry,
-      {
-        xCm: startPoint.x * CM_PER_PX,
-        yCm: startPoint.y * CM_PER_PX,
-      },
-      { xCm: nowPoint.x * CM_PER_PX, yCm: nowPoint.y * CM_PER_PX },
+      { xCm: startXCm, yCm: startYCm },
+      { xCm: nowXCm, yCm: nowYCm },
       { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
     );
-    // Snapping applies to the creation drag too (AC-28); there is no element
-    // yet, so nothing is excluded. Alt suppresses it (AC-25).
+    // Snapping applies to the creation *drag* (AC-28); there is no element yet,
+    // so nothing is excluded, and Alt suppresses it (AC-25). But a zero-distance
+    // plain click must land exactly under the pointer — only a gesture that has
+    // passed the drag threshold snaps (human-resolution). A click, or a text box
+    // placed by click (forced to its default size), is left where the pointer is,
+    // with no transient guide left behind.
+    const dragged =
+      Math.abs(nowXCm - startXCm) > DRAW_DRAG_THRESHOLD_CM ||
+      Math.abs(nowYCm - startYCm) > DRAW_DRAG_THRESHOLD_CM;
+    if (!dragged) {
+      clearDrawingGuides();
+      return { geometry: realGeometry, isTextBox, box };
+    }
     const snapped = applyDrawingSnap(
       { xCm: box.leftCm, yCm: box.topCm, wCm: box.widthCm, hCm: box.heightCm },
       null,
