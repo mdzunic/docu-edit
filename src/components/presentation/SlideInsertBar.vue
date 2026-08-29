@@ -12,6 +12,7 @@ import FrameStylePopover from "./FrameStylePopover.vue";
 import { asShapeGeometry } from "../../lib/core/shapes";
 import { asSlideFrame } from "./slideRender";
 import { PRESENTATION_IMAGE_ACCEPT } from "../../views/presentation/useFrameInsertion";
+import { MAX_TABLE_COLS, MAX_TABLE_ROWS, PICKER_MAX_COLS, PICKER_MAX_ROWS } from "../../lib/core/tables";
 
 const props = defineProps({
   /** The selected frame, or null. Enables Arrange/Style and (for a group)
@@ -25,6 +26,7 @@ const emit = defineEmits([
   "insert-text-box",
   "insert-image",
   "insert-shape",
+  "insert-table",
   "arrange",
   "ungroup",
   "set-fill",
@@ -44,6 +46,30 @@ const styleOpen = ref(false);
 function pickShape(geometry = "rect") {
   emit("insert-shape", asShapeGeometry(geometry));
   galleryOpen.value = false;
+}
+
+// --- table picker (SPEC-091 AC-5) ------------------------------------------
+const tableOpen = ref(false);
+const tableHover = ref({ rows: 0, cols: 0 });
+const tableRowsInput = ref(2);
+const tableColsInput = ref(2);
+const PICKER_ROWS = Array.from({ length: PICKER_MAX_ROWS }, (_, i) => i + 1);
+const PICKER_COLS = Array.from({ length: PICKER_MAX_COLS }, (_, i) => i + 1);
+const maxTableRows = MAX_TABLE_ROWS;
+const maxTableCols = MAX_TABLE_COLS;
+
+function hoverTable(rows = 0, cols = 0) {
+  tableHover.value = { rows, cols };
+}
+function chooseTable(rows = 0, cols = 0) {
+  const r = Math.min(Math.max(1, Math.round(rows)), MAX_TABLE_ROWS);
+  const c = Math.min(Math.max(1, Math.round(cols)), MAX_TABLE_COLS);
+  emit("insert-table", r, c);
+  tableOpen.value = false;
+  tableHover.value = { rows: 0, cols: 0 };
+}
+function confirmTableInputs() {
+  chooseTable(tableRowsInput.value, tableColsInput.value);
 }
 
 function arrange(target = "front") {
@@ -147,6 +173,85 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           v-if="galleryOpen"
           class="popover-backdrop"
           @click="galleryOpen = false"
+        />
+      </div>
+      <div class="popover-host">
+        <button
+          type="button"
+          class="tb-btn"
+          aria-haspopup="menu"
+          :aria-expanded="tableOpen"
+          data-testid="insert-table"
+          @click="tableOpen = !tableOpen"
+        >
+          Table ▾
+        </button>
+        <div
+          v-if="tableOpen"
+          class="popover table-popover"
+          data-testid="table-popover"
+        >
+          <div
+            class="table-grid-picker"
+            data-testid="table-grid-picker"
+            @mouseleave="hoverTable(0, 0)"
+          >
+            <template
+              v-for="r in PICKER_ROWS"
+              :key="r"
+            >
+              <button
+                v-for="c in PICKER_COLS"
+                :key="`${r}-${c}`"
+                type="button"
+                class="grid-cell"
+                :class="{ active: r <= tableHover.rows && c <= tableHover.cols }"
+                :data-testid="`table-grid-cell-${r}-${c}`"
+                :aria-label="`Insert ${r} by ${c} table`"
+                @mouseenter="hoverTable(r, c)"
+                @focus="hoverTable(r, c)"
+                @click="chooseTable(r, c)"
+              />
+            </template>
+          </div>
+          <div class="table-grid-label">
+            {{ tableHover.rows > 0 ? `${tableHover.rows} × ${tableHover.cols}` : "Rows × Columns" }}
+          </div>
+          <div class="table-inputs">
+            <label class="table-input-label">
+              Rows
+              <input
+                v-model.number="tableRowsInput"
+                type="number"
+                min="1"
+                :max="maxTableRows"
+                data-testid="table-rows-input"
+              >
+            </label>
+            <label class="table-input-label">
+              Columns
+              <input
+                v-model.number="tableColsInput"
+                type="number"
+                min="1"
+                :max="maxTableCols"
+                data-testid="table-cols-input"
+              >
+            </label>
+            <button
+              type="button"
+              class="tb-btn"
+              data-testid="table-insert-confirm"
+              @click="confirmTableInputs"
+            >
+              Insert
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="tableOpen"
+          class="popover-backdrop"
+          @click="tableOpen = false"
         />
       </div>
     </div>
@@ -327,6 +432,63 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
   width: 20rem;
   max-height: 22rem;
   overflow: auto;
+}
+
+.table-popover {
+  width: max-content;
+}
+
+.table-grid-picker {
+  display: grid;
+  grid-template-columns: repeat(v-bind("PICKER_COLS.length"), 1.1rem);
+  gap: var(--space-1);
+}
+
+.grid-cell {
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  cursor: pointer;
+}
+
+.grid-cell.active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.table-grid-label {
+  margin-top: var(--space-1);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.table-inputs {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.table-input-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.table-input-label input {
+  width: 3.5rem;
+  height: 1.9rem;
+  padding: 0 var(--space-1);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-primary);
 }
 
 .popover-backdrop {

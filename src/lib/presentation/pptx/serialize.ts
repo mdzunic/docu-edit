@@ -7,17 +7,21 @@
 //
 // Framework-free; imports only presentation siblings and src/lib/core.
 import { GEOMETRY_TO_PRST } from "../../core/drawingMl";
+import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { cmToEmu } from "../../core/units";
 import { escapeXmlAttribute, escapeXmlText, resolvePartPath, type Relationship } from "../../core/xml";
-import type {
-  ImageFrame,
-  ShapeFrame,
-  Slide,
-  SlideFill,
-  SlideFrame,
-  SlideParagraph,
-  SlideRun,
-  TextFrame,
+import {
+  DEFAULT_TABLE_CELL_PADDING_CM,
+  type ImageFrame,
+  type ShapeFrame,
+  type Slide,
+  type SlideFill,
+  type SlideFrame,
+  type SlideParagraph,
+  type SlideRun,
+  type SlideTableCell,
+  type TableFrame,
+  type TextFrame,
 } from "../model";
 import { writePptxTransition } from "../transitions";
 import { writePptxTiming } from "./timing";
@@ -65,7 +69,7 @@ export function serializeSlideXml(
   // the timing's `p:spTgt spid` references match (SPEC-086 wire ids).
   const spidFor = new Map<string, number>();
   for (const frame of slide.frames) {
-    if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image") {
+    if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image" || frame.kind === "table") {
       spidFor.set(frame.id, nextId++);
     }
   }
@@ -150,6 +154,8 @@ function frameXml(
       return shapeFrameXml(frame, mintId());
     case "image":
       return imageFrameXml(frame, mintId(), rels, slidePartPath);
+    case "table":
+      return tableFrameXml(frame, mintId());
     case "group":
     case "foreign":
       return frame.xml; // re-emitted verbatim, in z-order (AC-35)
@@ -273,4 +279,125 @@ function embedIdFor(mediaId: string, rels: Map<string, Relationship>, slidePartP
     }
   }
   return undefined;
+}
+
+// --- table frame (SPEC-091) -------------------------------------------------
+
+/** The DrawingML table `a:graphicData@uri`. */
+export const PPTX_TABLE_URI = "http://schemas.openxmlformats.org/drawingml/2006/table";
+
+const DASH_FOR: Partial<Record<BorderSide["style"], string>> = {
+  dashed: "dash",
+  dotted: "sysDot",
+};
+
+/** A cell border edge → `a:lnL/R/T/B`. `"none"` paints `a:noFill`; a set style
+ * emits width, solid colour, compound for double, and a preset dash. */
+function borderLnXml(tag: string, side: BorderSide | undefined): string {
+  if (!side) {
+    return "";
+  }
+  if (side.style === "none") {
+    return `<${tag}><a:noFill/></${tag}>`;
+  }
+  const w = ` w="${Math.round(side.widthPt * 12700)}"`;
+  const cmpd = side.style === "double" ? ` cmpd="dbl"` : "";
+  const dash = DASH_FOR[side.style] ? `<a:prstDash val="${DASH_FOR[side.style]}"/>` : "";
+  return `<${tag}${w}${cmpd}><a:solidFill><a:srgbClr val="${hex(side.color)}"/></a:solidFill>${dash}</${tag}>`;
+}
+
+/** A cell's `a:tcPr`: the preserved verbatim string when the cell has one
+ * (AC-12), else regenerated from the modelled borders / padding / anchor /
+ * fill. */
+function tcPrXml(cell: SlideTableCell): string {
+  if (cell.pptxTcPr) {
+    return cell.pptxTcPr;
+  }
+  const padEmu = cmToEmu(cell.paddingCm ?? DEFAULT_TABLE_CELL_PADDING_CM);
+  const mar = ` marL="${padEmu}" marR="${padEmu}" marT="${padEmu}" marB="${padEmu}"`;
+  const anchor =
+    cell.verticalAlign === "center" ? ` anchor="ctr"` : cell.verticalAlign === "bottom" ? ` anchor="b"` : "";
+  const borders =
+    borderLnXml("a:lnL", cell.borders?.left) +
+    borderLnXml("a:lnR", cell.borders?.right) +
+    borderLnXml("a:lnT", cell.borders?.top) +
+    borderLnXml("a:lnB", cell.borders?.bottom);
+  const fill = cell.fill ? fillXml(cell.fill) : "";
+  return `<a:tcPr${mar}${anchor}>${borders}${fill}</a:tcPr>`;
+}
+
+/** A table cell's `a:txBody` (the DrawingML-namespaced counterpart of a shape's
+ * `p:txBody`). An empty cell emits a single empty `a:p`. */
+function cellTxBodyXml(paragraphs: SlideParagraph[]): string {
+  const body = paragraphs.length > 0 ? paragraphs.map(paragraphXml).join("") : `<a:p/>`;
+  return `<a:txBody><a:bodyPr/><a:lstStyle/>${body}</a:txBody>`;
+}
+
+/** The table's `a:tblPr`: preserved verbatim when present (AC-12), else the
+ * modelled look flags plus an optional table style id. */
+function tblPrXml(frame: TableFrame): string {
+  if (frame.pptxTblPr) {
+    return frame.pptxTblPr;
+  }
+  const firstRow = frame.firstRow ? ` firstRow="1"` : "";
+  const bandRow = frame.bandRow ? ` bandRow="1"` : "";
+  const styleId = frame.styleId ? `<a:tableStyleId>${escapeXmlText(frame.styleId)}</a:tableStyleId>` : "";
+  return styleId ? `<a:tblPr${firstRow}${bandRow}>${styleId}</a:tblPr>` : `<a:tblPr${firstRow}${bandRow}/>`;
+}
+
+/** The graphicFrame's `p:nvGraphicFramePr`: the preserved verbatim string with
+ * its `p:cNvPr` id re-pointed at the minted `id` (so an animation `p:spTgt`
+ * resolves — AC-11e), else the canonical scaffold. */
+function nvGraphicFramePrXml(frame: TableFrame, id: number): string {
+  if (frame.pptxGraphicFramePr) {
+    return frame.pptxGraphicFramePr.replace(/id="[^"]*"/, `id="${id}"`);
+  }
+  return (
+    `<p:nvGraphicFramePr><p:cNvPr id="${id}" name="Table ${id}"/>` +
+    `<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>`
+  );
+}
+
+/** The graphicFrame transform (`p:xfrm`, not `a:xfrm`). */
+function pXfrmXml(frame: TableFrame): string {
+  const rot = frame.rotationDeg ? ` rot="${Math.round(frame.rotationDeg * 60000)}"` : "";
+  return (
+    `<p:xfrm${rot}><a:off x="${cmToEmu(frame.xCm)}" y="${cmToEmu(frame.yCm)}"/>` +
+    `<a:ext cx="${cmToEmu(frame.widthCm)}" cy="${cmToEmu(frame.heightCm)}"/></p:xfrm>`
+  );
+}
+
+/** Serialises a `TableFrame` to its `p:graphicFrame` XML with the given
+ * `p:cNvPr` id — the test seam the golden spec pins (SPEC-091 AC-16). */
+export function serializeTableFrame(frame: TableFrame, id: number): string {
+  return tableFrameXml(frame, id);
+}
+
+function tableFrameXml(frame: TableFrame, id: number): string {
+  const grid = computeOwnerGrid(frame);
+  const gridCols = frame.columnWidthsCm.map((w) => `<a:gridCol w="${cmToEmu(w)}"/>`).join("");
+  const rows = frame.rows
+    .map((row, r) => {
+      const h = ` h="${cmToEmu(row.heightCm ?? 0.9)}"`;
+      const cells = row.cells
+        .map((cell, c) => {
+          const owner = grid[r][c];
+          if (owner.originRow !== r || owner.originCol !== c) {
+            const hMerge = c > owner.originCol ? ` hMerge="1"` : "";
+            const vMerge = r > owner.originRow ? ` vMerge="1"` : "";
+            return `<a:tc${hMerge}${vMerge}><a:txBody><a:bodyPr/><a:lstStyle/><a:p/></a:txBody><a:tcPr/></a:tc>`;
+          }
+          const gs = cell.colSpan && cell.colSpan > 1 ? ` gridSpan="${cell.colSpan}"` : "";
+          const rs = cell.rowSpan && cell.rowSpan > 1 ? ` rowSpan="${cell.rowSpan}"` : "";
+          return `<a:tc${gs}${rs}>${cellTxBodyXml(cell.paragraphs)}${tcPrXml(cell)}</a:tc>`;
+        })
+        .join("");
+      return `<a:tr${h}>${cells}</a:tr>`;
+    })
+    .join("");
+  const tbl = `<a:tbl>${tblPrXml(frame)}<a:tblGrid>${gridCols}</a:tblGrid>${rows}</a:tbl>`;
+  return (
+    `<p:graphicFrame>${nvGraphicFramePrXml(frame, id)}${pXfrmXml(frame)}` +
+    `<a:graphic><a:graphicData uri="${PPTX_TABLE_URI}">${tbl}</a:graphicData></a:graphic></p:graphicFrame>`
+  );
 }

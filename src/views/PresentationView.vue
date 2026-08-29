@@ -19,9 +19,7 @@ import DeckHeader from "../components/presentation/DeckHeader.vue";
 import DeckSetupDialog from "../components/presentation/DeckSetupDialog.vue";
 import HtmlExportOptionsDialog from "../components/presentation/HtmlExportOptionsDialog.vue";
 import LayoutGalleryDialog from "../components/presentation/LayoutGalleryDialog.vue";
-import NotesPanel from "../components/presentation/NotesPanel.vue";
-import TransitionsPanel from "../components/presentation/TransitionsPanel.vue";
-import AnimationsPanel from "../components/presentation/AnimationsPanel.vue";
+import SlidePanelStack from "../components/presentation/SlidePanelStack.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
@@ -34,6 +32,7 @@ import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
 import { useTransitions } from "./presentation/useTransitions";
 import { useAnimations } from "./presentation/useAnimations";
+import { useTables } from "./presentation/useTables";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useDeckActions } from "./presentation/useDeckActions";
@@ -212,6 +211,18 @@ const animations = useAnimations({
   selectFrame: stageEdit.selection.select,
 });
 
+// --- table editing (SPEC-091) ----------------------------------------------
+const tables = useTables({
+  model: presentation,
+  currentSlide,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+  selectedFrame: stageEdit.selection.selectedFrame,
+  selectFrame: stageEdit.selection.select,
+});
+watch(stageEdit.editing.activeCell, (c) => c && tables.setCurrentCell(c.row, c.col)); // panel anchor = editing cell
+
 // --- slide layouts + Reset slide (SPEC-089) --------------------------------
 const layouts = useSlideLayouts({
   model: presentation,
@@ -306,9 +317,11 @@ onBeforeUnmount(() => {
         :transition-open="transitions.open.value"
         :animate-open="animations.open.value"
         :layout-open="layouts.open.value"
+        :table-open="tables.open.value"
         @transition-toggle="transitions.toggle()"
         @animate-toggle="animations.toggle()"
         @layout-toggle="toggleLayout()"
+        @table-toggle="tables.toggle()"
         @bold="stageEdit.editing.toggleBold()"
         @italic="stageEdit.editing.toggleItalic()"
         @underline="stageEdit.editing.toggleUnderline()"
@@ -327,6 +340,7 @@ onBeforeUnmount(() => {
         @insert-text-box="stageEdit.insertion.armTextBox()"
         @insert-shape="stageEdit.insertion.armShape($event)"
         @insert-image="stageEdit.insertion.insertImageFile($event)"
+        @insert-table="(rows, cols) => stageEdit.insertion.insertTable(rows, cols)"
         @arrange="stageEdit.manipulation.arrange($event)"
         @ungroup="stageEdit.manipulation.ungroup()"
         @set-fill="stageEdit.setFill($event)"
@@ -357,21 +371,13 @@ onBeforeUnmount(() => {
             :transitions="transitions"
             @add="addSlideAction"
           />
-          <NotesPanel
-            v-if="notes.open.value && currentSlide"
-            :value="notes.notesText.value"
+          <SlidePanelStack
+            :notes="notes"
+            :transitions="transitions"
+            :animations="animations"
+            :tables="tables"
             :slide-number="currentIndex + 1"
-            @input="notes.onInput"
-          />
-          <TransitionsPanel
-            v-if="transitions.open.value && currentSlide"
-            :controller="transitions"
-            :slide-number="currentIndex + 1"
-          />
-          <AnimationsPanel
-            v-if="animations.open.value && currentSlide"
-            :controller="animations"
-            :slide-number="currentIndex + 1"
+            :has-slide="!!currentSlide"
           />
         </div>
       </div>

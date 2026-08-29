@@ -6,7 +6,7 @@
 // write-through on release. The pure geometry lives in stageMath.ts; this
 // composable owns the DOM listeners and the command wiring.
 import { ref, type ComputedRef, type Ref } from "vue";
-import type { PresentationModel, Slide, SlideFrame } from "../../lib/presentation/model";
+import { DEFAULT_TABLE_ROW_HEIGHT_CM, type PresentationModel, type Slide, type SlideFrame } from "../../lib/presentation/model";
 import {
   GUIDE_SNAP_CM,
   NUDGE_LARGE_STEP_CM,
@@ -16,6 +16,8 @@ import {
   moveFrame,
   reorderFrame,
   resizeFrame,
+  resizeTableColumnBoundary,
+  resizeTableRowBoundary,
   setFramePosition,
   ungroupFrame,
   type FrameRect,
@@ -53,6 +55,8 @@ export function frameNoun(frame: SlideFrame): string {
       return "group";
     case "foreign":
       return frame.label || "object";
+    case "table":
+      return "table";
     default:
       return "text box";
   }
@@ -69,6 +73,8 @@ export function frameAccessibleName(frame: SlideFrame): string {
       return frame.label || "Object";
     case "shape":
       return shapeDefinition(frame.geometry)?.label ?? "Shape";
+    case "table":
+      return "Table";
     default:
       return frame.role ? "Placeholder" : "Text box";
   }
@@ -184,6 +190,50 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
     window.addEventListener("pointerup", onUp);
   }
 
+  // --- table grid resize (boundary drag) ------------------------------------
+
+  // Dragging an internal column/row boundary of the selected table live-resizes
+  // it (AC-8a/b): one undo entry, refresh per move, commit on release — the same
+  // record/refresh/commit shape as the frame move/resize gestures. The origin
+  // (widths / row height) is snapshotted at pointer-down so each move recomputes
+  // from a stable base rather than accumulating rounding.
+  function onTableBorderPointerDown(frameId: string, axis: "col" | "row", index: number, event: PointerEvent): void {
+    if (deps.isEditing()) return;
+    const frame = frameById(frameId);
+    const model = deps.model.value;
+    const start = pointerCm(event);
+    if (!frame || frame.kind !== "table" || !model || !start) return;
+    deps.selection.select(frameId);
+
+    const originWidths = [...frame.columnWidthsCm];
+    const originRowHeight = frame.rows[index]?.heightCm ?? DEFAULT_TABLE_ROW_HEIGHT_CM;
+    let recorded = false;
+    dragging.value = true;
+
+    const onMove = (move: PointerEvent): void => {
+      const now = pointerCm(move);
+      if (!now) return;
+      if (!recorded) {
+        deps.record(axis === "col" ? "Resize column" : "Resize row");
+        recorded = true;
+      }
+      if (axis === "col") {
+        resizeTableColumnBoundary(model, deps.currentIndex.value, frameId, index, originWidths, now.xCm - start.xCm);
+      } else {
+        resizeTableRowBoundary(model, deps.currentIndex.value, frameId, index, originRowHeight, now.yCm - start.yCm);
+      }
+      deps.refresh();
+    };
+    const onUp = (): void => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      dragging.value = false;
+      if (recorded) deps.commit();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   // --- keyboard (nudge / delete / duplicate / arrange / ungroup) ------------
 
   function run(label: string, apply: (model: PresentationModel, index: number) => string | string[] | null): void {
@@ -281,6 +331,7 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
     dragging,
     onFramePointerDown,
     onHandlePointerDown,
+    onTableBorderPointerDown,
     onKeydown,
     remove,
     duplicate,

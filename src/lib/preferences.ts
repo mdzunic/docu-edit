@@ -86,6 +86,9 @@ export interface Preferences {
   /** Whether the presentation editor's animations panel is expanded
    * (SPEC-086). Per-device, default collapsed. */
   presentationAnimationsOpen: boolean;
+  /** Whether the presentation editor's table properties panel is expanded
+   * (SPEC-091). Per-device, default collapsed. */
+  presentationTableOpen: boolean;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -146,6 +149,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationNotesOpen: false,
   presentationTransitionsOpen: false,
   presentationAnimationsOpen: false,
+  presentationTableOpen: false,
 };
 
 // --- validators -------------------------------------------------------------
@@ -209,6 +213,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationNotesOpen: isBoolean,
   presentationTransitionsOpen: isBoolean,
   presentationAnimationsOpen: isBoolean,
+  presentationTableOpen: isBoolean,
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

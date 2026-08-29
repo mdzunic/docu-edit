@@ -28,6 +28,9 @@ const props = defineProps({
    * neither, so they stay read-only). */
   selectedFrameId: { type: String, default: null },
   editingFrameId: { type: String, default: null },
+  /** SPEC-091: the cell of the editing table currently in a session, so its
+   * `<td>` renders the in-cell contenteditable host. */
+  editingCell: { type: Object, default: null },
   /** SPEC-082 direct-manipulation surface state. */
   guides: { type: Object, default: () => ({ vertical: [], horizontal: [] }) },
   drawPreview: { type: Object, default: null },
@@ -45,6 +48,9 @@ const props = defineProps({
 const emit = defineEmits([
   "frame-select",
   "frame-start-edit",
+  "frame-start-edit-cell",
+  "frame-cell-select",
+  "table-border-pointerdown",
   "frame-pointerdown",
   "handle-pointerdown",
   "edit-mounted",
@@ -121,11 +127,15 @@ const previewStyle = computed(() => {
         :resolve-media="resolveMedia"
         :selected="frame.id === selectedFrameId"
         :editing="frame.id === editingFrameId"
+        :editing-cell="frame.id === editingFrameId ? editingCell : undefined"
         :armed="armed"
         :top-level="interactive"
         :play-style="frameStyles[frame.id] || null"
         @select="(id) => emit('frame-select', id)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
+        @start-edit-cell="(id, row, col, point) => emit('frame-start-edit-cell', id, row, col, point)"
+        @cell-select="(id, row, col) => emit('frame-cell-select', id, row, col)"
+        @table-border-pointerdown="(id, axis, index, event) => emit('table-border-pointerdown', id, axis, index, event)"
         @frame-pointerdown="(id, event) => emit('frame-pointerdown', id, event)"
         @edit-mounted="(el) => emit('edit-mounted', el)"
         @edit-unmounted="() => emit('edit-unmounted')"

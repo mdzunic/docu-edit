@@ -25,6 +25,7 @@ import {
   type SlideFrame,
   type SlideParagraph,
   type SlideRun,
+  type TableFrame,
   type TextFrame,
 } from "./model";
 import {
@@ -208,6 +209,38 @@ function renderForeignFrame(frame: Extract<SlideFrame, { kind: "foreign" }>, fid
   return `<div class="frame foreign" data-fid="${fid}" style="${esc(style.join(";"))}"><span class="foreign-label">${esc(frame.label)}</span></div>`;
 }
 
+function renderTableFrame(frame: TableFrame, fid: string): string {
+  const style = positionStyle(frame);
+  const cols = frame.columnWidthsCm
+    .map((cm) => `<col style="width:${px(cm)}">`)
+    .join("");
+  const rows = frame.rows
+    .map((row) => {
+      const cells = row.cells
+        .map((cell) => {
+          if (cell.covered) return "";
+          const spanAttrs = [
+            cell.colSpan && cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : "",
+            cell.rowSpan && cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : "",
+          ].join("");
+          const cellStyle: string[] = [];
+          const fill = cell.fill && cell.fill.type === "solid" ? validColor(cell.fill.color) : undefined;
+          if (fill) cellStyle.push(`background:${fill}`);
+          cellStyle.push(`vertical-align:${cell.verticalAlign ?? "top"}`);
+          const body = markedParagraphs(cell.paragraphs).map((e) => renderParagraph(e, false)).join("");
+          return `<td${spanAttrs} style="${esc(cellStyle.join(";"))}">${body}</td>`;
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("");
+  return (
+    `<div class="frame table" data-fid="${fid}" style="${esc(style.join(";"))}">` +
+    `<table class="slide-table" style="border-collapse:collapse;width:100%;height:100%">` +
+    `<colgroup>${cols}</colgroup><tbody>${rows}</tbody></table></div>`
+  );
+}
+
 function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
   const fid = nextFid(ctx, frame);
   switch (frame.kind) {
@@ -221,6 +254,8 @@ function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
       return renderGroupFrame(frame, fid, ctx);
     case "foreign":
       return renderForeignFrame(frame, fid);
+    case "table":
+      return renderTableFrame(frame, fid);
   }
 }
 

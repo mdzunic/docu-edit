@@ -14,17 +14,21 @@
 //
 // Framework-free; imports only presentation siblings and src/lib/core.
 import { GEOMETRY_TO_DRAW_TYPE } from "../../core/drawingMl";
+import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { escapeXmlAttribute, escapeXmlText } from "../../core/xml";
-import type {
-  FrameStroke,
-  ImageFrame,
-  PlaceholderRole,
-  ShapeFrame,
-  Slide,
-  SlideFill,
-  SlideParagraph,
-  SlideRun,
-  TextFrame,
+import {
+  DEFAULT_TABLE_CELL_PADDING_CM,
+  type FrameStroke,
+  type ImageFrame,
+  type PlaceholderRole,
+  type ShapeFrame,
+  type Slide,
+  type SlideFill,
+  type SlideParagraph,
+  type SlideRun,
+  type SlideTableCell,
+  type TableFrame,
+  type TextFrame,
 } from "../model";
 import { odpTransitionProps } from "../transitions";
 import { writeOdpAnim } from "./anim";
@@ -52,14 +56,19 @@ export class StyleRegistry {
   private readonly textStyles: string[] = [];
   private readonly graphicStyles: string[] = [];
   private readonly drawingPageStyles: string[] = [];
+  private readonly tableStyles: string[] = [];
   private readonly paraCache = new Map<string, string>();
   private readonly textCache = new Map<string, string>();
   private readonly graphicCache = new Map<string, string>();
   private readonly drawingPageCache = new Map<string, string>();
+  private readonly tableCache = new Map<string, string>();
   private pCount = 0;
   private tCount = 0;
   private gCount = 0;
   private dpCount = 0;
+  private colCount = 0;
+  private rowCount = 0;
+  private ceCount = 0;
 
   /** Advances every counter past any `de-`-prefixed names already present in
    * `source`, so a (pathological) source using the reserved prefix cannot
@@ -159,17 +168,75 @@ export class StyleRegistry {
     return name;
   }
 
+  /** A `table-column` automatic style carrying a column width (SPEC-091). */
+  columnStyle(widthCm: number): string {
+    return this.tableFamilyStyle("table-column", `<style:table-column-properties style:column-width="${widthCm}cm"/>`, () => `de-C${++this.colCount}`);
+  }
+
+  /** A `table-row` automatic style carrying a (minimum) row height. */
+  rowStyle(heightCm: number): string {
+    return this.tableFamilyStyle(
+      "table-row",
+      `<style:table-row-properties style:row-height="${heightCm}cm" style:min-row-height="${heightCm}cm"/>`,
+      () => `de-R${++this.rowCount}`,
+    );
+  }
+
+  /** A `table-cell` automatic style carrying the cell's fill / padding / valign
+   * / borders, or undefined when the cell has no modelled non-default look. */
+  tableCellStyle(cell: SlideTableCell): string | undefined {
+    const props: string[] = [];
+    if (cell.fill?.type === "solid") props.push(`fo:background-color="${escapeXmlAttribute(cell.fill.color)}"`);
+    else if (cell.fill?.type === "none") props.push(`fo:background-color="transparent"`);
+    if (cell.paddingCm !== undefined && cell.paddingCm !== DEFAULT_TABLE_CELL_PADDING_CM) {
+      props.push(`fo:padding="${cell.paddingCm}cm"`);
+    }
+    if (cell.verticalAlign === "center") props.push(`style:vertical-align="middle"`);
+    else if (cell.verticalAlign === "bottom") props.push(`style:vertical-align="bottom"`);
+    if (cell.borders) {
+      for (const [edge, side] of [
+        ["top", cell.borders.top],
+        ["bottom", cell.borders.bottom],
+        ["left", cell.borders.left],
+        ["right", cell.borders.right],
+      ] as const) {
+        if (side) props.push(`fo:border-${edge}="${foBorderValue(side)}"`);
+      }
+    }
+    if (props.length === 0) return undefined;
+    return this.tableFamilyStyle("table-cell", `<style:table-cell-properties ${props.join(" ")}/>`, () => `de-CE${++this.ceCount}`);
+  }
+
+  private tableFamilyStyle(family: string, propsXml: string, mint: () => string): string {
+    const key = `${family}::${propsXml}`;
+    const cached = this.tableCache.get(key);
+    if (cached) return cached;
+    const name = mint();
+    this.tableCache.set(key, name);
+    this.tableStyles.push(`<style:style style:name="${name}" style:family="${family}">${propsXml}</style:style>`);
+    return name;
+  }
+
   hasStyles(): boolean {
     return (
-      this.paraStyles.length + this.textStyles.length + this.graphicStyles.length + this.drawingPageStyles.length > 0
+      this.paraStyles.length + this.textStyles.length + this.graphicStyles.length + this.drawingPageStyles.length + this.tableStyles.length > 0
     );
   }
 
   /** The generated `<style:style>` elements, to splice before
    * `</office:automatic-styles>`. */
   xml(): string {
-    return [...this.paraStyles, ...this.textStyles, ...this.graphicStyles, ...this.drawingPageStyles].join("");
+    return [...this.paraStyles, ...this.textStyles, ...this.graphicStyles, ...this.drawingPageStyles, ...this.tableStyles].join("");
   }
+}
+
+/** A `BorderSide` → an `fo:border-*` value ("0.5pt solid #000000"). */
+function foBorderValue(side: BorderSide): string {
+  if (side.style === "none") {
+    return "none";
+  }
+  const line = side.style === "single" ? "solid" : side.style;
+  return `${side.widthPt}pt ${line} ${side.color}`;
 }
 
 const DRAW_NS_ATTR = ` draw:name`;
@@ -229,7 +296,7 @@ export function serializePage(
   if (slide.animations !== undefined) {
     let n = 1;
     for (const frame of slide.frames) {
-      if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image") {
+      if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image" || frame.kind === "table") {
         wireIdFor.set(frame.id, `de-f${n++}`);
       }
     }
@@ -343,12 +410,81 @@ function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireI
       return shapeFrameXml(frame, registry, wireId);
     case "image":
       return imageFrameXml(frame, registry, wireId);
+    case "table":
+      return tableFrameXml(frame, registry, wireId);
     case "group":
     case "foreign":
       return frame.xml; // verbatim (AC-39)
     default:
       return "";
   }
+}
+
+// --- table frame (SPEC-091) -------------------------------------------------
+
+/** How many leading rows form the table's header band: the contiguous leading
+ * `isHeader` rows, plus row 0 when the frame carries the `firstRow` look. */
+function headerRowCount(frame: TableFrame): number {
+  let n = 0;
+  while (n < frame.rows.length && (frame.rows[n].isHeader === true || (frame.firstRow === true && n === 0))) {
+    n++;
+  }
+  return n;
+}
+
+function tableCellXml(cell: SlideTableCell, registry: StyleRegistry): string {
+  if (cell.covered) {
+    return `<table:covered-table-cell/>`;
+  }
+  const styleName = cell.odpCellStyleName ?? registry.tableCellStyle(cell);
+  const styleAttr = styleName ? ` table:style-name="${escapeXmlAttribute(styleName)}"` : "";
+  const colSpan = cell.colSpan && cell.colSpan > 1 ? ` table:number-columns-spanned="${cell.colSpan}"` : "";
+  const rowSpan = cell.rowSpan && cell.rowSpan > 1 ? ` table:number-rows-spanned="${cell.rowSpan}"` : "";
+  const body = cell.paragraphs.map((para) => paragraphXml(para, registry)).join("");
+  return `<table:table-cell${styleAttr}${colSpan}${rowSpan}>${body}</table:table-cell>`;
+}
+
+function tableFrameXml(frame: TableFrame, registry: StyleRegistry, wireId?: string): string {
+  // Normalise covered slots against the owner grid so a stale `covered` flag
+  // never emits a spurious covered cell.
+  const grid = computeOwnerGrid(frame);
+  const columns = frame.columnWidthsCm
+    .map((w, c) => {
+      const styleName = frame.odpColumnStyleNames?.[c] ?? registry.columnStyle(w);
+      return `<table:table-column table:style-name="${escapeXmlAttribute(styleName)}"/>`;
+    })
+    .join("");
+  const rowXml = frame.rows.map((row, r) => {
+    const cells = row.cells
+      .map((cell, c) => {
+        const owner = grid[r][c];
+        const covered = owner.originRow !== r || owner.originCol !== c;
+        return tableCellXml(covered ? { paragraphs: [], covered: true } : cell, registry);
+      })
+      .join("");
+    const styleName = row.odpRowStyleName ?? (row.heightCm !== undefined ? registry.rowStyle(row.heightCm) : undefined);
+    const styleAttr = styleName ? ` table:style-name="${escapeXmlAttribute(styleName)}"` : "";
+    return `<table:table-row${styleAttr}>${cells}</table:table-row>`;
+  });
+  const headerCount = headerRowCount(frame);
+  let body: string;
+  if (headerCount > 0) {
+    body = `<table:table-header-rows>${rowXml.slice(0, headerCount).join("")}</table:table-header-rows>${rowXml.slice(headerCount).join("")}`;
+  } else {
+    body = rowXml.join("");
+  }
+  const tableStyleAttr = frame.odpTableStyleName ? ` table:style-name="${escapeXmlAttribute(frame.odpTableStyleName)}"` : "";
+  const table = `<table:table${tableStyleAttr}>${columns}${body}</table:table>`;
+  return `<draw:frame${idAttrs(wireId)}${geomAttrs(frame)}>${table}</draw:frame>`;
+}
+
+/** Serialises a `TableFrame` to its `draw:frame` markup plus the generated
+ * automatic styles it references — the test seam the golden spec pins
+ * (SPEC-091 AC-16, both directions). */
+export function serializeOdpTableFrame(frame: TableFrame): { frame: string; autoStyles: string } {
+  const registry = new StyleRegistry();
+  const xml = tableFrameXml(frame, registry, undefined);
+  return { frame: xml, autoStyles: registry.xml() };
 }
 
 function geomAttrs(frame: Slide["frames"][number]): string {
