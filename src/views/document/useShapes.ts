@@ -108,6 +108,7 @@ import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
 import { LINE_GEOMETRIES, asShapeGeometry, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
+import { useDrawingGuides } from "./useDrawingGuides";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
 import type { EditorContext } from "./context";
@@ -172,6 +173,13 @@ export function useShapes(deps: ShapesDeps) {
     contentPxToClient,
     onDrawingGeometryChanged,
   } = deps;
+
+  // Alignment guides + snapping while a drawing is dragged or created (SPEC-072).
+  const {
+    snapGuides,
+    applySnap: applyDrawingSnap,
+    clearGuides: clearDrawingGuides,
+  } = useDrawingGuides({ pageRef, contentRoot, clientToContentPx, zoom });
 
   const shapeSelection = ref<ShapeLocation | null>(null);
   /** Shift-click multi-selection (AC-34): empty for an ordinary single
@@ -1301,6 +1309,8 @@ export function useShapes(deps: ShapesDeps) {
     startOffsetXCm: number;
     startOffsetYCm: number;
     startTopCm: number;
+    startLeftCm: number;
+    widthCm: number;
     heightCm: number;
     groupOrdinal: number | undefined;
     el: HTMLElement;
@@ -1348,6 +1358,8 @@ export function useShapes(deps: ShapesDeps) {
       startOffsetXCm: shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm,
       startOffsetYCm: shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm,
       startTopCm: startTop.y * CM_PER_PX,
+      startLeftCm: startTop.x * CM_PER_PX,
+      widthCm: shape.widthCm,
       heightCm: shape.heightCm,
       groupOrdinal: shape.groupOrdinal,
       el,
@@ -1381,6 +1393,19 @@ export function useShapes(deps: ShapesDeps) {
     const dyContent = now.y - start.y;
     drag.dxCm = dxContent * CM_PER_PX;
     drag.dyCm = dyContent * CM_PER_PX;
+    // Snapping + alignment guides (SPEC-072). Only single shapes snap; a group
+    // move previews on release (below), and Alt suppresses snapping (AC-25).
+    // The snap adjusts the delta by however far the drawing was pulled onto a
+    // candidate, so the offset preview and the commit both use it.
+    if (drag.groupOrdinal === undefined) {
+      const snapped = applyDrawingSnap(
+        { xCm: drag.startLeftCm + drag.dxCm, yCm: drag.startTopCm + drag.dyCm, wCm: drag.widthCm, hCm: drag.heightCm },
+        drag.el,
+        event.altKey,
+      );
+      drag.dxCm += snapped.xCm - (drag.startLeftCm + drag.dxCm);
+      drag.dyCm += snapped.yCm - (drag.startTopCm + drag.dyCm);
+    }
     // A grouped member previews only on release (finishShapeMove's
     // moveGroup moves every member at once) — live-previewing just the
     // dragged element here would show the rest of the group left behind.
@@ -1409,6 +1434,8 @@ export function useShapes(deps: ShapesDeps) {
   function finishShapeMove() {
     window.removeEventListener("mousemove", handleShapeMoveMove);
     window.removeEventListener("mouseup", finishShapeMove);
+    // Guides are transient — they vanish on release (AC-56).
+    clearDrawingGuides();
     const drag = moveDrag;
     moveDrag = null;
     movingShape.value = false;
@@ -2323,6 +2350,7 @@ export function useShapes(deps: ShapesDeps) {
     shapeAnchorMarker,
     drawGeometry,
     drawPreview,
+    snapGuides,
     movingShape,
     editingShapeText,
     shapeTextRemountEpoch,

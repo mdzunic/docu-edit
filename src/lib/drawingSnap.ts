@@ -28,6 +28,12 @@ export interface SnapGuide {
   endCm: number;
 }
 
+/** Typed pass-through for the guides array a `.vue` template holds untyped
+ * (same espree idiom as connectors' asConnectorRenders). */
+export function asSnapGuides(value: unknown[]): SnapGuide[] {
+  return value as SnapGuide[];
+}
+
 export interface SnapResult {
   /** The snapped top-left, equal to the input when nothing matched. */
   xCm: number;

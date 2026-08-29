@@ -35,6 +35,7 @@ import PointEditOverlay from "../components/PointEditOverlay.vue";
 import ConnectorOverlay from "../components/ConnectorOverlay.vue";
 import ConnectorToolbar from "../components/ConnectorToolbar.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
+import DrawingGuidesOverlay from "../components/DrawingGuidesOverlay.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -757,6 +758,7 @@ const {
   shapeAnchorMarker,
   drawGeometry,
   drawPreview,
+  snapGuides,
   movingShape,
   editingShapeText,
   shapeTextRemountEpoch,
@@ -3549,6 +3551,7 @@ function handleMenuCommand(id = "") {
               @adjust-start="startShapeAdjust"
               @adjust-keydown="handleAdjustmentKeydown"
             />
+            <DrawingGuidesOverlay v-if="snapGuides.length" :guides="snapGuides" />
             <div
               v-if="shapeAnchorMarker"
               class="shape-anchor-marker print-exclude"
