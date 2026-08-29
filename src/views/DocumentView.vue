@@ -2290,7 +2290,7 @@ const {
   closePrintPreview,
   confirmPrint,
   realizeAllPages,
-} = usePrintPreview({ ...editorContext, pagination });
+} = usePrintPreview({ ...editorContext, pagination, remeasureConnectors: () => remeasureConnectorsFn() });
 
 // PDF export (SPEC-034): reads the realized canvas into a client-built PDF.
 const { pdfExporting, pdfProgress, exportPdf } = usePdfExport({
@@ -3624,6 +3624,7 @@ function handleMenuCommand(id = "") {
                 :footnote-area="pageView.footnoteArea ?? undefined"
                 :endnote-area="pageView.endnoteArea ?? undefined"
                 :print-hidden="printHiddenPages.has(pageIndex)"
+                :connectors="connectors.connectorsForPage(pageIndex)"
                 @image-select="handleImageSelect"
                 @shape-select="handleShapeSelect"
                 @shape-edit-text="handleShapeEditText"

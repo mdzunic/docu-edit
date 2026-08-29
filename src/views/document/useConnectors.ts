@@ -9,7 +9,7 @@
 // `.doc-shape-anchor-floating` span that is the block's `[data-section]
 // [data-block]` element) so a connector routes to the actually-painted box —
 // the same pattern useShapes uses for its own handles.
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, shallowRef, type Ref } from "vue";
 import type { EditorContext } from "./context";
 import {
   asConnectorKind,
@@ -30,9 +30,17 @@ import {
   routeConnector,
   routedPathToSvg,
   segmentPolygonCrossing,
+  translateRoutedPath,
   type ConnectorBox,
   type ConnectorEndpoint,
+  type RoutedPath,
 } from "../../lib/core/connectors";
+import {
+  buildConnectorPaint,
+  connectorPaintBounds,
+  type ConnectorPaint,
+  type ConnectorPaintOptions,
+} from "../../lib/core/connectorPaint";
 import type { Point } from "../../lib/core/shapeGeometry";
 import {
   connectorAt,
@@ -56,6 +64,9 @@ import type { ConnectorRender, SiteHint } from "../../lib/connectorOverlay";
 export type { ConnectorRender, SiteHint } from "../../lib/connectorOverlay";
 
 const PX_PER_CM = 96 / 2.54;
+
+/** The one empty paint array every connector-free page is handed. */
+const NO_CONNECTOR_PAINT: ConnectorPaint[] = [];
 
 /** A free connector endpoint's page-relative px point. The model stores
  * `start`/`end` relative to the connector's OFFSET origin (offsetXCm/
@@ -82,10 +93,38 @@ export function useConnectors(deps: ConnectorsDeps) {
   const hoverSites = ref<SiteHint | null>(null);
   const selected = ref<ConnectorLocation | null>(null);
   const renders = ref<ConnectorRender[]>([]);
+  // The painted connectors, split per realized page and expressed in that
+  // page's own px (ConnectorPaintLayer renders them inside the page box, so
+  // they reach the print preview, the sheet and the PDF). A shallowRef
+  // guarded by a signature: remeasuring on every scroll tick must not
+  // re-render the page list when nothing actually moved.
+  const pageLayers = shallowRef<ConnectorPaint[][]>([]);
+  let pageLayerSignature = "";
 
   let endpointDrag: { location: ConnectorLocation; which: "start" | "end" } | null = null;
 
   // --- DOM measurement (page-relative px) -----------------------------------
+
+  /** The scale the page stack is ACTUALLY rendered at — the measured box over
+   * the layout box.
+   *
+   * Not `zoom.value`: that is the *requested* zoom, and the two disagree
+   * exactly when a mode neutralises the `.pages` transform without changing
+   * the zoom value, which is what the PDF export and printing do
+   * (`is-exporting-pdf`, App.vue). Dividing untransformed rects by a 0.75
+   * zoom scaled every exported connector by 1/0.75 and slid it off the
+   * shapes it joins. Measuring both boxes is true in either state. */
+  function renderScale(): number {
+    // `pageRef` is typed Element (see context.ts); clientWidth is on Element
+    // and, unlike getBoundingClientRect, is the untransformed layout width.
+    const pageEl = pageRef.value;
+    const layoutWidth = pageEl?.clientWidth ?? 0;
+    if (!pageEl || layoutWidth <= 0) {
+      return zoom.value || 1;
+    }
+    const scale = pageEl.getBoundingClientRect().width / layoutWidth;
+    return scale > 0 ? scale : zoom.value || 1;
+  }
 
   function pagePointFromClient(clientX: number, clientY: number): Point | null {
     const pageEl = pageRef.value;
@@ -93,7 +132,7 @@ export function useConnectors(deps: ConnectorsDeps) {
       return null;
     }
     const rect = pageEl.getBoundingClientRect();
-    const z = zoom.value || 1;
+    const z = renderScale();
     return { x: (clientX - rect.left) / z, y: (clientY - rect.top) / z };
   }
 
@@ -115,7 +154,7 @@ export function useConnectors(deps: ConnectorsDeps) {
     if (!el) {
       return null;
     }
-    const geo = measureImageGeometry(pageEl, el, zoom.value);
+    const geo = measureImageGeometry(pageEl, el, renderScale());
     if (!geo) {
       return null;
     }
@@ -153,7 +192,7 @@ export function useConnectors(deps: ConnectorsDeps) {
     }
     const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    const z = zoom.value || 1;
+    const z = renderScale();
     return { x: (rect.left - pageRect.left) / z, y: (rect.top - pageRect.top) / z };
   }
 
@@ -202,15 +241,42 @@ export function useConnectors(deps: ConnectorsDeps) {
     return { point: sites[site].point, normal: sites[site].normal };
   }
 
+  /** Every realized `.page`'s box, in the same unscaled page-stack px the
+   * connector geometry is measured in — the frame ConnectorPaintLayer's
+   * page-local coordinates are derived from. */
+  function measurePageBoxes(): Array<{ left: number; top: number; right: number; bottom: number }> {
+    const pageEl = pageRef.value;
+    if (!pageEl) {
+      return [];
+    }
+    const pageRect = pageEl.getBoundingClientRect();
+    const z = renderScale();
+    return Array.from(pageEl.querySelectorAll(".page")).map((el) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        left: (rect.left - pageRect.left) / z,
+        top: (rect.top - pageRect.top) / z,
+        right: (rect.right - pageRect.left) / z,
+        bottom: (rect.bottom - pageRect.top) / z,
+      };
+    });
+  }
+
   /** Re-measures every connector and rebuilds the overlay geometry. Cheap
    * enough to run on every mousemove of a shape drag (AC-7/8/9). */
   function remeasureConnectors() {
     const model = doc.value;
     if (!model) {
       renders.value = [];
+      publishPageLayers([]);
       return;
     }
     const next: ConnectorRender[] = [];
+    // What each connector paints, collected here and split across pages only
+    // once we know there IS one: measurePageBoxes() reads a rect off every
+    // realized page, and remeasuring runs on every scroll tick — a 200-page
+    // document with no connectors must not pay 200 forced layouts for it.
+    const painted: Array<{ key: string; path: RoutedPath; options: ConnectorPaintOptions }> = [];
     model.sections.forEach((section, sectionIndex) => {
       section.blocks.forEach((block, blockIndex) => {
         if (!isConnector(block)) {
@@ -235,9 +301,16 @@ export function useConnectors(deps: ConnectorsDeps) {
         }
         const path = routeConnector(block.kind, a2, b, block.adjustments?.[0] ?? 0.5);
         const mid = midpointOf(path.points, block.kind);
+        const key = `${sectionIndex}:${blockIndex}`;
+        const paintOptions: ConnectorPaintOptions = {
+          outline: block.outline,
+          startArrow: block.startArrow,
+          endArrow: block.endArrow ?? "triangle",
+        };
+        painted.push({ key, path, options: paintOptions });
         next.push({
           location,
-          key: `${sectionIndex}:${blockIndex}`,
+          key,
           kind: block.kind,
           d: routedPathToSvg(path),
           selected: !!selected.value && selected.value.section === sectionIndex && selected.value.block === blockIndex,
@@ -251,6 +324,48 @@ export function useConnectors(deps: ConnectorsDeps) {
       });
     });
     renders.value = next;
+    publishPageLayers(painted.length > 0 ? splitAcrossPages(painted) : []);
+  }
+
+  /** Paints each connector onto every page it overlaps, in that page's own
+   * frame: a connector whose shapes straddle a page break then shows its own
+   * portion on each sheet rather than being clipped away on one of them. */
+  function splitAcrossPages(
+    painted: Array<{ key: string; path: RoutedPath; options: ConnectorPaintOptions }>,
+  ): ConnectorPaint[][] {
+    const pageBoxes = measurePageBoxes();
+    const layers: ConnectorPaint[][] = pageBoxes.map(() => []);
+    for (const { key, path, options } of painted) {
+      const bounds = connectorPaintBounds(path, options);
+      pageBoxes.forEach((box, pageIndex) => {
+        if (bounds.right < box.left || bounds.left > box.right || bounds.bottom < box.top || bounds.top > box.bottom) {
+          return;
+        }
+        layers[pageIndex].push(
+          buildConnectorPaint(key, translateRoutedPath(path, -box.left, -box.top), options),
+        );
+      });
+    }
+    return layers;
+  }
+
+  /** Publishes the per-page paint data only when it actually changed. The
+   * measurers run on every scroll tick, and page-local geometry is
+   * scroll-invariant — without this guard each tick would hand DocPage a
+   * fresh array and re-render the whole page list. */
+  function publishPageLayers(layers: ConnectorPaint[][]) {
+    const signature = layers
+      .map((page) =>
+        page
+          .map((paint) => `${paint.key}|${paint.d}|${paint.color}|${paint.widthPx}|${paint.dash}|${paint.heads.map((head) => head.d).join("~")}`)
+          .join(";"),
+      )
+      .join("/");
+    if (signature === pageLayerSignature) {
+      return;
+    }
+    pageLayerSignature = signature;
+    pageLayers.value = layers;
   }
 
   function midpointOf(points: Point[], kind: ConnectorKind): Point {
@@ -423,7 +538,7 @@ export function useConnectors(deps: ConnectorsDeps) {
     }
     const pageRect = pageEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    const z = zoom.value || 1;
+    const z = renderScale();
     return { x: (rect.left - pageRect.left) / z, y: (rect.top - pageRect.top) / z };
   }
 
@@ -654,6 +769,15 @@ export function useConnectors(deps: ConnectorsDeps) {
     return { left: `${midX}px`, top: `${Math.max(0, topY - 46)}px` };
   });
 
+  /** This page's painted connectors — always the SAME empty array when it has
+   * none, so a page without connectors never sees its prop change identity
+   * and never re-renders because a connector moved on another page (or
+   * because the page count changed). */
+  function connectorsForPage(pageIndex: number): ConnectorPaint[] {
+    const layer = pageLayers.value[pageIndex];
+    return layer && layer.length > 0 ? layer : NO_CONNECTOR_PAINT;
+  }
+
   function removeSelectedConnector() {
     const location = selected.value;
     if (!location) {
@@ -678,6 +802,8 @@ export function useConnectors(deps: ConnectorsDeps) {
     handleConnectorMouseMove,
     // overlay geometry
     connectorRenders: renders as Ref<ConnectorRender[]>,
+    /** One page's painted connectors, for DocPage (SPEC-034). */
+    connectorsForPage,
     hoverSites,
     drawFrom,
     drawPointer,

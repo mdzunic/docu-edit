@@ -204,34 +204,46 @@ body.is-print-preview .doc-field-shaded {
 
 /* SPEC-063 Web layout: the same paginated model rendered as one continuous
    column — page frames, gaps, headers, footers and page numbers hidden
-   (AC-38, AC-39). The model and section properties are untouched (AC-42). */
-.is-web-layout .page {
-  /* !important throughout: DocPage.vue's scoped `.page` rule ties on
-     specificity (0,2,0) and, being later in source order, would otherwise win —
-     leaving the drop shadow and 12 px page gap visible in Web layout (AC-39). */
-  box-shadow: none !important;
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
-  /* AC-40: the column is the first section's content width, not the full page
-     width; --web-content-width is set on the editor root (DocumentView).
-     !important overrides the per-page inline `width: <pageWidth>cm`. */
-  width: var(--web-content-width, auto) !important;
-}
+   (AC-38, AC-39). The model and section properties are untouched (AC-42).
 
-/* The page margins are inline padding on .page-content; drop the horizontal
-   pair in Web layout so the text fills the content-width column exactly (the
-   vertical padding stays as the inter-page rhythm). */
-.is-web-layout .page-content {
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
+   Every override below is SCREEN-ONLY and additionally suppressed while the
+   print preview is open or the PDF export is reading the DOM. AC-52 says
+   export and print always see 100% Print layout whatever the view mode, and
+   `width`/`padding` cannot be handed back by `revert` — an `!important`
+   author rule beats DocPage's inline `width: <pageWidth>cm`, and reverting
+   drops the inline value too. Not applying the rules at all is what restores
+   the real sheet. Without this the exporter mapped a content-width page box
+   onto an A4 media box: every font size grew by the ratio (12pt printed as
+   15.8pt) and the margins vanished. */
+@media screen {
+  body:not(.is-print-preview):not(.is-exporting-pdf) .is-web-layout .page {
+    /* !important throughout: DocPage.vue's scoped `.page` rule ties on
+       specificity (0,2,0) and, being later in source order, would otherwise win —
+       leaving the drop shadow and 12 px page gap visible in Web layout (AC-39). */
+    box-shadow: none !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    /* AC-40: the column is the first section's content width, not the full page
+       width; --web-content-width is set on the editor root (DocumentView).
+       !important overrides the per-page inline `width: <pageWidth>cm`. */
+    width: var(--web-content-width, auto) !important;
+  }
 
-.is-web-layout .page-header-band,
-.is-web-layout .page-footer-band {
-  /* !important for the same specificity tie as `.page` above: DocPage.vue's
-     scoped band rule sets `display: flex` and would otherwise win on source
-     order, leaving the header/footer bands visible in Web layout (AC-39). */
-  display: none !important;
+  /* The page margins are inline padding on .page-content; drop the horizontal
+     pair in Web layout so the text fills the content-width column exactly (the
+     vertical padding stays as the inter-page rhythm). */
+  body:not(.is-print-preview):not(.is-exporting-pdf) .is-web-layout .page-content {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  body:not(.is-print-preview):not(.is-exporting-pdf) .is-web-layout .page-header-band,
+  body:not(.is-print-preview):not(.is-exporting-pdf) .is-web-layout .page-footer-band {
+    /* !important for the same specificity tie as `.page` above: DocPage.vue's
+       scoped band rule sets `display: flex` and would otherwise win on source
+       order, leaving the header/footer bands visible in Web layout (AC-39). */
+    display: none !important;
+  }
 }
 
 /* SPEC-063 AC-36: when the zoom leaves room, the paginated pages tile side by

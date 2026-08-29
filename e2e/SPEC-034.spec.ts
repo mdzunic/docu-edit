@@ -498,6 +498,52 @@ test("an empty document previews as no pages and exports a zero-page PDF with em
   expect(pdf).toContain("/Title ()");
 });
 
+// SPEC-070: connectors are the only drawing the page paints as SVG. They used
+// to live in a `print-exclude` overlay outside the `.page` boxes, so the
+// exporter — which reads one realized page at a time — never saw them and the
+// exported diagram lost every arrow. They now export as real vector paths.
+test("a connector between two shapes exports as a vector path with its arrowhead", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click({ position: { x: 20, y: 20 } });
+  await page.keyboard.type("Diagram");
+
+  const insertShape = async (x: number, y: number) => {
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-rect").click();
+    await content(page).click({ position: { x, y } });
+  };
+  await insertShape(320, 260);
+  await insertShape(520, 260);
+  const drawings = content(page).locator('[data-testid^="drawing-"]');
+  await expect(drawings).toHaveCount(2);
+
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("connector-gallery-straight").click();
+  for (const index of [0, 1]) {
+    const box = (await drawings.nth(index).boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  }
+  await expect(page.locator('path[data-testid^="connector-"]')).toHaveCount(1);
+  await waitForPagination(page);
+
+  const pdf = await downloadPdfText(page);
+  // The line is stroked geometry — not a rasterized bitmap, and not missing.
+  const stroke = /q ([\d.]+) ([\d.]+) ([\d.]+) RG ([\d.]+) w \[[^\]]*\] 0 d \d J \d j ([\d.]+) ([\d.]+) m\n([\d.]+) ([\d.]+) l\nS Q/.exec(pdf);
+  expect(stroke).not.toBeNull();
+  // Drawn in the connector's own default blue (#2e5395), not black.
+  expect(Number(stroke![3])).toBeGreaterThan(Number(stroke![1]));
+  // …and it spans the gap between the two shapes rather than collapsing.
+  expect(Math.abs(Number(stroke![7]) - Number(stroke![5]))).toBeGreaterThan(30);
+  // The arrowhead is a filled path, not a stroked one.
+  expect(pdf).toMatch(/q [\d.]+ [\d.]+ [\d.]+ rg [\d.]+ [\d.]+ m\n[\s\S]*?h\nf Q/);
+  // The shapes still export as image XObjects and the text as text.
+  expect(pdf).toContain("/Type /XObject /Subtype /Image");
+  expect(pdf).toContain(" Tj ET");
+});
+
 test("a failed export shows \"Couldn't create the PDF\" with a reason and leaves the document untouched (AC-24, AC-25, AC-26)", async ({
   page,
 }) => {

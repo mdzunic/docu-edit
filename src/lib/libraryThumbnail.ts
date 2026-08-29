@@ -9,12 +9,31 @@
 // genuine preview of the first page's content, cheap enough to schedule
 // through the idle scheduler.
 //
+// Lines are flow-ordered, but the drawings the page positions by their own
+// offsets are NOT: a run of them (with the connectors between them) becomes
+// one `ThumbnailDiagram` laid out at its real relative geometry, so a
+// flowchart previews as a flowchart rather than as a column of loose boxes.
+// Where that run sits *down the page* still follows block order — resolving
+// a paragraph-relative anchor needs the layout this module deliberately does
+// not run.
+//
 // This module is the pure, framework-free part: it builds and caches thumbnail
 // data. The IntersectionObserver gating and idle scheduling live in the
 // LibraryThumbnail component, so only visible cards ever call in here.
-import type { Block, Chart, DocumentModel, Image, Shape, Table, TableCell } from "./documentModel";
+import type {
+  Block,
+  Chart,
+  Connector,
+  DocumentModel,
+  Image,
+  Section,
+  Shape,
+  Table,
+  TableCell,
+} from "./documentModel";
 import {
   isChart,
+  isConnector,
   isImage,
   isShape,
   isTable,
@@ -22,8 +41,16 @@ import {
   sectionPageSize,
 } from "./documentModel";
 import type { ShapeVisual } from "./core/shapes";
+import {
+  buildConnectorPaint,
+  connectorPaintBounds,
+  scaleRoutedPath,
+  type ConnectorPaint,
+} from "./core/connectorPaint";
+import { translateRoutedPath } from "./core/connectors";
 import { mediaDataUri } from "./core/media";
-import { cmToPx } from "./core/units";
+import { cmToPx, pxToCm } from "./core/units";
+import { routeConnectorInSection } from "./connectors";
 import { blockText } from "./textEditing";
 
 /** An image on a thumbnail preview line, resolved for rendering. */
@@ -88,11 +115,71 @@ export interface ThumbnailShape {
   aspectRatio: number;
 }
 
+/** A LONE connector on a thumbnail preview line (SPEC-070) — one with no
+ * neighbouring drawing to be positioned against, so there is no diagram to
+ * put it in. It previews as the line it paints: routed from the model
+ * exactly as the page routes it, then framed by its own painted bounds.
+ * A connector beside drawings goes into a ThumbnailDiagram instead. */
+export interface ThumbnailConnector {
+  /** Paint data in the miniature's own px box (0,0 at its top-left). */
+  paint: ConnectorPaint;
+  /** The box the paint sits in — the SVG's viewBox. */
+  widthPx: number;
+  heightPx: number;
+  /** Display width as a fraction (0..1] of the section's content width. */
+  widthFraction: number;
+  /** Display aspect ratio (width / height). */
+  aspectRatio: number;
+}
+
+/** One drawing inside a diagram line, placed by its own offsets. The
+ * placement is in fractions of the diagram's box, so the card can size the
+ * whole diagram however it likes and every member stays where it belongs. */
+export interface ThumbnailDiagramItem {
+  leftFraction: number;
+  topFraction: number;
+  widthFraction: number;
+  heightFraction: number;
+  /** Exactly one is present. The payload is the same one a stand-alone line
+   * carries, so the card paints it with the same code; its own
+   * `widthFraction`/`aspectRatio` are unused here — the placement above
+   * replaces them. */
+  shape?: ThumbnailShape;
+  chart?: ThumbnailChart;
+}
+
+/** A diagram on a thumbnail preview line: a run of offset-positioned
+ * drawings and the connectors between them, laid out at their real relative
+ * positions instead of stacked one per line.
+ *
+ * This is the only placement the model alone can support, and it is the one
+ * that matters: `shapeDisplayStyle` positions a non-inline Shape/Chart
+ * absolutely at `offsetXCm`/`offsetYCm` from its anchor, so drawings sharing
+ * an anchor share an origin — the same assumption `routeConnectorInSection`
+ * already makes. Where a drawing sits *down the page* depends on where its
+ * anchor paragraph landed, which needs the layout the miniature deliberately
+ * does not run, so the diagram as a whole still takes its turn in flow. */
+export interface ThumbnailDiagram {
+  items: ThumbnailDiagramItem[];
+  /** Connectors routed in the diagram box's own px (the SVG's viewBox). */
+  connectors: ConnectorPaint[];
+  /** The box in model px — the items' and connectors' coordinate basis. */
+  widthPx: number;
+  heightPx: number;
+  /** Indent from the content box's left edge, as a fraction of the section's
+   * content width — the diagram's own horizontal place on the page. */
+  leftFraction: number;
+  /** Display width as a fraction (0..1] of the section's content width. */
+  widthFraction: number;
+  /** Display aspect ratio (width / height). */
+  aspectRatio: number;
+}
+
 /** One line of a thumbnail preview: a text line, an image, a table, a chart,
- * or a shape. Exactly one of the optional members is present on a non-text
- * line; `text` is then "" and `level` 0. All optional members are absent on
- * every text line, so pre-image thumbnails and their tests keep their exact
- * shape. */
+ * a shape, a connector or a diagram. Exactly one of the optional members is
+ * present on a non-text line; `text` is then "" and `level` 0. All optional
+ * members are absent on every text line, so pre-image thumbnails and their
+ * tests keep their exact shape. */
 export interface ThumbnailLine {
   text: string;
   /** 0 for body text, 1..6 for a heading of that level — the card scales the
@@ -103,6 +190,8 @@ export interface ThumbnailLine {
   table?: ThumbnailTable;
   chart?: ThumbnailChart;
   shape?: ThumbnailShape;
+  connector?: ThumbnailConnector;
+  diagram?: ThumbnailDiagram;
 }
 
 export interface Thumbnail {
@@ -159,7 +248,7 @@ function thumbnailImage(
 function drawingLineCost(
   model: DocumentModel,
   sectionIndex: number,
-  block: Image | Chart | Shape,
+  block: { heightCm: number },
 ): number {
   const pageHeightCm = sectionPageSize(model, sectionIndex).heightCm;
   const share = pageHeightCm > 0 ? block.heightCm / pageHeightCm : 0;
@@ -172,7 +261,7 @@ function drawingLineCost(
 function drawingWidthFraction(
   model: DocumentModel,
   sectionIndex: number,
-  block: Image | Chart | Shape,
+  block: { widthCm: number },
 ): number {
   const contentWidthCm = sectionContentWidthCm(model, sectionIndex);
   return Math.min(1, Math.max(0.02, block.widthCm / contentWidthCm));
@@ -271,6 +360,215 @@ function thumbnailShape(
   };
 }
 
+/** Resolves a connector block to its thumbnail line, or null when it routes
+ * to nothing paintable. The routing is the model-level `routeConnectorInSection`
+ * — the same resolver the page's DOM measurement mirrors — so an attached
+ * connector previews where its shapes put it, in cm, scaled to px and framed
+ * by the bounds it actually paints (arrowheads included). */
+function thumbnailConnector(
+  model: DocumentModel,
+  sectionIndex: number,
+  section: Section,
+  block: Connector,
+): ThumbnailConnector | null {
+  const options = {
+    outline: block.outline,
+    startArrow: block.startArrow,
+    endArrow: block.endArrow ?? ("triangle" as const),
+  };
+  const routed = scaleRoutedPath(routeConnectorInSection(section, block), cmToPx(1));
+  const bounds = connectorPaintBounds(routed, options);
+  const widthPx = bounds.right - bounds.left;
+  const heightPx = bounds.bottom - bounds.top;
+  if (!(widthPx > 0) || !(heightPx > 0)) {
+    return null;
+  }
+  const paint = buildConnectorPaint(
+    "connector",
+    translateRoutedPath(routed, -bounds.left, -bounds.top),
+    options,
+  );
+  return {
+    paint,
+    widthPx,
+    heightPx,
+    widthFraction: connectorWidthFraction(model, sectionIndex, widthPx, heightPx),
+    aspectRatio: widthPx / heightPx,
+  };
+}
+
+/** The share of a page's height one connector line may take in the
+ * miniature. */
+const CONNECTOR_MAX_HEIGHT_SHARE = 0.25;
+
+/** A connector's display width fraction. Unlike a shape's, a connector's box
+ * is derived from where it routes, so an elbow's vertical leg gives a tall,
+ * nearly empty box — and the miniature stacks drawings in flow rather than at
+ * their page positions, so one of those pushes everything after it off the
+ * card. Scaling the whole line down (aspect ratio intact) until it fits
+ * CONNECTOR_MAX_HEIGHT_SHARE of the page keeps the rest of the preview. */
+function connectorWidthFraction(
+  model: DocumentModel,
+  sectionIndex: number,
+  widthPx: number,
+  heightPx: number,
+): number {
+  const widthFraction = drawingWidthFraction(model, sectionIndex, { widthCm: pxToCm(widthPx) });
+  const pageHeightCm = sectionPageSize(model, sectionIndex).heightCm;
+  const contentWidthCm = sectionContentWidthCm(model, sectionIndex);
+  if (!(pageHeightCm > 0) || !(contentWidthCm > 0) || !(widthPx > 0)) {
+    return widthFraction;
+  }
+  const shownHeightCm = ((widthFraction * contentWidthCm) / widthPx) * heightPx;
+  const heightShare = shownHeightCm / pageHeightCm;
+  if (heightShare <= CONNECTOR_MAX_HEIGHT_SHARE) {
+    return widthFraction;
+  }
+  return Math.max(0.02, (widthFraction * CONNECTOR_MAX_HEIGHT_SHARE) / heightShare);
+}
+
+/** How many drawings one diagram line renders. A hundred-shape page still
+ * has to be a cheap miniature; past this the run is closed and any further
+ * members start a second diagram. */
+export const THUMBNAIL_DIAGRAM_MAX_ITEMS = 24;
+
+/** The blocks a diagram is made of: the drawings the page positions by their
+ * offsets (a non-inline Shape or Chart — `imageDisplayStyle` positions no
+ * Image that way, so images stay in flow) plus the connectors between them. */
+type DiagramMember = Shape | Chart | Connector;
+
+/** Whether `block` can join a diagram run. */
+function isDiagramMember(block: Block): block is DiagramMember {
+  if (isConnector(block)) {
+    return true;
+  }
+  return (isShape(block) || isChart(block)) && block.wrap !== "inline";
+}
+
+/** A diagram member's box in the shared offset space, in cm. */
+function memberBoxCm(member: Shape | Chart): { x: number; y: number; w: number; h: number } {
+  return {
+    x: member.offsetXCm ?? 0,
+    y: member.offsetYCm ?? 0,
+    w: Math.max(member.widthCm, 0.05),
+    h: Math.max(member.heightCm, 0.05),
+  };
+}
+
+/** Lays a run of drawings and connectors out at their real relative
+ * positions. Null when nothing in the run has a box worth showing — the
+ * caller then falls back to one line per member. */
+function thumbnailDiagram(
+  model: DocumentModel,
+  sectionIndex: number,
+  section: Section,
+  run: DiagramMember[],
+): ThumbnailDiagram | null {
+  const drawings = run.filter((member): member is Shape | Chart => !isConnector(member));
+  const routes = run
+    .filter(isConnector)
+    .map((connector) => ({
+      connector,
+      path: routeConnectorInSection(section, connector),
+      options: {
+        outline: connector.outline,
+        startArrow: connector.startArrow,
+        endArrow: connector.endArrow ?? ("triangle" as const),
+      },
+    }));
+
+  // The union of every member's painted extent, in the shared cm space.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const drawing of drawings) {
+    const box = memberBoxCm(drawing);
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.w);
+    maxY = Math.max(maxY, box.y + box.h);
+  }
+  for (const route of routes) {
+    // The connector's painted bounds are computed in px (arrowheads scale
+    // with the stroke width, which is in points), then read back as cm.
+    const bounds = connectorPaintBounds(scaleRoutedPath(route.path, cmToPx(1)), route.options);
+    minX = Math.min(minX, pxToCm(bounds.left));
+    minY = Math.min(minY, pxToCm(bounds.top));
+    maxX = Math.max(maxX, pxToCm(bounds.right));
+    maxY = Math.max(maxY, pxToCm(bounds.bottom));
+  }
+  const boxWidthCm = maxX - minX;
+  const boxHeightCm = maxY - minY;
+  if (!(boxWidthCm > 0) || !(boxHeightCm > 0)) {
+    return null;
+  }
+
+  const items: ThumbnailDiagramItem[] = [];
+  for (const drawing of drawings) {
+    const box = memberBoxCm(drawing);
+    const placement = {
+      leftFraction: (box.x - minX) / boxWidthCm,
+      topFraction: (box.y - minY) / boxHeightCm,
+      widthFraction: box.w / boxWidthCm,
+      heightFraction: box.h / boxHeightCm,
+    };
+    if (isChart(drawing)) {
+      const chart = thumbnailChart(model, sectionIndex, drawing);
+      if (chart) {
+        items.push({ ...placement, chart });
+      }
+      continue;
+    }
+    const shape = thumbnailShape(model, sectionIndex, drawing);
+    if (shape) {
+      items.push({ ...placement, shape });
+    }
+  }
+
+  const widthPx = cmToPx(boxWidthCm);
+  const heightPx = cmToPx(boxHeightCm);
+  const connectors = routes.map((route, index) =>
+    buildConnectorPaint(
+      `connector-${index}`,
+      translateRoutedPath(scaleRoutedPath(route.path, cmToPx(1)), -cmToPx(minX), -cmToPx(minY)),
+      route.options,
+    ),
+  );
+  if (items.length === 0 && connectors.length === 0) {
+    return null;
+  }
+
+  const contentWidthCm = sectionContentWidthCm(model, sectionIndex);
+  const widthFraction = drawingWidthFraction(model, sectionIndex, { widthCm: boxWidthCm });
+  const leftFraction =
+    contentWidthCm > 0
+      ? Math.min(Math.max(0, minX / contentWidthCm), Math.max(0, 1 - widthFraction))
+      : 0;
+  return {
+    items,
+    connectors,
+    widthPx,
+    heightPx,
+    leftFraction,
+    widthFraction,
+    aspectRatio: boxWidthCm / boxHeightCm,
+  };
+}
+
+/** How tall a diagram is shown, in cm — its clamped display width carried
+ * through its own aspect ratio. The line budget charges this, so a page-tall
+ * flowchart fills the miniature and stops the walk, exactly as a page-tall
+ * image already does. */
+function diagramShownHeightCm(
+  model: DocumentModel,
+  sectionIndex: number,
+  diagram: ThumbnailDiagram,
+): number {
+  const contentWidthCm = sectionContentWidthCm(model, sectionIndex);
+  return diagram.aspectRatio > 0 ? (diagram.widthFraction * contentWidthCm) / diagram.aspectRatio : 0;
+}
+
 /** Resolves a chart block to its thumbnail line (a deep clone — the cache
  * must never alias the live model), or null for a degenerate one. */
 function thumbnailChart(
@@ -300,7 +598,72 @@ export function buildThumbnail(model: DocumentModel): Thumbnail {
     let used = 0;
     const sections = model.sections ?? [];
     for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex += 1) {
-      for (const block of sections[sectionIndex].blocks ?? []) {
+      const section = sections[sectionIndex];
+      // Offset-positioned drawings and their connectors are gathered into a
+      // run and laid out together (see ThumbnailDiagram) rather than stacked
+      // one per line — a flowchart previewed as a column of loose boxes with
+      // its arrows dangling underneath before this.
+      let run: DiagramMember[] = [];
+
+      /** Emits the pending run: a diagram when there is relative geometry to
+       * show, otherwise the single member's own line (unchanged). */
+      const flushRun = () => {
+        if (run.length === 0) {
+          return;
+        }
+        const members = run;
+        run = [];
+        if (members.length > 1) {
+          const diagram = thumbnailDiagram(model, sectionIndex, section, members);
+          if (diagram) {
+            lines.push({ text: "", level: 0, diagram });
+            used += drawingLineCost(model, sectionIndex, {
+              heightCm: diagramShownHeightCm(model, sectionIndex, diagram),
+            });
+            return;
+          }
+        }
+        // One member, or a run with no showable box: one line each, exactly
+        // as before diagrams existed.
+        for (const member of members) {
+          if (isConnector(member)) {
+            const connector = thumbnailConnector(model, sectionIndex, section, member);
+            if (connector) {
+              lines.push({ text: "", level: 0, connector });
+              used += drawingLineCost(model, sectionIndex, { heightCm: pxToCm(connector.heightPx) });
+            }
+            continue;
+          }
+          if (isChart(member)) {
+            const chart = thumbnailChart(model, sectionIndex, member);
+            if (chart) {
+              lines.push({ text: "", level: 0, chart });
+              used += drawingLineCost(model, sectionIndex, member);
+            }
+            continue;
+          }
+          const shape = thumbnailShape(model, sectionIndex, member);
+          if (shape) {
+            lines.push({ text: "", level: 0, shape });
+            used += drawingLineCost(model, sectionIndex, member);
+          }
+        }
+      };
+
+      for (const block of section.blocks ?? []) {
+        if (isDiagramMember(block)) {
+          if (run.length >= THUMBNAIL_DIAGRAM_MAX_ITEMS) {
+            flushRun();
+          }
+          run.push(block);
+          continue;
+        }
+        // The anchor paragraphs an insert leaves between drawings carry no
+        // text and must not split the diagram they anchor.
+        if (run.length > 0 && isParagraph(block) && blockText(block).trim().length === 0) {
+          continue;
+        }
+        flushRun();
         if (used >= THUMBNAIL_MAX_LINES) {
           return { lines, failed: false };
         }
@@ -346,6 +709,7 @@ export function buildThumbnail(model: DocumentModel): Thumbnail {
         lines.push({ text, level: block.headingLevel ?? 0 });
         used += 1;
       }
+      flushRun();
       if (used >= THUMBNAIL_MAX_LINES) {
         break;
       }

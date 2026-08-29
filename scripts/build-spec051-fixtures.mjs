@@ -11,13 +11,19 @@
 // with a wps:txbx/draw:text-box), and one geometry outside the catalogue
 // (rendered as a dashed placeholder on open, AC-60).
 //
+// Re-running this must leave every part's *content* identical to the
+// committed fixtures — that is the check that this script has not drifted
+// from them. The packaged bytes may still differ by a few: deflate output is
+// not stable across zlib/Node versions, so `git checkout` the four fixture
+// files when only their compressed sizes moved.
+//
 // Shapes are written in a fixed document order so the e2e spec can address
 // each one by its 0-based `data-testid="drawing-<n>"` index (DocShapeBlock.vue
 // assigns that index by walking Shape blocks in document order):
 //   0  line              7  star5              14 group member A (rect)
 //   1  arrow             8  rightArrow         15 group member B (roundRect)
 //   2  rect              9  leftArrow          16 text box (rect, no fill/outline)
-//   3  roundRect        10  upArrow            17 unsupported geometry ("pentagon")
+//   3  roundRect        10  upArrow            17 unsupported geometry ("gear9"/"gear")
 //   4  ellipse          11  downArrow
 //   5  triangle         12  wedgeRectCallout
 //   6  diamond          13  wedgeRoundRectCallout
@@ -228,7 +234,7 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
   }
 
   // Builds one `<w:drawing>` for a shape. `opts.prst` overrides the geometry
-  // lookup (used for the unsupported "pentagon" entry, which is not in
+  // lookup (used for the unsupported "gear9" entry, which is not in
   // GEOMETRY_TO_PRST).
   function shapeDrawing(opts) {
     const {
@@ -371,12 +377,17 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
   );
 
   // Unsupported geometry: a prst outside GEOMETRY_TO_PRST — the reader falls
-  // back to geometry "rect" with unsupportedGeometryXml set (AC-60).
+  // back to geometry "rect" with unsupportedGeometryXml set (AC-60). This
+  // entry has to stay outside SPEC-069's catalogue to mean anything: it was
+  // "pentagon" until SPEC-069 made that a real preset, and the committed
+  // fixture bytes moved to "gear9" while this script did not — a drift that
+  // would have broken AC-60 the next time anyone regenerated. Nine
+  // parametric teeth is not an outline the model could plausibly gain.
   drawings.push(
     shapeDrawing({
       id: nextId++,
       geometry: "rect",
-      prst: "pentagon",
+      prst: "gear9",
       widthCm: 4,
       heightCm: 3,
       fill: "CC6600",
@@ -625,9 +636,11 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
 
   // Unsupported geometry: a draw:type outside GEOMETRY_TO_DRAW_TYPE — the
   // reader falls back to geometry "rect" with unsupportedGeometryXml set.
+  // "gear" for the same reason the .docx side uses "gear9" (see there):
+  // ODF's "pentagon" is now the catalogue's homePlate.
   addShape({
     geometry: "rect",
-    drawType: "pentagon",
+    drawType: "gear",
     widthCm: 4,
     heightCm: 3,
     fill: "#cc6600",

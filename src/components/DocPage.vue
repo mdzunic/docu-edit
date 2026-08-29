@@ -21,8 +21,10 @@
 // read-only, which is how "edits apply to every page in the section at
 // once" (AC-10) falls out for free: they all read the same model content.
 import { computed } from "vue";
+import ConnectorPaintLayer from "./ConnectorPaintLayer.vue";
 import DocBlockEntries from "./DocBlockEntries.vue";
 import DocPageBlock from "./DocPageBlock.vue";
+import { noConnectorPaint } from "../lib/core/connectorPaint";
 import { asPageColumns, asRenderEntries, noRenderEntries } from "../lib/pageRender";
 
 const props = defineProps({
@@ -58,6 +60,13 @@ const props = defineProps({
    * while the print preview is open and never prints. Inert on screen —
    * only the is-print-preview / @media print rules act on the marker. */
   printHidden: { type: Boolean, default: false },
+  /** SPEC-070: this page's connectors, as paint data in page-local px
+   * (lib/core/connectorPaint). Painted inside the page box so they reach the
+   * print preview, the printed sheet and the PDF extractor — see
+   * ConnectorPaintLayer. A stable empty array for the (usual) pages with
+   * none, so their DocPage never re-renders when a connector elsewhere
+   * re-routes. */
+  connectors: { type: Array, default: () => noConnectorPaint() },
 });
 
 defineEmits([
@@ -325,6 +334,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
     >
       <DocBlockEntries :entries="footerEntries" />
     </div>
+    <ConnectorPaintLayer :renders="connectors" />
   </div>
 </template>
 

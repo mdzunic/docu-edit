@@ -362,6 +362,64 @@ describe("endpoint + formatting commands", () => {
     expect(connector.endAttachment?.site).toBe(0);
   });
 
+  // The model must stay plain data: IDBObjectStore.put() structured-clones it,
+  // and a Vue reactive Proxy throws DataCloneError on that clone — which is
+  // exactly what the draw gesture used to hand in (its pending source endpoint
+  // lives in a `ref`). Every write then failed for the rest of the session and
+  // the app bar read "Not saved — browser storage is full".
+  it("stores plain copies of the attachments and endpoints it is given", () => {
+    const model = doc(shapeAtBox(0, 0), paragraph("x"));
+    const start = { xCm: 0, yCm: 0 };
+    const startAttachment = { target: { block: 0, path: [1] }, site: 1 };
+    const spec: NewConnector = {
+      kind: "straight",
+      widthCm: 4,
+      heightCm: 2,
+      start,
+      end: { xCm: 4, yCm: 2 },
+      startAttachment,
+      outline: { color: "#123456", widthPt: 2, dash: "dash" },
+    };
+    const result = insertConnector(model, sel(1), spec);
+    const connector = result.model.sections[0].blocks.find(isConnector)!;
+    expect(connector.startAttachment).toEqual(startAttachment);
+    expect(connector.startAttachment).not.toBe(startAttachment);
+    expect(connector.startAttachment!.target).not.toBe(startAttachment.target);
+    expect(connector.startAttachment!.target.path).not.toBe(startAttachment.target.path);
+    expect(connector.start).toEqual(start);
+    expect(connector.start).not.toBe(start);
+    expect(connector.outline).not.toBe(spec.outline);
+    expect(structuredClone(result.model)).toBeTruthy();
+  });
+
+  it("survives an attachment handed in as a Proxy (what a Vue `ref` returns)", () => {
+    const model = doc(shapeAtBox(0, 0), paragraph("x"));
+    const reactiveish = <T extends object>(value: T): T => new Proxy(value, {});
+    const result = insertConnector(model, sel(1), {
+      kind: "straight",
+      widthCm: 4,
+      heightCm: 2,
+      start: reactiveish({ xCm: 0, yCm: 0 }),
+      end: { xCm: 4, yCm: 2 },
+      startAttachment: reactiveish({ target: reactiveish({ block: 0 }), site: 1 }),
+    });
+    // A Proxy is not structured-cloneable, so this throws unless the command
+    // copied it into the model as plain data.
+    expect(() => structuredClone(result.model)).not.toThrow();
+  });
+
+  it("stores a plain copy of an attachment set by setConnectorEndpoint", () => {
+    const { model } = attachedFixture();
+    const attachment = { target: { block: 1 }, site: 0 };
+    const result = setConnectorEndpoint(model, sel(2), { section: 0, block: 2 }, "end", {
+      attachment,
+    });
+    const connector = connectorAt(result.model, { section: 0, block: 2 })!;
+    expect(connector.endAttachment).toEqual(attachment);
+    expect(connector.endAttachment).not.toBe(attachment);
+    expect(connector.endAttachment!.target).not.toBe(attachment.target);
+  });
+
   it("sets kind, arrowheads and adjustment", () => {
     const { model } = attachedFixture();
     let r = setConnectorKind(model, sel(2), { section: 0, block: 2 }, "curved");

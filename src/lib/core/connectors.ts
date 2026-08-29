@@ -7,6 +7,7 @@
 // reusable by a future Slides host (the core layer's boundary rule).
 import type { Point } from "./shapeGeometry";
 import { rotatePoint } from "./shapeGeometry";
+import type { ArrowheadKind } from "./shapes";
 
 /** How a connector routes between its two endpoints. The document model's
  * `Connector.kind` is this type (re-exported from documentModel.ts). */
@@ -310,4 +311,138 @@ function pointStrictlyInBox(p: Point, box: ConnectorBox): boolean {
   const local = rotatePoint({ x: p.x - box.x, y: p.y - box.y }, box.w, box.h, -(box.rotationDeg ?? 0));
   const eps = 1e-6;
   return local.x > eps && local.x < box.w - eps && local.y > eps && local.y < box.h - eps;
+}
+
+// --- painted decoration: arrowheads and path translation --------------------
+
+/** How long an arrowhead is, and how wide, as multiples of the line's stroke
+ * width. The values reproduce the SVG marker the overlay painted before
+ * arrowheads became real geometry (viewBox 0 0 10 10 at markerWidth 7:
+ * 9 units back from the tip, 5 units half-height, 0.7 px per unit), so a
+ * default connector's head is unchanged on screen — it is now the same
+ * geometry everywhere, which is what lets it reach print and the PDF. */
+const ARROW_LENGTH_RATIO = 6.3;
+const ARROW_HALF_WIDTH_RATIO = 3.5;
+
+/** One painted line-end decoration, as a point list in the caller's own unit
+ * (the same unit the routed path is in). */
+export interface ArrowheadOutline {
+  /** The head's outline: a closed polygon when `filled`, an open barb
+   * polyline otherwise. */
+  points: Point[];
+  /** Painted solid in the line's colour; `false` means stroked like the
+   * line itself (the "open" barb). */
+  filled: boolean;
+}
+
+/** The outline of one arrowhead, or null for `"none"` (and for a degenerate
+ * direction). `along` is the unit vector pointing out of the line toward the
+ * tip; `strokeWidth` is the line's width in the same unit as the points. */
+export function arrowheadOutline(
+  kind: ArrowheadKind | undefined,
+  tip: Point,
+  along: Point,
+  strokeWidth: number,
+): ArrowheadOutline | null {
+  if (!kind || kind === "none") {
+    return null;
+  }
+  const len = Math.hypot(along.x, along.y);
+  if (!(len > 0) || !(strokeWidth > 0)) {
+    return null;
+  }
+  const dx = along.x / len;
+  const dy = along.y / len;
+  // Perpendicular (y-down screen convention, same as the routing above).
+  const px = -dy;
+  const py = dx;
+  const back = strokeWidth * ARROW_LENGTH_RATIO;
+  const half = strokeWidth * ARROW_HALF_WIDTH_RATIO;
+  const at = (alongBy: number, acrossBy: number): Point => ({
+    x: tip.x - dx * alongBy + px * acrossBy,
+    y: tip.y - dy * alongBy + py * acrossBy,
+  });
+  if (kind === "open") {
+    return { points: [at(back, half), tip, at(back, -half)], filled: false };
+  }
+  if (kind === "stealth") {
+    return {
+      points: [tip, at(back, half), at(back * 0.55, 0), at(back, -half)],
+      filled: true,
+    };
+  }
+  if (kind === "diamond") {
+    return {
+      points: [tip, at(back / 2, half * 0.8), at(back, 0), at(back / 2, -half * 0.8)],
+      filled: true,
+    };
+  }
+  if (kind === "oval") {
+    // A circle tangent to the tip, as a polygon so every head is one shape
+    // kind for the painters (SVG, canvas and the PDF writer alike).
+    const radius = half;
+    const centre = at(radius, 0);
+    const points: Point[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      const angle = (i / 16) * Math.PI * 2;
+      points.push({
+        x: centre.x + Math.cos(angle) * radius,
+        y: centre.y + Math.sin(angle) * radius,
+      });
+    }
+    return { points, filled: true };
+  }
+  return { points: [tip, at(back, half), at(back, -half)], filled: true };
+}
+
+/** The two ends of a routed path, each with the unit direction the line
+ * leaves by — the tangent an arrowhead points along. Null for a path with
+ * no length to take a direction from. */
+export function routedPathEnds(
+  path: RoutedPath,
+): { start: { point: Point; along: Point }; end: { point: Point; along: Point } } | null {
+  const pts = path.points;
+  if (pts.length < 2) {
+    return null;
+  }
+  const a = pts[0];
+  const b = pts[pts.length - 1];
+  const startNeighbour = path.kind === "curved" && path.controls ? path.controls[0] : pts[1];
+  const endNeighbour =
+    path.kind === "curved" && path.controls ? path.controls[1] : pts[pts.length - 2];
+  const startAlong = unitFrom(startNeighbour, a) ?? unitFrom(b, a);
+  const endAlong = unitFrom(endNeighbour, b) ?? unitFrom(a, b);
+  if (!startAlong || !endAlong) {
+    return null;
+  }
+  return { start: { point: a, along: startAlong }, end: { point: b, along: endAlong } };
+}
+
+/** The unit vector from `from` to `to`, or null when they coincide. */
+function unitFrom(from: Point, to: Point): Point | null {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  return len > 1e-9 ? { x: dx / len, y: dy / len } : null;
+}
+
+/** The same routed path moved by (dx, dy) — how a path measured in one frame
+ * (the page stack) is re-expressed in another (one page's own box). */
+export function translateRoutedPath(path: RoutedPath, dx: number, dy: number): RoutedPath {
+  const move = (p: Point): Point => ({ x: p.x + dx, y: p.y + dy });
+  const moved: RoutedPath = { kind: path.kind, points: path.points.map(move) };
+  if (path.controls) {
+    moved.controls = [move(path.controls[0]), move(path.controls[1])];
+  }
+  return moved;
+}
+
+/** A closed/open point list as an SVG `d` — the arrowheads' counterpart to
+ * routedPathToSvg. */
+export function pointsToSvg(points: Point[], closed: boolean): string {
+  if (points.length === 0) {
+    return "";
+  }
+  const body = points.map((p) => `${fmt(p.x)} ${fmt(p.y)}`).join(" L ");
+  return `M ${body}${closed ? " Z" : ""}`;
 }

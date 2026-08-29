@@ -108,13 +108,21 @@ function withMeta(parsed: Awaited<ReturnType<typeof parseDocx>>): DocumentModel 
   return { ...(parsed as unknown as DocumentModel), id: "connector-fixture-doc", title: "Connector fixture" };
 }
 
+/** A fixed save stamp for both cycles. The writers default `modified` to
+ * `new Date()` and the readers put it back on `properties.modified`, which
+ * `equalStructural` compares like any other field — so two cycles that
+ * straddled a second boundary compared unequal, at random, under a loaded
+ * full-suite run. Pinning it is the same discipline fixtures.fields.spec.ts
+ * and docx/roundTrip.spec.ts already use. */
+const FIXED_MODIFIED = new Date(Date.UTC(2026, 2, 4, 14, 30, 0));
+
 async function docxCycle(source: DocumentModel): Promise<DocumentModel> {
-  const { bytes } = await writeDocx(source);
+  const { bytes } = await writeDocx(source, { modified: FIXED_MODIFIED });
   return withMeta(await parseDocx(bytes));
 }
 
 async function odtCycle(source: DocumentModel): Promise<DocumentModel> {
-  const { bytes } = await writeOdt(source);
+  const { bytes } = await writeOdt(source, { modified: FIXED_MODIFIED });
   return withMeta(await parseOdt(bytes));
 }
 

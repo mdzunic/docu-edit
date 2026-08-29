@@ -1,10 +1,17 @@
 <script setup lang="ts">
-// SPEC-070: the page-level connector overlay — the painted lines, the
-// endpoint/midpoint drag handles, the two-click draw rubber band and the
-// connection-site hints. All geometry arrives in unscaled page px (the
-// `.shape-handles` frame) from useConnectors; this component only paints it
-// and reports the handle gestures back. Runtime prop/emit declarations, not
-// the generic form — this script is parsed by espree (see AppShell.vue).
+// SPEC-070: the page-level connector *chrome* — the transparent hit paths,
+// the endpoint/midpoint drag handles, the two-click draw rubber band and the
+// connection-site hints. All of it is screen-only (`print-exclude`), which is
+// why the connector LINE is no longer painted here: it lived in this overlay,
+// so it never reached the print preview, a printed sheet or the PDF. The line
+// and its arrowheads now paint inside each page box (ConnectorPaintLayer);
+// this overlay is purely the interaction surface stretched over the whole
+// `.pages` stack.
+//
+// All geometry arrives in unscaled page px (the `.shape-handles` frame) from
+// useConnectors; this component only places it and reports the handle
+// gestures back. Runtime prop/emit declarations, not the generic form — this
+// script is parsed by espree (see AppShell.vue).
 import { computed } from "vue";
 import {
   asConnectorRenders,
@@ -32,20 +39,6 @@ const drawToPoint = computed(() => asDrawPoint(props.drawPointer));
 
 defineEmits(["select", "endpoint-drag", "adjust-drag"]);
 
-// Outline width is in points, the overlay in unscaled page px (1pt = 96/72px);
-// dash patterns mirror the shape outline's.
-function strokeWidthPx(widthPt = 1) {
-  return Math.max(1, (widthPt || 1) * (96 / 72));
-}
-function dashArray(dash = "solid") {
-  if (dash === "dash") {
-    return "6 4";
-  }
-  if (dash === "dot") {
-    return "1 3";
-  }
-  return undefined;
-}
 function previewPath(from = noDrawFrom(), to = noDrawPoint()) {
   if (!from || !to) {
     return "";
@@ -60,50 +53,10 @@ function previewPath(from = noDrawFrom(), to = noDrawPoint()) {
     class="connector-overlay print-exclude"
     data-testid="connector-overlay"
   >
-    <defs>
-      <marker
-        id="conn-arrow-end"
-        viewBox="0 0 10 10"
-        refX="9"
-        refY="5"
-        markerWidth="7"
-        markerHeight="7"
-        orient="auto-start-reverse"
-      >
-        <path
-          d="M0 0 L10 5 L0 10 z"
-          fill="context-stroke"
-        />
-      </marker>
-      <marker
-        id="conn-arrow-start"
-        viewBox="0 0 10 10"
-        refX="9"
-        refY="5"
-        markerWidth="7"
-        markerHeight="7"
-        orient="auto-start-reverse"
-      >
-        <path
-          d="M0 0 L10 5 L0 10 z"
-          fill="context-stroke"
-        />
-      </marker>
-    </defs>
     <g
       v-for="render in renderList"
       :key="render.key"
     >
-      <path
-        class="connector-line"
-        :d="render.d"
-        fill="none"
-        :stroke="render.outline ? render.outline.color : '#2e5395'"
-        :stroke-width="strokeWidthPx(render.outline ? render.outline.widthPt : 1)"
-        :stroke-dasharray="dashArray(render.outline ? render.outline.dash : 'solid')"
-        :marker-end="render.endArrow && render.endArrow !== 'none' ? 'url(#conn-arrow-end)' : undefined"
-        :marker-start="render.startArrow && render.startArrow !== 'none' ? 'url(#conn-arrow-start)' : undefined"
-      />
       <path
         class="connector-hit"
         :d="render.d"
@@ -165,10 +118,6 @@ function previewPath(from = noDrawFrom(), to = noDrawPoint()) {
   height: 100%;
   overflow: visible;
   z-index: 31;
-  pointer-events: none;
-}
-
-.connector-line {
   pointer-events: none;
 }
 

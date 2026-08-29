@@ -8,6 +8,7 @@ import {
   type PdfImageData,
   type PdfImageItem,
   type PdfPageInput,
+  type PdfPathItem,
 } from "./buildPdf";
 import type { FaceKey } from "./fontMap";
 import { parseSfnt, type SfntFont } from "./sfnt";
@@ -318,5 +319,137 @@ describe("pdfFileName", () => {
   it("appends .pdf to the trimmed title, falling back when blank", () => {
     expect(pdfFileName("Report ", "Untitled document")).toBe("Report.pdf");
     expect(pdfFileName("  ", "Untitled document")).toBe("Untitled document.pdf");
+  });
+});
+
+function pathItem(overrides: Partial<PdfPathItem> = {}): PdfPathItem {
+  return {
+    subpaths: [
+      {
+        start: { xPt: 10, yPt: 20 },
+        segments: [{ toXPt: 110, toYPt: 20 }],
+      },
+    ],
+    stroke: { color: [1, 0, 0], widthPt: 2 },
+    ...overrides,
+  };
+}
+
+// SPEC-070: connectors are the one drawing the page paints as SVG, so they
+// reach the PDF as real vector paths rather than a rasterized bitmap.
+describe("vector paths", () => {
+  it("strokes a line, flipping y into PDF space", () => {
+    const pdf = build({ pages: [page({ paths: [pathItem()] })] });
+    // 841.89 - 20 = 821.89
+    expect(pdf).toContain("1 0 0 RG 2 w [] 0 d 0 J 0 j 10 821.89 m");
+    expect(pdf).toContain("110 821.89 l");
+    expect(pdf).toContain("S Q");
+  });
+
+  it("fills a closed sub-path (an arrowhead) with `f`, not `S`", () => {
+    const pdf = build({
+      pages: [
+        page({
+          paths: [
+            pathItem({
+              stroke: undefined,
+              fill: [0, 0, 1],
+              subpaths: [
+                {
+                  start: { xPt: 10, yPt: 10 },
+                  segments: [
+                    { toXPt: 0, toYPt: 4 },
+                    { toXPt: 0, toYPt: 16 },
+                  ],
+                  closed: true,
+                },
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(pdf).toContain("0 0 1 rg 10 831.89 m");
+    expect(pdf).toContain("h\nf Q");
+    expect(pdf).not.toContain("S Q");
+  });
+
+  it("writes a cubic segment with the `c` operator", () => {
+    const pdf = build({
+      pages: [
+        page({
+          paths: [
+            pathItem({
+              subpaths: [
+                {
+                  start: { xPt: 0, yPt: 0 },
+                  segments: [
+                    { toXPt: 100, toYPt: 0, c1XPt: 30, c1YPt: 40, c2XPt: 70, c2YPt: 40 },
+                  ],
+                },
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(pdf).toContain("30 801.89 70 801.89 100 841.89 c");
+  });
+
+  it("carries the cap and join styles the painted element used", () => {
+    const pdf = build({
+      pages: [
+        page({
+          paths: [pathItem({ stroke: { color: [0, 0, 0], widthPt: 1, cap: 1, join: 2 } })],
+        }),
+      ],
+    });
+    expect(pdf).toContain("1 J 2 j");
+  });
+
+  it("emits the dash pattern the stroke carries", () => {
+    const pdf = build({
+      pages: [page({ paths: [pathItem({ stroke: { color: [0, 0, 0], widthPt: 1, dashPt: [4.5, 3] } })] })],
+    });
+    expect(pdf).toContain("[4.5 3] 0 d");
+  });
+
+  it("paints behind-text paths before the text and in-front ones after it", () => {
+    const pdf = build({
+      pages: [
+        page({
+          paths: [
+            pathItem({ stroke: { color: [1, 0, 0], widthPt: 2 }, onTop: false }),
+            pathItem({ stroke: { color: [0, 1, 0], widthPt: 2 }, onTop: true }),
+          ],
+        }),
+      ],
+    });
+    const behind = pdf.indexOf("1 0 0 RG");
+    const text = pdf.indexOf(" Tj ET");
+    const front = pdf.indexOf("0 1 0 RG");
+    expect(behind).toBeGreaterThan(-1);
+    expect(behind).toBeLessThan(text);
+    expect(text).toBeLessThan(front);
+  });
+
+  it("skips a path with neither stroke nor fill, and one with no geometry", () => {
+    const pdf = build({
+      pages: [
+        page({
+          paths: [
+            pathItem({ stroke: undefined, fill: undefined }),
+            pathItem({ subpaths: [] }),
+          ],
+        }),
+      ],
+    });
+    expect(pdf).not.toContain(" m\n");
+  });
+
+  it("draws nothing extra for a page that carries no `paths` at all", () => {
+    const pdf = build({ pages: [page()] });
+    expect(pdf).not.toContain(" RG ");
+    expect(pdf).toContain(" Tj ET");
   });
 });

@@ -21,6 +21,13 @@ import type { EditorContext } from "./context";
 
 export interface PrintPreviewDeps extends EditorContext {
   pagination: PaginationController;
+  /** SPEC-070: re-routes the connectors once every page is realized.
+   * Connectors are measured off the DOM, and a virtualized page has none of
+   * its shapes in it — a connector attached to one resolved to its frozen
+   * free position until the page materialized. Both callers of
+   * `realizeAllPages` (this preview and the PDF export) need the re-route,
+   * so it happens here rather than in each of them. */
+  remeasureConnectors?: () => void;
 }
 
 /** How long realizeAllPages may wait for every page to render and measure
@@ -122,6 +129,10 @@ export function usePrintPreview(deps: PrintPreviewDeps) {
         deps.pagination.state.value === "clean" &&
         root.querySelector(".page[data-virtual]") === null
       ) {
+        deps.remeasureConnectors?.();
+        // One more frame so the re-routed paint layers are in the DOM before
+        // the caller reads (or prints) the pages.
+        await raf();
         return true;
       }
       if (performance.now() > deadline) {

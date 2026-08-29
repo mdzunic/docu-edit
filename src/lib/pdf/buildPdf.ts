@@ -71,6 +71,48 @@ export interface PdfImageData {
   alpha?: Uint8Array;
 }
 
+/** One drawn sub-path of a vector item, in points from the page's TOP-left
+ * (the builder flips into PDF's bottom-up space, exactly as for text and
+ * images). A segment with `c1`/`c2` is a cubic, otherwise a straight line. */
+export interface PdfPathSubpath {
+  start: { xPt: number; yPt: number };
+  segments: Array<{
+    toXPt: number;
+    toYPt: number;
+    c1XPt?: number;
+    c1YPt?: number;
+    c2XPt?: number;
+    c2YPt?: number;
+  }>;
+  closed?: boolean;
+}
+
+/** One vector path — how a shape the page paints as SVG rather than as a
+ * bitmap reaches the PDF (SPEC-070's connectors): real stroked and filled
+ * geometry, so it stays crisp at any zoom instead of being rasterized.
+ * A path with neither `stroke` nor `fill` paints nothing and is skipped. */
+export interface PdfPathItem {
+  subpaths: PdfPathSubpath[];
+  /** rgb 0..1 plus the line width in points, an optional dash pattern (also
+   * in points, PDF's `d` operator array), and the cap/join styles as PDF's
+   * own codes (cap 0 butt / 1 round / 2 square; join 0 miter / 1 round /
+   * 2 bevel) — the extractor reads them off the painted element so an elbow's
+   * corners and a dash's ends look the same in the file as on the page.
+   * Absent means PDF's defaults, which are SVG's too (butt, miter). */
+  stroke?: {
+    color: [number, number, number];
+    widthPt: number;
+    dashPt?: number[];
+    cap?: 0 | 1 | 2;
+    join?: 0 | 1 | 2;
+  };
+  /** rgb 0..1; non-zero winding, matching SVG's default fill-rule for the
+   * convex heads this draws. */
+  fill?: [number, number, number];
+  /** Painted over the text rather than under it, like PdfImageItem.onTop. */
+  onTop?: boolean;
+}
+
 export interface PdfPageInput {
   widthPt: number;
   heightPt: number;
@@ -78,6 +120,9 @@ export interface PdfPageInput {
   links: PdfLinkItem[];
   headings: PdfHeading[];
   images: PdfImageItem[];
+  /** Vector paths (SPEC-070 connectors). Optional: a page input built before
+   * this existed draws none. */
+  paths?: PdfPathItem[];
 }
 
 export interface PdfBuildInput {
@@ -478,6 +523,57 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
     return ops;
   };
 
+  /** The draw operators for one page's vector paths, in the requested
+   * layer. Coordinates arrive measured from the page top, so every y is
+   * flipped into PDF space here — the one place that conversion happens for
+   * paths. */
+  const drawPaths = (page: PdfPageInput, onTop: boolean): string => {
+    let ops = "";
+    for (const item of page.paths ?? []) {
+      if (Boolean(item.onTop) !== onTop || (!item.stroke && !item.fill)) {
+        continue;
+      }
+      const flip = (yPt: number) => page.heightPt - yPt;
+      let geometry = "";
+      for (const subpath of item.subpaths) {
+        if (subpath.segments.length === 0 && !subpath.closed) {
+          continue;
+        }
+        geometry += `${fmt(subpath.start.xPt)} ${fmt(flip(subpath.start.yPt))} m\n`;
+        for (const segment of subpath.segments) {
+          if (segment.c1XPt !== undefined && segment.c2XPt !== undefined) {
+            geometry +=
+              `${fmt(segment.c1XPt)} ${fmt(flip(segment.c1YPt ?? 0))} ` +
+              `${fmt(segment.c2XPt)} ${fmt(flip(segment.c2YPt ?? 0))} ` +
+              `${fmt(segment.toXPt)} ${fmt(flip(segment.toYPt))} c\n`;
+          } else {
+            geometry += `${fmt(segment.toXPt)} ${fmt(flip(segment.toYPt))} l\n`;
+          }
+        }
+        if (subpath.closed) {
+          geometry += "h\n";
+        }
+      }
+      if (geometry.length === 0) {
+        continue;
+      }
+      let state = "";
+      if (item.fill) {
+        state += `${item.fill.map(fmt).join(" ")} rg `;
+      }
+      if (item.stroke) {
+        state +=
+          `${item.stroke.color.map(fmt).join(" ")} RG ` +
+          `${fmt(Math.max(0, item.stroke.widthPt))} w ` +
+          `[${(item.stroke.dashPt ?? []).map(fmt).join(" ")}] 0 d ` +
+          `${item.stroke.cap ?? 0} J ${item.stroke.join ?? 0} j `;
+      }
+      const paint = item.fill && item.stroke ? "B" : item.fill ? "f" : "S";
+      ops += `q ${state}${geometry}${paint} Q\n`;
+    }
+    return ops;
+  };
+
   const outlineEntries: OutlineEntry[] = [];
   const pageAnnotIds: number[][] = [];
   const contentIds: number[] = [];
@@ -485,7 +581,7 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
   input.pages.forEach((page, pageIndex) => {
     // Behind-the-text images first, then the text, then the images that sit
     // in front of it — PDF paints in content-stream order.
-    let content = drawImages(page, false);
+    let content = drawImages(page, false) + drawPaths(page, false);
     for (const item of page.items) {
       if (item.text.length === 0) {
         continue;
@@ -498,7 +594,7 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
         `1 0 0 1 ${fmt(item.xPt)} ${fmt(page.heightPt - item.yPt)} Tm ` +
         `<${encodeText(usage, item.text)}> Tj ET\n`;
     }
-    content += drawImages(page, true);
+    content += drawImages(page, true) + drawPaths(page, true);
     contentIds.push(objects.stream("", content));
     const annotIds: number[] = [];
     for (const link of page.links) {

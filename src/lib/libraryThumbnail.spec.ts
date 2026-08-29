@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   createDocument,
   sectionContentWidthCm,
+  sectionPageSize,
   type Chart,
   type Image,
   type Paragraph,
@@ -13,6 +14,7 @@ import {
   clearThumbnailCache,
   getCachedThumbnail,
   renderThumbnail,
+  THUMBNAIL_DIAGRAM_MAX_ITEMS,
   THUMBNAIL_MAX_LINES,
 } from "./libraryThumbnail";
 
@@ -267,6 +269,186 @@ describe("buildThumbnail (SPEC-067)", () => {
       // the thumbnail cache.
       unsupportedGeometryXml: "",
     });
+  });
+
+  // SPEC-070: without this a flowchart previewed as a column of loose boxes
+  // with nothing joining them — the connectors were skipped outright, and the
+  // boxes were stacked one per line instead of placed where they sit.
+  it("lays a run of drawings and connectors out at their real relative positions", () => {
+    const model = createDocument("doc");
+    const box = (offsetXCm: number, offsetYCm: number): Shape => ({
+      type: "shape",
+      geometry: "rect",
+      widthCm: 4,
+      heightCm: 2,
+      wrap: "square",
+      offsetXCm,
+      offsetYCm,
+    });
+    model.sections[0].blocks = [
+      box(0, 0),
+      box(10, 6),
+      {
+        type: "connector",
+        kind: "straight",
+        widthCm: 6,
+        heightCm: 6,
+        wrap: "square",
+        offsetXCm: 4,
+        offsetYCm: 1,
+        start: { xCm: 0, yCm: 0 },
+        end: { xCm: 6, yCm: 6 },
+        // Right-mid of the first box to left-mid of the second.
+        startAttachment: { target: { block: 0 }, site: 1 },
+        endAttachment: { target: { block: 1 }, site: 3 },
+        outline: { color: "#c0392b", widthPt: 2, dash: "dash" },
+        endArrow: "triangle",
+      },
+    ];
+    const thumb = buildThumbnail(model);
+    expect(thumb.failed).toBe(false);
+    // One diagram line, not three stacked ones.
+    expect(thumb.lines).toHaveLength(1);
+    const diagram = thumb.lines[0]?.diagram;
+    expect(diagram).toBeDefined();
+
+    // Both boxes are placed, and the second sits right of and below the
+    // first — exactly as their offsets put them on the page.
+    expect(diagram!.items).toHaveLength(2);
+    const [first, second] = diagram!.items;
+    expect(first.leftFraction).toBeCloseTo(0, 5);
+    expect(first.topFraction).toBeCloseTo(0, 5);
+    expect(second.leftFraction).toBeGreaterThan(first.leftFraction);
+    expect(second.topFraction).toBeGreaterThan(first.topFraction);
+    // Sized in the same frame: a 4cm box in a 14cm-wide diagram.
+    expect(first.widthFraction).toBeCloseTo(4 / 14, 5);
+    for (const item of diagram!.items) {
+      expect(item.leftFraction + item.widthFraction).toBeLessThanOrEqual(1.0001);
+      expect(item.topFraction + item.heightFraction).toBeLessThanOrEqual(1.0001);
+    }
+
+    // The connector is routed in the diagram's own frame, carrying its
+    // formatting and one arrowhead.
+    expect(diagram!.connectors).toHaveLength(1);
+    const [paint] = diagram!.connectors;
+    expect(paint.color).toBe("#c0392b");
+    expect(paint.dash).toBe("6 4");
+    expect(paint.heads).toHaveLength(1);
+    const coords = [paint.d, ...paint.heads.map((head) => head.d)]
+      .join(" ")
+      .match(/-?\d+(?:\.\d+)?/g)!
+      .map(Number);
+    const xs = coords.filter((_, index) => index % 2 === 0);
+    const ys = coords.filter((_, index) => index % 2 === 1);
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(diagram!.widthPx);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(diagram!.heightPx);
+  });
+
+  it("indents a diagram to its own place across the content width", () => {
+    const model = createDocument("doc");
+    const contentWidthCm = sectionContentWidthCm(model, 0);
+    const shape = (offsetXCm: number): Shape => ({
+      type: "shape",
+      geometry: "rect",
+      widthCm: 2,
+      heightCm: 2,
+      wrap: "square",
+      offsetXCm,
+      offsetYCm: 0,
+    });
+    model.sections[0].blocks = [shape(contentWidthCm / 2), shape(contentWidthCm / 2 + 3)];
+    const diagram = buildThumbnail(model).lines[0]?.diagram;
+    expect(diagram).toBeDefined();
+    expect(diagram!.leftFraction).toBeCloseTo(0.5, 2);
+    expect(diagram!.leftFraction + diagram!.widthFraction).toBeLessThanOrEqual(1.0001);
+  });
+
+  it("keeps a lone drawing on its own line — there is no relative geometry to show", () => {
+    const model = createDocument("doc");
+    model.sections[0].blocks = [
+      { type: "shape", geometry: "rect", widthCm: 4, heightCm: 2, wrap: "square", offsetXCm: 5 },
+      paragraph("After the shape"),
+    ];
+    const thumb = buildThumbnail(model);
+    expect(thumb.lines[0]?.shape).toBeDefined();
+    expect(thumb.lines[0]?.diagram).toBeUndefined();
+    expect(thumb.lines[1]?.text).toBe("After the shape");
+  });
+
+  it("does not let the empty anchor paragraphs between drawings split a diagram", () => {
+    const model = createDocument("doc");
+    const shape = (offsetXCm: number): Shape => ({
+      type: "shape",
+      geometry: "rect",
+      widthCm: 3,
+      heightCm: 2,
+      wrap: "square",
+      offsetXCm,
+      offsetYCm: 0,
+    });
+    model.sections[0].blocks = [shape(0), paragraph(""), shape(6), paragraph("   "), shape(12)];
+    const thumb = buildThumbnail(model);
+    expect(thumb.lines).toHaveLength(1);
+    expect(thumb.lines[0]?.diagram?.items).toHaveLength(3);
+  });
+
+  it("closes a run at THUMBNAIL_DIAGRAM_MAX_ITEMS so one page cannot paint unbounded drawings", () => {
+    const model = createDocument("doc");
+    model.sections[0].blocks = Array.from({ length: THUMBNAIL_DIAGRAM_MAX_ITEMS + 4 }, (_, index) => ({
+      type: "shape" as const,
+      geometry: "rect" as const,
+      widthCm: 0.4,
+      heightCm: 0.4,
+      wrap: "square" as const,
+      offsetXCm: index * 0.5,
+      offsetYCm: 0,
+    }));
+    const diagrams = buildThumbnail(model).lines.filter((line) => line.diagram);
+    expect(diagrams.length).toBeGreaterThan(1);
+    for (const line of diagrams) {
+      expect(line.diagram!.items.length).toBeLessThanOrEqual(THUMBNAIL_DIAGRAM_MAX_ITEMS);
+    }
+  });
+
+  it("leaves inline drawings and images in flow — the page does not position those by offset", () => {
+    const model = createDocument("doc");
+    model.sections[0].blocks = [
+      { type: "shape", geometry: "rect", widthCm: 4, heightCm: 2, wrap: "inline", offsetXCm: 9 },
+      { type: "shape", geometry: "ellipse", widthCm: 4, heightCm: 2, wrap: "inline", offsetXCm: 0 },
+    ];
+    const thumb = buildThumbnail(model);
+    expect(thumb.lines).toHaveLength(2);
+    expect(thumb.lines.every((line) => line.shape !== undefined)).toBe(true);
+  });
+
+  it("scales a tall elbow connector down so it cannot fill the miniature", () => {
+    const model = createDocument("doc");
+    const contentWidthCm = sectionContentWidthCm(model, 0);
+    model.sections[0].blocks = [
+      {
+        type: "connector",
+        kind: "elbow",
+        widthCm: 2,
+        heightCm: 20,
+        wrap: "square",
+        offsetXCm: 0,
+        offsetYCm: 0,
+        // A long vertical drop: the painted box is tall and nearly empty.
+        start: { xCm: 0, yCm: 0 },
+        end: { xCm: 2, yCm: 20 },
+        endArrow: "triangle",
+      },
+    ];
+    const line = buildThumbnail(model).lines[0]?.connector;
+    expect(line).toBeDefined();
+    // Aspect ratio untouched (no distortion)…
+    expect(line!.aspectRatio).toBeCloseTo(line!.widthPx / line!.heightPx, 5);
+    // …but the box it is shown at takes at most a quarter of the page height.
+    const shownHeightCm =
+      ((line!.widthFraction * contentWidthCm) / line!.widthPx) * line!.heightPx;
+    expect(shownHeightCm / sectionPageSize(model, 0).heightCm).toBeLessThanOrEqual(0.2501);
   });
 
   it("clamps a line shape's zero cross axis so its ratio stays finite", () => {

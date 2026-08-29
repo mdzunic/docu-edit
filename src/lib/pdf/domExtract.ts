@@ -13,9 +13,12 @@ import type {
   PdfImageItem,
   PdfLinkItem,
   PdfPageInput,
+  PdfPathItem,
+  PdfPathSubpath,
   PdfTextItem,
 } from "./buildPdf";
 import { faceKeyFor } from "./fontMap";
+import { parseSvgPath } from "./svgPath";
 
 /** CSS px (96dpi) to PDF points (72dpi). */
 export const PT_PER_PX = 72 / 96;
@@ -54,6 +57,39 @@ export function parseCssColor(color: string): [number, number, number] {
     Math.min(255, Number(match[2])) / 255,
     Math.min(255, Number(match[3])) / 255,
   ];
+}
+
+/** A computed `fill`/`stroke` as 0..1 rgb, or null when nothing is painted —
+ * `none`, or any fully transparent colour. Distinct from parseCssColor,
+ * whose "unparseable is black" fallback is right for text and wrong here:
+ * an unpainted stroke must not become a black line. */
+export function parseCssPaint(paint: string): [number, number, number] | null {
+  const value = paint.trim();
+  if (value.length === 0 || value === "none" || value === "transparent") {
+    return null;
+  }
+  const alpha = /^rgba\(\s*\d+[,\s]+\d+[,\s]+\d+[,\s/]+([\d.]+)\s*\)$/.exec(value);
+  if (alpha && Number(alpha[1]) === 0) {
+    return null;
+  }
+  if (!/^rgba?\(/.test(value)) {
+    return null;
+  }
+  return parseCssColor(value);
+}
+
+/** SVG stroke cap/join names to PDF's `J`/`j` operand codes. Both default
+ * the same way in SVG and PDF (butt, miter), so an unknown value maps to 0. */
+const LINE_CAPS: Record<string, 0 | 1 | 2> = { butt: 0, round: 1, square: 2 };
+const LINE_JOINS: Record<string, 0 | 1 | 2> = { miter: 0, round: 1, bevel: 2 };
+
+/** A computed `stroke-dasharray` as a px number list; empty for `none`. */
+function parseDashArray(value: string): number[] {
+  const parts = value
+    .split(/[,\s]+/)
+    .map((part) => Number.parseFloat(part))
+    .filter((part) => Number.isFinite(part) && part >= 0);
+  return parts.some((part) => part > 0) ? parts : [];
 }
 
 interface LineFragment {
@@ -118,10 +154,11 @@ export function extractPageContent(
   const links: PdfLinkItem[] = [];
   const headings: PdfHeading[] = [];
   const images: PdfImageItem[] = [];
+  const paths: PdfPathItem[] = [];
   const doc = pageEl.ownerDocument;
   const view = doc.defaultView;
   if (!view) {
-    return { widthPt, heightPt, items, links, headings, images };
+    return { widthPt, heightPt, items, links, headings, images, paths };
   }
 
   const walker = doc.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
@@ -272,6 +309,72 @@ export function extractPageContent(
     });
   }
 
+  // Connectors (SPEC-070) are the one thing the page paints as SVG rather
+  // than into a canvas, and they carry a stroke, a dash and arrowheads —
+  // rasterizing them would throw all of that away, so they become real PDF
+  // vector paths. The layer covers its page box, so its user units are the
+  // page's own layout px: `layoutScale` converts those to the on-screen px
+  // the rest of this function measures in (they differ under a zoom
+  // transform), and `scale` then converts to points.
+  const layoutScale = pageEl.offsetWidth > 0 ? pageRect.width / pageEl.offsetWidth : 1;
+  for (const layer of Array.from(pageEl.querySelectorAll("svg.doc-connector-layer"))) {
+    if (layer.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const layerRect = layer.getBoundingClientRect();
+    const originXPt = (layerRect.left - pageRect.left) * scale;
+    const originYPt = (layerRect.top - pageRect.top) * scale;
+    const unit = layoutScale * scale;
+    const zIndex = Number.parseInt(view.getComputedStyle(layer).zIndex, 10);
+    const onTop = Number.isFinite(zIndex) && zIndex > 0;
+    for (const element of Array.from(layer.querySelectorAll("path"))) {
+      if (element.closest(EXCLUDED_SELECTOR)) {
+        continue;
+      }
+      const subpaths = parseSvgPath(element.getAttribute("d") ?? "");
+      if (!subpaths || subpaths.length === 0) {
+        continue;
+      }
+      const style = view.getComputedStyle(element);
+      const strokeColor = parseCssPaint(style.stroke);
+      const fillColor = parseCssPaint(style.fill);
+      const strokeWidthPx = Number.parseFloat(style.strokeWidth);
+      const item: PdfPathItem = {
+        subpaths: subpaths.map(
+          (subpath): PdfPathSubpath => ({
+            start: { xPt: originXPt + subpath.start.x * unit, yPt: originYPt + subpath.start.y * unit },
+            segments: subpath.segments.map((segment) => ({
+              toXPt: originXPt + segment.to.x * unit,
+              toYPt: originYPt + segment.to.y * unit,
+              c1XPt: segment.c1 ? originXPt + segment.c1.x * unit : undefined,
+              c1YPt: segment.c1 ? originYPt + segment.c1.y * unit : undefined,
+              c2XPt: segment.c2 ? originXPt + segment.c2.x * unit : undefined,
+              c2YPt: segment.c2 ? originYPt + segment.c2.y * unit : undefined,
+            })),
+            closed: subpath.closed,
+          }),
+        ),
+        onTop,
+      };
+      if (strokeColor && Number.isFinite(strokeWidthPx) && strokeWidthPx > 0) {
+        const dashPt = parseDashArray(style.strokeDasharray).map((dash) => dash * unit);
+        item.stroke = {
+          color: strokeColor,
+          widthPt: strokeWidthPx * unit,
+          dashPt: dashPt.length > 0 ? dashPt : undefined,
+          cap: LINE_CAPS[style.strokeLinecap] ?? 0,
+          join: LINE_JOINS[style.strokeLinejoin] ?? 0,
+        };
+      }
+      if (fillColor) {
+        item.fill = fillColor;
+      }
+      if (item.stroke || item.fill) {
+        paths.push(item);
+      }
+    }
+  }
+
   for (const anchor of Array.from(pageEl.querySelectorAll("a[data-doc-link]"))) {
     if (anchor.closest(EXCLUDED_SELECTOR)) {
       continue;
@@ -323,5 +426,5 @@ export function extractPageContent(
     });
   }
 
-  return { widthPt, heightPt, items, links, headings, images };
+  return { widthPt, heightPt, items, links, headings, images, paths };
 }

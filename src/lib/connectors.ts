@@ -66,6 +66,32 @@ function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
 }
 
+/** A fresh, plain copy of an attachment.
+ *
+ * The model must hold nothing but plain data: `IDBObjectStore.put()`
+ * structured-clones what it is given, and a Vue reactive Proxy throws
+ * `DataCloneError` on that clone. The draw gesture parks its pending source
+ * endpoint in a `ref`, which deep-reactifies it, so the attachment reaching
+ * `insertConnector` was a Proxy — every write for the rest of the session
+ * then failed and the app bar read "Not saved — browser storage is full"
+ * while the document silently stopped persisting. Copying at the model
+ * boundary keeps the model plain whatever a caller passes in. */
+function plainAttachment(attachment: ConnectorAttachment): ConnectorAttachment {
+  const copy: ConnectorAttachment = {
+    target: { block: attachment.target.block },
+    site: attachment.site,
+  };
+  if (attachment.target.path) {
+    copy.target.path = [...attachment.target.path];
+  }
+  return copy;
+}
+
+/** The plain-copy rule of `plainAttachment`, for an endpoint position. */
+function plainPoint(point: { xCm: number; yCm: number }): { xCm: number; yCm: number } {
+  return { xCm: point.xCm, yCm: point.yCm };
+}
+
 /** The connector a location addresses, or null. */
 export function connectorAt(model: DocumentModel, location: ConnectorLocation): Connector | null {
   const target = model.sections[location.section]?.blocks[location.block];
@@ -387,19 +413,19 @@ export function insertConnector(
     relativeToV: DEFAULT_DRAWING_POSITION.relativeToV,
     offsetXCm: spec.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm,
     offsetYCm: spec.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm,
-    start: spec.start,
-    end: spec.end,
-    outline: spec.outline ?? { ...DEFAULT_CONNECTOR_OUTLINE },
+    start: plainPoint(spec.start),
+    end: plainPoint(spec.end),
+    outline: spec.outline ? { ...spec.outline } : { ...DEFAULT_CONNECTOR_OUTLINE },
     endArrow: spec.endArrow ?? "triangle",
   };
   if (spec.startArrow !== undefined) {
     connector.startArrow = spec.startArrow;
   }
   if (spec.startAttachment) {
-    connector.startAttachment = spec.startAttachment;
+    connector.startAttachment = plainAttachment(spec.startAttachment);
   }
   if (spec.endAttachment) {
-    connector.endAttachment = spec.endAttachment;
+    connector.endAttachment = plainAttachment(spec.endAttachment);
   }
 
   const replacement: Block[] = [];
@@ -471,7 +497,7 @@ export function setConnectorOutline(
   outline: ShapeOutline,
 ): CommandResult {
   return editConnector(model, selection, location, (c) => {
-    c.outline = outline;
+    c.outline = { ...outline };
   });
 }
 
@@ -549,10 +575,11 @@ export function setConnectorEndpoint(
       return;
     }
     if (change.attachment) {
+      const attachment = plainAttachment(change.attachment);
       if (which === "start") {
-        c.startAttachment = change.attachment;
+        c.startAttachment = attachment;
       } else {
-        c.endAttachment = change.attachment;
+        c.endAttachment = attachment;
       }
     }
     if (change.point) {

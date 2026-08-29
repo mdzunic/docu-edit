@@ -225,6 +225,106 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
             </p>
           </div>
         </div>
+        <div
+          v-else-if="line.diagram"
+          class="thumbnail-diagram"
+          :style="{
+            width: `${line.diagram.widthFraction * 100}%`,
+            marginLeft: `${line.diagram.leftFraction * 100}%`,
+            aspectRatio: String(line.diagram.aspectRatio),
+          }"
+        >
+          <div
+            v-for="(item, itemIndex) in line.diagram.items"
+            :key="itemIndex"
+            class="thumbnail-diagram-item"
+            :style="{
+              left: `${item.leftFraction * 100}%`,
+              top: `${item.topFraction * 100}%`,
+              width: `${item.widthFraction * 100}%`,
+              height: `${item.heightFraction * 100}%`,
+            }"
+          >
+            <canvas
+              v-if="item.chart"
+              :key="`chart-${itemIndex}-${resolvedTheme}`"
+              :ref="(el) => paintThumbnailChart(el, item.chart && item.chart.chart)"
+              class="thumbnail-chart thumbnail-diagram-fill"
+            />
+            <template v-else-if="item.shape">
+              <canvas
+                :ref="(el) => paintThumbnailShape(el, item.shape)"
+                class="thumbnail-shape-canvas"
+              />
+              <div
+                v-if="item.shape.textLines.length > 0"
+                class="thumbnail-shape-text"
+                :class="`valign-${item.shape.vAlign}`"
+              >
+                <p
+                  v-for="(shapeText, textIndex) in item.shape.textLines"
+                  :key="textIndex"
+                  class="thumbnail-line is-body"
+                >
+                  {{ shapeText }}
+                </p>
+              </div>
+            </template>
+          </div>
+          <svg
+            v-if="line.diagram.connectors.length > 0"
+            class="thumbnail-connector thumbnail-diagram-connectors"
+            :viewBox="`0 0 ${line.diagram.widthPx} ${line.diagram.heightPx}`"
+            preserveAspectRatio="none"
+          >
+            <g
+              v-for="paint in line.diagram.connectors"
+              :key="paint.key"
+            >
+              <path
+                :d="paint.d"
+                fill="none"
+                :stroke="paint.color"
+                :stroke-width="paint.widthPx"
+                :stroke-dasharray="paint.dash || undefined"
+              />
+              <path
+                v-for="(head, headIndex) in paint.heads"
+                :key="headIndex"
+                :d="head.d"
+                :fill="head.filled ? paint.color : 'none'"
+                :stroke="head.filled ? 'none' : paint.color"
+                :stroke-width="head.filled ? undefined : paint.widthPx"
+              />
+            </g>
+          </svg>
+        </div>
+        <svg
+          v-else-if="line.connector"
+          class="thumbnail-connector"
+          :viewBox="`0 0 ${line.connector.widthPx} ${line.connector.heightPx}`"
+          preserveAspectRatio="none"
+          :style="{
+            width: `${line.connector.widthFraction * 100}%`,
+            aspectRatio: String(line.connector.aspectRatio),
+          }"
+        >
+          <path
+            :d="line.connector.paint.d"
+            fill="none"
+            :stroke="line.connector.paint.color"
+            :stroke-width="line.connector.paint.widthPx"
+            :stroke-dasharray="line.connector.paint.dash || undefined"
+          />
+          <path
+            v-for="(head, headIndex) in line.connector.paint.heads"
+            :key="headIndex"
+            :d="head.d"
+            :fill="head.filled ? line.connector.paint.color : 'none'"
+            :stroke="head.filled ? 'none' : line.connector.paint.color"
+            :stroke-width="head.filled ? undefined : line.connector.paint.widthPx"
+          />
+        </svg>
         <canvas
           v-else-if="line.chart"
           :key="`chart-${index}-${resolvedTheme}`"
@@ -336,6 +436,48 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
   display: block;
   flex: none;
   max-width: 100%;
+}
+
+/* A diagram line (SPEC-070): a run of offset-positioned drawings and the
+   connectors between them, at their real relative positions. The box is the
+   run's union bounding box, sized (and indented) like the page sizes it;
+   every member is percent-placed inside it, so the whole diagram scales as
+   one. */
+.thumbnail-diagram {
+  position: relative;
+  flex: none;
+  max-width: 100%;
+}
+
+.thumbnail-diagram-item {
+  position: absolute;
+}
+
+/* A chart inside a diagram fills its placed box rather than taking a width
+   fraction of the miniature's column. */
+.thumbnail-diagram-fill {
+  width: 100%;
+  height: 100%;
+}
+
+/* The connectors paint over the drawings they join, matching the page (see
+   ConnectorPaintLayer's own z-index note). */
+.thumbnail-diagram-connectors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* A connector line (SPEC-070): the routed line and its arrowheads, drawn at
+   the connector's own painted size and scaled into the miniature by the
+   viewBox — the one drawing kind the page paints as SVG rather than into a
+   canvas, previewed the same way here. */
+.thumbnail-connector {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  overflow: visible;
 }
 
 /* A shape line: the wrapper is the shape's box (sized like the page sizes

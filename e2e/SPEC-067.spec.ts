@@ -196,3 +196,54 @@ test("a grid card's thumbnail shows the document's images, tables, charts and sh
   // …and the document's text still previews alongside them.
   await expect(thumbnail).toContainText("Quarterly picture");
 });
+
+// SPEC-070: a flowchart previewed as a column of loose boxes with nothing
+// joining them — buildThumbnail walked past every connector block, and stacked
+// the shapes one per line instead of placing them where they sit.
+test("a grid card's thumbnail lays a flowchart out where its shapes actually sit", async ({ page }) => {
+  await createDocument(page, "Flowchart");
+  const content = page.getByTestId("document-content");
+  await content.click({ position: { x: 20, y: 20 } });
+  await page.keyboard.type("Process");
+
+  const drawings = content.locator('[data-testid^="drawing-"]');
+  for (const x of [320, 520]) {
+    await content.click({ position: { x: 20, y: 20 } });
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-rect").click();
+    await content.click({ position: { x, y: 260 } });
+  }
+  await expect(drawings).toHaveCount(2);
+
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("connector-gallery-straight").click();
+  for (const index of [0, 1]) {
+    const box = (await drawings.nth(index).boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  }
+  await expect(page.locator('path[data-testid^="connector-"]')).toHaveCount(1);
+  await content.click({ position: { x: 20, y: 20 } });
+
+  await page.getByTestId("close-document").click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByTestId("view-grid").click();
+
+  const thumbnail = page.getByTestId("row-thumbnail").first();
+  // One diagram holding both shapes, not two stacked lines…
+  const diagram = thumbnail.locator(".thumbnail-diagram");
+  await expect(diagram).toHaveCount(1);
+  const items = diagram.locator(".thumbnail-diagram-item");
+  await expect(items).toHaveCount(2);
+
+  // …and the second shape sits to the RIGHT of the first, as it does on the
+  // page (they were placed side by side, and used to preview stacked).
+  const first = (await items.nth(0).boundingBox())!;
+  const second = (await items.nth(1).boundingBox())!;
+  expect(second.x).toBeGreaterThan(first.x + first.width / 2);
+  expect(Math.abs(second.y - first.y)).toBeLessThan(first.height);
+
+  // The routed line and its arrowhead preview, over the shapes they join.
+  const connector = diagram.locator("svg.thumbnail-connector");
+  await expect(connector).toBeVisible();
+  await expect(connector.locator("path")).toHaveCount(2);
+});

@@ -259,4 +259,70 @@ test.describe("SPEC-070 — connectors", () => {
     expect(Math.abs(after.b[0] - before.b[0])).toBeLessThan(5);
     expect(Math.abs(after.b[1] - before.b[1])).toBeLessThan(5);
   });
+
+  // SPEC-034 AC-13: the connector LINE is document content, not screen chrome.
+  // It used to be painted by the `print-exclude` overlay stretched across the
+  // whole page stack, so it vanished in the print preview, never printed, and
+  // was invisible to the PDF extractor (which reads one `.page` at a time).
+  test("the painted line lives inside its own page and survives the print preview", async ({
+    page,
+  }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    await insertShape(page, "rect", 520, 260);
+    await armConnector(page, "straight");
+    await clickCenter(page, drawings(page).nth(0));
+    await clickCenter(page, drawings(page).nth(1));
+    await expect(connectors(page)).toHaveCount(1);
+
+    // The line, and its arrowhead, are painted inside the page box…
+    const line = page.getByTestId("document-page").locator("path.doc-connector-line");
+    await expect(line).toHaveCount(1);
+    await expect(
+      page.getByTestId("document-page").locator("path.doc-connector-arrow"),
+    ).toHaveCount(1);
+
+    // …and, unlike the interaction chrome, the paint layer stays shown in the
+    // preview. (The line itself is asserted through its layer: a horizontal
+    // path has a zero-height box, which Playwright reads as hidden.)
+    await page.evaluate(() => document.body.classList.add("is-print-preview"));
+    await expect(page.getByTestId("connector-paint-layer")).toBeVisible();
+    await expect(page.getByTestId("connector-overlay")).toBeHidden();
+    expect(
+      await line.evaluate((el) => getComputedStyle(el).display !== "none"),
+    ).toBe(true);
+    await page.evaluate(() => document.body.classList.remove("is-print-preview"));
+  });
+
+  // AC-19: the arrowhead kind is real geometry, not one hard-coded triangle.
+  test("each arrowhead kind paints its own outline (AC-19)", async ({ page }) => {
+    await createDocument(page);
+    await content(page).click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type("Diagram");
+    await insertShape(page, "rect", 320, 260);
+    await insertShape(page, "rect", 520, 260);
+    await armConnector(page, "straight");
+    await clickCenter(page, drawings(page).nth(0));
+    await clickCenter(page, drawings(page).nth(1));
+    await expect(connectors(page)).toHaveCount(1);
+
+    const box = await boxOf(connectors(page).first());
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByTestId("connector-toolbar")).toBeVisible();
+
+    const head = page.getByTestId("document-page").locator("path.doc-connector-arrow");
+    const seen = new Set<string>();
+    for (const kind of ["triangle", "open", "stealth", "diamond", "oval"]) {
+      await page.getByTestId("connector-end-arrow").selectOption(kind);
+      await expect(head).toHaveCount(1);
+      seen.add((await head.getAttribute("d")) ?? "");
+    }
+    expect(seen.size).toBe(5);
+
+    // "none" paints no head at all.
+    await page.getByTestId("connector-end-arrow").selectOption("none");
+    await expect(head).toHaveCount(0);
+  });
 });
