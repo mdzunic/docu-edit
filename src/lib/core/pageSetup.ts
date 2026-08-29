@@ -78,6 +78,69 @@ export function matchPaperSize(pageSize: PageSize): PaperSizeName {
   return "Custom";
 }
 
+// --- slide sizes (the Slides product's catalogue) ------------------------
+
+/** The named slide sizes the deck-setup dialog offers (SPEC-090), plus the
+ * custom escape hatch — the presentation-side counterpart of `PaperSizeName`.
+ * `matchSlideSize` compares against `SLIDE_SIZES` in either orientation. */
+export type SlideSizeName = "16:9" | "4:3" | "16:10" | "A4" | "Letter" | "Custom";
+
+/** The standard slide sizes, LANDSCAPE-first (wider side first) — the reverse
+ * of `PAPER_SIZES`, because slides default to landscape. The two paper entries
+ * reuse `PAPER_SIZES`, swapped to landscape, rather than restating their
+ * dimensions. Values in centimetres:
+ *   16:9  → 12192000 × 6858000 EMU, 4:3 → 9144000 × 6858000 EMU. */
+export const SLIDE_SIZES: Record<Exclude<SlideSizeName, "Custom">, PageSize> = {
+  "16:9": { widthCm: 33.867, heightCm: 19.05 },
+  "4:3": { widthCm: 25.4, heightCm: 19.05 },
+  "16:10": { widthCm: 25.4, heightCm: 15.875 },
+  A4: swapOrientation(PAPER_SIZES.A4),
+  Letter: swapOrientation(PAPER_SIZES.Letter),
+};
+
+/** The catalogue order the preset selector lists (Custom last). */
+export const SLIDE_SIZE_NAMES: SlideSizeName[] = ["16:9", "4:3", "16:10", "A4", "Letter", "Custom"];
+
+/** The smallest / largest slide dimension the dialog accepts: 1 in and 56 in,
+ * PowerPoint's own bounds. */
+export const MIN_SLIDE_DIMENSION_CM = 2.54;
+export const MAX_SLIDE_DIMENSION_CM = 142.24;
+
+/** Typed pass-through for a slide-size name coming from a `.vue` template's
+ * plain string (same espree constraint as `asPaperSizeName`). */
+export function asSlideSizeName(value: string): SlideSizeName {
+  return value as SlideSizeName;
+}
+
+/** Which standard slide size (in either orientation) matches `size` within
+ * `MATCH_TOLERANCE_CM`, or `"Custom"` when none does — how the dialog
+ * preselects the open deck's size (AC-4). */
+export function matchSlideSize(size: PageSize): SlideSizeName {
+  for (const name of SLIDE_SIZE_NAMES) {
+    if (name === "Custom") {
+      continue;
+    }
+    const candidate = SLIDE_SIZES[name];
+    if (
+      (approxEqual(size.widthCm, candidate.widthCm) && approxEqual(size.heightCm, candidate.heightCm)) ||
+      (approxEqual(size.widthCm, candidate.heightCm) && approxEqual(size.heightCm, candidate.widthCm))
+    ) {
+      return name;
+    }
+  }
+  return "Custom";
+}
+
+/** A named slide size's dimensions in the given orientation — the landscape
+ * catalogue entry, swapped if portrait is requested. Custom has no catalogue
+ * entry (its size comes from the width/height fields); callers only pass a
+ * non-Custom name, but `name` stays the full `SlideSizeName` so a cast-back
+ * `asSlideSizeName` value needs no second pass-through. */
+export function slideSizeFor(name: SlideSizeName, orientation: Orientation): PageSize {
+  const landscape = SLIDE_SIZES[name as Exclude<SlideSizeName, "Custom">] ?? SLIDE_SIZES["16:9"];
+  return orientation === "portrait" ? swapOrientation(landscape) : { ...landscape };
+}
+
 export type Orientation = "portrait" | "landscape";
 
 /** Typed pass-through for an orientation coming from a `.vue` template's

@@ -209,6 +209,10 @@ export function stripRetention(model: PresentationModel): PresentationModel {
     delete slide.dirty;
   }
   delete copy.structureDirty;
+  // deckDirty is retention (like structureDirty) — the cross-format writer
+  // builds from scratch, so there is no deck-level part to rebuild; but
+  // firstSlideNumber is content and is kept (SPEC-090).
+  delete copy.deckDirty;
   return copy;
 }
 

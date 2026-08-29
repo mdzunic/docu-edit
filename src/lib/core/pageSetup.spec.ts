@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   matchPaperSize,
+  matchSlideSize,
   MARGINS_TOO_LARGE_MESSAGE,
+  MAX_SLIDE_DIMENSION_CM,
+  MIN_SLIDE_DIMENSION_CM,
   orientationOf,
   pageSizeFor,
+  slideSizeFor,
+  SLIDE_SIZES,
   swapOrientation,
   textAreaTooNarrow,
 } from "./pageSetup";
@@ -109,5 +114,58 @@ describe("textAreaTooNarrow (SPEC-027 AC-9)", () => {
 
   it("exports the exact rejection message text (AC-9)", () => {
     expect(MARGINS_TOO_LARGE_MESSAGE).toBe("Margins are too large for this page size");
+  });
+});
+
+describe("matchSlideSize (SPEC-090)", () => {
+  it("matches each catalogue size in landscape", () => {
+    expect(matchSlideSize({ widthCm: 33.867, heightCm: 19.05 })).toBe("16:9");
+    expect(matchSlideSize({ widthCm: 25.4, heightCm: 19.05 })).toBe("4:3");
+    expect(matchSlideSize({ widthCm: 25.4, heightCm: 15.875 })).toBe("16:10");
+    expect(matchSlideSize(SLIDE_SIZES.A4)).toBe("A4");
+    expect(matchSlideSize(SLIDE_SIZES.Letter)).toBe("Letter");
+  });
+
+  it("matches in the swapped (portrait) orientation too", () => {
+    expect(matchSlideSize({ widthCm: 19.05, heightCm: 33.867 })).toBe("16:9");
+    expect(matchSlideSize(swapOrientation(SLIDE_SIZES.A4))).toBe("A4");
+  });
+
+  it("tolerates up to ±0.05 cm and rejects beyond it", () => {
+    expect(matchSlideSize({ widthCm: 33.9, heightCm: 19.02 })).toBe("16:9");
+    expect(matchSlideSize({ widthCm: 34.0, heightCm: 19.05 })).toBe("Custom");
+  });
+
+  it("returns Custom for a non-standard size", () => {
+    expect(matchSlideSize({ widthCm: 20, heightCm: 20 })).toBe("Custom");
+  });
+
+  it("prefers 4:3 over 16:10 when both could tie only by one axis (distinct heights)", () => {
+    // 4:3 and 16:10 share width 25.4 but differ in height; the exact size wins.
+    expect(matchSlideSize({ widthCm: 25.4, heightCm: 19.05 })).toBe("4:3");
+    expect(matchSlideSize({ widthCm: 25.4, heightCm: 15.875 })).toBe("16:10");
+  });
+});
+
+describe("slideSizeFor (SPEC-090)", () => {
+  it("returns the landscape catalogue entry by default", () => {
+    expect(slideSizeFor("16:9", "landscape")).toEqual({ widthCm: 33.867, heightCm: 19.05 });
+    expect(slideSizeFor("4:3", "landscape")).toEqual({ widthCm: 25.4, heightCm: 19.05 });
+  });
+
+  it("swaps to portrait when requested", () => {
+    expect(slideSizeFor("16:9", "portrait")).toEqual({ widthCm: 19.05, heightCm: 33.867 });
+  });
+
+  it("A4/Letter reuse PAPER_SIZES swapped to landscape", () => {
+    expect(slideSizeFor("A4", "landscape")).toEqual({ widthCm: 29.7, heightCm: 21 });
+    expect(slideSizeFor("Letter", "landscape")).toEqual({ widthCm: 27.94, heightCm: 21.59 });
+  });
+});
+
+describe("slide dimension clamps (SPEC-090)", () => {
+  it("are 1in and 56in in centimetres", () => {
+    expect(MIN_SLIDE_DIMENSION_CM).toBe(2.54);
+    expect(MAX_SLIDE_DIMENSION_CM).toBe(142.24);
   });
 });

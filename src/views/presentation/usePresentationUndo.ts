@@ -8,14 +8,27 @@
 // persisted; capped at 100 entries, oldest dropped. SPEC-081+ push their
 // edits through the same `record`.
 import { ref, type Ref } from "vue";
+import type { DocumentProperties } from "../../lib/core/documentProperties";
 import type { PresentationModel, Slide } from "../../lib/presentation/model";
 
 /** The most undo steps a view keeps; the oldest is dropped past this (AC-43). */
 export const MAX_UNDO_STEPS = 100;
 
+/** The deck-level state a snapshot captures beside the slides (SPEC-090), so an
+ * undo restores size, first-slide-number, properties and `deckDirty` together
+ * with the slide geometry a rescale changed. */
+interface DeckSnapshot {
+  slideWidthCm: number;
+  slideHeightCm: number;
+  firstSlideNumber?: number;
+  deckDirty?: true;
+  properties?: DocumentProperties;
+}
+
 interface Snapshot {
   slides: Slide[];
   structureDirty?: true;
+  deck: DeckSnapshot;
 }
 
 export interface PresentationUndoDeps {
@@ -47,7 +60,20 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
   }
 
   function snapshot(model: PresentationModel): Snapshot {
-    const snap: Snapshot = { slides: structuredClone(model.slides) };
+    const deck: DeckSnapshot = {
+      slideWidthCm: model.slideWidthCm,
+      slideHeightCm: model.slideHeightCm,
+    };
+    if (model.firstSlideNumber !== undefined) {
+      deck.firstSlideNumber = model.firstSlideNumber;
+    }
+    if (model.deckDirty) {
+      deck.deckDirty = true;
+    }
+    if (model.properties) {
+      deck.properties = structuredClone(model.properties);
+    }
+    const snap: Snapshot = { slides: structuredClone(model.slides), deck };
     if (model.structureDirty) {
       snap.structureDirty = true;
     }
@@ -60,6 +86,25 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
       model.structureDirty = true;
     } else {
       delete model.structureDirty;
+    }
+    // Deck-level state (SPEC-090): size, first-slide-number, properties and
+    // deckDirty restore together; absent keys are deleted, not left stale.
+    model.slideWidthCm = snap.deck.slideWidthCm;
+    model.slideHeightCm = snap.deck.slideHeightCm;
+    if (snap.deck.firstSlideNumber !== undefined) {
+      model.firstSlideNumber = snap.deck.firstSlideNumber;
+    } else {
+      delete model.firstSlideNumber;
+    }
+    if (snap.deck.deckDirty) {
+      model.deckDirty = true;
+    } else {
+      delete model.deckDirty;
+    }
+    if (snap.deck.properties) {
+      model.properties = snap.deck.properties;
+    } else {
+      delete model.properties;
     }
     deps.onApply();
   }

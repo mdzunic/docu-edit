@@ -297,6 +297,14 @@ export interface PresentationModel {
    * `fo:page-width`/`fo:page-height`); the stage's aspect ratio. */
   slideWidthCm: number;
   slideHeightCm: number;
+  /** Slide-number origin (pptx `p:presentation @firstSlideNum`), 1..9999;
+   * absent = 1, and only a value ≠ 1 is stored (SPEC-090). Model-only on odp
+   * (that format does not serialise it). */
+  firstSlideNumber?: number;
+  /** Deck-level setup (size, first slide number, properties) changed since
+   * open → the writers rebuild the deck-level parts. Absent = unchanged since
+   * open; only `true` is stored, exactly like `structureDirty` (SPEC-090). */
+  deckDirty?: true;
   /** Every part of the source package, verbatim and in package order —
    * SPEC-008's retention rule applied wholesale. The writers re-emit exactly
    * these, so a no-edit download stays byte-identical; media referenced by
@@ -345,6 +353,9 @@ export interface ParsedPresentation {
   layouts: SlideLayout[];
   slideWidthCm: number;
   slideHeightCm: number;
+  /** Slide-number origin from pptx `p:presentation @firstSlideNum`; absent for
+   * odp and for a deck that counts from 1 (SPEC-090). */
+  firstSlideNumber?: number;
   /** Image bytes referenced by the slides' `ImageFrame`s. */
   media: MediaPart[];
   /** Every source package part, verbatim, in package order. */

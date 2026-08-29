@@ -593,3 +593,88 @@ describe("SPEC-089: a layout change re-points one slide's .rels and leaves every
     expect(reopened.slides[0].layoutKey).toBe("ppt/slideLayouts/slideLayout2.xml");
   });
 });
+
+// --- SPEC-090: deck setup round-trip ---------------------------------------
+
+describe("SPEC-090: deck setup round-trip", () => {
+  const MOD = new Date("2026-03-01T12:00:00Z");
+
+  it("an untouched deck still downloads byte-identically per part (both formats)", async () => {
+    for (const format of ["pptx", "odp"] as const) {
+      const source = format === "pptx" ? await buildPptxFixtureBytes() : await buildOdpFixtureBytes();
+      const model = await readPresentationBytes(source, format, "Deck");
+      const { bytes } = format === "pptx" ? await writePptx(model) : await writeOdp(model);
+      const before = await unzip(source);
+      const after = await unzip(bytes);
+      expect([...after.keys()]).toEqual([...before.keys()]);
+      for (const [name, data] of before) {
+        expect(equalBytes(after.get(name)!, data), `${format} part ${name}`).toBe(true);
+      }
+    }
+  });
+
+  it("pptx: size + first-slide-number + metadata → save → reopen reproduces every field, re-saves byte-stable", async () => {
+    const { applyDeckSize, setFirstSlideNumber, applyDeckProperties } = await import("./deckSetup");
+    const model = await readPresentationBytes(await buildPptxFixtureBytes(), "pptx", "Deck");
+    applyDeckSize(model, { widthCm: 25.4, heightCm: 19.05 }, "keep");
+    setFirstSlideNumber(model, 3);
+    applyDeckProperties(model, {
+      ...model.properties,
+      title: "New Title",
+      subject: "Subj",
+      keywords: "kw",
+      comments: "Cmt",
+      author: "Ada",
+      lastModifiedBy: "Grace",
+    });
+    const first = await writePptx(model, { modified: MOD });
+    const reopened = await readPresentationBytes(first.bytes, "pptx", "Deck");
+    expect(reopened.slideWidthCm).toBeCloseTo(25.4, 2);
+    expect(reopened.slideHeightCm).toBeCloseTo(19.05, 2);
+    expect(reopened.firstSlideNumber).toBe(3);
+    expect(reopened.properties?.title).toBe("New Title");
+    expect(reopened.properties?.subject).toBe("Subj");
+    expect(reopened.properties?.keywords).toBe("kw");
+    expect(reopened.properties?.comments).toBe("Cmt");
+    expect(reopened.properties?.author).toBe("Ada");
+    expect(reopened.properties?.lastModifiedBy).toBe("Grace");
+    // Re-saving the reopened (deckDirty-free) model is byte-stable.
+    const second = await writePptx(reopened, { modified: MOD });
+    const a = await unzip(first.bytes);
+    const b = await unzip(second.bytes);
+    for (const part of ["ppt/presentation.xml", "docProps/core.xml"]) {
+      expect(equalBytes(a.get(part)!, b.get(part)!), part).toBe(true);
+    }
+  });
+
+  it("odp: size + metadata reproduces; firstSlideNumber stays model-only; re-saves byte-stable", async () => {
+    const { applyDeckSize, setFirstSlideNumber, applyDeckProperties } = await import("./deckSetup");
+    const model = await readPresentationBytes(await buildOdpFixtureBytes(), "odp", "Deck");
+    applyDeckSize(model, { widthCm: 25.4, heightCm: 19.05 }, "keep");
+    setFirstSlideNumber(model, 3);
+    applyDeckProperties(model, {
+      ...model.properties,
+      title: "New Title",
+      subject: "Subj",
+      keywords: "kw",
+      comments: "Cmt",
+      author: "Ada",
+      lastModifiedBy: "Grace",
+    });
+    const first = await writeOdp(model, { modified: MOD });
+    const reopened = await readPresentationBytes(first.bytes, "odp", "Deck");
+    expect(reopened.slideWidthCm).toBeCloseTo(25.4, 2);
+    expect(reopened.slideHeightCm).toBeCloseTo(19.05, 2);
+    // odp does not serialise the numbering origin — it reads back as absent (= 1).
+    expect(reopened.firstSlideNumber).toBeUndefined();
+    expect(reopened.properties?.title).toBe("New Title");
+    expect(reopened.properties?.author).toBe("Ada");
+    expect(reopened.properties?.lastModifiedBy).toBe("Grace");
+    const second = await writeOdp(reopened, { modified: MOD });
+    const a = await unzip(first.bytes);
+    const b = await unzip(second.bytes);
+    for (const part of ["styles.xml", "meta.xml"]) {
+      expect(equalBytes(a.get(part)!, b.get(part)!), part).toBe(true);
+    }
+  });
+});

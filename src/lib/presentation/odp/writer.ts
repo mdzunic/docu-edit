@@ -17,7 +17,8 @@
 //     is spliced only when parts were added/removed (never, this spec — pages
 //     live inside content.xml).
 import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
-import { buildMetaXml } from "../../core/odfMeta";
+import { buildMetaXml, type OdfMetaInput } from "../../core/odfMeta";
+import { orientationOf } from "../../core/pageSetup";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { MediaPart } from "../../core/media";
 import { escapeXmlAttribute } from "../../core/xml";
@@ -173,6 +174,137 @@ function spliceOfficeStyles(stylesXml: string, blocks: string[]): string {
   return stylesXml.replace(/<\/office:document-styles>/, `<office:styles>${joined}</office:styles></office:document-styles>`);
 }
 
+// ── Deck-size write-back (SPEC-090) ─────────────────────────────────────────
+
+/** The meta.xml input for the deck's metadata — the deck's `properties` with
+ * `title` falling back to the app-bar title, passing custom/unsupported/extra
+ * fields straight back so nothing this dialog does not edit is lost. Shared by
+ * the from-scratch and substitution paths. */
+function metaInputFor(model: PresentationModel): OdfMetaInput {
+  const props = model.properties ?? {};
+  return {
+    title: props.title ?? model.title,
+    subject: props.subject,
+    author: props.author,
+    lastModifiedBy: props.lastModifiedBy,
+    keywords: props.keywords,
+    comments: props.comments,
+    created: props.created,
+    extraFields: props.extraFields,
+    customProperties: props.customProperties,
+    unsupportedCustomProperties: props.unsupportedCustomProperties,
+  };
+}
+
+/** The `style:page-layout-name` on each `style:master-page` START tag (a notes
+ * page layout on a `presentation:notes` CHILD is a separate element, so this
+ * naturally excludes it — SPEC-090). */
+function masterPageLayoutNames(xml: string): string[] {
+  const names = new Set<string>();
+  for (const tag of xml.match(/<style:master-page\b[^>]*>/g) ?? []) {
+    const match = /\bstyle:page-layout-name="([^"]*)"/.exec(tag);
+    if (match) {
+      names.add(match[1]);
+    }
+  }
+  return [...names];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Sets an ODF attribute on a start/empty tag, replacing its value in place or
+ * inserting it before the tag's close when absent (SPEC-090 "inserting an
+ * attribute when absent, leaving every other byte alone"). */
+function setOdfAttr(tag: string, name: string, value: string): string {
+  const re = new RegExp(`\\b${escapeRegExp(name)}="[^"]*"`);
+  if (re.test(tag)) {
+    return tag.replace(re, `${name}="${value}"`);
+  }
+  return tag.replace(/\s*\/?>$/, (end) => ` ${name}="${value}"${end}`);
+}
+
+/** Rewrites `fo:page-width`, `fo:page-height` and `style:print-orientation` on
+ * every named `style:page-layout`'s `style:page-layout-properties`. */
+function rewritePageLayoutSize(
+  xml: string,
+  names: string[],
+  widthCm: number,
+  heightCm: number,
+  orientation: string,
+): string {
+  let out = xml;
+  for (const name of names) {
+    const re = new RegExp(
+      `(<style:page-layout\\b[^>]*\\bstyle:name="${escapeRegExp(name)}"[^>]*>)([\\s\\S]*?)(</style:page-layout>)`,
+    );
+    out = out.replace(re, (_full, open: string, inner: string, close: string) => {
+      let body = inner;
+      if (/<style:page-layout-properties\b/.test(body)) {
+        body = body.replace(/<style:page-layout-properties\b[^>]*\/?>/, (props) => {
+          let updated = setOdfAttr(props, "fo:page-width", `${widthCm}cm`);
+          updated = setOdfAttr(updated, "fo:page-height", `${heightCm}cm`);
+          updated = setOdfAttr(updated, "style:print-orientation", orientation);
+          return updated;
+        });
+      } else {
+        body =
+          `<style:page-layout-properties fo:page-width="${widthCm}cm" fo:page-height="${heightCm}cm"` +
+          ` style:print-orientation="${orientation}"/>` +
+          body;
+      }
+      return open + body + close;
+    });
+  }
+  return out;
+}
+
+/** Applies the deck size to whichever part carries the master pages' page
+ * layouts: styles.xml first (the common case), else the rebuilt content.xml's
+ * automatic styles (the reader's own fallback), else a fresh `PMde1` layout
+ * spliced into styles.xml and referenced from each bare master page. */
+function rewriteOdpDeckSize(
+  stylesXml: string | undefined,
+  contentXml: string | undefined,
+  model: PresentationModel,
+): { stylesXml?: string; contentXml?: string } {
+  const widthCm = model.slideWidthCm;
+  const heightCm = model.slideHeightCm;
+  const orientation = orientationOf({ widthCm, heightCm });
+  const stylesNames = stylesXml ? masterPageLayoutNames(stylesXml) : [];
+  if (stylesXml && stylesNames.length > 0) {
+    return { stylesXml: rewritePageLayoutSize(stylesXml, stylesNames, widthCm, heightCm, orientation) };
+  }
+  const contentNames = contentXml ? masterPageLayoutNames(contentXml) : [];
+  if (contentXml && contentNames.length > 0) {
+    return { contentXml: rewritePageLayoutSize(contentXml, contentNames, widthCm, heightCm, orientation) };
+  }
+  if (stylesXml) {
+    const layout =
+      `<style:page-layout style:name="PMde1"><style:page-layout-properties fo:page-width="${widthCm}cm"` +
+      ` fo:page-height="${heightCm}cm" style:print-orientation="${orientation}"/></style:page-layout>`;
+    let out = spliceAutoStyleLayout(stylesXml, layout);
+    out = out.replace(/<style:master-page\b[^>]*>/g, (tag) =>
+      /\bstyle:page-layout-name="/.test(tag) ? tag : setOdfAttr(tag, "style:page-layout-name", "PMde1"),
+    );
+    return { stylesXml: out };
+  }
+  return {};
+}
+
+/** Splices a page-layout style into styles.xml's `office:automatic-styles`
+ * (creating the container just before `</office:document-styles>` if absent). */
+function spliceAutoStyleLayout(stylesXml: string, layout: string): string {
+  if (/<\/office:automatic-styles>/.test(stylesXml)) {
+    return stylesXml.replace(/<\/office:automatic-styles>/, `${layout}</office:automatic-styles>`);
+  }
+  return stylesXml.replace(
+    /<\/office:document-styles>/,
+    `<office:automatic-styles>${layout}</office:automatic-styles></office:document-styles>`,
+  );
+}
+
 export function odpFileName(title: string): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : DEFAULT_PRESENTATION_TITLE}.odp`;
@@ -191,7 +323,11 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
     return { bytes: await zip(buildFromScratch(model, options.modified ?? new Date())) };
   }
   const parts = decodedPartBytes(model.opaque);
-  const structural = model.structureDirty === true || model.slides.some((slide) => slide.dirty === true);
+  const deckDirty = model.deckDirty === true;
+  // A deck-level change (SPEC-090) joins the structural condition: it rewrites
+  // styles.xml's page-layout size + meta.xml (and, in scale mode, dirties the
+  // slides so content.xml re-emits their geometry too).
+  const structural = model.structureDirty === true || deckDirty || model.slides.some((slide) => slide.dirty === true);
   const mimetype = parts.get("mimetype") ?? encode(ODP_MIMETYPE);
   const entries: ZipEntryInput[] = [{ name: "mimetype", data: mimetype, store: true }];
 
@@ -199,14 +335,30 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   // a synthesised layout also authors a styles.xml page-layout style. A deck
   // whose layouts were untouched authors nothing, so styles.xml stays verbatim.
   const layoutPlan = planOdpLayouts(model);
-  const rebuiltContent =
-    structural && model.odpContentEnvelope
-      ? encode(rebuildContentXml(model, model.odpContentEnvelope, layoutPlan))
-      : undefined;
-  const rebuiltStyles =
-    structural && layoutPlan.styleBlocks.length > 0 && parts.has("styles.xml")
-      ? encode(spliceOfficeStyles(decoder.decode(parts.get("styles.xml")!), layoutPlan.styleBlocks))
-      : undefined;
+  let contentXml =
+    structural && model.odpContentEnvelope ? rebuildContentXml(model, model.odpContentEnvelope, layoutPlan) : undefined;
+
+  // styles.xml: SPEC-089's authored layout blocks and/or SPEC-090's deck-size
+  // rewrite (fo:page-width/height + style:print-orientation on the layouts the
+  // master pages reference).
+  let stylesXml: string | undefined;
+  if (structural && parts.has("styles.xml") && (layoutPlan.styleBlocks.length > 0 || deckDirty)) {
+    stylesXml = decoder.decode(parts.get("styles.xml")!);
+    if (layoutPlan.styleBlocks.length > 0) {
+      stylesXml = spliceOfficeStyles(stylesXml, layoutPlan.styleBlocks);
+    }
+  }
+  if (deckDirty) {
+    const rewritten = rewriteOdpDeckSize(stylesXml, contentXml, model);
+    stylesXml = rewritten.stylesXml ?? stylesXml;
+    contentXml = rewritten.contentXml ?? contentXml;
+  }
+
+  // meta.xml is rebuilt from the deck metadata on a deck change (SPEC-090),
+  // passing custom/unsupported/extra fields straight back so nothing is lost;
+  // firstSlideNumber is deliberately NOT written to odp (Decisions).
+  const metaXml =
+    deckDirty && parts.has("meta.xml") ? buildMetaXml(metaInputFor(model), options.modified ?? new Date()) : undefined;
 
   // Inserted images: model.media is the source of truth (overrides an opaque
   // twin), new `Pictures/…` parts are appended, and the manifest gains their
@@ -219,10 +371,12 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
     if (name === "mimetype") {
       continue;
     }
-    if (name === "content.xml" && rebuiltContent) {
-      entries.push({ name, data: rebuiltContent });
-    } else if (name === "styles.xml" && rebuiltStyles) {
-      entries.push({ name, data: rebuiltStyles });
+    if (name === "content.xml" && contentXml !== undefined) {
+      entries.push({ name, data: encode(contentXml) });
+    } else if (name === "styles.xml" && stylesXml !== undefined) {
+      entries.push({ name, data: encode(stylesXml) });
+    } else if (name === "meta.xml" && metaXml !== undefined) {
+      entries.push({ name, data: encode(metaXml) });
     } else if (name === "META-INF/manifest.xml" && appended.length > 0) {
       entries.push({ name, data: encode(spliceManifest(decoder.decode(data), appended)) });
     } else if (mediaBytes.has(name)) {
@@ -371,7 +525,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `</office:master-styles>` +
     `</office:document-styles>`;
 
-  const meta = buildMetaXml({ title: model.title }, modified);
+  const meta = buildMetaXml(metaInputFor(model), modified);
 
   const media = referencedMedia(model);
   const mediaEntries = media

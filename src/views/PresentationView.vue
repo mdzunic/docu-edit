@@ -15,7 +15,8 @@ import SlideStageArea from "../components/presentation/SlideStageArea.vue";
 import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
-import DeckActions from "../components/presentation/DeckActions.vue";
+import DeckHeader from "../components/presentation/DeckHeader.vue";
+import DeckSetupDialog from "../components/presentation/DeckSetupDialog.vue";
 import HtmlExportOptionsDialog from "../components/presentation/HtmlExportOptionsDialog.vue";
 import LayoutGalleryDialog from "../components/presentation/LayoutGalleryDialog.vue";
 import NotesPanel from "../components/presentation/NotesPanel.vue";
@@ -36,6 +37,7 @@ import { useAnimations } from "./presentation/useAnimations";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useDeckActions } from "./presentation/useDeckActions";
+import { useDeckSetup } from "./presentation/useDeckSetup";
 
 const route = useRoute();
 const router = useRouter();
@@ -227,6 +229,15 @@ function toggleLayout() {
   }
 }
 
+// --- deck setup: slide size, first slide number, metadata (SPEC-090) -------
+const deckSetup = useDeckSetup({
+  model: presentation,
+  currentIndex,
+  record: slideUndo.record,
+  commit,
+  reportError: (message) => addToast(message),
+});
+
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
 
 onMounted(() => {
@@ -268,32 +279,25 @@ onBeforeUnmount(() => {
       class="presentation"
       data-testid="presentation-view"
     >
-      <header class="deck-header">
-        <div class="deck-facts">
-          <h2 class="deck-title">
-            {{ presentation.title }}
-          </h2>
-          <p class="deck-meta">
-            <span data-testid="presentation-slide-count">{{ slideCountLabel }}</span>
-            · {{ formatName }}
-          </p>
-        </div>
-        <DeckActions
-          :can-undo="canUndo"
-          :can-redo="canRedo"
-          :notes-open="notes.open.value"
-          :can-present="deckActions.canPresent.value"
-          :other-format-label="deckActions.otherFormatLabel.value"
-          @undo="slideUndo.undo()"
-          @redo="slideUndo.redo()"
-          @toggle-notes="notes.toggle()"
-          @present="deckActions.present()"
-          @download="deckActions.download()"
-          @download-copy="deckActions.downloadCopy()"
-          @export-html="deckActions.openHtmlExport()"
-          @close="deckActions.close()"
-        />
-      </header>
+      <DeckHeader
+        :deck-title="presentation.title"
+        :slide-count-label="slideCountLabel"
+        :format-name="formatName"
+        :can-undo="canUndo"
+        :can-redo="canRedo"
+        :notes-open="notes.open.value"
+        :can-present="deckActions.canPresent.value"
+        :other-format-label="deckActions.otherFormatLabel.value"
+        @undo="slideUndo.undo()"
+        @redo="slideUndo.redo()"
+        @toggle-notes="notes.toggle()"
+        @deck-setup="deckSetup.open()"
+        @present="deckActions.present()"
+        @download="deckActions.download()"
+        @download-copy="deckActions.downloadCopy()"
+        @export-html="deckActions.openHtmlExport()"
+        @close="deckActions.close()"
+      />
 
       <PresentationToolbar
         :state="stageEdit.editing.toolbarState.value ?? undefined"
@@ -382,6 +386,10 @@ onBeforeUnmount(() => {
       :controller="layouts"
       :slide-number="currentIndex + 1"
     />
+    <DeckSetupDialog
+      v-if="deckSetup.isOpen.value"
+      :controller="deckSetup"
+    />
   </AppShell>
 </template>
 
@@ -412,34 +420,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.deck-header {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-  padding: var(--space-4) var(--space-5);
-  border-bottom: var(--border-width) solid var(--border-subtle);
-}
-
-.deck-facts {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.deck-title {
-  margin: 0;
-  font-size: var(--text-xl);
-  font-weight: var(--weight-bold);
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.deck-meta {
-  margin: var(--space-1) 0 0;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
 }
 
 .deck-body {
