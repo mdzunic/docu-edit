@@ -16,6 +16,10 @@ import { zip } from "../../core/zipWriter";
 import { writePptxTiming } from "../pptx/timing";
 import { writeOdpAnim } from "../odp/anim";
 import { GOLDEN_PAGE_LAYOUT_NAMES, LAYOUT_GOLDEN } from "../odp/layoutGolden";
+import { createBlankPresentation } from "../slides";
+import { createTableFrame } from "../tables";
+import { writePptx } from "../pptx/writer";
+import { writeOdp } from "../odp/writer";
 import type { SlideAnimation } from "../model";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -156,7 +160,9 @@ export const FIXTURE_FRAME_KINDS: string[][] = [
   ["text", "text"],
   ["text", "text"],
   ["text", "group"],
-  ["text", "text", "text", "shape", "image", "group", "foreign"],
+  // Slide 4's trailing graphicFrame/table:table is a modelled table (SPEC-091);
+  // before SPEC-091 it read as a foreign "Table" box.
+  ["text", "text", "text", "shape", "image", "group", "table"],
 ];
 
 /** Slide 4's per-frame geometry in cm ([x, y, w, h]), asserted equal across
@@ -169,7 +175,7 @@ export const FIXTURE_SLIDE4_GEOMETRY: [number, number, number, number][] = [
   [2, 15, 5, 3], // ellipse
   [25, 15, 4, 3], // image
   [8, 15, 5.5, 3], // group box (union of the two rects)
-  [16, 15, 8, 3], // table (foreign)
+  [16, 15, 8, 3], // table (modelled TableFrame, SPEC-091)
 ];
 
 export const FIXTURE_DECK_TITLE = "Deck fixture";
@@ -1136,4 +1142,110 @@ export async function buildSpec089OdpFixtureBytes(): Promise<Uint8Array> {
     { name: "meta.xml", data: encoder.encode(meta) },
     { name: "META-INF/manifest.xml", data: encoder.encode(manifest) },
   ]);
+}
+
+// ============================================================================
+// SPEC-091 table fixtures
+// ============================================================================
+// Built through the from-scratch writers (createBlankPresentation + insert +
+// write) rather than hand-authored package bytes: each deck carries one
+// modelled TableFrame (a 3×3 grid with a header row and banded rows) and one
+// deliberately out-of-subset table (an irregular a:tbl / table:table) that must
+// stay a foreign frame — pinning the preserve-don't-parse path (AC-17c).
+
+/** The modelled table the SPEC-091 fixtures carry, for the unit spec and e2e to
+ * assert after open (AC-17a). */
+export const EXPECTED_FIXTURE_TABLE = {
+  rows: 3,
+  cols: 3,
+  firstRow: true as const,
+  bandRow: true as const,
+  /** The header row's cell texts, left to right. */
+  headerText: ["Region", "Q1", "Q2"],
+  /** Cell (1,0) text (first body row). */
+  bodyFirstCell: "North",
+};
+
+function fixtureTableFrame(widthCm: number, heightCm: number) {
+  const table = createTableFrame(
+    EXPECTED_FIXTURE_TABLE.rows,
+    EXPECTED_FIXTURE_TABLE.cols,
+    widthCm,
+    heightCm,
+  );
+  table.bandRow = true;
+  const text = [
+    EXPECTED_FIXTURE_TABLE.headerText,
+    [EXPECTED_FIXTURE_TABLE.bodyFirstCell, "12", "18"],
+    ["South", "9", "15"],
+  ];
+  table.rows.forEach((row, r) => {
+    row.cells.forEach((cell, c) => {
+      cell.paragraphs = [{ runs: [{ text: text[r][c] }] }];
+    });
+  });
+  return table;
+}
+
+/** A `p:graphicFrame` whose `a:tbl` is out of subset — a 2-column grid whose
+ * single row carries three `a:tc`, so the reader aborts to a foreign frame. */
+const OUT_OF_SUBSET_PPTX_TABLE =
+  `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="99" name="Bad Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+  `<p:xfrm><a:off x="${EMU(2)}" y="${EMU(2)}"/><a:ext cx="${EMU(6)}" cy="${EMU(2)}"/></p:xfrm>` +
+  `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+  `<a:tbl><a:tblGrid><a:gridCol w="${EMU(3)}"/><a:gridCol w="${EMU(3)}"/></a:tblGrid>` +
+  `<a:tr h="${EMU(2)}">` +
+  `<a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>bad</a:t></a:r></a:p></a:txBody></a:tc>` +
+  `<a:tc><a:txBody><a:bodyPr/><a:p/></a:txBody></a:tc>` +
+  `<a:tc><a:txBody><a:bodyPr/><a:p/></a:txBody></a:tc>` +
+  `</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+
+/** A `draw:frame` whose `table:table` is out of subset — a two-column grid whose
+ * row carries three cells. */
+const OUT_OF_SUBSET_ODP_TABLE =
+  `<draw:frame${geom(2, 2, 6, 2)}><table:table>` +
+  `<table:table-column table:number-columns-repeated="2"/>` +
+  `<table:table-row>` +
+  `<table:table-cell><text:p>bad</text:p></table:table-cell>` +
+  `<table:table-cell><text:p/></table:table-cell>` +
+  `<table:table-cell><text:p/></table:table-cell>` +
+  `</table:table-row></table:table></draw:frame>`;
+
+export async function buildPptxTablesFixtureBytes(): Promise<Uint8Array> {
+  const model = createBlankPresentation();
+  const slide = model.slides[0];
+  slide.frames = [
+    fixtureTableFrame(model.slideWidthCm, model.slideHeightCm),
+    {
+      id: crypto.randomUUID(),
+      kind: "foreign",
+      label: "Table",
+      xml: OUT_OF_SUBSET_PPTX_TABLE,
+      xCm: 2,
+      yCm: 2,
+      widthCm: 6,
+      heightCm: 2,
+    },
+  ];
+  return (await writePptx(model)).bytes;
+}
+
+export async function buildOdpTablesFixtureBytes(): Promise<Uint8Array> {
+  const model = createBlankPresentation();
+  model.format = "odp";
+  const slide = model.slides[0];
+  slide.frames = [
+    fixtureTableFrame(model.slideWidthCm, model.slideHeightCm),
+    {
+      id: crypto.randomUUID(),
+      kind: "foreign",
+      label: "Table",
+      xml: OUT_OF_SUBSET_ODP_TABLE,
+      xCm: 2,
+      yCm: 2,
+      widthCm: 6,
+      heightCm: 2,
+    },
+  ];
+  return (await writeOdp(model)).bytes;
 }

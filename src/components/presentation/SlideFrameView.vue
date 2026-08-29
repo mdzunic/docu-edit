@@ -23,6 +23,11 @@ import {
   placeholderPrompt,
   runStyle,
   shapeVisualOf,
+  tableColumnBoundaries,
+  tableColumnWidths,
+  tableRenderRows,
+  tableRowBoundaries,
+  tableRowHeights,
   textFrameFill,
   frameAccessibleName,
   frameRole,
@@ -37,6 +42,9 @@ const props = defineProps({
    * these — group children render read-only. */
   selected: { type: Boolean, default: false },
   editing: { type: Boolean, default: false },
+  /** SPEC-091: the {row,col} of the table cell in a session (null otherwise),
+   * so that cell's `<td>` renders the in-cell contenteditable host. */
+  editingCell: { type: Object, default: null },
   /** False for a group's children, which render read-only (no selection,
    * focus or test hooks) until ungroup promotes them (SPEC-082). */
   topLevel: { type: Boolean, default: true },
@@ -49,7 +57,16 @@ const props = defineProps({
   playStyle: { type: Object, default: null },
 });
 
-const emit = defineEmits(["select", "start-edit", "frame-pointerdown", "edit-mounted", "edit-unmounted"]);
+const emit = defineEmits([
+  "select",
+  "start-edit",
+  "start-edit-cell",
+  "cell-select",
+  "table-border-pointerdown",
+  "frame-pointerdown",
+  "edit-mounted",
+  "edit-unmounted",
+]);
 
 const frame = computed(() => asSlideFrame(props.frame));
 const kind = computed(() => frame.value.kind);
@@ -64,6 +81,16 @@ const paragraphs = computed(() => markedParagraphs(frame.value));
 const textFill = computed(() => textFrameFill(frame.value));
 const children = computed(() => groupChildren(frame.value));
 const foreignVisible = computed(() => isForeignVisible(frame.value));
+const tableColumns = computed(() => tableColumnWidths(frame.value));
+const tableRows = computed(() => tableRenderRows(frame.value));
+const tableRowHeightsPx = computed(() => tableRowHeights(frame.value));
+// AC-8a/b: a selected (not editing) table exposes drag handles on its internal
+// column/row boundaries; suppressed while a text session or insertion is active.
+const showResizeHandles = computed(
+  () => kind.value === "table" && props.topLevel && props.selected && !props.editing && !props.armed,
+);
+const colBoundaries = computed(() => tableColumnBoundaries(frame.value));
+const rowBoundaries = computed(() => tableRowBoundaries(frame.value));
 const foreignText = computed(() => foreignLabel(frame.value));
 const imgSrc = computed(() => imageSrc(frame.value, asResolver(props.resolveMedia)));
 const showPrompt = computed(() => !props.editing && isEmptyTextPlaceholder(frame.value));
@@ -71,6 +98,55 @@ const promptText = computed(() => placeholderPrompt(frame.value));
 
 const canvasEl = useTemplateRef("canvasEl");
 const editHost = useTemplateRef("editHost");
+const tableFrameEl = useTemplateRef("tableFrameEl");
+
+// The in-cell contenteditable host is created/destroyed as the editing cell
+// changes (double-click, Enter, Tab between cells). Hand the freshly-mounted
+// host to the editing composable — the same edit-mounted/edit-unmounted
+// contract the text frame uses (SPEC-091 AC-6a).
+const editingCellKey = computed(() =>
+  kind.value === "table" && props.editing && props.editingCell
+    ? `${props.editingCell.row}:${props.editingCell.col}`
+    : null,
+);
+watch(editingCellKey, (key) => {
+  if (key) {
+    void nextTick(() => {
+      const el = tableFrameEl.value?.querySelector(".cell-edit");
+      if (el instanceof HTMLElement) emit("edit-mounted", el);
+    });
+  } else {
+    emit("edit-unmounted");
+  }
+});
+
+/** True for the one owner cell currently in an editing session. */
+function isEditingCell(cell = { rowIndex: 0, colIndex: 0 }) {
+  return (
+    props.editing &&
+    props.editingCell != null &&
+    props.editingCell.row === cell.rowIndex &&
+    props.editingCell.col === cell.colIndex
+  );
+}
+
+function onCellMousedown(row = 0, col = 0, event = new MouseEvent("mousedown")) {
+  // Anchor the panel/session on this cell and select the frame; stop here so a
+  // click inside the table never bubbles to the surface deselect (AC-9c).
+  event.stopPropagation();
+  emit("cell-select", frame.value.id, row, col);
+}
+
+function onCellDblclick(row = 0, col = 0, event = new MouseEvent("dblclick")) {
+  event.stopPropagation();
+  emit("start-edit-cell", frame.value.id, row, col, { x: event.clientX, y: event.clientY });
+}
+
+function onBoundaryPointerdown(axis = "col", index = 0, event = new PointerEvent("pointerdown")) {
+  // Stop here so a boundary drag never also starts a frame move (AC-8a/b).
+  event.stopPropagation();
+  emit("table-border-pointerdown", frame.value.id, axis, index, event);
+}
 
 // The contenteditable host is created/destroyed with `editing`; hand it to the
 // editing composable (which populates it and attaches the caret) once mounted.
@@ -262,6 +338,103 @@ watch(() => props.frame, paint, { deep: true });
     />
   </div>
 
+  <!-- Table frame: a real <table> with a colgroup and merged cells (AC-4) -->
+  <div
+    v-else-if="kind === 'table'"
+    ref="tableFrameEl"
+    class="frame table-frame"
+    :class="{ 'is-selected': selected }"
+    :style="[position, playStyle]"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
+    @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
+  >
+    <table
+      class="slide-table"
+      data-testid="slide-table"
+    >
+      <colgroup>
+        <col
+          v-for="(w, ci) in tableColumns"
+          :key="ci"
+          :style="{ width: w }"
+        >
+      </colgroup>
+      <tbody>
+        <tr
+          v-for="(row, ri) in tableRows"
+          :key="ri"
+          :style="{ height: tableRowHeightsPx[ri] }"
+        >
+          <td
+            v-for="cell in row"
+            :key="cell.colIndex"
+            class="slide-table-cell"
+            :colspan="cell.colSpan"
+            :rowspan="cell.rowSpan"
+            :style="cell.style"
+            :data-testid="`slide-table-cell-${cell.rowIndex}-${cell.colIndex}`"
+            @mousedown="onCellMousedown(cell.rowIndex, cell.colIndex, $event)"
+            @dblclick="onCellDblclick(cell.rowIndex, cell.colIndex, $event)"
+          >
+            <!-- Editing session: the same contenteditable host the text frame
+                 uses, owned by the editing composable (SPEC-091 AC-6a) -->
+            <div
+              v-if="isEditingCell(cell)"
+              class="ce-host cell-edit"
+              contenteditable="true"
+              spellcheck="false"
+              data-testid="slide-table-cell-edit"
+            />
+            <template v-else>
+              <div
+                v-for="(entry, pi) in cell.paragraphs"
+                :key="pi"
+                class="paragraph"
+                :style="paragraphStyle(entry.para)"
+              >
+                <span
+                  v-if="entry.marker"
+                  class="bullet-marker"
+                  aria-hidden="true"
+                >{{ entry.marker }} </span>
+                <span
+                  v-for="(run, runIndex) in entry.para.runs"
+                  :key="runIndex"
+                  :style="runStyle(run)"
+                >{{ run.text }}</span>
+              </div>
+            </template>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <!-- Drag-resize handles on the internal grid boundaries (AC-8a/b) -->
+    <template v-if="showResizeHandles">
+      <div
+        v-for="b in colBoundaries"
+        :key="`col-${b.index}`"
+        class="col-resize-handle"
+        data-testid="table-col-resize"
+        :data-boundary="b.index"
+        :style="{ left: `${b.offsetPct}%` }"
+        @pointerdown="onBoundaryPointerdown('col', b.index, $event)"
+      />
+      <div
+        v-for="b in rowBoundaries"
+        :key="`row-${b.index}`"
+        class="row-resize-handle"
+        data-testid="table-row-resize"
+        :data-boundary="b.index"
+        :style="{ top: `${b.offsetPct}%` }"
+        @pointerdown="onBoundaryPointerdown('row', b.index, $event)"
+      />
+    </template>
+  </div>
+
   <!-- Foreign placeholder box -->
   <div
     v-else-if="foreignVisible"
@@ -399,6 +572,62 @@ watch(() => props.frame, paint, { deep: true });
   width: 0 !important;
   height: 0 !important;
   overflow: visible;
+}
+
+.table-frame {
+  overflow: hidden;
+}
+
+.slide-table {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.slide-table-cell {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* The in-cell editing host fills the cell and drops the text-frame flex/font
+   sizing so it inherits the cell's own type (SPEC-091 AC-6a). */
+.slide-table-cell .cell-edit {
+  flex: none;
+  min-height: 1em;
+  font-size: inherit;
+  outline: none;
+  cursor: text;
+}
+
+.table-frame.is-selected {
+  outline: 1px solid var(--accent, #3b82f6);
+}
+
+/* Thin invisible strips centred on each internal grid line; they carry the
+   resize cursor and swallow the pointer-down that starts the drag (AC-8a/b). */
+.col-resize-handle,
+.row-resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2;
+}
+
+.col-resize-handle {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+
+.row-resize-handle {
+  left: 0;
+  right: 0;
+  height: 8px;
+  transform: translateY(-50%);
+  cursor: row-resize;
 }
 
 .foreign-frame {

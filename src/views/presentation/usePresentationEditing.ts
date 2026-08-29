@@ -108,6 +108,9 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
   function onHandlePointerDown(id: string, handle: ResizeHandle, event: PointerEvent): void {
     manipulation.onHandlePointerDown(id, handle, event);
   }
+  function onTableBorderPointerDown(id: string, axis: "col" | "row", index: number, event: PointerEvent): void {
+    manipulation.onTableBorderPointerDown(id, axis, index, event);
+  }
 
   const recentColors = ref<string[]>(loadRecentColors());
 
@@ -119,6 +122,15 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
   }
   function onStartEdit(id: string, point?: CaretPoint): void {
     editing.startEditing(id, false, point);
+  }
+  function onStartEditCell(id: string, row: number, col: number, point?: CaretPoint): void {
+    editing.startEditingCell(id, row, col, point);
+  }
+  function onCellSelect(id: string, row: number, col: number): void {
+    if (editing.editingFrameId.value && editing.editingFrameId.value !== id) {
+      editing.stopEditing();
+    }
+    editing.focusCell(id, row, col);
   }
   function onSurfaceDeselect(): void {
     if (editing.editingFrameId.value) editing.stopEditing();
@@ -156,6 +168,10 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
       if (frame && frame.kind === "text") {
         event.preventDefault();
         editing.startEditing(frame.id);
+      } else if (frame && frame.kind === "table") {
+        event.preventDefault();
+        const cell = editing.activeCell.value;
+        editing.startEditingCell(frame.id, cell?.row ?? 0, cell?.col ?? 0);
       }
       return;
     }
@@ -191,10 +207,13 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     recentColors: computed(() => recentColors.value),
     onFrameSelect,
     onStartEdit,
+    onStartEditCell,
+    onCellSelect,
     onSurfaceDeselect,
     onSurfaceDraw,
     onFramePointerDown,
     onHandlePointerDown,
+    onTableBorderPointerDown,
     registerSurface,
     setColor,
     setFill,

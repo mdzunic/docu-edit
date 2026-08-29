@@ -80,6 +80,7 @@ const FO_NS = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const SVG_NS = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const PRESENTATION_NS = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
 const SMIL_NS = "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0";
+const TABLE_NS = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const MANIFEST_NS = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 
 const encoder = new TextEncoder();
@@ -505,7 +506,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}"` +
     ` xmlns:draw="${DRAW_NS}" xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:xlink="http://www.w3.org/1999/xlink"` +
-    ` xmlns:presentation="${PRESENTATION_NS}" xmlns:smil="${SMIL_NS}" office:version="1.2">` +
+    ` xmlns:presentation="${PRESENTATION_NS}" xmlns:smil="${SMIL_NS}" xmlns:table="${TABLE_NS}" office:version="1.2">` +
     `<office:automatic-styles></office:automatic-styles>` +
     `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
     `</office:document-content>`;

@@ -18,11 +18,14 @@ import {
   insertImageFrame,
   insertImageRect,
   insertShapeFrame,
+  insertTableFrame,
   insertTextBoxFrame,
   mediaExtension,
   moveFrame,
   reorderFrame,
   resizeFrame,
+  resizeTableColumnBoundary,
+  resizeTableRowBoundary,
   setFrameFill,
   setFrameStroke,
   ungroupFrame,
@@ -33,6 +36,7 @@ import { writeOdp } from "./odp/writer";
 import { buildOdpFixtureBytes, buildPptxFixtureBytes } from "./fixtures/build";
 import { unzip } from "../core/zip";
 import { equalBytes } from "../core/equality";
+import { MIN_COLUMN_WIDTH_CM, MIN_ROW_HEIGHT_CM } from "../core/tables";
 import type {
   GroupFrame,
   ImageFrame,
@@ -77,6 +81,66 @@ describe("insert commands", () => {
     expect(frame.kind).toBe("shape");
     expect(frame.fill).toEqual({ type: "solid", color: DECK_DEFAULT_SHAPE_FILL });
     expect(frame.stroke).toEqual(DECK_DEFAULT_SHAPE_STROKE);
+  });
+
+  it("insertTableFrame lands a centred 80%-width table with the caret cell (AC-5c)", () => {
+    const model = blank();
+    const id = insertTableFrame(model, 0, 3, 4)!;
+    const frame = only(model.slides[0]);
+    expect(frame.kind).toBe("table");
+    expect(id).toBe(frame.id);
+    if (frame.kind === "table") {
+      expect(frame.widthCm).toBeCloseTo(model.slideWidthCm * 0.8, 2);
+      expect(frame.columnWidthsCm).toHaveLength(4);
+      expect(frame.rows).toHaveLength(3);
+      expect(frame.firstRow).toBe(true);
+    }
+  });
+
+  it("resizeTableColumnBoundary moves an internal boundary, keeping table width (AC-8a)", () => {
+    const model = blank();
+    const id = insertTableFrame(model, 0, 2, 2)!;
+    const frame = only(model.slides[0]);
+    if (frame.kind !== "table") throw new Error("expected table");
+    const [w0, w1] = frame.columnWidthsCm;
+    const totalBefore = frame.widthCm;
+    resizeTableColumnBoundary(model, 0, id, 0, [...frame.columnWidthsCm], 1);
+    expect(frame.columnWidthsCm[0]).toBeCloseTo(w0 + 1, 3);
+    expect(frame.columnWidthsCm[1]).toBeCloseTo(w1 - 1, 3);
+    // The right neighbour absorbs exactly what column 0 gains: width unchanged.
+    expect(frame.widthCm).toBeCloseTo(totalBefore, 3);
+  });
+
+  it("resizeTableColumnBoundary floors both columns at MIN_COLUMN_WIDTH_CM (AC-8a)", () => {
+    const model = blank();
+    const id = insertTableFrame(model, 0, 1, 2)!;
+    const frame = only(model.slides[0]);
+    if (frame.kind !== "table") throw new Error("expected table");
+    const origin = [...frame.columnWidthsCm];
+    // Drag far past the neighbour: it clamps rather than going below the floor.
+    resizeTableColumnBoundary(model, 0, id, 0, origin, 1000);
+    expect(frame.columnWidthsCm[1]).toBeCloseTo(MIN_COLUMN_WIDTH_CM, 3);
+    expect(frame.columnWidthsCm[0]).toBeCloseTo(origin[0] + origin[1] - MIN_COLUMN_WIDTH_CM, 3);
+  });
+
+  it("resizeTableRowBoundary sets the row height, floored at MIN_ROW_HEIGHT_CM (AC-8b)", () => {
+    const model = blank();
+    const id = insertTableFrame(model, 0, 2, 1)!;
+    const frame = only(model.slides[0]);
+    if (frame.kind !== "table") throw new Error("expected table");
+    const origin = frame.rows[0].heightCm ?? 0;
+    resizeTableRowBoundary(model, 0, id, 0, origin, 1.5);
+    expect(frame.rows[0].heightCm).toBeCloseTo(origin + 1.5, 3);
+    // A large negative delta cannot shrink past the floor.
+    resizeTableRowBoundary(model, 0, id, 0, origin, -1000);
+    expect(frame.rows[0].heightCm).toBeCloseTo(MIN_ROW_HEIGHT_CM, 3);
+  });
+
+  it("resizeTable* is a no-op on a non-table frame", () => {
+    const model = blank();
+    const id = insertTextBoxFrame(model, 0, { xCm: 1, yCm: 1, widthCm: 4, heightCm: 2 })!;
+    expect(resizeTableColumnBoundary(model, 0, id, 0, [1, 1], 1)).toBeNull();
+    expect(resizeTableRowBoundary(model, 0, id, 0, 1, 1)).toBeNull();
   });
 
   it("insertShapeFrame gives a line geometry a stroke but no fill", () => {

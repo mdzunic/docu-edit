@@ -15,7 +15,9 @@
 import { pxToCm } from "../core/units";
 import { extensionForContentType, type MediaPart } from "../core/media";
 import { LINE_GEOMETRIES, type ShapeGeometry } from "../core/shapes";
+import { MIN_COLUMN_WIDTH_CM } from "../core/tables";
 import { markSlideEdited } from "./text";
+import { createTableFrame, scaleTableGrid, setColumnWidths, setRowHeight } from "./tables";
 import { removeAnimationsForFrame } from "./animations";
 import type {
   FrameStroke,
@@ -121,6 +123,25 @@ export function insertTextBoxFrame(model: PresentationModel, slideIndex: number,
     kind: "text",
     paragraphs: [{ runs: [] }],
   };
+  slide.frames.push(frame);
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Inserts a `rows`×`cols` table centred at 80% of the slide width (SPEC-091
+ * AC-5c), appended on top in z-order. Returns its id (the view selects it with
+ * the caret in cell (0,0)). */
+export function insertTableFrame(
+  model: PresentationModel,
+  slideIndex: number,
+  rows: number,
+  cols: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  if (!slide) {
+    return null;
+  }
+  const frame = createTableFrame(rows, cols, model.slideWidthCm, model.slideHeightCm);
   slide.frames.push(frame);
   touch(model, slide);
   return frame.id;
@@ -328,10 +349,71 @@ export function resizeFrame(
   if (!slide || !frame) {
     return null;
   }
+  const nextWidth = r3(Math.max(rect.widthCm, MIN_FRAME_SIZE_CM));
+  const nextHeight = r3(Math.max(rect.heightCm, MIN_FRAME_SIZE_CM));
+  if (frame.kind === "table") {
+    // Scale the grid proportionally so the columns/rows keep their relative
+    // proportions (SPEC-091 AC-8c) — before overwriting widthCm/heightCm.
+    scaleTableGrid(frame, nextWidth / frame.widthCm, nextHeight / frame.heightCm);
+  }
   frame.xCm = r3(rect.xCm);
   frame.yCm = r3(rect.yCm);
-  frame.widthCm = r3(Math.max(rect.widthCm, MIN_FRAME_SIZE_CM));
-  frame.heightCm = r3(Math.max(rect.heightCm, MIN_FRAME_SIZE_CM));
+  frame.widthCm = nextWidth;
+  frame.heightCm = nextHeight;
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Live column-boundary drag (SPEC-091 AC-8a). `boundary` is the index of the
+ * column left of the dragged internal boundary; the column right of it absorbs
+ * exactly what this one gains, so the table's overall width is unchanged. Both
+ * are floored at `MIN_COLUMN_WIDTH_CM`. `originWidthsCm` is the snapshot taken
+ * at pointer-down so each move recomputes from a stable base. */
+export function resizeTableColumnBoundary(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  boundary: number,
+  originWidthsCm: number[],
+  deltaCm: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "table") {
+    return null;
+  }
+  const left = originWidthsCm[boundary];
+  const right = originWidthsCm[boundary + 1];
+  if (left === undefined || right === undefined) {
+    return null;
+  }
+  const total = left + right;
+  const nextLeft = Math.min(Math.max(left + deltaCm, MIN_COLUMN_WIDTH_CM), total - MIN_COLUMN_WIDTH_CM);
+  const widths = [...originWidthsCm];
+  widths[boundary] = nextLeft;
+  widths[boundary + 1] = total - nextLeft;
+  setColumnWidths(frame, widths);
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Live row-boundary drag (SPEC-091 AC-8b): sets the height of the row above
+ * the dragged boundary (a floor, not a fixed height — `setRowHeight` clamps to
+ * `MIN_ROW_HEIGHT_CM`). `originHeightCm` is the row's height at pointer-down. */
+export function resizeTableRowBoundary(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  boundary: number,
+  originHeightCm: number,
+  deltaCm: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "table") {
+    return null;
+  }
+  setRowHeight(frame, boundary, originHeightCm + deltaCm);
   touch(model, slide);
   return frame.id;
 }

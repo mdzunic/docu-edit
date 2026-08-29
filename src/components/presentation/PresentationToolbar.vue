@@ -31,6 +31,8 @@ const props = defineProps({
   animateOpen: { type: Boolean, default: false },
   /** Whether the layout gallery is open (SPEC-089). */
   layoutOpen: { type: Boolean, default: false },
+  /** Whether the table properties panel is open (SPEC-091). */
+  tableOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -47,6 +49,7 @@ const emit = defineEmits([
   "transition-toggle",
   "animate-toggle",
   "layout-toggle",
+  "table-toggle",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -275,6 +278,16 @@ onBeforeUnmount(() => observer?.disconnect());
         @click="emit('layout-toggle')"
       >
         Layout
+      </button>
+      <button
+        type="button"
+        class="tb-toggle"
+        data-testid="slides-table-toggle"
+        aria-label="Table"
+        :aria-pressed="tableOpen"
+        @click="emit('table-toggle')"
+      >
+        Table
       </button>
     </div>
 

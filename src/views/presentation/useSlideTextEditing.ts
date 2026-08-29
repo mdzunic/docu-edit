@@ -7,8 +7,16 @@
 // re-renders the host. Typing coalesces into one undo entry per burst (a pause
 // ≥ 1s, ending the session, or any non-typing command closes it); formatting is
 // one entry each. Every edit marks the slide dirty and persists.
+//
+// SPEC-091 extends the SAME machinery to table cells: a `TableFrame`'s cell is
+// a `ParagraphOwner` (it has `paragraphs`), so `startEditingCell` opens a
+// session against a cell's `SlideParagraph[]` and every formatting command,
+// toolbar control and the DOM render/normalise path work unchanged. Tab/
+// Shift+Tab move between non-covered cells (Tab in the last cell appends a row);
+// arrow keys are left to the browser so the caret can leave the table at its
+// edges.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import type { PresentationModel, Slide, TextFrame } from "../../lib/presentation/model";
+import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import {
   applyParagraphFormat,
   applyRunFormat,
@@ -18,10 +26,12 @@ import {
   toggleBullet,
   wholeFrameRange,
   type ParagraphFormatPatch,
+  type ParagraphOwner,
   type RunFormatPatch,
   type SelectionFormatState,
   type TextRange,
 } from "../../lib/presentation/text";
+import { insertTableRow, nextCellAddress, ownerCellAt, prevCellAddress } from "../../lib/presentation/tables";
 import {
   normalizeTextFrameDom,
   placeCaret,
@@ -43,6 +53,12 @@ export interface CaretPoint {
   y: number;
 }
 
+/** A table cell address (SPEC-091). */
+export interface CellAddress {
+  row: number;
+  col: number;
+}
+
 export interface SlideTextEditingDeps {
   model: Ref<PresentationModel | null>;
   currentSlide: ComputedRef<Slide | null>;
@@ -55,6 +71,13 @@ export interface SlideTextEditingDeps {
 
 export interface SlideTextEditing {
   editingFrameId: Ref<string | null>;
+  /** The cell of the frame being edited (SPEC-091), or null for a text frame /
+   * no session. Drives the stage's in-cell contenteditable host. */
+  editingCell: Ref<CellAddress | null>;
+  /** The table cell the panel's commands anchor to — the last cell clicked or
+   * edited (SPEC-091). Persists after a session ends so the Table panel keeps
+   * acting on it; PresentationView mirrors it into useTables. */
+  activeCell: Ref<CellAddress | null>;
   /** Whether the toolbar's formatting controls act on something (an editing
    * session, or a selected text frame). */
   toolbarEnabled: ComputedRef<boolean>;
@@ -62,6 +85,11 @@ export interface SlideTextEditing {
    * targeted). */
   toolbarState: Ref<SelectionFormatState | null>;
   startEditing: (frameId: string, selectAll?: boolean, point?: CaretPoint) => void;
+  /** Starts a session inside a table cell (AC-6a). */
+  startEditingCell: (frameId: string, row: number, col: number, point?: CaretPoint) => void;
+  /** Single-click a table cell: anchor the panel there and move an active
+   * session onto it, without starting one otherwise (AC-9c). */
+  focusCell: (frameId: string, row: number, col: number) => void;
   stopEditing: () => void;
   registerHost: (el: HTMLElement | null) => void;
   onInput: () => void;
@@ -81,6 +109,8 @@ export interface SlideTextEditing {
 
 export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
   const editingFrameId = ref<string | null>(null);
+  const editingCell = ref<CellAddress | null>(null);
+  const activeCell = ref<CellAddress | null>(null);
   const host = ref<HTMLElement | null>(null);
   // Bumped when the DOM caret/selection moves (no model change) so the toolbar
   // state recomputes; model edits recompute it through the reactive frame.
@@ -113,7 +143,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   // so every `:slide`/`:frame`-bound view re-renders. The editing frame's
   // contenteditable host is imperatively managed and keyed by id, so it is not
   // disturbed; the slide id is unchanged, so selection is not dropped.
-  function bumpFrame(frame: TextFrame): void {
+  function bumpFrame(frame: SlideFrame): void {
     const model = deps.model.value;
     const current = deps.currentSlide.value;
     if (!model || !current) return;
@@ -124,44 +154,75 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     }
   }
 
-  // --- frame lookup ---------------------------------------------------------
-  function textFrameById(frameId: string | null): TextFrame | null {
+  // --- frame / owner lookup -------------------------------------------------
+  function frameById(frameId: string | null): SlideFrame | null {
     const slide = deps.currentSlide.value;
     if (!slide || frameId === null) return null;
-    const frame = slide.frames.find((f) => f.id === frameId);
+    return slide.frames.find((f) => f.id === frameId) ?? null;
+  }
+  function textFrameById(frameId: string | null): TextFrame | null {
+    const frame = frameById(frameId);
     return frame && frame.kind === "text" ? frame : null;
   }
-  const editingFrame = computed(() => textFrameById(editingFrameId.value));
+  function tableFrameById(frameId: string | null): TableFrame | null {
+    const frame = frameById(frameId);
+    return frame && frame.kind === "table" ? frame : null;
+  }
+
+  /** The frame that currently holds an editing session (text or table). */
+  const editingFrame = computed<SlideFrame | null>(() => frameById(editingFrameId.value));
+
+  /** The paragraph list the session edits: a text frame's own, or the addressed
+   * table cell's. Null when no session (or the cell no longer exists). */
+  const editingOwner = computed<ParagraphOwner | null>(() => {
+    const frame = editingFrame.value;
+    if (!frame) return null;
+    if (frame.kind === "text") return frame;
+    if (frame.kind === "table" && editingCell.value) {
+      const cell = frame.rows[editingCell.value.row]?.cells[editingCell.value.col];
+      return cell && !cell.covered ? cell : null;
+    }
+    return null;
+  });
+
   /** The frame a command targets: the one being edited, else a selected text
-   * frame (AC-25). */
-  function targetFrame(): TextFrame | null {
+   * frame (AC-25). Used to re-clone for reactivity. */
+  function targetFrame(): SlideFrame | null {
     if (editingFrame.value) return editingFrame.value;
     const selected = deps.selection.selectedFrame.value;
     return selected && selected.kind === "text" ? selected : null;
   }
+  /** The paragraph owner a command formats: the edited cell/frame, else a
+   * selected text frame. */
+  function targetOwner(): ParagraphOwner | null {
+    if (editingOwner.value) return editingOwner.value;
+    const selected = deps.selection.selectedFrame.value;
+    return selected && selected.kind === "text" ? selected : null;
+  }
 
-  const toolbarEnabled = computed(() => targetFrame() !== null);
+  const toolbarEnabled = computed(() => targetOwner() !== null);
 
-  // Reactive over the target frame's model (via commit's triggerRef) AND the
+  // Reactive over the target owner's model (via commit's triggerRef) AND the
   // DOM selection (via selectionTick), so it survives undo/redo and caret moves.
   const toolbarState = computed<SelectionFormatState | null>(() => {
-    const frame = targetFrame();
-    if (!frame) return null;
+    const owner = targetOwner();
+    if (!owner) return null;
     selectionTick.value; // eslint-disable-line no-unused-expressions -- reactive touch
     let range: TextRange;
-    if (editingFrame.value && host.value) {
+    if (editingOwner.value && host.value) {
       const dom = selectionRangeOf(host.value) ?? lastRange;
       range = dom ? { start: dom.start, end: dom.end } : { start: { para: 0, offset: 0 }, end: { para: 0, offset: 0 } };
     } else {
-      range = wholeFrameRange(frame);
+      range = wholeFrameRange(owner);
     }
-    return selectionFormatState(frame, range);
+    return selectionFormatState(owner, range);
   });
 
   // --- session lifecycle ----------------------------------------------------
   function startEditing(frameId: string, selectAll = false, point?: CaretPoint): void {
     if (!textFrameById(frameId)) return;
     deps.selection.select(frameId);
+    editingCell.value = null;
     editingFrameId.value = frameId;
     // registerHost (from the mounted contenteditable) finishes the setup; a
     // re-entry into the same frame just refreshes.
@@ -173,17 +234,59 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     }
   }
 
+  function startEditingCell(frameId: string, row: number, col: number, point?: CaretPoint): void {
+    const table = tableFrameById(frameId);
+    if (!table) return;
+    const owner = ownerCellAt(table, row, col);
+    if (!owner) return;
+    deps.selection.select(frameId);
+    editingCell.value = { row: owner.row, col: owner.col };
+    activeCell.value = { row: owner.row, col: owner.col };
+    // Re-register against the new cell's host: a running session in another cell
+    // must drop its listeners before the host element is replaced.
+    if (host.value) detachAndClearHost();
+    editingFrameId.value = frameId;
+    if (host.value) {
+      renderAndFocus(false, point);
+    } else {
+      pendingSelectAll = false;
+      pendingPoint = point ?? null;
+    }
+  }
+
+  function focusCell(frameId: string, row: number, col: number): void {
+    const table = tableFrameById(frameId);
+    if (!table) return;
+    const owner = ownerCellAt(table, row, col);
+    if (!owner) return;
+    activeCell.value = { row: owner.row, col: owner.col };
+    // Move a live session onto the clicked cell; otherwise just anchor + select
+    // (a single click never starts a session — AC-6a).
+    if (editingFrameId.value === frameId && editingCell.value) {
+      startEditingCell(frameId, owner.row, owner.col);
+    } else {
+      deps.selection.select(frameId);
+    }
+  }
+
   let pendingSelectAll = false;
   let pendingPoint: CaretPoint | null = null;
 
   let detachHost: (() => void) | null = null;
+  function detachAndClearHost(): void {
+    if (detachHost) {
+      detachHost();
+      detachHost = null;
+    }
+    host.value = null;
+  }
   function registerHost(el: HTMLElement | null): void {
     if (detachHost) {
       detachHost();
       detachHost = null;
     }
     host.value = el;
-    if (el && editingFrame.value) {
+    if (el && editingOwner.value) {
       const onSelectionChange = (): void => {
         // Only while the host is focused — a toolbar click moves focus off the
         // contenteditable and collapses its selection; ignoring that keeps the
@@ -221,9 +324,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   function renderAndFocus(selectAll: boolean, point?: CaretPoint): void {
     const el = host.value;
-    const frame = editingFrame.value;
-    if (!el || !frame) return;
-    renderEditableParagraphs(el, frame.paragraphs);
+    const owner = editingOwner.value;
+    if (!el || !owner) return;
+    renderEditableParagraphs(el, owner.paragraphs);
     el.focus();
     // A double-click drops the caret at the click point (AC-1); a select-all
     // start (Enter-to-edit selects nothing, but a keyboard entry may) or a
@@ -231,27 +334,24 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     if (selectAll) selectAllIn(el);
     else if (point && placeCaretAtPoint(el, point.x, point.y)) {
       /* caret placed at the click point */
-    } else placeCaretAtEnd(el, frame);
+    } else placeCaretAtEnd(el, owner);
     selectionTick.value++;
   }
 
-  function placeCaretAtEnd(el: HTMLElement, frame: TextFrame): void {
-    const last = Math.max(0, frame.paragraphs.length - 1);
-    const lastLen = frame.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
+  function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {
+    const last = Math.max(0, owner.paragraphs.length - 1);
+    const lastLen = owner.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
     placeCaret(el, { para: last, offset: lastLen });
   }
 
   function stopEditing(): void {
     closeBurst();
-    if (host.value && editingFrame.value) {
+    if (host.value && editingOwner.value) {
       syncModelFromDom();
     }
-    if (detachHost) {
-      detachHost();
-      detachHost = null;
-    }
+    detachAndClearHost();
     editingFrameId.value = null;
-    host.value = null;
+    editingCell.value = null;
     lastRange = null;
     selectionTick.value++;
   }
@@ -265,14 +365,15 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   function syncModelFromDom(): void {
     const el = host.value;
+    const owner = editingOwner.value;
     const frame = editingFrame.value;
     const slide = deps.currentSlide.value;
     const model = deps.model.value;
-    if (!el || !frame || !slide || !model) return;
+    if (!el || !owner || !frame || !slide || !model) return;
     // normalizeTextFrameDom recovers paragraph-level props (align/bullet/level)
     // per DOM block, so bullet/indent stay glued to their paragraph across a
     // keystroke that changes the paragraph count (Enter, Backspace-merge).
-    frame.paragraphs = normalizeTextFrameDom(el);
+    owner.paragraphs = normalizeTextFrameDom(el);
     markSlideEdited(slide, model.format); // before bumpFrame so the clone carries dirty
     bumpFrame(frame);
     deps.commit();
@@ -280,7 +381,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   }
 
   function onPaste(event: ClipboardEvent): void {
-    if (!host.value || !editingFrame.value) return;
+    if (!host.value || !editingOwner.value) return;
     event.preventDefault();
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text.length === 0) return;
@@ -302,7 +403,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     event.clipboardData.setData("text/plain", text);
   }
   function onCut(event: ClipboardEvent): void {
-    if (!host.value || !editingFrame.value) return;
+    if (!host.value || !editingOwner.value) return;
     onCopy(event);
     closeBurst();
     deps.record("Cut");
@@ -313,10 +414,17 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (!editingFrame.value) return;
+    if (!editingOwner.value) return;
     if (event.key === "Escape") {
       event.preventDefault();
       stopEditing();
+      return;
+    }
+    // Tab/Shift+Tab move between non-covered cells; Tab in the last cell appends
+    // a row (AC-6b). Only a table-cell session traps Tab.
+    if (event.key === "Tab" && editingCell.value) {
+      event.preventDefault();
+      tabCell(event.shiftKey ? -1 : 1);
       return;
     }
     const mod = event.metaKey || event.ctrlKey;
@@ -337,34 +445,63 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
         selectionTick.value++;
       }
     }
+    // Arrow keys are deliberately NOT trapped: the browser moves the caret, so
+    // it can leave the table at its edges (AC-6c).
+  }
+
+  /** Moves the cell session forward/back one non-covered cell, committing the
+   * cell just left. Tab past the last cell appends a row (AC-6b). */
+  function tabCell(dir: 1 | -1): void {
+    const frame = tableFrameById(editingFrameId.value);
+    const cell = editingCell.value;
+    if (!frame || !cell) return;
+    if (host.value && editingOwner.value) syncModelFromDom();
+    const next = dir > 0 ? nextCellAddress(frame, cell.row, cell.col) : prevCellAddress(frame, cell.row, cell.col);
+    if (next) {
+      startEditingCell(frame.id, next.row, next.col);
+      return;
+    }
+    if (dir < 0) return; // Shift+Tab in the first cell is a no-op.
+    // Last cell: append a row and land in its first cell.
+    const slide = deps.currentSlide.value;
+    const model = deps.model.value;
+    if (!slide || !model) return;
+    closeBurst();
+    deps.record("Insert row");
+    insertTableRow(frame, frame.rows.length - 1, "below");
+    markSlideEdited(slide, model.format);
+    bumpFrame(frame);
+    deps.commit();
+    startEditingCell(frame.id, frame.rows.length - 1, 0);
   }
 
   // --- formatting commands --------------------------------------------------
   /** The model TextRange a command applies to: the DOM selection when editing,
    * else the whole selected frame (AC-25). */
-  function commandRange(frame: TextFrame): TextRange {
-    if (editingFrame.value && host.value) {
+  function commandRange(owner: ParagraphOwner): TextRange {
+    if (editingOwner.value && host.value) {
       const live = selectionRangeOf(host.value);
       // Prefer a real (non-collapsed) selection; a toolbar click collapses the
       // live one, so fall back to the last selection captured while focused.
       const chosen = live && !isCollapsed(live) ? live : lastRange && !isCollapsed(lastRange) ? lastRange : live ?? lastRange;
       if (chosen) return { start: chosen.start, end: chosen.end };
     }
-    return wholeFrameRange(frame);
+    return wholeFrameRange(owner);
   }
 
-  function runCommand(label: string, apply: (frame: TextFrame, range: TextRange) => void): void {
+  function runCommand(label: string, apply: (owner: ParagraphOwner, range: TextRange) => void): void {
+    const owner = targetOwner();
     const frame = targetFrame();
     const slide = deps.currentSlide.value;
     const model = deps.model.value;
-    if (!frame || !slide || !model) return;
+    if (!owner || !frame || !slide || !model) return;
     closeBurst();
-    const range = commandRange(frame);
+    const range = commandRange(owner);
     deps.record(label);
-    apply(frame, range);
+    apply(owner, range);
     markSlideEdited(slide, model.format);
-    if (editingFrame.value && host.value) {
-      renderEditableParagraphs(host.value, frame.paragraphs);
+    if (editingOwner.value && host.value) {
+      renderEditableParagraphs(host.value, owner.paragraphs);
       setSelectionRange(host.value, range.start, range.end);
     }
     bumpFrame(frame);
@@ -373,8 +510,8 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   }
 
   function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
-    runCommand(label, (frame, range) =>
-      applyParagraphFormat(frame, { startPara: range.start.para, endPara: range.end.para }, patch),
+    runCommand(label, (owner, range) =>
+      applyParagraphFormat(owner, { startPara: range.start.para, endPara: range.end.para }, patch),
     );
   }
 
@@ -382,32 +519,36 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     const state = toolbarState.value;
     const on = state ? state[key] !== true : true; // mixed/false → turn on
     const patch: RunFormatPatch = { [key]: on };
-    runCommand(label, (frame, range) => applyRunFormat(frame, range, patch));
+    runCommand(label, (owner, range) => applyRunFormat(owner, range, patch));
   }
 
   const toggleBold = (): void => toggleRunMark("Bold", "bold");
   const toggleItalic = (): void => toggleRunMark("Italic", "italic");
   const toggleUnderline = (): void => toggleRunMark("Underline", "underline");
   const setFontFamily = (family: string): void =>
-    runCommand("Font", (frame, range) => applyRunFormat(frame, range, { fontFamily: family }));
+    runCommand("Font", (owner, range) => applyRunFormat(owner, range, { fontFamily: family }));
   const setFontSize = (sizePt: number): void =>
-    runCommand("Font size", (frame, range) => applyRunFormat(frame, range, { sizePt }));
+    runCommand("Font size", (owner, range) => applyRunFormat(owner, range, { sizePt }));
   const setColor = (color: string): void =>
-    runCommand("Text colour", (frame, range) => applyRunFormat(frame, range, { color }));
+    runCommand("Text colour", (owner, range) => applyRunFormat(owner, range, { color }));
   const setAlign = (align: NonNullable<TextFrame["paragraphs"][number]["align"]>): void =>
     paragraphCommand("Align", { align });
   const toggleBulletCmd = (): void =>
-    runCommand("Bullet", (frame, range) => toggleBullet(frame, { startPara: range.start.para, endPara: range.end.para }));
+    runCommand("Bullet", (owner, range) => toggleBullet(owner, { startPara: range.start.para, endPara: range.end.para }));
   const indent = (delta: 1 | -1): void =>
-    runCommand(delta > 0 ? "Indent" : "Outdent", (frame, range) =>
-      setIndentLevel(frame, { startPara: range.start.para, endPara: range.end.para }, delta),
+    runCommand(delta > 0 ? "Indent" : "Outdent", (owner, range) =>
+      setIndentLevel(owner, { startPara: range.start.para, endPara: range.end.para }, delta),
     );
 
   return {
     editingFrameId,
+    editingCell,
+    activeCell,
     toolbarEnabled,
     toolbarState,
     startEditing,
+    startEditingCell,
+    focusCell,
     stopEditing,
     registerHost,
     onInput,
