@@ -87,6 +87,15 @@ const props = defineProps({
   /** SPEC-063 live zoom percentage and fit mode, for the View → Zoom checks. */
   zoomPercent: { type: Number, default: 100 },
   zoomFitMode: { type: String, default: "none" },
+  /** SPEC-072 Format → Drawing: "" when align/distribute are available, else
+   * the disabled-with-reason string for the current selection (AC-17). */
+  drawingAlignReason: { type: String, default: "" },
+  drawingDistributeReason: { type: String, default: "" },
+  /** The remembered single-drawing align reference: "margin" | "page" |
+   * "column" (AC-3). */
+  alignToReference: { type: String, default: "margin" },
+  /** Whether the Column reference is offered (section has >1 column, AC-3). */
+  columnReferenceAvailable: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -103,7 +112,28 @@ const emit = defineEmits([
   "insert-image-file",
   "painter-click",
   "painter-dblclick",
+  "drawing-align-to",
 ]);
+
+// SPEC-072 Format → Drawing → Align / Distribute items. The command suffix
+// doubles as the `drawing-<id>` testid.
+const DRAWING_ALIGN_ITEMS = [
+  { id: "align-left", label: "Align left" },
+  { id: "align-center", label: "Align centre" },
+  { id: "align-right", label: "Align right" },
+  { id: "align-top", label: "Align top" },
+  { id: "align-middle", label: "Align middle" },
+  { id: "align-bottom", label: "Align bottom" },
+];
+const DRAWING_DISTRIBUTE_ITEMS = [
+  { id: "distribute-horizontal", label: "Distribute horizontally" },
+  { id: "distribute-vertical", label: "Distribute vertically" },
+];
+const ALIGN_TO_REFERENCES = [
+  { value: "margin", label: "Margin" },
+  { value: "page", label: "Page" },
+  { value: "column", label: "Column" },
+];
 
 // SPEC-068 AC-12/13 — features that genuinely cannot be operated by touch on a
 // small screen stay LISTED in their menu but disabled, with a stated reason,
@@ -824,6 +854,64 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :disabled="!editable"
         @select="emit('command', 'format.columns')"
       />
+      <hr class="menu-separator">
+      <!-- SPEC-072: align, distribute, the align-to reference and the numeric
+           position dialog for a drawing selection. A new command names its
+           menu (SPEC-049). -->
+      <MenuSubmenu
+        label="Drawing"
+        testid="format-menu-drawing"
+      >
+        <MenuSubmenu
+          label="Align"
+          testid="drawing-align-submenu"
+        >
+          <MenuItem
+            v-for="item in DRAWING_ALIGN_ITEMS"
+            :key="item.id"
+            :label="item.label"
+            :testid="`drawing-${item.id}`"
+            :disabled="!!drawingAlignReason"
+            :reason="drawingAlignReason"
+            @select="emit('command', `drawing.${item.id}`)"
+          />
+        </MenuSubmenu>
+        <MenuSubmenu
+          label="Distribute"
+          testid="drawing-distribute-submenu"
+        >
+          <MenuItem
+            v-for="item in DRAWING_DISTRIBUTE_ITEMS"
+            :key="item.id"
+            :label="item.label"
+            :testid="`drawing-${item.id}`"
+            :disabled="!!drawingDistributeReason"
+            :reason="drawingDistributeReason"
+            @select="emit('command', `drawing.${item.id}`)"
+          />
+        </MenuSubmenu>
+        <MenuSubmenu
+          label="Align to"
+          testid="drawing-align-to-submenu"
+        >
+          <MenuRadioItem
+            v-for="option in ALIGN_TO_REFERENCES"
+            v-show="option.value !== 'column' || columnReferenceAvailable"
+            :key="option.value"
+            :label="option.label"
+            :testid="`drawing-align-to-${option.value}`"
+            :checked="alignToReference === option.value"
+            @select="emit('drawing-align-to', option.value)"
+          />
+        </MenuSubmenu>
+        <hr class="menu-separator">
+        <MenuItem
+          label="Position and size…"
+          testid="drawing-position-size"
+          :disabled="!editable"
+          @select="emit('command', 'drawing.position-size')"
+        />
+      </MenuSubmenu>
       <hr class="menu-separator">
       <div class="menu-section-label">
         Multilevel list

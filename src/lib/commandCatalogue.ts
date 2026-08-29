@@ -125,6 +125,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: "drawing.align-bottom", label: "Align bottom", path: ["Format", "Drawing", "Align"], scope: "document", aliases: ["align drawings", "align shapes"] },
   { id: "drawing.distribute-horizontal", label: "Distribute horizontally", path: ["Format", "Drawing", "Distribute"], scope: "document", aliases: ["space drawings", "space shapes evenly"] },
   { id: "drawing.distribute-vertical", label: "Distribute vertically", path: ["Format", "Drawing", "Distribute"], scope: "document", aliases: ["space drawings", "space shapes evenly"] },
+  { id: "drawing.position-size", label: "Position and size…", path: ["Format", "Drawing"], scope: "document", aliases: ["exact position", "drawing size", "rotate drawing"] },
   { id: "format.multilevel-link-headings", label: "Number headings 1–3", path: ["Format", "Multilevel list"], scope: "document", icon: "multilevel-list" },
   { id: "format.multilevel-define-list", label: "Define new list…", path: ["Format", "Multilevel list"], scope: "document", icon: "multilevel-list" },
   { id: "format.text-color", label: "Text colour", path: ["Format"], scope: "document", icon: "text-color", aliases: ["font color"] },

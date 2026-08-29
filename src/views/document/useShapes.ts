@@ -4,7 +4,7 @@
 // rotation-handle drag, keyboard nudge/duplicate, and z-order/grouping.
 // Mirrors useImages.ts's shape closely — see its own header comment for the
 // pattern this follows.
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   caretSelection,
   commitShapeModel,
@@ -54,8 +54,9 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setDrawingGeometry,
+  type DrawingGeometry,
   setShapePath,
-  setShapePosition,
   setShapeRotation,
   setShapeSize,
   setShapeWrap,
@@ -185,7 +186,17 @@ export function useShapes(deps: ShapesDeps) {
    * fallback for dragging a drawing handle. `shapePositionInitial` is the
    * captured prefill the dialog opens with. */
   const shapePositionOpen = ref(false);
-  const shapePositionInitial = ref({ offsetXCm: 0, offsetYCm: 0, widthCm: 0, heightCm: 0, inline: false });
+  const shapePositionInitial = ref({
+    offsetXCm: 0,
+    offsetYCm: 0,
+    widthCm: 0,
+    heightCm: 0,
+    rotationDeg: 0,
+    relativeToH: "column",
+    relativeToV: "paragraph",
+    inline: false,
+    isLine: false,
+  });
   /** The anchor marker's position (AC-27) — page-relative px, same basis as
    * shapeHandles (measureImageGeometry). Null when nothing is selected, or
    * the selected shape's preceding block isn't a paragraph to mark (see
@@ -1026,9 +1037,24 @@ export function useShapes(deps: ShapesDeps) {
     applyShapeEdit((model, selection) => reorderShapeZ(model, selection, location, command), "reorder shape");
   }
 
+  /** Captures the selected shape's geometry into the dialog prefill. */
+  function seedShapePosition(shape: Shape) {
+    shapePositionInitial.value = {
+      offsetXCm: shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm,
+      offsetYCm: shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm,
+      widthCm: shape.widthCm,
+      heightCm: shape.heightCm,
+      rotationDeg: shape.rotationDeg ?? 0,
+      relativeToH: shape.relativeToH ?? DEFAULT_DRAWING_POSITION.relativeToH,
+      relativeToV: shape.relativeToV ?? DEFAULT_DRAWING_POSITION.relativeToV,
+      inline: shape.wrap === "inline",
+      isLine: LINE_GEOMETRIES.has(shape.geometry),
+    };
+  }
+
   /** Opens the numeric "Position & size" dialog for the selected shape
-   * (AC-42): the fallback for a handle drag when the pointer is coarse.
-   * Prefills from the shape's current offset and size. */
+   * (SPEC-072): the keyboard/coarse-pointer path for every geometric property
+   * a drag adjusts. Prefills from the shape's current geometry. */
   function openShapePosition() {
     const model = doc.value;
     const location = shapeSelection.value;
@@ -1036,28 +1062,40 @@ export function useShapes(deps: ShapesDeps) {
     if (!shape) {
       return;
     }
-    shapePositionInitial.value = {
-      offsetXCm: Number((shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm).toFixed(2)),
-      offsetYCm: Number((shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm).toFixed(2)),
-      widthCm: Number(shape.widthCm.toFixed(2)),
-      heightCm: Number(shape.heightCm.toFixed(2)),
-      inline: shape.wrap === "inline",
-    };
+    seedShapePosition(shape);
     shapePositionOpen.value = true;
   }
 
+  // Reflect the selection live (AC-51): if the selection moves to a different
+  // shape while the dialog is open, re-seed the prefill so it shows the new
+  // shape's geometry.
+  watch(shapeSelection, (location) => {
+    if (!shapePositionOpen.value) {
+      return;
+    }
+    const model = doc.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    if (shape) {
+      seedShapePosition(shape);
+    } else {
+      shapePositionOpen.value = false;
+    }
+  });
+
+  /** Applies one live field change from the dialog as a single undo entry
+   * (SPEC-072 AC-43/AC-45) — the whole geometry set at once so the entry is
+   * self-contained. The dialog stays open (live editing); dismiss closes it. */
   function handleShapePositionApply(
-    payload = { offsetXCm: 0, offsetYCm: 0, widthCm: 0, heightCm: 0 },
+    geometry: DrawingGeometry = { widthCm: 0, heightCm: 0, offsetXCm: 0, offsetYCm: 0, rotationDeg: 0 },
   ) {
-    shapePositionOpen.value = false;
     const location = shapeSelection.value;
     if (!location) {
       return;
     }
-    applyShapeEdit((model, selection) => {
-      const sized = setShapeSize(model, selection, location, payload.widthCm, payload.heightCm);
-      return setShapePosition(sized.model, sized.selection, location, payload.offsetXCm, payload.offsetYCm);
-    }, "shape position");
+    applyShapeEdit(
+      (model, selection) => setDrawingGeometry(model, selection, location, geometry),
+      "shape position",
+    );
     void nextTick().then(remeasureShapeHandles);
   }
 

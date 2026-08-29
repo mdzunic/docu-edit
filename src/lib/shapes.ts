@@ -408,6 +408,60 @@ export function arrangeDrawings(
   return { model: next, selection };
 }
 
+/** The full geometry the position-and-size dialog edits (SPEC-072). */
+export interface DrawingGeometry {
+  widthCm: number;
+  heightCm: number;
+  offsetXCm: number;
+  offsetYCm: number;
+  rotationDeg: number;
+  relativeToH?: DrawingPlacement["relativeToH"];
+  relativeToV?: DrawingPlacement["relativeToV"];
+}
+
+/** Sets a shape's whole geometry at once (SPEC-072 position dialog) — size,
+ * offset, reference edges and rotation — in a single command, so each live
+ * field change records exactly one undo entry (AC-45). Size is floored at
+ * `MIN_SHAPE_SIZE_CM` (a Line keeps its 0 height floor), offset and reference
+ * edges are ignored for an inline shape, and rotation normalises to 0-359,
+ * dropping the field when it is zero (matching setShapeRotation). */
+export function setDrawingGeometry(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+  geometry: DrawingGeometry,
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape) {
+    return { model: next, selection };
+  }
+  const minH = LINE_GEOMETRIES.has(shape.geometry) ? 0 : MIN_SHAPE_SIZE_CM;
+  const updated: Shape = {
+    ...shape,
+    widthCm: Math.max(MIN_SHAPE_SIZE_CM, geometry.widthCm),
+    heightCm: Math.max(minH, geometry.heightCm),
+  };
+  if (shape.wrap !== "inline") {
+    updated.offsetXCm = geometry.offsetXCm;
+    updated.offsetYCm = geometry.offsetYCm;
+    if (geometry.relativeToH !== undefined) {
+      updated.relativeToH = geometry.relativeToH;
+    }
+    if (geometry.relativeToV !== undefined) {
+      updated.relativeToV = geometry.relativeToV;
+    }
+  }
+  const rotation = normalizeRotationDeg(geometry.rotationDeg);
+  if (rotation === 0) {
+    delete updated.rotationDeg;
+  } else {
+    updated.rotationDeg = rotation;
+  }
+  replaceShape(next, location, updated);
+  return { model: next, selection };
+}
+
 /** Moves a shape by a page-space delta (a drag, or a keyboard nudge —
  * AC-40, AC-41), adjusting its own offset. Used directly for a shape whose
  * anchor did not change; a drag that crosses a paragraph boundary instead

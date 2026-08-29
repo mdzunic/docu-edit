@@ -3179,6 +3179,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
   // Drawing align/distribute (SPEC-072); wiring in useDrawingArrange.
   ...drawingArrange.commands,
+  // Format → Drawing → Position and size… (SPEC-072 AC-35).
+  ["drawing.position-size", openShapePosition],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
   ["format.multilevel-define-list", openDefineList],
   ["format.text-color", openTextColorMenu],
@@ -3338,8 +3340,13 @@ function handleMenuCommand(id = "") {
         :focus-mode="focusMode"
         :zoom-percent="zoomPercent"
         :zoom-fit-mode="zoomFitMode"
+        :drawing-align-reason="drawingArrange.alignDisabledReason.value"
+        :drawing-distribute-reason="drawingArrange.distributeDisabledReason.value"
+        :align-to-reference="drawingArrange.alignToReference.value"
+        :column-reference-available="drawingArrange.columnReferenceAvailable.value"
         v-bind="themeMenu"
         @command="handleMenuCommand"
+        @drawing-align-to="drawingArrange.setAlignToReference"
         @insert-table-size="(rows, cols) => insertTableWithAutoCaption({ rows, cols })"
         @insert-break="handleInsertBreak"
         @insert-section-break="handleInsertSectionBreak"
@@ -4021,6 +4028,10 @@ function handleMenuCommand(id = "") {
         :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
         :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
         :can-group="canGroupSelection()"
+        :can-align="!drawingArrange.alignDisabledReason.value"
+        :can-distribute="!drawingArrange.distributeDisabledReason.value"
+        @align="(edge) => editorCommands.get(`drawing.align-${edge}`)?.()"
+        @distribute="(axis) => editorCommands.get(`drawing.distribute-${axis}`)?.()"
         @fill="handleShapeFill"
         @outline="handleShapeOutline"
         @rotation="handleShapeRotationInput"
@@ -4277,7 +4288,7 @@ function handleMenuCommand(id = "") {
       :initial="shapePositionInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="handleShapePositionApply"
-      @cancel="shapePositionOpen = false"
+      @dismiss="shapePositionOpen = false"
     />
     <ChartDataSheetDialog
       v-if="editingChartData"
