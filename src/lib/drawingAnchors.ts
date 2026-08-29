@@ -16,15 +16,22 @@ import {
   type Chart,
   type Connector,
   type DocumentModel,
+  type Image,
   type Paragraph,
   type Shape,
 } from "./documentModel";
 
-/** A Shape/Chart that sits outside the text flow — the blocks that carry an
- * anchor pairing. Image floats too but has no anchor-relative offsets to
- * measure, so it never pairs (SPEC-078's out of scope). */
-export function isFloatingDrawing(block: Block | undefined): block is Shape | Chart | Connector {
-  return (isShape(block) || isChart(block) || isConnector(block)) && block.wrap !== "inline";
+/** A drawing that sits outside the text flow — the blocks that carry an
+ * anchor pairing, and the ones the renderer hoists to their anchor
+ * paragraph's own origin.
+ *
+ * Image joined this list when it gained real placement: before that it had no
+ * anchor-relative offsets to measure (SPEC-078 called it out of scope), so
+ * pairing and hoisting would have moved nothing. Now a floating picture's
+ * `offsetXCm`/`offsetYCm` measure from exactly the same origin a shape's do,
+ * which only holds if it hoists the same way. */
+export function isFloatingDrawing(block: Block | undefined): block is Shape | Chart | Connector | Image {
+  return (isShape(block) || isChart(block) || isConnector(block) || isImage(block)) && block.wrap !== "inline";
 }
 
 /** Any drawing block — what the adjacency fallback walks over: in

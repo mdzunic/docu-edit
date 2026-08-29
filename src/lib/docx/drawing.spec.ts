@@ -314,5 +314,46 @@ describe("deferred media encode (SPEC-047 AC-3/AC-16)", () => {
   });
 });
 
+describe("Image group membership on the .docx wire", () => {
+  // SPEC-051's grouping accepts an Image (shapes.ts's groupShapes narrows on
+  // isShape || isImage || isChart || isConnector), but only Shape, Chart and
+  // Connector ever wrote `de:group` — a grouped picture silently left its
+  // group on every save.
+  const rels = relsMap([["rId5", IMAGE_REL("media/image1.png")]]);
+  const parts = partsMap([["word/media/image1.png", PNG_BYTES]]);
+
+  it("writes de:group for a grouped image and reads it back", () => {
+    const image: Image = {
+      type: "image",
+      mediaId: "word/media/image1.png",
+      naturalWidthPx: 1,
+      naturalHeightPx: 1,
+      widthCm: 1,
+      heightCm: 1,
+      wrap: "square",
+      groupOrdinal: 7,
+    };
+    const xml = drawingXml(image, "rId5", 1);
+    expect(xml).toContain('de:group="7"');
+    const reread = parseDrawing(drawingElement(xml), rels, MAIN_PART_PATH, parts);
+    expect(reread?.image.groupOrdinal).toBe(7);
+  });
+
+  it("writes no de:group attribute for an ungrouped image", () => {
+    const image: Image = {
+      type: "image",
+      mediaId: "word/media/image1.png",
+      naturalWidthPx: 1,
+      naturalHeightPx: 1,
+      widthCm: 1,
+      heightCm: 1,
+      wrap: "inline",
+    };
+    const xml = drawingXml(image, "rId5", 1);
+    expect(xml).not.toContain("de:group");
+    expect(xml).not.toContain("urn:docu-edit:shape");
+  });
+});
+
 // The contentTypeForPartName / extensionForContentType tests moved to
 // core/media.spec.ts with the helpers themselves (both formats share them).

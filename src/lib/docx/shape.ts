@@ -281,6 +281,91 @@ export function custGeomXml(path: ShapePath): string {
   return `<a:custGeom${smoothAttr}><a:pathLst><a:path w="${g}" h="${g}">${steps}</a:path></a:pathLst></a:custGeom>`;
 }
 
+/** The size + wrap a `wps:wsp` cannot supply for itself: for a top-level
+ * shape they come from its `wp:inline`/`wp:anchor` container, for a group
+ * member from the group's `chOff`/`chExt` mapping applied to the member's own
+ * `a:xfrm` (see group.ts). */
+export interface WspBox {
+  widthCm: number;
+  heightCm: number;
+  wrap: Shape["wrap"];
+}
+
+/** Builds a Shape from a bare `wps:wsp` and an externally-resolved box —
+ * everything the shape markup itself carries (geometry, custom path, fill,
+ * outline, rotation, text), and nothing that lives on a container. Returns
+ * null when the `wsp` has no `wps:spPr` to read.
+ *
+ * Split out of parseShapeDrawing so a `wpg:wgp` group member — which has no
+ * container of its own — reads through exactly the same code as a top-level
+ * shape, rather than a second parser drifting from this one. The caller adds
+ * the container-derived fields: alt text, offsets, `relativeTo*`, z-order and
+ * `groupOrdinal`. */
+export function shapeFromWsp(wsp: Element, box: WspBox, ctx: ShapeTextContext): Shape | null {
+  const spPr = firstChildElement(wsp, WPS_NAMESPACE, "spPr");
+  if (!spPr) {
+    return null;
+  }
+  const prstGeom = firstChildElement(spPr, A_NAMESPACE, "prstGeom");
+  let geometry = PRST_TO_GEOMETRY[prstGeom?.getAttribute("prst") ?? ""];
+  // SPEC-070 "Untangling the arrow preset": a `prst="line"` carrying an
+  // `a:tailEnd` is the model's `arrow` (a line with an end arrowhead). The
+  // legacy `straightConnector1` → `arrow` mapping stays in PRST_TO_GEOMETRY
+  // for documents saved before this change.
+  if (geometry === "line") {
+    const lnEl = firstChildElement(spPr, A_NAMESPACE, "ln");
+    const tailEnd = lnEl ? firstChildElement(lnEl, A_NAMESPACE, "tailEnd") : undefined;
+    if (tailEnd && tailEnd.getAttribute("type") !== "none") {
+      geometry = "arrow";
+    }
+  }
+
+  const xfrm = firstChildElement(spPr, A_NAMESPACE, "xfrm");
+  const rotAttr = xfrm?.getAttribute("rot");
+  const rotationDeg = rotAttr ? ooxmlRotToDeg(Number(rotAttr)) : 0;
+
+  const shape: Shape = {
+    type: "shape",
+    geometry: geometry ?? "rect",
+    widthCm: box.widthCm,
+    heightCm: box.heightCm,
+    wrap: box.wrap,
+  };
+  const custGeom = !geometry ? firstChildElement(spPr, A_NAMESPACE, "custGeom") : undefined;
+  const parsedPath = custGeom ? parseCustGeom(custGeom) : null;
+  if (parsedPath) {
+    // A modelled path renders its real outline (AC-4); geometry stays the
+    // "rect" bounding-box stand-in and nothing is preserved opaquely.
+    shape.path = parsedPath.path;
+    if (parsedPath.converted && custGeom) {
+      shape.pathSource = { format: "docx", xml: serializeElement(custGeom) };
+    }
+  } else if (!geometry) {
+    shape.unsupportedGeometryXml = serializeElement(prstGeom ?? custGeom ?? spPr);
+  } else if (prstGeom) {
+    const adjustments = parseAvLstAdjustments(prstGeom);
+    if (adjustments.length > 0) {
+      shape.adjustments = adjustments;
+    }
+  }
+  if (rotationDeg) {
+    shape.rotationDeg = rotationDeg;
+  }
+  const fill = parseFill(spPr);
+  if (fill) {
+    shape.fill = fill;
+  }
+  const outline = parseOutline(spPr);
+  if (outline) {
+    shape.outline = outline;
+  }
+  const text = parseShapeText(wsp, ctx);
+  if (text) {
+    shape.text = text;
+  }
+  return shape;
+}
+
 /** Parses a `w:drawing` element into a Shape, or null when it is not a
  * single, recognisable `wps:wsp` this spec models — the caller's existing
  * SPEC-008 opaque-inline fallback then preserves it verbatim. */
@@ -311,29 +396,6 @@ export function parseShapeDrawing(
   if (!wsp) {
     return null;
   }
-  const spPr = firstChildElement(wsp, WPS_NAMESPACE, "spPr");
-  if (!spPr) {
-    return null;
-  }
-  const prstGeom = firstChildElement(spPr, A_NAMESPACE, "prstGeom");
-  const prst = prstGeom?.getAttribute("prst") ?? "";
-  let geometry = PRST_TO_GEOMETRY[prst];
-  // SPEC-070 "Untangling the arrow preset": a `prst="line"` carrying an
-  // `a:tailEnd` is the model's `arrow` (a line with an end arrowhead). The
-  // legacy `straightConnector1` → `arrow` mapping stays in PRST_TO_GEOMETRY
-  // for documents saved before this change.
-  if (geometry === "line") {
-    const lnEl = firstChildElement(spPr, A_NAMESPACE, "ln");
-    const tailEnd = lnEl ? firstChildElement(lnEl, A_NAMESPACE, "tailEnd") : undefined;
-    if (tailEnd && tailEnd.getAttribute("type") !== "none") {
-      geometry = "arrow";
-    }
-  }
-
-  const xfrm = firstChildElement(spPr, A_NAMESPACE, "xfrm");
-  const rotAttr = xfrm?.getAttribute("rot");
-  const rotationDeg = rotAttr ? ooxmlRotToDeg(Number(rotAttr)) : 0;
-
   const docPr = firstChildElement(container, WP_NAMESPACE, "docPr");
   const altText = docPr?.getAttribute("descr") || undefined;
   const groupOrdinalAttr = docPr?.getAttributeNS(DE_NAMESPACE, "group");
@@ -369,32 +431,9 @@ export function parseShapeDrawing(
     }
   }
 
-  const shape: Shape = {
-    type: "shape",
-    geometry: geometry ?? "rect",
-    widthCm: emuToCm(cx),
-    heightCm: emuToCm(cy),
-    wrap,
-  };
-  const custGeom = !geometry ? firstChildElement(spPr, A_NAMESPACE, "custGeom") : undefined;
-  const parsedPath = custGeom ? parseCustGeom(custGeom) : null;
-  if (parsedPath) {
-    // A modelled path renders its real outline (AC-4); geometry stays the
-    // "rect" bounding-box stand-in and nothing is preserved opaquely.
-    shape.path = parsedPath.path;
-    if (parsedPath.converted && custGeom) {
-      shape.pathSource = { format: "docx", xml: serializeElement(custGeom) };
-    }
-  } else if (!geometry) {
-    shape.unsupportedGeometryXml = serializeElement(prstGeom ?? custGeom ?? spPr);
-  } else if (prstGeom) {
-    const adjustments = parseAvLstAdjustments(prstGeom);
-    if (adjustments.length > 0) {
-      shape.adjustments = adjustments;
-    }
-  }
-  if (rotationDeg) {
-    shape.rotationDeg = rotationDeg;
+  const shape = shapeFromWsp(wsp, { widthCm: emuToCm(cx), heightCm: emuToCm(cy), wrap }, ctx);
+  if (!shape) {
+    return null;
   }
   if (altText) {
     shape.altText = altText;
@@ -414,18 +453,6 @@ export function parseShapeDrawing(
   }
   if (zOrder !== undefined) {
     shape.zOrder = zOrder;
-  }
-  const fill = parseFill(spPr);
-  if (fill) {
-    shape.fill = fill;
-  }
-  const outline = parseOutline(spPr);
-  if (outline) {
-    shape.outline = outline;
-  }
-  const text = parseShapeText(wsp, ctx);
-  if (text) {
-    shape.text = text;
   }
   return { shape };
 }

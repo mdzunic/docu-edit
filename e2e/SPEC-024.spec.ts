@@ -268,16 +268,29 @@ test("the toolbar's wrap modes change the image's rendering (AC-13, AC-14)", asy
   // persists), so the wrap buttons can be clicked back to back.
   await page.getByTestId("image-wrap-square").click();
   await expect(page.getByTestId("image-wrap-square")).toHaveAttribute("aria-pressed", "true");
-  const floatValue = await images(page).first().evaluate((el) => getComputedStyle(el).float);
-  expect(floatValue).toBe("left");
+  // Every floating wrap positions the image absolutely at its own offsets now
+  // that an Image carries real placement — `square` reserves its text room
+  // through the shared in-flow wrap spacer instead of being a bare
+  // `float: left`, which could not have sat at an offset. Same shape as
+  // SPEC-051's shape-wrap-spacer, and the same helper builds both.
+  const squarePosition = await images(page).first().evaluate((el) => getComputedStyle(el).position);
+  expect(squarePosition).toBe("absolute");
+  await expect(page.getByTestId("image-wrap-spacer")).toHaveCount(1);
+  const spacerFloat = await page
+    .getByTestId("image-wrap-spacer")
+    .evaluate((el) => getComputedStyle(el).float);
+  expect(spacerFloat).toBe("left");
 
   await page.getByTestId("image-wrap-behind").click();
   await expect(page.getByTestId("image-wrap-behind")).toHaveAttribute("aria-pressed", "true");
   const behindPosition = await images(page).first().evaluate((el) => getComputedStyle(el).position);
   expect(behindPosition).toBe("absolute");
+  // behind/infront overlap the text by design, so neither reserves room.
+  await expect(page.getByTestId("image-wrap-spacer")).toHaveCount(0);
 
   await page.getByTestId("image-wrap-infront").click();
   await expect(page.getByTestId("image-wrap-infront")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("image-wrap-spacer")).toHaveCount(0);
 });
 
 // --- Image options panel (AC-15..22) ----------------------------------------

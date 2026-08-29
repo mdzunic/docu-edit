@@ -96,6 +96,17 @@ export function parseDrawFrame(
   const altText = descEl?.textContent || undefined;
   const natural = decodeImageDimensions(bytes, contentType);
 
+  // Where the picture actually sits. SPEC-024 modelled only its wrap mode, so
+  // a floating image opened at its anchor's origin regardless of the frame's
+  // own `svg:x`/`svg:y` — read here the way shape.ts reads a
+  // `draw:custom-shape`'s, so an Image and a Shape at the same spot land
+  // together. `draw:z-index` is ODF's stacking order, the twin of
+  // DrawingML's `relativeHeight`.
+  const offsetXCm = wrap === "inline" ? undefined : odfLengthToCm(svgAttr(frameEl, "x"));
+  const offsetYCm = wrap === "inline" ? undefined : odfLengthToCm(svgAttr(frameEl, "y"));
+  const zIndexAttr = drawAttr(frameEl, "z-index");
+  const zOrder = zIndexAttr !== null && Number.isFinite(Number(zIndexAttr)) ? Number(zIndexAttr) : undefined;
+
   const image: Image = {
     type: "image",
     mediaId: partPath,
@@ -107,6 +118,19 @@ export function parseDrawFrame(
   };
   if (altText) {
     image.altText = altText;
+  }
+  if (offsetXCm !== undefined) {
+    image.offsetXCm = offsetXCm;
+  }
+  if (offsetYCm !== undefined) {
+    image.offsetYCm = offsetYCm;
+  }
+  if (wrap !== "inline") {
+    image.relativeToH = "column";
+    image.relativeToV = "paragraph";
+    if (zOrder !== undefined) {
+      image.zOrder = zOrder;
+    }
   }
   return { image, media: { mediaId: partPath, contentType, data: bytesToBase64(bytes) } };
 }
@@ -142,8 +166,16 @@ export function drawFrameXml(image: Image, href: string, graphicStyleName: strin
   const anchorType = image.wrap === "inline" ? "as-char" : "paragraph";
   const styleAttrXml = graphicStyleName ? ` draw:style-name="${escapeXmlAttribute(graphicStyleName)}"` : "";
   const descXml = image.altText ? `<svg:desc>${escapeXmlAttribute(image.altText)}</svg:desc>` : "";
+  // An inline frame anchors as a character and has no position of its own;
+  // a floating one carries its offsets and stacking order, the same pair
+  // shape.ts writes on a `draw:custom-shape`.
+  const posXml =
+    image.wrap === "inline"
+      ? ""
+      : ` svg:x="${cmToOdfLength(image.offsetXCm ?? 0)}" svg:y="${cmToOdfLength(image.offsetYCm ?? 0)}"`;
+  const zIndexXml = image.wrap === "inline" || image.zOrder === undefined ? "" : ` draw:z-index="${image.zOrder}"`;
   return (
-    `<draw:frame${FRAME_XMLNS} text:anchor-type="${anchorType}"${styleAttrXml}` +
+    `<draw:frame${FRAME_XMLNS} text:anchor-type="${anchorType}"${styleAttrXml}${zIndexXml}${posXml}` +
     ` svg:width="${cmToOdfLength(image.widthCm)}" svg:height="${cmToOdfLength(image.heightCm)}">` +
     `<draw:image xlink:href="${escapeXmlAttribute(href)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
     descXml +

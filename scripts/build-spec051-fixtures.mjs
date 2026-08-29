@@ -5,7 +5,15 @@
 // would emit for drawn shapes — NOT round-tripped through this project's own
 // writer — so opening them is a genuine test of the reader (src/lib/docx/shape.ts,
 // src/lib/odf/shape.ts), not just "the reader understands its own writer's
-// output". Each fixture contains, per AC-63/AC-64: every catalogue geometry
+// output".
+//
+// That claim was only half true until 2026-08-29: the .docx side emitted bare
+// `<w:drawing>` elements, and Word emits none. Word wraps every shape in
+// `mc:AlternateContent` (an `mc:Choice Requires="wps"` beside a legacy VML
+// `mc:Fallback`), which the reader could not see through — so SPEC-051's
+// shape import passed this fixture while failing on every real Word document.
+// Keep the wrapper when editing this script; a bare drawing here tests markup
+// no producer writes. Each fixture contains, per AC-63/AC-64: every catalogue geometry
 // (SHAPE_CATALOGUE in src/lib/documentModel.ts), a grouped pair of shapes
 // sharing a `de:group` ordinal, a text box (a fill-less/outline-less rect
 // with a wps:txbx/draw:text-box), and one geometry outside the catalogue
@@ -24,9 +32,15 @@
 //   1  arrow             8  rightArrow         15 group member B (roundRect)
 //   2  rect              9  leftArrow          16 text box (rect, no fill/outline)
 //   3  roundRect        10  upArrow            17 unsupported geometry ("gear9"/"gear")
-//   4  ellipse          11  downArrow
-//   5  triangle         12  wedgeRectCallout
+//   4  ellipse          11  downArrow          18 group container member A
+//   5  triangle         12  wedgeRectCallout   19 group container member B
 //   6  diamond          13  wedgeRoundRectCallout
+//
+// 14/15 are the FLAT grouping this editor writes (`de:group` on two sibling
+// drawings); 18/19 are one real container — a Word `wpg:wgp` in the .docx,
+// a LibreOffice `draw:g` in the .odt — that group.ts flattens into two
+// blocks. Both shapes of grouping exist in the wild and the fixtures have to
+// carry both.
 import { deflateRawSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -174,7 +188,51 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
   const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
   const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
   const WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+  const WPG = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
+  const MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+  const WP14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing";
+  const V = "urn:schemas-microsoft-com:vml";
+  const O = "urn:schemas-microsoft-com:office:office";
+  const W10 = "urn:schemas-microsoft-com:office:word";
   const DE = "urn:docu-edit:shape";
+
+  // Every prefix an `mc:Choice/@Requires` below names, declared where Word
+  // declares them — on `w:document`. MCE resolves Requires through the
+  // document's own declarations, so a fixture that declared `wps` only on the
+  // inner `wps:wsp` would leave the condition unevaluable and send every
+  // reader to the VML fallback.
+  const DOCUMENT_NAMESPACES =
+    ` xmlns:w="${W}" xmlns:mc="${MC}" xmlns:wp="${WP}" xmlns:a="${A}"` +
+    ` xmlns:wps="${WPS}" xmlns:wpg="${WPG}" xmlns:wp14="${WP14}"` +
+    ` xmlns:v="${V}" xmlns:o="${O}" xmlns:w10="${W10}" xmlns:de="${DE}"` +
+    ' mc:Ignorable="wp14"';
+
+  // Word writes NOTHING that uses a post-2006 namespace as a bare
+  // `w:drawing`: a `wps:wsp` shape, a `wpg:wgp` group, a text box — each is
+  // an `mc:Choice` gated on the namespace it needs, beside an `mc:Fallback`
+  // holding the legacy VML that Word 2007 reads instead. Reproducing that
+  // here is the whole point of this fixture: with bare drawings the suite
+  // passed for years against markup Word does not produce, and no Word shape
+  // ever reached the reader (see docx/reader.ts's runDrawingElement).
+  //
+  // The fallback is deliberately real markup, not a stub: if a regression
+  // ever makes the reader take the Fallback branch instead of the Choice,
+  // these shapes vanish and the e2e count assertion fails loudly.
+  let vmlShapeId = 1026;
+  function alternateContent(requires, drawing, { fill, outline, widthCm, heightCm }) {
+    const spid = `_x0000_s${vmlShapeId++}`;
+    const style = `position:absolute;width:${widthCm}cm;height:${heightCm}cm;z-index:251658240`;
+    const fillAttr = fill ? ` fillcolor="#${fill.toLowerCase()}"` : ' filled="f"';
+    const strokeAttr = outline
+      ? ` strokecolor="#${outline.color.toLowerCase()}" strokeweight="${outline.widthPt}pt"`
+      : ' stroked="f"';
+    return (
+      `<mc:AlternateContent><mc:Choice Requires="${requires}">${drawing}</mc:Choice>` +
+      `<mc:Fallback><w:pict><v:rect id="${spid}" o:spid="${spid}" style="${style}"` +
+      `${fillAttr}${strokeAttr}><w10:wrap type="square"/></v:rect></w:pict></mc:Fallback>` +
+      "</mc:AlternateContent>"
+    );
+  }
 
   const GEOMETRY_TO_PRST = {
     line: "line",
@@ -228,7 +286,7 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
       .map((text) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`)
       .join("");
     return (
-      `<wps:txbx><w:txbxContent xmlns:w="${W}">${pXml}</w:txbxContent></wps:txbx>` +
+      `<wps:txbx><w:txbxContent>${pXml}</w:txbxContent></wps:txbx>` +
       `<wps:bodyPr wrap="square" anchor="${vAlign}"/>`
     );
   }
@@ -259,7 +317,7 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
     const isLine = LINE_GEOMETRIES.has(geometry);
 
     const descrAttr = altText ? ` descr="${escapeXml(altText)}"` : "";
-    const groupAttrs = groupOrdinal !== undefined ? ` xmlns:de="${DE}" de:group="${groupOrdinal}"` : "";
+    const groupAttrs = groupOrdinal !== undefined ? ` de:group="${groupOrdinal}"` : "";
     const docPr = `<wp:docPr id="${id}" name="Shape ${id}"${descrAttr}${groupAttrs}/>`;
 
     const rotAttr = rotationDeg ? ` rot="${Math.round(rotationDeg * 60000)}"` : "";
@@ -272,41 +330,36 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
       outlineXml(outline, tailEnd) +
       "</wps:spPr>";
 
-    const wsp = `<wps:wsp xmlns:wps="${WPS}"><wps:cNvSpPr/>${spPr}${txbx ?? ""}</wps:wsp>`;
-    const graphic =
-      `<a:graphic xmlns:a="${A}">` +
-      `<a:graphicData uri="${WPS}">${wsp}</a:graphicData>` +
-      "</a:graphic>";
+    const wsp = `<wps:wsp><wps:cNvSpPr/>${spPr}${txbx ?? ""}</wps:wsp>`;
+    const graphic = `<a:graphic><a:graphicData uri="${WPS}">${wsp}</a:graphicData></a:graphic>`;
 
-    if (wrap === "inline") {
-      return (
-        `<w:drawing xmlns:wp="${WP}">` +
-        '<wp:inline distT="0" distB="0" distL="0" distR="0">' +
-        `<wp:extent cx="${cx}" cy="${cy}"/>` +
-        '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
-        docPr +
-        "<wp:cNvGraphicFramePr/>" +
-        graphic +
-        "</wp:inline></w:drawing>"
-      );
-    }
-
-    const relativeHeight = 251658240 + (zOrder ?? 0);
-    return (
-      `<w:drawing xmlns:wp="${WP}">` +
-      '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0"' +
-      ` relativeHeight="${relativeHeight}" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">` +
-      '<wp:simplePos x="0" y="0"/>' +
-      `<wp:positionH relativeFrom="column"><wp:posOffset>${cmToEmu(offsetXCm)}</wp:posOffset></wp:positionH>` +
-      `<wp:positionV relativeFrom="paragraph"><wp:posOffset>${cmToEmu(offsetYCm)}</wp:posOffset></wp:positionV>` +
-      `<wp:extent cx="${cx}" cy="${cy}"/>` +
-      '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
-      '<wp:wrapSquare wrapText="bothSides"/>' +
-      docPr +
-      "<wp:cNvGraphicFramePr/>" +
-      graphic +
-      "</wp:anchor></w:drawing>"
-    );
+    const drawing =
+      wrap === "inline"
+        ? "<w:drawing>" +
+          '<wp:inline distT="0" distB="0" distL="0" distR="0">' +
+          `<wp:extent cx="${cx}" cy="${cy}"/>` +
+          '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
+          docPr +
+          "<wp:cNvGraphicFramePr/>" +
+          graphic +
+          "</wp:inline></w:drawing>"
+        : "<w:drawing>" +
+          '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0"' +
+          ` relativeHeight="${251658240 + (zOrder ?? 0)}" behindDoc="0" locked="0"` +
+          ' layoutInCell="1" allowOverlap="1">' +
+          '<wp:simplePos x="0" y="0"/>' +
+          `<wp:positionH relativeFrom="column"><wp:posOffset>${cmToEmu(offsetXCm)}</wp:posOffset></wp:positionH>` +
+          `<wp:positionV relativeFrom="paragraph"><wp:posOffset>${cmToEmu(offsetYCm)}</wp:posOffset></wp:positionV>` +
+          `<wp:extent cx="${cx}" cy="${cy}"/>` +
+          '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
+          '<wp:wrapSquare wrapText="bothSides"/>' +
+          docPr +
+          "<wp:cNvGraphicFramePr/>" +
+          graphic +
+          "</wp:anchor></w:drawing>";
+    // `wps` is the 2010 shape namespace, so Word gates every one of these —
+    // inline and floating alike — on it.
+    return alternateContent("wps", drawing, { fill, outline, widthCm, heightCm });
   }
 
   let nextId = 1;
@@ -396,8 +449,82 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
     }),
   );
 
+  // A REAL Word group (`wpg:wgp`), as distinct from the flat `de:group` pair
+  // at 14/15 above: Word's own Group command writes a container whose members
+  // carry no `wp:anchor` of their own, positioned in the group's `chOff`/
+  // `chExt` child space. docx/group.ts flattens it into one block per member
+  // sharing a minted ordinal, so this one drawing yields TWO entries (18, 19).
+  //
+  // The child space is deliberately 2x the group box on both axes, so a
+  // reader that ignores `chExt` places and sizes both members wrongly rather
+  // than coincidentally right.
+  function groupMemberXml({ id, prst, fill, x, y, cx, cy, descr }) {
+    return (
+      `<wps:wsp><wps:cNvPr id="${id}" name="Shape ${id}" descr="${escapeXml(descr)}"/><wps:cNvSpPr/>` +
+      `<wps:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+      `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>` +
+      fillXml(fill) +
+      outlineXml({ color: "000000", widthPt: 1, dash: "solid" }) +
+      "</wps:spPr><wps:bodyPr/></wps:wsp>"
+    );
+  }
+
+  {
+    const groupId = nextId++;
+    const boxCx = cmToEmu(8);
+    const boxCy = cmToEmu(3);
+    const members =
+      groupMemberXml({
+        id: nextId++,
+        prst: "rect",
+        fill: "1155CC",
+        x: 0,
+        y: 0,
+        cx: cmToEmu(4),
+        cy: cmToEmu(4),
+        descr: "Word group member A",
+      }) +
+      groupMemberXml({
+        id: nextId++,
+        prst: "ellipse",
+        fill: "109618",
+        x: cmToEmu(8),
+        y: cmToEmu(2),
+        cx: cmToEmu(4),
+        cy: cmToEmu(4),
+        descr: "Word group member B",
+      });
+    const groupDrawing =
+      "<w:drawing>" +
+      '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0"' +
+      ' relativeHeight="251658242" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">' +
+      '<wp:simplePos x="0" y="0"/>' +
+      '<wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>' +
+      '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+      `<wp:extent cx="${boxCx}" cy="${boxCy}"/>` +
+      '<wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>' +
+      `<wp:docPr id="${groupId}" name="Group ${groupId}" descr="Word group"/>` +
+      "<wp:cNvGraphicFramePr/>" +
+      `<a:graphic><a:graphicData uri="${WPG}">` +
+      "<wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr>" +
+      `<a:xfrm><a:off x="0" y="0"/><a:ext cx="${boxCx}" cy="${boxCy}"/>` +
+      `<a:chOff x="0" y="0"/><a:chExt cx="${boxCx * 2}" cy="${boxCy * 2}"/></a:xfrm>` +
+      "</wpg:grpSpPr>" +
+      members +
+      "</wpg:wgp></a:graphicData></a:graphic>" +
+      "</wp:anchor></w:drawing>";
+    drawings.push(
+      alternateContent("wpg", groupDrawing, {
+        fill: "1155CC",
+        outline: { color: "000000", widthPt: 1, dash: "solid" },
+        widthCm: 8,
+        heightCm: 3,
+      }),
+    );
+  }
+
   const documentXml =
-    `${XML}<w:document xmlns:w="${W}"><w:body>` +
+    `${XML}<w:document${DOCUMENT_NAMESPACES}><w:body>` +
     drawings.map((d) => `<w:p><w:r>${d}</w:r></w:p>`).join("") +
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
     '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>' +
@@ -647,6 +774,53 @@ const LINE_GEOMETRIES = new Set(["line", "arrow"]);
     outline: { color: "#000000", widthPt: 1, dash: "solid" },
     altText: "Unsupported shape",
   });
+
+  // A REAL LibreOffice group (`draw:g`), the .odt twin of the `wpg:wgp` the
+  // .docx side carries: a container whose members have no anchor of their
+  // own, positioned by their own `svg:x`/`svg:y` in the group's frame (ODF
+  // has no `chOff`/`chExt` equivalent). odf/group.ts flattens it into one
+  // block per member sharing a minted ordinal, so this one element yields
+  // TWO entries (18, 19) — the same indices the .docx group lands on.
+  {
+    const memberStyles = [];
+    const memberXml = [
+      {
+        geometry: "rect",
+        fill: "#1155cc",
+        offsetXCm: 0,
+        offsetYCm: 0,
+        altText: "ODF group member A",
+      },
+      {
+        geometry: "ellipse",
+        fill: "#109618",
+        offsetXCm: 4,
+        offsetYCm: 1,
+        altText: "ODF group member B",
+      },
+    ].map((opts) => {
+      const styleName = `gr${styleCounter++}`;
+      const { styleXml, shapeXml } = shapeElement({
+        ...opts,
+        styleName,
+        widthCm: 2,
+        heightCm: 2,
+        outline: { color: "#000000", widthPt: 1, dash: "solid" },
+        // "square" only so the member carries svg:x/svg:y; the group owns the
+        // real anchoring, and odf/group.ts overwrites the wrap from it.
+        wrap: "square",
+      });
+      memberStyles.push(styleXml);
+      return shapeXml;
+    });
+    styles.push(...memberStyles);
+    paragraphs.push(
+      '<text:p><draw:g draw:name="Group 1" text:anchor-type="paragraph" draw:z-index="10">' +
+        '<svg:desc>ODF group</svg:desc>' +
+        memberXml.join("") +
+        "</draw:g></text:p>",
+    );
+  }
 
   const contentXml =
     `${XML}<office:document-content${NS} office:version="1.2">` +

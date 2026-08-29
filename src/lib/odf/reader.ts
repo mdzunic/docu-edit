@@ -75,6 +75,7 @@ import {
   LIST_MARKER_WIDTH_CM,
 } from "../core/lists";
 import { collectGraphicWrapStyles, parseDrawFrame } from "./drawing";
+import { firstFreeOdfGroupOrdinal, parseDrawGroup, type ParsedOdfGroup } from "./group";
 import { parseShapeElement } from "./shape";
 import { parseConnectorElement, resolveOdfConnectorAttachments, stampOdfConnectorTargetId } from "./connector";
 import { parseChartFrame } from "./chart";
@@ -1041,6 +1042,11 @@ export interface OdfDrawingContext {
    * docx/reader.ts's DrawingContext.anchorOrdinals, this is its exact
    * twin: containment is the wire pairing, minted in document order. */
   anchorOrdinals?: { next: number };
+  /** The document-wide counter imported `draw:g` groups take their
+   * `groupOrdinal` from — the .odt twin of docx/reader.ts's
+   * DrawingContext.groupOrdinals, seeded above every `de:group` already in
+   * `content.xml` for the same reason. */
+  groupOrdinals?: { next: number };
 }
 
 /** collectInline run over a detached clone of `nodes` — reused so a
@@ -1264,6 +1270,20 @@ function parseBodyTextBlockOrSplit(
   const hasConnector = Array.from(el.children).some(
     (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "connector",
   );
+  // A `draw:g` group splits it too, and yields one block per member (group.ts).
+  const groupCtx = {
+    contentDoc: ctx.contentDoc,
+    stylesDoc: ctx.stylesDoc,
+    text: shapeTextCtx,
+    parts: ctx.parts,
+    graphicWrapStyles: ctx.graphicWrapStyles,
+  };
+  const hasGroup = Array.from(el.children).some(
+    (child) =>
+      child.namespaceURI === DRAW_NAMESPACE &&
+      child.localName === "g" &&
+      parseDrawGroup(child, groupCtx) !== null,
+  );
   // A chart frame always becomes a (possibly placeholder) Chart block —
   // unlike image/shape, parseChartFrame never returns null just because the
   // embedded chart's type is outside "Chart catalogue" (see its own doc
@@ -1275,7 +1295,7 @@ function parseBodyTextBlockOrSplit(
     (frame) =>
       firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined && !isFormulaFrame(frame, ctx.parts),
   );
-  if (!hasImage && !hasShape && !hasChart && !hasConnector) {
+  if (!hasImage && !hasShape && !hasChart && !hasConnector && !hasGroup) {
     return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
   }
 
@@ -1363,6 +1383,24 @@ function parseBodyTextBlockOrSplit(
           flush();
           blocks.push(parsedConnector.connector);
           stampOdfConnectorTargetId(frameEl, parsedConnector.connector);
+          continue;
+        }
+      }
+      if (frameEl.namespaceURI === DRAW_NAMESPACE && frameEl.localName === "g") {
+        // A `draw:g` flattens into several blocks at once, all sharing one
+        // freshly minted ordinal (group.ts). Not stamped for connector
+        // targeting: a member carries no `draw:id` a connector could name.
+        const parsedGroup: ParsedOdfGroup | null = parseDrawGroup(frameEl, groupCtx);
+        if (parsedGroup) {
+          flush();
+          const ordinal = ctx.groupOrdinals ? ctx.groupOrdinals.next++ : undefined;
+          for (const member of parsedGroup.blocks) {
+            if (ordinal !== undefined) {
+              member.groupOrdinal = ordinal;
+            }
+            blocks.push(member);
+          }
+          media.push(...parsedGroup.media);
           continue;
         }
       }
@@ -2473,6 +2511,7 @@ export async function parseOdt(
     contentDoc,
     stylesDoc,
     anchorOrdinals: { next: 1 },
+    groupOrdinals: { next: firstFreeOdfGroupOrdinal(contentDoc.documentElement) },
   };
   const mediaById = new Map<string, MediaPart>();
   const sections: Section[] = [];

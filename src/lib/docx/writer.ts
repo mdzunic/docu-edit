@@ -2128,6 +2128,14 @@ function* documentBlockXml(
           const ids = connectorTargetIds(sectionIndex, drawing, docPrIdByBlock);
           return `<w:r>${connectorDrawingXml(drawing, docPrId++, ids)}</w:r>`;
         }
+        if (drawing.type === "image") {
+          // A floating picture absorbs into its anchor paragraph like every
+          // other floating drawing — it joined them when Image gained real
+          // placement. Missing this case dropped the picture entirely: the
+          // plan skipped its own block slot and nothing emitted it here.
+          const relId = mediaPlan.relIdFor(drawing.mediaId);
+          return relId ? `<w:r>${drawingXml(drawing, relId, docPrId++)}</w:r>` : "";
+        }
         return "";
       };
       return { leading: entry.leading.map(runXml).join(""), trailing: entry.trailing.map(runXml).join("") };

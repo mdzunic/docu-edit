@@ -2148,6 +2148,14 @@ export function buildContentXml(
         const chartEntry = chartPlan.planFor(sectionIndex, drawingIndex);
         return chartEntry ? chartFrameXml(drawing, `./${chartEntry.objectDir}`) : "";
       }
+      if (drawing.type === "image") {
+        // A floating picture absorbs into its anchor paragraph like every
+        // other floating drawing — it joined them when Image gained real
+        // placement. Missing this case dropped the picture entirely: the
+        // plan skipped its own block slot and nothing emitted it here.
+        const href = mediaPlan.hrefFor(drawing.mediaId);
+        return href ? drawFrameXml(drawing, href, styles.graphicStyleNameFor(drawing.wrap)) : "";
+      }
       return "";
     };
     const anchorsAt = (index: number): typeof opaqueBlocks =>

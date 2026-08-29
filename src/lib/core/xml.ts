@@ -11,6 +11,11 @@
 export const RELATIONSHIPS_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/relationships";
 export const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 
+/** Markup Compatibility and Extensibility (ECMA-376 Part 3) — the namespace
+ * of the `mc:AlternateContent` wrapper every Office producer puts around
+ * markup that postdates the 2006 schema. */
+export const MARKUP_COMPATIBILITY_NAMESPACE = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+
 export class XmlParseError extends Error {}
 
 /** Parses an XML string into a `Document`, throwing `XmlParseError` if the
@@ -43,6 +48,57 @@ export function childElements(parent: Element | Document, namespace: string, loc
 
 export function firstChildElement(parent: Element | Document, namespace: string, localName: string): Element | undefined {
   return childElements(parent, namespace, localName)[0];
+}
+
+/** Resolves an `mc:AlternateContent` to the children of the branch a
+ * consumer that understands `understoodNamespaces` must read: the first
+ * `mc:Choice` whose every `Requires` prefix resolves (in that element's own
+ * scope) to an understood namespace, else the `mc:Fallback`, else nothing.
+ *
+ * This is how Word writes anything newer than the 2006 schema — a shape, a
+ * group, a picture with relative sizing — so a reader that only looks for
+ * direct children sees the wrapper instead of the drawing inside it. The
+ * prefixes in `Requires` are resolved through the document's own namespace
+ * declarations, never matched by spelling: a producer is free to bind
+ * `wps`/`wpg`/`wp14` to any prefix it likes.
+ *
+ * Returns the branch's element children so the caller can treat them as if
+ * they stood in the wrapper's place. An empty result means MCE says to elide
+ * the wrapper entirely; a caller that preserves unmodelled markup should
+ * fall back to keeping the original `mc:AlternateContent` verbatim rather
+ * than dropping it. */
+export function selectAlternateContent(
+  alternateContent: Element,
+  understoodNamespaces: ReadonlySet<string>,
+): Element[] {
+  let fallback: Element | undefined;
+  for (const branch of Array.from(alternateContent.children)) {
+    if (branch.namespaceURI !== MARKUP_COMPATIBILITY_NAMESPACE) {
+      continue;
+    }
+    if (branch.localName === "Fallback") {
+      fallback ??= branch;
+      continue;
+    }
+    if (branch.localName !== "Choice") {
+      continue;
+    }
+    const requires = (branch.getAttribute("Requires") ?? "").split(/\s+/).filter(Boolean);
+    // A Choice with no Requires is malformed (MCE requires at least one
+    // prefix); skipping it leaves the Fallback, which is what a consumer
+    // that cannot evaluate the condition should read.
+    if (requires.length === 0) {
+      continue;
+    }
+    const understood = requires.every((prefix) => {
+      const uri = branch.lookupNamespaceURI(prefix);
+      return uri !== null && understoodNamespaces.has(uri);
+    });
+    if (understood) {
+      return Array.from(branch.children);
+    }
+  }
+  return fallback ? Array.from(fallback.children) : [];
 }
 
 export interface Relationship {

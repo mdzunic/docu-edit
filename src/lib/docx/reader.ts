@@ -82,10 +82,12 @@ import { parseOmmlEquation } from "./omml";
 import {
   childElements,
   firstChildElement,
+  MARKUP_COMPATIBILITY_NAMESPACE,
   parseRelationships,
   parseXml,
   relsPathFor,
   resolvePartPath,
+  selectAlternateContent,
   serializeElement,
   XmlParseError,
   type Relationship,
@@ -94,6 +96,8 @@ import { isFloatingDrawing } from "../drawingAnchors";
 import { parseDrawing, type ParsedDrawing } from "./drawing";
 import { ensureMediaEncoded, pendingMediaByteLength } from "../core/media";
 import { parseShapeDrawing } from "./shape";
+import { parseGroupDrawing, type ParsedGroupDrawing } from "./group";
+import { parseVmlPicture } from "./vml";
 import { parseConnectorDrawing, resolveDocxConnectorAttachments, stampConnectorTargetId } from "./connector";
 import { parseChartDrawing } from "./chart";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
@@ -131,6 +135,11 @@ const HYPERLINK_RELATIONSHIP =
 // The `r:` attribute namespace (w:hyperlink/@r:id) — same URI drawing.ts
 // uses for a:blip/@r:embed.
 const R_ATTRIBUTE_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+// `wp:docPr` lives here, and `de:group` — this editor's own group ordinal
+// (shape.ts's DE_NAMESPACE) — is an attribute on it. Both are needed only to
+// seed the imported-group ordinal counter below.
+const WP_DRAWING_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const DE_NAMESPACE = "urn:docu-edit:shape";
 
 /** Resolves a `w:hyperlink`'s r:id to its external URL (SPEC-025): the main
  * part's hyperlink relationships, sanitized — a dangerous scheme (AC-17)
@@ -727,6 +736,95 @@ export interface DrawingContext {
    * read → write → read structurally equal. Absent on contexts that never
    * reach parseBodyParagraphBlocks (headers/footers, the comments part). */
   anchorOrdinals?: { next: number };
+  /** The document-wide counter imported `wpg:wgp` groups take their
+   * `groupOrdinal` from (SPEC-051's flat grouping — see group.ts). Seeded
+   * above every `de:group` already in the part so a group Word added to a
+   * document this editor had saved cannot land on an ordinal that document
+   * already uses. Absent on contexts that never reach
+   * parseBodyParagraphBlocks (headers/footers, the comments part), where a
+   * drawing is preserved opaquely anyway. */
+  groupOrdinals?: { next: number };
+}
+
+/** One more than the largest `de:group` ordinal the part already carries —
+ * the seed for ordinals minted for imported `wpg:wgp` groups (group.ts).
+ *
+ * Both kinds of group can coexist in one file: this editor saves its groups
+ * as `de:group` on sibling drawings, and a user who then groups two more
+ * shapes in Word gets a real `wpg:wgp` next to them. Minting from 1 would put
+ * the imported group on an ordinal the document already uses, silently
+ * merging two unrelated groups. */
+function firstFreeGroupOrdinal(root: Element): number {
+  let max = 0;
+  const docPrs = root.getElementsByTagNameNS(WP_DRAWING_NAMESPACE, "docPr");
+  for (let i = 0; i < docPrs.length; i++) {
+    const value = Number(docPrs[i].getAttributeNS(DE_NAMESPACE, "group"));
+    if (Number.isFinite(value)) {
+      max = Math.max(max, value);
+    }
+  }
+  return max + 1;
+}
+
+/** The DrawingML extension namespaces whose markup the readers below can
+ * actually parse — the answer to an `mc:Choice`'s `Requires`. `wp14` adds
+ * relative sizing/positioning attributes to a `wp:anchor` we already ignore;
+ * `wps` is SPEC-051's shape/SPEC-070's connector namespace; `wpg` is the
+ * group namespace group.ts flattens.
+ *
+ * Deliberately absent: `wpc` (a drawing canvas), which no reader models — its
+ * Choice is skipped, the VML `mc:Fallback` is read instead, nothing parses out
+ * of it, and the run stays preserved verbatim. Add a namespace here only once
+ * something can read what it gates: selecting a Choice we then fail to parse
+ * still preserves the run, but only because every caller falls back to the
+ * original element rather than the branch. */
+const UNDERSTOOD_DRAWING_NAMESPACES: ReadonlySet<string> = new Set([
+  "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+  "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
+  "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+  "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+]);
+
+/** The single `w:drawing` a run's content resolves to, or null when the run
+ * holds anything else (text, a field, several drawings, a `w:pict`).
+ *
+ * Word writes a drawing bare only when its markup predates the 2010
+ * extensions; a shape, a text box, or a picture with relative sizing is
+ * wrapped in `mc:AlternateContent`, so this looks through that wrapper via
+ * the MCE rules (core/xml's selectAlternateContent) rather than requiring a
+ * direct child. Looking through it is a read-side lens only: when nothing
+ * downstream models what is inside, every caller falls back to the
+ * opaque-inline path, which serialises the *original* run — wrapper, chosen
+ * branch and VML fallback intact — so preservation is unchanged. */
+function runDrawingElement(rEl: Element): Element | null {
+  let drawing: Element | null = null;
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE) {
+      if (child.localName === "rPr") {
+        continue;
+      }
+      if (child.localName !== "drawing" || drawing) {
+        return null;
+      }
+      drawing = child;
+      continue;
+    }
+    if (child.namespaceURI === MARKUP_COMPATIBILITY_NAMESPACE && child.localName === "AlternateContent") {
+      const selected = selectAlternateContent(child, UNDERSTOOD_DRAWING_NAMESPACES);
+      if (selected.length !== 1 || selected[0].namespaceURI !== WORD_NAMESPACE) {
+        return null;
+      }
+      if (selected[0].localName !== "drawing" || drawing) {
+        return null;
+      }
+      drawing = selected[0];
+      continue;
+    }
+    // Any other foreign-namespaced child is skipped rather than disqualifying
+    // the run, matching the `namespaceURI === WORD_NAMESPACE` filter this
+    // replaced — widening the unwrap must not narrow what already reads.
+  }
+  return drawing;
 }
 
 /** A `w:r` whose only content (besides `w:rPr`) is one `w:drawing` that
@@ -735,13 +833,11 @@ export interface DrawingContext {
  * one holding a drawing this spec doesn't model (a chart, shape, ...), which
  * keeps falling through to the ordinary opaque-inline path. */
 function imageRunDrawing(rEl: Element, ctx: DrawingContext): ParsedDrawing | null {
-  const contentChildren = Array.from(rEl.children).filter(
-    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
-  );
-  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+  const drawing = runDrawingElement(rEl);
+  if (!drawing) {
     return null;
   }
-  return parseDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
+  return parseDrawing(drawing, ctx.mainRels, ctx.mainPartPath, ctx.parts);
 }
 
 /** A `w:r` whose only content is one `w:drawing` holding a `wps:wsp` this
@@ -755,39 +851,98 @@ function shapeRunDrawing(
   numberingCatalog: NumberingCatalog,
   links: LinkReadContext | undefined,
 ): Shape | null {
-  const contentChildren = Array.from(rEl.children).filter(
-    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
-  );
-  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+  const drawing = runDrawingElement(rEl);
+  if (!drawing) {
     return null;
   }
-  const parsed = parseShapeDrawing(contentChildren[0], {
+  const parsed = parseShapeDrawing(drawing, {
     parseParagraph: (pEl) => parseParagraph(pEl, styleCatalog, numberingCatalog, links),
   });
   return parsed?.shape ?? null;
 }
 
-/** The single `w:drawing` child of a run (the caller has already confirmed it
- * is one via imageRunDrawing/shapeRunDrawing/etc.) — used to stamp the
- * drawing's `wp:docPr/@id` onto its parsed block for connector resolution. */
+/** A `w:r` whose only content is one legacy `w:pict` holding an embedded VML
+ * picture (vml.ts) — the Word 97-2003 sibling of imageRunDrawing. Null for
+ * every other run, including a `w:pict` holding a VML shape or a horizontal
+ * rule, which keeps its verbatim preservation.
+ *
+ * Deliberately separate from runDrawingElement: a `w:pict` is not a
+ * `w:drawing`, and the two never appear as alternatives to each other in a
+ * run — Word writes VML markup instead of DrawingML, or as the `mc:Fallback`
+ * of an AlternateContent whose Choice this reader takes first. */
+function hasVmlPict(rEl: Element): boolean {
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI === WORD_NAMESPACE && child.localName === "pict") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function vmlRunPicture(rEl: Element, ctx: DrawingContext): ParsedDrawing | null {
+  let pict: Element | null = null;
+  for (const child of Array.from(rEl.children)) {
+    if (child.namespaceURI !== WORD_NAMESPACE) {
+      continue;
+    }
+    if (child.localName === "rPr") {
+      continue;
+    }
+    if (child.localName !== "pict" || pict) {
+      return null;
+    }
+    pict = child;
+  }
+  return pict ? parseVmlPicture(pict, ctx.mainRels, ctx.mainPartPath, ctx.parts) : null;
+}
+
+/** A `w:r` whose only content is one `w:drawing` holding a `wpg:wgp` group,
+ * flattened into its member blocks — the many-blocks sibling of
+ * imageRunDrawing/shapeRunDrawing. Null for every other run, and for a group
+ * holding a member no reader models, which keeps the whole run on the
+ * opaque-inline path.
+ *
+ * Deliberately free of side effects (it mints no ordinal): the caller runs it
+ * once to decide whether the paragraph splits and again to build the blocks,
+ * then stamps the shared `groupOrdinal` itself. */
+function groupRunDrawing(
+  rEl: Element,
+  ctx: DrawingContext,
+  styleCatalog: StyleCatalog,
+  numberingCatalog: NumberingCatalog,
+  links: LinkReadContext | undefined,
+): ParsedGroupDrawing | null {
+  const drawing = runDrawingElement(rEl);
+  if (!drawing) {
+    return null;
+  }
+  return parseGroupDrawing(drawing, {
+    mainRels: ctx.mainRels,
+    mainPartPath: ctx.mainPartPath,
+    parts: ctx.parts,
+    parseParagraph: (pEl) => parseParagraph(pEl, styleCatalog, numberingCatalog, links),
+  });
+}
+
+/** The single `w:drawing` a run resolves to (the caller has already
+ * confirmed it has one via imageRunDrawing/shapeRunDrawing/etc.) — used to
+ * stamp the drawing's `wp:docPr/@id` onto its parsed block for connector
+ * resolution. Resolved through runDrawingElement so a drawing inside an
+ * `mc:AlternateContent` is stamped from the same element that was parsed. */
 function drawingElementOf(rEl: Element): Element {
-  return Array.from(rEl.children).find(
-    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "drawing",
-  ) as Element;
+  return runDrawingElement(rEl) as Element;
 }
 
 /** A `w:r` whose only content is one `w:drawing` holding a `wps:cxnSp`
  * (SPEC-070) — the connector-flavoured sibling of shapeRunDrawing. Null for
  * every other run. A `wps:cxnSp` reads as a Connector, never a Shape. */
 function connectorRunDrawing(rEl: Element): { connector: import("../documentModel").Connector; drawing: Element } | null {
-  const contentChildren = Array.from(rEl.children).filter(
-    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
-  );
-  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+  const drawing = runDrawingElement(rEl);
+  if (!drawing) {
     return null;
   }
-  const parsed = parseConnectorDrawing(contentChildren[0]);
-  return parsed ? { connector: parsed.connector, drawing: contentChildren[0] } : null;
+  const parsed = parseConnectorDrawing(drawing);
+  return parsed ? { connector: parsed.connector, drawing } : null;
 }
 
 /** A `w:r` whose only content is one `w:drawing` holding a `c:chart`
@@ -800,13 +955,11 @@ function connectorRunDrawing(rEl: Element): { connector: import("../documentMode
  * the anchored-drawing selection/paint/preserve treatment rather than
  * falling back to an inert opaque-inline run. */
 function chartRunDrawing(rEl: Element, ctx: DrawingContext): Chart | null {
-  const contentChildren = Array.from(rEl.children).filter(
-    (child) => child.namespaceURI === WORD_NAMESPACE && child.localName !== "rPr",
-  );
-  if (contentChildren.length !== 1 || contentChildren[0].localName !== "drawing") {
+  const drawing = runDrawingElement(rEl);
+  if (!drawing) {
     return null;
   }
-  const parsed = parseChartDrawing(contentChildren[0], ctx.mainRels, ctx.mainPartPath, ctx.parts);
+  const parsed = parseChartDrawing(drawing, ctx.mainRels, ctx.mainPartPath, ctx.parts);
   if (!parsed) {
     return null;
   }
@@ -1154,10 +1307,24 @@ function parseBodyParagraphBlocks(
   const runElements = Array.from(pEl.children).filter(
     (child) => child.namespaceURI === WORD_NAMESPACE && child.localName === "r",
   );
-  const hasImageRun = runElements.some((r) => imageRunDrawing(r, ctx) !== null);
-  const hasShapeRun = runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
-  const hasChartRun = runElements.some((r) => chartRunDrawing(r, ctx) !== null);
-  const hasConnectorRun = runElements.some((r) => connectorRunDrawing(r) !== null);
+  // Every drawing precheck below starts by resolving the run's `w:drawing`,
+  // so ask that once first: a paragraph of plain text — the overwhelming
+  // majority — then pays one cheap scan per run instead of one per drawing
+  // kind, which is what keeps adding a kind from costing anything on open.
+  const hasDrawingRun = runElements.some((r) => runDrawingElement(r) !== null);
+  const hasImageRun = hasDrawingRun && runElements.some((r) => imageRunDrawing(r, ctx) !== null);
+  const hasShapeRun =
+    hasDrawingRun && runElements.some((r) => shapeRunDrawing(r, styleCatalog, numberingCatalog, links) !== null);
+  const hasChartRun = hasDrawingRun && runElements.some((r) => chartRunDrawing(r, ctx) !== null);
+  const hasConnectorRun = hasDrawingRun && runElements.some((r) => connectorRunDrawing(r) !== null);
+  const hasGroupRun =
+    hasDrawingRun && runElements.some((r) => groupRunDrawing(r, ctx, styleCatalog, numberingCatalog, links) !== null);
+  // Legacy VML has no `w:drawing` to resolve, so it is asked separately —
+  // and only of runs that actually hold a `w:pict`, which is why the cheap
+  // element check comes before the parse.
+  const hasVmlRun = runElements.some(
+    (r) => hasVmlPict(r) && vmlRunPicture(r, ctx) !== null,
+  );
   // A typed w:br in an otherwise-modelled run splits the paragraph the same
   // way an image does (SPEC-028 AC-30); one inside an opaque run stays part
   // of that run's verbatim XML — splitting an unmodelled run could not
@@ -1165,7 +1332,15 @@ function parseBodyParagraphBlocks(
   const hasBreakRun = runElements.some(
     (r) => !runHasUnmodelledContent(r) && runHasTypedBreak(r),
   );
-  if (!hasImageRun && !hasShapeRun && !hasChartRun && !hasConnectorRun && !hasBreakRun) {
+  if (
+    !hasImageRun &&
+    !hasShapeRun &&
+    !hasChartRun &&
+    !hasConnectorRun &&
+    !hasGroupRun &&
+    !hasVmlRun &&
+    !hasBreakRun
+  ) {
     return { blocks: [parseParagraph(pEl, styleCatalog, numberingCatalog, links)], media: [] };
   }
 
@@ -1223,6 +1398,34 @@ function parseBodyParagraphBlocks(
         blocks.push(chart);
         stampConnectorTargetId(drawingElementOf(child), chart);
         continue;
+      }
+      // A `wpg:wgp` group flattens into several blocks at once (group.ts),
+      // all sharing one freshly minted ordinal. Not stamped for connector
+      // targeting: a member has no `wp:docPr` of its own to be named by.
+      const group = groupRunDrawing(child, ctx, styleCatalog, numberingCatalog, links);
+      if (group) {
+        flush();
+        const ordinal = ctx.groupOrdinals ? ctx.groupOrdinals.next++ : undefined;
+        for (const member of group.blocks) {
+          if (ordinal !== undefined) {
+            member.groupOrdinal = ordinal;
+          }
+          blocks.push(member);
+        }
+        media.push(...group.media);
+        continue;
+      }
+      // A legacy `w:pict` picture (SPEC-024's markup predecessor, vml.ts):
+      // last of the drawing kinds, so a `w:pict` that is a VML shape rather
+      // than a picture still falls through to the opaque-inline path below.
+      if (hasVmlPict(child)) {
+        const vml = vmlRunPicture(child, ctx);
+        if (vml) {
+          flush();
+          blocks.push(vml.image);
+          media.push(vml.media);
+          continue;
+        }
       }
       if (isCommentReferenceRun(child)) {
         continue;
@@ -2628,7 +2831,13 @@ export async function parseDocx(
     }
   }
   const styleCatalog = parseStylesCatalog(stylesDoc);
-  const drawingCtx: DrawingContext = { mainRels, mainPartPath, parts, anchorOrdinals: { next: 1 } };
+  const drawingCtx: DrawingContext = {
+    mainRels,
+    mainPartPath,
+    parts,
+    anchorOrdinals: { next: 1 },
+    groupOrdinals: { next: firstFreeGroupOrdinal(documentXml.documentElement) },
+  };
   const linkContext: LinkReadContext = {
     hrefForRelId: (relId) => {
       const rel = mainRels.get(relId);

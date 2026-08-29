@@ -178,6 +178,19 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
   const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
   const PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
   const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+  const WP14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing";
+  const V = "urn:schemas-microsoft-com:vml";
+  const O = "urn:schemas-microsoft-com:office:office";
+  const W10 = "urn:schemas-microsoft-com:office:word";
+
+  // Declared where Word declares them — on `w:document`, since MCE resolves
+  // an `mc:Choice/@Requires` prefix through the document's own declarations.
+  const DOCUMENT_NAMESPACES =
+    ` xmlns:w="${W}" xmlns:mc="${MC}" xmlns:wp="${WP}" xmlns:a="${A}"` +
+    ` xmlns:pic="${PIC}" xmlns:r="${R}" xmlns:wp14="${WP14}"` +
+    ` xmlns:v="${V}" xmlns:o="${O}" xmlns:w10="${W10}"` +
+    ' mc:Ignorable="wp14"';
 
   const inlineCx = 300 * 9525;
   const inlineCy = 200 * 9525;
@@ -186,19 +199,22 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
   function pictureGraphic(id, name, relId, cx, cy) {
     return (
-      `<a:graphic xmlns:a="${A}"><a:graphicData uri="${PIC}">` +
-      `<pic:pic xmlns:pic="${PIC}">` +
+      `<a:graphic><a:graphicData uri="${PIC}">` +
+      "<pic:pic>" +
       `<pic:nvPicPr><pic:cNvPr id="${id}" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr>` +
-      `<pic:blipFill><a:blip xmlns:r="${R}" r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+      `<pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
       `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
       '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
       "</pic:pic></a:graphicData></a:graphic>"
     );
   }
 
-  // A real Word inline picture run, as Word itself emits it.
+  // A real Word inline picture run, as Word itself emits it — bare. An inline
+  // picture uses nothing newer than the 2006 schema, so Word writes no
+  // `mc:AlternateContent` around it; the floating one below is a different
+  // story, and the fixture has to carry both forms.
   const inlineDrawing =
-    `<w:drawing xmlns:wp="${WP}">` +
+    "<w:drawing>" +
     `<wp:inline distT="0" distB="0" distL="0" distR="0">` +
     `<wp:extent cx="${inlineCx}" cy="${inlineCy}"/>` +
     '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
@@ -208,8 +224,14 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
     "</wp:inline></w:drawing>";
 
   // A real Word floating (anchored) picture: square wrap, in front of text.
+  // Word gives a floating picture the 2010 relative-size extensions
+  // (`wp14:sizeRelH`/`sizeRelV`), so it writes the anchor inside an
+  // `mc:Choice Requires="wp14"` beside a VML `mc:Fallback` — the same
+  // wrapper it puts round every shape. A reader that only looks at a run's
+  // direct children sees the wrapper and preserves the whole run instead,
+  // which renders as nothing; keep this wrapped.
   const anchorDrawing =
-    `<w:drawing xmlns:wp="${WP}">` +
+    "<w:drawing>" +
     '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0"' +
     ' relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">' +
     '<wp:simplePos x="0" y="0"/>' +
@@ -221,12 +243,22 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
     '<wp:docPr id="2" name="Picture 2" descr="A red square logo"/>' +
     "<wp:cNvGraphicFramePr/>" +
     pictureGraphic(2, "Picture 2", "rId5", floatCx, floatCy) +
+    '<wp14:sizeRelH relativeFrom="margin"><wp14:pctWidth>0</wp14:pctWidth></wp14:sizeRelH>' +
+    '<wp14:sizeRelV relativeFrom="margin"><wp14:pctHeight>0</wp14:pctHeight></wp14:sizeRelV>' +
     "</wp:anchor></w:drawing>";
 
+  const anchorRun =
+    '<mc:AlternateContent><mc:Choice Requires="wp14">' +
+    anchorDrawing +
+    '</mc:Choice><mc:Fallback><w:pict><v:rect id="_x0000_s1026" o:spid="_x0000_s1026"' +
+    ` style="position:absolute;width:${floatCx / 9525}pt;height:${floatCy / 9525}pt"` +
+    ' fillcolor="#cc0000" stroked="f"><w10:wrap type="square"/></v:rect></w:pict></mc:Fallback>' +
+    "</mc:AlternateContent>";
+
   const documentXml =
-    `${XML}<w:document xmlns:w="${W}"><w:body>` +
+    `${XML}<w:document${DOCUMENT_NAMESPACES}><w:body>` +
     `<w:p><w:r><w:t xml:space="preserve">Inline picture: </w:t></w:r><w:r>${inlineDrawing}</w:r><w:r><w:t xml:space="preserve"> end of paragraph.</w:t></w:r></w:p>` +
-    `<w:p><w:r>${anchorDrawing}</w:r><w:r><w:t>Text beside the floating picture.</w:t></w:r></w:p>` +
+    `<w:p><w:r>${anchorRun}</w:r><w:r><w:t>Text beside the floating picture.</w:t></w:r></w:p>` +
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
     '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>' +
     "</w:sectPr></w:body></w:document>";
