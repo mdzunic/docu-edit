@@ -96,6 +96,9 @@ const props = defineProps({
   alignToReference: { type: String, default: "margin" },
   /** Whether the Column reference is offered (section has >1 column, AC-3). */
   columnReferenceAvailable: { type: Boolean, default: false },
+  /** Snap-to-guides / snap-to-grid checked states (SPEC-072 AC-30/31). */
+  snapToGuides: { type: Boolean, default: true },
+  snapToGrid: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -113,6 +116,8 @@ const emit = defineEmits([
   "painter-click",
   "painter-dblclick",
   "drawing-align-to",
+  "toggle-snap-guides",
+  "toggle-snap-grid",
 ]);
 
 // SPEC-072 Format → Drawing → Align / Distribute items. The command suffix
@@ -904,6 +909,19 @@ function chooseTableGrid(rows = 0, cols = 0) {
             @select="emit('drawing-align-to', option.value)"
           />
         </MenuSubmenu>
+        <hr class="menu-separator">
+        <MenuCheckItem
+          label="Snap to guides"
+          testid="drawing-snap-guides"
+          :checked="snapToGuides"
+          @select="emit('toggle-snap-guides')"
+        />
+        <MenuCheckItem
+          label="Snap to grid"
+          testid="drawing-snap-grid"
+          :checked="snapToGrid"
+          @select="emit('toggle-snap-grid')"
+        />
         <hr class="menu-separator">
         <MenuItem
           label="Position and size…"

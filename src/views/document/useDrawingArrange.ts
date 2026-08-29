@@ -14,6 +14,7 @@
 // content area, switchable to the whole page or a column, remembered for the
 // life of the view (AC-2, AC-3, AC-4).
 import { computed, ref, type ComputedRef, type Ref } from "vue";
+import { usePreferences } from "../../composables/usePreferences";
 import {
   documentStart,
   caretSelection,
@@ -109,6 +110,12 @@ export interface DrawingArrangeApi {
   alignDisabledReason: ComputedRef<string>;
   /** "" when distribute is available, else the disabled reason (AC-17). */
   distributeDisabledReason: ComputedRef<string>;
+  /** Every Format → Drawing prop the menu bar reads, bundled so DocumentView
+   * binds them with one v-bind (line-budget discipline). */
+  menuBindings: ComputedRef<Record<string, unknown>>;
+  /** Flip the persisted Snap to guides / Snap to grid preferences (AC-30/31). */
+  toggleSnapToGuides: () => void;
+  toggleSnapToGrid: () => void;
 }
 
 export function useDrawingArrange(deps: DrawingArrangeDeps): DrawingArrangeApi {
@@ -251,6 +258,25 @@ export function useDrawingArrange(deps: DrawingArrangeDeps): DrawingArrangeApi {
     ["drawing.distribute-vertical", () => distribute("v", "distribute vertically")],
   ];
 
+  // Snap-to-guides / snap-to-grid live in preferences (SPEC-066); the menu
+  // toggles read and flip them here (AC-30/31/32).
+  const { preferences, setPreference } = usePreferences();
+  function toggleSnapToGuides(): void {
+    setPreference("snapToGuides", !preferences.snapToGuides);
+  }
+  function toggleSnapToGrid(): void {
+    setPreference("snapToGrid", !preferences.snapToGrid);
+  }
+
+  const menuBindings = computed<Record<string, unknown>>(() => ({
+    drawingAlignReason: alignDisabledReason.value,
+    drawingDistributeReason: distributeDisabledReason.value,
+    alignToReference: alignToReference.value,
+    columnReferenceAvailable: columnReferenceAvailable.value,
+    snapToGuides: preferences.snapToGuides,
+    snapToGrid: preferences.snapToGrid,
+  }));
+
   return {
     commands,
     alignToReference,
@@ -258,5 +284,8 @@ export function useDrawingArrange(deps: DrawingArrangeDeps): DrawingArrangeApi {
     columnReferenceAvailable,
     alignDisabledReason,
     distributeDisabledReason,
+    menuBindings,
+    toggleSnapToGuides,
+    toggleSnapToGrid,
   };
 }
