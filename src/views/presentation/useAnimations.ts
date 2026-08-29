@@ -47,7 +47,7 @@ export interface AnimationsDeps {
 /** The frame kinds an animation may target (AC out-of-scope: group/foreign
  * cannot be animated). */
 function isAnimatableKind(kind: string): boolean {
-  return kind === "text" || kind === "image" || kind === "shape";
+  return kind === "text" || kind === "image" || kind === "shape" || kind === "table";
 }
 
 export interface AnimationRow {

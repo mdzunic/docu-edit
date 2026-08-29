@@ -217,7 +217,7 @@ function renderTableFrame(frame: TableFrame, fid: string): string {
   const rows = frame.rows
     .map((row) => {
       const cells = row.cells
-        .map((cell, c) => {
+        .map((cell) => {
           if (cell.covered) return "";
           const spanAttrs = [
             cell.colSpan && cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : "",
@@ -227,7 +227,6 @@ function renderTableFrame(frame: TableFrame, fid: string): string {
           const fill = cell.fill && cell.fill.type === "solid" ? validColor(cell.fill.color) : undefined;
           if (fill) cellStyle.push(`background:${fill}`);
           cellStyle.push(`vertical-align:${cell.verticalAlign ?? "top"}`);
-          void c;
           const body = markedParagraphs(cell.paragraphs).map((e) => renderParagraph(e, false)).join("");
           return `<td${spanAttrs} style="${esc(cellStyle.join(";"))}">${body}</td>`;
         })

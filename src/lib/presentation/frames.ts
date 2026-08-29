@@ -16,6 +16,7 @@ import { pxToCm } from "../core/units";
 import { extensionForContentType, type MediaPart } from "../core/media";
 import { LINE_GEOMETRIES, type ShapeGeometry } from "../core/shapes";
 import { markSlideEdited } from "./text";
+import { scaleTableGrid } from "./tables";
 import { removeAnimationsForFrame } from "./animations";
 import type {
   FrameStroke,
@@ -328,10 +329,17 @@ export function resizeFrame(
   if (!slide || !frame) {
     return null;
   }
+  const nextWidth = r3(Math.max(rect.widthCm, MIN_FRAME_SIZE_CM));
+  const nextHeight = r3(Math.max(rect.heightCm, MIN_FRAME_SIZE_CM));
+  if (frame.kind === "table") {
+    // Scale the grid proportionally so the columns/rows keep their relative
+    // proportions (SPEC-091 AC-8c) — before overwriting widthCm/heightCm.
+    scaleTableGrid(frame, nextWidth / frame.widthCm, nextHeight / frame.heightCm);
+  }
   frame.xCm = r3(rect.xCm);
   frame.yCm = r3(rect.yCm);
-  frame.widthCm = r3(Math.max(rect.widthCm, MIN_FRAME_SIZE_CM));
-  frame.heightCm = r3(Math.max(rect.heightCm, MIN_FRAME_SIZE_CM));
+  frame.widthCm = nextWidth;
+  frame.heightCm = nextHeight;
   touch(model, slide);
   return frame.id;
 }

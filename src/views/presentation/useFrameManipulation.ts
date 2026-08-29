@@ -53,6 +53,8 @@ export function frameNoun(frame: SlideFrame): string {
       return "group";
     case "foreign":
       return frame.label || "object";
+    case "table":
+      return "table";
     default:
       return "text box";
   }
