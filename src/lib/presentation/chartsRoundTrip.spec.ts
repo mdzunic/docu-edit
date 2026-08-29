@@ -13,6 +13,7 @@ import { readPresentationBytes } from "./open";
 import { writePptx } from "./pptx/writer";
 import { chartPartXml } from "../core/chartPartOoxml";
 import { insertChartFrame, setSlideChartData } from "./charts";
+import { deleteFrame } from "./frames";
 import type { ChartFrame, PresentationModel } from "./model";
 import type { ChartVisual } from "../core/charts";
 
@@ -145,5 +146,73 @@ describe("pptx chart read → write round trip", () => {
     expect(inserted).toBeDefined();
     expect(id).toBeTruthy();
     void equalStructural;
+  });
+
+  it("deleting a chart frame excludes its part, rels and workbook (AC-20)", async () => {
+    // Build a deck whose chart carries an embedded workbook (its own .rels +
+    // ppt/embeddings/book.xlsx + a c:externalData reference), like a real one.
+    const parts = await unzip(await chartDeckBytes());
+    const chartRels =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/book.xlsx"/>` +
+      `</Relationships>`;
+    parts.set("ppt/charts/_rels/chart1.xml.rels", enc(chartRels));
+    parts.set("ppt/embeddings/book.xlsx", enc("PK-workbook-bytes"));
+    const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
+    const model = await readPresentationBytes(bytes, "pptx", "Deck");
+
+    const chart = chartFrameOf(model);
+    expect(deleteFrame(model, 0, chart.id)).not.toBeNull();
+
+    const written = await unzip((await writePptx(model)).bytes);
+    // The chart part, its .rels and the embedded workbook are gone.
+    expect(written.has("ppt/charts/chart1.xml")).toBe(false);
+    expect(written.has("ppt/charts/_rels/chart1.xml.rels")).toBe(false);
+    expect(written.has("ppt/embeddings/book.xlsx")).toBe(false);
+    // The slide's rels no longer dangles a chart relationship.
+    expect(dec(written.get("ppt/slides/_rels/slide1.xml.rels")!)).not.toContain(CHART_REL);
+    // The Content-Types Override for the deleted part is dropped.
+    expect(dec(written.get("[Content_Types].xml")!)).not.toContain("/ppt/charts/chart1.xml");
+  });
+
+  it("editing one chart keeps another untouched chart's part and workbook byte-identical (AC-25)", async () => {
+    // Two charts on one slide; edit the first, the second must pass through.
+    const parts = await unzip(await chartDeckBytes());
+    const secondFrame = GRAPHIC_FRAME.replace('id="9" name="Chart 9"', 'id="10" name="Chart 10"').replace('r:id="rId9"', 'r:id="rId10"');
+    const slide1 = dec(parts.get("ppt/slides/slide1.xml")!).replace("</p:spTree>", `${secondFrame}</p:spTree>`);
+    parts.set("ppt/slides/slide1.xml", enc(slide1));
+    parts.set("ppt/charts/chart2.xml", enc(chartPartXml(VISUAL)));
+    parts.set(
+      "ppt/charts/_rels/chart2.xml.rels",
+      enc(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+          `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/book2.xlsx"/>` +
+          `</Relationships>`,
+      ),
+    );
+    parts.set("ppt/embeddings/book2.xlsx", enc("PK-workbook-two"));
+    const relsPath = "ppt/slides/_rels/slide1.xml.rels";
+    parts.set(
+      relsPath,
+      enc(
+        dec(parts.get(relsPath)!).replace(
+          "</Relationships>",
+          `<Relationship Id="rId10" Type="${CHART_REL}" Target="../charts/chart2.xml"/></Relationships>`,
+        ),
+      ),
+    );
+    parts.set("[Content_Types].xml", enc(dec(parts.get("[Content_Types].xml")!).replace("</Types>", `<Override PartName="/ppt/charts/chart2.xml" ContentType="${CHART_CT}"/></Types>`)));
+    const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
+    const source = await unzip(bytes);
+    const model = await readPresentationBytes(bytes, "pptx", "Deck");
+
+    const first = model.slides[0].frames.find((f) => f.kind === "chart" && f.sourcePart === "ppt/charts/chart1.xml") as ChartFrame;
+    setSlideChartData(model, 0, first.id, ["Q1", "Q2", "Q3"], [{ name: "Revenue", values: [42, 20, 30], color: "#4e79a7" }]);
+    const written = await unzip((await writePptx(model)).bytes);
+    // The untouched second chart's part and its workbook survive byte-identical.
+    expect(equalBytes(written.get("ppt/charts/chart2.xml")!, source.get("ppt/charts/chart2.xml")!)).toBe(true);
+    expect(equalBytes(written.get("ppt/embeddings/book2.xlsx")!, source.get("ppt/embeddings/book2.xlsx")!)).toBe(true);
   });
 });

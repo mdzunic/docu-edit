@@ -11,6 +11,7 @@ import { readPresentationBytes } from "./open";
 import { writeOdp } from "./odp/writer";
 import { odfChartContentXml } from "../core/chartPartOdf";
 import { insertChartFrame, setSlideChartData } from "./charts";
+import { deleteFrame } from "./frames";
 import type { ChartFrame, PresentationModel } from "./model";
 import type { ChartVisual } from "../core/charts";
 
@@ -117,5 +118,31 @@ describe("odp chart read → write round trip", () => {
     const reopened = await readPresentationBytes((await writeOdp(model)).bytes, "odp", "Deck");
     const charts = reopened.slides[idx].frames.filter((f) => f.kind === "chart");
     expect(charts.length).toBe(2);
+  });
+
+  it("deleting a chart frame excludes its object, preview and manifest entries (AC-20)", async () => {
+    const parts = await unzip(await chartDeckBytes());
+    // Add an ObjectReplacements preview like a real Impress deck carries.
+    parts.set("ObjectReplacements/Object 1", enc("preview-bytes"));
+    const manifest = dec(parts.get("META-INF/manifest.xml")!).replace(
+      "</manifest:manifest>",
+      `<manifest:file-entry manifest:full-path="ObjectReplacements/Object 1" manifest:media-type="application/vnd.oasis.opendocument.chart"/></manifest:manifest>`,
+    );
+    parts.set("META-INF/manifest.xml", enc(manifest));
+    const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+    const bytes = await zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+    const model = await readPresentationBytes(bytes, "odp", "Deck");
+
+    const idx = slideIndexOfChart(model);
+    const chart = chartFrameOf(model);
+    expect(deleteFrame(model, idx, chart.id)).not.toBeNull();
+
+    const written = await unzip((await writeOdp(model)).bytes);
+    expect(written.has("Object 1/content.xml")).toBe(false);
+    expect(written.has("ObjectReplacements/Object 1")).toBe(false);
+    const manifestXml = dec(written.get("META-INF/manifest.xml")!);
+    expect(manifestXml).not.toContain('manifest:full-path="Object 1/"');
+    expect(manifestXml).not.toContain('manifest:full-path="Object 1/content.xml"');
+    expect(manifestXml).not.toContain('manifest:full-path="ObjectReplacements/Object 1"');
   });
 });
