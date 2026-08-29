@@ -108,6 +108,9 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
   function onHandlePointerDown(id: string, handle: ResizeHandle, event: PointerEvent): void {
     manipulation.onHandlePointerDown(id, handle, event);
   }
+  function onTableBorderPointerDown(id: string, axis: "col" | "row", index: number, event: PointerEvent): void {
+    manipulation.onTableBorderPointerDown(id, axis, index, event);
+  }
 
   const recentColors = ref<string[]>(loadRecentColors());
 
@@ -210,6 +213,7 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     onSurfaceDraw,
     onFramePointerDown,
     onHandlePointerDown,
+    onTableBorderPointerDown,
     registerSurface,
     setColor,
     setFill,

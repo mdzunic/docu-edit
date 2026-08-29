@@ -50,6 +50,7 @@ const emit = defineEmits([
   "frame-start-edit",
   "frame-start-edit-cell",
   "frame-cell-select",
+  "table-border-pointerdown",
   "frame-pointerdown",
   "handle-pointerdown",
   "edit-mounted",
@@ -134,6 +135,7 @@ const previewStyle = computed(() => {
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @start-edit-cell="(id, row, col, point) => emit('frame-start-edit-cell', id, row, col, point)"
         @cell-select="(id, row, col) => emit('frame-cell-select', id, row, col)"
+        @table-border-pointerdown="(id, axis, index, event) => emit('table-border-pointerdown', id, axis, index, event)"
         @frame-pointerdown="(id, event) => emit('frame-pointerdown', id, event)"
         @edit-mounted="(el) => emit('edit-mounted', el)"
         @edit-unmounted="() => emit('edit-unmounted')"

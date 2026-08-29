@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableFrame } from "../../lib/presentation/model";
-import { tableColumnWidths, tableRenderRows } from "./slideRender";
+import { tableColumnBoundaries, tableColumnWidths, tableRenderRows, tableRowBoundaries } from "./slideRender";
 
 function table(): TableFrame {
   return {
@@ -60,5 +60,28 @@ describe("table render helpers (AC-4)", () => {
     const rows = tableRenderRows(t);
     expect(rows[0][0].style.borderTop).toContain("solid"); // neutral fallback
     expect(rows[1][1].style.borderTop).toBe("none"); // explicit none wins
+  });
+});
+
+describe("table resize boundaries (AC-8a/b)", () => {
+  it("places one internal column boundary per gap at its cumulative width %", () => {
+    const t = table(); // two 4cm columns → one boundary at 50%
+    const cols = tableColumnBoundaries(t);
+    expect(cols).toHaveLength(1);
+    expect(cols[0]).toEqual({ index: 0, offsetPct: 50 });
+  });
+
+  it("places row boundaries from each row's height (default when unset)", () => {
+    const t = table(); // two rows, no explicit heights → one boundary at 50%
+    const rows = tableRowBoundaries(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].index).toBe(0);
+    expect(rows[0].offsetPct).toBeCloseTo(50, 5);
+  });
+
+  it("weights boundaries by uneven column widths", () => {
+    const t = table();
+    t.columnWidthsCm = [3, 1]; // boundary at 75%
+    expect(tableColumnBoundaries(t)[0].offsetPct).toBeCloseTo(75, 5);
   });
 });

@@ -87,6 +87,7 @@ onBeforeUnmount(() => {
       @frame-start-edit="s.onStartEdit"
       @frame-start-edit-cell="s.onStartEditCell"
       @frame-cell-select="s.onCellSelect"
+      @table-border-pointerdown="s.onTableBorderPointerDown"
       @frame-pointerdown="s.onFramePointerDown"
       @handle-pointerdown="s.onHandlePointerDown"
       @edit-mounted="s.editing.registerHost"

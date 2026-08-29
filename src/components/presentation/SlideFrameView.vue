@@ -23,8 +23,10 @@ import {
   placeholderPrompt,
   runStyle,
   shapeVisualOf,
+  tableColumnBoundaries,
   tableColumnWidths,
   tableRenderRows,
+  tableRowBoundaries,
   textFrameFill,
   frameAccessibleName,
   frameRole,
@@ -59,6 +61,7 @@ const emit = defineEmits([
   "start-edit",
   "start-edit-cell",
   "cell-select",
+  "table-border-pointerdown",
   "frame-pointerdown",
   "edit-mounted",
   "edit-unmounted",
@@ -79,6 +82,13 @@ const children = computed(() => groupChildren(frame.value));
 const foreignVisible = computed(() => isForeignVisible(frame.value));
 const tableColumns = computed(() => tableColumnWidths(frame.value));
 const tableRows = computed(() => tableRenderRows(frame.value));
+// AC-8a/b: a selected (not editing) table exposes drag handles on its internal
+// column/row boundaries; suppressed while a text session or insertion is active.
+const showResizeHandles = computed(
+  () => kind.value === "table" && props.topLevel && props.selected && !props.editing && !props.armed,
+);
+const colBoundaries = computed(() => tableColumnBoundaries(frame.value));
+const rowBoundaries = computed(() => tableRowBoundaries(frame.value));
 const foreignText = computed(() => foreignLabel(frame.value));
 const imgSrc = computed(() => imageSrc(frame.value, asResolver(props.resolveMedia)));
 const showPrompt = computed(() => !props.editing && isEmptyTextPlaceholder(frame.value));
@@ -128,6 +138,12 @@ function onCellMousedown(row = 0, col = 0, event = new MouseEvent("mousedown")) 
 function onCellDblclick(row = 0, col = 0, event = new MouseEvent("dblclick")) {
   event.stopPropagation();
   emit("start-edit-cell", frame.value.id, row, col, { x: event.clientX, y: event.clientY });
+}
+
+function onBoundaryPointerdown(axis = "col", index = 0, event = new PointerEvent("pointerdown")) {
+  // Stop here so a boundary drag never also starts a frame move (AC-8a/b).
+  event.stopPropagation();
+  emit("table-border-pointerdown", frame.value.id, axis, index, event);
 }
 
 // The contenteditable host is created/destroyed with `editing`; hand it to the
@@ -393,6 +409,27 @@ watch(() => props.frame, paint, { deep: true });
         </tr>
       </tbody>
     </table>
+    <!-- Drag-resize handles on the internal grid boundaries (AC-8a/b) -->
+    <template v-if="showResizeHandles">
+      <div
+        v-for="b in colBoundaries"
+        :key="`col-${b.index}`"
+        class="col-resize-handle"
+        data-testid="table-col-resize"
+        :data-boundary="b.index"
+        :style="{ left: `${b.offsetPct}%` }"
+        @pointerdown="onBoundaryPointerdown('col', b.index, $event)"
+      />
+      <div
+        v-for="b in rowBoundaries"
+        :key="`row-${b.index}`"
+        class="row-resize-handle"
+        data-testid="table-row-resize"
+        :data-boundary="b.index"
+        :style="{ top: `${b.offsetPct}%` }"
+        @pointerdown="onBoundaryPointerdown('row', b.index, $event)"
+      />
+    </template>
   </div>
 
   <!-- Foreign placeholder box -->
@@ -562,6 +599,32 @@ watch(() => props.frame, paint, { deep: true });
 
 .table-frame.is-selected {
   outline: 1px solid var(--accent, #3b82f6);
+}
+
+/* Thin invisible strips centred on each internal grid line; they carry the
+   resize cursor and swallow the pointer-down that starts the drag (AC-8a/b). */
+.col-resize-handle,
+.row-resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2;
+}
+
+.col-resize-handle {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+
+.row-resize-handle {
+  left: 0;
+  right: 0;
+  height: 8px;
+  transform: translateY(-50%);
+  cursor: row-resize;
 }
 
 .foreign-frame {

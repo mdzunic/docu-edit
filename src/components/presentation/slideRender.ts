@@ -9,6 +9,7 @@ import { mediaDataUri, type MediaPart } from "../../lib/core/media";
 import { computeOwnerGrid, type BorderSide } from "../../lib/core/tables";
 import {
   DEFAULT_TABLE_CELL_PADDING_CM,
+  DEFAULT_TABLE_ROW_HEIGHT_CM,
   type Slide,
   type SlideFrame,
   type SlideParagraph,
@@ -237,6 +238,40 @@ export function tableOf(frame: SlideFrame): TableFrame | null {
 /** The `<colgroup>` widths (px) for a table frame. */
 export function tableColumnWidths(frame: SlideFrame): string[] {
   return frame.kind === "table" ? frame.columnWidthsCm.map((cm) => cmPx(cm)) : [];
+}
+
+/** One internal grid boundary: the index of the row/column left/above it and
+ * its position as a percentage of the frame's width/height, so the drag-resize
+ * handles (AC-8a/b) can sit on the grid lines regardless of stage scale. */
+export interface TableBoundary {
+  index: number;
+  offsetPct: number;
+}
+
+function boundariesFrom(sizesCm: number[]): TableBoundary[] {
+  const total = sizesCm.reduce((sum, s) => sum + s, 0);
+  if (total <= 0) {
+    return [];
+  }
+  const out: TableBoundary[] = [];
+  let acc = 0;
+  for (let i = 0; i < sizesCm.length - 1; i++) {
+    acc += sizesCm[i];
+    out.push({ index: i, offsetPct: (acc / total) * 100 });
+  }
+  return out;
+}
+
+/** The internal column boundaries a selected table exposes for drag-resize. */
+export function tableColumnBoundaries(frame: SlideFrame): TableBoundary[] {
+  const table = tableOf(frame);
+  return table ? boundariesFrom(table.columnWidthsCm) : [];
+}
+
+/** The internal row boundaries a selected table exposes for drag-resize. */
+export function tableRowBoundaries(frame: SlideFrame): TableBoundary[] {
+  const table = tableOf(frame);
+  return table ? boundariesFrom(table.rows.map((row) => row.heightCm ?? DEFAULT_TABLE_ROW_HEIGHT_CM)) : [];
 }
 
 function isHeaderRow(frame: TableFrame, rowIndex: number, row: SlideTableRow): boolean {

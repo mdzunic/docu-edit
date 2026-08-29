@@ -15,8 +15,9 @@
 import { pxToCm } from "../core/units";
 import { extensionForContentType, type MediaPart } from "../core/media";
 import { LINE_GEOMETRIES, type ShapeGeometry } from "../core/shapes";
+import { MIN_COLUMN_WIDTH_CM } from "../core/tables";
 import { markSlideEdited } from "./text";
-import { createTableFrame, scaleTableGrid } from "./tables";
+import { createTableFrame, scaleTableGrid, setColumnWidths, setRowHeight } from "./tables";
 import { removeAnimationsForFrame } from "./animations";
 import type {
   FrameStroke,
@@ -359,6 +360,60 @@ export function resizeFrame(
   frame.yCm = r3(rect.yCm);
   frame.widthCm = nextWidth;
   frame.heightCm = nextHeight;
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Live column-boundary drag (SPEC-091 AC-8a). `boundary` is the index of the
+ * column left of the dragged internal boundary; the column right of it absorbs
+ * exactly what this one gains, so the table's overall width is unchanged. Both
+ * are floored at `MIN_COLUMN_WIDTH_CM`. `originWidthsCm` is the snapshot taken
+ * at pointer-down so each move recomputes from a stable base. */
+export function resizeTableColumnBoundary(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  boundary: number,
+  originWidthsCm: number[],
+  deltaCm: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "table") {
+    return null;
+  }
+  const left = originWidthsCm[boundary];
+  const right = originWidthsCm[boundary + 1];
+  if (left === undefined || right === undefined) {
+    return null;
+  }
+  const total = left + right;
+  const nextLeft = Math.min(Math.max(left + deltaCm, MIN_COLUMN_WIDTH_CM), total - MIN_COLUMN_WIDTH_CM);
+  const widths = [...originWidthsCm];
+  widths[boundary] = nextLeft;
+  widths[boundary + 1] = total - nextLeft;
+  setColumnWidths(frame, widths);
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Live row-boundary drag (SPEC-091 AC-8b): sets the height of the row above
+ * the dragged boundary (a floor, not a fixed height — `setRowHeight` clamps to
+ * `MIN_ROW_HEIGHT_CM`). `originHeightCm` is the row's height at pointer-down. */
+export function resizeTableRowBoundary(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  boundary: number,
+  originHeightCm: number,
+  deltaCm: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "table") {
+    return null;
+  }
+  setRowHeight(frame, boundary, originHeightCm + deltaCm);
   touch(model, slide);
   return frame.id;
 }
