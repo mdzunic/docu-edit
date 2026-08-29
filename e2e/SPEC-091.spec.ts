@@ -76,3 +76,35 @@ test("pptx: table renders, edits through the panel, and round-trips", async ({ p
   await expect(stage2.getByTestId("slide-table-cell-0-0")).toHaveAttribute("colspan", "2");
   await expect(stage2.locator(".foreign-label")).toHaveText("Table");
 });
+
+test("pptx: dragging a table grid boundary resizes a column and a row (AC-8a,8b)", async ({ page }) => {
+  await openFixture(page, PPTX);
+  const stage = page.getByTestId("stage-workspace");
+
+  // Selecting the table (single click on a cell) reveals the internal grid
+  // boundary handles — one per gap in a 3×3 table.
+  await stage.getByTestId("slide-table-cell-0-0").click();
+  const colHandles = stage.getByTestId("table-col-resize");
+  const rowHandles = stage.getByTestId("table-row-resize");
+  await expect(colHandles).toHaveCount(2);
+  await expect(rowHandles).toHaveCount(2);
+
+  // AC-8a: drag the first column boundary right → column 0 gets wider.
+  const cell = stage.getByTestId("slide-table-cell-0-0");
+  const widthBefore = (await cell.boundingBox())!.width;
+  const colBox = (await colHandles.first().boundingBox())!;
+  await page.mouse.move(colBox.x + colBox.width / 2, colBox.y + colBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(colBox.x + 60, colBox.y + colBox.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => (await cell.boundingBox())!.width).toBeGreaterThan(widthBefore + 5);
+
+  // AC-8b: drag the first row boundary down → row 0 gets taller.
+  const heightBefore = (await cell.boundingBox())!.height;
+  const rowBox = (await rowHandles.first().boundingBox())!;
+  await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + 50, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => (await cell.boundingBox())!.height).toBeGreaterThan(heightBefore + 5);
+});
