@@ -30,6 +30,7 @@ import {
   smilAttr,
   styleAttr,
   svgAttr,
+  tableAttr,
   xlinkAttr,
 } from "../../core/odfXml";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
@@ -41,6 +42,7 @@ const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
+  DEFAULT_TABLE_CELL_PADDING_CM,
   type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
@@ -49,7 +51,11 @@ import {
   type SlideLayout,
   type SlideParagraph,
   type SlideRun,
+  type SlideTableCell,
+  type SlideTableRow,
+  type TableFrame,
 } from "../model";
+import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
 import { classifyLayout } from "../layouts";
 
 export class OdpOpenError extends Error {}
@@ -97,12 +103,21 @@ class StyleResolver {
   private readonly styles = new Map<string, StyleEntry>();
   private readonly cache = new Map<string, RunProps>();
   private readonly drawingPageTransitions = new Map<string, OdpTransitionAttrs>();
+  private readonly rawStyles = new Map<string, Element>();
+
+  /** The raw `<style:style>` element for a name, for the table reader to read
+   * table-column/row/cell properties the general resolver does not model
+   * (SPEC-091). */
+  raw(name: string | null | undefined): Element | undefined {
+    return name ? this.rawStyles.get(name) : undefined;
+  }
 
   add(styleEl: Element): void {
     const name = styleAttr(styleEl, "name");
     if (!name) {
       return;
     }
+    this.rawStyles.set(name, styleEl);
     const parent = styleAttr(styleEl, "parent-style-name") ?? undefined;
     const entry: StyleEntry = { parent, text: {}, graphic: {} };
     const textProps = firstChildElement(styleEl, STYLE_NAMESPACE, "text-properties");
@@ -448,9 +463,13 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
     return foreignAt(frame, base, "Media");
   }
 
-  const table = frame.getElementsByTagNameNS(TABLE_NAMESPACE, "table")[0];
+  const table = firstChildElement(frame, TABLE_NAMESPACE, "table");
   if (table) {
-    return foreignAt(frame, base, "Table");
+    const parsed = parseOdpTable(table, base, frame, ctx);
+    if (parsed) {
+      return parsed;
+    }
+    return foreignAt(frame, base, "Table"); // out of subset (AC-3b)
   }
 
   const textBox = firstChildElement(frame, DRAW_NAMESPACE, "text-box");
@@ -466,6 +485,315 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
   }
   return foreignAt(frame, base, "Object");
 }
+
+// --- table (SPEC-091) -------------------------------------------------------
+
+function round3(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+/** Parses `fo:border`-shaped value ("0.5pt solid #000000") into a BorderSide. */
+function parseFoBorder(value: string | null | undefined): BorderSide | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "none" || /^0(cm|pt|mm|in)?$/.test(trimmed)) {
+    return { style: "none", widthPt: 0, color: "#000000" };
+  }
+  let widthPt = 1;
+  let style: BorderSide["style"] = "single";
+  let color = "#000000";
+  for (const part of trimmed.split(/\s+/)) {
+    const len = odfLengthToPt(part);
+    if (len !== undefined) {
+      widthPt = len;
+      continue;
+    }
+    if (part === "solid") {
+      style = "single";
+    } else if (part === "double" || part === "dashed" || part === "dotted" || part === "none") {
+      style = part;
+    } else {
+      const c = odfColorToCss(part);
+      if (c) color = c;
+    }
+  }
+  return { style, widthPt, color };
+}
+
+const MODELLED_CELL_PROP_ATTRS = new Set([
+  "background-color",
+  "padding",
+  "border",
+  "border-left",
+  "border-right",
+  "border-top",
+  "border-bottom",
+  "vertical-align",
+]);
+
+/** Reads a `table-cell` style's modelled fill / padding / valign / borders into
+ * `cell`, and returns whether the style is fully modelled (so no
+ * `odpCellStyleName` reference need survive — AC-3c). */
+function readCellStyle(styleName: string | undefined, cell: SlideTableCell, ctx: OdpContext): boolean {
+  const raw = ctx.styles.raw(styleName);
+  if (!raw) {
+    return true;
+  }
+  let fullyModelled = !styleAttr(raw, "parent-style-name");
+  const cp = firstChildElement(raw, STYLE_NAMESPACE, "table-cell-properties");
+  for (const child of Array.from(raw.children)) {
+    if (child.namespaceURI === STYLE_NAMESPACE && child.localName === "table-cell-properties") {
+      continue;
+    }
+    fullyModelled = false; // paragraph/text props etc. are not modelled here
+  }
+  if (!cp) {
+    return fullyModelled;
+  }
+  for (const attr of Array.from(cp.attributes)) {
+    if (!MODELLED_CELL_PROP_ATTRS.has(attr.localName ?? attr.name)) {
+      fullyModelled = false;
+    }
+  }
+  const bg = foAttr(cp, "background-color");
+  if (bg === "transparent" || bg === "none") {
+    cell.fill = { type: "none" };
+  } else if (bg) {
+    const c = odfColorToCss(bg);
+    if (c) cell.fill = { type: "solid", color: c };
+  }
+  const pad = odfLengthToCm(foAttr(cp, "padding"));
+  if (pad !== undefined && Math.abs(pad - DEFAULT_TABLE_CELL_PADDING_CM) > 1e-6) {
+    cell.paddingCm = round3(pad);
+  }
+  const va = styleAttr(cp, "vertical-align");
+  if (va === "middle") cell.verticalAlign = "center";
+  else if (va === "bottom") cell.verticalAlign = "bottom";
+  const all = parseFoBorder(foAttr(cp, "border"));
+  const borders: CellBorders = {};
+  const top = parseFoBorder(foAttr(cp, "border-top")) ?? all;
+  const bottom = parseFoBorder(foAttr(cp, "border-bottom")) ?? all;
+  const left = parseFoBorder(foAttr(cp, "border-left")) ?? all;
+  const right = parseFoBorder(foAttr(cp, "border-right")) ?? all;
+  if (top) borders.top = top;
+  if (bottom) borders.bottom = bottom;
+  if (left) borders.left = left;
+  if (right) borders.right = right;
+  if (Object.keys(borders).length > 0) cell.borders = borders;
+  return fullyModelled;
+}
+
+/** The column width (cm) a `table-column` style declares, plus whether it is
+ * fully modelled (only `style:column-width`). */
+function readColumnStyle(styleName: string | undefined, ctx: OdpContext): { widthCm?: number; fullyModelled: boolean } {
+  const raw = ctx.styles.raw(styleName);
+  if (!raw) {
+    return { fullyModelled: true };
+  }
+  let fullyModelled = !styleAttr(raw, "parent-style-name");
+  const cp = firstChildElement(raw, STYLE_NAMESPACE, "table-column-properties");
+  if (!cp) {
+    return { fullyModelled };
+  }
+  for (const attr of Array.from(cp.attributes)) {
+    if ((attr.localName ?? attr.name) !== "column-width") {
+      fullyModelled = false;
+    }
+  }
+  return { widthCm: odfLengthToCm(styleAttr(cp, "column-width")), fullyModelled };
+}
+
+/** The row height (cm) a `table-row` style declares, plus whether it is fully
+ * modelled (only a row-height/min-row-height). */
+function readRowStyle(styleName: string | undefined, ctx: OdpContext): { heightCm?: number; fullyModelled: boolean } {
+  const raw = ctx.styles.raw(styleName);
+  if (!raw) {
+    return { fullyModelled: true };
+  }
+  let fullyModelled = !styleAttr(raw, "parent-style-name");
+  const cp = firstChildElement(raw, STYLE_NAMESPACE, "table-row-properties");
+  if (!cp) {
+    return { fullyModelled };
+  }
+  const allowed = new Set(["row-height", "min-row-height", "use-optimal-row-height"]);
+  for (const attr of Array.from(cp.attributes)) {
+    if (!allowed.has(attr.localName ?? attr.name)) {
+      fullyModelled = false;
+    }
+  }
+  const h = odfLengthToCm(styleAttr(cp, "row-height")) ?? odfLengthToCm(styleAttr(cp, "min-row-height"));
+  return { heightCm: h, fullyModelled };
+}
+
+function parseOdpCells(row: Element, colCount: number, ctx: OdpContext): SlideTableCell[] | undefined {
+  const cells: SlideTableCell[] = [];
+  for (const el of Array.from(row.children)) {
+    if (el.namespaceURI !== TABLE_NAMESPACE) {
+      continue;
+    }
+    if (el.localName === "covered-table-cell") {
+      cells.push({ paragraphs: [], covered: true });
+    } else if (el.localName === "table-cell") {
+      const cell: SlideTableCell = { paragraphs: parseTextBox(el, undefined, ctx.styles) };
+      const colSpan = Number(tableAttr(el, "number-columns-spanned") ?? "1");
+      const rowSpan = Number(tableAttr(el, "number-rows-spanned") ?? "1");
+      if (colSpan > 1) cell.colSpan = colSpan;
+      if (rowSpan > 1) cell.rowSpan = rowSpan;
+      const styleName = tableAttr(el, "style-name") ?? undefined;
+      const fullyModelled = readCellStyle(styleName, cell, ctx);
+      if (styleName && !fullyModelled) {
+        cell.odpCellStyleName = styleName;
+      }
+      cells.push(cell);
+    }
+  }
+  return cells.length === colCount ? cells : undefined;
+}
+
+/** Parses an in-subset `table:table` into a `TableFrame`, or `undefined` when
+ * out of subset (no columns, no rows, an irregular row, or an inconsistent
+ * merge map — AC-3b). Unmodelled style markup is preserved by name in
+ * odpTableStyleName/odpColumnStyleNames/odpRowStyleName/odpCellStyleName. */
+function parseOdpTable(
+  table: Element,
+  base: ReturnType<typeof frameBase>,
+  frameEl: Element,
+  ctx: OdpContext,
+): TableFrame | undefined {
+  const columnWidthsCm: number[] = [];
+  const columnStyleNames: (string | undefined)[] = [];
+  const rows: SlideTableRow[] = [];
+  const rowStyleNames: (string | undefined)[] = [];
+  let sawHeader = false;
+
+  const walk = (parent: Element, inHeader: boolean): boolean => {
+    for (const el of Array.from(parent.children)) {
+      if (el.namespaceURI !== TABLE_NAMESPACE) {
+        continue;
+      }
+      switch (el.localName) {
+        case "table-column": {
+          const styleName = tableAttr(el, "style-name") ?? undefined;
+          const { widthCm, fullyModelled } = readColumnStyle(styleName, ctx);
+          const repeat = Number(tableAttr(el, "number-columns-repeated") ?? "1");
+          for (let i = 0; i < repeat; i++) {
+            columnWidthsCm.push(widthCm !== undefined ? round3(widthCm) : 0);
+            columnStyleNames.push(styleName && !fullyModelled ? styleName : undefined);
+          }
+          break;
+        }
+        case "table-columns":
+        case "table-column-group":
+          if (!walk(el, inHeader)) return false;
+          break;
+        case "table-header-rows":
+          sawHeader = true;
+          if (!walk(el, true)) return false;
+          break;
+        case "table-rows":
+        case "table-row-group":
+          if (!walk(el, inHeader)) return false;
+          break;
+        case "table-row": {
+          const styleName = tableAttr(el, "style-name") ?? undefined;
+          const { heightCm, fullyModelled } = readRowStyle(styleName, ctx);
+          const cells = parseOdpCells(el, columnWidthsCm.length, ctx);
+          if (!cells) {
+            return false; // irregular row
+          }
+          const row: SlideTableRow = { cells };
+          if (heightCm !== undefined) row.heightCm = round3(heightCm);
+          if (inHeader) row.isHeader = true;
+          rows.push(row);
+          rowStyleNames.push(styleName && !fullyModelled ? styleName : undefined);
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    return true;
+  };
+
+  if (!walk(table, false)) {
+    return undefined;
+  }
+  if (columnWidthsCm.length === 0 || rows.length === 0) {
+    return undefined;
+  }
+  const frame: TableFrame = {
+    ...base,
+    xCm: round3(base.xCm),
+    yCm: round3(base.yCm),
+    widthCm: round3(base.widthCm),
+    heightCm: round3(base.heightCm),
+    kind: "table",
+    rows,
+    columnWidthsCm,
+  };
+  if (!isOdpConsistentMergeGrid(frame)) {
+    return undefined;
+  }
+  if (sawHeader && rows[0]?.isHeader) {
+    frame.firstRow = true; // the header look survives the round trip
+  }
+  if (columnStyleNames.some((n) => n !== undefined)) {
+    frame.odpColumnStyleNames = columnStyleNames;
+  }
+  rows.forEach((r, i) => {
+    if (rowStyleNames[i]) r.odpRowStyleName = rowStyleNames[i];
+  });
+  const tableStyle = tableAttr(table, "style-name") ?? undefined;
+  if (tableStyle) {
+    frame.odpTableStyleName = tableStyle; // table-level props are all unmodelled
+  }
+  void frameEl;
+  return frame;
+}
+
+function isOdpConsistentMergeGrid(frame: TableFrame): boolean {
+  const grid = computeOwnerGrid(frame);
+  for (let r = 0; r < frame.rows.length; r++) {
+    for (let c = 0; c < frame.columnWidthsCm.length; c++) {
+      const owner = grid[r][c];
+      const isOwnerSlot = owner.originRow === r && owner.originCol === c;
+      if (isOwnerSlot === Boolean(frame.rows[r].cells[c].covered)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Test seam (SPEC-091 golden): parse a standalone `draw:frame` table XML
+ * string into a `TableFrame` (or undefined), with its automatic styles supplied
+ * inline in an `office:automatic-styles` wrapper. */
+export function parseOdpTableFrameForTest(drawFrameXml: string, autoStylesXml = ""): TableFrame | undefined {
+  const wrapped =
+    `<office:document-content ${ODP_TEST_NS}>` +
+    `<office:automatic-styles>${autoStylesXml}</office:automatic-styles>` +
+    `<office:body><office:presentation><draw:page>${drawFrameXml}</draw:page></office:presentation></office:body>` +
+    `</office:document-content>`;
+  const doc = parseXml(wrapped);
+  const styles = new StyleResolver();
+  addStylesFrom(doc.documentElement, styles);
+  const ctx: OdpContext = { styles, masterPh: new Map(), media: new Map(), parts: new Map() };
+  const frameEl = doc.documentElement.getElementsByTagNameNS(DRAW_NAMESPACE, "frame")[0];
+  const frame = parseDrawFrame(frameEl, ctx);
+  return frame.kind === "table" ? frame : undefined;
+}
+
+const ODP_TEST_NS =
+  `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+  `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ` +
+  `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+  `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ` +
+  `xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
+  `xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
+  `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" ` +
+  `xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"`;
 
 function parseCustomShape(el: Element, ctx: OdpContext): SlideFrame {
   const geom = geometryOf(el);
