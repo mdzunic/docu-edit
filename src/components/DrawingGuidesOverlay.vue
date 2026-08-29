@@ -57,6 +57,6 @@ const guideLines = computed(() =>
 
 .drawing-guide {
   position: absolute;
-  background: var(--accent-strong, #e5308a);
+  background: var(--accent);
 }
 </style>
