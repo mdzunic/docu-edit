@@ -58,6 +58,7 @@ import {
   type TableFrame,
 } from "../model";
 import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
+import { CHART_RELATIONSHIP, C_NAMESPACE, parseChartXml } from "../../core/chartPartOoxml";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
@@ -150,6 +151,9 @@ interface SlideContext {
   slideRels: Map<string, Relationship>;
   slidePartPath: string;
   media: Map<string, MediaPart>;
+  /** Every package part's raw bytes — the chart-part lookup (SPEC-092 AC-7a)
+   *  resolves a `p:graphicFrame`'s `c:chart r:id` through here. */
+  parts: Map<string, Uint8Array>;
 }
 
 /** Reads a run/defRPr-shaped element's own declared properties. */
@@ -546,8 +550,79 @@ function parseGraphicFrame(gf: Element, ctx: SlideContext): SlideFrame {
     }
     return foreignFrame(gf, base, "Table"); // out of subset (AC-2b)
   }
+  if (uri === C_NAMESPACE && graphicData) {
+    const chart = parseChartGraphicFrame(gf, graphicData, base, ctx);
+    if (chart) {
+      return chart;
+    }
+  }
   const label = uri.includes("chart") ? "Chart" : "Object";
   return foreignFrame(gf, base, label);
+}
+
+/** Resolves a chart `p:graphicFrame` — `<c:chart r:id>` through the slide's
+ * rels to `ppt/charts/chartN.xml` — into a `ChartFrame` (SPEC-092 AC-7). A
+ * parseable in-catalogue part becomes a painted chart; a valid `c:chartSpace`
+ * outside the catalogue becomes an unsupported placeholder chart carrying the
+ * verbatim part text (AC-8); an unresolvable relationship, or a resolved part
+ * that is not a `c:chartSpace` at all, returns null so the caller keeps
+ * today's "Chart" ForeignFrame (AC-8a). Either way `xml` retains the source
+ * `p:graphicFrame` so an untouched chart re-emits byte-identically. */
+function parseChartGraphicFrame(
+  gf: Element,
+  graphicData: Element,
+  base: ReturnType<typeof frameBase>,
+  ctx: SlideContext,
+): SlideFrame | null {
+  const chartRef = firstChildElement(graphicData, C_NAMESPACE, "chart");
+  const relId = chartRef?.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
+  if (!relId) {
+    return null;
+  }
+  const rel = ctx.slideRels.get(relId);
+  if (!rel || rel.type !== CHART_RELATIONSHIP) {
+    return null;
+  }
+  const partPath = resolvePartPath(ctx.slidePartPath, rel.target);
+  const bytes = ctx.parts.get(partPath);
+  if (!bytes) {
+    return null;
+  }
+  const xmlText = new TextDecoder("utf-8").decode(bytes);
+  const parsed = parseChartXml(xmlText);
+  if (parsed) {
+    return { ...base, kind: "chart", ...parsed, sourcePart: partPath, xml: serializeElement(gf) };
+  }
+  if (!isChartSpace(xmlText)) {
+    return null; // not a chart part at all — foreign "Chart" (AC-8a)
+  }
+  return {
+    ...base,
+    kind: "chart",
+    chartType: "columnClustered",
+    categories: [],
+    series: [],
+    options: { legend: "none", dataLabels: false, gridlines: false },
+    unsupportedChartXml: xmlText,
+    sourcePart: partPath,
+    xml: serializeElement(gf),
+  };
+}
+
+/** True when `xmlText` is a well-formed `c:chartSpace` document — the test
+ * that separates AC-8 (out-of-catalogue chart) from AC-8a (not a chart). */
+function isChartSpace(xmlText: string): boolean {
+  let doc: Document;
+  try {
+    doc = parseXml(xmlText);
+  } catch (err) {
+    if (err instanceof XmlParseError) {
+      return false;
+    }
+    throw err;
+  }
+  const root = doc.documentElement;
+  return root.namespaceURI === C_NAMESPACE && root.localName === "chartSpace";
 }
 
 const TRUE_ATTR = new Set(["1", "true", "on"]);
@@ -834,9 +909,40 @@ export function parseTableGraphicFrameForTest(graphicFrameXml: string): TableFra
     slideRels: new Map(),
     slidePartPath: "",
     media: new Map(),
+    parts: new Map(),
   };
   const frame = parseGraphicFrame(gf, ctx);
   return frame.kind === "table" ? frame : undefined;
+}
+
+/** Test seam (SPEC-092): parses a chart `p:graphicFrame` against a supplied
+ * `{ relId → partPath }` rel map and `{ partPath → bytes }` parts map. */
+export function parseChartGraphicFrameForTest(
+  graphicFrameXml: string,
+  rels: Record<string, string>,
+  parts: Record<string, Uint8Array>,
+): SlideFrame {
+  const xml = graphicFrameXml.includes("xmlns:p")
+    ? graphicFrameXml
+    : graphicFrameXml.replace(
+        "<p:graphicFrame>",
+        `<p:graphicFrame xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}" xmlns:c="${C_NAMESPACE}">`,
+      );
+  const gf = parseXml(xml).documentElement;
+  const slideRels = new Map<string, Relationship>(
+    Object.entries(rels).map(([id, target]) => [id, { id, type: CHART_RELATIONSHIP, target }]),
+  );
+  const ctx: SlideContext = {
+    color: { scheme: {}, map: {} },
+    layoutPh: new Map(),
+    masterPh: new Map(),
+    txStyles: new Map(),
+    slideRels,
+    slidePartPath: "ppt/slides/slide1.xml",
+    media: new Map(),
+    parts: new Map(Object.entries(parts)),
+  };
+  return parseGraphicFrame(gf, ctx);
 }
 
 /** Parses a `p:cxnSp` connector: a line/straight connector is a line shape,
@@ -1279,6 +1385,7 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
     slideRels,
     slidePartPath: slidePath,
     media: deps.media,
+    parts: deps.parts,
   };
 
   // Populate media referenced by this slide's image rels.
