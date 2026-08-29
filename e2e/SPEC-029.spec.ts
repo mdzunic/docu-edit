@@ -176,6 +176,45 @@ test("double-clicking the body returns to body editing (AC-8)", async ({ page })
   await expect(headerBand(page)).not.toHaveAttribute("data-hf-editable", "1");
 });
 
+test("double-clicking a word in a header selects it instead of jumping to the paragraph start (AC-3)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("hf-menu-header").click();
+  await page.keyboard.type("Confidential quarterly report");
+  await waitForPagination(page);
+
+  // Double-clicking a word inside the live band is the browser's own
+  // word-select gesture: re-entering the band on that click would re-place
+  // the caret at the band's start and wipe the selection.
+  await headerBand(page).getByText("quarterly").first().dblclick();
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+    .toBe("quarterly");
+
+  // And the selection is live: typing replaces the selected word.
+  await page.keyboard.type("annual");
+  await expect(headerBand(page)).toContainText("Confidential annual report");
+});
+
+test("double-clicking a word in a footer selects it when entering the band (AC-3)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("hf-menu-footer").click();
+  await page.keyboard.type("Internal draft only");
+  await page.keyboard.press("Escape");
+  await waitForPagination(page);
+
+  await footerBand(page).getByText("draft").first().dblclick();
+  await expect(footerBand(page)).toHaveAttribute("data-hf-editable", "1");
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+    .toBe("draft");
+});
+
 test("header content repeats on every page and edits apply to all at once (AC-9, AC-10)", async ({ page }) => {
   await createDocument(page);
   await makeThreePages(page);
