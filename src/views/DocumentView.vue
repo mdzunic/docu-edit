@@ -128,6 +128,7 @@ import { useVerticalRuler } from "./document/useVerticalRuler";
 import { useOutlinePane } from "./document/useOutlinePane";
 import { useSidePanel } from "./document/useSidePanel";
 import { useMergeFields } from "./document/useMergeFields";
+import { useInsertBreaks } from "./document/useInsertBreaks";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
 import { useZoomView } from "./document/useZoomView";
@@ -154,8 +155,6 @@ import {
   asTrackChangesDisplayMode,
   asPageNumberFormat,
   asParagraphBlock,
-  asBreakKind,
-  asSectionStart,
   createDocument,
   createEmptyHeaderFooterContent,
   isBreak,
@@ -314,7 +313,6 @@ import {
   insertLineBreak,
   insertNote,
   insertPageNumberCommand,
-  insertSectionBreak,
   insertText,
   isCollapsed,
   noCommandResult,
@@ -2919,33 +2917,8 @@ const { pagedViews } = usePaginationView({
 });
 
 /** Insert → Break menu picks and Ctrl/Cmd+Enter (AC-4..9). */
-function handleInsertBreak(kind = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(insertBreak(model, selection, asBreakKind(kind)), selection, "insert break");
-  root.focus();
-  void scrollModelCaretIntoView(caret, true);
-}
-
-function handleInsertSectionBreak(start = "") {
-  const root = contentRoot.value;
-  const model = doc.value;
-  if (!root || !model || !editable.value) {
-    return;
-  }
-  const selection = paragraphSelection(root);
-  applyEdit(
-    insertSectionBreak(model, selection, asSectionStart(start)),
-    selection,
-    "insert section break",
-  );
-  root.focus();
-  void scrollModelCaretIntoView(caret, true);
-}
+// Insert → Break / section break (SPEC-018) — wiring in useInsertBreaks.
+const { handleInsertBreak, handleInsertSectionBreak } = useInsertBreaks({ ...editorContext, paragraphSelection });
 
 // --- mail-merge fields (SPEC-046) -------------------------------------------
 // The attached data source, the field picker / merge-run dialogs' state and
