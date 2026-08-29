@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  IMAGE_RELATIONSHIP,
-  drawingXml,
-  fillPendingMediaDataSync,
-  parseDrawing,
-  pendingMediaByteLength,
-} from "./drawing";
+import { IMAGE_RELATIONSHIP, drawingXml, parseDrawing } from "./drawing";
+import { ensureMediaEncoded, pendingMediaByteLength } from "../core/media";
 import { parseXml } from "../core/xml";
 import { bytesToBase64 } from "../opaque";
 import type { Image } from "../documentModel";
@@ -306,15 +301,15 @@ describe("deferred media encode (SPEC-047 AC-3/AC-16)", () => {
     expect(pendingMediaByteLength(media)).toBe(PNG_BYTES.length);
   });
 
-  it("fillPendingMediaDataSync encodes byte-identically and then reports a zero pending length", () => {
+  it("ensureMediaEncoded encodes byte-identically and then reports a zero pending length", () => {
     const media = parseDrawing(drawingElement(inlinePictureXml()), rels, MAIN_PART_PATH, parts)!.media;
-    fillPendingMediaDataSync(media);
+    ensureMediaEncoded(media);
     expect(media.data).toBe(bytesToBase64(PNG_BYTES));
     // Consumed: a second pass over an already-encoded part is a no-op, so
     // parseDocx's chunk accounting counts each part's bytes exactly once.
     expect(pendingMediaByteLength(media)).toBe(0);
     const before = media.data;
-    fillPendingMediaDataSync(media);
+    ensureMediaEncoded(media);
     expect(media.data).toBe(before);
   });
 });

@@ -48,7 +48,7 @@ import {
   type ConnectorPaint,
 } from "./core/connectorPaint";
 import { translateRoutedPath } from "./core/connectors";
-import { mediaDataUri } from "./core/media";
+import { ensureMediaEncoded, mediaDataUri } from "./core/media";
 import { cmToPx, pxToCm } from "./core/units";
 import { routeConnectorInSection } from "./connectors";
 import { blockText } from "./textEditing";
@@ -231,6 +231,11 @@ function thumbnailImage(
   block: Image,
 ): ThumbnailImage | null {
   const part = (model.media ?? []).find((media) => media.mediaId === block.mediaId);
+  // SPEC-047: force-encode a still-deferred part so a just-opened doc's
+  // thumbnail renders its images rather than skipping them; a no-op once
+  // encoded. mediaDataUri would encode anyway, but the empty-`data` guard
+  // below runs first, so do it explicitly.
+  ensureMediaEncoded(part);
   if (!part || part.data.length === 0 || !(block.widthCm > 0) || !(block.heightCm > 0)) {
     return null;
   }

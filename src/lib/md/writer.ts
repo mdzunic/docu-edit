@@ -24,6 +24,7 @@ import {
   type TableCell,
 } from "../documentModel";
 import { collectDropRecords, type WriteResult } from "../opaque";
+import { mediaDataUri } from "../core/media";
 import { CODE_CHAR_STYLE_ID, styleById, styleChainIncludes } from "../styles";
 
 /** Markdown's registered content type — the download's Blob type and the
@@ -232,7 +233,10 @@ function renderBlock(
       return null;
     }
     const alt = block.altText ? escapeInline(block.altText) : "";
-    return `![${alt}](data:${media.contentType};base64,${media.data})`;
+    // mediaDataUri force-encodes a still-deferred part (SPEC-047) before
+    // building the URI, so a Markdown export before the background encode has
+    // run still embeds every image.
+    return `![${alt}](${mediaDataUri(media)})`;
   }
   if (isTable(block)) {
     listCounters.length = 0;

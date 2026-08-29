@@ -40,7 +40,7 @@ import {
   type Section,
   type SourceXml,
 } from "./documentModel";
-import { type MediaPart } from "./core/media";
+import { ensureMediaEncoded, type MediaPart } from "./core/media";
 import { windowOf } from "./core/arrayWindow";
 import { documentStats } from "./wordCount";
 import { deleteVersionsRecord, getVersionsRecord, putVersionsRecord } from "./idb";
@@ -255,6 +255,10 @@ const opaqueHashCache = new WeakMap<OpaquePart, string>();
 const sourceXmlHashCache = new WeakMap<SourceXml, string>();
 
 async function hashMediaPart(part: MediaPart): Promise<string> {
+  // SPEC-047: force-encode a still-deferred part before reading its bytes, so
+  // a snapshot taken during the deferral window hashes the real image rather
+  // than empty `data` (which would also poison this per-part hash cache).
+  ensureMediaEncoded(part);
   const cached = mediaHashCache.get(part);
   if (cached) {
     return cached;

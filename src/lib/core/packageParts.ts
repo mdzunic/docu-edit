@@ -35,7 +35,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
  * fixture a per-part FileReader pass measured ~2x the wall clock of a
  * synchronous `bytesToBase64` pass, so the docx reader defers its encodes and
  * runs them synchronously in byte-bounded chunks instead — see
- * `fillPendingMediaDataSync` (docx/drawing.ts) and the deferred-encode pass in
+ * `ensureMediaEncoded` (core/media.ts) and the deferred-encode pass in
  * docx/reader.ts. Suited to keeping an occasional large encode off the main
  * thread, not to per-part loops; of the readers only pptx/odp still call it
  * that way. Falls back to the sync path where FileReader/Blob are missing. */

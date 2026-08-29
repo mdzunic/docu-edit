@@ -10,7 +10,7 @@
 // else in the package references a media path except the relationship this
 // module writes).
 import type { Block, DocumentModel } from "../documentModel";
-import { extensionForContentType, type MediaPart } from "../core/media";
+import { ensureMediaEncoded, extensionForContentType, type MediaPart } from "../core/media";
 import { referencedMediaIds } from "../mediaRefs";
 import { base64ToBytes } from "../opaque";
 import { yieldToMainThread } from "../core/idleScheduler";
@@ -88,6 +88,11 @@ function planOneMedia(accum: MediaWriteAccum, mediaId: string, byId: Map<string,
   if (!part || part.contentType === "image/svg+xml") {
     return;
   }
+  // SPEC-047: force-encode a still-deferred part before reading its bytes, so
+  // a save that happens before the background encode pass has run still
+  // writes every image (round-trip fidelity is the project's first
+  // constraint) — a no-op once the part carries its `data`.
+  ensureMediaEncoded(part);
   const ext = extensionForContentType(part.contentType);
   let partName = `word/media/image${accum.n}.${ext}`;
   while (accum.existingPartNames.has(partName)) {

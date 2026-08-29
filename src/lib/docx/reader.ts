@@ -91,7 +91,8 @@ import {
   type Relationship,
 } from "../core/xml";
 import { isFloatingDrawing } from "../drawingAnchors";
-import { fillPendingMediaDataSync, pendingMediaByteLength, parseDrawing, type ParsedDrawing } from "./drawing";
+import { parseDrawing, type ParsedDrawing } from "./drawing";
+import { ensureMediaEncoded, pendingMediaByteLength } from "../core/media";
 import { parseShapeDrawing } from "./shape";
 import { parseConnectorDrawing, resolveDocxConnectorAttachments, stampConnectorTargetId } from "./connector";
 import { parseChartDrawing } from "./chart";
@@ -2510,9 +2511,22 @@ function parseCommentsPart(
  * project's document model needs. Throws `LegacyDocError` for a binary
  * Word 97-2003 `.doc` file, or `DocxOpenError` for anything else that
  * isn't a valid, openable `.docx` package. */
+export interface ParseDocxOptions {
+  /** SPEC-047: when true, media parts are left base64-unencoded (their raw
+   * bytes held in core/media's pending registry) so the ~1s encode of a
+   * large document's images does not sit on the open path between choosing
+   * the file and first paint. Every consumer force-encodes on demand via
+   * `ensureMediaEncoded`/`mediaDataUri`, and the interactive open path runs a
+   * chunked background pass after first paint. Default false: direct callers
+   * (tests, headless generate, template import) get fully-encoded media as
+   * before. */
+  deferMedia?: boolean;
+}
+
 export async function parseDocx(
   data: ArrayBuffer | Uint8Array,
   preunzipped?: Map<string, Uint8Array>,
+  options: ParseDocxOptions = {},
 ): Promise<ParsedDocxDocument> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 
@@ -2930,15 +2944,22 @@ export async function parseDocx(
       });
     }
   }
-  for (const part of mediaById.values()) {
-    pendingEncodes.push({
-      byteLength: pendingMediaByteLength(part),
-      encode: () => fillPendingMediaDataSync(part),
-    });
+  // SPEC-047: with deferMedia, the media parts are left in the pending
+  // registry (data still ""), encoded lazily per part when first read and in
+  // a chunked background pass after first paint — see core/media. Opaque
+  // parts above are still encoded here: they are small XML, never rendered,
+  // and read only on save, so deferring them buys nothing.
+  if (!options.deferMedia) {
+    for (const part of mediaById.values()) {
+      pendingEncodes.push({
+        byteLength: pendingMediaByteLength(part),
+        encode: () => ensureMediaEncoded(part),
+      });
+    }
   }
 
   // The one deferred base64 pass for every preserved part and image any walk
-  // above collected — see parseDrawing/fillPendingMediaDataSync: encoding per
+  // above collected — see parseDrawing/ensureMediaEncoded: encoding per
   // drawing put ~0.6s of the benchmark fixture's open inside the body walk.
   // Encoded SYNCHRONOUSLY here rather than through FileReader.readAsDataURL:
   // a large `.docx` carries hundreds of small media parts, and one FileReader
