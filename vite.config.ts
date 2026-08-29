@@ -6,6 +6,14 @@ import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
   plugins: [vue()],
+  worker: {
+    // Both workers are constructed with `{ type: "module" }`, and the
+    // spell-check worker reaches loadDictionary, whose per-language
+    // `import()` calls are deliberate code-split points. Vite's default
+    // worker.format ("iife") cannot emit a multi-chunk bundle, so the build
+    // failed on the very split the dictionaries were designed around.
+    format: "es",
+  },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
