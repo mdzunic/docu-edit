@@ -940,18 +940,21 @@ test.describe("SPEC-068 — drawing handle degrades to a numeric position dialog
     await page.getByTestId("shape-position-button").click();
     await expect(page.getByTestId("shape-position-dialog")).toBeVisible();
 
-    // Enlarge the shape well beyond the 3cm x 2cm default and commit.
+    // Enlarge the shape well beyond the 3cm x 2cm default. Changes apply LIVE
+    // as each field is committed (SPEC-072 AC-43) — there is no OK button.
     await page.getByTestId("shape-position-width").fill("12");
+    await page.getByTestId("shape-position-width").press("Tab");
     await page.getByTestId("shape-position-height").fill("8");
-    await page.getByTestId("shape-position-apply").click();
-    await expect(page.getByTestId("shape-position-dialog")).toHaveCount(0);
+    await page.getByTestId("shape-position-height").press("Tab");
 
-    // The committed size shows up as a visibly larger rendered drawing.
+    // The live change shows up as a visibly larger rendered drawing.
     await expect
       .poll(async () => (await drawing.boundingBox())?.width ?? 0)
       .toBeGreaterThan(before.width + 20);
 
-    // Re-opening the dialog reflects the persisted numeric size.
+    // Close, then re-open; the dialog reflects the persisted numeric size.
+    await page.getByTestId("shape-position-done").click();
+    await expect(page.getByTestId("shape-position-dialog")).toHaveCount(0);
     await page.getByTestId("shape-position-button").click();
     await expect(page.getByTestId("shape-position-dialog")).toBeVisible();
     await expect(page.getByTestId("shape-position-width")).toHaveValue("12");
