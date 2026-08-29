@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeDrawingSnap,
+  computeResizeSnap,
   gridCandidates,
   type SnapCandidate,
 } from "./drawingSnap";
@@ -61,6 +62,51 @@ describe("computeDrawingSnap", () => {
     const candidates: SnapCandidate[] = [{ axis: "x", coordCm: 4.9, startCm: 0, endCm: 10 }];
     const snapshot = JSON.parse(JSON.stringify({ rect, candidates }));
     computeDrawingSnap(rect, candidates, 0.2);
+    expect({ rect, candidates }).toEqual(snapshot);
+  });
+});
+
+describe("computeResizeSnap", () => {
+  // The top-left (5,5) is the fixed corner a resize grows from; only the moving
+  // right (7cm) and bottom (7cm) edges snap (AC-27).
+  it("snaps the moving right edge onto a nearby vertical candidate", () => {
+    const candidates: SnapCandidate[] = [{ axis: "x", coordCm: 7.1, startCm: 0, endCm: 10 }];
+    const result = computeResizeSnap(rect, candidates, 0.2);
+    // Right edge 7 -> 7.1, so width 2 -> 2.1; height untouched.
+    expect(result.widthCm).toBeCloseTo(2.1, 9);
+    expect(result.heightCm).toBe(2);
+    expect(result.guides).toHaveLength(1);
+    expect(result.guides[0]).toMatchObject({ axis: "x", coordCm: 7.1 });
+  });
+
+  it("snaps the moving bottom edge onto a nearby horizontal candidate", () => {
+    const candidates: SnapCandidate[] = [{ axis: "y", coordCm: 6.9, startCm: 0, endCm: 10 }];
+    const result = computeResizeSnap(rect, candidates, 0.2);
+    // Bottom edge 7 -> 6.9, so height 2 -> 1.9; width untouched.
+    expect(result.heightCm).toBeCloseTo(1.9, 9);
+    expect(result.widthCm).toBe(2);
+  });
+
+  it("leaves the left/top edges fixed: a candidate at the left edge never snaps", () => {
+    // A vertical line exactly on the fixed left edge must not move the box.
+    const candidates: SnapCandidate[] = [{ axis: "x", coordCm: 5, startCm: 0, endCm: 10 }];
+    const result = computeResizeSnap(rect, candidates, 0.2);
+    expect(result.widthCm).toBe(2);
+    expect(result.guides).toHaveLength(0);
+  });
+
+  it("does not snap when the nearest candidate is beyond the threshold", () => {
+    const candidates: SnapCandidate[] = [{ axis: "x", coordCm: 7.5, startCm: 0, endCm: 10 }];
+    const result = computeResizeSnap(rect, candidates, 0.2);
+    expect(result.widthCm).toBe(2);
+    expect(result.heightCm).toBe(2);
+    expect(result.guides).toHaveLength(0);
+  });
+
+  it("is pure: does not mutate its inputs", () => {
+    const candidates: SnapCandidate[] = [{ axis: "x", coordCm: 7.1, startCm: 0, endCm: 10 }];
+    const snapshot = JSON.parse(JSON.stringify({ rect, candidates }));
+    computeResizeSnap(rect, candidates, 0.2);
     expect({ rect, candidates }).toEqual(snapshot);
   });
 });

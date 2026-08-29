@@ -44,6 +44,54 @@ export interface SnapResult {
 
 const EPS = 1e-9;
 
+/** The candidate on `axis` nearest any of `features`, within `thresholdCm`, as
+ * the signed delta from the matched feature and the candidate's coordinate.
+ * `null` when nothing on that axis is close enough. Shared by the move/create
+ * snap (which offers left/centre/right, top/centre/bottom features) and the
+ * resize snap (which offers only its moving edges). */
+function nearestCandidate(
+  axis: SnapAxis,
+  features: number[],
+  candidates: SnapCandidate[],
+  thresholdCm: number,
+): { delta: number; coordCm: number } | null {
+  let best: { delta: number; coordCm: number } | null = null;
+  for (const candidate of candidates) {
+    if (candidate.axis !== axis) continue;
+    for (const feature of features) {
+      const delta = candidate.coordCm - feature;
+      if (Math.abs(delta) <= thresholdCm && (best === null || Math.abs(delta) < Math.abs(best.delta))) {
+        best = { delta, coordCm: candidate.coordCm };
+      }
+    }
+  }
+  return best;
+}
+
+/** Pushes a guide for every candidate sharing the matched coordinate on `axis`
+ * (multiple simultaneous matches => multiple guides, AC-22), spanning the union
+ * of the dragged drawing's perpendicular extent and each candidate's own. */
+function collectGuides(
+  guides: SnapGuide[],
+  candidates: SnapCandidate[],
+  axis: SnapAxis,
+  matchedCoord: number | null,
+  perpStart: number,
+  perpEnd: number,
+): void {
+  if (matchedCoord === null) return;
+  for (const candidate of candidates) {
+    if (candidate.axis === axis && Math.abs(candidate.coordCm - matchedCoord) <= EPS) {
+      guides.push({
+        axis,
+        coordCm: candidate.coordCm,
+        startCm: Math.min(perpStart, candidate.startCm),
+        endCm: Math.max(perpEnd, candidate.endCm),
+      });
+    }
+  }
+}
+
 /** Snaps a laid-out drawing rectangle onto the nearest candidate alignment
  * within `thresholdCm` and returns the snapped top-left plus the guides to
  * draw. The drawing's own six features are tested against each candidate: its
@@ -60,46 +108,52 @@ export function computeDrawingSnap(
   const featuresX = [rect.xCm, rect.xCm + rect.wCm / 2, rect.xCm + rect.wCm];
   const featuresY = [rect.yCm, rect.yCm + rect.hCm / 2, rect.yCm + rect.hCm];
 
-  function bestMatch(axis: SnapAxis, features: number[]): { delta: number; coordCm: number } | null {
-    let best: { delta: number; coordCm: number } | null = null;
-    for (const candidate of candidates) {
-      if (candidate.axis !== axis) continue;
-      for (const feature of features) {
-        const delta = candidate.coordCm - feature;
-        if (Math.abs(delta) <= thresholdCm && (best === null || Math.abs(delta) < Math.abs(best.delta))) {
-          best = { delta, coordCm: candidate.coordCm };
-        }
-      }
-    }
-    return best;
-  }
-
-  const matchX = bestMatch("x", featuresX);
-  const matchY = bestMatch("y", featuresY);
+  const matchX = nearestCandidate("x", featuresX, candidates, thresholdCm);
+  const matchY = nearestCandidate("y", featuresY, candidates, thresholdCm);
   const xCm = rect.xCm + (matchX ? matchX.delta : 0);
   const yCm = rect.yCm + (matchY ? matchY.delta : 0);
 
   const guides: SnapGuide[] = [];
-  function collect(axis: SnapAxis, matchedCoord: number | null, perpStart: number, perpEnd: number): void {
-    if (matchedCoord === null) return;
-    for (const candidate of candidates) {
-      if (candidate.axis === axis && Math.abs(candidate.coordCm - matchedCoord) <= EPS) {
-        guides.push({
-          axis,
-          coordCm: candidate.coordCm,
-          startCm: Math.min(perpStart, candidate.startCm),
-          endCm: Math.max(perpEnd, candidate.endCm),
-        });
-      }
-    }
-  }
   // A vertical (x) guide spans the dragged drawing's vertical extent; a
   // horizontal (y) guide spans its horizontal extent — both taken at the
   // snapped position so the line passes through the aligned edge.
-  collect("x", matchX ? matchX.coordCm : null, yCm, yCm + rect.hCm);
-  collect("y", matchY ? matchY.coordCm : null, xCm, xCm + rect.wCm);
+  collectGuides(guides, candidates, "x", matchX ? matchX.coordCm : null, yCm, yCm + rect.hCm);
+  collectGuides(guides, candidates, "y", matchY ? matchY.coordCm : null, xCm, xCm + rect.wCm);
 
   return { xCm, yCm, guides };
+}
+
+/** The snapped size and guides for a resize gesture (AC-27). */
+export interface ResizeSnapResult {
+  widthCm: number;
+  heightCm: number;
+  guides: SnapGuide[];
+}
+
+/** Snaps the moving right and bottom edges of a drawing being resized onto the
+ * nearest candidate within `thresholdCm`, returning the snapped size and the
+ * guides through each matched edge. The model resize keeps the drawing's
+ * top-left offset fixed and only grows its size (see finishShapeResize), so the
+ * left and top edges never move: only the right edge tests the vertical (x)
+ * candidates and only the bottom edge the horizontal (y) candidates. Never
+ * reads screen pixels — the caller converts the pixel threshold (AC-54). */
+export function computeResizeSnap(
+  rect: AlignRect,
+  candidates: SnapCandidate[],
+  thresholdCm: number,
+): ResizeSnapResult {
+  const rightEdge = rect.xCm + rect.wCm;
+  const bottomEdge = rect.yCm + rect.hCm;
+  const matchX = nearestCandidate("x", [rightEdge], candidates, thresholdCm);
+  const matchY = nearestCandidate("y", [bottomEdge], candidates, thresholdCm);
+  const widthCm = Math.max(0, (matchX ? matchX.coordCm : rightEdge) - rect.xCm);
+  const heightCm = Math.max(0, (matchY ? matchY.coordCm : bottomEdge) - rect.yCm);
+
+  const guides: SnapGuide[] = [];
+  collectGuides(guides, candidates, "x", matchX ? matchX.coordCm : null, rect.yCm, rect.yCm + heightCm);
+  collectGuides(guides, candidates, "y", matchY ? matchY.coordCm : null, rect.xCm, rect.xCm + widthCm);
+
+  return { widthCm, heightCm, guides };
 }
 
 /** The vertical grid candidate coordinates covering [0, extentCm] at `spacing`,

@@ -23,6 +23,7 @@ import {
 } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { asImageHandle, previewImageSize, resizedImageSize } from "../../lib/imageResize";
+import { MIN_IMAGE_SIZE_CM } from "../../lib/core/media";
 import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { CM_PER_PX } from "../../lib/core/units";
@@ -178,6 +179,7 @@ export function useShapes(deps: ShapesDeps) {
   const {
     snapGuides,
     applySnap: applyDrawingSnap,
+    applyResizeSnap: applyDrawingResizeSnap,
     clearGuides: clearDrawingGuides,
   } = useDrawingGuides({ pageRef, contentRoot, clientToContentPx, zoom });
 
@@ -491,6 +493,11 @@ export function useShapes(deps: ShapesDeps) {
     el: HTMLElement;
     groupOrdinal: number | undefined;
     rotationDeg: number;
+    /** The drawing's `.pages`-relative top-left in cm at drag start (SPEC-072):
+     * the fixed offset corner the resize grows from, so the moving right/bottom
+     * edges can be snapped to page candidates (AC-27). */
+    startLeftCm: number;
+    startTopCm: number;
     currentWidthCm: number;
     currentHeightCm: number;
   } | null = null;
@@ -1179,6 +1186,10 @@ export function useShapes(deps: ShapesDeps) {
     }
     event.preventDefault();
     resizeDragMoved = false;
+    const rect = el.getBoundingClientRect();
+    // Unscaled, .pages-relative top-left in model cm (SPEC-063 AC-22) — the
+    // fixed corner the resize snap grows from (AC-27).
+    const startTopLeft = clientToContentPx(rect.left, rect.top);
     resizeDrag = {
       location,
       handle,
@@ -1188,6 +1199,8 @@ export function useShapes(deps: ShapesDeps) {
       el,
       groupOrdinal: shape.groupOrdinal,
       rotationDeg: shape.rotationDeg ?? 0,
+      startLeftCm: startTopLeft.x * CM_PER_PX,
+      startTopCm: startTopLeft.y * CM_PER_PX,
       currentWidthCm: shape.widthCm,
       currentHeightCm: shape.heightCm,
     };
@@ -1237,17 +1250,33 @@ export function useShapes(deps: ShapesDeps) {
       drag.rotationDeg,
     );
     const size = resizedImageSize(drag.start, asImageHandle(drag.handle), local.dx, local.dy, event.shiftKey);
-    drag.currentWidthCm = size.widthCm;
-    drag.currentHeightCm = size.heightCm;
+    let widthCm = size.widthCm;
+    let heightCm = size.heightCm;
+    // Snapping + guides on resize (AC-27): the model resize keeps the top-left
+    // offset and grows the size, so the right/bottom edges snap onto page
+    // candidates. Only for a single, unrotated shape — a grouped member previews
+    // on release, and snapping an axis-aligned page rectangle is meaningless once
+    // the shape's own axes are turned. Alt suppresses it (AC-25).
+    if (drag.groupOrdinal === undefined && drag.rotationDeg === 0) {
+      const snapped = applyDrawingResizeSnap(
+        { xCm: drag.startLeftCm, yCm: drag.startTopCm, wCm: widthCm, hCm: heightCm },
+        drag.el,
+        event.altKey,
+      );
+      widthCm = Math.max(MIN_IMAGE_SIZE_CM, snapped.widthCm);
+      heightCm = Math.max(MIN_IMAGE_SIZE_CM, snapped.heightCm);
+    }
+    drag.currentWidthCm = widthCm;
+    drag.currentHeightCm = heightCm;
     // A grouped member previews only on release, same as a grouped move
     // (finishShapeResize's resizeGroup scales every member about the
     // group's own bounding-box centre — live-previewing just the dragged
     // element here would show the rest of the group left behind).
     if (drag.groupOrdinal === undefined) {
-      previewImageSize(drag.el, size.widthCm, size.heightCm);
+      previewImageSize(drag.el, widthCm, heightCm);
       const shape = doc.value ? shapeAt(doc.value, drag.location) : null;
       if (shape) {
-        previewShapeCanvas(drag.el, shape, size.widthCm, size.heightCm);
+        previewShapeCanvas(drag.el, shape, widthCm, heightCm);
       }
       // The handles are what the pointer is dragging — they have to track
       // the box they are sizing, not sit at the size it started.
@@ -1260,6 +1289,8 @@ export function useShapes(deps: ShapesDeps) {
   function finishShapeResize() {
     window.removeEventListener("mousemove", handleShapeResizeMove);
     window.removeEventListener("mouseup", finishShapeResize);
+    // Guides are transient — they vanish on release (AC-56).
+    clearDrawingGuides();
     const drag = resizeDrag;
     resizeDrag = null;
     if (!drag || !resizeDragMoved) {

@@ -11,6 +11,7 @@ import { CM_PER_PX, PX_PER_CM } from "../../lib/core/units";
 import { usePreferences } from "../../composables/usePreferences";
 import {
   computeDrawingSnap,
+  computeResizeSnap,
   type SnapCandidate,
   type SnapGuide,
 } from "../../lib/drawingSnap";
@@ -134,6 +135,32 @@ export function useDrawingGuides(deps: DrawingGuidesDeps) {
     return { xCm: result.xCm, yCm: result.yCm };
   }
 
+  /** Snaps a drawing being resized (AC-27): the top-left of `rect` is the fixed
+   * offset corner and `wCm`/`hCm` the size the pointer has produced so far. Only
+   * the moving right/bottom edges snap; guides are recorded for the overlay just
+   * as a move does. Alt or both snap preferences off suppress it (AC-25). */
+  function applyResizeSnap(
+    rect: AlignRect,
+    excludeEl: Element | null,
+    altKey: boolean,
+  ): { widthCm: number; heightCm: number } {
+    if (altKey || (!preferences.snapToGuides && !preferences.snapToGrid)) {
+      clearGuides();
+      return { widthCm: rect.wCm, heightCm: rect.hCm };
+    }
+    const candidates: SnapCandidate[] = [];
+    if (preferences.snapToGuides) {
+      candidates.push(...drawingCandidates(excludeEl), ...frameCandidates(excludeEl));
+    }
+    if (preferences.snapToGrid) {
+      candidates.push(...gridSnapCandidates(excludeEl));
+    }
+    const thresholdCm = (SNAP_THRESHOLD_PX / Math.max(zoom.value, 0.01)) * CM_PER_PX;
+    const result = computeResizeSnap(rect, candidates, thresholdCm);
+    snapGuides.value = result.guides;
+    return { widthCm: result.widthCm, heightCm: result.heightCm };
+  }
+
   function clearGuides(): void {
     if (snapGuides.value.length > 0) {
       snapGuides.value = [];
@@ -151,5 +178,5 @@ export function useDrawingGuides(deps: DrawingGuidesDeps) {
     };
   }
 
-  return { snapGuides, applySnap, clearGuides, guidePx };
+  return { snapGuides, applySnap, applyResizeSnap, clearGuides, guidePx };
 }
