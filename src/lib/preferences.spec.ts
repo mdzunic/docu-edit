@@ -101,6 +101,24 @@ describe("preferences store (SPEC-066)", () => {
       savePreference("theme", "neon");
       expect(loadPreferences().theme).toBe(PREFERENCE_DEFAULTS.theme);
     });
+
+    it("defaults the SPEC-072 snap preferences (guides on, grid off, 0.25cm)", () => {
+      expect(PREFERENCE_DEFAULTS.snapToGuides).toBe(true);
+      expect(PREFERENCE_DEFAULTS.snapToGrid).toBe(false);
+      expect(PREFERENCE_DEFAULTS.gridSpacingCm).toBe(0.25);
+    });
+
+    it("round-trips the snap preferences and rejects an out-of-range grid spacing", () => {
+      savePreference("snapToGuides", false);
+      savePreference("snapToGrid", true);
+      savePreference("gridSpacingCm", 1);
+      expect(loadPreferences().snapToGuides).toBe(false);
+      expect(loadPreferences().snapToGrid).toBe(true);
+      expect(loadPreferences().gridSpacingCm).toBe(1);
+      // Zero or negative spacing would divide by zero when snapping — rejected.
+      savePreference("gridSpacingCm", 0);
+      expect(loadPreferences().gridSpacingCm).toBe(PREFERENCE_DEFAULTS.gridSpacingCm);
+    });
   });
 
   describe("migration of legacy keys (AC-10)", () => {

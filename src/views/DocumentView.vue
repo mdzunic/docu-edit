@@ -35,6 +35,7 @@ import PointEditOverlay from "../components/PointEditOverlay.vue";
 import ConnectorOverlay from "../components/ConnectorOverlay.vue";
 import ConnectorToolbar from "../components/ConnectorToolbar.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
+import DrawingGuidesOverlay from "../components/DrawingGuidesOverlay.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -96,6 +97,7 @@ import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
+import { useDrawingArrange } from "./document/useDrawingArrange";
 import { useConnectors } from "./document/useConnectors";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
@@ -756,6 +758,7 @@ const {
   shapeAnchorMarker,
   drawGeometry,
   drawPreview,
+  snapGuides,
   movingShape,
   editingShapeText,
   shapeTextRemountEpoch,
@@ -802,6 +805,9 @@ const {
   drawFreeformTool, freeformPreviewD, handleFreeformPick, startFreeformGesture, pointEdit,
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
+
+// Align/distribute for a drawing selection (SPEC-072); commands spread below.
+const drawingArrange = useDrawingArrange({ ...editorContext, shapeSelection, shapeMultiSelection });
 
 // --- connectors (SPEC-070) --------------------------------------------------
 // Two-click draw, live-measured overlay geometry, handles and formatting. One
@@ -3170,6 +3176,10 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
   ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
+  // Drawing align/distribute (SPEC-072); wiring in useDrawingArrange.
+  ...drawingArrange.commands,
+  // Format → Drawing → Position and size… (SPEC-072 AC-35).
+  ["drawing.position-size", openShapePosition],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
   ["format.multilevel-define-list", openDefineList],
   ["format.text-color", openTextColorMenu],
@@ -3329,8 +3339,11 @@ function handleMenuCommand(id = "") {
         :focus-mode="focusMode"
         :zoom-percent="zoomPercent"
         :zoom-fit-mode="zoomFitMode"
-        v-bind="themeMenu"
+        v-bind="{ ...themeMenu, ...drawingArrange.menuBindings.value }"
         @command="handleMenuCommand"
+        @drawing-align-to="drawingArrange.setAlignToReference"
+        @toggle-snap-guides="drawingArrange.toggleSnapToGuides"
+        @toggle-snap-grid="drawingArrange.toggleSnapToGrid"
         @insert-table-size="(rows, cols) => insertTableWithAutoCaption({ rows, cols })"
         @insert-break="handleInsertBreak"
         @insert-section-break="handleInsertSectionBreak"
@@ -3538,6 +3551,7 @@ function handleMenuCommand(id = "") {
               @adjust-start="startShapeAdjust"
               @adjust-keydown="handleAdjustmentKeydown"
             />
+            <DrawingGuidesOverlay v-if="snapGuides.length" :guides="snapGuides" />
             <div
               v-if="shapeAnchorMarker"
               class="shape-anchor-marker print-exclude"
@@ -4012,6 +4026,10 @@ function handleMenuCommand(id = "") {
         :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
         :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
         :can-group="canGroupSelection()"
+        :can-align="!drawingArrange.alignDisabledReason.value"
+        :can-distribute="!drawingArrange.distributeDisabledReason.value"
+        @align="(edge) => editorCommands.get(`drawing.align-${edge}`)?.()"
+        @distribute="(axis) => editorCommands.get(`drawing.distribute-${axis}`)?.()"
         @fill="handleShapeFill"
         @outline="handleShapeOutline"
         @rotation="handleShapeRotationInput"
@@ -4063,6 +4081,8 @@ function handleMenuCommand(id = "") {
       :field-actions="contextMenuOnField"
       :field-locked="contextMenuFieldLocked"
       :caption-action="captionTargetSelected"
+      :drawing-actions="!!(shapeSelection || shapeMultiSelection.length)"
+      :can-distribute-drawings="!drawingArrange.distributeDisabledReason.value"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
@@ -4070,6 +4090,7 @@ function handleMenuCommand(id = "") {
       @list-action="handleContextMenuListAction"
       @field-action="handleFieldAction"
       @caption-action="() => { closeContextMenu(); openCaptionDialog(); }"
+      @drawing-action="(id) => { closeContextMenu(); editorCommands.get(`drawing.${id}`)?.(); }"
       @dismiss="closeContextMenu"
     />
     <SpellContextMenu
@@ -4268,7 +4289,7 @@ function handleMenuCommand(id = "") {
       :initial="shapePositionInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="handleShapePositionApply"
-      @cancel="shapePositionOpen = false"
+      @dismiss="shapePositionOpen = false"
     />
     <ChartDataSheetDialog
       v-if="editingChartData"

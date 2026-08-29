@@ -24,6 +24,7 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  arrangeDrawings,
   setShapePosition,
   setShapeRotation,
   setShapePath,
@@ -1375,5 +1376,50 @@ describe("anchor pairing (SPEC-078)", () => {
     expect(paragraphIn(next, 1).anchorOrdinal).toBeUndefined();
     // The shape still resolves to the top half.
     expect(resolveAnchorBlockIndex(next.sections[0].blocks, 2)).toBe(0);
+  });
+});
+
+// --- arrangeDrawings (SPEC-072) ------------------------------------------------
+
+describe("arrangeDrawings (SPEC-072)", () => {
+  it("sets several drawings' offsets in one command", () => {
+    const model = doc(
+      shape({ offsetXCm: 1, offsetYCm: 2 }),
+      shape({ offsetXCm: 5, offsetYCm: 6 }),
+      paragraph("body"),
+    );
+    const { model: next } = arrangeDrawings(model, selectionAt(2, 0), [
+      { location: { section: 0, block: 0 }, offsetXCm: 3, offsetYCm: 3 },
+      { location: { section: 0, block: 1 }, offsetXCm: 3, offsetYCm: 9 },
+    ]);
+    expect(shapeAt(next, { section: 0, block: 0 })).toMatchObject({ offsetXCm: 3, offsetYCm: 3 });
+    expect(shapeAt(next, { section: 0, block: 1 })).toMatchObject({ offsetXCm: 3, offsetYCm: 9 });
+  });
+
+  it("applies a single-axis reference change (single-drawing align)", () => {
+    const model = doc(shape({ relativeToH: "column", offsetXCm: 4 }), paragraph("body"));
+    const { model: next } = arrangeDrawings(model, selectionAt(1, 0), [
+      { location: { section: 0, block: 0 }, relativeToH: "margin", offsetXCm: 0 },
+    ]);
+    const updated = shapeAt(next, { section: 0, block: 0 });
+    expect(updated).toMatchObject({ relativeToH: "margin", offsetXCm: 0 });
+    // The untouched vertical axis is preserved.
+    expect(updated?.relativeToV).toBe("paragraph");
+  });
+
+  it("skips an inline shape, whose offset the wrap mode ignores", () => {
+    const model = doc(shape({ wrap: "inline", offsetXCm: 0 }), paragraph("body"));
+    const { model: next } = arrangeDrawings(model, selectionAt(1, 0), [
+      { location: { section: 0, block: 0 }, offsetXCm: 7, offsetYCm: 7 },
+    ]);
+    expect(shapeAt(next, { section: 0, block: 0 })?.offsetXCm).toBe(0);
+  });
+
+  it("does not mutate the input model", () => {
+    const model = doc(shape({ offsetXCm: 1 }), paragraph("body"));
+    arrangeDrawings(model, selectionAt(1, 0), [
+      { location: { section: 0, block: 0 }, offsetXCm: 9, offsetYCm: 9 },
+    ]);
+    expect(shapeAt(model, { section: 0, block: 0 })?.offsetXCm).toBe(1);
   });
 });

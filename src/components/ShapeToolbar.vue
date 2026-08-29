@@ -18,6 +18,9 @@ const props = defineProps({
   altText: { type: String, default: "" },
   grouped: { type: Boolean, default: false },
   canGroup: { type: Boolean, default: false },
+  /** SPEC-072: whether align / distribute apply to the current selection. */
+  canAlign: { type: Boolean, default: false },
+  canDistribute: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -33,7 +36,24 @@ const emit = defineEmits([
   "delete",
   "duplicate",
   "edit-points",
+  "align",
+  "distribute",
 ]);
+
+// SPEC-072 align/distribute on the contextual toolbar (AC-15). The value is the
+// command suffix (`drawing.align-<value>` / `drawing.distribute-<value>`).
+const ALIGN_COMMANDS = [
+  { command: "left", label: "Align left" },
+  { command: "center", label: "Align centre" },
+  { command: "right", label: "Align right" },
+  { command: "top", label: "Align top" },
+  { command: "middle", label: "Align middle" },
+  { command: "bottom", label: "Align bottom" },
+];
+const DISTRIBUTE_COMMANDS = [
+  { command: "horizontal", label: "Distribute horizontally" },
+  { command: "vertical", label: "Distribute vertically" },
+];
 
 const WRAP_MODES = [
   { mode: "inline", label: "In line with text" },
@@ -121,6 +141,22 @@ function onWrapChange(event = new Event("change")) {
   const target = event.target;
   if (target instanceof HTMLSelectElement) {
     emit("wrap", target.value);
+  }
+}
+
+function onAlignChange(event = new Event("change")) {
+  const target = event.target;
+  if (target instanceof HTMLSelectElement && target.value) {
+    emit("align", target.value);
+    target.value = "";
+  }
+}
+
+function onDistributeChange(event = new Event("change")) {
+  const target = event.target;
+  if (target instanceof HTMLSelectElement && target.value) {
+    emit("distribute", target.value);
+    target.value = "";
   }
 }
 
@@ -240,6 +276,52 @@ function onZOrderChange(event = new Event("change")) {
         v-for="option in WRAP_MODES"
         :key="option.mode"
         :value="option.mode"
+      >
+        {{ option.label }}
+      </option>
+    </select>
+    <select
+      class="shape-toolbar-select"
+      data-testid="shape-align"
+      :disabled="!canAlign"
+      title="Align drawings"
+      @change="onAlignChange"
+      @mousedown.stop
+    >
+      <option
+        value=""
+        disabled
+        selected
+      >
+        Align…
+      </option>
+      <option
+        v-for="option in ALIGN_COMMANDS"
+        :key="option.command"
+        :value="option.command"
+      >
+        {{ option.label }}
+      </option>
+    </select>
+    <select
+      class="shape-toolbar-select"
+      data-testid="shape-distribute"
+      :disabled="!canDistribute"
+      title="Distribute drawings"
+      @change="onDistributeChange"
+      @mousedown.stop
+    >
+      <option
+        value=""
+        disabled
+        selected
+      >
+        Distribute…
+      </option>
+      <option
+        v-for="option in DISTRIBUTE_COMMANDS"
+        :key="option.command"
+        :value="option.command"
       >
         {{ option.label }}
       </option>

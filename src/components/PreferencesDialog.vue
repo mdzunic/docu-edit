@@ -14,6 +14,7 @@ import { SUPPORTED_LANGUAGES } from "../lib/core/language";
 import { STANDARD_FONT_FAMILIES } from "../lib/core/fonts";
 import { COMMON_FONT_SIZES } from "../lib/fonts";
 import { ZOOM_PRESETS } from "../lib/zoom";
+import { parseLengthToCm, formatLength, asMeasurementUnit } from "../lib/core/units";
 
 // The Preferences dialog (SPEC-066). Every control reads the live reactive
 // preferences and, on change, writes straight through usePreferences —
@@ -89,6 +90,19 @@ function zoomValue(value = "") {
 function confirmReset() {
   resetPreferences();
   confirmingReset.value = false;
+}
+
+// The snap-to-grid spacing shows and parses in the current measurement unit
+// (SPEC-072 AC-34) while the preference keeps centimetres.
+function gridSpacingDisplay() {
+  return formatLength(preferences.gridSpacingCm, asMeasurementUnit(preferences.measurementUnit));
+}
+
+function commitGridSpacing(event = new Event("change")) {
+  const cm = parseLengthToCm(textValue(event), asMeasurementUnit(preferences.measurementUnit));
+  if (cm !== null) {
+    setPreference("gridSpacingCm", cm);
+  }
 }
 </script>
 
@@ -450,6 +464,62 @@ function confirmReset() {
           :options="downloadFormatOptions"
           @update:model-value="(value) => setPreference('defaultDownloadFormat', value)"
         />
+      </UiField>
+    </section>
+
+    <!-- Drawing (SPEC-072) -->
+    <section
+      class="section"
+      aria-labelledby="preferences-drawing-heading"
+    >
+      <h3
+        id="preferences-drawing-heading"
+        class="section-title"
+      >
+        Drawing
+      </h3>
+      <UiField
+        label="Snap to guides"
+        for="preferences-snap-guides"
+        hint="Snap a dragged drawing to alignment guides. Default: on"
+      >
+        <input
+          id="preferences-snap-guides"
+          type="checkbox"
+          class="pref-checkbox"
+          data-testid="preferences-snap-guides"
+          :checked="preferences.snapToGuides"
+          @change="(event) => setPreference('snapToGuides', checked(event))"
+        >
+      </UiField>
+      <UiField
+        label="Snap to grid"
+        for="preferences-snap-grid"
+        hint="Snap a dragged drawing to the grid. Default: off"
+      >
+        <input
+          id="preferences-snap-grid"
+          type="checkbox"
+          class="pref-checkbox"
+          data-testid="preferences-snap-grid"
+          :checked="preferences.snapToGrid"
+          @change="(event) => setPreference('snapToGrid', checked(event))"
+        >
+      </UiField>
+      <UiField
+        label="Grid spacing"
+        for="preferences-grid-spacing"
+        :hint="`Distance between grid lines, in ${preferences.measurementUnit}. Default: 0.25cm`"
+      >
+        <input
+          id="preferences-grid-spacing"
+          type="text"
+          inputmode="decimal"
+          class="pref-text"
+          data-testid="preferences-grid-spacing"
+          :value="gridSpacingDisplay()"
+          @change="commitGridSpacing"
+        >
       </UiField>
     </section>
 
