@@ -804,10 +804,7 @@ const {
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
 
-// --- align / distribute (SPEC-072) ------------------------------------------
-// Bounding-box align + gap distribution for a drawing selection, and single-
-// drawing align to margin/page/column. One namespace to hold the line budget;
-// its command ids spread into editorCommands below.
+// Align/distribute for a drawing selection (SPEC-072); commands spread below.
 const drawingArrange = useDrawingArrange({ ...editorContext, shapeSelection, shapeMultiSelection });
 
 // --- connectors (SPEC-070) --------------------------------------------------
@@ -4083,6 +4080,8 @@ function handleMenuCommand(id = "") {
       :field-actions="contextMenuOnField"
       :field-locked="contextMenuFieldLocked"
       :caption-action="captionTargetSelected"
+      :drawing-actions="!!(shapeSelection || shapeMultiSelection.length)"
+      :can-distribute-drawings="!drawingArrange.distributeDisabledReason.value"
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
@@ -4090,6 +4089,7 @@ function handleMenuCommand(id = "") {
       @list-action="handleContextMenuListAction"
       @field-action="handleFieldAction"
       @caption-action="() => { closeContextMenu(); openCaptionDialog(); }"
+      @drawing-action="(id) => { closeContextMenu(); editorCommands.get(`drawing.${id}`)?.(); }"
       @dismiss="closeContextMenu"
     />
     <SpellContextMenu
