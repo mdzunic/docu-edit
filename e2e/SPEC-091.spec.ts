@@ -108,3 +108,51 @@ test("pptx: dragging a table grid boundary resizes a column and a row (AC-8a,8b)
   await page.mouse.up();
   await expect.poll(async () => (await cell.boundingBox())!.height).toBeGreaterThan(heightBefore + 5);
 });
+
+// The cell currently hosting the in-place editor, as "slide-table-cell-{r}-{c}"
+// (the editor host is nested inside the addressed <td>). Used to observe Tab /
+// Shift+Tab navigation on the real contenteditable — the jsdom unit test invokes
+// onKeydown directly and cannot prove the DOM key event drives the gesture.
+function editingCell(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const edit = document.querySelector('[data-testid="slide-table-cell-edit"]');
+    const cell = edit?.parentElement?.closest('[data-testid^="slide-table-cell-"]');
+    return cell?.getAttribute("data-testid") ?? "none";
+  });
+}
+
+test("pptx: Tab/Shift+Tab move between cells, arrows do not (AC-6b, AC-6c)", async ({ page }) => {
+  await openFixture(page, PPTX);
+  const stage = page.getByTestId("stage-workspace");
+  const table = stage.getByTestId("slide-table");
+
+  // Start a cell session (AC-6a) at the top-left cell.
+  await stage.getByTestId("slide-table-cell-0-0").dblclick();
+  await expect(page.getByTestId("slide-table-cell-edit")).toBeVisible();
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-0-0");
+
+  // AC-6b: Tab walks the row and wraps to the next row's first cell.
+  await page.keyboard.press("Tab");
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-0-1");
+  await page.keyboard.press("Tab");
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-0-2");
+  await page.keyboard.press("Tab");
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-1-0");
+  // Shift+Tab steps back across the same wrap.
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-0-2");
+
+  // AC-6c: arrow keys are NOT trapped for grid navigation — the session stays
+  // in the same cell (the caret moves within / leaves at the table edge).
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-0-2");
+
+  // AC-6b: Tab in the last cell appends a row and lands in its first cell.
+  await page.keyboard.press("Escape");
+  await stage.getByTestId("slide-table-cell-2-2").dblclick();
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-2-2");
+  await expect(table.locator("tbody > tr")).toHaveCount(3);
+  await page.keyboard.press("Tab");
+  await expect(table.locator("tbody > tr")).toHaveCount(4);
+  await expect.poll(() => editingCell(page)).toBe("slide-table-cell-3-0");
+});
