@@ -144,3 +144,30 @@ export function odfColorToCss(value: string | null | undefined): string | undefi
   }
   return value.toLowerCase();
 }
+
+// --- ODF length writer (SPEC-092's move from odf/units.ts) ------------------
+// The cm-to-length writer moved here (beside its `odfLengthToCm` inverse) so
+// the hoisted chart-part codec `core/chartPartOdf.ts` — which emits `svg:width`
+// on a `chart:chart` — imports nothing from `../odf/*`. odf/units.ts re-exports
+// it so every existing `odf/*` importer keeps its path. The pt/percentage
+// writers stay odf-local, being reached only from the text product.
+
+/** `value.toFixed(digits)` with trailing fraction zeros trimmed. */
+function trimmedFixed(value: number, digits: number): string {
+  const text = value.toFixed(digits);
+  return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
+}
+
+/** Formats a centimetre value as an ODF length ("1.27cm") that
+ * `odfLengthToCm` parses back to exactly `cm`. Exactness is guaranteed: the
+ * cm parse path multiplies by 1, so the full-precision decimal always
+ * round-trips — the search just prefers the shortest form. */
+export function cmToOdfLength(cm: number): string {
+  for (let digits = 0; digits <= 17; digits++) {
+    const candidate = `${trimmedFixed(cm, digits)}cm`;
+    if (odfLengthToCm(candidate) === cm) {
+      return candidate;
+    }
+  }
+  return `${cm}cm`;
+}
