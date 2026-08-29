@@ -33,6 +33,7 @@ import {
 import { classifyFromSlots, synthesiseStandardLayouts } from "../layouts";
 import { ODP_MIMETYPE } from "./reader";
 import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
+import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "../../core/chartPartOdf";
 
 /** Every media part referenced by an ImageFrame anywhere in the deck (groups
  * descended), from `model.media` — the writer's source of truth for inserted
@@ -71,6 +72,64 @@ function spliceManifest(manifestXml: string, media: MediaPart[]): string {
 }
 
 export { ODP_MIMETYPE };
+
+interface OdpChartPlan {
+  /** Regenerated `Object N/content.xml` bytes by part name. */
+  partBytes: Map<string, Uint8Array>;
+  /** Fresh object directories (e.g. "Object 3") — appended, and given
+   *  `META-INF/manifest.xml` entries for the object dir and its content.xml. */
+  newObjects: string[];
+}
+
+/** Plans the embedded chart objects a rebuild writes (SPEC-092 AC-21). Every
+ * touched chart frame is regenerated: an `edited` chart's `content.xml` is
+ * rewritten in its `Object N/` directory; a chart created here — or a duplicate
+ * sharing a `sourcePart` (D8) — mints a fresh `Object {n}` past the highest
+ * existing, recorded on the frame so the page serialiser resolves its href.
+ * Untouched and unsupported charts are left alone (verbatim pass-through). */
+function planOdpCharts(model: PresentationModel, parts: Map<string, Uint8Array>): OdpChartPlan {
+  const partBytes = new Map<string, Uint8Array>();
+  const newObjects: string[] = [];
+  const claimed = new Set<string>();
+  let maxIndex = 0;
+  for (const name of parts.keys()) {
+    const m = /^Object (\d+)\//.exec(name);
+    if (m) {
+      maxIndex = Math.max(maxIndex, Number(m[1]));
+    }
+  }
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind !== "chart" || frame.xml !== undefined || frame.unsupportedChartXml !== undefined) {
+        continue;
+      }
+      let target = frame.sourcePart;
+      if (!target || claimed.has(target) || !parts.has(target)) {
+        maxIndex += 1;
+        const dir = `Object ${maxIndex}`;
+        target = `${dir}/content.xml`;
+        frame.sourcePart = target;
+        newObjects.push(dir);
+      }
+      claimed.add(target);
+      partBytes.set(target, encode(odfChartContentXml(frame, frame.widthCm, frame.heightCm)));
+    }
+  }
+  return { partBytes, newObjects };
+}
+
+/** `<manifest:file-entry>` rows for a chart plan's fresh object directories:
+ * the `Object N/` dir (media type `application/vnd.oasis.opendocument.chart`)
+ * and its `Object N/content.xml` (`text/xml`). */
+function odpChartManifestEntries(plan: OdpChartPlan): string {
+  return plan.newObjects
+    .map(
+      (dir) =>
+        `<manifest:file-entry manifest:full-path="${escapeXmlAttribute(dir)}/" manifest:media-type="${CHART_OBJECT_CONTENT_TYPE}"/>` +
+        `<manifest:file-entry manifest:full-path="${escapeXmlAttribute(dir)}/content.xml" manifest:media-type="text/xml"/>`,
+    )
+    .join("");
+}
 
 const OFFICE_NS = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
@@ -367,6 +426,11 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   const media = structural ? referencedMedia(model) : [];
   const mediaBytes = new Map(media.map((part) => [part.mediaId, base64ToBytes(part.data)]));
   const appended = media.filter((part) => !parts.has(part.mediaId));
+  // Embedded charts (SPEC-092): regenerate a touched chart's Object N/content.xml
+  // and mint fresh objects, splicing their manifest entries.
+  const charts = structural ? planOdpCharts(model, parts) : { partBytes: new Map<string, Uint8Array>(), newObjects: [] };
+  const chartManifest = odpChartManifestEntries(charts);
+  const manifestChanged = appended.length > 0 || chartManifest.length > 0;
 
   for (const [name, data] of parts) {
     if (name === "mimetype") {
@@ -378,8 +442,12 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
       entries.push({ name, data: encode(stylesXml) });
     } else if (name === "meta.xml" && metaXml !== undefined) {
       entries.push({ name, data: encode(metaXml) });
-    } else if (name === "META-INF/manifest.xml" && appended.length > 0) {
-      entries.push({ name, data: encode(spliceManifest(decoder.decode(data), appended)) });
+    } else if (name === "META-INF/manifest.xml" && manifestChanged) {
+      const withMedia = appended.length > 0 ? spliceManifest(decoder.decode(data), appended) : decoder.decode(data);
+      const withCharts = chartManifest.length > 0 ? withMedia.replace(/<\/manifest:manifest>/, `${chartManifest}</manifest:manifest>`) : withMedia;
+      entries.push({ name, data: encode(withCharts) });
+    } else if (charts.partBytes.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     } else if (mediaBytes.has(name)) {
       entries.push({ name, data: mediaBytes.get(name)! });
     } else {
@@ -388,6 +456,10 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   }
   for (const part of appended) {
     entries.push({ name: part.mediaId, data: mediaBytes.get(part.mediaId)! });
+  }
+  for (const dir of charts.newObjects) {
+    const name = `${dir}/content.xml`;
+    entries.push({ name, data: charts.partBytes.get(name)! });
   }
   return { bytes: await zip(entries) };
 }
