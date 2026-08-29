@@ -207,6 +207,10 @@ export function stripRetention(model: PresentationModel): PresentationModel {
     delete slide.sourceXml;
     delete slide.preserved;
     delete slide.dirty;
+    // A chart frame is unconvertible (SPEC-092 AC-6d, D9): its part lives in the
+    // stripped `opaque` and the from-scratch writers do not synthesise one, so a
+    // cross-format copy drops it — `unsupportedChartXml` or not.
+    slide.frames = slide.frames.filter((frame) => frame.kind !== "chart");
   }
   delete copy.structureDirty;
   // deckDirty is retention (like structureDirty) — the cross-format writer

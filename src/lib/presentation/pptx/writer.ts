@@ -39,6 +39,7 @@ import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStand
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { serializeSlideXml } from "./serialize";
 import { applyNotesContentTypes, planNotes } from "./notesWriter";
+import { chartPartXml } from "../../core/chartPartOoxml";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -112,6 +113,7 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
 function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
+  const charts = planCharts(model, parts);
   const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
   const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
   const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
@@ -124,7 +126,7 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       const relsPath = relsPathFor(slide.partName);
       const relsXml = decode(parts.get(relsPath) ?? encode(""));
       const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
-      const newRels = linkImageRels(slide, rels, slide.partName);
+      const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName)];
       rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName)));
       const outRels = relsForLayoutChange(slide, slide.partName, relsXml, newRels, plan);
       if (outRels !== undefined) {
@@ -159,6 +161,7 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
     combinedContentTypes = spliceContentDefaults(combinedContentTypes, media.defaults);
   }
   combinedContentTypes = spliceLayoutOverrides(combinedContentTypes, plan.overrides);
+  combinedContentTypes = spliceLayoutOverrides(combinedContentTypes, chartContentTypeOverrides(charts));
 
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
@@ -175,10 +178,19 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       entries.push({ name, data: encode(plan.masterXml.get(name)!) });
     } else if (plan.masterRelsXml.has(name)) {
       entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
+    } else if (charts.partBytes.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     } else if (media.override.has(name)) {
       entries.push({ name, data: media.override.get(name)! });
     } else {
       entries.push({ name, data });
+    }
+  }
+  // Genuinely new chart parts (an inserted chart, or a fresh part for a
+  // duplicate sharing a sourcePart).
+  for (const name of charts.newParts) {
+    if (!parts.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     }
   }
   // New notes parts (notes-slide, its rels, a created notes master + rels).
@@ -291,6 +303,93 @@ function linkImageRels(slide: Slide, rels: Map<string, Relationship>, slidePartN
   };
   walk(slide.frames);
   return added;
+}
+
+// --- charts (SPEC-092) ------------------------------------------------------
+
+const CHART_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const CHART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+
+interface ChartPlan {
+  /** Regenerated chart part bytes by part name: an edited existing part is
+   *  overridden in place, a new/minted part is appended. */
+  partBytes: Map<string, Uint8Array>;
+  /** Part names not already in the package — appended and given a
+   *  `CHART_CONTENT_TYPE` Override. */
+  newParts: Set<string>;
+}
+
+/** Plans the chart parts a rebuild writes (AC-18..AC-19, AC-22a). Every
+ * *touched* chart frame (its verbatim `xml` dropped by an edit or a move) is
+ * regenerated from the model: an `edited` chart's part is rewritten at its
+ * `sourcePart`; a chart created here — or a second frame sharing a `sourcePart`
+ * after a slide duplicate (D8) — mints a fresh `ppt/charts/chart{n}.xml` past
+ * the highest existing index, recorded on the frame so the slide serialiser
+ * resolves its relationship. An untouched chart (verbatim `xml`) and an
+ * unsupported chart (never rewritten) are left alone — their parts pass through
+ * `opaque` byte-identical, workbook and `.rels` included. */
+function planCharts(model: PresentationModel, parts: Map<string, Uint8Array>): ChartPlan {
+  const partBytes = new Map<string, Uint8Array>();
+  const newParts = new Set<string>();
+  const claimed = new Set<string>();
+  let maxIndex = 0;
+  for (const name of parts.keys()) {
+    const m = /^ppt\/charts\/chart(\d+)\.xml$/.exec(name);
+    if (m) {
+      maxIndex = Math.max(maxIndex, Number(m[1]));
+    }
+  }
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind !== "chart" || frame.xml !== undefined || frame.unsupportedChartXml !== undefined) {
+        continue;
+      }
+      let target = frame.sourcePart;
+      if (!target || claimed.has(target)) {
+        maxIndex += 1;
+        target = `ppt/charts/chart${maxIndex}.xml`;
+        frame.sourcePart = target;
+      }
+      claimed.add(target);
+      partBytes.set(target, encode(chartPartXml(frame)));
+      if (!parts.has(target)) {
+        newParts.add(target);
+      }
+    }
+  }
+  return { partBytes, newParts };
+}
+
+/** Adds a chart relationship to `rels` for any touched chart frame whose
+ * `sourcePart` is not yet resolvable in it (a new part, or a rel the source
+ * slide never carried), minting ids after the highest existing one. Mutates
+ * `rels`; returns the new relationships. Call after `linkImageRels` so the two
+ * never mint the same id. */
+function linkChartRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
+  let maxId = 0;
+  const resolved = new Set<string>();
+  for (const rel of rels.values()) {
+    maxId = Math.max(maxId, relIdNumber(rel.id));
+    if (rel.type === CHART_REL) {
+      resolved.add(resolvePartPath(slidePartName, rel.target));
+    }
+  }
+  const added: Relationship[] = [];
+  for (const frame of slide.frames) {
+    if (frame.kind === "chart" && frame.xml === undefined && frame.sourcePart && !resolved.has(frame.sourcePart)) {
+      maxId += 1;
+      const rel: Relationship = { id: `rId${maxId}`, type: CHART_REL, target: relativeTarget(slidePartName, frame.sourcePart) };
+      rels.set(rel.id, rel);
+      resolved.add(frame.sourcePart);
+      added.push(rel);
+    }
+  }
+  return added;
+}
+
+/** `<Override>` content-type entries for a chart plan's genuinely new parts. */
+function chartContentTypeOverrides(plan: ChartPlan): string[] {
+  return [...plan.newParts].map((name) => `<Override PartName="/${name}" ContentType="${CHART_CONTENT_TYPE}"/>`);
 }
 
 /** The `.rels` XML of a slide with `newRels` appended before `</Relationships>`
@@ -616,10 +715,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   // new part names are added.
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
+  const charts = planCharts(model, parts);
   const addedSlidePaths = emitted.filter((entry) => entry.kind !== "verbatim").map((entry) => entry.emitName);
   const rebuiltContentTypes = spliceLayoutOverrides(
-    spliceContentDefaults(rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]), media.defaults),
-    plan.overrides,
+    spliceLayoutOverrides(
+      spliceContentDefaults(rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]), media.defaults),
+      plan.overrides,
+    ),
+    chartContentTypeOverrides(charts),
   );
 
   // A dirty slide kept under its own part name is rebuilt in place; one that
@@ -631,7 +734,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const relsPath = relsPathFor(entry.emitName);
       const relsXml = decode(parts.get(relsPath) ?? encode(""));
       const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
-      const newRels = linkImageRels(entry.slide, rels, entry.emitName);
+      const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
       rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
       const outRels = relsForLayoutChange(entry.slide, entry.emitName, relsXml, newRels, plan);
       if (outRels !== undefined) {
@@ -657,7 +760,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
       const sourceRelsXml = sourceRelsBytes ? stripNotesSlideRel(decode(sourceRelsBytes)) : "";
       const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
-      const newRels = entry.slide.dirty ? linkImageRels(entry.slide, rels, entry.emitName) : [];
+      const newRels = entry.slide.dirty
+        ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)]
+        : [];
       const xml = entry.slide.dirty
         ? encode(slideXml(entry.slide, rels, entry.emitName))
         : parts.get(entry.sourceName)!;
@@ -671,7 +776,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath, plan));
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-      const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
+      const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
       baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
       baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
     }
@@ -745,7 +850,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     } else if (plan.masterRelsXml.has(name)) {
       entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
     } else {
-      entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
+      entries.push({ name, data: rebuiltOwn.get(name) ?? charts.partBytes.get(name) ?? media.override.get(name) ?? data });
+    }
+  }
+  // Genuinely new chart parts (an inserted chart, or a fresh part for a
+  // duplicate sharing a sourcePart).
+  for (const name of charts.newParts) {
+    if (!parts.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     }
   }
   const emittedFresh = new Set<string>();
