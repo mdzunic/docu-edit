@@ -57,6 +57,8 @@ export function frameNoun(frame: SlideFrame): string {
       return frame.label || "object";
     case "table":
       return "table";
+    case "chart":
+      return "chart";
     default:
       return "text box";
   }
@@ -75,6 +77,8 @@ export function frameAccessibleName(frame: SlideFrame): string {
       return shapeDefinition(frame.geometry)?.label ?? "Shape";
     case "table":
       return "Table";
+    case "chart":
+      return "Chart";
     default:
       return frame.role ? "Placeholder" : "Text box";
   }

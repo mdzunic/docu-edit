@@ -19,6 +19,7 @@ import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
 import type { ShapeGeometry } from "../core/shapes";
+import type { ChartVisual } from "../core/charts";
 
 /** The presentation file formats, by the package family they ride in:
  * `.pptx` is OPC/PresentationML, `.odp` is an ODF package. */
@@ -221,6 +222,29 @@ export interface ForeignFrame extends SlideFrameBase {
   noBounds?: true;
 }
 
+/** A chart on a slide (SPEC-092): the product-neutral `ChartVisual` (chart
+ * type, categories, series, options + optional out-of-catalogue
+ * `unsupportedChartXml`) placed on the slide stage. Its part bytes live in
+ * `PresentationModel.opaque` under `sourcePart` (the chart part name, never
+ * bytes on the frame — same rule as the text `Chart` block); `edited` and
+ * `xml` decide regenerate-vs-verbatim, exactly SPEC-052's switch. */
+export interface ChartFrame extends SlideFrameBase, ChartVisual {
+  kind: "chart";
+  /** "ppt/charts/chart1.xml" | "Object 1/content.xml" — a NAME into
+   *  `model.opaque`, never bytes; absent for a chart created here. Not
+   *  called `id`, which equalStructural's IGNORED_KEYS would drop. */
+  sourcePart?: string;
+  /** Set only by the data sheet / options panel — the switch the writer reads
+   *  to regenerate the part from the model vs. re-emit `sourcePart`'s bytes.
+   *  A move/resize/reorder never sets it (they don't touch the chart part). */
+  edited?: true;
+  /** Verbatim source `p:graphicFrame` / `draw:frame`, re-emitted while the
+   *  frame is untouched; deleted by any geometry or data change, the
+   *  serialiser then writing the canonical container. In XML_STRING_KEYS so it
+   *  compares canonically under equalStructural. */
+  xml?: string;
+}
+
 /** The default cell padding (cm) a cell renders with when it carries no
  * explicit `paddingCm` (SPEC-091 AC-1). ~1/20 inch, matching PowerPoint's
  * default `a:tcPr` internal margins. */
@@ -293,7 +317,7 @@ export interface TableFrame extends SlideFrameBase {
   odpColumnStyleNames?: (string | undefined)[];
 }
 
-export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | GroupFrame | ForeignFrame | TableFrame;
+export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | ChartFrame | GroupFrame | ForeignFrame | TableFrame;
 
 export interface Slide {
   id: string; // minted at read, never serialised

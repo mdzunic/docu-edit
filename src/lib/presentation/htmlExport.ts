@@ -256,7 +256,17 @@ function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
       return renderForeignFrame(frame, fid);
     case "table":
       return renderTableFrame(frame, fid);
+    case "chart":
+      return renderChartFrame(frame, fid);
   }
+}
+
+/** A chart on an exported slide (SPEC-092). This exporter has no canvas, so a
+ * chart renders as a positioned placeholder box for now; SPEC-088 replaces it
+ * with a `core/chartCanvas.ts`-painted image. */
+function renderChartFrame(frame: Extract<SlideFrame, { kind: "chart" }>, fid: string): string {
+  const style = positionStyle(frame);
+  return `<div class="frame chart" data-fid="${fid}" style="${esc(style.join(";"))}"><span class="foreign-label">Chart</span></div>`;
 }
 
 // --- animation data ---------------------------------------------------------
