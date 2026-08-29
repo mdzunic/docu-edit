@@ -38,7 +38,6 @@ import {
   type ShapeFrame,
   type GroupFrame,
   type TextFrame,
-  type ForeignFrame,
 } from "./model";
 import { slideOutline } from "./slideModel";
 import { addSlide, createBlankPresentation, deleteSlide, duplicateSlide, moveSlide } from "./slides";
