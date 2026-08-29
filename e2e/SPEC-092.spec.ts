@@ -49,8 +49,13 @@ test("pptx: charts paint, edit through the toolbar, insert, and round-trip", asy
   await frames.nth(3).dblclick();
   await expect(page.getByTestId("chart-data-grid")).toHaveCount(0);
 
-  // AC-14: select the column chart (first frame) → its toolbar offers Edit data.
-  await frames.nth(0).click();
+  // AC-14: double-clicking a supported chart opens its data sheet directly.
+  await frames.nth(0).dblclick();
+  await expect(page.getByTestId("chart-data-grid")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("chart-data-grid")).toHaveCount(0);
+
+  // AC-14: the column chart stays selected → its toolbar offers Edit data.
   await expect(page.getByTestId("chart-edit-data-button")).toBeVisible();
 
   // AC-14/16: Edit data → change a value cell → Done → the sheet closes.
