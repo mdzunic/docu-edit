@@ -16,6 +16,7 @@ import {
   insertImageFrame,
   insertImageRect,
   insertShapeFrame,
+  insertTableFrame,
   insertTextBoxFrame,
   type FrameRect,
 } from "../../lib/presentation/frames";
@@ -135,6 +136,19 @@ export function useFrameInsertion(deps: FrameInsertionDeps) {
     }
   }
 
+  // --- table (SPEC-091 AC-5) ------------------------------------------------
+
+  /** Inserts a `rows`×`cols` table centred at 80% of the slide width and
+   * selects it (the caret lands in cell (0,0) once a cell session opens). */
+  function insertTable(rows: number, cols: number): void {
+    const model = deps.model.value;
+    if (!model) return;
+    deps.record("Insert table");
+    const id = insertTableFrame(model, deps.currentIndex.value, rows, cols);
+    deps.selection.select(id);
+    deps.commit();
+  }
+
   // --- image picker ---------------------------------------------------------
 
   async function insertImageFile(file: File): Promise<void> {
@@ -181,6 +195,7 @@ export function useFrameInsertion(deps: FrameInsertionDeps) {
     disarm,
     onSurfacePointerDown,
     insertImageFile,
+    insertTable,
     accept: PRESENTATION_IMAGE_ACCEPT,
   };
 }

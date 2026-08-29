@@ -61,6 +61,18 @@ describe("useFrameInsertion arm state", () => {
     const { insertion } = setup();
     expect(insertion.accept).toBe("image/png,image/jpeg,image/gif,image/webp");
   });
+
+  it("inserts a table centred at 80% width and selects it (AC-5)", () => {
+    const { model, selection, insertion } = setup();
+    insertion.insertTable(3, 4);
+    const table = model.value!.slides[0].frames.find((f) => f.kind === "table");
+    expect(table).toBeTruthy();
+    expect(selection.selectedFrameId.value).toBe(table!.id);
+    if (table && table.kind === "table") {
+      expect(table.rows).toHaveLength(3);
+      expect(table.columnWidthsCm).toHaveLength(4);
+    }
+  });
 });
 
 describe("useFrameInsertion image picker (AC-4/9)", () => {

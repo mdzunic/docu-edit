@@ -327,6 +327,7 @@ onBeforeUnmount(() => {
         @insert-text-box="stageEdit.insertion.armTextBox()"
         @insert-shape="stageEdit.insertion.armShape($event)"
         @insert-image="stageEdit.insertion.insertImageFile($event)"
+        @insert-table="(rows, cols) => stageEdit.insertion.insertTable(rows, cols)"
         @arrange="stageEdit.manipulation.arrange($event)"
         @ungroup="stageEdit.manipulation.ungroup()"
         @set-fill="stageEdit.setFill($event)"
