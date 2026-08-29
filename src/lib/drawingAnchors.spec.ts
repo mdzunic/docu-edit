@@ -27,8 +27,17 @@ function shape(overrides: Partial<Shape> = {}): Shape {
   return { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides };
 }
 
-function image(): Image {
-  return { type: "image", mediaId: "m1", naturalWidthPx: 10, naturalHeightPx: 10, widthCm: 2, heightCm: 2, wrap: "square" };
+function image(overrides: Partial<Image> = {}): Image {
+  return {
+    type: "image",
+    mediaId: "m1",
+    naturalWidthPx: 10,
+    naturalHeightPx: 10,
+    widthCm: 2,
+    heightCm: 2,
+    wrap: "square",
+    ...overrides,
+  };
 }
 
 function doc(...blocks: Block[]): DocumentModel {
@@ -38,10 +47,14 @@ function doc(...blocks: Block[]): DocumentModel {
 }
 
 describe("isFloatingDrawing", () => {
-  it("is true for a non-inline shape and false for inline, images and paragraphs", () => {
+  it("is true for any non-inline drawing and false for inline ones and paragraphs", () => {
     expect(isFloatingDrawing(shape())).toBe(true);
     expect(isFloatingDrawing(shape({ wrap: "inline" }))).toBe(false);
-    expect(isFloatingDrawing(image())).toBe(false);
+    // Image joined this list when it gained real placement: its offsets
+    // measure from the anchor paragraph's own origin, which only holds if it
+    // pairs and hoists the same way every other floating drawing does.
+    expect(isFloatingDrawing(image())).toBe(true);
+    expect(isFloatingDrawing(image({ wrap: "inline" }))).toBe(false);
     expect(isFloatingDrawing(paragraph("p"))).toBe(false);
     expect(isFloatingDrawing(undefined)).toBe(false);
   });

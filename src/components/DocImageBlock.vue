@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { imageDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { onMounted, onUpdated, ref, useTemplateRef } from "vue";
+import { drawingWrapSpacerStyle, imageDisplayStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
+import { pxToCm } from "../lib/core/units";
 import { asImage, asTrackChangesDisplayMode } from "../lib/documentModel";
 
 // One image block on the canvas (SPEC-024). Runtime prop declarations, not
@@ -8,7 +10,7 @@ import { asImage, asTrackChangesDisplayMode } from "../lib/documentModel";
 // `data-block` sit on the anchor span (not the `<img>` itself) so
 // lib/domCaret.ts's `[data-section][data-block]` lookups resolve to a
 // stable element regardless of the image's own wrap-mode positioning
-// (behind/infront images position the `<img>` absolutely relative to this
+// (a floating image positions the `<img>` absolutely relative to this
 // anchor — see lib/renderFormatting.ts's imageDisplayStyle).
 // The parent (DocumentView.vue) also binds data-section/data-block on this
 // component's own `<component :is>` tag (as `undefined`, mirroring
@@ -37,16 +39,57 @@ const props = defineProps({
 
 defineEmits(["select"]);
 
-const floatingWrap = ["behind", "infront"];
+// Every non-inline wrap now positions absolutely from the anchor's own
+// top-left (imageDisplayStyle), so all four floating modes need the
+// zero-footprint anchor — not just behind/infront as before, when `square`
+// was a plain CSS float with no offset to honour.
+const floatingWrap = ["square", "topAndBottom", "behind", "infront"];
+
+// The text-column width the wrap spacer needs (drawingWrapSpacerStyle):
+// measured off the anchor's own block container, so an image inside a
+// SPEC-030 column wraps within that column. Mirrors DocShapeBlock.vue's
+// identical measure-in-component pattern.
+const anchorEl = useTemplateRef("anchorEl");
+const columnWidthCm = ref(0);
+
+function measureColumnWidth() {
+  const parent = anchorEl.value instanceof HTMLElement ? anchorEl.value.parentElement : null;
+  const cm = parent ? pxToCm(parent.clientWidth) : 0;
+  if (Math.abs(cm - columnWidthCm.value) > 0.01) {
+    columnWidthCm.value = cm;
+  }
+}
+
+onMounted(measureColumnWidth);
+onUpdated(measureColumnWidth);
+
+/** The in-flow float that reserves this image's text room (square /
+ * topAndBottom) — null for every other wrap mode. The image itself stays an
+ * absolute overlay, so this is what makes its wrap real rather than
+ * decorative, exactly as it does for a shape. */
+function wrapSpacerStyle() {
+  return drawingWrapSpacerStyle(asImage(props.block), columnWidthCm.value);
+}
 </script>
 
 <template>
   <span
+    ref="anchorEl"
     class="doc-image-anchor"
     :class="{ 'doc-image-anchor-floating': floatingWrap.includes(block.wrap) }"
     :data-section="section"
     :data-block="blockIndex"
   >
+    <!-- The wrap spacer: an invisible float in the TEXT flow that the
+         surrounding lines yield to (square / topAndBottom). The image below
+         stays an absolute overlay; this is what makes its wrap mode real. -->
+    <span
+      v-if="wrapSpacerStyle() && !trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
+      class="doc-image-wrap-spacer"
+      data-testid="image-wrap-spacer"
+      aria-hidden="true"
+      :style="wrapSpacerStyle()"
+    />
     <img
       v-show="!trackChangeBlockHidden(block.changes, asTrackChangesDisplayMode(displayMode))"
       class="doc-image"
@@ -67,8 +110,23 @@ const floatingWrap = ["behind", "infront"];
   line-height: 0;
 }
 
+/* SPEC-078's zero-footprint floating anchor, the same one DocShapeBlock.vue
+   uses and for the same reasons (see its own comment): a zero-height BLOCK,
+   so the wrap spacer's float can escape into the page's text flow instead of
+   being trapped in an inline-block's own formatting context, and so the
+   anchor's top-left stays pinned at the anchor paragraph's top-left — the
+   origin the image's `left`/`top` (offsetXCm/offsetYCm) measure from. An
+   inline-block here added a baseline's worth of drift, which is exactly the
+   "lands below where the file said" bug this shape of anchor exists to
+   avoid. */
 .doc-image-anchor-floating {
+  display: block;
+  height: 0;
   position: relative;
+}
+
+.doc-image-wrap-spacer {
+  pointer-events: none;
 }
 
 .doc-image {

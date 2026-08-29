@@ -244,6 +244,19 @@ const HEIGHT_CM = 3;
   const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
   const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
   const WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+  const MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+  const WP14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing";
+  const V = "urn:schemas-microsoft-com:vml";
+  const O = "urn:schemas-microsoft-com:office:office";
+
+  // Declared where Word declares them — on `w:document`. MCE resolves an
+  // `mc:Choice/@Requires` prefix through the document's own declarations, so
+  // declaring `wps` only on the inner `wps:wsp` would leave the condition
+  // unevaluable and send every reader to the VML fallback.
+  const DOCUMENT_NAMESPACES =
+    ` xmlns:w="${W}" xmlns:mc="${MC}" xmlns:wp="${WP}" xmlns:a="${A}"` +
+    ` xmlns:wps="${WPS}" xmlns:wp14="${WP14}" xmlns:v="${V}" xmlns:o="${O}"` +
+    ' mc:Ignorable="wp14"';
 
   const cmToEmu = (cm) => Math.round(cm * 360000);
   const ptToEmu = (pt) => Math.round(pt * 12700);
@@ -309,17 +322,31 @@ const HEIGHT_CM = 3;
       (fill ? `<a:solidFill><a:srgbClr val="${FILL}"/></a:solidFill>` : "<a:noFill/>") +
       `<a:ln w="${ptToEmu(OUTLINE.widthPt)}"><a:solidFill><a:srgbClr val="${OUTLINE.color}"/></a:solidFill></a:ln>` +
       "</wps:spPr>";
-    const wsp = `<wps:wsp xmlns:wps="${WPS}"><wps:cNvSpPr/>${spPr}</wps:wsp>`;
-    const graphic = `<a:graphic xmlns:a="${A}"><a:graphicData uri="${WPS}">${wsp}</a:graphicData></a:graphic>`;
-    return (
-      `<w:drawing xmlns:wp="${WP}">` +
+    const wsp = `<wps:wsp><wps:cNvSpPr/>${spPr}</wps:wsp>`;
+    const graphic = `<a:graphic><a:graphicData uri="${WPS}">${wsp}</a:graphicData></a:graphic>`;
+    const drawing =
+      "<w:drawing>" +
       '<wp:inline distT="0" distB="0" distL="0" distR="0">' +
       `<wp:extent cx="${cx}" cy="${cy}"/>` +
       '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
       `<wp:docPr id="${id}" name="Shape ${id}" descr="${escapeXml(altText)}"/>` +
       "<wp:cNvGraphicFramePr/>" +
       graphic +
-      "</wp:inline></w:drawing>"
+      "</wp:inline></w:drawing>";
+    // Word writes no `wps:wsp` bare: every one is an `mc:Choice Requires="wps"`
+    // beside a legacy VML `mc:Fallback` that Word 2007 reads instead. A bare
+    // drawing here would test markup no producer emits — and, until the reader
+    // learned to see through the wrapper, hid this whole fixture's real-world
+    // equivalent from it. The fallback is real markup so a regression that
+    // took the Fallback branch would blank these shapes, not quietly pass.
+    const spid = `_x0000_s${1025 + id}`;
+    return (
+      '<mc:AlternateContent><mc:Choice Requires="wps">' +
+      drawing +
+      `</mc:Choice><mc:Fallback><w:pict><v:shape id="${spid}" o:spid="${spid}"` +
+      ` style="width:${WIDTH_CM}cm;height:${HEIGHT_CM}cm" coordsize="${GRID},${GRID}"` +
+      ` path="m0,0l${GRID},${GRID}xe" fillcolor="#${FILL.toLowerCase()}"/></w:pict></mc:Fallback>` +
+      "</mc:AlternateContent>"
     );
   }
 
@@ -332,7 +359,7 @@ const HEIGHT_CM = 3;
   drawings.push(shapeDrawing({ id: nextId++, geomXml: unsupportedGeomXml, fill: true, altText: UNSUPPORTED_LABEL }));
 
   const documentXml =
-    `${XML}<w:document xmlns:w="${W}"><w:body>` +
+    `${XML}<w:document${DOCUMENT_NAMESPACES}><w:body>` +
     drawings.map((d) => `<w:p><w:r>${d}</w:r></w:p>`).join("") +
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
     '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>' +

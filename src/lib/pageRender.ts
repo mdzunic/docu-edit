@@ -188,7 +188,12 @@ export function asPageColumns(value: unknown): PageColumns | null {
 export function hoistFloatingDrawingEntries(entries: RenderEntry[], model: DocumentModel): RenderEntry[] {
   let result: RenderEntry[] | null = null;
   for (const entry of entries) {
-    if (entry.kind !== "shape" && entry.kind !== "chart" && entry.kind !== "connector") {
+    if (
+      entry.kind !== "shape" &&
+      entry.kind !== "chart" &&
+      entry.kind !== "connector" &&
+      entry.kind !== "image"
+    ) {
       continue;
     }
     const section = entry.sectionProp;

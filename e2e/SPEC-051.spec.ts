@@ -11,10 +11,15 @@ import { fileURLToPath } from "node:url";
 //   0  line              7  star5              14 group member A (rect)
 //   1  arrow             8  rightArrow         15 group member B (roundRect)
 //   2  rect              9  leftArrow          16 text box (rect, no fill/outline)
-//   3  roundRect        10  upArrow            17 unsupported geometry ("pentagon")
-//   4  ellipse          11  downArrow
-//   5  triangle         12  wedgeRectCallout
+//   3  roundRect        10  upArrow            17 unsupported geometry ("gear9"/"gear")
+//   4  ellipse          11  downArrow          18 group container member A
+//   5  triangle         12  wedgeRectCallout   19 group container member B
 //   6  diamond          13  wedgeRoundRectCallout
+//
+// Every .docx drawing here is wrapped in `mc:AlternateContent` beside a legacy
+// VML `mc:Fallback`, which is what Word actually writes — the fixture emitted
+// bare `<w:drawing>` until 2026-08-29, so this whole file passed against
+// markup no producer emits while no Word shape reached the reader at all.
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const docxShapesFixture = join(fixturesDir, "word-shapes.docx");
@@ -99,11 +104,16 @@ async function canvasHasOpaquePixel(proxy: Locator): Promise<boolean> {
  * two fixtures are structurally identical (same geometries, same document
  * order, same alt text), so this runs once per format instead of
  * duplicating every assertion. */
-function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: string): void {
+function registerFixtureTests(
+  formatLabel: string,
+  fixturePath: string,
+  acTag: string,
+  drawingCount: number,
+): void {
   test.describe(`SPEC-051 — opening ${formatLabel}'s shape fixture (${acTag})`, () => {
-    test(`renders all 18 shapes, one proxy per drawing, in document order (${acTag})`, async ({ page }) => {
+    test(`renders all ${drawingCount} shapes, one proxy per drawing, in document order (${acTag})`, async ({ page }) => {
       await openFixture(page, fixturePath);
-      await expect(drawings(page)).toHaveCount(18);
+      await expect(drawings(page)).toHaveCount(drawingCount);
     });
 
     test(`renders every catalogue geometry with a focusable, correctly labelled ARIA proxy (${acTag})`, async ({ page }) => {
@@ -167,8 +177,73 @@ function registerFixtureTests(formatLabel: string, fixturePath: string, acTag: s
   });
 }
 
-registerFixtureTests("word-shapes.docx", docxShapesFixture, "AC-63");
-registerFixtureTests("lo-shapes.odt", odtShapesFixture, "AC-64");
+registerFixtureTests("word-shapes.docx", docxShapesFixture, "AC-63", 20);
+registerFixtureTests("lo-shapes.odt", odtShapesFixture, "AC-64", 20);
+
+// Each producer's own Group command writes a real container — Word a
+// `wpg:wgp` (inside `mc:AlternateContent`, like every Word shape),
+// LibreOffice a `draw:g` — not the flat `de:group` pair at 14/15. Neither had
+// a reader until 2026-08-29, and on the Word side the wrapper had to be seen
+// through first; these assertions are what would fail if either regressed,
+// since the .docx fixture's VML `mc:Fallback` renders nothing.
+function registerGroupContainerTests(
+  formatLabel: string,
+  fixturePath: string,
+  memberLabels: [string, string],
+  spanCm: { x: number; y: number },
+): void {
+  test.describe(`SPEC-051 — a real group container (${formatLabel})`, () => {
+    test("flattens the container into one proxy per member, at their mapped positions", async ({ page }) => {
+      await openFixture(page, fixturePath);
+      const memberA = drawingAt(page, 18);
+      const memberB = drawingAt(page, 19);
+      await expect(memberA).toHaveAttribute("aria-label", memberLabels[0]);
+      await expect(memberB).toHaveAttribute("aria-label", memberLabels[1]);
+
+      // The .docx group's child space is 2x its box on both axes, so a reader
+      // that ignored `chExt` would size these 4cm and place B twice as far
+      // across; the .odt group's members carry their own coordinates.
+      const boxA = await memberA.boundingBox();
+      const boxB = await memberB.boundingBox();
+      expect(boxA).not.toBeNull();
+      expect(boxB).not.toBeNull();
+      const cmToPx = boxA!.width / 2;
+      expect(boxB!.x - boxA!.x).toBeCloseTo(spanCm.x * cmToPx, -1);
+      expect(boxB!.y - boxA!.y).toBeCloseTo(spanCm.y * cmToPx, -1);
+    });
+
+    test("both members belong to one group — selecting either offers Ungroup", async ({ page }) => {
+      await openFixture(page, fixturePath);
+      await drawingAt(page, 18).click();
+      await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+      await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+    });
+
+    test("its members do not join the fixture's own de:group pair", async ({ page }) => {
+      // The imported group's ordinal is minted above every `de:group` already
+      // in the file (the pair at 14/15 uses 1), so Ungroup on a member of one
+      // must leave the other group intact.
+      await openFixture(page, fixturePath);
+      await drawingAt(page, 18).click();
+      await page.getByTestId("shape-ungroup-button").click();
+      await drawingAt(page, 14).click();
+      await expect(page.getByTestId("shape-ungroup-button")).toBeVisible();
+    });
+  });
+}
+
+registerGroupContainerTests(
+  "wpg:wgp, word-shapes.docx",
+  docxShapesFixture,
+  ["Word group member A", "Word group member B"],
+  { x: 4, y: 1 },
+);
+registerGroupContainerTests(
+  "draw:g, lo-shapes.odt",
+  odtShapesFixture,
+  ["ODF group member A", "ODF group member B"],
+  { x: 4, y: 1 },
+);
 
 // --- interactive editing (fix-forward retry: AC-11, AC-17, AC-18, AC-27,
 // AC-28, AC-34 — previously unreachable from the UI or wrong) -------------

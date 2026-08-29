@@ -397,25 +397,34 @@ export function tableColumnWidth(table: Table, index: number): string {
   return totalCm > 0 ? `${(widthCm / totalCm) * 100}%` : "auto";
 }
 
-/** An image's size and wrap-mode rendering (SPEC-024 AC-13, AC-14):
- * "inline" is a plain block, no different from a paragraph's own box;
- * "square" floats left with text wrapping around it; "behind"/"infront"
- * float out of flow entirely (positioned at their block's own slot via the
- * zero-size anchor DocImageBlock.vue renders around them), stacked behind
- * or in front of the surrounding text by z-index. */
+/** An image's size and position rendering (SPEC-024 AC-13, AC-14) —
+ * identical logic to shapeDisplayStyle, which it deliberately mirrors: an
+ * Image carries the same `offsetXCm`/`offsetYCm`/`zOrder` from
+ * DrawingPlacement, so a picture and a shape floating at the same spot in the
+ * source file land at the same spot on the page.
+ *
+ * It did not always. Until image placement landed, this pinned every floating
+ * image to `left: 0; top: 0` and floated a `square` one to the column's left
+ * edge, because the readers never read `wp:positionH`/`svg:x` at all — a
+ * picture Word had put halfway down the page opened at its anchor's origin.
+ * `square` now reserves its text room through drawingWrapSpacerStyle, the
+ * same in-flow float every other drawing kind uses, rather than a CSS float
+ * that could not honour an offset. "inline" ignores the offsets entirely, per
+ * "Default position — when offsets are absent". */
 export function imageDisplayStyle(image: Image): Record<string, string> {
   const style: Record<string, string> = {
     width: `${image.widthCm}cm`,
     height: `${image.heightCm}cm`,
   };
-  if (image.wrap === "square") {
-    style.float = "left";
-    style.marginRight = "0.35cm";
-  } else if (image.wrap === "behind" || image.wrap === "infront") {
+  if (image.wrap !== "inline") {
     style.position = "absolute";
-    style.left = "0";
-    style.top = "0";
-    style.zIndex = image.wrap === "behind" ? "0" : "5";
+    style.left = `${image.offsetXCm ?? 0}cm`;
+    style.top = `${image.offsetYCm ?? 0}cm`;
+    // The same two far-apart tiers shapeDisplayStyle uses, so z-order
+    // commands order pictures and shapes against each other while "behind"
+    // still always paints under the text.
+    const order = image.zOrder ?? 0;
+    style.zIndex = String(image.wrap === "behind" ? order - 100000 : 100000 + order);
   }
   return style;
 }
