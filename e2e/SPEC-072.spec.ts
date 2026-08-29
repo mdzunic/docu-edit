@@ -119,4 +119,42 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     // The middle landed on the exact midpoint, 5cm.
     expect(ys[1]).toBe(cmToEmu(5));
   });
+
+  test("dragging a drawing near another's centre shows a guide and snaps into alignment (AC-18,23,26,55,56)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 360, 220);
+    await insertShapeAt(page, "rect", 620, 420);
+    await expect(drawings(page)).toHaveCount(2);
+
+    const anchor = (await drawings(page).nth(0).boundingBox())!;
+    const mover = drawings(page).nth(1);
+    const box = (await mover.boundingBox())!;
+
+    const anchorCentreX = anchor.x + anchor.width / 2;
+    const moverCentreX = box.x + box.width / 2;
+    // Grab the mover's lower half and drag its centre to 5px shy of the
+    // anchor's centre x — within the 8px snap threshold but not aligned.
+    const grabX = moverCentreX;
+    const grabY = box.y + box.height * 0.72;
+    await page.mouse.move(grabX, grabY);
+    await page.mouse.down();
+    await page.mouse.move(anchorCentreX - 5, grabY, { steps: 12 });
+
+    // A guide line is shown while the edges line up (AC-18/21), and it is a
+    // print-excluded overlay (AC-57).
+    const guides = page.getByTestId("drawing-guides");
+    await expect(guides).toBeVisible();
+    await expect(guides.locator(".drawing-guide").first()).toBeVisible();
+
+    await page.mouse.up();
+    // Guides vanish on release (AC-56).
+    await expect(page.getByTestId("drawing-guides")).toHaveCount(0);
+
+    // Both shapes are the default 3cm wide, so equal centres mean equal left
+    // offsets. Snapping pulled the released-5px-off drawing into alignment:
+    // the two offsets now differ by far less than those 5px (~0.13cm).
+    const offsets = await readOffsetsEmu(page);
+    expect(offsets).toHaveLength(2);
+    expect(Math.abs(offsets[0].x - offsets[1].x)).toBeLessThan(cmToEmu(0.05));
+  });
 });
