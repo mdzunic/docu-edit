@@ -15,6 +15,7 @@
 // life of the view (AC-2, AC-3, AC-4).
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import { usePreferences } from "../../composables/usePreferences";
+import { CM_PER_PX } from "../../lib/core/units";
 import {
   documentStart,
   caretSelection,
@@ -24,8 +25,6 @@ import {
   resolveColumnWidthsCm,
   sectionColumns,
   sectionContentWidthCm,
-  sectionMargins,
-  sectionPageSize,
   type DocumentModel,
 } from "../../lib/documentModel";
 import {
@@ -81,12 +80,6 @@ function unionRect(rects: AlignRect[]): AlignRect {
     maxB = Math.max(maxB, r.yCm + r.hCm);
   }
   return { xCm: minX, yCm: minY, wCm: maxR - minX, hCm: maxB - minY };
-}
-
-function contentHeightCm(model: DocumentModel, section: number): number {
-  const page = sectionPageSize(model, section);
-  const margins = sectionMargins(model, section);
-  return Math.max(0.1, page.heightCm - margins.topCm - margins.bottomCm);
 }
 
 /** The width of the drawing's column (SPEC-030). Uses the first column's width,
@@ -177,33 +170,96 @@ export function useDrawingArrange(deps: DrawingArrangeDeps): DrawingArrangeApi {
     }));
   }
 
-  function alignSingle(model: DocumentModel, location: ShapeLocation, edge: AlignEdge): DrawingPositionUpdate[] {
-    const shape = shapeAt(model, location);
-    if (!shape) {
-      return [];
+  /** An element's top-left in `.pages`-relative centimetres, through the live
+   * zoom (SPEC-063's clientToContentPx). */
+  function pageTopLeftCm(el: Element): { xCm: number; yCm: number } {
+    const box = el.getBoundingClientRect();
+    const point = deps.clientToContentPx(box.left, box.top);
+    return { xCm: point.x * CM_PER_PX, yCm: point.y * CM_PER_PX };
+  }
+
+  /** An element's rectangle in `.pages`-relative centimetres. */
+  function pageRectCm(el: Element): AlignRect {
+    const box = el.getBoundingClientRect();
+    const topLeft = deps.clientToContentPx(box.left, box.top);
+    const bottomRight = deps.clientToContentPx(box.right, box.bottom);
+    return {
+      xCm: topLeft.x * CM_PER_PX,
+      yCm: topLeft.y * CM_PER_PX,
+      wCm: (bottomRight.x - topLeft.x) * CM_PER_PX,
+      hCm: (bottomRight.y - topLeft.y) * CM_PER_PX,
+    };
+  }
+
+  /** The single-drawing align reference rectangle, in `.pages`-relative cm,
+   * measured from the page holding the drawing: the content area inside the
+   * margins by default (AC-2), the whole page, or the first column (AC-3). It
+   * must be measured, not computed from the model, because the offset written
+   * back is anchor-relative (the renderer positions a drawing at its offset from
+   * its anchor paragraph, not from the page origin) — so the target has to be
+   * expressed in the same laid-out page space the drawing's own rectangle is. */
+  function singleReferenceRect(model: DocumentModel, anchorEl: Element, section: number): AlignRect | null {
+    const page =
+      anchorEl.closest(".page-content") ??
+      (deps.pageRef.value as Element | null)?.querySelector(".page-content") ??
+      null;
+    if (!page) {
+      return null;
     }
     const reference = alignToReference.value;
-    const section = location.section;
-    const horizontal = edge === "left" || edge === "centerH" || edge === "right";
-    if (horizontal) {
-      const refWidth =
-        reference === "page"
-          ? sectionPageSize(model, section).widthCm
-          : reference === "column"
-            ? columnWidthCm(model, section)
-            : sectionContentWidthCm(model, section);
-      const offsetXCm =
-        edge === "left" ? 0 : edge === "right" ? refWidth - shape.widthCm : (refWidth - shape.widthCm) / 2;
-      return [{ location, relativeToH: reference, offsetXCm }];
+    if (reference === "page") {
+      return pageRectCm(page);
     }
-    // Columns divide the page horizontally, so a vertical align to "column"
-    // uses the content area's height, exactly as the margin reference does.
-    const verticalReference = reference === "page" ? "page" : "margin";
-    const refHeight =
-      reference === "page" ? sectionPageSize(model, section).heightCm : contentHeightCm(model, section);
-    const offsetYCm =
-      edge === "top" ? 0 : edge === "bottom" ? refHeight - shape.heightCm : (refHeight - shape.heightCm) / 2;
-    return [{ location, relativeToV: verticalReference, offsetYCm }];
+    const marginEl = page.querySelector(".page-margin");
+    if (!marginEl) {
+      return null;
+    }
+    const content = pageRectCm(marginEl);
+    // A column reference narrows the content area to the first column's width
+    // (its left edge and height stay the content area's) — which column an
+    // anchor sits in is a layout fact src/lib does not compute (AC-3).
+    return reference === "column" ? { ...content, wCm: columnWidthCm(model, section) } : content;
+  }
+
+  function alignSingle(model: DocumentModel, location: ShapeLocation, edge: AlignEdge): DrawingPositionUpdate[] {
+    const shape = shapeAt(model, location);
+    const root = deps.contentRoot.value as Element | null;
+    if (!shape || !root) {
+      return [];
+    }
+    // The anchor span's top-left is the origin the drawing's offset measures
+    // from (DocShapeBlock.vue) — reading it from the DOM lets a single-drawing
+    // align land the drawing on the real page content-area / page / column edge,
+    // independent of where its anchor paragraph sits down the page.
+    const anchorEl = root.querySelector(
+      `.doc-shape-anchor[data-section="${location.section}"][data-block="${location.block}"]`,
+    );
+    if (!anchorEl) {
+      return [];
+    }
+    const reference = singleReferenceRect(model, anchorEl, location.section);
+    if (!reference) {
+      return [];
+    }
+    const origin = pageTopLeftCm(anchorEl);
+    const offsetXCm = shape.offsetXCm ?? 0;
+    const offsetYCm = shape.offsetYCm ?? 0;
+    const drawingRect: AlignRect = {
+      xCm: origin.xCm + offsetXCm,
+      yCm: origin.yCm + offsetYCm,
+      wCm: shape.widthCm,
+      hCm: shape.heightCm,
+    };
+    const [target] = alignRects([drawingRect], edge, reference);
+    // Only the aligned axis changes; the offset is the target page position back
+    // in anchor space (target − anchor origin). No relativeToH/relativeToV is
+    // stamped: the offset is anchor-relative, so re-labelling its reference edge
+    // would misdescribe it (the renderer and the docx writer both read the
+    // offset as measured from the anchor).
+    const horizontal = edge === "left" || edge === "centerH" || edge === "right";
+    return horizontal
+      ? [{ location, offsetXCm: offsetXCm + (target.xCm - drawingRect.xCm) }]
+      : [{ location, offsetYCm: offsetYCm + (target.yCm - drawingRect.yCm) }];
   }
 
   function align(edge: AlignEdge, label: string): void {
