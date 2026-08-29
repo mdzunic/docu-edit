@@ -28,6 +28,33 @@ async function downloadTo(page: Page, name: string): Promise<string> {
   return filePath;
 }
 
+// Read the first data cell (row 1, col 1) of every supported chart on the slide,
+// draining as it goes: select the topmost frame, read it (unsupported charts have
+// no Edit-data control and are skipped), then delete it to expose the next. This
+// stays robust when charts overlap — a duplicate lands stacked on its source, so
+// index-based clicks would be intercepted. The deck is discarded after, so the
+// destructive read is harmless.
+async function drainChartFirstValues(page: Page): Promise<string[]> {
+  const stage = page.getByTestId("stage-workspace");
+  const values: string[] = [];
+  for (let guard = 0; guard < 20; guard++) {
+    const frames = stage.getByTestId("slide-frame");
+    const n = await frames.count();
+    if (n === 0) break;
+    await frames.nth(n - 1).click({ force: true });
+    const editBtn = page.getByTestId("chart-edit-data-button");
+    if ((await editBtn.count()) > 0) {
+      await editBtn.click();
+      values.push(await page.getByTestId("chart-data-cell-1-1").inputValue());
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("chart-data-grid")).toHaveCount(0);
+    }
+    await page.getByTestId("chart-delete-button").click();
+    await expect(stage.getByTestId("slide-frame")).toHaveCount(n - 1);
+  }
+  return values;
+}
+
 test("pptx: charts paint, edit through the toolbar, insert, and round-trip", async ({ page }) => {
   await openFixture(page, PPTX);
   const stage = page.getByTestId("stage-workspace");
@@ -97,4 +124,40 @@ test("pptx: charts paint, edit through the toolbar, insert, and round-trip", asy
   await frames2.nth(0).click();
   await page.getByTestId("chart-edit-data-button").click();
   await expect(page.getByTestId("chart-data-cell-1-1")).toHaveValue("99");
+});
+
+// AC-18a/AC-25/AC-18/AC-30 — the regression guard. Two frames may share one
+// sourcePart (Duplicate, per D8); editing one must mint a fresh part and leave
+// the other's data intact. A prior round shipped a writer that silently
+// overwrote the shared part, so the duplicated sibling came back corrupted.
+test("pptx: duplicating an imported chart then editing the copy leaves the original intact", async ({ page }) => {
+  await openFixture(page, PPTX);
+  const stage = page.getByTestId("stage-workspace");
+  const frames = stage.getByTestId("slide-frame");
+
+  // Select the imported line chart (frame 1) and duplicate it. The copy shares
+  // the original's sourcePart (ppt/charts/chart2.xml) until the deck is written.
+  await frames.nth(1).click();
+  await page.getByTestId("chart-duplicate-button").click();
+  // Five charts now paint (the four fixture charts plus the duplicate).
+  await expect(stage.locator(".chart-frame canvas")).toHaveCount(5);
+
+  // The duplicate lands selected, stacked on its source. Edit its first value to
+  // a sentinel (99). The original line chart's Q1 is 3 and must not move.
+  await page.getByTestId("chart-edit-data-button").click();
+  await expect(page.getByTestId("chart-data-grid")).toBeVisible();
+  await expect(page.getByTestId("chart-data-cell-1-1")).toHaveValue("3");
+  await page.getByTestId("chart-data-cell-1-1").fill("99");
+  await page.getByTestId("chart-data-apply").click();
+  await expect(page.getByTestId("chart-data-grid")).toHaveCount(0);
+
+  // Download → reopen and read every supported chart's first value. The edit
+  // must land in exactly one chart (a freshly-minted part) while the untouched
+  // sibling keeps its original 3 — if the shared part had been overwritten, the
+  // sentinel would appear twice and the 3 would be gone.
+  const file = await downloadTo(page, "spec092-charts-duplicate.pptx");
+  await openFixture(page, file);
+  const values = await drainChartFirstValues(page);
+  expect(values.filter((v) => v === "99")).toHaveLength(1);
+  expect(values).toContain("3");
 });
