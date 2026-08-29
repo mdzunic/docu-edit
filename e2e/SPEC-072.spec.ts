@@ -228,4 +228,63 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     expect(offsets).toHaveLength(2);
     expect(Math.abs(offsets[0].x - offsets[1].x)).toBeLessThan(cmToEmu(0.05));
   });
+
+  test("Format → Drawing → Align opens and runs by mouse click through the nested submenu (AC-12)", async ({ page }) => {
+    await createDocument(page);
+    // Push the anchor down the page so align-top has somewhere to move to.
+    await content(page).click({ position: { x: 20, y: 20 } });
+    for (let i = 0; i < 12; i++) {
+      await page.keyboard.press("Enter");
+    }
+    await page.getByTestId("menu-title-insert").click();
+    await page.getByTestId("shape-gallery-rect").click();
+    await content(page).click({ position: { x: 300, y: 300 } });
+    await expect(drawings(page)).toHaveCount(1);
+
+    const marginTop = (await content(page).getByTestId("page-margin").first().boundingBox())!.y;
+    const beforeTop = (await drawings(page).nth(0).boundingBox())!.y;
+    expect(beforeTop - marginTop).toBeGreaterThan(30);
+
+    await clickDrawing(page, 0);
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+
+    // Drive the Format-menu path entirely by mouse: the Align entry is a
+    // MenuSubmenu nested inside the Drawing MenuSubmenu, so clicking it must
+    // open its flyout (not collapse the parent — the QA regression).
+    await page.getByTestId("menu-title-format").click();
+    await page.getByTestId("format-menu-drawing").click();
+    await page.getByTestId("drawing-align-submenu").click();
+    const alignTop = page.getByTestId("drawing-align-top");
+    await expect(alignTop).toBeVisible();
+    await alignTop.click();
+
+    // The command ran: the drawing sits on the content-area top margin.
+    const afterTop = (await drawings(page).nth(0).boundingBox())!.y;
+    expect(Math.abs(afterTop - marginTop)).toBeLessThan(4);
+  });
+
+  test("Format → Drawing → Align to switches the reference by mouse and remembers it (AC-3,4)", async ({ page }) => {
+    await createDocument(page);
+    await insertShapeAt(page, "rect", 320, 220);
+    await expect(drawings(page)).toHaveCount(1);
+    await clickDrawing(page, 0);
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+
+    // Open Format → Drawing → Align to by mouse and pick Page.
+    await page.getByTestId("menu-title-format").click();
+    await page.getByTestId("format-menu-drawing").click();
+    await page.getByTestId("drawing-align-to-submenu").click();
+    const pageRef = page.getByTestId("drawing-align-to-page");
+    await expect(pageRef).toBeVisible();
+    // Margin is the default; Page is not yet chosen.
+    await expect(pageRef).toHaveAttribute("aria-checked", "false");
+    await pageRef.click();
+
+    // Reopen the same path: the chosen reference is remembered (session-scoped).
+    await page.getByTestId("menu-title-format").click();
+    await page.getByTestId("format-menu-drawing").click();
+    await page.getByTestId("drawing-align-to-submenu").click();
+    await expect(page.getByTestId("drawing-align-to-page")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("drawing-align-to-margin")).toHaveAttribute("aria-checked", "false");
+  });
 });
