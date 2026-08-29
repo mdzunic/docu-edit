@@ -16,7 +16,7 @@ import { pxToCm } from "../core/units";
 import { extensionForContentType, type MediaPart } from "../core/media";
 import { LINE_GEOMETRIES, type ShapeGeometry } from "../core/shapes";
 import { markSlideEdited } from "./text";
-import { scaleTableGrid } from "./tables";
+import { createTableFrame, scaleTableGrid } from "./tables";
 import { removeAnimationsForFrame } from "./animations";
 import type {
   FrameStroke,
@@ -122,6 +122,25 @@ export function insertTextBoxFrame(model: PresentationModel, slideIndex: number,
     kind: "text",
     paragraphs: [{ runs: [] }],
   };
+  slide.frames.push(frame);
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Inserts a `rows`×`cols` table centred at 80% of the slide width (SPEC-091
+ * AC-5c), appended on top in z-order. Returns its id (the view selects it with
+ * the caret in cell (0,0)). */
+export function insertTableFrame(
+  model: PresentationModel,
+  slideIndex: number,
+  rows: number,
+  cols: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  if (!slide) {
+    return null;
+  }
+  const frame = createTableFrame(rows, cols, model.slideWidthCm, model.slideHeightCm);
   slide.frames.push(frame);
   touch(model, slide);
   return frame.id;

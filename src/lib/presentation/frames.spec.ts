@@ -18,6 +18,7 @@ import {
   insertImageFrame,
   insertImageRect,
   insertShapeFrame,
+  insertTableFrame,
   insertTextBoxFrame,
   mediaExtension,
   moveFrame,
@@ -77,6 +78,20 @@ describe("insert commands", () => {
     expect(frame.kind).toBe("shape");
     expect(frame.fill).toEqual({ type: "solid", color: DECK_DEFAULT_SHAPE_FILL });
     expect(frame.stroke).toEqual(DECK_DEFAULT_SHAPE_STROKE);
+  });
+
+  it("insertTableFrame lands a centred 80%-width table with the caret cell (AC-5c)", () => {
+    const model = blank();
+    const id = insertTableFrame(model, 0, 3, 4);
+    const frame = only(model.slides[0]);
+    expect(frame.kind).toBe("table");
+    expect(id).toBe(frame.id);
+    if (frame.kind === "table") {
+      expect(frame.widthCm).toBeCloseTo(model.slideWidthCm * 0.8, 2);
+      expect(frame.columnWidthsCm).toHaveLength(4);
+      expect(frame.rows).toHaveLength(3);
+      expect(frame.firstRow).toBe(true);
+    }
   });
 
   it("insertShapeFrame gives a line geometry a stroke but no fill", () => {
