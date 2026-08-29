@@ -263,6 +263,44 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     expect(Math.abs(afterTop - marginTop)).toBeLessThan(4);
   });
 
+  test("Format → Drawing → Distribute opens and runs by mouse click through the nested submenu (AC-13)", async ({ page }) => {
+    await createDocument(page);
+    // Three shapes at unevenly-spaced verticals (2, 3, 8 → gaps 1 and 5) so a
+    // vertical distribute has a visible effect: the middle moves to 5cm.
+    await insertShapeAt(page, "rect", 320, 220);
+    await insertShapeAt(page, "ellipse", 540, 220);
+    await insertShapeAt(page, "hexagon", 400, 420);
+    await expect(drawings(page)).toHaveCount(3);
+    await setPosition(page, 0, 1, 2);
+    await setPosition(page, 1, 4, 3);
+    await setPosition(page, 2, 2, 8);
+
+    // Select all three so Distribute is enabled (fewer than three disables it).
+    await clickDrawing(page, 0);
+    await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+    await clickDrawing(page, 1, true);
+    await clickDrawing(page, 2, true);
+
+    // Drive the Format-menu path entirely by mouse: Distribute is a MenuSubmenu
+    // nested inside the Drawing MenuSubmenu, so clicking it must open its flyout
+    // (not collapse the parent — the QA regression).
+    await page.getByTestId("menu-title-format").click();
+    await page.getByTestId("format-menu-drawing").click();
+    await page.getByTestId("drawing-distribute-submenu").click();
+    const distributeVertical = page.getByTestId("drawing-distribute-vertical");
+    await expect(distributeVertical).toBeVisible();
+    await distributeVertical.click();
+
+    // The command ran: the middle shape's top offset is now the exact midpoint
+    // between the two outermost (2cm and 8cm → 5cm), an exact arithmetic
+    // progression with the outermost two unchanged.
+    const ys = (await readOffsetsEmu(page)).map((o) => o.y).sort((a, b) => a - b);
+    expect(ys[0]).toBe(cmToEmu(2));
+    expect(ys[2]).toBe(cmToEmu(8));
+    expect(ys[1] - ys[0]).toBe(ys[2] - ys[1]);
+    expect(ys[1]).toBe(cmToEmu(5));
+  });
+
   test("Format → Drawing → Align to switches the reference by mouse and remembers it (AC-3,4)", async ({ page }) => {
     await createDocument(page);
     await insertShapeAt(page, "rect", 320, 220);
