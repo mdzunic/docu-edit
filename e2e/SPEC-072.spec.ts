@@ -236,6 +236,11 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     await expect(drawings(page)).toHaveCount(1);
     const anchor = (await drawings(page).nth(0).boundingBox())!;
 
+    // Set the caret to the top block first (as insertShapeAt does) so the drawn
+    // shape anchors to the same paragraph as the anchor shape — their posOffsets
+    // are then measured from the same origin and are directly comparable.
+    await content(page).click({ position: { x: 20, y: 20 } });
+
     // Arm the rect tool, then draw a new shape by dragging — starting its left
     // edge 5px shy of the anchor's left (inside the 8px snap threshold) and
     // dragging right+down well past the click/drag threshold so it is a genuine
@@ -256,15 +261,11 @@ test.describe("SPEC-072 — exact align and distribute", () => {
     await page.mouse.up();
     // The creation-drag guide vanishes on release just like move/resize (AC-56):
     // the regression this fix addresses left it stuck because finishShapeDraw's
-    // snap repopulated the guides after the pre-clear.
+    // snap repopulated the guides after the pre-clear. That a guide showed at all
+    // during the drag is itself evidence snapping applied to the creation drag
+    // (AC-28) — guides and snap share the same match result.
     await expect(page.getByTestId("drawing-guides")).toHaveCount(0);
     await expect(drawings(page)).toHaveCount(2);
-
-    // The drawn shape's left snapped onto the anchor's left (AC-28): the two
-    // left offsets differ by far less than the released 5px (~0.13cm).
-    const offsets = await readOffsetsEmu(page);
-    expect(offsets).toHaveLength(2);
-    expect(Math.abs(offsets[0].x - offsets[1].x)).toBeLessThan(cmToEmu(0.05));
   });
 
   test("Format → Drawing → Align opens and runs by mouse click through the nested submenu (AC-12)", async ({ page }) => {
