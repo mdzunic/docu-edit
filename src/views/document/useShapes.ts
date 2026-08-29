@@ -4,7 +4,7 @@
 // rotation-handle drag, keyboard nudge/duplicate, and z-order/grouping.
 // Mirrors useImages.ts's shape closely — see its own header comment for the
 // pattern this follows.
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   caretSelection,
   commitShapeModel,
@@ -23,6 +23,7 @@ import {
 } from "../../lib/commands";
 import { measureImageGeometry, noImageHandleGeometry } from "../../lib/caretGeometry";
 import { asImageHandle, previewImageSize, resizedImageSize } from "../../lib/imageResize";
+import { MIN_IMAGE_SIZE_CM } from "../../lib/core/media";
 import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { CM_PER_PX } from "../../lib/core/units";
@@ -54,8 +55,9 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setDrawingGeometry,
+  type DrawingGeometry,
   setShapePath,
-  setShapePosition,
   setShapeRotation,
   setShapeSize,
   setShapeWrap,
@@ -70,6 +72,7 @@ import {
 import {
   DEFAULT_NEW_SHAPE_FILL,
   DEFAULT_NEW_SHAPE_OUTLINE,
+  DRAW_DRAG_THRESHOLD_CM,
   drawGestureBox,
   normalizeRotationDeg,
   type NudgeDirection,
@@ -107,6 +110,7 @@ import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
 import { LINE_GEOMETRIES, asShapeGeometry, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
+import { useDrawingGuides } from "./useDrawingGuides";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
 import type { EditorContext } from "./context";
@@ -172,6 +176,14 @@ export function useShapes(deps: ShapesDeps) {
     onDrawingGeometryChanged,
   } = deps;
 
+  // Alignment guides + snapping while a drawing is dragged or created (SPEC-072).
+  const {
+    snapGuides,
+    applySnap: applyDrawingSnap,
+    applyResizeSnap: applyDrawingResizeSnap,
+    clearGuides: clearDrawingGuides,
+  } = useDrawingGuides({ pageRef, contentRoot, clientToContentPx, zoom });
+
   const shapeSelection = ref<ShapeLocation | null>(null);
   /** Shift-click multi-selection (AC-34): empty for an ordinary single
    * selection, 2+ entries while a multi-object selection is active —
@@ -185,7 +197,17 @@ export function useShapes(deps: ShapesDeps) {
    * fallback for dragging a drawing handle. `shapePositionInitial` is the
    * captured prefill the dialog opens with. */
   const shapePositionOpen = ref(false);
-  const shapePositionInitial = ref({ offsetXCm: 0, offsetYCm: 0, widthCm: 0, heightCm: 0, inline: false });
+  const shapePositionInitial = ref({
+    offsetXCm: 0,
+    offsetYCm: 0,
+    widthCm: 0,
+    heightCm: 0,
+    rotationDeg: 0,
+    relativeToH: "column",
+    relativeToV: "paragraph",
+    inline: false,
+    isLine: false,
+  });
   /** The anchor marker's position (AC-27) — page-relative px, same basis as
    * shapeHandles (measureImageGeometry). Null when nothing is selected, or
    * the selected shape's preceding block isn't a paragraph to mark (see
@@ -472,6 +494,11 @@ export function useShapes(deps: ShapesDeps) {
     el: HTMLElement;
     groupOrdinal: number | undefined;
     rotationDeg: number;
+    /** The drawing's `.pages`-relative top-left in cm at drag start (SPEC-072):
+     * the fixed offset corner the resize grows from, so the moving right/bottom
+     * edges can be snapped to page candidates (AC-27). */
+    startLeftCm: number;
+    startTopCm: number;
     currentWidthCm: number;
     currentHeightCm: number;
   } | null = null;
@@ -1026,9 +1053,24 @@ export function useShapes(deps: ShapesDeps) {
     applyShapeEdit((model, selection) => reorderShapeZ(model, selection, location, command), "reorder shape");
   }
 
+  /** Captures the selected shape's geometry into the dialog prefill. */
+  function seedShapePosition(shape: Shape) {
+    shapePositionInitial.value = {
+      offsetXCm: shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm,
+      offsetYCm: shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm,
+      widthCm: shape.widthCm,
+      heightCm: shape.heightCm,
+      rotationDeg: shape.rotationDeg ?? 0,
+      relativeToH: shape.relativeToH ?? DEFAULT_DRAWING_POSITION.relativeToH,
+      relativeToV: shape.relativeToV ?? DEFAULT_DRAWING_POSITION.relativeToV,
+      inline: shape.wrap === "inline",
+      isLine: LINE_GEOMETRIES.has(shape.geometry),
+    };
+  }
+
   /** Opens the numeric "Position & size" dialog for the selected shape
-   * (AC-42): the fallback for a handle drag when the pointer is coarse.
-   * Prefills from the shape's current offset and size. */
+   * (SPEC-072): the keyboard/coarse-pointer path for every geometric property
+   * a drag adjusts. Prefills from the shape's current geometry. */
   function openShapePosition() {
     const model = doc.value;
     const location = shapeSelection.value;
@@ -1036,28 +1078,40 @@ export function useShapes(deps: ShapesDeps) {
     if (!shape) {
       return;
     }
-    shapePositionInitial.value = {
-      offsetXCm: Number((shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm).toFixed(2)),
-      offsetYCm: Number((shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm).toFixed(2)),
-      widthCm: Number(shape.widthCm.toFixed(2)),
-      heightCm: Number(shape.heightCm.toFixed(2)),
-      inline: shape.wrap === "inline",
-    };
+    seedShapePosition(shape);
     shapePositionOpen.value = true;
   }
 
+  // Reflect the selection live (AC-51): if the selection moves to a different
+  // shape while the dialog is open, re-seed the prefill so it shows the new
+  // shape's geometry.
+  watch(shapeSelection, (location) => {
+    if (!shapePositionOpen.value) {
+      return;
+    }
+    const model = doc.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    if (shape) {
+      seedShapePosition(shape);
+    } else {
+      shapePositionOpen.value = false;
+    }
+  });
+
+  /** Applies one live field change from the dialog as a single undo entry
+   * (SPEC-072 AC-43/AC-45) — the whole geometry set at once so the entry is
+   * self-contained. The dialog stays open (live editing); dismiss closes it. */
   function handleShapePositionApply(
-    payload = { offsetXCm: 0, offsetYCm: 0, widthCm: 0, heightCm: 0 },
+    geometry: DrawingGeometry = { widthCm: 0, heightCm: 0, offsetXCm: 0, offsetYCm: 0, rotationDeg: 0 },
   ) {
-    shapePositionOpen.value = false;
     const location = shapeSelection.value;
     if (!location) {
       return;
     }
-    applyShapeEdit((model, selection) => {
-      const sized = setShapeSize(model, selection, location, payload.widthCm, payload.heightCm);
-      return setShapePosition(sized.model, sized.selection, location, payload.offsetXCm, payload.offsetYCm);
-    }, "shape position");
+    applyShapeEdit(
+      (model, selection) => setDrawingGeometry(model, selection, location, geometry),
+      "shape position",
+    );
     void nextTick().then(remeasureShapeHandles);
   }
 
@@ -1133,6 +1187,10 @@ export function useShapes(deps: ShapesDeps) {
     }
     event.preventDefault();
     resizeDragMoved = false;
+    const rect = el.getBoundingClientRect();
+    // Unscaled, .pages-relative top-left in model cm (SPEC-063 AC-22) — the
+    // fixed corner the resize snap grows from (AC-27).
+    const startTopLeft = clientToContentPx(rect.left, rect.top);
     resizeDrag = {
       location,
       handle,
@@ -1142,6 +1200,8 @@ export function useShapes(deps: ShapesDeps) {
       el,
       groupOrdinal: shape.groupOrdinal,
       rotationDeg: shape.rotationDeg ?? 0,
+      startLeftCm: startTopLeft.x * CM_PER_PX,
+      startTopCm: startTopLeft.y * CM_PER_PX,
       currentWidthCm: shape.widthCm,
       currentHeightCm: shape.heightCm,
     };
@@ -1191,17 +1251,33 @@ export function useShapes(deps: ShapesDeps) {
       drag.rotationDeg,
     );
     const size = resizedImageSize(drag.start, asImageHandle(drag.handle), local.dx, local.dy, event.shiftKey);
-    drag.currentWidthCm = size.widthCm;
-    drag.currentHeightCm = size.heightCm;
+    let widthCm = size.widthCm;
+    let heightCm = size.heightCm;
+    // Snapping + guides on resize (AC-27): the model resize keeps the top-left
+    // offset and grows the size, so the right/bottom edges snap onto page
+    // candidates. Only for a single, unrotated shape — a grouped member previews
+    // on release, and snapping an axis-aligned page rectangle is meaningless once
+    // the shape's own axes are turned. Alt suppresses it (AC-25).
+    if (drag.groupOrdinal === undefined && drag.rotationDeg === 0) {
+      const snapped = applyDrawingResizeSnap(
+        { xCm: drag.startLeftCm, yCm: drag.startTopCm, wCm: widthCm, hCm: heightCm },
+        drag.el,
+        event.altKey,
+      );
+      widthCm = Math.max(MIN_IMAGE_SIZE_CM, snapped.widthCm);
+      heightCm = Math.max(MIN_IMAGE_SIZE_CM, snapped.heightCm);
+    }
+    drag.currentWidthCm = widthCm;
+    drag.currentHeightCm = heightCm;
     // A grouped member previews only on release, same as a grouped move
     // (finishShapeResize's resizeGroup scales every member about the
     // group's own bounding-box centre — live-previewing just the dragged
     // element here would show the rest of the group left behind).
     if (drag.groupOrdinal === undefined) {
-      previewImageSize(drag.el, size.widthCm, size.heightCm);
+      previewImageSize(drag.el, widthCm, heightCm);
       const shape = doc.value ? shapeAt(doc.value, drag.location) : null;
       if (shape) {
-        previewShapeCanvas(drag.el, shape, size.widthCm, size.heightCm);
+        previewShapeCanvas(drag.el, shape, widthCm, heightCm);
       }
       // The handles are what the pointer is dragging — they have to track
       // the box they are sizing, not sit at the size it started.
@@ -1214,6 +1290,8 @@ export function useShapes(deps: ShapesDeps) {
   function finishShapeResize() {
     window.removeEventListener("mousemove", handleShapeResizeMove);
     window.removeEventListener("mouseup", finishShapeResize);
+    // Guides are transient — they vanish on release (AC-56).
+    clearDrawingGuides();
     const drag = resizeDrag;
     resizeDrag = null;
     if (!drag || !resizeDragMoved) {
@@ -1263,6 +1341,8 @@ export function useShapes(deps: ShapesDeps) {
     startOffsetXCm: number;
     startOffsetYCm: number;
     startTopCm: number;
+    startLeftCm: number;
+    widthCm: number;
     heightCm: number;
     groupOrdinal: number | undefined;
     el: HTMLElement;
@@ -1310,6 +1390,8 @@ export function useShapes(deps: ShapesDeps) {
       startOffsetXCm: shape.offsetXCm ?? DEFAULT_DRAWING_POSITION.offsetXCm,
       startOffsetYCm: shape.offsetYCm ?? DEFAULT_DRAWING_POSITION.offsetYCm,
       startTopCm: startTop.y * CM_PER_PX,
+      startLeftCm: startTop.x * CM_PER_PX,
+      widthCm: shape.widthCm,
       heightCm: shape.heightCm,
       groupOrdinal: shape.groupOrdinal,
       el,
@@ -1343,6 +1425,19 @@ export function useShapes(deps: ShapesDeps) {
     const dyContent = now.y - start.y;
     drag.dxCm = dxContent * CM_PER_PX;
     drag.dyCm = dyContent * CM_PER_PX;
+    // Snapping + alignment guides (SPEC-072). Only single shapes snap; a group
+    // move previews on release (below), and Alt suppresses snapping (AC-25).
+    // The snap adjusts the delta by however far the drawing was pulled onto a
+    // candidate, so the offset preview and the commit both use it.
+    if (drag.groupOrdinal === undefined) {
+      const snapped = applyDrawingSnap(
+        { xCm: drag.startLeftCm + drag.dxCm, yCm: drag.startTopCm + drag.dyCm, wCm: drag.widthCm, hCm: drag.heightCm },
+        drag.el,
+        event.altKey,
+      );
+      drag.dxCm += snapped.xCm - (drag.startLeftCm + drag.dxCm);
+      drag.dyCm += snapped.yCm - (drag.startTopCm + drag.dyCm);
+    }
     // A grouped member previews only on release (finishShapeMove's
     // moveGroup moves every member at once) — live-previewing just the
     // dragged element here would show the rest of the group left behind.
@@ -1371,6 +1466,8 @@ export function useShapes(deps: ShapesDeps) {
   function finishShapeMove() {
     window.removeEventListener("mousemove", handleShapeMoveMove);
     window.removeEventListener("mouseup", finishShapeMove);
+    // Guides are transient — they vanish on release (AC-56).
+    clearDrawingGuides();
     const drag = moveDrag;
     moveDrag = null;
     movingShape.value = false;
@@ -1574,18 +1671,38 @@ export function useShapes(deps: ShapesDeps) {
     // matches the pointer at any zoom (SPEC-063 AC-24).
     const startPoint = clientToContentPx(drag.startClientX, drag.startClientY);
     const nowPoint = clientToContentPx(event.clientX, event.clientY);
+    const startXCm = startPoint.x * CM_PER_PX;
+    const startYCm = startPoint.y * CM_PER_PX;
+    const nowXCm = nowPoint.x * CM_PER_PX;
+    const nowYCm = nowPoint.y * CM_PER_PX;
+    const box = drawGestureBox(
+      realGeometry,
+      { xCm: startXCm, yCm: startYCm },
+      { xCm: nowXCm, yCm: nowYCm },
+      { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
+    );
+    // Snapping applies to the creation *drag* (AC-28); there is no element yet,
+    // so nothing is excluded, and Alt suppresses it (AC-25). But a zero-distance
+    // plain click must land exactly under the pointer — only a gesture that has
+    // passed the drag threshold snaps (human-resolution). A click, or a text box
+    // placed by click (forced to its default size), is left where the pointer is,
+    // with no transient guide left behind.
+    const dragged =
+      Math.abs(nowXCm - startXCm) > DRAW_DRAG_THRESHOLD_CM ||
+      Math.abs(nowYCm - startYCm) > DRAW_DRAG_THRESHOLD_CM;
+    if (!dragged) {
+      clearDrawingGuides();
+      return { geometry: realGeometry, isTextBox, box };
+    }
+    const snapped = applyDrawingSnap(
+      { xCm: box.leftCm, yCm: box.topCm, wCm: box.widthCm, hCm: box.heightCm },
+      null,
+      event.altKey,
+    );
     return {
       geometry: realGeometry,
       isTextBox,
-      box: drawGestureBox(
-        realGeometry,
-        {
-          xCm: startPoint.x * CM_PER_PX,
-          yCm: startPoint.y * CM_PER_PX,
-        },
-        { xCm: nowPoint.x * CM_PER_PX, yCm: nowPoint.y * CM_PER_PX },
-        { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
-      ),
+      box: { ...box, leftCm: snapped.xCm, topCm: snapped.yCm },
     };
   }
 
@@ -1641,11 +1758,13 @@ export function useShapes(deps: ShapesDeps) {
     const geometry = drawGeometry.value;
     drawDrag = null;
     drawPreview.value = null;
-    if (!drag || !geometry) {
-      return;
-    }
-    const now = drawBoxNow(drag, event, geometry);
-    if (!now) {
+    // Resolve the final box first: for a genuine creation drag drawBoxNow runs
+    // the snap, which repopulates the transient guides. Guides are release-only
+    // (AC-56), so clear them *after* that runs — clearing before, as the move
+    // path can, would leave the snap's fresh guides stuck on the page.
+    const now = drag && geometry ? drawBoxNow(drag, event, geometry) : null;
+    clearDrawingGuides();
+    if (!drag || !geometry || !now) {
       return;
     }
     const { isTextBox, geometry: realGeometry } = now;
@@ -2285,6 +2404,7 @@ export function useShapes(deps: ShapesDeps) {
     shapeAnchorMarker,
     drawGeometry,
     drawPreview,
+    snapGuides,
     movingShape,
     editingShapeText,
     shapeTextRemountEpoch,

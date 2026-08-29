@@ -89,6 +89,12 @@ export interface Preferences {
   /** Whether the presentation editor's table properties panel is expanded
    * (SPEC-091). Per-device, default collapsed. */
   presentationTableOpen: boolean;
+  /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
+  snapToGuides: boolean;
+  /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
+  snapToGrid: boolean;
+  /** The snap-to-grid spacing in centimetres (SPEC-072). Default 0.25cm. */
+  gridSpacingCm: number;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -150,7 +156,15 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationTransitionsOpen: false,
   presentationAnimationsOpen: false,
   presentationTableOpen: false,
+  snapToGuides: true,
+  snapToGrid: false,
+  gridSpacingCm: 0.25,
 };
+
+/** The snap-to-grid spacing bounds (SPEC-072): fine enough to be useful, never
+ * zero or negative (which would divide by zero when snapping). */
+export const MIN_GRID_SPACING_CM = 0.05;
+export const MAX_GRID_SPACING_CM = 5;
 
 // --- validators -------------------------------------------------------------
 // One validator per field. Each takes the raw stored value (of unknown type)
@@ -214,6 +228,12 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationTransitionsOpen: isBoolean,
   presentationAnimationsOpen: isBoolean,
   presentationTableOpen: isBoolean,
+  snapToGuides: isBoolean,
+  snapToGrid: isBoolean,
+  gridSpacingCm: (raw) =>
+    typeof raw === "number" && Number.isFinite(raw) && raw >= MIN_GRID_SPACING_CM && raw <= MAX_GRID_SPACING_CM
+      ? raw
+      : undefined,
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

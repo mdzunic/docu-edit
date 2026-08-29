@@ -140,6 +140,20 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
     closeMenu();
   }
 }
+
+// A click inside the flyout is a real command and closes it (and, bubbling on,
+// the whole bar). But a nested submenu's own trigger carries
+// data-menu-keep-open: this flyout can host another MenuSubmenu (Format →
+// Drawing → Align), and clicking that child trigger must open its flyout, not
+// collapse this one. Mirror MenuBar.onPopupClick and leave this open for any
+// keep-open target — the child's flyout owns its own dismissal.
+function onFlyoutClick(event = new MouseEvent("click")) {
+  const target = event.target;
+  if (target instanceof Element && target.closest("[data-menu-keep-open]")) {
+    return;
+  }
+  open.value = false;
+}
 </script>
 
 <template>
@@ -185,7 +199,7 @@ function onFlyoutKeydown(event = new KeyboardEvent("keydown")) {
       :data-testid="testid ? `${testid}-flyout` : undefined"
       @dismiss="closeMenu(false)"
       @keydown="onFlyoutKeydown"
-      @click="open = false"
+      @click="onFlyoutClick"
     >
       <slot />
     </UiMenuSurface>
