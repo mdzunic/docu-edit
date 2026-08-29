@@ -1639,18 +1639,26 @@ export function useShapes(deps: ShapesDeps) {
     // matches the pointer at any zoom (SPEC-063 AC-24).
     const startPoint = clientToContentPx(drag.startClientX, drag.startClientY);
     const nowPoint = clientToContentPx(event.clientX, event.clientY);
+    const box = drawGestureBox(
+      realGeometry,
+      {
+        xCm: startPoint.x * CM_PER_PX,
+        yCm: startPoint.y * CM_PER_PX,
+      },
+      { xCm: nowPoint.x * CM_PER_PX, yCm: nowPoint.y * CM_PER_PX },
+      { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
+    );
+    // Snapping applies to the creation drag too (AC-28); there is no element
+    // yet, so nothing is excluded. Alt suppresses it (AC-25).
+    const snapped = applyDrawingSnap(
+      { xCm: box.leftCm, yCm: box.topCm, wCm: box.widthCm, hCm: box.heightCm },
+      null,
+      event.altKey,
+    );
     return {
       geometry: realGeometry,
       isTextBox,
-      box: drawGestureBox(
-        realGeometry,
-        {
-          xCm: startPoint.x * CM_PER_PX,
-          yCm: startPoint.y * CM_PER_PX,
-        },
-        { xCm: nowPoint.x * CM_PER_PX, yCm: nowPoint.y * CM_PER_PX },
-        { shiftKey: event.shiftKey, forceDefaultSize: isTextBox },
-      ),
+      box: { ...box, leftCm: snapped.xCm, topCm: snapped.yCm },
     };
   }
 
@@ -1702,6 +1710,7 @@ export function useShapes(deps: ShapesDeps) {
   function finishShapeDraw(event: MouseEvent) {
     window.removeEventListener("mousemove", handleShapeDrawMove);
     window.removeEventListener("mouseup", finishShapeDraw);
+    clearDrawingGuides();
     const drag = drawDrag;
     const geometry = drawGeometry.value;
     drawDrag = null;
