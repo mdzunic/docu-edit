@@ -27,6 +27,7 @@ import {
   tableColumnWidths,
   tableRenderRows,
   tableRowBoundaries,
+  tableRowHeights,
   textFrameFill,
   frameAccessibleName,
   frameRole,
@@ -82,6 +83,7 @@ const children = computed(() => groupChildren(frame.value));
 const foreignVisible = computed(() => isForeignVisible(frame.value));
 const tableColumns = computed(() => tableColumnWidths(frame.value));
 const tableRows = computed(() => tableRenderRows(frame.value));
+const tableRowHeightsPx = computed(() => tableRowHeights(frame.value));
 // AC-8a/b: a selected (not editing) table exposes drag handles on its internal
 // column/row boundaries; suppressed while a text session or insertion is active.
 const showResizeHandles = computed(
@@ -365,6 +367,7 @@ watch(() => props.frame, paint, { deep: true });
         <tr
           v-for="(row, ri) in tableRows"
           :key="ri"
+          :style="{ height: tableRowHeightsPx[ri] }"
         >
           <td
             v-for="cell in row"

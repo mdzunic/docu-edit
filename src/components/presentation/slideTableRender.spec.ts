@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { TableFrame } from "../../lib/presentation/model";
-import { tableColumnBoundaries, tableColumnWidths, tableRenderRows, tableRowBoundaries } from "./slideRender";
+import {
+  tableColumnBoundaries,
+  tableColumnWidths,
+  tableRenderRows,
+  tableRowBoundaries,
+  tableRowHeights,
+} from "./slideRender";
 
 function table(): TableFrame {
   return {
@@ -83,5 +89,14 @@ describe("table resize boundaries (AC-8a/b)", () => {
     const t = table();
     t.columnWidthsCm = [3, 1]; // boundary at 75%
     expect(tableColumnBoundaries(t)[0].offsetPct).toBeCloseTo(75, 5);
+  });
+
+  it("renders each row at its own heightCm so a resized row grows alone", () => {
+    const t = table();
+    t.rows[0].heightCm = 2;
+    t.rows[1].heightCm = 0.5;
+    const [top, bottom] = tableRowHeights(t);
+    // Both are px strings and the taller row's px value is strictly larger.
+    expect(parseFloat(top)).toBeGreaterThan(parseFloat(bottom));
   });
 });

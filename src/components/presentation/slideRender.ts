@@ -262,6 +262,15 @@ function boundariesFrom(sizesCm: number[]): TableBoundary[] {
   return out;
 }
 
+/** Per-row heights (px) for a table frame's `<tr>` elements, so a row resized
+ * via AC-8b renders at its `heightCm` (a minimum — content may push it taller).
+ * Without this the browser distributes the table's height equally and a single
+ * row drag would grow the whole grid rather than the targeted row. */
+export function tableRowHeights(frame: SlideFrame): string[] {
+  const table = tableOf(frame);
+  return table ? table.rows.map((row) => cmPx(row.heightCm ?? DEFAULT_TABLE_ROW_HEIGHT_CM)) : [];
+}
+
 /** The internal column boundaries a selected table exposes for drag-resize. */
 export function tableColumnBoundaries(frame: SlideFrame): TableBoundary[] {
   const table = tableOf(frame);
