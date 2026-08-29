@@ -80,6 +80,8 @@ export function frameAccessibleName(frame: SlideFrame): string {
       return frame.label || "Object";
     case "shape":
       return shapeDefinition(frame.geometry)?.label ?? "Shape";
+    case "table":
+      return "Table";
     default:
       return frame.role ? "Placeholder" : "Text box";
   }

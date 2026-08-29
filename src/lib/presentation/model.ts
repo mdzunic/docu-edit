@@ -14,6 +14,7 @@
 // format layers. Plain serialisable data only (all lengths cm, font sizes pt,
 // colours lowercase `#rrggbb` hex), so the document store persists both
 // products' models through the same IndexedDB machinery.
+import type { CellBorders, CellVerticalAlign } from "../core/tables";
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
@@ -220,7 +221,79 @@ export interface ForeignFrame extends SlideFrameBase {
   noBounds?: true;
 }
 
-export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | GroupFrame | ForeignFrame;
+/** The default cell padding (cm) a cell renders with when it carries no
+ * explicit `paddingCm` (SPEC-091 AC-1). ~1/20 inch, matching PowerPoint's
+ * default `a:tcPr` internal margins. */
+export const DEFAULT_TABLE_CELL_PADDING_CM = 0.13;
+
+/** The default row height a freshly-inserted table's rows take (SPEC-091
+ * AC-5c). */
+export const DEFAULT_TABLE_ROW_HEIGHT_CM = 0.9;
+
+/** One cell of a `TableFrame` (SPEC-091). A covered slot — the space consumed
+ * by a neighbour's `colSpan`/`rowSpan` — carries `covered: true` with
+ * `paragraphs: []` and is never an editing or navigation target; the owner
+ * cell holds the content and the span. Cell content is edited by SPEC-081's
+ * text machinery, exactly as a `TextFrame`'s `paragraphs` are. */
+export interface SlideTableCell {
+  paragraphs: SlideParagraph[];
+  /** Columns this cell spans (owner cell only); absent = 1. */
+  colSpan?: number;
+  /** Rows this cell spans (owner cell only); absent = 1. */
+  rowSpan?: number;
+  /** A slot covered by a neighbour's span: `paragraphs` is always `[]`. */
+  covered?: true;
+  fill?: SlideFill; // cell background; absent = inherit look / none
+  borders?: CellBorders; // per-edge borders (core/tables shape); absent = look
+  paddingCm?: number; // internal margin; absent = DEFAULT_TABLE_CELL_PADDING_CM
+  verticalAlign?: CellVerticalAlign; // absent = "top"
+  /** pptx: unmodelled `a:tcPr` attributes/children preserved verbatim, cleared
+   *  by the command that edits the modelled property it shadows (AC-12). */
+  pptxTcPr?: string;
+  /** odp: the cell's automatic style name, re-emitted verbatim (AC-3c). */
+  odpCellStyleName?: string;
+}
+
+/** One row of a `TableFrame` (SPEC-091): exactly `columnWidthsCm.length`
+ * cells (covered slots included). */
+export interface SlideTableRow {
+  cells: SlideTableCell[];
+  /** Row height (pptx `a:tr@h`, odp `style:row-height`); absent = auto. */
+  heightCm?: number;
+  /** A header row (odp `table:table-header-rows`), for the header look. */
+  isHeader?: true;
+  /** odp: the row's automatic style name, re-emitted verbatim (AC-3c). */
+  odpRowStyleName?: string;
+}
+
+/** A table on a slide (SPEC-091): a real editable grid that round-trips
+ * through pptx `a:tbl` and odp `table:table`. Every row holds exactly
+ * `columnWidthsCm.length` cells. Unmodelled markup is preserved verbatim in
+ * the `pptx*`/`odp*` fields, each cleared by the command that edits the
+ * modelled property it shadows (AC-12), exactly Table.docxTblPr's rule. */
+export interface TableFrame extends SlideFrameBase {
+  kind: "table";
+  rows: SlideTableRow[];
+  columnWidthsCm: number[];
+  /** Give the first (header) row its distinct look (AC-4b, AC-10d). */
+  firstRow?: true;
+  /** Band alternate body rows (AC-4b, AC-10d). */
+  bandRow?: true;
+  /** The deck table style this table resolves its look from (AC-4b). */
+  styleId?: string;
+  /** pptx: unmodelled `a:tblPr` markup preserved verbatim (AC-2c). */
+  pptxTblPr?: string;
+  /** pptx: unmodelled `p:graphicFrame`-level markup (`p:nvGraphicFramePr`,
+   *  transforms) preserved verbatim (AC-2c). */
+  pptxGraphicFramePr?: string;
+  /** odp: the table's automatic style name, re-emitted verbatim (AC-3c). */
+  odpTableStyleName?: string;
+  /** odp: per-column automatic style names, aligned with `columnWidthsCm`
+   *  (AC-3c). A resize/insert that no longer matches drops them. */
+  odpColumnStyleNames?: (string | undefined)[];
+}
+
+export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | GroupFrame | ForeignFrame | TableFrame;
 
 export interface Slide {
   id: string; // minted at read, never serialised
