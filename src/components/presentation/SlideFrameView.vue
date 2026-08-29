@@ -23,6 +23,8 @@ import {
   placeholderPrompt,
   runStyle,
   shapeVisualOf,
+  tableColumnWidths,
+  tableRenderRows,
   textFrameFill,
   frameAccessibleName,
   frameRole,
@@ -64,6 +66,8 @@ const paragraphs = computed(() => markedParagraphs(frame.value));
 const textFill = computed(() => textFrameFill(frame.value));
 const children = computed(() => groupChildren(frame.value));
 const foreignVisible = computed(() => isForeignVisible(frame.value));
+const tableColumns = computed(() => tableColumnWidths(frame.value));
+const tableRows = computed(() => tableRenderRows(frame.value));
 const foreignText = computed(() => foreignLabel(frame.value));
 const imgSrc = computed(() => imageSrc(frame.value, asResolver(props.resolveMedia)));
 const showPrompt = computed(() => !props.editing && isEmptyTextPlaceholder(frame.value));
@@ -262,6 +266,67 @@ watch(() => props.frame, paint, { deep: true });
     />
   </div>
 
+  <!-- Table frame: a real <table> with a colgroup and merged cells (AC-4) -->
+  <div
+    v-else-if="kind === 'table'"
+    class="frame table-frame"
+    :class="{ 'is-selected': selected }"
+    :style="[position, playStyle]"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
+    @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
+  >
+    <table
+      class="slide-table"
+      data-testid="slide-table"
+    >
+      <colgroup>
+        <col
+          v-for="(w, ci) in tableColumns"
+          :key="ci"
+          :style="{ width: w }"
+        >
+      </colgroup>
+      <tbody>
+        <tr
+          v-for="(row, ri) in tableRows"
+          :key="ri"
+        >
+          <td
+            v-for="cell in row"
+            :key="cell.colIndex"
+            class="slide-table-cell"
+            :colspan="cell.colSpan"
+            :rowspan="cell.rowSpan"
+            :style="cell.style"
+            :data-testid="`slide-table-cell-${cell.rowIndex}-${cell.colIndex}`"
+          >
+            <div
+              v-for="(entry, pi) in cell.paragraphs"
+              :key="pi"
+              class="paragraph"
+              :style="paragraphStyle(entry.para)"
+            >
+              <span
+                v-if="entry.marker"
+                class="bullet-marker"
+                aria-hidden="true"
+              >{{ entry.marker }} </span>
+              <span
+                v-for="(run, runIndex) in entry.para.runs"
+                :key="runIndex"
+                :style="runStyle(run)"
+              >{{ run.text }}</span>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
   <!-- Foreign placeholder box -->
   <div
     v-else-if="foreignVisible"
@@ -399,6 +464,26 @@ watch(() => props.frame, paint, { deep: true });
   width: 0 !important;
   height: 0 !important;
   overflow: visible;
+}
+
+.table-frame {
+  overflow: hidden;
+}
+
+.slide-table {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.slide-table-cell {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.table-frame.is-selected {
+  outline: 1px solid var(--accent, #3b82f6);
 }
 
 .foreign-frame {

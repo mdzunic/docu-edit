@@ -6,7 +6,16 @@
 // framework-agnostic: plain data in, inline-style records / booleans out.
 import { cmToPx } from "../../lib/core/units";
 import { mediaDataUri, type MediaPart } from "../../lib/core/media";
-import type { Slide, SlideFrame, SlideParagraph, SlideRun } from "../../lib/presentation/model";
+import { computeOwnerGrid, type BorderSide } from "../../lib/core/tables";
+import {
+  DEFAULT_TABLE_CELL_PADDING_CM,
+  type Slide,
+  type SlideFrame,
+  type SlideParagraph,
+  type SlideRun,
+  type SlideTableRow,
+  type TableFrame,
+} from "../../lib/presentation/model";
 import { slideOutline } from "../../lib/presentation/slideModel";
 import type { ShapeVisual } from "../../lib/core/shapes";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
@@ -127,8 +136,7 @@ export function surfaceBackground(slide: Slide): string {
 // --- text ------------------------------------------------------------------
 /** A text/shape frame's paragraphs annotated with their bullet marker
  * (numbered bullets restart per contiguous same-level run). */
-export function markedParagraphs(frame: SlideFrame): { para: SlideParagraph; marker: string }[] {
-  const paragraphs = frame.kind === "text" ? frame.paragraphs : frame.kind === "shape" ? frame.paragraphs ?? [] : [];
+export function markParagraphList(paragraphs: SlideParagraph[]): { para: SlideParagraph; marker: string }[] {
   const counts: Record<number, number> = {};
   let prev: SlideParagraph | undefined;
   return paragraphs.map((para) => {
@@ -147,6 +155,11 @@ export function markedParagraphs(frame: SlideFrame): { para: SlideParagraph; mar
     prev = para;
     return { para, marker };
   });
+}
+
+export function markedParagraphs(frame: SlideFrame): { para: SlideParagraph; marker: string }[] {
+  const paragraphs = frame.kind === "text" ? frame.paragraphs : frame.kind === "shape" ? frame.paragraphs ?? [] : [];
+  return markParagraphList(paragraphs);
 }
 
 /** Whether a text frame renders its empty-placeholder prompt (SPEC-081): a
@@ -204,6 +217,112 @@ export function shapeVisualOf(frame: SlideFrame): ShapeVisual | null {
     visual.adjustments = frame.adjustments;
   }
   return visual;
+}
+
+// --- tables (SPEC-091) ------------------------------------------------------
+// The effective look resolves per "Table styles" (AC-4b): an explicit per-cell
+// value wins; else the header/banding look driven by the frame's firstRow/
+// bandRow flags; else the neutral built-in fallback (a thin grid). Deck table
+// styles (styleId) are not themselves parsed — they resolve to the fallback.
+
+const NEUTRAL_BORDER_COLOR = "#cfcfcf";
+const HEADER_FILL = "#d9d9d9";
+const BAND_FILL = "#f3f3f3";
+
+/** A frame narrowed to a table, or null. */
+export function tableOf(frame: SlideFrame): TableFrame | null {
+  return frame.kind === "table" ? frame : null;
+}
+
+/** The `<colgroup>` widths (px) for a table frame. */
+export function tableColumnWidths(frame: SlideFrame): string[] {
+  return frame.kind === "table" ? frame.columnWidthsCm.map((cm) => cmPx(cm)) : [];
+}
+
+function isHeaderRow(frame: TableFrame, rowIndex: number, row: SlideTableRow): boolean {
+  return row.isHeader === true || (frame.firstRow === true && rowIndex === 0);
+}
+
+function bandFillFor(frame: TableFrame, rowIndex: number): string | undefined {
+  if (!frame.bandRow) {
+    return undefined;
+  }
+  const bodyStart = frame.firstRow ? 1 : 0;
+  if (rowIndex < bodyStart) {
+    return undefined;
+  }
+  return (rowIndex - bodyStart) % 2 === 1 ? BAND_FILL : undefined;
+}
+
+function effectiveCellFill(frame: TableFrame, rowIndex: number, row: SlideTableRow, colIndex: number): string {
+  const cell = row.cells[colIndex];
+  if (cell.fill) {
+    return cell.fill.type === "solid" ? cell.fill.color : "transparent";
+  }
+  if (isHeaderRow(frame, rowIndex, row)) {
+    return HEADER_FILL;
+  }
+  return bandFillFor(frame, rowIndex) ?? "transparent";
+}
+
+function borderCss(side: BorderSide | undefined): string {
+  if (!side) {
+    return `1px solid ${NEUTRAL_BORDER_COLOR}`; // neutral fallback grid
+  }
+  if (side.style === "none") {
+    return "none";
+  }
+  const line =
+    side.style === "double" ? "double" : side.style === "dashed" ? "dashed" : side.style === "dotted" ? "dotted" : "solid";
+  return `${Math.max(1, side.widthPt)}px ${line} ${side.color}`;
+}
+
+/** One rendered (owner) cell of a table: its span, computed style and marked
+ * paragraphs. Covered slots emit nothing (AC-4a). */
+export interface TableCellRender {
+  rowIndex: number;
+  colIndex: number;
+  colSpan: number;
+  rowSpan: number;
+  style: Record<string, string>;
+  paragraphs: { para: SlideParagraph; marker: string }[];
+}
+
+/** The table's rows as arrays of visible owner cells (covered slots dropped),
+ * each carrying the colspan/rowspan its owner claims and its effective style. */
+export function tableRenderRows(frame: SlideFrame): TableCellRender[][] {
+  const table = tableOf(frame);
+  if (!table) {
+    return [];
+  }
+  const grid = computeOwnerGrid(table);
+  return table.rows.map((row, r) => {
+    const out: TableCellRender[] = [];
+    for (let c = 0; c < table.columnWidthsCm.length; c++) {
+      const owner = grid[r][c];
+      if (owner.originRow !== r || owner.originCol !== c) {
+        continue; // covered slot — its owner's colspan/rowspan covers it
+      }
+      const cell = row.cells[c];
+      out.push({
+        rowIndex: r,
+        colIndex: c,
+        colSpan: cell.colSpan ?? 1,
+        rowSpan: cell.rowSpan ?? 1,
+        style: {
+          borderTop: borderCss(cell.borders?.top),
+          borderBottom: borderCss(cell.borders?.bottom),
+          borderLeft: borderCss(cell.borders?.left),
+          borderRight: borderCss(cell.borders?.right),
+          padding: cmPx(cell.paddingCm ?? DEFAULT_TABLE_CELL_PADDING_CM),
+          verticalAlign: cell.verticalAlign ?? "top",
+          background: effectiveCellFill(table, r, row, c),
+        },
+        paragraphs: markParagraphList(cell.paragraphs),
+      });
+    }
+    return out;
+  });
 }
 
 // --- filmstrip --------------------------------------------------------------
