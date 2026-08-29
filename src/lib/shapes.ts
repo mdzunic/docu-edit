@@ -363,6 +363,51 @@ export function setShapePosition(
   return { model: next, selection };
 }
 
+/** One drawing's new placement in an align/distribute batch (SPEC-072): the
+ * offsets are absolute cm from the reference edges; `relativeToH`/`relativeToV`
+ * are set only when a single-drawing align re-references it to a margin, page
+ * or column edge. Absent axes are left untouched. */
+export interface DrawingPositionUpdate {
+  location: ShapeLocation;
+  offsetXCm?: number;
+  offsetYCm?: number;
+  relativeToH?: DrawingPlacement["relativeToH"];
+  relativeToV?: DrawingPlacement["relativeToV"];
+}
+
+/** Applies new offsets (and, for a single-drawing align, new reference edges)
+ * to several drawings at once (SPEC-072 align/distribute) — one command, so
+ * the snapshot history records exactly one labelled undo entry for the whole
+ * batch. Inline shapes are skipped, whose offset the wrap mode ignores. */
+export function arrangeDrawings(
+  model: DocumentModel,
+  selection: ModelSelection,
+  updates: DrawingPositionUpdate[],
+): CommandResult {
+  const next = cloneContainers(model);
+  for (const update of updates) {
+    const shape = shapeAt(next, update.location);
+    if (!shape || shape.wrap === "inline") {
+      continue;
+    }
+    const updated = { ...shape };
+    if (update.offsetXCm !== undefined) {
+      updated.offsetXCm = update.offsetXCm;
+    }
+    if (update.offsetYCm !== undefined) {
+      updated.offsetYCm = update.offsetYCm;
+    }
+    if (update.relativeToH !== undefined) {
+      updated.relativeToH = update.relativeToH;
+    }
+    if (update.relativeToV !== undefined) {
+      updated.relativeToV = update.relativeToV;
+    }
+    replaceShape(next, update.location, updated);
+  }
+  return { model: next, selection };
+}
+
 /** Moves a shape by a page-space delta (a drag, or a keyboard nudge —
  * AC-40, AC-41), adjusting its own offset. Used directly for a shape whose
  * anchor did not change; a drag that crosses a paragraph boundary instead

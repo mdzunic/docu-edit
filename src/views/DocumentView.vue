@@ -96,6 +96,7 @@ import { useFormatPainter } from "./document/useFormatPainter";
 import { useHeadersFooters } from "./document/useHeadersFooters";
 import { useImages } from "./document/useImages";
 import { useShapes } from "./document/useShapes";
+import { useDrawingArrange } from "./document/useDrawingArrange";
 import { useConnectors } from "./document/useConnectors";
 import { useCharts } from "./document/useCharts";
 import { useLinks } from "./document/useLinks";
@@ -802,6 +803,12 @@ const {
   drawFreeformTool, freeformPreviewD, handleFreeformPick, startFreeformGesture, pointEdit,
   insertTextBoxAction,
 } = useShapes({ ...editorContext, getUpdateFieldInSurface: () => updateFieldInSurface });
+
+// --- align / distribute (SPEC-072) ------------------------------------------
+// Bounding-box align + gap distribution for a drawing selection, and single-
+// drawing align to margin/page/column. One namespace to hold the line budget;
+// its command ids spread into editorCommands below.
+const drawingArrange = useDrawingArrange({ ...editorContext, shapeSelection, shapeMultiSelection });
 
 // --- connectors (SPEC-070) --------------------------------------------------
 // Two-click draw, live-measured overlay geometry, handles and formatting. One
@@ -3170,6 +3177,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
   ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
+  // Drawing align/distribute (SPEC-072); wiring in useDrawingArrange.
+  ...drawingArrange.commands,
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
   ["format.multilevel-define-list", openDefineList],
   ["format.text-color", openTextColorMenu],

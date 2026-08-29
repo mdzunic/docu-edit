@@ -115,6 +115,16 @@ export const COMMANDS: CommandMeta[] = [
   { id: "format.tabs", label: "Tabs…", path: ["Format"], scope: "document" },
   { id: "format.columns", label: "Columns", path: ["Format"], scope: "document" },
   { id: "format.edit-points", label: "Edit points", path: ["Format"], scope: "document" },
+  // Drawing align/distribute (SPEC-072). Path names the Format → Drawing menu
+  // (SPEC-049: a new command names its menu).
+  { id: "drawing.align-left", label: "Align left", path: ["Format", "Drawing", "Align"], scope: "document", icon: "align-left", aliases: ["align drawings", "align shapes"] },
+  { id: "drawing.align-center", label: "Align centre", path: ["Format", "Drawing", "Align"], scope: "document", icon: "align-center", aliases: ["align drawings", "align shapes"] },
+  { id: "drawing.align-right", label: "Align right", path: ["Format", "Drawing", "Align"], scope: "document", icon: "align-right", aliases: ["align drawings", "align shapes"] },
+  { id: "drawing.align-top", label: "Align top", path: ["Format", "Drawing", "Align"], scope: "document", aliases: ["align drawings", "align shapes"] },
+  { id: "drawing.align-middle", label: "Align middle", path: ["Format", "Drawing", "Align"], scope: "document", aliases: ["align drawings", "align shapes"] },
+  { id: "drawing.align-bottom", label: "Align bottom", path: ["Format", "Drawing", "Align"], scope: "document", aliases: ["align drawings", "align shapes"] },
+  { id: "drawing.distribute-horizontal", label: "Distribute horizontally", path: ["Format", "Drawing", "Distribute"], scope: "document", aliases: ["space drawings", "space shapes evenly"] },
+  { id: "drawing.distribute-vertical", label: "Distribute vertically", path: ["Format", "Drawing", "Distribute"], scope: "document", aliases: ["space drawings", "space shapes evenly"] },
   { id: "format.multilevel-link-headings", label: "Number headings 1–3", path: ["Format", "Multilevel list"], scope: "document", icon: "multilevel-list" },
   { id: "format.multilevel-define-list", label: "Define new list…", path: ["Format", "Multilevel list"], scope: "document", icon: "multilevel-list" },
   { id: "format.text-color", label: "Text colour", path: ["Format"], scope: "document", icon: "text-color", aliases: ["font color"] },
