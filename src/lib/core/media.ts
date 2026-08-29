@@ -4,6 +4,8 @@
 // product stores and validates the same media parts; only anchoring an
 // Image block into the text flow is document-specific (lib/images.ts).
 import { pxToCm } from "./units";
+import { bytesToBase64 } from "./packageParts";
+import { yieldToMainThread } from "./idleScheduler";
 
 /** A binary image payload stored once and referenced by an image block's
  * `mediaId` — so an image used twice (AC-32) shares one entry, and deleting
@@ -22,11 +24,105 @@ export interface MediaPart {
   data: string;
 }
 
+// Raw (not-yet-base64-encoded) bytes for a media part whose encode was
+// deferred off the open path (SPEC-047): on a large `.docx` the base64 pass
+// over ~50 MB of images is ~1s of main-thread work that would otherwise sit
+// between choosing the file and the first page painting. When a reader
+// defers, it registers the raw bytes here keyed by the part object and
+// leaves `data` empty; every consumer that reads `data` in earnest
+// (rendering, saving, persisting, thumbnailing, version hashing) calls
+// `ensureMediaEncoded`/`flushPendingMedia` first, so the encode happens
+// lazily, per part, at the moment the bytes are actually needed rather than
+// all at once during open. A WeakMap so a part dropped before it is ever
+// read costs nothing to forget.
+const pendingMediaBytes = new WeakMap<MediaPart, Uint8Array>();
+
+/** Records a media part's raw bytes as pending a deferred base64 encode
+ * (SPEC-047). The part's `data` stays "" until a consumer forces the encode
+ * through `ensureMediaEncoded`. */
+export function registerPendingMedia(part: MediaPart, bytes: Uint8Array): void {
+  pendingMediaBytes.set(part, bytes);
+}
+
+/** The pending (not-yet-encoded) byte length for a media part, or 0 when it
+ * already carries its `data` — used to size the background encode's chunks
+ * against the AC-16 main-thread-block budget. */
+export function pendingMediaByteLength(part: MediaPart): number {
+  return pendingMediaBytes.get(part)?.length ?? 0;
+}
+
+/** Encodes a still-deferred media part's bytes into `data` (a no-op once it
+ * has been encoded, or for a part that never deferred). Idempotent and
+ * synchronous: the one `btoa` for a single ~100 KB image is a short task,
+ * unlike the whole-document pass this exists to break up. */
+export function ensureMediaEncoded(part: MediaPart | undefined): void {
+  if (!part) {
+    return;
+  }
+  const bytes = pendingMediaBytes.get(part);
+  if (bytes === undefined) {
+    return;
+  }
+  pendingMediaBytes.delete(part);
+  part.data = bytesToBase64(bytes);
+}
+
+/** Force-encodes every still-deferred part in a media list, synchronously.
+ * Called by the writers, persist and version hashing right before they read
+ * `data` in bulk, so a document saved or snapshotted before the background
+ * pass (below) has finished never loses an image (round-trip fidelity is the
+ * project's first constraint). */
+export function flushPendingMedia(parts: readonly MediaPart[] | undefined): void {
+  for (const part of parts ?? []) {
+    ensureMediaEncoded(part);
+  }
+}
+
+// One deferred encode chunk: ~9ms of `btoa` on the factory container at the
+// documented ~18ms/MB. Deliberately small — this pass runs after first paint,
+// overlapping the settle/scroll/typing phases, so each chunk is kept well
+// under those phases' main-thread-block and typing-latency budgets (AC-15,
+// AC-16) with room for a loaded host; the MessageChannel yield between chunks
+// is near-free, so the extra chunks cost little.
+const BACKGROUND_ENCODE_CHUNK_BYTES = 512 * 1024;
+
+/** Encodes all still-deferred media in byte-bounded chunks with a real
+ * macrotask yield between them (SPEC-047 AC-16), so the deferred pass reads
+ * as many short tasks rather than one long block. The interactive open path
+ * kicks this off after first paint; it races harmlessly with the per-part
+ * force-encodes above (both re-check WeakMap membership with no await between
+ * the read and the encode, so a part is never encoded twice or lost). */
+export async function encodePendingMediaInBackground(
+  parts: readonly MediaPart[] | undefined,
+  chunkBytes: number = BACKGROUND_ENCODE_CHUNK_BYTES,
+): Promise<void> {
+  const list = parts ?? [];
+  let pending = 0;
+  for (let i = 0; i < list.length; i++) {
+    const byteLength = pendingMediaByteLength(list[i]);
+    if (byteLength === 0) {
+      continue;
+    }
+    ensureMediaEncoded(list[i]);
+    pending += byteLength;
+    if (pending >= chunkBytes && i < list.length - 1) {
+      pending = 0;
+      await yieldToMainThread();
+    }
+  }
+}
+
 /** A media part's bytes as a `data:` URI for the canvas `<img>` — resolved
  * only for rendering; AC-27 bars base64 data URIs from the saved XML, which
- * this never touches. "" for an unresolved/absent part. */
+ * this never touches. "" for an unresolved/absent part. Force-encodes a
+ * still-deferred part on demand (SPEC-047), so a page's images paint the
+ * moment it is realised without waiting for the whole-document encode. */
 export function mediaDataUri(media: MediaPart | undefined): string {
-  return media ? `data:${media.contentType};base64,${media.data}` : "";
+  if (!media) {
+    return "";
+  }
+  ensureMediaEncoded(media);
+  return `data:${media.contentType};base64,${media.data}`;
 }
 
 /** Images larger than this are rejected at insertion time (AC-33). */

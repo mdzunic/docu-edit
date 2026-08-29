@@ -7,7 +7,7 @@
 // `draw:image` stores any media type as-is, so every referenced media part
 // is written, none dropped.
 import type { DocumentModel } from "../documentModel";
-import { extensionForContentType } from "../core/media";
+import { ensureMediaEncoded, extensionForContentType } from "../core/media";
 import { referencedMediaIds } from "../mediaRefs";
 import { base64ToBytes } from "../opaque";
 import type { ZipEntryInput } from "../core/zipWriter";
@@ -57,6 +57,10 @@ export function planOdtMediaWrite(
     if (!part) {
       continue;
     }
+    // SPEC-047: force-encode a still-deferred part (a docx opened with
+    // deferred media, saved As .odt) before reading its bytes — a no-op once
+    // encoded.
+    ensureMediaEncoded(part);
     const ext = extensionForContentType(part.contentType);
     let path = `Pictures/image${counter}.${ext}`;
     while (existingPartNames.has(path)) {

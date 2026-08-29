@@ -7,9 +7,8 @@
 // spec. This module only ever narrows what is already preserved, never
 // widens what gets dropped.
 import type { Image, ImageWrapMode } from "../documentModel";
-import { contentTypeForPartName, type MediaPart } from "../core/media";
+import { contentTypeForPartName, registerPendingMedia, type MediaPart } from "../core/media";
 import { decodeImageDimensions } from "../core/imageDimensions";
-import { bytesToBase64 } from "../opaque";
 import { escapeXmlAttribute, firstChildElement, resolvePartPath, type Relationship } from "../core/xml";
 import { cmToEmu, emuToCm } from "../core/units";
 
@@ -119,43 +118,16 @@ export function parseDrawing(
     image.altText = altText;
   }
 
-  // `data` is filled in by parseDocx's single deferred pass (see
-  // fillPendingMediaDataSync): encoding here, per drawing, put ~0.6s of the
-  // benchmark fixture's open inside the walk. The raw bytes
-  // ride in a WeakMap keyed by the part object so every intermediate
-  // collector (body walk, notes part, header/footer parts) forwards them
-  // without signature changes.
+  // `data` is filled in later — see parseDocx's encode pass: encoding here,
+  // per drawing, put ~0.6s of the benchmark fixture's open inside the walk.
+  // The raw bytes ride in the shared pending-media registry (core/media)
+  // keyed by the part object, so every intermediate collector (body walk,
+  // notes part, header/footer parts) forwards them without signature
+  // changes, and every consumer that reads `data` can force the encode
+  // through `ensureMediaEncoded`.
   const media: ParsedDrawing["media"] = { mediaId: partPath, contentType, data: "" };
-  pendingMediaBytes.set(media, bytes);
+  registerPendingMedia(media, bytes);
   return { image, media };
-}
-
-// See parseDrawing's return: raw media bytes awaiting their one deferred
-// base64 pass. WeakMap so a MediaPart dropped mid-parse costs nothing.
-const pendingMediaBytes = new WeakMap<MediaPart, Uint8Array>();
-
-/** The pending (not-yet-encoded) byte length for a MediaPart, or 0 when it
- * already carries data — parseDocx uses it to keep each synchronous encode
- * chunk within the AC-16 main-thread-block budget (see the encode pass in
- * reader.ts). */
-export function pendingMediaByteLength(part: MediaPart): number {
-  return pendingMediaBytes.get(part)?.length ?? 0;
-}
-
-/** Encodes a parsed-but-not-yet-encoded MediaPart's bytes into `data` with
- * `bytesToBase64` (a no-op for parts that already carry data — an
- * already-encoded part from another path). parseDocx runs this over the
- * final media list in byte-bounded chunks with a yield between them, so each
- * `btoa` stays a short main-thread task; for the many small media parts a
- * large `.docx` carries, encoding synchronously here is measurably faster
- * than one FileReader round trip per part (SPEC-047 AC-3, see reader.ts). */
-export function fillPendingMediaDataSync(part: MediaPart): void {
-  const bytes = pendingMediaBytes.get(part);
-  if (bytes === undefined) {
-    return;
-  }
-  pendingMediaBytes.delete(part);
-  part.data = bytesToBase64(bytes);
 }
 
 /** The `wp:wrap*` element for a wrap mode (the inverse of wrapModeOf), plus

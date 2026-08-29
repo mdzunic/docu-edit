@@ -89,7 +89,6 @@ export interface FlatEntry {
   isConnector: boolean;
   isToc: boolean;
   isTof: boolean;
-  imageSrc: string;
   imageSelected: boolean;
   shapeSelected: boolean;
   /** Whether this exact shape is the one in text-editing mode (SPEC-051
@@ -313,7 +312,12 @@ function renderEntryFor(
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
       listDefinitions: flatEntry.isTable || flatEntry.isShape ? model.listDefinitions ?? [] : undefined,
-      imageSrc: flatEntry.isImage ? flatEntry.imageSrc : undefined,
+      // SPEC-047: resolve the image's data URI here — only realized pages
+      // reach renderEntryFor, so a still-deferred part is force-encoded (via
+      // mediaSrc -> mediaDataUri) just for the images actually painting, not
+      // the whole document's media up front in flatBlocks (which would put
+      // the entire ~1s encode back on the open path).
+      imageSrc: flatEntry.isImage ? mediaSrc(model, block) : undefined,
       imageSelected: flatEntry.isImage ? flatEntry.imageSelected : undefined,
       shapeSelected: flatEntry.isShape ? flatEntry.shapeSelected : undefined,
       shapeEditing: flatEntry.isShape ? flatEntry.shapeEditing : undefined,
@@ -1007,7 +1011,6 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           isConnector: connector,
           isToc: toc,
           isTof: tof,
-          imageSrc: image ? mediaSrc(deps.doc.value, block) : "",
           imageSelected: imgSelected,
           shapeSelected,
           shapeEditing: shape && shapeIsPrimarySelection && shapeTextEditing,

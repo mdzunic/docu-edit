@@ -11,6 +11,7 @@ import { writeDocx } from "./writer";
 import { unzip } from "../core/zip";
 import type { DocumentModel, Image } from "../documentModel";
 import { asParagraph } from "../documentModel";
+import { ensureMediaEncoded, mediaDataUri } from "../core/media";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -112,5 +113,62 @@ describe("writeDocx — images same-format round trip", () => {
 
     const savedParts = await unzip(bytes);
     expect(Array.from(savedParts.keys()).some((name) => /word\/media\/image\d+\.png/.test(name))).toBe(true);
+  });
+});
+
+// SPEC-047: the interactive open path parses with { deferMedia: true } so the
+// image base64 pass does not sit between choosing the file and first paint.
+describe("parseDocx — deferred media (SPEC-047)", () => {
+  const fixture = loadFixture("images.docx");
+
+  it("leaves media parts unencoded but force-encodes on demand to the same bytes", async () => {
+    const eager = await parseDocx(fixture);
+    const deferred = await parseDocx(fixture, undefined, { deferMedia: true });
+    expect(deferred.media).toHaveLength(2);
+    // Deferred: no data yet.
+    expect(deferred.media.every((part) => part.data === "")).toBe(true);
+    // Force-encoding yields exactly what the eager parse produced.
+    for (const part of deferred.media) {
+      ensureMediaEncoded(part);
+    }
+    const eagerById = new Map(eager.media.map((p) => [p.mediaId, p.data]));
+    for (const part of deferred.media) {
+      expect(part.data).toBe(eagerById.get(part.mediaId));
+    }
+  });
+
+  it("mediaDataUri renders a page-1 image without waiting for the background pass", async () => {
+    const deferred = await parseDocx(fixture, undefined, { deferMedia: true });
+    const inline = deferred.sections[0].blocks[1] as Image;
+    const part = deferred.media.find((p) => p.mediaId === inline.mediaId)!;
+    const uri = mediaDataUri(part);
+    expect(uri.startsWith("data:image/png;base64,")).toBe(true);
+    expect(uri.length).toBeGreaterThan("data:image/png;base64,".length);
+  });
+
+  it("a save before the background encode has run still writes every image (round-trip fidelity)", async () => {
+    // Parse deferred and DO NOT flush — the writer must force-encode itself.
+    const parsed = await parseDocx(fixture, undefined, { deferMedia: true });
+    expect(parsed.media.every((part) => part.data === "")).toBe(true);
+    const model: DocumentModel = {
+      id: "images-deferred",
+      title: "Images",
+      sections: parsed.sections,
+      defaultStyles: parsed.defaultStyles,
+      format: "docx",
+      opaque: parsed.opaque,
+      sourceXml: parsed.sourceXml,
+      media: parsed.media,
+    };
+    const { bytes, dropped } = await writeDocx(model);
+    expect(dropped).toEqual([]);
+    const savedParts = await unzip(bytes);
+    const mediaNames = Array.from(savedParts.keys()).filter((name) => /word\/media\/image\d+\.png/.test(name));
+    expect(mediaNames).toHaveLength(2);
+    for (const name of mediaNames) {
+      expect(savedParts.get(name)!.length).toBeGreaterThan(0);
+    }
+    const reopened = await parseDocx(bytes);
+    expect(reopened.media).toHaveLength(2);
   });
 });

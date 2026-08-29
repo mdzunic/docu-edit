@@ -9,7 +9,7 @@ import { kindOfFormat, type DocumentKind, type LibraryFormat } from "./documentK
 import type { PresentationModel } from "./presentation/model";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
-import { type MediaPart } from "./core/media";
+import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
 import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
 import type { CaretPosition } from "./textEditing";
@@ -210,8 +210,16 @@ function persistMedia(docId: string, media: MediaPart[] | undefined): Promise<vo
     return null;
   }
   lastPersistedMedia.set(docId, media);
+  // SPEC-047: the interactive open defers a large `.docx`'s image encode off
+  // the first-paint path (only realised pages force-encode as they render).
+  // This first idle persist is the background finaliser: encode any parts
+  // still deferred, in byte-bounded chunks with a yield between them so the
+  // ~1s whole-document encode never lands as one long task (AC-16), then
+  // write the complete media record — reload must never find empty `data`.
   const record: MediaRecord = { id: mediaKey(docId), docId, media: media ?? [] };
-  return putRecordYielding(record).catch((error: unknown) => {
+  return encodePendingMediaInBackground(media)
+    .then(() => putRecordYielding(record))
+    .catch((error: unknown) => {
     // The latch was set optimistically before the write; a failed write must
     // clear it, or every later persist would skip the media (reference
     // unchanged, "already persisted") while still stripping the shell —
@@ -247,8 +255,12 @@ function persistDraftMedia(docId: string, media: MediaPart[] | undefined): Promi
     return null;
   }
   lastDraftPersistedMedia.set(docId, media);
+  // SPEC-047: as persistMedia — a draft autosave must store real image bytes,
+  // never a still-deferred part's empty `data`. Chunked so it never blocks.
   const record: MediaRecord = { id: draftMediaKey(docId), docId, media: media ?? [] };
-  return putRecordYielding(record).catch((error: unknown) => {
+  return encodePendingMediaInBackground(media)
+    .then(() => putRecordYielding(record))
+    .catch((error: unknown) => {
     // Same failed-write rule as persistMedia's latch above.
     if (lastDraftPersistedMedia.get(docId) === media) {
       lastDraftPersistedMedia.delete(docId);

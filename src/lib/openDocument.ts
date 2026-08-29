@@ -193,6 +193,15 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
   const buffer = await readFileAsArrayBuffer(file);
   const bytes = new Uint8Array(buffer);
   const title = titleFromFileName(file.name);
+  // SPEC-047: the interactive open path (picker, drag-drop, URL, library)
+  // parses a `.docx` with { deferMedia: true } so the ~1s base64 encode of a
+  // large document's images does not sit between choosing the file and first
+  // paint. The model comes back with its images' `data` still ""; each page
+  // force-encodes its own images as it renders (usePaginationView's
+  // renderEntryFor), and the first idle persist finalises the rest in a
+  // chunked background pass (documentStore's persistMedia). Headless callers
+  // (generate, template import) go through the exported helpers below, which
+  // never defer.
   const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
 
   let parts: Map<string, Uint8Array> | null = null;
@@ -210,7 +219,7 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     if (/\.(md|markdown)$/i.test(file.name)) {
       return text(assembleDocumentModel(title, "md", await parseMd(bytes, options)));
     }
-    return text(assembleDocumentModel(title, "docx", await parseDocx(bytes)));
+    return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, undefined, { deferMedia: true })));
   }
 
   // We already inflated the package once above to classify it; hand those
@@ -232,7 +241,7 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     }
     throw new UnsupportedFileError(UNSUPPORTED_ODF_MESSAGE);
   }
-  return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, parts)));
+  return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, parts, { deferMedia: true })));
 }
 
 /** Reads and parses a picked File of ANY supported kind (not yet stored or
