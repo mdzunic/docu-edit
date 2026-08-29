@@ -335,7 +335,11 @@ interface ChartPlan {
  * the highest existing index, recorded on the frame so the slide serialiser
  * resolves its relationship. An untouched chart (verbatim `xml`) and an
  * unsupported chart (never rewritten) are left alone — their parts pass through
- * `opaque` byte-identical, workbook and `.rels` included. */
+ * `opaque` byte-identical, workbook and `.rels` included. A part still pointed
+ * at by such a pass-through frame is *reserved*: a touched sibling sharing that
+ * `sourcePart` never regenerates over it but mints a fresh part instead, so a
+ * duplicate-then-edit can never silently overwrite the frame that still holds
+ * the original bytes (AC-18a/AC-25). */
 function planCharts(model: PresentationModel, parts: Map<string, Uint8Array>): ChartPlan {
   const partBytes = new Map<string, Uint8Array>();
   const newParts = new Set<string>();
@@ -347,13 +351,14 @@ function planCharts(model: PresentationModel, parts: Map<string, Uint8Array>): C
       maxIndex = Math.max(maxIndex, Number(m[1]));
     }
   }
+  const reserved = passThroughChartParts(model);
   for (const slide of model.slides) {
     for (const frame of slide.frames) {
       if (frame.kind !== "chart" || frame.xml !== undefined || frame.unsupportedChartXml !== undefined) {
         continue;
       }
       let target = frame.sourcePart;
-      if (!target || claimed.has(target)) {
+      if (!target || claimed.has(target) || reserved.has(target)) {
         maxIndex += 1;
         target = `ppt/charts/chart${maxIndex}.xml`;
         frame.sourcePart = target;
@@ -366,6 +371,22 @@ function planCharts(model: PresentationModel, parts: Map<string, Uint8Array>): C
     }
   }
   return { partBytes, newParts };
+}
+
+/** The `sourcePart` names of chart frames that pass through byte-identical — an
+ * untouched chart (verbatim `xml`) or an unsupported chart. These parts are off
+ * limits to the regeneration pass so a touched frame can never overwrite the
+ * bytes another frame still references. */
+function passThroughChartParts(model: PresentationModel): Set<string> {
+  const reserved = new Set<string>();
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind === "chart" && (frame.xml !== undefined || frame.unsupportedChartXml !== undefined) && frame.sourcePart) {
+        reserved.add(frame.sourcePart);
+      }
+    }
+  }
+  return reserved;
 }
 
 /** Adds a chart relationship to `rels` for any touched chart frame whose

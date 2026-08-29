@@ -86,7 +86,10 @@ interface OdpChartPlan {
  * rewritten in its `Object N/` directory; a chart created here — or a duplicate
  * sharing a `sourcePart` (D8) — mints a fresh `Object {n}` past the highest
  * existing, recorded on the frame so the page serialiser resolves its href.
- * Untouched and unsupported charts are left alone (verbatim pass-through). */
+ * Untouched and unsupported charts are left alone (verbatim pass-through). An
+ * object still pointed at by such a pass-through frame is *reserved*: a touched
+ * sibling sharing it mints a fresh object rather than regenerating over the
+ * bytes that frame still holds (AC-18a/AC-25). */
 function planOdpCharts(model: PresentationModel, parts: Map<string, Uint8Array>): OdpChartPlan {
   const partBytes = new Map<string, Uint8Array>();
   const newObjects: string[] = [];
@@ -98,13 +101,14 @@ function planOdpCharts(model: PresentationModel, parts: Map<string, Uint8Array>)
       maxIndex = Math.max(maxIndex, Number(m[1]));
     }
   }
+  const reserved = passThroughOdpChartParts(model);
   for (const slide of model.slides) {
     for (const frame of slide.frames) {
       if (frame.kind !== "chart" || frame.xml !== undefined || frame.unsupportedChartXml !== undefined) {
         continue;
       }
       let target = frame.sourcePart;
-      if (!target || claimed.has(target) || !parts.has(target)) {
+      if (!target || claimed.has(target) || reserved.has(target) || !parts.has(target)) {
         maxIndex += 1;
         const dir = `Object ${maxIndex}`;
         target = `${dir}/content.xml`;
@@ -116,6 +120,21 @@ function planOdpCharts(model: PresentationModel, parts: Map<string, Uint8Array>)
     }
   }
   return { partBytes, newObjects };
+}
+
+/** The `sourcePart` names of chart frames that pass through byte-identical — an
+ * untouched chart (verbatim `xml`) or an unsupported chart — so the
+ * regeneration pass never overwrites bytes another frame still references. */
+function passThroughOdpChartParts(model: PresentationModel): Set<string> {
+  const reserved = new Set<string>();
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind === "chart" && (frame.xml !== undefined || frame.unsupportedChartXml !== undefined) && frame.sourcePart) {
+        reserved.add(frame.sourcePart);
+      }
+    }
+  }
+  return reserved;
 }
 
 /** Deleted embedded charts: the `Object N/…` parts (and their
@@ -174,7 +193,12 @@ function orphanedOdpChartParts(model: PresentationModel, parts: Map<string, Uint
   const orphanParts = new Set<string>();
   for (const name of parts.keys()) {
     for (const dir of dirs) {
-      if (name === `${dir}/` || name.startsWith(`${dir}/`) || name.startsWith(`ObjectReplacements/${dir}`)) {
+      if (
+        name === `${dir}/` ||
+        name.startsWith(`${dir}/`) ||
+        name === `ObjectReplacements/${dir}` ||
+        name.startsWith(`ObjectReplacements/${dir}/`)
+      ) {
         orphanParts.add(name);
         break;
       }
@@ -195,7 +219,12 @@ function stripOrphanManifestEntries(manifestXml: string, dirs: Set<string>): str
       return el;
     }
     for (const dir of dirs) {
-      if (path === `${dir}/` || path.startsWith(`${dir}/`) || path.startsWith(`ObjectReplacements/${dir}`)) {
+      if (
+        path === `${dir}/` ||
+        path.startsWith(`${dir}/`) ||
+        path === `ObjectReplacements/${dir}` ||
+        path.startsWith(`ObjectReplacements/${dir}/`)
+      ) {
         return "";
       }
     }

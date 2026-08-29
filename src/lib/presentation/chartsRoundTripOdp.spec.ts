@@ -11,7 +11,7 @@ import { readPresentationBytes } from "./open";
 import { writeOdp } from "./odp/writer";
 import { odfChartContentXml } from "../core/chartPartOdf";
 import { insertChartFrame, setSlideChartData } from "./charts";
-import { deleteFrame } from "./frames";
+import { deleteFrame, duplicateFrame } from "./frames";
 import type { ChartFrame, PresentationModel } from "./model";
 import type { ChartVisual } from "../core/charts";
 
@@ -144,5 +144,44 @@ describe("odp chart read → write round trip", () => {
     expect(manifestXml).not.toContain('manifest:full-path="Object 1/"');
     expect(manifestXml).not.toContain('manifest:full-path="Object 1/content.xml"');
     expect(manifestXml).not.toContain('manifest:full-path="ObjectReplacements/Object 1"');
+  });
+
+  it("duplicating a chart keeps the original object byte-identical and mints a fresh one (AC-18a)", async () => {
+    const { model, source } = await openChartDeck();
+    const chart = chartFrameOf(model);
+    expect(duplicateFrame(model, slideIndexOfChart(model), chart.id)).not.toBeNull();
+    const written = await unzip((await writeOdp(model)).bytes);
+    expect(equalBytes(written.get("Object 1/content.xml")!, source.get("Object 1/content.xml")!)).toBe(true);
+    const newObjects = [...written.keys()].filter((n) => /^Object \d+\/content\.xml$/.test(n) && !source.has(n));
+    expect(newObjects.length).toBe(1);
+  });
+
+  it("editing one of two frames sharing an object never corrupts the other (AC-18a, AC-25)", async () => {
+    const parts = await unzip(await chartDeckBytes());
+    const content = dec(parts.get("content.xml")!).replace(DRAW_FRAME, `${DRAW_FRAME}${DRAW_FRAME}`);
+    parts.set("content.xml", enc(content));
+    const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+    const bytes = await zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+    const source = await unzip(bytes);
+    const model = await readPresentationBytes(bytes, "odp", "Deck");
+    const idx = slideIndexOfChart(model);
+    const chartFrames = model.slides[idx].frames.filter((f): f is ChartFrame => f.kind === "chart");
+    expect(chartFrames.length).toBe(2);
+    expect(chartFrames.every((f) => f.sourcePart === "Object 1/content.xml")).toBe(true);
+
+    setSlideChartData(model, idx, chartFrames[0].id, ["Q1", "Q2", "Q3"], [{ name: "Revenue", values: [42, 20, 30], color: "#4e79a7" }]);
+    const written = await unzip((await writeOdp(model)).bytes);
+    // The object the untouched frame still points at survives byte-identical.
+    expect(equalBytes(written.get("Object 1/content.xml")!, source.get("Object 1/content.xml")!)).toBe(true);
+    const newObjects = [...written.keys()].filter((n) => /^Object \d+\/content\.xml$/.test(n) && !source.has(n));
+    expect(newObjects.length).toBe(1);
+    expect(dec(written.get(newObjects[0])!)).toContain("42");
+    // Reopen: one chart edited, the other keeps its original data.
+    const reopened = await readPresentationBytes((await writeOdp(model)).bytes, "odp", "Deck");
+    const values = reopened.slides[idx].frames
+      .filter((f): f is ChartFrame => f.kind === "chart")
+      .map((c) => c.series[0].values[0] as number)
+      .sort((a, b) => a - b);
+    expect(values).toEqual([10, 42]);
   });
 });

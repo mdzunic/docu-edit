@@ -13,7 +13,7 @@ import { readPresentationBytes } from "./open";
 import { writePptx } from "./pptx/writer";
 import { chartPartXml } from "../core/chartPartOoxml";
 import { insertChartFrame, setSlideChartData } from "./charts";
-import { deleteFrame } from "./frames";
+import { deleteFrame, duplicateFrame } from "./frames";
 import type { ChartFrame, PresentationModel } from "./model";
 import type { ChartVisual } from "../core/charts";
 
@@ -214,5 +214,56 @@ describe("pptx chart read → write round trip", () => {
     // The untouched second chart's part and its workbook survive byte-identical.
     expect(equalBytes(written.get("ppt/charts/chart2.xml")!, source.get("ppt/charts/chart2.xml")!)).toBe(true);
     expect(equalBytes(written.get("ppt/embeddings/book2.xlsx")!, source.get("ppt/embeddings/book2.xlsx")!)).toBe(true);
+  });
+
+  it("duplicating a chart keeps the original's part byte-identical and mints a fresh part for the copy (AC-18a)", async () => {
+    const { model, source } = await openChartDeck();
+    const chart = chartFrameOf(model);
+    // Duplicate shares the source's sourcePart but drops its verbatim container
+    // (touched, not edited) — the writer must not overwrite the original part.
+    expect(duplicateFrame(model, 0, chart.id)).not.toBeNull();
+    const written = await unzip((await writePptx(model)).bytes);
+    // The original (untouched) chart part passes through byte-identical.
+    expect(equalBytes(written.get("ppt/charts/chart1.xml")!, source.get("ppt/charts/chart1.xml")!)).toBe(true);
+    // The duplicate mints its own part rather than sharing chart1.
+    const newChartParts = [...written.keys()].filter((n) => /^ppt\/charts\/chart\d+\.xml$/.test(n) && !source.has(n));
+    expect(newChartParts.length).toBe(1);
+    // Reopen: two chart frames on distinct parts.
+    const reopened = await readPresentationBytes((await writePptx(model)).bytes, "pptx", "Deck");
+    const charts = reopened.slides[0].frames.filter((f): f is ChartFrame => f.kind === "chart");
+    expect(charts.length).toBe(2);
+    expect(new Set(charts.map((c) => c.sourcePart)).size).toBe(2);
+  });
+
+  it("editing one of two frames sharing a sourcePart never corrupts the other (AC-18a, AC-25)", async () => {
+    // A saved deck can hold two graphicFrames pointing at the same chart part
+    // (e.g. a duplicated chart re-read). Editing one must leave the other's
+    // rendered data — and its underlying part — intact.
+    const parts = await unzip(await chartDeckBytes());
+    const secondFrame = GRAPHIC_FRAME.replace('id="9" name="Chart 9"', 'id="10" name="Chart 10"');
+    const slide1 = dec(parts.get("ppt/slides/slide1.xml")!).replace("</p:spTree>", `${secondFrame}</p:spTree>`);
+    parts.set("ppt/slides/slide1.xml", enc(slide1));
+    const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
+    const source = await unzip(bytes);
+    const model = await readPresentationBytes(bytes, "pptx", "Deck");
+    const chartFrames = model.slides[0].frames.filter((f): f is ChartFrame => f.kind === "chart");
+    expect(chartFrames.length).toBe(2);
+    expect(chartFrames.every((f) => f.sourcePart === "ppt/charts/chart1.xml")).toBe(true);
+
+    setSlideChartData(model, 0, chartFrames[0].id, ["Q1", "Q2", "Q3"], [{ name: "Revenue", values: [42, 20, 30], color: "#4e79a7" }]);
+    const written = await unzip((await writePptx(model)).bytes);
+    // The part the untouched frame still points at is preserved byte-identical.
+    expect(equalBytes(written.get("ppt/charts/chart1.xml")!, source.get("ppt/charts/chart1.xml")!)).toBe(true);
+    // The edit lands in a fresh part, not over the shared one.
+    const newChartParts = [...written.keys()].filter((n) => /^ppt\/charts\/chart\d+\.xml$/.test(n) && !source.has(n));
+    expect(newChartParts.length).toBe(1);
+    expect(dec(written.get(newChartParts[0])!)).toContain("<c:v>42</c:v>");
+    // Reopen: one chart shows the edit, the other keeps its original data.
+    const reopened = await readPresentationBytes((await writePptx(model)).bytes, "pptx", "Deck");
+    const values = reopened.slides[0].frames
+      .filter((f): f is ChartFrame => f.kind === "chart")
+      .map((c) => c.series[0].values[0] as number)
+      .sort((a, b) => a - b);
+    expect(values).toEqual([10, 42]);
   });
 });
