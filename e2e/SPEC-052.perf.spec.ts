@@ -8,6 +8,16 @@ import { test, expect, type Page } from "@playwright/test";
 // not a re-run of SPEC-047's own harness), and a data-sheet edit re-renders
 // in under 100ms for a 12-series, 100-category chart.
 
+// These two benchmarks share one dev server, and the budgets are calibrated
+// for a benchmark running in a quiet window (see SPEC-047's file header and
+// playwright.config.ts, which isolates each perf benchmark in its own project
+// for exactly this reason). Run them serially so the two never overlap: with
+// the suite's default worker fan-out they would otherwise be dispatched
+// concurrently and hammer the single Vite dev server at once, inflating the
+// open-time reading by ~seconds — the shared server, not the product, blowing
+// the budget.
+test.describe.configure({ mode: "serial" });
+
 async function createDocument(page: Page): Promise<string> {
   await page.goto("/");
   await page.getByTestId("new-document").first().click();
