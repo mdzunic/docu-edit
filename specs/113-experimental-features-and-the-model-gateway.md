@@ -3,6 +3,8 @@ id: SPEC-113
 title: Experimental features — the flag registry and the model gateway
 status: draft
 area: platform
+complexity: normal
+story_points: 5
 depends_on: [SPEC-058, SPEC-066]
 ---
 ## Why

@@ -3,6 +3,8 @@ id: SPEC-105
 title: Animation depth — paragraph builds, emphasis effects and motion paths
 status: draft
 area: formatting
+complexity: normal
+story_points: 8
 depends_on: [SPEC-080, SPEC-081, SPEC-082, SPEC-084, SPEC-086, SPEC-088]
 ---
 ## Why

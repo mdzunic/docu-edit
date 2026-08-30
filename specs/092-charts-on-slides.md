@@ -3,6 +3,8 @@ id: SPEC-092
 title: Charts on slides — render, insert and edit data
 status: draft
 area: structure
+complexity: complex
+story_points: 13
 depends_on: [SPEC-052, SPEC-079, SPEC-080, SPEC-081, SPEC-082]
 ---
 ## Why

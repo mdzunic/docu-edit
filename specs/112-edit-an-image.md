@@ -3,6 +3,8 @@ id: SPEC-112
 title: Edit an image
 status: draft
 area: editing
+complexity: normal
+story_points: 8
 depends_on: [SPEC-015, SPEC-058, SPEC-063, SPEC-064, SPEC-107, SPEC-108]
 ---
 ## Why

@@ -3,6 +3,8 @@ id: SPEC-097
 title: Slide text depth — lists, spacing, autofit and links
 status: draft
 area: formatting
+complexity: normal
+story_points: 8
 depends_on: [SPEC-014, SPEC-018, SPEC-025, SPEC-032, SPEC-079, SPEC-080, SPEC-081, SPEC-082, SPEC-084]
 ---
 ## Why

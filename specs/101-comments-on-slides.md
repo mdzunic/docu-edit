@@ -3,6 +3,8 @@ id: SPEC-101
 title: Comments on slides — review threads, markers and both wire formats
 status: draft
 area: collab
+complexity: normal
+story_points: 8
 depends_on: [SPEC-038, SPEC-079, SPEC-080, SPEC-081, SPEC-082, SPEC-084, SPEC-085, SPEC-086]
 ---
 ## Why

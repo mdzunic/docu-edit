@@ -3,6 +3,8 @@ id: SPEC-094
 title: Deck themes — colour and font schemes
 status: draft
 area: formatting
+complexity: complex
+story_points: 13
 depends_on: [SPEC-077, SPEC-079, SPEC-080, SPEC-081, SPEC-082, SPEC-089]
 ---
 ## Why

@@ -3,6 +3,8 @@ id: SPEC-077
 title: Document themes — colour and font schemes
 status: draft
 area: formatting
+complexity: complex
+story_points: 21
 depends_on: [SPEC-013, SPEC-019, SPEC-042, SPEC-073]
 ---
 ## Why

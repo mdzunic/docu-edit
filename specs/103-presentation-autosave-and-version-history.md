@@ -3,6 +3,8 @@ id: SPEC-103
 title: Autosave, drafts and version history for presentations
 status: draft
 area: io
+complexity: complex
+story_points: 13
 depends_on: [SPEC-009, SPEC-010, SPEC-040, SPEC-079, SPEC-080]
 ---
 ## Why

@@ -3,6 +3,8 @@ id: SPEC-093
 title: Slide footers, slide numbers and dates
 status: draft
 area: formatting
+complexity: normal
+story_points: 8
 depends_on: [SPEC-053, SPEC-079, SPEC-080, SPEC-081, SPEC-083, SPEC-089, SPEC-090]
 ---
 ## Why

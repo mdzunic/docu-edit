@@ -3,6 +3,8 @@ id: SPEC-073
 title: Shape styling depth — gradients, effects, arrowheads and presets
 status: draft
 area: structure
+complexity: complex
+story_points: 13
 depends_on: [SPEC-051, SPEC-069, SPEC-070]
 ---
 ## Why

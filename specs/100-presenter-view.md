@@ -3,6 +3,8 @@ id: SPEC-100
 title: Presenter view — notes, next slide and the second window
 status: draft
 area: shell
+complexity: normal
+story_points: 8
 depends_on: [SPEC-066, SPEC-083, SPEC-084, SPEC-085, SPEC-086]
 ---
 ## Why

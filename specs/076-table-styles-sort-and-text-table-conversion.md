@@ -3,6 +3,8 @@ id: SPEC-076
 title: Table styles, header repeat, sort and text↔table conversion
 status: draft
 area: structure
+complexity: normal
+story_points: 8
 depends_on: [SPEC-022, SPEC-023, SPEC-042]
 ---
 ## Why

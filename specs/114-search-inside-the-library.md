@@ -3,6 +3,8 @@ id: SPEC-114
 title: Search inside the library (experimental)
 status: draft
 area: shell
+complexity: complex
+story_points: 13
 depends_on: [SPEC-017, SPEC-047, SPEC-067, SPEC-098, SPEC-107, SPEC-113]
 ---
 ## Why

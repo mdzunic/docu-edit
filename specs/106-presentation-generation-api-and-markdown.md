@@ -3,6 +3,8 @@ id: SPEC-106
 title: Presentation generation API, and Markdown to slides
 status: draft
 area: export
+complexity: normal
+story_points: 8
 depends_on: [SPEC-045, SPEC-050, SPEC-079, SPEC-080, SPEC-081, SPEC-082, SPEC-083, SPEC-088]
 ---
 ## Why

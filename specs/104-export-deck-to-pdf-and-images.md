@@ -3,6 +3,8 @@ id: SPEC-104
 title: Export a deck to PDF, images and handouts
 status: draft
 area: export
+complexity: normal
+story_points: 8
 depends_on: [SPEC-034, SPEC-079, SPEC-080, SPEC-081, SPEC-083, SPEC-084, SPEC-085, SPEC-086, SPEC-088, SPEC-090, SPEC-093]
 ---
 ## Why

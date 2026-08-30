@@ -3,6 +3,8 @@ id: SPEC-099
 title: The slide sorter, deck sections and slide reuse
 status: draft
 area: structure
+complexity: normal
+story_points: 8
 depends_on: [SPEC-016, SPEC-079, SPEC-080, SPEC-082, SPEC-086, SPEC-089, SPEC-090, SPEC-094]
 ---
 ## Why

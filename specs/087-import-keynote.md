@@ -3,6 +3,8 @@ id: SPEC-087
 title: Import Apple Keynote presentations (.key)
 status: draft
 area: io
+complexity: complex
+story_points: 21
 depends_on: [SPEC-080, SPEC-081, SPEC-082, SPEC-083]
 ---
 ## Why

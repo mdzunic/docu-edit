@@ -3,6 +3,8 @@ id: SPEC-110
 title: Assemble images into a PDF
 status: draft
 area: export
+complexity: normal
+story_points: 5
 depends_on: [SPEC-034, SPEC-107, SPEC-108, SPEC-109]
 ---
 ## Why

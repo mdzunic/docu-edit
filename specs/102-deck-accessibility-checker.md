@@ -3,6 +3,8 @@ id: SPEC-102
 title: Deck accessibility — alt text, reading order and the checker
 status: draft
 area: editing
+complexity: normal
+story_points: 8
 depends_on: [SPEC-043, SPEC-079, SPEC-081, SPEC-082, SPEC-086, SPEC-089, SPEC-091, SPEC-094, SPEC-095, SPEC-097]
 ---
 ## Why

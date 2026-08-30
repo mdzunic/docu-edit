@@ -3,6 +3,8 @@ id: SPEC-075
 title: Watermarks and line numbering
 status: draft
 area: layout
+complexity: normal
+story_points: 8
 depends_on: [SPEC-028, SPEC-029, SPEC-051, SPEC-074]
 ---
 ## Why

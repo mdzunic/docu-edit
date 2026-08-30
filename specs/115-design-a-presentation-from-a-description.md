@@ -3,6 +3,8 @@ id: SPEC-115
 title: Design a presentation from a description (experimental)
 status: draft
 area: structure
+complexity: normal
+story_points: 8
 depends_on: [SPEC-037, SPEC-080, SPEC-083, SPEC-089, SPEC-094, SPEC-106, SPEC-113]
 ---
 ## Why

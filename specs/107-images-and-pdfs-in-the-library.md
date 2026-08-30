@@ -3,6 +3,8 @@ id: SPEC-107
 title: Images and PDFs in the library
 status: draft
 area: io
+complexity: complex
+story_points: 13
 depends_on: [SPEC-003, SPEC-009, SPEC-024, SPEC-058, SPEC-060, SPEC-063, SPEC-067]
 ---
 ## Why

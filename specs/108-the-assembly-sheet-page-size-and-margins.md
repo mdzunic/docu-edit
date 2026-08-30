@@ -3,6 +3,8 @@ id: SPEC-108
 title: The assembly sheet — page size, margins and fit
 status: draft
 area: layout
+complexity: easy
+story_points: 3
 depends_on: [SPEC-027, SPEC-034, SPEC-058, SPEC-064, SPEC-066, SPEC-107]
 ---
 ## Why

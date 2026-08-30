@@ -3,6 +3,8 @@ id: SPEC-095
 title: Slide media — audio and video frames
 status: draft
 area: structure
+complexity: normal
+story_points: 8
 depends_on: [SPEC-079, SPEC-082, SPEC-084, SPEC-086, SPEC-088]
 ---
 ## Why

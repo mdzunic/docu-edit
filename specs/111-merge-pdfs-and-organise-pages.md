@@ -3,6 +3,8 @@ id: SPEC-111
 title: Merge PDFs, and organise their pages
 status: draft
 area: structure
+complexity: complex
+story_points: 13
 depends_on: [SPEC-107, SPEC-108, SPEC-109, SPEC-110]
 ---
 ## Why

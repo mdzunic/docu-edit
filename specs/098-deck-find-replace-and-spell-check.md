@@ -3,6 +3,8 @@ id: SPEC-098
 title: Deck find and replace, and spell check on slides
 status: draft
 area: editing
+complexity: normal
+story_points: 8
 depends_on: [SPEC-017, SPEC-035, SPEC-079, SPEC-081, SPEC-082, SPEC-083, SPEC-091]
 ---
 ## Why

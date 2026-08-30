@@ -3,6 +3,8 @@ id: SPEC-109
 title: Combine images into one image
 status: draft
 area: structure
+complexity: normal
+story_points: 8
 depends_on: [SPEC-058, SPEC-063, SPEC-064, SPEC-107, SPEC-108]
 ---
 ## Why

@@ -3,6 +3,8 @@ id: SPEC-044
 title: Real-time collaborative editing
 status: draft
 area: collab
+complexity: complex
+story_points: 21
 depends_on: [SPEC-011, SPEC-038, SPEC-040]
 ---
 ## Why

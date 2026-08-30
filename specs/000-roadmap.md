@@ -98,6 +98,35 @@ rejecting SPEC-007 as ambiguous:
    (model shape, function signatures, fixture layout), and names the equality
    relation each test uses. A reader of one file alone must never have to guess.
 
+3. **Every spec not yet built carries a size in its frontmatter** — one
+   `complexity` band and its `story_points` estimate:
+
+   ```yaml
+   complexity: complex   # complex | normal | easy
+   story_points: 13      # 21, 13 | 8, 5 | 3
+   ```
+
+   The band is the normative field and the only one the factory reads; the
+   points are the estimate that justifies it, on the Fibonacci scale this
+   queue has always used informally. They are written **before** a spec is
+   labelled `status:ready`, by whoever writes the spec, because the judgement
+   is about the work the spec describes and not about how a run is going.
+
+   | Band | Points | What earns it |
+   | --- | --- | --- |
+   | `complex` | 13, 21 | New machinery with no seam to hang it on — a decoder or engine written from scratch, a type change that crosses the whole model, a dependency this product does not have. |
+   | `normal` | 5, 8 | A new model area, one or two wire mappings and a UI surface, built on seams that already exist and named exactly by the spec. |
+   | `easy` | 3 | Mostly pure functions and wiring: one surface, no new format mapping, nothing the codebase cannot already almost do. |
+
+   The band is a claim about the *work*, not about how carefully the spec is
+   written — every file here is written to the same normative bar, so length
+   and acceptance-criteria count are not the signal. The factory reads the
+   band to choose which model opens the implement stage
+   (`routing.implementByComplexity` in the factory's `config.json`); a spec
+   with no band falls back to the default ladder, so omitting it is degraded,
+   never broken. Specs already built carry no band — it would be a
+   retrospective guess about work that is finished.
+
 Any spec asserting a round trip must name one of the three relations —
 `equalBytes`, `equalStructural`, `equalSemantic` — and use the helpers in
 `src/lib/equality.ts`. "Asserts model equality" is not a specification. Note

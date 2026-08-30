@@ -3,6 +3,8 @@ id: SPEC-096
 title: Slide object depth — rotation, handles, multi-select, groups, align and distribute
 status: draft
 area: editing
+complexity: complex
+story_points: 13
 depends_on: [SPEC-069, SPEC-072, SPEC-079, SPEC-080, SPEC-081, SPEC-082, SPEC-086]
 ---
 ## Why

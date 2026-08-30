@@ -3,6 +3,8 @@ id: SPEC-074
 title: Paragraph and page borders and shading
 status: draft
 area: formatting
+complexity: normal
+story_points: 8
 depends_on: [SPEC-014, SPEC-019, SPEC-023, SPEC-027]
 ---
 ## Why
