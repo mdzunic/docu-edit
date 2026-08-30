@@ -102,14 +102,14 @@ function readUint24LE(bytes: Uint8Array, offset: number): number {
 function decodeWebp(bytes: Uint8Array): ImageDimensions | null {
   const ascii = (offset: number, length: number): string =>
     new TextDecoder("ascii").decode(bytes.subarray(offset, offset + length));
-  if (bytes.length < 30 || ascii(0, 4) !== "RIFF" || ascii(8, 4) !== "WEBP") {
+  if (bytes.length < 25 || ascii(0, 4) !== "RIFF" || ascii(8, 4) !== "WEBP") {
     return null;
   }
   const chunk = ascii(12, 4);
   if (chunk === "VP8 ") {
     // Lossy: a 3-byte frame tag, then the 9D 01 2A start code, then width
     // and height as 14-bit little-endian values.
-    if (bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) {
+    if (bytes.length < 30 || bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) {
       return null;
     }
     const width = readUint16LE(bytes, 26) & 0x3fff;
@@ -131,6 +131,9 @@ function decodeWebp(bytes: Uint8Array): ImageDimensions | null {
   if (chunk === "VP8X") {
     // Extended: flags + reserved, then canvas width-1 and height-1 as
     // 24-bit little-endian values.
+    if (bytes.length < 30) {
+      return null;
+    }
     const width = readUint24LE(bytes, 24) + 1;
     const height = readUint24LE(bytes, 27) + 1;
     return width > 0 && height > 0 ? { widthPx: width, heightPx: height } : null;
