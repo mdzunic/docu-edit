@@ -62,5 +62,8 @@ test("a flat XML ODF (.fodt) file is rejected with the specific message and stay
     "Flat ODF files aren't supported yet",
   );
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId("document-title")).toHaveText("No document");
+  // The library redesign dropped the "No document" placeholder: the library
+  // is not a document, so no title region renders there at all (see
+  // SPEC-001). No title region still proves no document was opened.
+  await expect(page.getByTestId("document-title")).toHaveCount(0);
 });

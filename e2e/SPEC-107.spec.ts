@@ -78,12 +78,16 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   await expect(page.getByTestId("library")).toBeVisible();
 
   // Drop the PNG; its card shows a REAL downscaled thumbnail of the image.
+  // Scoped to the PNG's own card: the PDF card next to it re-renders its
+  // cached raster under the same testid, so an unscoped media-thumbnail
+  // locator matches whichever raster lands first — and trips strict mode
+  // the moment both are up.
   const pngTransfer = await dataTransferWithFile(page, "spec107-shot.png", "image/png", pngFixture);
   await page.dispatchEvent("body", "drop", { dataTransfer: pngTransfer });
   await expect(page).toHaveURL(/\/media\/.+/);
   await page.getByTestId("close-document").click();
   await expect(page.getByTestId("library")).toBeVisible();
-  const thumbnail = page.getByTestId("media-thumbnail");
+  const thumbnail = rowByTitle(page, "spec107-shot").getByTestId("media-thumbnail");
   await expect(thumbnail).toBeVisible();
   await expect(thumbnail).toHaveAttribute("src", /^data:image\//);
 

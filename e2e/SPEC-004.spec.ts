@@ -59,7 +59,10 @@ test("a file that is not a ZIP shows the specific error and stays on the home pa
     "This file isn't a Word document we can open",
   );
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId("document-title")).toHaveText("No document");
+  // The library redesign dropped the "No document" placeholder: the library
+  // is not a document, so no title region renders there at all (see
+  // SPEC-001). No title region still proves no document was opened.
+  await expect(page.getByTestId("document-title")).toHaveCount(0);
 });
 
 test("a .doc (binary Word 97) file is rejected with the legacy-format error (AC-34)", async ({ page }) => {
