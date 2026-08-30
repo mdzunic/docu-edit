@@ -34,6 +34,49 @@ describe("LibraryThumbnail", () => {
     expect(getDocument).toHaveBeenCalledWith("doc-a");
   });
 
+  it("renders a presentation's first slide as a miniature, not the format badge", async () => {
+    const deck = {
+      kind: "presentation",
+      id: "deck-a",
+      title: "Deck",
+      format: "pptx",
+      slideWidthCm: 33.87,
+      slideHeightCm: 19.05,
+      media: [],
+      slides: [
+        {
+          id: "s1",
+          frames: [
+            {
+              id: "f1",
+              kind: "text",
+              xCm: 2,
+              yCm: 2,
+              widthCm: 20,
+              heightCm: 4,
+              paragraphs: [
+                { runs: [{ text: "Nova launch plan", bold: true, sizePt: 40 }] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const getPresentation = vi
+      .spyOn(documentStore, "getPresentation")
+      .mockImplementation((id) => (id === "deck-a" ? (deck as never) : undefined));
+    const wrapper = mount(LibraryThumbnail, {
+      props: { id: "deck-a", lastModified: 1, format: "pptx" },
+    });
+    vi.runAllTimers();
+    await wrapper.vm.$nextTick();
+    expect(getPresentation).toHaveBeenCalledWith("deck-a");
+    const miniature = wrapper.find('[data-testid="slide-miniature"]');
+    expect(miniature.exists()).toBe(true);
+    expect(miniature.text()).toContain("Nova launch plan");
+    expect(wrapper.find(".thumbnail-fallback").exists()).toBe(false);
+  });
+
   it("renders a document's images in the preview", async () => {
     const model = {
       sections: [

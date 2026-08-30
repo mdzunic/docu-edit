@@ -66,12 +66,19 @@ describe("AppShell", () => {
     expect(wrapper.get('[data-testid="document-title"]').text()).toBe("My doc");
   });
 
-  it("renders a toolbar strip and a canvas area", () => {
-    const wrapper = mount(AppShell, { props: { documentTitle: "t" } });
+  it("renders a toolbar strip only when a view supplies one, and a canvas area", () => {
+    // No toolbar slot (the library, the presentation editor): no empty strip.
+    const bare = mount(AppShell, { props: { documentTitle: "t" } });
+    expect(bare.find('[data-testid="toolbar"]').exists()).toBe(false);
+    expect(bare.get('[data-testid="canvas"]').element.tagName).toBe("MAIN");
+
+    const wrapper = mount(AppShell, {
+      props: { documentTitle: "t" },
+      slots: { toolbar: "<button>Bold</button>" },
+    });
     expect(wrapper.get('[data-testid="toolbar"]').attributes("role")).toBe(
       "toolbar",
     );
-    expect(wrapper.get('[data-testid="canvas"]').element.tagName).toBe("MAIN");
   });
 
   it("places slotted content into the toolbar and canvas", () => {

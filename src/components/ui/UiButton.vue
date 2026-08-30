@@ -46,8 +46,8 @@ const nativeType = computed(() =>
   border: var(--border-width) solid transparent;
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
+  font-size: var(--text-button);
+  font-weight: var(--weight-button);
   line-height: var(--line-tight);
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--easing),

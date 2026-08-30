@@ -1,6 +1,11 @@
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { ThemePreference } from "../lib/themePrefs";
-import { loadPreferences, onPreferencesChange, savePreference } from "../lib/preferences";
+import {
+  loadPreferences,
+  onPreferencesChange,
+  savePreference,
+  type PaletteId,
+} from "../lib/preferences";
 
 // The app-shell theme controller (SPEC-059). A single module-level singleton
 // so every view — the library (HomeView), the open-from-URL loader and the
@@ -19,6 +24,7 @@ import { loadPreferences, onPreferencesChange, savePreference } from "../lib/pre
 
 const initialPreferences = loadPreferences();
 const theme: Ref<ThemePreference> = ref(initialPreferences.theme);
+const palette: Ref<PaletteId> = ref(initialPreferences.palette);
 const dimPage: Ref<boolean> = ref(initialPreferences.dimPage);
 // Tracks the OS setting so `system` follows prefers-color-scheme live (AC-3).
 const systemDark = ref(false);
@@ -42,6 +48,22 @@ function applyDataTheme(): void {
     el.removeAttribute("data-theme");
   } else {
     el.setAttribute("data-theme", theme.value);
+  }
+}
+
+/** Sets data-palette on <html> for a non-default design theme, or removes it
+ * for the default (Modernist — the base :root palette needs no attribute,
+ * exactly as `system` leaves data-theme absent). Mirrors the no-flash script
+ * in index.html so the app's first application never differs from it. */
+function applyDataPalette(): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const el = document.documentElement;
+  if (palette.value === "modernist") {
+    el.removeAttribute("data-palette");
+  } else {
+    el.setAttribute("data-palette", palette.value);
   }
 }
 
@@ -82,12 +104,15 @@ function install(): void {
   // so the singleton stays the single owner of every theme change (AC-60).
   onPreferencesChange((prefs) => {
     theme.value = prefs.theme;
+    palette.value = prefs.palette;
     dimPage.value = prefs.dimPage;
     applyDataTheme();
+    applyDataPalette();
     applyDimPage();
   });
 
   applyDataTheme();
+  applyDataPalette();
   applyDimPage();
 }
 
@@ -103,6 +128,10 @@ function setTheme(next: ThemePreference): void {
   savePreference("theme", next);
 }
 
+function setPalette(next: PaletteId): void {
+  savePreference("palette", next);
+}
+
 function setDimPage(on: boolean): void {
   savePreference("dimPage", on);
 }
@@ -113,7 +142,7 @@ function toggleDimPage(): void {
 
 export function useTheme() {
   install();
-  return { theme, resolvedTheme, dimPage, setTheme, setDimPage, toggleDimPage };
+  return { theme, resolvedTheme, palette, dimPage, setTheme, setPalette, setDimPage, toggleDimPage };
 }
 
 /** Resolves a design token to its computed value on the current theme, for

@@ -7,6 +7,7 @@
 // ShapeGallery (it renders from core/shapeIcons — no text-product imports) and
 // FrameStylePopover. Runtime prop/emit declarations per the espree constraint.
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
+import AppIcon from "../AppIcon.vue";
 import ShapeGallery from "../ShapeGallery.vue";
 import ChartGallery from "../ChartGallery.vue";
 import FrameStylePopover from "./FrameStylePopover.vue";
@@ -149,6 +150,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
         data-testid="insert-text-box"
         @click="emit('insert-text-box')"
       >
+        <AppIcon name="text-box" />
         Text box
       </button>
       <button
@@ -157,6 +159,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
         data-testid="insert-image"
         @click="openPicker"
       >
+        <AppIcon name="image" />
         Image…
       </button>
       <div class="popover-host">
@@ -169,6 +172,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           data-testid="insert-shape"
           @click="galleryOpen = !galleryOpen"
         >
+          <AppIcon name="shape" />
           Shapes ▾
         </button>
         <div
@@ -193,6 +197,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           data-testid="insert-table"
           @click="tableOpen = !tableOpen"
         >
+          <AppIcon name="table" />
           Table ▾
         </button>
         <div
@@ -272,6 +277,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           data-testid="insert-chart"
           @click="chartGalleryOpen = !chartGalleryOpen"
         >
+          <AppIcon name="chart" />
           Chart ▾
         </button>
         <div
@@ -387,7 +393,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
         :aria-expanded="overflowOpen"
         @click="overflowOpen = !overflowOpen"
       >
-        ⋯
+        <AppIcon name="more-horizontal" />
       </button>
       <div
         v-show="overflowOpen"
@@ -420,23 +426,29 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
 }
 
 .tb-btn {
-  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--height-control);
   padding: 0 var(--space-2);
-  border: var(--border-width) solid var(--border-subtle);
+  border: var(--border-width) solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
-  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
 }
 
 .tb-btn:hover:not(:disabled) {
-  background: var(--surface-sunken);
+  background: var(--state-hover);
 }
 
-.tb-btn[aria-pressed="true"] {
-  background: var(--accent-soft, var(--surface-sunken));
-  border-color: var(--accent, var(--border-default));
+.tb-btn[aria-pressed="true"],
+.tb-btn[aria-expanded="true"] {
+  background: var(--surface-selected);
+  color: var(--text-accent);
 }
 
 .tb-btn:disabled {

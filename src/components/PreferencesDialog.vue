@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import AppIcon from "./AppIcon.vue";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 import UiField from "./ui/UiField.vue";
 import UiSelect from "./ui/UiSelect.vue";
+import UiToggleButton from "./ui/UiToggleButton.vue";
 import { usePreferences } from "../composables/usePreferences";
 import {
   AUTOSAVE_DELAY_CHOICES,
   MARGIN_PRESET_NAMES,
   PAGE_SIZE_PRESET_NAMES,
+  PALETTE_OPTIONS,
 } from "../lib/preferences";
 import { SUPPORTED_LANGUAGES } from "../lib/core/language";
 import { STANDARD_FONT_FAMILIES } from "../lib/core/fonts";
@@ -29,11 +32,13 @@ const { preferences, setPreference, resetPreferences } = usePreferences();
 // Confirmation gate for the destructive reset (AC-28).
 const confirmingReset = ref(false);
 
+// The theme switch is a segmented icon control (system / sun / moon).
 const themeOptions = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
+  { value: "system", label: "System", icon: "system" },
+  { value: "light", label: "Light", icon: "sun" },
+  { value: "dark", label: "Dark", icon: "moon" },
 ];
+const paletteOptions = PALETTE_OPTIONS;
 const unitOptions = [
   { value: "cm", label: "Centimetres (cm)" },
   { value: "mm", label: "Millimetres (mm)" },
@@ -87,6 +92,12 @@ function zoomValue(value = "") {
   return Number(value);
 }
 
+/** Narrows a theme segment value to the preference union without a cast
+ * (espree bars TS-only syntax in .vue scripts). */
+function themeValue(value = "") {
+  return value === "light" ? "light" : value === "dark" ? "dark" : "system";
+}
+
 function confirmReset() {
   resetPreferences();
   confirmingReset.value = false;
@@ -110,7 +121,7 @@ function commitGridSpacing(event = new Event("change")) {
   <BaseDialog
     title="Preferences"
     testid="preferences-dialog"
-    width="30rem"
+    width="34rem"
     @dismiss="emit('close')"
   >
     <template #header-extra>
@@ -135,21 +146,61 @@ function commitGridSpacing(event = new Event("change")) {
         id="preferences-appearance-heading"
         class="section-title"
       >
+        <AppIcon name="styles" />
         Appearance
       </h3>
       <UiField
         label="Theme"
-        for="preferences-theme"
-        hint="How the app chrome looks. Default: System"
+        hint="Default: System"
       >
-        <UiSelect
-          id="preferences-theme"
+        <div
+          class="theme-segment"
+          role="group"
+          aria-label="Theme"
           data-testid="preferences-theme"
-          aria-describedby="preferences-theme-hint"
-          :model-value="preferences.theme"
-          :options="themeOptions"
-          @update:model-value="(value) => setPreference('theme', value)"
-        />
+        >
+          <UiToggleButton
+            v-for="option in themeOptions"
+            :key="option.value"
+            :icon="option.icon"
+            :label="option.label"
+            :data-testid="`preferences-theme-${option.value}`"
+            :pressed="preferences.theme === option.value"
+            @click="setPreference('theme', themeValue(option.value))"
+          >
+            {{ option.label }}
+          </UiToggleButton>
+        </div>
+      </UiField>
+      <UiField
+        class="field-wide"
+        label="Color theme"
+        hint="Each works in light and dark. Default: Modernist"
+      >
+        <div
+          class="palette-grid"
+          role="group"
+          aria-label="Color theme"
+          data-testid="preferences-palette"
+        >
+          <button
+            v-for="option in paletteOptions"
+            :key="option.value"
+            type="button"
+            class="palette-chip"
+            :data-testid="`preferences-palette-${option.value}`"
+            :class="{ 'is-active': preferences.palette === option.value }"
+            :aria-pressed="preferences.palette === option.value"
+            @click="setPreference('palette', option.value)"
+          >
+            <span
+              class="palette-swatch"
+              :style="{ background: option.swatch }"
+              aria-hidden="true"
+            />
+            {{ option.label }}
+          </button>
+        </div>
       </UiField>
       <UiField
         label="Dim page in dark theme"
@@ -249,6 +300,7 @@ function commitGridSpacing(event = new Event("change")) {
         id="preferences-editing-heading"
         class="section-title"
       >
+        <AppIcon name="pencil" />
         Editing
       </h3>
       <UiField
@@ -336,6 +388,7 @@ function commitGridSpacing(event = new Event("change")) {
         id="preferences-new-documents-heading"
         class="section-title"
       >
+        <AppIcon name="text-box" />
         New documents
       </h3>
       <UiField
@@ -405,6 +458,7 @@ function commitGridSpacing(event = new Event("change")) {
         id="preferences-saving-heading"
         class="section-title"
       >
+        <AppIcon name="download" />
         Saving
       </h3>
       <UiField
@@ -476,6 +530,7 @@ function commitGridSpacing(event = new Event("change")) {
         id="preferences-drawing-heading"
         class="section-title"
       >
+        <AppIcon name="shape" />
         Drawing
       </h3>
       <UiField
@@ -532,6 +587,7 @@ function commitGridSpacing(event = new Event("change")) {
         id="preferences-advanced-heading"
         class="section-title"
       >
+        <AppIcon name="settings" />
         Advanced
       </h3>
       <UiField
@@ -610,12 +666,12 @@ function commitGridSpacing(event = new Event("change")) {
 }
 
 .section {
-  margin-bottom: var(--space-6);
-  padding-bottom: var(--space-5);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
   border-bottom: var(--border-width) solid var(--border-default);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .section:last-of-type {
@@ -624,16 +680,122 @@ function commitGridSpacing(event = new Event("change")) {
 
 .section-title {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--text-md);
   font-weight: var(--weight-bold);
   color: var(--text-secondary);
   text-transform: uppercase;
 }
 
+/* ---- Compact settings rows -----------------------------------------------
+   Each field is a settings-app row: label (and its hint beneath) on the left,
+   the control flush right — instead of the stacked label/control/hint column,
+   which made the dialog twice as tall. The wide controls (the palette grid)
+   opt out via .field-wide and keep the stacked layout. */
+.section :deep(.ui-field) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-5);
+  row-gap: var(--space-1);
+}
+
+.section :deep(.ui-field > .ui-field-label) {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+}
+
+.section :deep(.ui-field > .ui-field-hint),
+.section :deep(.ui-field > .ui-field-error) {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.section :deep(.ui-field > *:not(.ui-field-label):not(.ui-field-hint):not(.ui-field-error)) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  align-self: center;
+}
+
+.section :deep(.field-wide.ui-field) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.section :deep(.field-wide.ui-field > *:not(.ui-field-label):not(.ui-field-hint):not(.ui-field-error)) {
+  align-self: stretch;
+  justify-self: stretch;
+}
+
+/* ---- The theme segment (system / sun / moon) ------------------------------ */
+.theme-segment {
+  display: inline-flex;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.theme-segment :deep(.ui-toggle-button) {
+  border-radius: 0;
+}
+
+.theme-segment :deep(.ui-toggle-button + .ui-toggle-button) {
+  border-inline-start: var(--border-width) solid var(--border-default);
+}
+
+/* ---- The palette chips ---------------------------------------------------- */
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2);
+}
+
+.palette-chip {
+  font: inherit;
+  font-size: var(--text-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--height-control);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  text-align: start;
+  cursor: pointer;
+}
+
+.palette-chip:hover {
+  background: var(--state-hover);
+}
+
+.palette-chip.is-active {
+  border-color: var(--accent);
+  background: var(--surface-selected);
+  color: var(--text-accent);
+  font-weight: var(--weight-bold);
+}
+
+/* The dominant-colour square; its fill is data (PALETTE_OPTIONS.swatch),
+   bound inline — palettes are not chrome tokens. */
+.palette-swatch {
+  flex: none;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid var(--border-subtle);
+}
+
 .pref-checkbox {
   width: 1rem;
   height: 1rem;
-  align-self: flex-start;
   accent-color: var(--accent);
 }
 
@@ -645,7 +807,7 @@ function commitGridSpacing(event = new Event("change")) {
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
-  font-size: var(--text-md);
+  font-size: var(--text-control);
 }
 
 .pref-text:focus-visible {

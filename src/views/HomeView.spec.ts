@@ -13,11 +13,9 @@ function mountHome() {
 }
 
 describe("HomeView", () => {
-  it("titles the app bar 'No document'", () => {
+  it("shows no document title in the app bar — the library is not a document", () => {
     const { wrapper } = mountHome();
-    expect(wrapper.get('[data-testid="document-title"]').text()).toBe(
-      "No document",
-    );
+    expect(wrapper.find('[data-testid="document-title"]').exists()).toBe(false);
   });
 
   // SPEC-067 AC-51..53: the empty state is a first-run screen describing what

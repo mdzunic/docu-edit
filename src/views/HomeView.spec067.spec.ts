@@ -156,6 +156,56 @@ describe("sort + view persistence (AC-2, AC-13, AC-14, AC-15)", () => {
   });
 });
 
+describe("grid click previews in quick look; double-click opens", () => {
+  it("a plain card click selects the card into the quick-look pane without navigating", async () => {
+    const { store, mountHome } = await loadModules();
+    seed(store, "a", "One", 3000);
+    seed(store, "b", "Two", 2000);
+    const { wrapper, router } = await mountHome();
+    await wrapper.get('[data-testid="view-grid"]').trigger("click");
+
+    await wrapper.get('[data-doc-id="a"]').trigger("click");
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe("/");
+    expect(wrapper.get('[data-testid="quick-look-title"]').text()).toBe("One");
+
+    // Clicking another card moves the preview — the selection is replaced,
+    // never accumulated.
+    await wrapper.get('[data-doc-id="b"]').trigger("click");
+    expect(wrapper.get('[data-testid="quick-look-title"]').text()).toBe("Two");
+    expect(wrapper.find('[data-testid="quick-look-multiple"]').exists()).toBe(false);
+  });
+
+  it("a double-click opens the document", async () => {
+    const { store, mountHome } = await loadModules();
+    seed(store, "a", "One", 3000);
+    const { wrapper, router } = await mountHome();
+    await wrapper.get('[data-testid="view-grid"]').trigger("click");
+
+    // Await the navigation the dblclick started — the push promise is the
+    // deterministic "navigation settled" signal.
+    const pushSpy = vi.spyOn(router, "push");
+    await wrapper.get('[data-doc-id="a"]').trigger("dblclick");
+    await pushSpy.mock.results[0]?.value;
+    expect(router.currentRoute.value.path).toBe("/doc/a");
+  });
+
+  it("a multi-selection shows the no-preview message instead of one entry", async () => {
+    const { store, mountHome } = await loadModules();
+    seed(store, "a", "One", 3000);
+    seed(store, "b", "Two", 2000);
+    const { wrapper } = await mountHome();
+    await wrapper.get('[data-testid="view-grid"]').trigger("click");
+
+    const checks = wrapper.findAll('[data-testid="row-select"]');
+    await checks[0]!.setValue(true);
+    await checks[1]!.setValue(true);
+    const message = wrapper.get('[data-testid="quick-look-multiple"]');
+    expect(message.text()).toContain("2 documents selected");
+    expect(wrapper.find('[data-testid="quick-look-title"]').exists()).toBe(false);
+  });
+});
+
 describe("multi-select + bulk actions (AC-23, AC-26, AC-27..32)", () => {
   it("selects rows and shows a bulk bar with a count and Clear", async () => {
     const { store, mountHome } = await loadModules();

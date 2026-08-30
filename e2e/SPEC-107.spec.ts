@@ -61,15 +61,17 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   const pdfRow = rowByTitle(page, "spec107-pages");
   await expect(pdfRow.getByTestId("row-format")).toHaveText("PDF");
 
-  // The grid card is an honest paper-shaped placeholder: page count on it,
-  // no rasterised preview.
+  // The grid card shows a real raster of the PDF's first page (pdf.js — the
+  // sanctioned dependency exception), exactly as an image card does.
   await page.getByTestId("view-grid").click();
-  const placeholder = page.getByTestId("pdf-placeholder");
-  await expect(placeholder).toBeVisible();
-  await expect(placeholder).toContainText("3 pages");
+  const pdfThumb = page.getByTestId("media-thumbnail").first();
+  await expect(pdfThumb).toBeVisible();
+  expect(await pdfThumb.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+  await expect(page.getByTestId("pdf-placeholder")).toHaveCount(0);
 
-  // Open it from the card, then close again.
-  await rowByTitle(page, "spec107-pages").click();
+  // Open it from the card — a plain click previews in the quick-look pane,
+  // a double-click opens — then close again.
+  await rowByTitle(page, "spec107-pages").dblclick();
   await expect(page).toHaveURL(/\/media\/.+/);
   await expect(page.getByTestId("detail-pages")).toHaveText("3 pages");
   await page.getByTestId("close-document").click();
@@ -85,9 +87,9 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   await expect(thumbnail).toBeVisible();
   await expect(thumbnail).toHaveAttribute("src", /^data:image\//);
 
-  // Open the image: it starts fit-to-window, zooms to 100% and back to fit
-  // (SPEC-063 vocabulary).
-  await rowByTitle(page, "spec107-shot").click();
+  // Open the image (double-click — the grid's plain click previews): it
+  // starts fit-to-window, zooms to 100% and back to fit (SPEC-063 vocabulary).
+  await rowByTitle(page, "spec107-shot").dblclick();
   await expect(page).toHaveURL(/\/media\/.+/);
   await expect(page.getByTestId("media-image")).toBeVisible();
   await expect(page.getByTestId("media-zoom-fit")).toHaveAttribute("aria-pressed", "true");

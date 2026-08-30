@@ -182,13 +182,16 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
   box-shadow: var(--shadow-1);
 }
 
+/* The handoff's column headers: small uppercase caps over a heavier rule. */
 .library-table th {
   text-align: left;
-  font-size: var(--text-md);
-  font-weight: var(--weight-bold);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-secondary);
   padding: var(--space-3) var(--space-5);
-  border-bottom: var(--border-width) solid var(--border-default);
+  border-bottom: calc(2 * var(--border-width)) solid var(--border-default);
 }
 
 .library-table td {

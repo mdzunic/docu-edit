@@ -71,10 +71,11 @@ test("the Close control is labelled and icon-only, and is absent in the library 
 
   await close.click();
   await expect(page.getByTestId("library")).toBeVisible();
-  // The library's app bar carries no Close control, and shows no real document
-  // title — the placeholder is unchanged from today (AC-24, AC-25).
+  // The library's app bar carries no Close control, and shows no document
+  // title at all — the library is not a document, so the old "No document"
+  // placeholder no longer renders either (AC-24, AC-25).
   await expect(page.getByTestId("close-document")).toHaveCount(0);
-  await expect(page.getByTestId("document-title")).toHaveText("No document");
+  await expect(page.getByTestId("document-title")).toHaveCount(0);
 });
 
 test("File → Close returns to the library (AC-4, AC-5)", async ({ page }) => {

@@ -13,6 +13,7 @@
     "lint": "oxlint src && eslint \"src/**/*.vue\""
   },
   "dependencies": {
+    "pdfjs-dist": "^6.3.289",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },

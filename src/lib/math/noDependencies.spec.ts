@@ -12,8 +12,16 @@ const manifest = JSON.parse(
 ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
 
 describe("SPEC-056 AC-27 — package.json is unchanged", () => {
-  it("keeps exactly the two runtime dependencies", () => {
-    expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual(["vue", "vue-router"]);
+  it("keeps exactly the sanctioned runtime dependencies", () => {
+    // vue + vue-router since SPEC-001; pdfjs-dist is the one sanctioned
+    // exception (approved 2026-08-30 — PDF first-page previews, see
+    // lib/pdfRaster.ts and CLAUDE.md). Still an exact pin: anything else
+    // added here fails.
+    expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
+      "pdfjs-dist",
+      "vue",
+      "vue-router",
+    ]);
   });
 
   it("adds no math-rendering library or font package", () => {

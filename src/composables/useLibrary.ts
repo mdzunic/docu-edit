@@ -242,6 +242,14 @@ export function useLibrary() {
     selectionAnchor.value = id;
   }
 
+  /** Makes `id` the sole selection — the grid's plain-click behaviour: the
+   * clicked card becomes the quick-look subject without toggling into (or
+   * accumulating onto) the checkbox multi-selection. */
+  function selectOnly(id: string): void {
+    selected.value = new Set([id]);
+    selectionAnchor.value = id;
+  }
+
   function selectRange(id: string): void {
     const order = displayed.value.map((entry) => entry.id);
     const anchor = selectionAnchor.value || order[0] || id;
@@ -438,6 +446,7 @@ export function useLibrary() {
     hasSelection,
     isSelected,
     toggleSelection,
+    selectOnly,
     selectRange,
     selectWithModifiers,
     selectAll,

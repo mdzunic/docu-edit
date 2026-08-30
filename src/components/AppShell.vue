@@ -24,8 +24,9 @@ import { installTierObserver, useTier } from "../composables/useResponsiveTier";
 // the types from them. useTemplateRef needs no generic for the same reason —
 // it infers the element type from the matching template `ref` attribute.
 const props = defineProps({
-  /** Shown in the app bar next to the product name. */
-  documentTitle: { type: String, required: true },
+  /** Shown in the app bar next to the product name. An empty title (the
+   * library) renders no title region at all — no divider, no placeholder. */
+  documentTitle: { type: String, default: "" },
   /** Whether clicking the title enters an editable text field. */
   titleEditable: { type: Boolean, default: false },
   /** Shown as a badge next to the title, e.g. "DOCX". Omitted when unset. */
@@ -240,53 +241,53 @@ onUnmounted(() => {
         data-testid="product-name"
         href="/"
         @click.prevent="goHome"
-      ><svg
-        class="brand-mark"
-        data-testid="brand-mark"
-        viewBox="0 0 24 24"
-        width="26"
-        height="26"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <rect
-          class="brand-mark-tile"
-          x="1"
-          y="1"
-          width="22"
-          height="22"
-          rx="6"
-        />
-        <path
-          class="brand-mark-glyph"
-          d="M7.5 5.5h6L17 9v9.5h-9.5z"
-        />
-        <path
-          class="brand-mark-glyph"
-          d="M13.5 5.5V9H17"
-        />
-        <path
-          class="brand-mark-glyph"
-          d="M10 12.5h4.5"
-        />
-        <path
-          class="brand-mark-glyph"
-          d="M10 15.5h2.5"
-        />
-        <path
-          class="brand-mark-glyph"
-          d="M14.75 13.75v3.5"
-        />
-      </svg><span class="product-wordmark">docu-edit</span></a>
+      ><!-- The modernist handoff's mark: an ink block with a diagonal cut and
+           two bars, the lower one in the accent. On the brand bar the block
+           renders in the on-brand foreground (the handoff's own dark-ground
+           treatment) so the mark reads in every palette and scheme. -->
+        <svg
+          class="brand-mark"
+          data-testid="brand-mark"
+          viewBox="0 0 24 24"
+          width="26"
+          height="26"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            class="brand-mark-tile"
+            d="M0 0h24v24H0z"
+          />
+          <path
+            class="brand-mark-cut"
+            d="M24 24H8L24 8z"
+          />
+          <rect
+            class="brand-mark-cut"
+            x="4"
+            y="4"
+            width="12"
+            height="2.6"
+          />
+          <rect
+            class="brand-mark-accent"
+            x="4"
+            y="10"
+            width="7"
+            height="2.6"
+          />
+        </svg><span class="product-wordmark">docu-<span class="wordmark-accent">edit</span></span></a>
       <span
+        v-if="documentTitle || titleEditable"
         class="app-bar-divider"
         aria-hidden="true"
       />
       <!-- The title doubles as the rename control (SPEC-002): when editable it
            carries a pencil that surfaces on hover/focus and a hover wash, so
-           "click to rename" is discoverable rather than a hidden gesture. -->
+           "click to rename" is discoverable rather than a hidden gesture. An
+           empty, non-editable title (the library) renders no title region. -->
       <h1
-        v-if="!isEditingTitle"
+        v-if="(documentTitle || titleEditable) && !isEditingTitle"
         class="document-title"
         :class="{ 'document-title--editable': titleEditable }"
         data-testid="document-title"
@@ -304,7 +305,7 @@ onUnmounted(() => {
         />
       </h1>
       <input
-        v-else
+        v-else-if="documentTitle || titleEditable"
         ref="titleInput"
         v-model="draftTitle"
         class="document-title document-title-input"
@@ -319,6 +320,15 @@ onUnmounted(() => {
         class="format-badge"
         data-testid="format-badge"
       >{{ formatBadge }}</span>
+      <!-- Centre region (the library's header search — the modernist handoff
+           places search in the app bar). Only laid out when a view fills it,
+           so the editor shell keeps its previous layout. -->
+      <div
+        v-if="$slots['app-bar-center']"
+        class="app-bar-center"
+      >
+        <slot name="app-bar-center" />
+      </div>
       <div class="app-bar-actions">
         <slot name="app-bar-actions" />
       </div>
@@ -333,7 +343,11 @@ onUnmounted(() => {
     >
       <slot name="menubar" />
     </div>
+    <!-- Only rendered when a view supplies toolbar content — the library,
+         the presentation editor and the media/loader shells otherwise carry
+         an empty 40px strip that just costs vertical space. -->
     <div
+      v-if="$slots.toolbar"
       class="toolbar"
       role="toolbar"
       aria-label="Document toolbar"
@@ -348,6 +362,7 @@ onUnmounted(() => {
       <slot />
     </main>
     <div
+      v-if="$slots['status-bar']"
       class="status-bar"
       data-testid="status-bar"
     >
@@ -433,15 +448,15 @@ onUnmounted(() => {
 }
 
 .brand-mark-tile {
-  fill: var(--accent);
+  fill: var(--text-on-brand);
 }
 
-.brand-mark-glyph {
-  fill: none;
-  stroke: var(--text-on-brand);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.brand-mark-cut {
+  fill: var(--surface-brand);
+}
+
+.brand-mark-accent {
+  fill: var(--accent);
 }
 
 .product-wordmark {
@@ -450,6 +465,12 @@ onUnmounted(() => {
   letter-spacing: -0.01em;
   line-height: var(--line-tight);
   white-space: nowrap;
+}
+
+/* The handoff's two-tone logotype: "edit" takes the accent, lightened toward
+   the on-brand foreground so it reads on the dark bar in every palette. */
+.wordmark-accent {
+  color: color-mix(in srgb, var(--accent) 55%, var(--text-on-brand));
 }
 
 /* A hairline between the brand and the document title. */
@@ -529,6 +550,17 @@ onUnmounted(() => {
 
 /* Pushed to the far edge of the app bar; align-self keeps the actions
    vertically centred even though the bar's items align to baseline. */
+.app-bar-center {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.app-bar-center :slotted(*) {
+  width: min(28rem, 100%);
+}
+
 .app-bar-actions {
   margin-left: auto;
   align-self: center;
@@ -584,8 +616,8 @@ onUnmounted(() => {
 }
 
 /* The status bar (SPEC-028 AC-3): a slim strip under the canvas the view
-   fills with the caret's page indicator. Present even when the slot is
-   empty so the layout never jumps. */
+   fills with the caret's page indicator. Only rendered when a view supplies
+   status content — the library and the presentation editor carry none. */
 .status-bar {
   flex: none;
   display: flex;

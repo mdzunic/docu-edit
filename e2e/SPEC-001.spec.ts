@@ -11,21 +11,31 @@ import { test, expect } from "@playwright/test";
 // reach that state; it is covered by unit tests (src/views/DocumentView.spec.ts).
 test.use({ viewport: { width: 1024, height: 768 } });
 
-test("/ shows the app shell: app bar, toolbar strip, canvas (AC-1)", async ({
+test("/ shows the app shell: app bar, canvas — and the toolbar strip in the editor (AC-1)", async ({
   page,
 }) => {
+  // The library renders no toolbar strip of its own — the shell only mounts
+  // the strip when a view supplies toolbar content, so the landing page does
+  // not spend 40px on an empty bar.
   await page.goto("/");
   await expect(page.getByTestId("app-bar")).toBeVisible();
-  await expect(page.getByTestId("toolbar")).toBeVisible();
   await expect(page.getByTestId("canvas")).toBeVisible();
+  await expect(page.getByTestId("toolbar")).toHaveCount(0);
+
+  // The editor supplies one, so the strip appears there.
+  await page.getByTestId("new-document").first().click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(page.getByTestId("toolbar")).toBeVisible();
 });
 
-test("app bar shows the product name and 'No document' (AC-2, AC-3, AC-4)", async ({
+test("app bar shows the product name; the library carries no document title (AC-2, AC-3, AC-4)", async ({
   page,
 }) => {
   await page.goto("/");
   await expect(page.getByTestId("product-name")).toHaveText("docu-edit");
-  await expect(page.getByTestId("document-title")).toHaveText("No document");
+  // The library is not a document, so no "No document" placeholder renders;
+  // the title region appears only in the editors (see the /doc test below).
+  await expect(page.getByTestId("document-title")).toHaveCount(0);
 });
 
 // SPEC-067 redesigned the first-run empty state into a "Welcome to docu-edit"
@@ -57,12 +67,15 @@ test("/doc/:id titles the app bar with the document's default title", async ({
 test("toolbar scrolls horizontally on overflow — no wrap, no clip (AC-11, AC-12, AC-13)", async ({
   page,
 }) => {
+  // The strip only mounts where a view supplies it — the editor.
   await page.goto("/");
+  await page.getByTestId("new-document").first().click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
   const toolbar = page.getByTestId("toolbar");
   const heightBefore = (await toolbar.boundingBox())!.height;
 
-  // The strip ships empty in SPEC-001, so overflow it the way later specs
-  // will: with a row of controls wider than the viewport.
+  // Overflow the strip the way an over-wide control set would: with a row of
+  // extra controls wider than the viewport.
   await toolbar.evaluate((el) => {
     for (let i = 0; i < 40; i += 1) {
       const button = document.createElement("button");
@@ -128,7 +141,21 @@ test("layout fills the viewport and only the canvas scrolls (AC-14, AC-15)", asy
 test("at 1024px the bars stack without overlap and nothing is cut off (AC-16, AC-17)", async ({
   page,
 }) => {
+  // The empty-state actions are fully inside the canvas, hence usable —
+  // checked first, while the library is still empty.
   await page.goto("/");
+  const libraryCanvas = (await page.getByTestId("canvas").boundingBox())!;
+  const openButton = (await page
+    .getByRole("button", { name: "Open a file" })
+    .boundingBox())!;
+  expect(openButton.y).toBeGreaterThanOrEqual(libraryCanvas.y);
+  expect(openButton.y + openButton.height).toBeLessThanOrEqual(
+    libraryCanvas.y + libraryCanvas.height + 0.5,
+  );
+
+  // The full bar stack lives in the editor (the library mounts no toolbar).
+  await page.getByRole("button", { name: "New document" }).first().click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
   const appBar = (await page.getByTestId("app-bar").boundingBox())!;
   const toolbar = (await page.getByTestId("toolbar").boundingBox())!;
   const canvas = (await page.getByTestId("canvas").boundingBox())!;
@@ -144,13 +171,4 @@ test("at 1024px the bars stack without overlap and nothing is cut off (AC-16, AC
     expect(box.x + box.width).toBeLessThanOrEqual(1024.5);
     expect(box.y + box.height).toBeLessThanOrEqual(768.5);
   }
-
-  // The empty-state actions are fully inside the canvas, hence usable.
-  const openButton = (await page
-    .getByRole("button", { name: "Open a file" })
-    .boundingBox())!;
-  expect(openButton.y).toBeGreaterThanOrEqual(canvas.y);
-  expect(openButton.y + openButton.height).toBeLessThanOrEqual(
-    canvas.y + canvas.height + 0.5,
-  );
 });

@@ -19,6 +19,9 @@ import LibraryDialogs from "./library/LibraryDialogs.vue";
 import LibraryGrid from "./library/LibraryGrid.vue";
 import LibraryHeaderActions from "./library/LibraryHeaderActions.vue";
 import LibraryList from "./library/LibraryList.vue";
+import LibraryQuickLook from "./library/LibraryQuickLook.vue";
+import LibraryRail from "./library/LibraryRail.vue";
+import LibrarySearchBox from "./library/LibrarySearchBox.vue";
 import LibrarySelectionBar from "./library/LibrarySelectionBar.vue";
 import LibraryStateMessage from "./library/LibraryStateMessage.vue";
 import LibraryStoragePanel from "./library/LibraryStoragePanel.vue";
@@ -56,6 +59,8 @@ const lib = useLibrary();
 // owns the menu state, HomeView only supplies the tier flag.
 const tier = useTier();
 const compact = computed(() => tier.value === "compact");
+// The handoff's full-tier layout (rail + quick look, search in the app bar).
+const fullTier = computed(() => tier.value === "full");
 
 const openError = ref("");
 const dialogs = useTemplateRef("dialogs");
@@ -123,6 +128,12 @@ function openDocument(id = "") {
 
 function onSelectModifiers(id = "", modifiers = { shift: false, ctrlOrMeta: false }) {
   lib.selectWithModifiers(id, modifiers);
+  lib.focusedId.value = id;
+}
+
+// Grid plain click: sole-select into quick look (open = dblclick/Enter/pane).
+function onCardPreview(id = "") {
+  lib.selectOnly(id);
   lib.focusedId.value = id;
 }
 
@@ -345,7 +356,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppShell document-title="No document">
+  <AppShell>
+    <template
+      v-if="fullTier"
+      #app-bar-center
+    >
+      <LibrarySearchBox :lib="lib" />
+    </template>
     <template #app-bar-actions>
       <UiButton
         variant="ghost"
@@ -385,72 +402,111 @@ onMounted(async () => {
       @menu-select="onMenuSelect"
     />
 
-    <!-- The library shell (AC-1, AC-8..50). -->
+    <!-- The library shell (AC-1, AC-8..50); full tier = rail | main | quick look. -->
     <div
       v-else
       class="library"
+      :class="{ 'library--full': fullTier }"
       data-testid="library"
     >
-      <LibraryControls :lib="lib">
+      <LibraryRail
+        v-if="fullTier"
+        :lib="lib"
+      >
         <template #actions>
           <LibraryHeaderActions
-            :compact="compact"
+            :compact="false"
             @new-document="createNewDocument"
             @new-presentation="createNewPresentation"
             @new-from-template="openTemplateGallery"
             @open-document="pickFile"
           />
         </template>
-      </LibraryControls>
+        <template #storage>
+          <LibraryStoragePanel :lib="lib" />
+        </template>
+      </LibraryRail>
 
-      <!-- Bulk action bar (AC-27..32). -->
-      <LibrarySelectionBar
-        v-if="lib.hasSelection.value"
+      <div class="library-main">
+        <LibraryControls
+          :lib="lib"
+          :rail="fullTier"
+        >
+          <template
+            v-if="!fullTier"
+            #actions
+          >
+            <LibraryHeaderActions
+              :compact="compact"
+              @new-document="createNewDocument"
+              @new-presentation="createNewPresentation"
+              @new-from-template="openTemplateGallery"
+              @open-document="pickFile"
+            />
+          </template>
+        </LibraryControls>
+
+        <!-- Bulk action bar (AC-27..32). -->
+        <LibrarySelectionBar
+          v-if="lib.hasSelection.value"
+          :lib="lib"
+          @trash="bulkTrash"
+        />
+
+        <!-- Storage usage (AC-47..50); the rail hosts it at the full tier. -->
+        <LibraryStoragePanel
+          v-if="!fullTier"
+          :lib="lib"
+        />
+
+        <!-- No results (AC-54..56) / empty-with-trash note. -->
+        <LibraryStateMessage
+          v-if="lib.noResults.value"
+          no-results
+          @clear-filters="lib.clearFilters()"
+        />
+        <LibraryStateMessage
+          v-else-if="lib.libraryEmpty.value"
+          :trash-count="lib.trashCount.value"
+        />
+
+        <!-- List view (AC-1). -->
+        <LibraryList
+          v-else-if="lib.view.value === 'list'"
+          :lib="lib"
+          :menu-for="menuFor"
+          :highlight-id="highlightId"
+          @open="openDocument"
+          @select-modifiers="onSelectModifiers($event.id, { shift: $event.shift, ctrlOrMeta: $event.ctrlOrMeta })"
+          @keydown="handleContentKeydown"
+          @menu-toggle="toggleMenu"
+          @menu-close="closeMenu"
+          @menu-select="onMenuSelect"
+        />
+
+        <!-- Grid view (AC-1, AC-3..7). -->
+        <LibraryGrid
+          v-else
+          :lib="lib"
+          :menu-for="menuFor"
+          :highlight-id="highlightId"
+          @open="openDocument"
+          @preview="onCardPreview"
+          @select-modifiers="onSelectModifiers($event.id, { shift: $event.shift, ctrlOrMeta: $event.ctrlOrMeta })"
+          @keydown="handleContentKeydown"
+          @menu-toggle="toggleMenu"
+          @menu-close="closeMenu"
+          @menu-select="onMenuSelect"
+          @focus="lib.focusedId.value = $event"
+        />
+      </div>
+
+      <LibraryQuickLook
+        v-if="fullTier"
         :lib="lib"
-        @trash="bulkTrash"
-      />
-
-      <!-- Storage usage (AC-47..50). -->
-      <LibraryStoragePanel :lib="lib" />
-
-      <!-- No results (AC-54..56) / empty-with-trash note. -->
-      <LibraryStateMessage
-        v-if="lib.noResults.value"
-        no-results
-        @clear-filters="lib.clearFilters()"
-      />
-      <LibraryStateMessage
-        v-else-if="lib.libraryEmpty.value"
-        :trash-count="lib.trashCount.value"
-      />
-
-      <!-- List view (AC-1). -->
-      <LibraryList
-        v-else-if="lib.view.value === 'list'"
-        :lib="lib"
-        :menu-for="menuFor"
-        :highlight-id="highlightId"
         @open="openDocument"
-        @select-modifiers="onSelectModifiers($event.id, { shift: $event.shift, ctrlOrMeta: $event.ctrlOrMeta })"
-        @keydown="handleContentKeydown"
-        @menu-toggle="toggleMenu"
-        @menu-close="closeMenu"
-        @menu-select="onMenuSelect"
-      />
-
-      <!-- Grid view (AC-1, AC-3..7). -->
-      <LibraryGrid
-        v-else
-        :lib="lib"
-        :menu-for="menuFor"
-        :highlight-id="highlightId"
-        @open="openDocument"
-        @select-modifiers="onSelectModifiers($event.id, { shift: $event.shift, ctrlOrMeta: $event.ctrlOrMeta })"
-        @keydown="handleContentKeydown"
-        @menu-toggle="toggleMenu"
-        @menu-close="closeMenu"
-        @menu-select="onMenuSelect"
-        @focus="lib.focusedId.value = $event"
+        @action="onMenuSelect"
+        @download="lib.downloadDocuments([$event])"
       />
     </div>
 
@@ -509,5 +565,45 @@ onMounted(async () => {
   max-width: 64rem;
   margin: 0 auto;
   padding: var(--space-7) var(--space-5);
+}
+
+/* The modernist handoff's full-tier frame: rail | main | quick look. The two
+   side columns are sticky so the file list scrolls between them. */
+.library--full {
+  max-width: none;
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr) 19rem;
+  gap: var(--space-6);
+  align-items: stretch;
+  padding: var(--space-6) var(--space-6) var(--space-7);
+}
+
+/* The side panes pin to the viewport while the file list scrolls between
+   them: sticky against the canvas scrollport, sized to the visible height so
+   the rail bottom-pins its storage meter and the column rules span the view.
+   align-self overrides the grid stretch — a full-row pane would leave sticky
+   no travel. */
+.library--full > :deep(.library-rail),
+.library--full > :deep(.quick-look) {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  height: calc(100vh - var(--height-app-bar) - 2 * var(--space-6));
+  overflow-y: auto;
+}
+
+/* The main column's header — title, sort/view controls and the filter chips —
+   pins too, so only the rows scroll. The negative top margin + matching
+   padding extend the header's painted box up over the frame's top padding,
+   so rows sliding under it never peek through the gap above. */
+.library--full .library-main :deep(.library-header) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-canvas);
+  margin-top: calc(-1 * var(--space-6));
+  padding-top: var(--space-6);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 </style>

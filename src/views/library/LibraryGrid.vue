@@ -1,10 +1,10 @@
 // The library's grid rendering (SPEC-067 AC-1, AC-3..7): one card per visible
 // entry — thumbnail, select checkbox, star, highlighted title, relative time,
 // format badge and page/word counts — plus the overflow menu. Card semantics
-// (modifier-click selects, plain click opens) live here; opening, menus and
-// keyboard handling stay with HomeView, which owns the cross-view state they
-// touch. Product-neutral: renders entries and emits intents, mirroring
-// LibraryList for the grid view.
+// (modifier-click multi-selects, plain click previews in the quick-look pane,
+// double-click opens) live here; opening, menus and keyboard handling stay
+// with HomeView, which owns the cross-view state they touch. Product-neutral:
+// renders entries and emits intents, mirroring LibraryList for the grid view.
 // `lib` is the LibraryController from useLibrary (runtime-typed Object — the
 // .vue ESLint parser bars the PropType syntax; see useLibrary.ts).
 <script setup lang="ts">
@@ -17,7 +17,7 @@ const props = defineProps({
   highlightId: { type: String, default: "" },
 });
 
-const emit = defineEmits(["open", "select-modifiers", "keydown", "menu-toggle", "menu-close", "menu-select", "focus"]);
+const emit = defineEmits(["open", "preview", "select-modifiers", "keydown", "menu-toggle", "menu-close", "menu-select", "focus"]);
 </script>
 
 <template>
@@ -39,6 +39,7 @@ const emit = defineEmits(["open", "select-modifiers", "keydown", "menu-toggle", 
       :highlight="entry.id === props.highlightId"
       :menu-items="libraryRowMenuItems(entry.starred)"
       @open="emit('open', $event)"
+      @preview="emit('preview', $event)"
       @select="(payload) => emit('select-modifiers', payload)"
       @toggle-check="props.lib.toggleSelection"
       @toggle-star="props.lib.toggleStar"
@@ -53,8 +54,9 @@ const emit = defineEmits(["open", "select-modifiers", "keydown", "menu-toggle", 
 <style scoped>
 .library-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-  gap: var(--space-5);
+  /* The handoff's card raster: ~196px minimum tracks, tighter gutters. */
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: var(--space-4);
 }
 
 /* SPEC-068 AC-37 — the compact tier (<640px, matching useResponsiveTier):

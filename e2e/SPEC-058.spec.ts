@@ -8,7 +8,21 @@ import { test, expect, type Page } from "@playwright/test";
 // target (the criterion that regressed in earlier rounds). The exhaustive
 // per-control hit-target sweep lives in SPEC-058.hit-targets.spec.ts.
 
-const FOCUS_RING = "rgb(26, 115, 232)"; // --focus-ring
+/** The computed colour --focus-ring resolves to on the current palette — the
+ * ring assertions compare against the token, not a baked-in value, so they
+ * hold under every design theme (theme-palettes e2e). */
+function focusRing(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = getComputedStyle(document.documentElement)
+      .getPropertyValue("--focus-ring")
+      .trim();
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  });
+}
 
 async function newDoc(page: Page): Promise<void> {
   await page.goto("/");
@@ -102,7 +116,7 @@ test("interactive controls show the 2px --focus-ring at a 2px offset (AC-45)", a
   });
   expect(primitiveRing.width).toBe("2px");
   expect(primitiveRing.style).toBe("solid");
-  expect(primitiveRing.color).toBe(FOCUS_RING);
+  expect(primitiveRing.color).toBe(await focusRing(page));
   expect(primitiveRing.offset).toBe("2px");
 
   // A hand-rolled status-bar control inherits the same global ring.
@@ -114,7 +128,7 @@ test("interactive controls show the 2px --focus-ring at a 2px offset (AC-45)", a
     return { width: cs.outlineWidth, color: cs.outlineColor, offset: cs.outlineOffset };
   });
   expect(handRolledRing.width).toBe("2px");
-  expect(handRolledRing.color).toBe(FOCUS_RING);
+  expect(handRolledRing.color).toBe(await focusRing(page));
   expect(handRolledRing.offset).toBe("2px");
 });
 

@@ -64,7 +64,7 @@ function onChange(event = new Event("change")) {
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
-  font-size: var(--text-md);
+  font-size: var(--text-control);
   line-height: var(--line-tight);
   cursor: pointer;
   transition: border-color var(--motion-fast) var(--easing);

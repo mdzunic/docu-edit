@@ -52,11 +52,51 @@ export type DefaultZoom = number | "fit-width" | "fit-page";
  * document's own source format, or a fixed target (SPEC-006/007). */
 export type DownloadFormatPreference = "source" | "docx" | "odt";
 
+/** The design themes tokens.css declares (the library-modernist handoff):
+ * Modernist is the base :root palette; the rest are value-only
+ * [data-palette="…"] redefinitions. Ids double as the data-palette attribute
+ * value, so this list and tokens.css must agree — theme-palettes e2e holds
+ * them together. */
+export const PALETTE_IDS = [
+  "modernist",
+  "nocturne",
+  "classic",
+  "petrol",
+  "plum",
+  "ink",
+  "signal",
+  "pine",
+  "ochre",
+  "graphite",
+] as const;
+
+export type PaletteId = (typeof PALETTE_IDS)[number];
+
+/** Display labels for the palette picker, in menu order. `swatch` is each
+ * palette's dominant (light-scheme accent) colour, shown as the little square
+ * on its picker chip — data for an inline style, deliberately not a CSS
+ * literal in a component style block (tokens.spec.ts). */
+export const PALETTE_OPTIONS: { value: PaletteId; label: string; swatch: string }[] = [
+  { value: "modernist", label: "Modernist", swatch: "#9c4a34" },
+  { value: "nocturne", label: "Nocturne", swatch: "#6f5fc4" },
+  { value: "classic", label: "Classic", swatch: "#1a73e8" },
+  { value: "petrol", label: "Petrol", swatch: "#0e6f83" },
+  { value: "plum", label: "Plum", swatch: "#7a2d59" },
+  { value: "ink", label: "Ink", swatch: "#1c1b1a" },
+  { value: "signal", label: "Signal blue", swatch: "#1b4ae0" },
+  { value: "pine", label: "Pine", swatch: "#0f6b4f" },
+  { value: "ochre", label: "Ochre", swatch: "#8a5600" },
+  { value: "graphite", label: "Graphite violet", swatch: "#5b45c9" },
+];
+
 /** The full, typed set of application preferences (SPEC-066). Every field is
  * required here; a stored object that omits, mistypes or corrupts any of
  * them is repaired per field on read (see `loadPreferences`). */
 export interface Preferences {
   theme: "system" | "light" | "dark";
+  /** The design theme (colour palette / face / geometry) the chrome renders
+   * in. Orthogonal to `theme`: every palette has a light and a dark scheme. */
+  palette: PaletteId;
   dimPage: boolean;
   measurementUnit: MeasurementUnit;
   defaultZoom: DefaultZoom;
@@ -132,6 +172,7 @@ export const AUTOSAVE_DELAY_CHOICES: number[] = [1000, AUTOSAVE_DEBOUNCE_MS, 300
  * preference. */
 export const PREFERENCE_DEFAULTS: Preferences = {
   theme: "system",
+  palette: "modernist",
   dimPage: false,
   measurementUnit: "cm",
   defaultZoom: DEFAULT_ZOOM,
@@ -193,6 +234,7 @@ function inSet(raw: unknown, values: readonly string[]): string | undefined {
 
 const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   theme: oneOf<"theme">(["system", "light", "dark"]),
+  palette: oneOf<"palette">(PALETTE_IDS),
   dimPage: isBoolean,
   measurementUnit: oneOf<"measurementUnit">(["cm", "mm", "in", "pt"]),
   defaultZoom: (raw) => {

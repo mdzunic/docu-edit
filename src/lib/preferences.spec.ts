@@ -108,6 +108,15 @@ describe("preferences store (SPEC-066)", () => {
       expect(PREFERENCE_DEFAULTS.gridSpacingCm).toBe(0.25);
     });
 
+    it("defaults the design theme to Modernist, round-trips a choice and rejects an unknown id", () => {
+      expect(PREFERENCE_DEFAULTS.palette).toBe("modernist");
+      savePreference("palette", "nocturne");
+      expect(loadPreferences().palette).toBe("nocturne");
+      // @ts-expect-error deliberately invalid for the runtime guard
+      savePreference("palette", "neon");
+      expect(loadPreferences().palette).toBe(PREFERENCE_DEFAULTS.palette);
+    });
+
     it("round-trips the snap preferences and rejects an out-of-range grid spacing", () => {
       savePreference("snapToGuides", false);
       savePreference("snapToGrid", true);

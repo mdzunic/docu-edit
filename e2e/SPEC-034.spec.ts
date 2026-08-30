@@ -249,10 +249,37 @@ test("under print media, chrome and screen affordances vanish while page content
   await expect(page.getByTestId("document-ruler")).toBeHidden();
   await expect(page.getByTestId("app-bar")).toBeHidden();
   await expect(page.getByTestId("toolbar")).toBeHidden();
+  await expect(page.getByTestId("menu-bar")).toBeHidden();
   await expect(page.getByTestId("status-bar")).toBeHidden();
   await expect(content(page)).toContainText("Printed body content");
   await page.emulateMedia({ media: "screen" });
   await expect(page.getByTestId("document-ruler")).toBeVisible();
+});
+
+// The printed sheets are exactly the page boxes — no leading sheet of app
+// chrome (the menu bar's row used to print as one) and no trailing blank
+// (the 1px aria-live stubs sat just past the last page box and rounded the
+// sheet count up). page.pdf() renders with the print stylesheet, so it sees
+// what a printer would.
+test("printing yields one sheet per page box — no chrome sheet, no trailing blank", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "page.pdf() is Chromium-only");
+  await stubPrint(page);
+  await createDocument(page);
+  // Two-plus pages, so a stray sheet at either end is unambiguous.
+  await pasteText(page, paragraphLines(90));
+  await waitForPagination(page);
+
+  const expectedSheets = await documentPages(page).count();
+  expect(expectedSheets).toBeGreaterThan(1);
+
+  const pdf = await page.pdf({ preferCSSPageSize: true });
+  // Page objects in the PDF body: `/Type /Page` not followed by `s` (which
+  // would make it the /Pages tree node).
+  const sheets = (pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+  expect(sheets).toBe(expectedSheets);
 });
 
 test("Download → PDF exports searchable text with embedded fonts, outline, links and title (AC-14..20)", async ({

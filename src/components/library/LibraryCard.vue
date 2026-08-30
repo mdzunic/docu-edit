@@ -28,6 +28,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   "open",
+  "preview",
   "select",
   "toggle-check",
   "toggle-star",
@@ -81,6 +82,10 @@ onMounted(() => {
   }, 800);
 });
 
+// A plain click previews the card in the quick-look pane rather than opening
+// it (the handoff's select-then-open grid); opening is the double-click, the
+// keyboard Enter, or the quick look's own Open button. Modifier clicks keep
+// their multi-selection semantics.
 function onClick(event = new MouseEvent("click")) {
   if (event.shiftKey || event.ctrlKey || event.metaKey) {
     event.preventDefault();
@@ -91,7 +96,7 @@ function onClick(event = new MouseEvent("click")) {
     });
     return;
   }
-  emit("open", props.entry.id);
+  emit("preview", props.entry.id);
 }
 </script>
 
@@ -105,6 +110,7 @@ function onClick(event = new MouseEvent("click")) {
     :tabindex="props.focused ? 0 : -1"
     :aria-selected="props.selected"
     @click="onClick"
+    @dblclick="emit('open', props.entry.id)"
     @focus="emit('focus', props.entry.id)"
   >
     <div class="card-thumb">
@@ -194,8 +200,8 @@ function onClick(event = new MouseEvent("click")) {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-md);
@@ -219,8 +225,23 @@ function onClick(event = new MouseEvent("click")) {
   background: var(--surface-selected);
 }
 
+/* The handoff's thumbnail well: a fixed 4:3 tinted ground bleeding to the
+   card's edges, with the miniature centred inside it — the card no longer
+   grows to the page preview's full portrait height. */
 .card-thumb {
   position: relative;
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) 0;
+  padding: var(--space-3);
+  background: var(--state-hover);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.card-thumb > :deep(.thumbnail) {
+  width: 58%;
 }
 
 .card-check {

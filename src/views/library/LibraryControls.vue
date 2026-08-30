@@ -4,13 +4,18 @@
 // product-neutral chrome of the library module. The product's own create/
 // open actions render through the `actions` slot, so this component never
 // knows what kinds of documents the app can make.
+// In the full-tier rail layout (the modernist handoff) the rail owns the
+// trash link and the create/open actions, and the app bar owns the search
+// box; the `rail` prop suppresses those here so each renders exactly once.
 // `lib` is the LibraryController from useLibrary (runtime-typed Object —
 // the .vue ESLint parser bars the PropType syntax; see useLibrary.ts).
 import { computed, ref, watch } from "vue";
 import { chipActive, chipCount, FORMAT_CHIPS } from "../../lib/libraryView";
+import LibrarySearchBox from "./LibrarySearchBox.vue";
 
 const props = defineProps({
   lib: { type: Object, required: true },
+  rail: { type: Boolean, default: false },
 });
 
 // A plain string ref drives the sort <select> (v-model), avoiding a TS `as`
@@ -19,30 +24,40 @@ const props = defineProps({
 const sortKeyChoice = ref(String(props.lib.sort.value.key));
 watch(sortKeyChoice, (value) => props.lib.setSortKey(value));
 
-// The search box binds through a get/set computed so v-model never assigns to
-// the `lib` prop's ref directly (vue/no-mutating-props); the setter routes the
-// write through the controller and the getter keeps the box in sync when the
-// controller clears the search (e.g. "Clear filters").
-const searchText = computed({
-  get: () => String(props.lib.search.value),
-  set: (value) => props.lib.setSearch(value),
+// The handoff's section subtitle: how many entries the current search/filters
+// leave visible, out of everything the library holds.
+const subtitle = computed(() => {
+  const shown = props.lib.visible.value.length;
+  const counts = props.lib.counts.value.formats;
+  const total = Object.keys(counts).reduce((sum, key) => sum + counts[key], 0);
+  return props.lib.filterActive.value ? `${shown} of ${total} shown` : `${total} in the library`;
 });
 </script>
 
 <template>
   <div class="library-header">
     <div class="header-line">
-      <h2 class="library-heading">
-        Documents
-      </h2>
-      <input
-        v-model="searchText"
-        type="search"
-        class="library-search"
-        data-testid="library-search"
-        placeholder="Search documents…"
-        aria-label="Search documents"
-      >
+      <div class="heading-block">
+        <h2 class="library-heading">
+          Documents
+        </h2>
+        <div
+          class="library-subtitle"
+          data-testid="library-subtitle"
+        >
+          {{ subtitle }}
+        </div>
+      </div>
+      <LibrarySearchBox
+        v-if="!props.rail"
+        :lib="props.lib"
+      />
+      <!-- In the rail layout (search in the app bar, actions in the rail) the
+           sort and view controls sit flush right, as in the handoff. -->
+      <div
+        v-if="props.rail"
+        class="header-spacer"
+      />
       <div class="sort-control">
         <label
           class="visually-hidden"
@@ -100,8 +115,12 @@ const searchText = computed({
           Grid
         </button>
       </div>
-      <div class="header-spacer" />
+      <div
+        v-if="!props.rail"
+        class="header-spacer"
+      />
       <button
+        v-if="!props.rail"
         type="button"
         class="trash-link"
         data-testid="trash-link"
@@ -112,7 +131,10 @@ const searchText = computed({
           data-testid="trash-count"
         >({{ props.lib.trashCount.value }})</span>
       </button>
-      <div class="library-actions">
+      <div
+        v-if="!props.rail"
+        class="library-actions"
+      >
         <slot name="actions" />
       </div>
     </div>
@@ -170,6 +192,12 @@ const searchText = computed({
   flex: 1 1 auto;
 }
 
+.heading-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
 .library-heading {
   margin: 0;
   font-size: var(--text-xl);
@@ -177,15 +205,10 @@ const searchText = computed({
   color: var(--text-primary);
 }
 
-.library-search {
-  font: inherit;
-  min-height: var(--height-control);
-  padding: 0 var(--space-3);
-  min-width: 12rem;
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  color: var(--text-primary);
+.library-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .sort-control {
@@ -280,17 +303,6 @@ const searchText = computed({
 
 .chip.is-active .chip-count {
   color: var(--text-accent);
-}
-
-/* SPEC-068 AC-37/39 — at the compact tier (<640px, matching
-   useResponsiveTier) the search box takes its own full-width row so it
-   always stays visible. */
-@media (max-width: 639.98px) {
-  .library-search {
-    flex: 1 1 100%;
-    min-width: 0;
-    order: 1;
-  }
 }
 
 .visually-hidden {

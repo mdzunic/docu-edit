@@ -122,8 +122,20 @@ body.is-print-preview .doc-field-shaded {
     display: none !important;
   }
 
-  /* App chrome never prints: only the page boxes reach the sheets. */
+  /* The aria-live announcement stubs (.visually-hidden) are 1px absolutely
+     positioned boxes whose static position is just past the last page box.
+     That one pixel of overflow rounded the sheet count up, printing an empty
+     trailing page. Printed output has no assistive-technology listeners. */
+  .visually-hidden {
+    display: none !important;
+  }
+
+  /* App chrome never prints: only the page boxes reach the sheets. The menu
+     bar (SPEC-049) postdates this list and used to leak: its 33px row was the
+     only flow content before the first page box, so it printed as a sheet of
+     its own — "File Edit View…" on an otherwise empty first page. */
   .app-bar,
+  .menubar-region,
   .toolbar,
   .status-bar,
   .storage-warning,

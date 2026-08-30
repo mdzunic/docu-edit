@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
+import { PALETTE_IDS } from "../lib/preferences";
 
 // SPEC-058's lint-style guard. It reads every .vue file's <style> blocks and
 // the token file itself and enforces, mechanically, the rules the spec makes
@@ -403,4 +404,84 @@ for (const [name, t] of Object.entries(palettes())) {
       });
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Design themes (the library-modernist handoff). Every non-default palette in
+// PALETTE_IDS is a value-only [data-palette="…"] redefinition in tokens.css:
+// this suite holds the preference list and the CSS together, enforces the
+// cascade invariant the palette blocks rely on, and re-runs the same WCAG AA
+// pairs over every palette in both schemes.
+function paletteVariants(): Record<
+  string,
+  { light: Record<string, string>; mediaDark: Record<string, string>; dark: Record<string, string> }
+> {
+  const css = readFileSync(join(SRC, "styles/tokens.css"), "utf8");
+  const out: Record<
+    string,
+    { light: Record<string, string>; mediaDark: Record<string, string>; dark: Record<string, string> }
+  > = {};
+  for (const id of PALETTE_IDS) {
+    if (id === "modernist") {
+      continue; // the base :root palette, already asserted above
+    }
+    out[id] = {
+      light: declsInBlock(css, `:root[data-palette="${id}"] {`),
+      mediaDark: declsInBlock(css, `:root[data-palette="${id}"]:not([data-theme="light"]) {`),
+      dark: declsInBlock(css, `:root[data-palette="${id}"][data-theme="dark"] {`),
+    };
+  }
+  return out;
+}
+
+describe("every declared palette exists in tokens.css with consistent blocks", () => {
+  const variants = paletteVariants();
+  const base = palettes();
+  for (const [id, blocks] of Object.entries(variants)) {
+    it(`${id} declares a light block and both dark guards`, () => {
+      expect(Object.keys(blocks.light).length).toBeGreaterThan(0);
+      expect(Object.keys(blocks.mediaDark).length).toBeGreaterThan(0);
+      expect(Object.keys(blocks.dark).length).toBeGreaterThan(0);
+    });
+    it(`${id} redefines the same token names in light and in both dark guards`, () => {
+      // The palette's light block appears after the base dark guards, so any
+      // token it defines that its dark guards do not would win the cascade
+      // tie and leak a light value into the dark scheme.
+      expect(Object.keys(blocks.dark).sort()).toEqual(Object.keys(blocks.light).sort());
+      expect(Object.keys(blocks.mediaDark).sort()).toEqual(Object.keys(blocks.light).sort());
+    });
+    it(`${id}'s two dark guards agree on every value`, () => {
+      expect(blocks.mediaDark).toEqual(blocks.dark);
+    });
+    it(`${id} introduces no token name the base palette lacks`, () => {
+      for (const name of Object.keys(blocks.light)) {
+        expect(base.light, name).toHaveProperty(name);
+      }
+    });
+  }
+});
+
+for (const [id, blocks] of Object.entries(paletteVariants())) {
+  const base = palettes();
+  const variant = {
+    light: { ...base.light, ...blocks.light },
+    // The real cascade in dark scheme: base light < base dark < palette light
+    // (later in source, same specificity) < palette dark (higher specificity).
+    dark: { ...base.light, ...base.dark, ...blocks.light, ...blocks.dark },
+  };
+  for (const [scheme, t] of Object.entries(variant)) {
+    describe(`palette "${id}" (${scheme}) meets WCAG AA contrast`, () => {
+      const ratio = (fg: string, bg: string) => contrast(t[fg], t[bg]);
+      for (const [fg, bg] of BODY_PAIRS) {
+        it(`${fg} on ${bg} ≥ 4.5:1`, () => {
+          expect(ratio(fg, bg)).toBeGreaterThanOrEqual(4.5);
+        });
+      }
+      for (const [fg, bg] of LARGE_PAIRS) {
+        it(`${fg} on ${bg} ≥ 3:1`, () => {
+          expect(ratio(fg, bg)).toBeGreaterThanOrEqual(3);
+        });
+      }
+    });
+  }
 }

@@ -90,6 +90,9 @@ views) is where they compose. Enforced by `core/boundary.spec.ts` and
 
 - `package.json` is protected: dependencies are not added by feature work. If a
   spec genuinely cannot be built with the current dependency set, stop and say
-  so rather than working around it.
+  so rather than working around it. The one sanctioned exception: `pdfjs-dist`
+  (Apache-2.0, zero runtime deps), approved 2026-08-30 for PDF first-page
+  previews — loaded lazily in `src/lib/pdfRaster.ts` only (the app layer;
+  `lib/media` stays framework- and package-free).
 - Round-trip fidelity matters more than feature count: never discard document
   content you did not parse — preserve unknown parts verbatim (see SPEC-008).

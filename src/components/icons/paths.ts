@@ -59,7 +59,9 @@ export const ICON_PATHS: Record<string, string[]> = {
   redo: ["M13 7l3 3-3 3", "M16 10H8a4 4 0 0 0 0 8h3"],
 
   // ---- Clipboard -----------------------------------------------------------
-  cut: ["M6 4l8 12", "M14 4L6 16", "M6 16a2 2 0 1 1-2-2 2 2 0 0 1 2 2z", "M16 16a2 2 0 1 1-2-2 2 2 0 0 1 2 2z"],
+  // Symmetric finger loops (the old loops sat at 4,14 and 14,14 — asymmetric;
+  // corrected geometry from the library-modernist design handoff).
+  cut: ["M6.9 13.6L14.5 3.5", "M13.1 13.6L5.5 3.5", "M6.6 13.4a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z", "M13.4 13.4a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z"],
   copy: ["M7 7h8v9H7z", "M5 13H4V4h9v1"],
   paste: ["M6 5h8v11H6z", "M8 5V4h4v1", "M8 9h4", "M8 12h4"],
 
@@ -78,9 +80,13 @@ export const ICON_PATHS: Record<string, string[]> = {
   "page-break": ["M6 4h5l3 3v3H6z", "M6 16v-3h8v3", "M4 12h12"],
 
   // ---- Actions -------------------------------------------------------------
-  find: ["M9 9a4 4 0 1 1-4-4 4 4 0 0 1 4 4z", "M11 11l4 4"],
-  search: ["M9 9a4 4 0 1 1-4-4 4 4 0 0 1 4 4z", "M11 11l4 4"],
-  print: ["M6 8V4h8v4", "M4 8h12v6h-2v-3H6v3H4z", "M6 13h8v4H6z"],
+  // Lens centred at 9,9 so the handle leaves the rim tangentially (the old arc
+  // and handle were centred inconsistently; corrected geometry from the
+  // library-modernist design handoff — zoom-in/out below share it).
+  find: ["M9 4.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z", "M12.5 12.5l4 4"],
+  search: ["M9 4.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z", "M12.5 12.5l4 4"],
+  // Paper tray abuts the body outline instead of crossing it (handoff fix).
+  print: ["M6 8V4h8v4", "M4 8h12v5h-2v-2H6v2H4z", "M6 13h8v4H6z"],
   download: ["M10 4v8", "M6 9l4 4 4-4", "M5 16h10"],
   close: ["M6 6l8 8", "M14 6l-8 8"],
 
@@ -89,14 +95,29 @@ export const ICON_PATHS: Record<string, string[]> = {
   outline: ["M5 6h2", "M9 6h6", "M5 10h2", "M9 10h6", "M5 14h2", "M9 14h6"],
   styles: ["M5 5h6v4H5z", "M13 5h2v10h-2z", "M5 11h6v4H5z"],
   comments: ["M4 5h12v8H9l-3 3v-3H4z", "M7 9h6"],
-  "track-changes": ["M4 14l8-8 2 2-8 8H4z", "M11 5l2 2", "M4 16h6"],
+  // Ferrule stroke inside the open barrel (handoff fix; pencil below shares
+  // the barrel).
+  "track-changes": ["M4.5 15.5l1-3 7.9-7.9 2 2-7.9 7.9z", "M11.4 6.6l2 2", "M4.5 17.5h7"],
   accessibility: ["M10 6a1 1 0 1 1-1-1 1 1 0 0 1 1 1z", "M5 8h10", "M10 8v4", "M7 16l3-4 3 4"],
   fonts: ["M5 15l4-10 4 10", "M6.5 12h5", "M14 15h2"],
   history: ["M10 6a5 5 0 1 1-5 5", "M5 7v3h3", "M10 8v3l2 1"],
 
   // ---- Zoom ----------------------------------------------------------------
-  "zoom-in": ["M9 9a4 4 0 1 1-4-4 4 4 0 0 1 4 4z", "M11 11l4 4", "M5 7h4", "M7 5v4"],
-  "zoom-out": ["M9 9a4 4 0 1 1-4-4 4 4 0 0 1 4 4z", "M11 11l4 4", "M5 7h4"],
+  // Lens and ± bars share the 9,9 centre (the old lens arc was centred at 5,5
+  // while the bars were centred at 7,7 — handoff fix).
+  "zoom-in": ["M9 4.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z", "M12.5 12.5l4 4", "M6.5 9h5", "M9 6.5v5"],
+  "zoom-out": ["M9 4.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z", "M12.5 12.5l4 4", "M6.5 9h5"],
+
+  // ---- Appearance (the Preferences theme switch) ---------------------------
+  sun: [
+    "M10 6.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z",
+    "M10 3v1.5", "M10 15.5V17", "M3 10h1.5", "M15.5 10H17",
+    "M5.05 5.05l1.06 1.06", "M13.89 13.89l1.06 1.06",
+    "M14.95 5.05l-1.06 1.06", "M6.11 13.89l-1.06 1.06",
+  ],
+  moon: ["M13 4a7 7 0 1 0 3 8 5.5 5.5 0 0 1-3-8z"],
+  // A display — "follow the system".
+  system: ["M4 5h12v8H4z", "M8 16h4", "M10 13v3"],
 
   // ---- Chevrons & primitives ----------------------------------------------
   "chevron-up": ["M5 12l5-5 5 5"],
@@ -111,7 +132,7 @@ export const ICON_PATHS: Record<string, string[]> = {
   "more-vertical": ["M10 5v.01", "M10 10v.01", "M10 15v.01"],
   settings: ["M10 8a2 2 0 1 1-2 2 2 2 0 0 1 2-2z", "M10 3v2", "M10 15v2", "M3 10h2", "M15 10h2", "M5 5l1.5 1.5", "M13.5 13.5L15 15", "M15 5l-1.5 1.5", "M6.5 13.5L5 15"],
   // The rename affordance on the app bar's document title (AppShell.vue).
-  pencil: ["M4 16l1-4 9-9 3 3-9 9z", "M12 5l3 3"],
+  pencil: ["M4.5 15.5l1-3 7.9-7.9 2 2-7.9 7.9z", "M11.4 6.6l2 2"],
   warning: ["M10 4l6 11H4z", "M10 9v3", "M10 14h.01"],
   error: ["M10 4a6 6 0 1 1-6 6 6 6 0 0 1 6-6z", "M7.5 7.5l5 5", "M12.5 7.5l-5 5"],
   info: ["M10 4a6 6 0 1 1-6 6 6 6 0 0 1 6-6z", "M10 9v4", "M10 6.5h.01"],

@@ -14,6 +14,7 @@ import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import FontFamilySelect from "../FontFamilySelect.vue";
 import FontSizeControl from "../FontSizeControl.vue";
 import TextColorPicker from "../TextColorPicker.vue";
+import UiToggleButton from "../ui/UiToggleButton.vue";
 import { alignIsActive, asFormatState, togglePressed } from "./slideToolbarState";
 
 const props = defineProps({
@@ -66,18 +67,23 @@ const sizeValue = computed(() => (typeof s.value?.sizePt === "number" ? s.value.
 const colorValue = computed(() => (typeof s.value?.color === "string" ? s.value.color : ""));
 const colorMixed = computed(() => s.value?.color === "mixed");
 
+// togglePressed folds to the aria strings; UiToggleButton takes the tri-state
+// as a boolean or the literal "mixed", so normalise here.
 function pressed(field = "bold") {
-  return togglePressed(s.value, field);
+  const value = togglePressed(s.value, field);
+  return value === "mixed" ? "mixed" : value === "true";
 }
 function alignActive(value = "") {
   return alignIsActive(s.value, value);
 }
 
+// The shared icon set (src/components/icons/paths.ts) — the same glyphs the
+// word processor's toolbar draws, so the two editors read as one product.
 const ALIGNMENTS = [
-  { value: "left", glyph: "⯇", label: "Align left" },
-  { value: "center", glyph: "≡", label: "Align centre" },
-  { value: "right", glyph: "⯈", label: "Align right" },
-  { value: "justify", glyph: "☰", label: "Justify" },
+  { value: "left", icon: "align-left", label: "Align left" },
+  { value: "center", icon: "align-center", label: "Align centre" },
+  { value: "right", icon: "align-right", label: "Align right" },
+  { value: "justify", icon: "align-justify", label: "Justify" },
 ];
 
 // --- overflow (⋯) ----------------------------------------------------------
@@ -106,79 +112,85 @@ onBeforeUnmount(() => observer?.disconnect());
     data-testid="slides-toolbar"
   >
     <div
-      class="tb-group"
-      data-testid="slides-font-family"
+      class="tb-band"
+      role="group"
+      aria-label="Type"
     >
-      <FontFamilySelect
-        :value="fontValue"
-        :disabled="!enabled"
-        @select="(family) => emit('font', family)"
-      />
+      <div
+        class="tb-group"
+        data-testid="slides-font-family"
+      >
+        <FontFamilySelect
+          :value="fontValue"
+          :disabled="!enabled"
+          @select="(family) => emit('font', family)"
+        />
+      </div>
+      <div
+        class="tb-group"
+        data-testid="slides-font-size"
+      >
+        <FontSizeControl
+          :value="sizeValue"
+          :min="PRESENTATION_FONT_SIZE_MIN"
+          :max="PRESENTATION_FONT_SIZE_MAX"
+          :disabled="!enabled"
+          @change="(pt) => emit('size', pt)"
+        />
+      </div>
     </div>
 
     <div
-      class="tb-group"
-      data-testid="slides-font-size"
+      class="tb-band"
+      role="group"
+      aria-label="Character"
     >
-      <FontSizeControl
-        :value="sizeValue"
-        :min="PRESENTATION_FONT_SIZE_MIN"
-        :max="PRESENTATION_FONT_SIZE_MAX"
-        :disabled="!enabled"
-        @change="(pt) => emit('size', pt)"
-      />
-    </div>
-
-    <div class="tb-group">
-      <button
-        type="button"
-        class="tb-toggle"
+      <UiToggleButton
+        icon="bold"
+        label="Bold"
         data-testid="slides-bold"
-        aria-label="Bold"
-        :aria-pressed="pressed('bold')"
+        :pressed="pressed('bold')"
         :disabled="!enabled"
         @mousedown.prevent
         @click="emit('bold')"
-      >
-        <b>B</b>
-      </button>
-      <button
-        type="button"
-        class="tb-toggle"
+      />
+      <UiToggleButton
+        icon="italic"
+        label="Italic"
         data-testid="slides-italic"
-        aria-label="Italic"
-        :aria-pressed="pressed('italic')"
+        :pressed="pressed('italic')"
         :disabled="!enabled"
         @mousedown.prevent
         @click="emit('italic')"
-      >
-        <i>I</i>
-      </button>
-      <button
-        type="button"
-        class="tb-toggle"
+      />
+      <UiToggleButton
+        icon="underline"
+        label="Underline"
         data-testid="slides-underline"
-        aria-label="Underline"
-        :aria-pressed="pressed('underline')"
+        :pressed="pressed('underline')"
         :disabled="!enabled"
         @mousedown.prevent
         @click="emit('underline')"
-      >
-        <u>U</u>
-      </button>
+      />
     </div>
 
     <div
-      class="tb-group"
-      data-testid="slides-text-color"
+      class="tb-band"
+      role="group"
+      aria-label="Colour"
     >
-      <TextColorPicker
-        :value="colorValue"
-        :mixed="colorMixed"
-        :recent="recentColors"
-        :disabled="!enabled"
-        @select="(color) => emit('color', color)"
-      />
+      <div
+        class="tb-group"
+        data-testid="slides-text-color"
+      >
+        <TextColorPicker
+          :value="colorValue"
+          :mixed="colorMixed"
+          :recent="recentColors"
+          :disabled="!enabled"
+          @select="(color) => emit('color', color)"
+        />
+      </div>
     </div>
 
     <!-- Alignment / bullet / indent: inline, or in the ⋯ menu when compact -->
@@ -186,126 +198,111 @@ onBeforeUnmount(() => observer?.disconnect());
       :to="'#slides-overflow-target'"
       :disabled="!compact"
     >
-      <div class="tb-secondary">
+      <div
+        class="tb-secondary tb-band"
+        role="group"
+        aria-label="Paragraph"
+      >
         <div
           class="tb-group"
           role="group"
           aria-label="Alignment"
           data-testid="slides-align"
         >
-          <button
+          <UiToggleButton
             v-for="a in ALIGNMENTS"
             :key="a.value"
-            type="button"
-            class="tb-toggle"
-            :aria-label="a.label"
-            :aria-pressed="alignActive(a.value) ? 'true' : 'false'"
+            :icon="a.icon"
+            :label="a.label"
+            :pressed="alignActive(a.value)"
             :data-align="a.value"
             :disabled="!enabled"
             @mousedown.prevent
             @click="emit('align', a.value)"
-          >
-            {{ a.glyph }}
-          </button>
+          />
         </div>
 
         <div class="tb-group">
-          <button
-            type="button"
-            class="tb-toggle"
+          <UiToggleButton
+            icon="bullet-list"
+            label="Bulleted list"
             data-testid="slides-bullet"
-            aria-label="Bulleted list"
-            :aria-pressed="pressed('bullet')"
+            :pressed="pressed('bullet')"
             :disabled="!enabled"
             @mousedown.prevent
             @click="emit('bullet')"
-          >
-            •
-          </button>
-          <button
-            type="button"
-            class="tb-toggle"
+          />
+          <UiToggleButton
+            icon="indent-decrease"
+            label="Decrease indent"
             data-testid="slides-outdent"
-            aria-label="Decrease indent"
             :disabled="!enabled"
             @mousedown.prevent
             @click="emit('outdent')"
-          >
-            ⇤
-          </button>
-          <button
-            type="button"
-            class="tb-toggle"
+          />
+          <UiToggleButton
+            icon="indent-increase"
+            label="Increase indent"
             data-testid="slides-indent"
-            aria-label="Increase indent"
             :disabled="!enabled"
             @mousedown.prevent
             @click="emit('indent')"
-          >
-            ⇥
-          </button>
+          />
         </div>
       </div>
     </Teleport>
 
-    <div class="tb-group tb-slide-actions">
-      <button
-        type="button"
-        class="tb-toggle"
+    <div
+      class="tb-band tb-slide-actions"
+      role="group"
+      aria-label="Slide"
+    >
+      <UiToggleButton
+        label="Transition"
         data-testid="slides-transition-toggle"
-        aria-label="Transition"
-        :aria-pressed="transitionOpen"
+        :pressed="transitionOpen"
         @click="emit('transition-toggle')"
       >
         Transition
-      </button>
-      <button
-        type="button"
-        class="tb-toggle"
+      </UiToggleButton>
+      <UiToggleButton
+        label="Animate"
         data-testid="slides-animate-toggle"
-        aria-label="Animate"
-        :aria-pressed="animateOpen"
+        :pressed="animateOpen"
         @click="emit('animate-toggle')"
       >
         Animate
-      </button>
-      <button
-        type="button"
-        class="tb-toggle"
+      </UiToggleButton>
+      <UiToggleButton
+        label="Layout"
         data-testid="slides-layout-toggle"
-        aria-label="Layout"
-        :aria-pressed="layoutOpen"
+        :pressed="layoutOpen"
         @click="emit('layout-toggle')"
       >
         Layout
-      </button>
-      <button
-        type="button"
-        class="tb-toggle"
+      </UiToggleButton>
+      <UiToggleButton
+        label="Table"
         data-testid="slides-table-toggle"
-        aria-label="Table"
-        :aria-pressed="tableOpen"
+        :pressed="tableOpen"
         @click="emit('table-toggle')"
       >
         Table
-      </button>
+      </UiToggleButton>
     </div>
 
     <div
       v-show="compact"
       class="tb-group tb-overflow"
     >
-      <button
-        type="button"
-        class="tb-toggle"
+      <UiToggleButton
+        icon="more-horizontal"
+        label="More formatting"
         data-testid="slides-overflow"
-        aria-label="More formatting"
         aria-haspopup="menu"
         :aria-expanded="overflowOpen"
         @click="overflowOpen = !overflowOpen"
-      >
-        ⋯
-      </button>
+      />
       <div
         v-show="overflowOpen"
         class="tb-overflow-menu"
@@ -341,48 +338,32 @@ onBeforeUnmount(() => observer?.disconnect());
   gap: var(--space-2);
 }
 
-.tb-toggle {
-  min-width: 2rem;
-  height: 2rem;
-  padding: 0 var(--space-2);
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  font-size: var(--text-sm);
+/* Bands mirror the word processor's toolbar (DocumentToolbar): grouped
+   controls with a separator rule between bands. The band names stay as
+   aria-labels for AT; they are not painted (the menus above name things). */
+.tb-band {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-inline: var(--space-3);
 }
 
-.tb-toggle:hover:not(:disabled) {
-  background: var(--surface-sunken);
+.tb-band:first-of-type {
+  padding-inline-start: 0;
 }
 
-.tb-toggle[aria-pressed="true"] {
-  background: var(--accent-soft, var(--surface-sunken));
-  border-color: var(--accent, var(--border-default));
+.tb-band + .tb-band {
+  border-inline-start: var(--border-width) solid var(--border-subtle);
 }
 
-.tb-toggle[aria-pressed="mixed"] {
-  background: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 3px,
-    var(--surface-sunken) 3px,
-    var(--surface-sunken) 6px
-  );
-}
-
-.tb-toggle:disabled {
-  opacity: 0.5;
-  cursor: default;
+/* Inside the overflow menu the teleported band drops its strip chrome. */
+.tb-overflow-menu .tb-band {
+  padding: 0;
+  border: none;
 }
 
 .tb-slide-actions {
   margin-inline-start: auto;
-}
-
-.tb-slide-actions .tb-toggle {
-  width: auto;
 }
 
 .tb-overflow {

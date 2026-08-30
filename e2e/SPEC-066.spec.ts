@@ -58,7 +58,7 @@ test("changing a setting applies live and the Close button just closes (AC-7/8)"
   await expect(dialog(page)).toBeVisible();
 
   // Live-apply: choosing Dark sets data-theme immediately, with no OK step.
-  await page.getByTestId("preferences-theme").selectOption("dark");
+  await page.getByTestId("preferences-theme-dark").click();
   expect(await htmlTheme(page)).toBe("dark");
 
   // Close just closes — the choice already applied stays applied.
@@ -74,7 +74,7 @@ test("theme, measurement unit and default font survive a reload (AC-41/42/43)", 
   await page.keyboard.press(`${MOD}+Comma`);
   await expect(dialog(page)).toBeVisible();
 
-  await page.getByTestId("preferences-theme").selectOption("dark");
+  await page.getByTestId("preferences-theme-dark").click();
   await page.getByTestId("preferences-measurement-unit").selectOption("in");
   await page.getByTestId("preferences-default-font").selectOption("Georgia");
   await page.getByTestId("preferences-close").click();
@@ -95,7 +95,7 @@ test("theme, measurement unit and default font survive a reload (AC-41/42/43)", 
   await expect(page.getByTestId("menu-title-file")).toBeVisible();
   await page.keyboard.press(`${MOD}+Comma`);
   await expect(dialog(page)).toBeVisible();
-  await expect(page.getByTestId("preferences-theme")).toHaveValue("dark");
+  await expect(page.getByTestId("preferences-theme-dark")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("preferences-measurement-unit")).toHaveValue("in");
   await expect(page.getByTestId("preferences-default-font")).toHaveValue("Georgia");
 });
@@ -105,7 +105,7 @@ test("Reset all preferences restores defaults after a confirmation (AC-28)", asy
   await page.keyboard.press(`${MOD}+Comma`);
   await expect(dialog(page)).toBeVisible();
 
-  await page.getByTestId("preferences-theme").selectOption("dark");
+  await page.getByTestId("preferences-theme-dark").click();
   await page.getByTestId("preferences-measurement-unit").selectOption("in");
   expect(await htmlTheme(page)).toBe("dark");
 
@@ -113,7 +113,7 @@ test("Reset all preferences restores defaults after a confirmation (AC-28)", asy
   await page.getByTestId("preferences-reset").click();
   await page.getByTestId("preferences-reset-confirm").click();
 
-  await expect(page.getByTestId("preferences-theme")).toHaveValue("system");
+  await expect(page.getByTestId("preferences-theme-system")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("preferences-measurement-unit")).toHaveValue("cm");
   expect(await htmlTheme(page)).toBeNull();
 });

@@ -4,6 +4,7 @@
 // (its size budget only ratchets down). Pure presentation + event forwarding;
 // the view owns the commands these fire. Runtime prop/emit declarations, not
 // the generic forms (espree lints .vue scripts).
+import AppIcon from "../AppIcon.vue";
 import UiButton from "../ui/UiButton.vue";
 import PresentationDownloadButton from "./PresentationDownloadButton.vue";
 
@@ -35,18 +36,20 @@ const emit = defineEmits([
       data-testid="presentation-undo"
       :disabled="!canUndo"
       aria-label="Undo"
+      title="Undo"
       @click="emit('undo')"
     >
-      Undo
+      <AppIcon name="undo" />
     </UiButton>
     <UiButton
       variant="ghost"
       data-testid="presentation-redo"
       :disabled="!canRedo"
       aria-label="Redo"
+      title="Redo"
       @click="emit('redo')"
     >
-      Redo
+      <AppIcon name="redo" />
     </UiButton>
     <UiButton
       variant="ghost"

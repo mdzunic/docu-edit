@@ -9,10 +9,13 @@ describe("useTheme (SPEC-059)", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-palette");
   });
   afterEach(() => {
-    // Leave the singleton in `system` so later files start clean.
+    // Leave the singleton in `system` / the default palette so later files
+    // start clean.
     useTheme().setTheme("system");
+    useTheme().setPalette("modernist");
   });
 
   it("sets data-theme for an explicit choice and removes it for system (AC-4/6)", async () => {
@@ -44,6 +47,29 @@ describe("useTheme (SPEC-059)", () => {
     setTheme("dark");
     await nextTick();
     expect(resolvedTheme.value).toBe("dark");
+  });
+
+  it("sets data-palette for a non-default design theme and removes it for the default", async () => {
+    const { setPalette } = useTheme();
+    setPalette("nocturne");
+    await nextTick();
+    expect(document.documentElement.getAttribute("data-palette")).toBe("nocturne");
+    setPalette("petrol");
+    await nextTick();
+    expect(document.documentElement.getAttribute("data-palette")).toBe("petrol");
+    setPalette("modernist");
+    await nextTick();
+    expect(document.documentElement.hasAttribute("data-palette")).toBe(false);
+  });
+
+  it("persists the palette in the preferences store", async () => {
+    const { setPalette } = useTheme();
+    setPalette("pine");
+    await nextTick();
+    const prefs = JSON.parse(localStorage.getItem(PREFERENCES_STORAGE_KEY) as string) as {
+      palette?: string;
+    };
+    expect(prefs.palette).toBe("pine");
   });
 
   it("toggles the dim-page flag onto <html> (AC-13)", async () => {

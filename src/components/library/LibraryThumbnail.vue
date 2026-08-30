@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
-import { getDocument, getMedia } from "../../lib/documentStore";
+import { getDocument, getMedia, getPresentation } from "../../lib/documentStore";
+import SlideMiniature from "./SlideMiniature.vue";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import {
   getCachedThumbnail,
@@ -11,10 +12,13 @@ import { kindOfFormat } from "../../lib/documentKinds";
 import {
   cacheMediaThumbnail,
   getCachedMediaThumbnail,
+  MEDIA_THUMBNAIL_MAX_EDGE_PX,
   mediaImageDataUri,
   pdfCardPlaceholder,
   thumbnailRasterSize,
 } from "../../lib/media/thumbnail";
+import { mediaSourceBytes } from "../../lib/media/download";
+import { pdfRasterSupported, rasterisePdfFirstPage } from "../../lib/pdfRaster";
 import { formatFileSize, formatBadgeLabel } from "../../lib/format";
 import { paintChart } from "../../lib/core/chartCanvas";
 import { paintShape } from "../../lib/core/shapeCanvas";
@@ -42,11 +46,27 @@ const thumbnail = ref(getCachedThumbnail(props.id, props.lastModified) ?? null);
 // An image card shows a REAL downscaled raster of the image (built once per
 // record under the same IntersectionObserver + idle gating as text
 // thumbnails, cached by id + lastModified, capped at
-// MEDIA_THUMBNAIL_MAX_EDGE_PX). A PDF card shows a paper-shaped placeholder
-// at the first page's real aspect ratio with the page count and size — no
-// PDF page is ever rasterised, so the card never fakes a preview it cannot
-// produce.
+// MEDIA_THUMBNAIL_MAX_EDGE_PX). A PDF card shows a real raster of its first
+// page too (lib/media/pdfRaster — pdf.js, the one sanctioned dependency),
+// falling back to the paper-shaped placeholder (real aspect ratio, page
+// count, size) wherever rasterisation is unavailable or fails.
 const isMediaEntry = computed(() => kindOfFormat(props.format) === "media");
+
+// --- presentation cards ----------------------------------------------------
+// A deck previews as its real first slide (SlideMiniature) under the same
+// observe-then-idle gating; the model renders directly — no PNG cache, the
+// miniature is light.
+const isPresentationEntry = computed(() => kindOfFormat(props.format) === "presentation");
+// Seeded from a miss so the ref's inferred type is PresentationModel | null
+// (an annotation is barred in .vue scripts).
+const presentationModel = ref(getPresentation("") ?? null);
+const presentationAspect = computed(() => {
+  const model = presentationModel.value;
+  if (model && model.slideWidthCm > 0 && model.slideHeightCm > 0) {
+    return model.slideWidthCm / model.slideHeightCm;
+  }
+  return 16 / 9;
+});
 const mediaRaster = ref(getCachedMediaThumbnail(props.id, props.lastModified) ?? "");
 // Seeded null-ish so the inferred type carries the placeholder shape.
 const pdfInfo = ref({ aspectRatio: 0, pageCount: 0, pageSize: "" });
@@ -60,11 +80,31 @@ function produceMediaThumbnail() {
   }
   mediaByteLength.value = model.byteLength;
   if (model.format === "pdf") {
-    if (model.pdf) {
-      pdfInfo.value = pdfCardPlaceholder(model.pdf);
-    } else {
+    if (!model.pdf) {
       thumbnail.value = { lines: [], failed: true };
+      return;
     }
+    // A real first-page raster (pdf.js, loaded lazily). Hosts that cannot
+    // rasterise — and any parse/render failure — keep the aspect-true paper
+    // placeholder: the card degrades, it never lies.
+    if (!pdfRasterSupported()) {
+      pdfInfo.value = pdfCardPlaceholder(model.pdf);
+      return;
+    }
+    const summary = model.pdf;
+    rasterisePdfFirstPage(mediaSourceBytes(model), MEDIA_THUMBNAIL_MAX_EDGE_PX)
+      .then((dataUrl) => {
+        if (unmounted) {
+          return;
+        }
+        cacheMediaThumbnail(props.id, props.lastModified, dataUrl);
+        mediaRaster.value = dataUrl;
+      })
+      .catch(() => {
+        if (!unmounted) {
+          pdfInfo.value = pdfCardPlaceholder(summary);
+        }
+      });
     return;
   }
   const src = mediaImageDataUri(model);
@@ -118,15 +158,24 @@ let observer = { disconnect() {} };
 let unmounted = false;
 
 function produce() {
-  if (thumbnail.value || mediaRaster.value) {
+  if (thumbnail.value || mediaRaster.value || presentationModel.value) {
     return;
   }
   runWhenIdle(() => {
-    if (unmounted || thumbnail.value || mediaRaster.value) {
+    if (unmounted || thumbnail.value || mediaRaster.value || presentationModel.value) {
       return;
     }
     if (isMediaEntry.value) {
       produceMediaThumbnail();
+      return;
+    }
+    if (isPresentationEntry.value) {
+      const presentation = getPresentation(props.id);
+      if (presentation) {
+        presentationModel.value = presentation;
+      } else {
+        thumbnail.value = { lines: [], failed: true };
+      }
       return;
     }
     const model = getDocument(props.id);
@@ -237,13 +286,22 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
   <div
     ref="root"
     class="thumbnail"
-    :style="{ aspectRatio: String(THUMBNAIL_ASPECT_RATIO) }"
+    :style="{
+      aspectRatio: isPresentationEntry ? String(presentationAspect) : String(THUMBNAIL_ASPECT_RATIO),
+    }"
     data-testid="row-thumbnail"
     aria-hidden="true"
   >
+    <!-- A presentation card: the deck's real first slide. -->
+    <div
+      v-if="presentationModel"
+      class="thumbnail-deck"
+    >
+      <SlideMiniature :presentation="presentationModel" />
+    </div>
     <!-- A media image card: the real downscaled raster (SPEC-107). -->
     <div
-      v-if="mediaRaster"
+      v-else-if="mediaRaster"
       class="thumbnail-media"
     >
       <img
@@ -645,6 +703,13 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
 
 .thumbnail-line.level-3 {
   font-size: calc(var(--text-sm) * 0.6);
+}
+
+.thumbnail-deck {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-items: center;
 }
 
 .thumbnail-fallback {

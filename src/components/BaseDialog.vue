@@ -155,7 +155,7 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
 
 .dialog {
   background: var(--surface-base);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
   padding: var(--space-6) var(--space-6);
   min-width: var(--dialog-width, 20rem);
@@ -163,10 +163,11 @@ function handleKeydown(event = new KeyboardEvent("keydown")) {
   box-sizing: border-box;
 }
 
+/* The handoff's dialog title: a step up the scale in the heading weight. */
 .dialog-title {
   margin: 0 0 var(--space-5);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-button);
   color: var(--text-primary);
 }
 
