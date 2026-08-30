@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { getDocument, getPresentation } from "../../lib/documentStore";
+import { getDocument, getMedia, getPresentation } from "../../lib/documentStore";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { getDocumentLibraryStats } from "../../lib/libraryStats";
-import { formatBadgeLabel, formatRelativeTime } from "../../lib/format";
+import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
 import LibraryThumbnail from "./LibraryThumbnail.vue";
 import HighlightedTitle from "./HighlightedTitle.vue";
 import RowMenu from "./RowMenu.vue";
@@ -43,6 +43,9 @@ const statsReady = ref(false);
 const stats = ref({ words: 0, pages: 0 });
 // A presentation entry's count line (its kind is on the entry itself).
 const slideTotal = ref(0);
+// A media entry's count line (SPEC-107): dimensions or page count, plus the
+// verbatim source's byte size.
+const mediaLabel = ref("");
 
 onMounted(() => {
   runWhenIdle(() => {
@@ -50,6 +53,22 @@ onMounted(() => {
       const presentation = getPresentation(props.entry.id);
       if (presentation) {
         slideTotal.value = presentation.slides.length;
+        statsReady.value = true;
+      }
+      return;
+    }
+    if (props.entry.kind === "media") {
+      const media = getMedia(props.entry.id);
+      if (media) {
+        const size = formatFileSize(media.byteLength);
+        if (media.pdf) {
+          const pages = media.pdf.pageCount === 1 ? "1 page" : `${media.pdf.pageCount} pages`;
+          mediaLabel.value = `${pages} · ${size}`;
+        } else if (media.image) {
+          mediaLabel.value = `${media.image.widthPx} × ${media.image.heightPx} px · ${size}`;
+        } else {
+          mediaLabel.value = size;
+        }
         statsReady.value = true;
       }
       return;
@@ -141,6 +160,9 @@ function onClick(event = new MouseEvent("click")) {
       >
         <template v-if="statsReady && props.entry.kind === 'presentation'">
           {{ slideTotal }} {{ slideTotal === 1 ? "slide" : "slides" }}
+        </template>
+        <template v-else-if="statsReady && props.entry.kind === 'media'">
+          {{ mediaLabel }}
         </template>
         <template v-else-if="statsReady">
           {{ stats.pages }} {{ stats.pages === 1 ? "page" : "pages" }} ·

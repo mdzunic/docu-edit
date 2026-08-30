@@ -5,8 +5,8 @@ import AppShell from "../components/AppShell.vue";
 import { useTheme } from "../composables/useTheme";
 import { openAnyDocumentFile } from "../lib/openDocument";
 import { openDocumentFromUrl } from "../lib/openDocumentFromUrl";
-import { storeDocument, storePresentation } from "../lib/documentStore";
-import { editorPathFor } from "../lib/documentKinds";
+import { storeDocument, storeMedia, storePresentation } from "../lib/documentStore";
+import { editorPathFor, OPEN_FILE_ACCEPT } from "../lib/documentKinds";
 
 const route = useRoute();
 const router = useRouter();
@@ -40,6 +40,8 @@ async function run() {
     const opened = await openDocumentFromUrl(url);
     if (opened.kind === "presentation") {
       storePresentation(opened.model);
+    } else if (opened.kind === "media") {
+      storeMedia(opened.model);
     } else {
       storeDocument(opened.model);
     }
@@ -71,6 +73,8 @@ async function handleFileChosen() {
     const opened = await openAnyDocumentFile(file);
     if (opened.kind === "presentation") {
       storePresentation(opened.model);
+    } else if (opened.kind === "media") {
+      storeMedia(opened.model);
     } else {
       storeDocument(opened.model);
     }
@@ -118,7 +122,7 @@ async function handleFileChosen() {
     <input
       ref="fileInput"
       type="file"
-      accept=".docx,.odt,.md,.markdown"
+      :accept="OPEN_FILE_ACCEPT"
       data-testid="open-from-url-input"
       class="visually-hidden"
       @change="handleFileChosen"

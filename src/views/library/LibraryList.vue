@@ -6,7 +6,7 @@
 // HomeView, which owns the cross-view state they touch.
 import HighlightedTitle from "../../components/library/HighlightedTitle.vue";
 import RowMenu from "../../components/library/RowMenu.vue";
-import { formatBadgeLabel, formatRelativeTime } from "../../lib/format";
+import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
 import { libraryRowMenuItems } from "../../lib/libraryMenu";
 
 const props = defineProps({
@@ -71,6 +71,12 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
           role="columnheader"
         >
           Format
+        </th>
+        <th
+          scope="col"
+          role="columnheader"
+        >
+          Size
         </th>
         <th
           scope="col"
@@ -142,6 +148,12 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
             class="badge"
             data-testid="row-format"
           >{{ formatBadgeLabel(entry.format) }}</span>
+        </td>
+        <td
+          class="cell-size"
+          data-testid="row-size"
+        >
+          {{ formatFileSize(props.lib.sizeOf(entry.id)) }}
         </td>
         <td
           class="cell-actions"

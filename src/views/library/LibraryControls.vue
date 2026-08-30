@@ -7,8 +7,7 @@
 // `lib` is the LibraryController from useLibrary (runtime-typed Object —
 // the .vue ESLint parser bars the PropType syntax; see useLibrary.ts).
 import { computed, ref, watch } from "vue";
-import { formatBadgeLabel } from "../../lib/format";
-import { FILTERABLE_FORMATS } from "../../lib/libraryView";
+import { chipActive, chipCount, FORMAT_CHIPS } from "../../lib/libraryView";
 
 const props = defineProps({
   lib: { type: Object, required: true },
@@ -122,18 +121,20 @@ const searchText = computed({
       role="group"
       aria-label="Filters"
     >
+      <!-- One chip per document format, plus the KIND-grouped media chips
+           ("Images", "PDFs") so each is one click (SPEC-107). -->
       <button
-        v-for="format in FILTERABLE_FORMATS"
-        :key="format"
+        v-for="chip in FORMAT_CHIPS"
+        :key="chip.id"
         type="button"
         class="chip"
-        :data-testid="`filter-${format}`"
-        :class="{ 'is-active': props.lib.activeFormats.value.has(format) }"
-        :aria-pressed="props.lib.activeFormats.value.has(format)"
-        @click="props.lib.toggleFormat(format)"
+        :data-testid="`filter-${chip.id}`"
+        :class="{ 'is-active': chipActive(chip, props.lib.activeFormats.value) }"
+        :aria-pressed="chipActive(chip, props.lib.activeFormats.value)"
+        @click="props.lib.toggleFormatChip(chip)"
       >
-        {{ formatBadgeLabel(format) }}
-        <span class="chip-count">{{ props.lib.counts.value.formats[format] }}</span>
+        {{ chip.label }}
+        <span class="chip-count">{{ chipCount(chip, props.lib.counts.value.formats) }}</span>
       </button>
       <button
         type="button"

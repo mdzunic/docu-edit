@@ -11,6 +11,7 @@ import {
   deleteDocument,
   duplicateDocument,
   getDocument,
+  getMedia,
   getPresentation,
   libraryStorageUsage,
   listDocuments,
@@ -19,6 +20,7 @@ import {
   setStarred,
   trashDocument,
 } from "../lib/documentStore";
+import { downloadMedia } from "../lib/media/download";
 import type { DocumentKind } from "../lib/documentKinds";
 import { downloadPresentation } from "../lib/presentation/download";
 import {
@@ -26,6 +28,8 @@ import {
   filterLibrary,
   searchLibrary,
   sortLibrary,
+  toggleChip,
+  type FormatChip,
   type LibraryFilter,
 } from "../lib/libraryView";
 import {
@@ -197,6 +201,12 @@ export function useLibrary() {
     activeFormats.value = next;
   }
 
+  /** Toggles a whole filter chip (SPEC-107): one chip can stand for several
+   * formats ("Images"), so toggling routes through the chip helpers. */
+  function toggleFormatChip(chip: FormatChip): void {
+    activeFormats.value = toggleChip(chip, activeFormats.value);
+  }
+
   function toggleStarredFilter(): void {
     starredOnly.value = !starredOnly.value;
   }
@@ -342,6 +352,13 @@ export function useLibrary() {
         }
         continue;
       }
+      if (kindOf(id) === "media") {
+        const media = getMedia(id);
+        if (media) {
+          downloadMedia(media);
+        }
+        continue;
+      }
       const model = getDocument(id);
       if (model) {
         await downloadDocument(model);
@@ -431,6 +448,7 @@ export function useLibrary() {
     toggleSortDirection,
     // filters
     toggleFormat,
+    toggleFormatChip,
     toggleStarredFilter,
     clearFilters,
     // starring

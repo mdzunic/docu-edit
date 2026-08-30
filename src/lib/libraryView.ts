@@ -5,15 +5,76 @@
 import type { DocumentFormat, LibraryEntry } from "./documentStore";
 import type { LibrarySort } from "./libraryPrefs";
 
-/** The document formats that get a filter chip, in display order. */
+/** Every format the filter can act on, in display order. The media formats
+ * (SPEC-107) are filterable but do NOT each get their own chip — see
+ * FORMAT_CHIPS below. */
 export const FILTERABLE_FORMATS: readonly DocumentFormat[] = [
   "docx",
   "odt",
   "md",
   "pptx",
   "odp",
+  "pdf",
+  "png",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
   "new",
 ];
+
+/** The image formats one "Images" chip toggles together. */
+export const IMAGE_FORMATS: readonly DocumentFormat[] = ["png", "jpeg", "gif", "svg", "webp"];
+
+/** One filter chip: a label over one or more formats. The document formats
+ * keep a chip each (id === format, so their testids are stable); the media
+ * formats group by KIND — "Images" and "PDFs" are one click each
+ * (SPEC-107). */
+export interface FormatChip {
+  id: string;
+  label: string;
+  formats: readonly DocumentFormat[];
+}
+
+export const FORMAT_CHIPS: readonly FormatChip[] = [
+  ...(["docx", "odt", "md", "pptx", "odp"] as const).map((format) => ({
+    id: format,
+    label: format.toUpperCase(),
+    formats: [format] as readonly DocumentFormat[],
+  })),
+  { id: "pdf", label: "PDFs", formats: ["pdf"] },
+  { id: "images", label: "Images", formats: IMAGE_FORMATS },
+  { id: "new", label: "New", formats: ["new"] },
+];
+
+/** Whether a chip reads active: every format it stands for is toggled on. */
+export function chipActive(chip: FormatChip, active: ReadonlySet<DocumentFormat>): boolean {
+  return chip.formats.every((format) => active.has(format));
+}
+
+/** The next active-format set after toggling a chip: all of its formats off
+ * when the chip is fully active, all on otherwise. */
+export function toggleChip(
+  chip: FormatChip,
+  active: ReadonlySet<DocumentFormat>,
+): Set<DocumentFormat> {
+  const next = new Set(active);
+  if (chipActive(chip, active)) {
+    for (const format of chip.formats) {
+      next.delete(format);
+    }
+  } else {
+    for (const format of chip.formats) {
+      next.add(format);
+    }
+  }
+  return next;
+}
+
+/** A chip's live count: the sum of its formats' counts. */
+export function chipCount(chip: FormatChip, counts: Record<DocumentFormat, number>): number {
+  return chip.formats.reduce((sum, format) => sum + counts[format], 0);
+}
 
 /** A run of a title, flagged as matched (a query character) or not, so the
  * row/card can highlight the matched characters (AC-9). */
@@ -129,6 +190,12 @@ export function filterCounts(
     md: 0,
     pptx: 0,
     odp: 0,
+    pdf: 0,
+    png: 0,
+    jpeg: 0,
+    gif: 0,
+    svg: 0,
+    webp: 0,
     new: 0,
   };
   let starred = 0;

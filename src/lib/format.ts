@@ -50,6 +50,12 @@ const BADGE_LABELS: Record<DocumentFormat, string> = {
   md: "MD",
   pptx: "PPTX",
   odp: "ODP",
+  pdf: "PDF",
+  png: "PNG",
+  jpeg: "JPEG",
+  gif: "GIF",
+  svg: "SVG",
+  webp: "WEBP",
   new: "New",
 };
 

@@ -148,16 +148,26 @@ describe("hasSupportedExtension", () => {
     expect(hasSupportedExtension("Notes.markdown")).toBe(true);
   });
 
+  it("accepts the media extensions (SPEC-107)", () => {
+    expect(hasSupportedExtension("Report.pdf")).toBe(true);
+    expect(hasSupportedExtension("Shot.PNG")).toBe(true);
+    expect(hasSupportedExtension("Photo.jpg")).toBe(true);
+    expect(hasSupportedExtension("Photo.jpeg")).toBe(true);
+    expect(hasSupportedExtension("Anim.gif")).toBe(true);
+    expect(hasSupportedExtension("Mark.svg")).toBe(true);
+    expect(hasSupportedExtension("Shot.webp")).toBe(true);
+  });
+
   it("rejects other extensions and extensionless names", () => {
-    expect(hasSupportedExtension("Report.pdf")).toBe(false);
     expect(hasSupportedExtension("Report.doc")).toBe(false);
+    expect(hasSupportedExtension("Report.tiff")).toBe(false);
     expect(hasSupportedExtension("Report")).toBe(false);
   });
 });
 
 describe("SPEC-050 — Markdown detection", () => {
-  it("names all three formats in the unsupported-file-type message", () => {
-    expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe("We can only open .docx, .odt, .md, .pptx and .odp files");
+  it("names every kind in the unsupported-file-type message (SPEC-107 wording)", () => {
+    expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe("We can only open .docx, .odt, .md, .pptx, .odp, .pdf and image files");
   });
 
   it("opens a .md file by extension — the deliberate exception to content sniffing", async () => {

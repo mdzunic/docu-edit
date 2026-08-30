@@ -7,6 +7,7 @@
 import { createDocument, type DocumentModel } from "./documentModel";
 import { kindOfFormat, type DocumentKind, type LibraryFormat } from "./documentKinds";
 import type { PresentationModel } from "./presentation/model";
+import type { MediaModel } from "./media/model";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
 import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
@@ -20,13 +21,18 @@ import type { CaretPosition } from "./textEditing";
 export type DocumentFormat = LibraryFormat;
 
 /** Everything a library record's `model` can hold: the word processor's
- * document tree or a presentation. Discriminated by `kind` — only
- * `PresentationModel` declares one. */
-export type StoredModel = DocumentModel | PresentationModel;
+ * document tree, a presentation, or a media document. Discriminated by
+ * `kind` — `DocumentModel` is the one without it. */
+export type StoredModel = DocumentModel | PresentationModel | MediaModel;
 
 /** Narrows a stored model to the presentation product's. */
 export function isPresentationModel(model: StoredModel): model is PresentationModel {
   return "kind" in model && model.kind === "presentation";
+}
+
+/** Narrows a stored model to the media product's (SPEC-107). */
+export function isMediaModel(model: StoredModel): model is MediaModel {
+  return "kind" in model && model.kind === "media";
 }
 
 /** What the library persists per document: the model plus its metadata.
@@ -353,14 +359,24 @@ export function initLibrary(): Promise<void> {
  * other product's model). */
 export function getDocument(id: string): DocumentModel | undefined {
   const model = records.get(id)?.model;
-  return model !== undefined && !isPresentationModel(model) ? model : undefined;
+  return model !== undefined && !isPresentationModel(model) && !isMediaModel(model)
+    ? model
+    : undefined;
 }
 
 /** The presentation counterpart of `getDocument`: undefined for absent ids
- * and for text documents alike. */
+ * and for the other kinds alike. */
 export function getPresentation(id: string): PresentationModel | undefined {
   const model = records.get(id)?.model;
   return model !== undefined && isPresentationModel(model) ? model : undefined;
+}
+
+/** The media counterpart of `getDocument`/`getPresentation` (SPEC-107):
+ * undefined for absent ids and for the other kinds alike, so a media id can
+ * never leak into a document-only path — nor the reverse. */
+export function getMedia(id: string): MediaModel | undefined {
+  const model = records.get(id)?.model;
+  return model !== undefined && isMediaModel(model) ? model : undefined;
 }
 
 /** Which product owns a stored id — the routing guard's question ("is
@@ -423,6 +439,11 @@ export function getOrCreateDocument(id: string): DocumentModel {
       // ids to /slides/:id before loading), and creating a text document
       // over a presentation's id would destroy it — so fail loudly.
       throw new Error(`Document ${id} is a presentation`);
+    }
+    if (isMediaModel(existing.model)) {
+      // Same rule for media (SPEC-107): silently overwriting the stored
+      // bytes with a blank text document is the one unforgivable failure.
+      throw new Error(`Document ${id} is a media file`);
     }
     return existing.model;
   }
@@ -617,6 +638,12 @@ const byteCounter =
  * what makes a document large on disk. Falls back to the string length when
  * TextEncoder is unavailable, and to 0 if the model is not serialisable. */
 function approximateRecordBytes(record: StoredDocumentRecord): number {
+  // A media document knows its exact source size (SPEC-107) — more honest
+  // than the base64-inflated JSON length, and it makes the library's size
+  // column read formatFileSize(byteLength) for media rows with no new path.
+  if (isMediaModel(record.model)) {
+    return record.model.byteLength;
+  }
   try {
     const json = JSON.stringify(record.model);
     return byteCounter ? byteCounter.encode(json).length : json.length;
@@ -662,6 +689,11 @@ export async function saveDraft(
   if (isPresentationModel(record.model)) {
     // Drafts are a text-editor feature; nothing edits presentations yet.
     throw new Error(`Document ${id} is a presentation`);
+  }
+  if (isMediaModel(record.model)) {
+    // A media document has no draft state at all (SPEC-107): its bytes are
+    // immutable, and an autosave draft would be a path to overwriting them.
+    throw new Error(`Document ${id} is a media file`);
   }
   const mediaWrite = persistDraftMedia(id, record.model.media);
   const draft: DraftRecord = {
@@ -782,6 +814,11 @@ export function replaceDocumentModel(
 ): DocumentModel {
   model.id = id;
   const record = records.get(id);
+  if (record && isMediaModel(record.model)) {
+    // SPEC-107: replacing a media document's model with text-editor state
+    // would destroy the stored bytes — the loud-throw rule applies.
+    throw new Error(`Document ${id} is a media file`);
+  }
   if (!record) {
     const created: StoredDocumentRecord = {
       id,
@@ -807,6 +844,13 @@ export function storeDocument(doc: DocumentModel): void {
 /** The presentation counterpart of `storeDocument` — the open path stores a
  * freshly parsed `.pptx`/`.odp` through the same record machinery. */
 export function storePresentation(model: PresentationModel): void {
+  storeRecord(model, model.format);
+}
+
+/** The media counterpart (SPEC-107) — an opened PDF/image stores through the
+ * same record machinery, its payload split into the media record like every
+ * other kind's. */
+export function storeMedia(model: MediaModel): void {
   storeRecord(model, model.format);
 }
 

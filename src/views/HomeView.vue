@@ -32,6 +32,7 @@ import {
   initLibrary,
   renameDocument,
   storeDocument,
+  storeMedia,
   storePresentation,
 } from "../lib/documentStore";
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
@@ -272,6 +273,8 @@ async function handleFileChosen(file = null) {
     openError.value = "";
     if (opened.kind === "presentation") {
       storePresentation(opened.model);
+    } else if (opened.kind === "media") {
+      storeMedia(opened.model);
     } else {
       storeDocument(opened.model);
     }

@@ -8,7 +8,7 @@ import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useToasts } from "../composables/useToasts";
-import { storeDocument, storePresentation } from "../lib/documentStore";
+import { storeDocument, storeMedia, storePresentation } from "../lib/documentStore";
 import { editorPathFor } from "../lib/documentKinds";
 import {
   hasSupportedExtension,
@@ -154,6 +154,8 @@ async function handleDrop(event = new DragEvent("drop")) {
     const opened = await openAnyDocumentFile(file);
     if (opened.kind === "presentation") {
       storePresentation(opened.model);
+    } else if (opened.kind === "media") {
+      storeMedia(opened.model);
     } else {
       storeDocument(opened.model);
     }
