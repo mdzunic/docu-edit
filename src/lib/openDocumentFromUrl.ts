@@ -9,6 +9,8 @@ import {
   openAnyDocumentFile,
   type OpenedFile,
 } from "./openDocument";
+import { OPENABLE_EXTENSIONS } from "./documentKinds";
+import { LIBRARY_IMAGE_MIME_TYPES } from "./core/media";
 
 export class OpenFromUrlError extends Error {}
 
@@ -26,9 +28,13 @@ const MARKDOWN_CONTENT_TYPE = "text/markdown";
 // deferring to the extension check and, ultimately, content sniffing.
 const GENERIC_BINARY_CONTENT_TYPES = ["application/zip", "application/octet-stream"];
 
+// Derived from the registry (documentKinds.ts), so this path gains new
+// kinds' extensions without local knowledge of them (SPEC-107 AC-1).
+const OPENABLE_EXTENSION_PATTERN = new RegExp(`\\.(${OPENABLE_EXTENSIONS.join("|")})$`, "i");
+
 function hasDocumentExtension(url: string): boolean {
   try {
-    return /\.(docx|odt|md|markdown|pptx|odp)$/i.test(new URL(url).pathname);
+    return OPENABLE_EXTENSION_PATTERN.test(new URL(url).pathname);
   } catch {
     return false;
   }
@@ -45,6 +51,8 @@ function isSupportedContentType(contentType: string | null): boolean {
     type === MARKDOWN_CONTENT_TYPE ||
     type === PPTX_CONTENT_TYPE ||
     type === ODP_CONTENT_TYPE ||
+    type === "application/pdf" ||
+    (LIBRARY_IMAGE_MIME_TYPES as readonly string[]).includes(type) ||
     GENERIC_BINARY_CONTENT_TYPES.includes(type)
   );
 }
@@ -99,7 +107,7 @@ export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
   const contentType = response.headers.get("content-type");
   if (!isSupportedContentType(contentType) && !hasDocumentExtension(url)) {
     throw new OpenFromUrlError(
-      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt, .md, .pptx or .odp document`,
+      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt, .md, .pptx, .odp, .pdf or image file`,
     );
   }
 

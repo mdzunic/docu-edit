@@ -76,7 +76,7 @@ describe("format layer boundaries", () => {
   /** Import specifiers in `name` (under `dir`) that resolve into a `docx/`,
    * `odf/` or `presentation/` path segment named by `banned` — "../docx/x",
    * "./odf/x" and aliased "…/docx/x" forms alike. */
-  function formatImportViolations(dir: string, name: string, banned: "docx" | "odf" | "presentation"): string[] {
+  function formatImportViolations(dir: string, name: string, banned: "docx" | "odf" | "presentation" | "media"): string[] {
     const source = readFileSync(join(dir, name), "utf8");
     const bannedSegment = new RegExp(`(^|/)${banned}/`);
     return importSpecifiers(source)
@@ -147,6 +147,23 @@ describe("format layer boundaries", () => {
       ...formatImportViolations(libDir, name, "odf"),
       ...formatImportViolations(libDir, name, "presentation"),
     ]);
+    expect(violations).toEqual([]);
+  });
+
+  // The media product (SPEC-107), reverse direction: nothing in core, the
+  // text product's layers or the presentation layer may import media/ — the
+  // media layer's own side of the rule (only siblings and core) is
+  // media/boundary.spec.ts. Note the trailing slash in the banned segment:
+  // core/media.ts ("./media", SPEC-024's media-part module) is a core
+  // sibling, not the media product, and stays importable everywhere.
+  it("no core, format-layer, presentation or model-layer module imports from media/", () => {
+    const dirs = ["core", "docx", "odf", "presentation"].map((name) => join(libDir, name));
+    const violations = [
+      ...dirs.flatMap((dir) =>
+        runtimeModules(dir).flatMap((name) => formatImportViolations(dir, name, "media")),
+      ),
+      ...MODEL_LAYER_MODULES.flatMap((name) => formatImportViolations(libDir, name, "media")),
+    ];
     expect(violations).toEqual([]);
   });
 });

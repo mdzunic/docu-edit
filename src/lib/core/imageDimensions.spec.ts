@@ -266,3 +266,65 @@ describe("decodeImageDimensions — unrecognised/malformed input", () => {
     expect(decodeImageDimensions(garbage, "image/png")).toBeNull();
   });
 });
+
+describe("decodeImageDimensions — WebP (SPEC-107)", () => {
+  function riff(chunk: string, payload: number[]): Uint8Array {
+    const fourCC = (text: string) => [...text].map((c) => c.charCodeAt(0));
+    const size = payload.length;
+    return new Uint8Array([
+      ...fourCC("RIFF"),
+      (12 + size) & 0xff, ((12 + size) >> 8) & 0xff, 0, 0,
+      ...fourCC("WEBP"),
+      ...fourCC(chunk),
+      size & 0xff, (size >> 8) & 0xff, 0, 0,
+      ...payload,
+    ]);
+  }
+
+  it("reads a lossy VP8 frame header", () => {
+    // 3-byte frame tag, 9D 01 2A start code, then 14-bit LE width/height.
+    const payload = [0, 0, 0, 0x9d, 0x01, 0x2a, 320 & 0xff, 320 >> 8, 240 & 0xff, 240 >> 8];
+    expect(decodeImageDimensions(riff("VP8 ", payload), "image/webp")).toEqual({
+      widthPx: 320,
+      heightPx: 240,
+    });
+  });
+
+  it("reads a lossless VP8L header", () => {
+    // 0x2F signature, then width-1 and height-1 as consecutive 14-bit
+    // fields of a little-endian 32-bit value.
+    const packed = (48 - 1) | ((30 - 1) << 14);
+    const payload = [
+      0x2f,
+      packed & 0xff, (packed >> 8) & 0xff, (packed >> 16) & 0xff, (packed >>> 24) & 0xff,
+      0,
+    ];
+    expect(decodeImageDimensions(riff("VP8L", payload), "image/webp")).toEqual({
+      widthPx: 48,
+      heightPx: 30,
+    });
+  });
+
+  it("reads an extended VP8X canvas size", () => {
+    // Flags + 3 reserved bytes, then 24-bit LE width-1 / height-1.
+    const payload = [
+      0x02, 0, 0, 0,
+      (700 - 1) & 0xff, ((700 - 1) >> 8) & 0xff, 0,
+      (350 - 1) & 0xff, ((350 - 1) >> 8) & 0xff, 0,
+    ];
+    expect(decodeImageDimensions(riff("VP8X", payload), "image/webp")).toEqual({
+      widthPx: 700,
+      heightPx: 350,
+    });
+  });
+
+  it("returns null for a malformed VP8 frame (bad start code) and unknown chunks", () => {
+    const badStart = [0, 0, 0, 0xff, 0xff, 0xff, 10, 0, 10, 0];
+    expect(decodeImageDimensions(riff("VP8 ", badStart), "image/webp")).toBeNull();
+    expect(decodeImageDimensions(riff("ANMF", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), "image/webp")).toBeNull();
+  });
+
+  it("returns null for a truncated RIFF container", () => {
+    expect(decodeImageDimensions(utf8("RIFF1234WEBP"), "image/webp")).toBeNull();
+  });
+});

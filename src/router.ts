@@ -21,7 +21,11 @@ export const routes: RouteRecordRaw[] = [
     component: () => import("./views/DocumentView.vue"),
     beforeEnter: (to) => {
       const id = String(to.params.id ?? "");
-      return documentKindOf(id) === "presentation" ? `/slides/${id}` : true;
+      const kind = documentKindOf(id);
+      if (kind === "presentation") {
+        return `/slides/${id}`;
+      }
+      return kind === "media" ? `/media/${id}` : true;
     },
   },
   {
@@ -30,7 +34,11 @@ export const routes: RouteRecordRaw[] = [
     component: () => import("./views/PresentationView.vue"),
     beforeEnter: (to) => {
       const id = String(to.params.id ?? "");
-      return documentKindOf(id) === "text" ? `/doc/${id}` : true;
+      const kind = documentKindOf(id);
+      if (kind === "text") {
+        return `/doc/${id}`;
+      }
+      return kind === "media" ? `/media/${id}` : true;
     },
   },
   {
@@ -41,7 +49,26 @@ export const routes: RouteRecordRaw[] = [
     component: () => import("./views/PresentationPlayView.vue"),
     beforeEnter: (to) => {
       const id = String(to.params.id ?? "");
-      return documentKindOf(id) === "text" ? `/doc/${id}` : true;
+      const kind = documentKindOf(id);
+      if (kind === "text") {
+        return `/doc/${id}`;
+      }
+      return kind === "media" ? `/media/${id}` : true;
+    },
+  },
+  {
+    // SPEC-107: the media viewer, kind-guarded in both directions exactly as
+    // /doc/:id and /slides/:id are.
+    path: "/media/:id",
+    name: "media",
+    component: () => import("./views/MediaView.vue"),
+    beforeEnter: (to) => {
+      const id = String(to.params.id ?? "");
+      const kind = documentKindOf(id);
+      if (kind === "text") {
+        return `/doc/${id}`;
+      }
+      return kind === "presentation" ? `/slides/${id}` : true;
     },
   },
   {

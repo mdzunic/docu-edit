@@ -22,7 +22,9 @@ import { type MediaPart } from "./core/media";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE, ODT_MIMETYPE, OTT_MIMETYPE } from "./odf/reader";
 import { unzip, ZipError } from "./core/zip";
-import { detectPackage } from "./core/packageDetect";
+import { detectMedia, detectPackage } from "./core/packageDetect";
+import type { MediaModel } from "./media/model";
+import { assembleMediaModel } from "./media/open";
 import { readFileAsArrayBuffer } from "./core/fileReader";
 import { parseMd, type ParseMdOptions } from "./md/reader";
 import { inferListStyleTypes } from "./styles";
@@ -40,6 +42,7 @@ export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
 export class UnsupportedFileError extends Error {}
 export const UNSUPPORTED_ODF_MESSAGE = "This OpenDocument file isn't a text document or presentation we can open";
 export const PRESENTATION_NOT_TEXT_MESSAGE = "This is a presentation file — open it from the library instead";
+export const MEDIA_NOT_TEXT_MESSAGE = "This is a PDF or image file — open it from the library instead";
 
 /** SPEC-009 AC-14: shared across every open path (picker, drag-drop,
  * URL fetch) since they all funnel through `openDocumentFile`. */
@@ -54,7 +57,7 @@ export class FileTooLargeError extends Error {}
  * except Markdown (SPEC-050), which has no content signature at all and is
  * admitted by extension as the deliberate, documented exception (see
  * `openDocumentFile`). */
-export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt, .md, .pptx and .odp files";
+export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt, .md, .pptx, .odp, .pdf and image files";
 
 const SUPPORTED_EXTENSION_PATTERN = new RegExp(`\\.(${OPENABLE_EXTENSIONS.join("|")})$`, "i");
 
@@ -72,7 +75,10 @@ export function hasTemplateFileExtension(fileName: string): boolean {
 /** The app-bar title for an opened document: its file name with the
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
-  const withoutExtension = fileName.replace(/\.(docx|dotx|odt|ott|md|markdown|pptx|odp)$/i, "");
+  const withoutExtension = fileName.replace(
+    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
+    "",
+  );
   return withoutExtension.length > 0 ? withoutExtension : fileName;
 }
 
@@ -170,7 +176,8 @@ export function assembleDocumentModel(
  * `kind` (see documentKinds.ts). */
 export type OpenedFile =
   | { kind: "text"; model: DocumentModel }
-  | { kind: "presentation"; model: PresentationModel };
+  | { kind: "presentation"; model: PresentationModel }
+  | { kind: "media"; model: MediaModel };
 
 /** The shared open pipeline. Unzips at most once for detection (parsers
  * re-unzip on their own, as they always did), then dispatches on the
@@ -203,6 +210,21 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
   // (generate, template import) go through the exported helpers below, which
   // never defer.
   const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
+
+  // SPEC-107: media is sniffed BEFORE any unzip attempt, from the bytes and
+  // never the extension — media files are not ZIPs, so this is both cheaper
+  // and unambiguous. An encrypted or unparseable PDF is refused here
+  // (PdfEncryptedError / PdfParseError propagate as the open error), never
+  // guessed at.
+  const mediaFormat = detectMedia(bytes);
+  if (mediaFormat !== null) {
+    if (!allowPresentations) {
+      // The text-only entry points (template import, style import) must keep
+      // returning DocumentModel — a PDF there is an error, not a misparse.
+      throw new UnsupportedFileError(MEDIA_NOT_TEXT_MESSAGE);
+    }
+    return { kind: "media", model: await assembleMediaModel(title, mediaFormat, bytes) };
+  }
 
   let parts: Map<string, Uint8Array> | null = null;
   try {

@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
-import { getDocument } from "../../lib/documentStore";
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
+import { getDocument, getMedia } from "../../lib/documentStore";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import {
   getCachedThumbnail,
   renderThumbnail,
   THUMBNAIL_ASPECT_RATIO,
 } from "../../lib/libraryThumbnail";
-import { formatBadgeLabel } from "../../lib/format";
+import { kindOfFormat } from "../../lib/documentKinds";
+import {
+  cacheMediaThumbnail,
+  getCachedMediaThumbnail,
+  mediaImageDataUri,
+  pdfCardPlaceholder,
+  thumbnailRasterSize,
+} from "../../lib/media/thumbnail";
+import { formatFileSize, formatBadgeLabel } from "../../lib/format";
 import { paintChart } from "../../lib/core/chartCanvas";
 import { paintShape } from "../../lib/core/shapeCanvas";
 import { rotatedBounds } from "../../lib/core/shapeGeometry";
@@ -30,6 +38,74 @@ const props = defineProps({
 const rootRef = useTemplateRef("root");
 const thumbnail = ref(getCachedThumbnail(props.id, props.lastModified) ?? null);
 
+// --- media cards (SPEC-107) ------------------------------------------------
+// An image card shows a REAL downscaled raster of the image (built once per
+// record under the same IntersectionObserver + idle gating as text
+// thumbnails, cached by id + lastModified, capped at
+// MEDIA_THUMBNAIL_MAX_EDGE_PX). A PDF card shows a paper-shaped placeholder
+// at the first page's real aspect ratio with the page count and size — no
+// PDF page is ever rasterised, so the card never fakes a preview it cannot
+// produce.
+const isMediaEntry = computed(() => kindOfFormat(props.format) === "media");
+const mediaRaster = ref(getCachedMediaThumbnail(props.id, props.lastModified) ?? "");
+// Seeded null-ish so the inferred type carries the placeholder shape.
+const pdfInfo = ref({ aspectRatio: 0, pageCount: 0, pageSize: "" });
+const mediaByteLength = ref(0);
+
+function produceMediaThumbnail() {
+  const model = getMedia(props.id);
+  if (!model) {
+    thumbnail.value = { lines: [], failed: true };
+    return;
+  }
+  mediaByteLength.value = model.byteLength;
+  if (model.format === "pdf") {
+    if (model.pdf) {
+      pdfInfo.value = pdfCardPlaceholder(model.pdf);
+    } else {
+      thumbnail.value = { lines: [], failed: true };
+    }
+    return;
+  }
+  const src = mediaImageDataUri(model);
+  if (!src || typeof Image !== "function") {
+    thumbnail.value = { lines: [], failed: true };
+    return;
+  }
+  const image = new Image();
+  image.onload = () => {
+    if (unmounted) {
+      return;
+    }
+    try {
+      const size = thumbnailRasterSize(
+        image.naturalWidth || model.image?.widthPx || 1,
+        image.naturalHeight || model.image?.heightPx || 1,
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = size.widthPx;
+      canvas.height = size.heightPx;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("no 2d context");
+      }
+      ctx.drawImage(image, 0, 0, size.widthPx, size.heightPx);
+      const dataUrl = canvas.toDataURL("image/png");
+      cacheMediaThumbnail(props.id, props.lastModified, dataUrl);
+      mediaRaster.value = dataUrl;
+    } catch {
+      // jsdom / a broken image: the honest fallback is the format badge.
+      thumbnail.value = { lines: [], failed: true };
+    }
+  };
+  image.onerror = () => {
+    if (!unmounted) {
+      thumbnail.value = { lines: [], failed: true };
+    }
+  };
+  image.src = src;
+}
+
 // A disconnectable stub as the initial value gives `observer` an inferred
 // { disconnect(): void } type without a TS annotation (barred in .vue scripts)
 // — a real IntersectionObserver is assignable to it.
@@ -42,11 +118,15 @@ let observer = { disconnect() {} };
 let unmounted = false;
 
 function produce() {
-  if (thumbnail.value) {
+  if (thumbnail.value || mediaRaster.value) {
     return;
   }
   runWhenIdle(() => {
-    if (unmounted || thumbnail.value) {
+    if (unmounted || thumbnail.value || mediaRaster.value) {
+      return;
+    }
+    if (isMediaEntry.value) {
+      produceMediaThumbnail();
       return;
     }
     const model = getDocument(props.id);
@@ -57,7 +137,9 @@ function produce() {
 }
 
 onMounted(() => {
-  if (thumbnail.value) {
+  // A PDF placeholder is derived synchronously from the stored summary, but
+  // still goes through the same observe-then-idle path as everything else.
+  if (thumbnail.value || mediaRaster.value) {
     return;
   }
   // No IntersectionObserver (jsdom, older engines): render on the next idle
@@ -159,8 +241,40 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
     data-testid="row-thumbnail"
     aria-hidden="true"
   >
+    <!-- A media image card: the real downscaled raster (SPEC-107). -->
     <div
-      v-if="thumbnail && !thumbnail.failed && thumbnail.lines.length > 0"
+      v-if="mediaRaster"
+      class="thumbnail-media"
+    >
+      <img
+        class="thumbnail-media-image"
+        data-testid="media-thumbnail"
+        :src="mediaRaster"
+        alt=""
+        decoding="async"
+      >
+    </div>
+    <!-- A PDF card: a paper-shaped placeholder at the first page's REAL
+         aspect ratio, with the page count and size. No page is rasterised. -->
+    <div
+      v-else-if="pdfInfo.pageCount > 0"
+      class="thumbnail-pdf"
+      data-testid="pdf-placeholder"
+    >
+      <div
+        class="thumbnail-pdf-paper"
+        :style="{ aspectRatio: String(pdfInfo.aspectRatio) }"
+      >
+        <span class="thumbnail-pdf-pages">{{ pdfInfo.pageCount }} {{ pdfInfo.pageCount === 1 ? "page" : "pages" }}</span>
+        <span class="thumbnail-pdf-size">{{ pdfInfo.pageSize }}</span>
+        <span
+          v-if="mediaByteLength > 0"
+          class="thumbnail-pdf-size"
+        >{{ formatFileSize(mediaByteLength) }}</span>
+      </div>
+    </div>
+    <div
+      v-else-if="thumbnail && !thumbnail.failed && thumbnail.lines.length > 0"
       class="thumbnail-page"
     >
       <template
@@ -539,6 +653,59 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
   align-items: center;
   justify-content: center;
   background: var(--surface-raised);
+}
+
+/* A media image thumbnail: the downscaled raster, letterboxed inside the
+   card's fixed paper box. */
+.thumbnail-media {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-raised);
+}
+
+.thumbnail-media-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* The PDF placeholder: an honest paper shape at the first page's real
+   aspect ratio (SPEC-107 — no page is ever rasterised). */
+.thumbnail-pdf {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-raised);
+  padding: var(--space-3);
+}
+
+.thumbnail-pdf-paper {
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+}
+
+.thumbnail-pdf-pages {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.thumbnail-pdf-size {
+  color: var(--text-secondary);
+  font-size: calc(var(--text-sm) * 0.85);
 }
 
 .thumbnail-badge {
