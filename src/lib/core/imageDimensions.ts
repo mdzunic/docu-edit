@@ -2,8 +2,9 @@
 // bytes (SPEC-024's "natural size", AC-21) — no `<img>`/`Image()` decode, so
 // this works identically in the browser and under Vitest (jsdom does not
 // implement image decoding). Supports the four formats "Insert image"
-// accepts (PNG, JPEG, GIF, SVG); returns null for anything else or malformed
-// data, which callers treat as "unknown", not a hard failure.
+// accepts (PNG, JPEG, GIF, SVG) plus WebP for the library's media kind
+// (SPEC-107); returns null for anything else or malformed data, which
+// callers treat as "unknown", not a hard failure.
 import { parseXml, XmlParseError } from "./xml";
 
 export interface ImageDimensions {
@@ -91,6 +92,52 @@ function decodeJpeg(bytes: Uint8Array): ImageDimensions | null {
   return null;
 }
 
+function readUint24LE(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+}
+
+/** WebP (SPEC-107): a RIFF container with a `WEBP` form type whose first
+ * chunk carries the dimensions in one of three layouts — `VP8 ` (lossy),
+ * `VP8L` (lossless) or `VP8X` (extended). Null for anything malformed. */
+function decodeWebp(bytes: Uint8Array): ImageDimensions | null {
+  const ascii = (offset: number, length: number): string =>
+    new TextDecoder("ascii").decode(bytes.subarray(offset, offset + length));
+  if (bytes.length < 30 || ascii(0, 4) !== "RIFF" || ascii(8, 4) !== "WEBP") {
+    return null;
+  }
+  const chunk = ascii(12, 4);
+  if (chunk === "VP8 ") {
+    // Lossy: a 3-byte frame tag, then the 9D 01 2A start code, then width
+    // and height as 14-bit little-endian values.
+    if (bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) {
+      return null;
+    }
+    const width = readUint16LE(bytes, 26) & 0x3fff;
+    const height = readUint16LE(bytes, 28) & 0x3fff;
+    return width > 0 && height > 0 ? { widthPx: width, heightPx: height } : null;
+  }
+  if (chunk === "VP8L") {
+    // Lossless: a 0x2F signature byte, then width-1 and height-1 as
+    // consecutive 14-bit fields of a little-endian 32-bit read.
+    if (bytes[20] !== 0x2f) {
+      return null;
+    }
+    const packed =
+      bytes[21] | (bytes[22] << 8) | (bytes[23] << 16) | (bytes[24] << 24);
+    const width = (packed & 0x3fff) + 1;
+    const height = ((packed >> 14) & 0x3fff) + 1;
+    return { widthPx: width, heightPx: height };
+  }
+  if (chunk === "VP8X") {
+    // Extended: flags + reserved, then canvas width-1 and height-1 as
+    // 24-bit little-endian values.
+    const width = readUint24LE(bytes, 24) + 1;
+    const height = readUint24LE(bytes, 27) + 1;
+    return width > 0 && height > 0 ? { widthPx: width, heightPx: height } : null;
+  }
+  return null;
+}
+
 const PX_PER_INCH = 96;
 const CM_PER_INCH = 2.54;
 
@@ -158,12 +205,12 @@ function decodeSvg(bytes: Uint8Array): ImageDimensions | null {
 
 /** Decodes an image's intrinsic pixel dimensions from its raw bytes, or null
  * when the format isn't recognised/supported or the data is malformed. Format
- * is sniffed from the bytes themselves (PNG/GIF signatures, JPEG's SOI
+ * is sniffed from the bytes themselves (PNG/GIF/WebP signatures, JPEG's SOI
  * marker) except SVG, identified by `contentType` since it is plain XML with
  * no fixed magic bytes. */
 export function decodeImageDimensions(bytes: Uint8Array, contentType: string): ImageDimensions | null {
   if (contentType === "image/svg+xml") {
     return decodeSvg(bytes);
   }
-  return decodePng(bytes) ?? decodeGif(bytes) ?? decodeJpeg(bytes);
+  return decodePng(bytes) ?? decodeGif(bytes) ?? decodeJpeg(bytes) ?? decodeWebp(bytes);
 }

@@ -110,6 +110,136 @@ function opcMainPartPath(parts: Map<string, Uint8Array>): string | undefined {
   return officeDocRel ? resolvePartPath("", officeDocRel.target) : undefined;
 }
 
+// --- media detection (SPEC-107) --------------------------------------------
+
+/** The media formats `detectMedia` can recognise from bytes. Structurally
+ * identical to media/model.ts's MediaFormat — core cannot import the product
+ * layer, so the union is restated here and stays assignable. */
+export type DetectedMediaFormat = "pdf" | "png" | "jpeg" | "gif" | "svg" | "webp";
+
+/** How deep into the file the `%PDF-` header may sit (some real files carry
+ * a preamble before it — the offset is honoured by the parser too). */
+const PDF_HEADER_SCAN_BYTES = 1024;
+
+/** How much of the file the SVG root-element scan reads. */
+const SVG_SCAN_BYTES = 4096;
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+function startsWithAscii(bytes: Uint8Array, text: string, offset = 0): boolean {
+  if (bytes.length < offset + text.length) {
+    return false;
+  }
+  for (let i = 0; i < text.length; i += 1) {
+    if (bytes[offset + i] !== text.charCodeAt(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The byte offset of `%PDF-` within the leading scan window, or -1. */
+export function pdfHeaderOffset(bytes: Uint8Array): number {
+  const limit = Math.min(bytes.length, PDF_HEADER_SCAN_BYTES);
+  for (let i = 0; i + 5 <= limit; i += 1) {
+    if (
+      bytes[i] === 0x25 && // %
+      bytes[i + 1] === 0x50 && // P
+      bytes[i + 2] === 0x44 && // D
+      bytes[i + 3] === 0x46 && // F
+      bytes[i + 4] === 0x2d // -
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Whether the leading bytes are an XML document whose ROOT element is
+ * `<svg>` — the one media sniff that is structural rather than a magic
+ * number (an SVG has none). Skips an optional BOM, the XML declaration,
+ * doctype and comments, then requires the first real element to be `svg`
+ * (optionally namespace-prefixed). A comment or doctype that merely mentions
+ * svg is not a match. */
+function sniffSvg(bytes: Uint8Array): boolean {
+  const limit = Math.min(bytes.length, SVG_SCAN_BYTES);
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, limit));
+  } catch {
+    return false;
+  }
+  let pos = 0;
+  if (text.charCodeAt(0) === 0xfeff) {
+    pos = 1; // BOM
+  }
+  for (;;) {
+    while (pos < text.length && /\s/.test(text[pos])) {
+      pos += 1;
+    }
+    if (text[pos] !== "<") {
+      return false;
+    }
+    if (text.startsWith("<?", pos)) {
+      const end = text.indexOf("?>", pos);
+      if (end < 0) {
+        return false;
+      }
+      pos = end + 2;
+      continue;
+    }
+    if (text.startsWith("<!--", pos)) {
+      const end = text.indexOf("-->", pos);
+      if (end < 0) {
+        return false;
+      }
+      pos = end + 3;
+      continue;
+    }
+    if (text.startsWith("<!", pos)) {
+      // A doctype; internal subsets ([]…) do not appear in real SVG files —
+      // scan to the closing angle bracket.
+      const end = text.indexOf(">", pos);
+      if (end < 0) {
+        return false;
+      }
+      pos = end + 1;
+      continue;
+    }
+    // The first real element: `<svg` or `<prefix:svg`, followed by a name
+    // boundary so `<svgfoo>` never matches.
+    const match = /^<([A-Za-z_][\w.-]*:)?svg(?=[\s/>])/.exec(text.slice(pos));
+    return match !== null;
+  }
+}
+
+/** Sniffs a media file's format from its leading bytes (SPEC-107) — run by
+ * the open funnel BEFORE any unzip attempt, since media files are not ZIPs.
+ * Never consults the file extension. Returns null for anything that is not
+ * one of the six media formats. */
+export function detectMedia(bytes: Uint8Array): DetectedMediaFormat | null {
+  if (PNG_SIGNATURE.every((byte, i) => bytes[i] === byte)) {
+    return "png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "jpeg";
+  }
+  if (startsWithAscii(bytes, "GIF87a") || startsWithAscii(bytes, "GIF89a")) {
+    return "gif";
+  }
+  if (startsWithAscii(bytes, "RIFF") && startsWithAscii(bytes, "WEBP", 8)) {
+    return "webp";
+  }
+  if (pdfHeaderOffset(bytes) >= 0) {
+    return "pdf";
+  }
+  // SVG last: the only structural (non-magic-number) check.
+  if (sniffSvg(bytes)) {
+    return "svg";
+  }
+  return null;
+}
+
 /** Classifies an unzipped package by its own declarations. ODF is checked
  * first (its `mimetype` entry is the format's mandated self-description);
  * a ZIP with neither declaration reports `container: "zip"` and the caller

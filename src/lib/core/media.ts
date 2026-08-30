@@ -142,6 +142,15 @@ export const ACCEPTED_IMAGE_MIME_TYPES = [
 
 export const ACCEPTED_IMAGE_ACCEPT_ATTR = ACCEPTED_IMAGE_MIME_TYPES.join(",");
 
+/** The image MIME types the LIBRARY holds as media documents (SPEC-107):
+ * SPEC-024's four insert-into-a-document types plus WebP. Deliberately a
+ * separate list — ACCEPTED_IMAGE_MIME_TYPES stays the insert list SPEC-024
+ * owns, and this spec does not change it. */
+export const LIBRARY_IMAGE_MIME_TYPES = [
+  ...ACCEPTED_IMAGE_MIME_TYPES,
+  "image/webp",
+] as const;
+
 /** Whether a file's declared MIME type is one "Insert image" accepts. */
 export function isAcceptedImageType(mimeType: string): boolean {
   return (ACCEPTED_IMAGE_MIME_TYPES as readonly string[]).includes(mimeType);
