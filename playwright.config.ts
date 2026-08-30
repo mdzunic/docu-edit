@@ -62,9 +62,15 @@ export default defineConfig({
       },
       testMatch: COMPACT_SPEC,
     },
-    // SPEC-052's two single-shot samples go ahead of SPEC-047's median-of-5
-    // benchmark so the long one inherits the quietest window.
+    // SPEC-052's two single-shot samples and SPEC-017's find-first-match
+    // benchmark go ahead of SPEC-047's median-of-5 so the long one inherits
+    // the quietest window. SPEC-017's timing test lives in its own project
+    // (rather than the mid-suite `chromium` run it used to share) for the same
+    // reason every benchmark here does: its perf-baseline row is calibrated
+    // for a quiet machine, so full-suite CPU contention was timing the sibling
+    // workers, not the search.
     { name: "perf-charts", use: { ...devices["Desktop Chrome"] }, testMatch: /SPEC-052\.perf\.spec\.ts$/ },
+    { name: "perf-find", use: { ...devices["Desktop Chrome"] }, testMatch: /SPEC-017\.perf\.spec\.ts$/ },
     { name: "perf-large-document", use: { ...devices["Desktop Chrome"] }, testMatch: /SPEC-047\.perf\.spec\.ts$/ },
   ],
   webServer: {
