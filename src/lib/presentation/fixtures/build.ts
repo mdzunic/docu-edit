@@ -20,6 +20,10 @@ import { createBlankPresentation } from "../slides";
 import { createTableFrame } from "../tables";
 import { writePptx } from "../pptx/writer";
 import { writeOdp } from "../odp/writer";
+import { unzip } from "../../core/zip";
+import { chartPartXml } from "../../core/chartPartOoxml";
+import { odfChartContentXml } from "../../core/chartPartOdf";
+import type { ChartSeries, ChartType, ChartVisual } from "../../core/charts";
 import type { SlideAnimation } from "../model";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -1248,4 +1252,163 @@ export async function buildOdpTablesFixtureBytes(): Promise<Uint8Array> {
     },
   ];
   return (await writeOdp(model)).bytes;
+}
+
+// --- SPEC-092 chart fixtures (AC-28/28a/28b) -------------------------------
+// Each deck carries a clustered column, a line, a pie and one deliberately
+// out-of-catalogue chart (a `c:bar3DChart` for pptx, a `chart:class="chart:
+// surface"` for odp) to pin the preserve-don't-parse path (AC-8/9b). The decks
+// are assembled by package surgery on a from-scratch blank deck — the chart
+// parts written by the hoisted pure string builders (`chartPartXml` /
+// `odfChartContentXml`), the container + relationship/manifest spliced in — so
+// the builders stay DOM-free (no reader), the constraint the e2e-fixture build
+// script runs under (Node has no DOMParser). On open every part resolves: the
+// three catalogue charts paint, the fourth shows the dashed placeholder.
+const CHART_URI = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const CHART_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const CHART_PART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const ODF_CHART_MEDIA_TYPE = "application/vnd.oasis.opendocument.chart";
+const decoder = new TextDecoder("utf-8");
+
+/** The chart data both fixtures carry, so the fixture spec + e2e assert one
+ * expected shape against either format. Four categories; the column chart has
+ * two series, the line and pie one each; the fourth chart is out of catalogue. */
+export const EXPECTED_FIXTURE_CHARTS = {
+  categories: ["Q1", "Q2", "Q3", "Q4"],
+  column: {
+    chartType: "columnClustered" as ChartType,
+    series: [
+      { name: "Revenue", color: "#4e79a7", values: [10, 20, 15, 25] },
+      { name: "Cost", color: "#f28e2b", values: [6, 9, 7, 11] },
+    ] as ChartSeries[],
+  },
+  line: {
+    chartType: "line" as ChartType,
+    series: [{ name: "Signups", color: "#59a14f", values: [3, 7, 9, 14] }] as ChartSeries[],
+  },
+  pie: {
+    chartType: "pie" as ChartType,
+    series: [{ name: "Share", color: "#e15759", values: [40, 25, 20, 15] }] as ChartSeries[],
+  },
+  /** The out-of-catalogue chart's marker in each format (AC-28a). */
+  unsupported: { pptxMarker: "bar3DChart", odpMarker: "chart:surface" },
+} as const;
+
+/** The four chart rectangles, a 2×2 grid on the 33.867×19.05 cm slide (the
+ * out-of-catalogue chart is the fourth). */
+const CHART_RECTS = [
+  { xCm: 1.5, yCm: 1, widthCm: 14, heightCm: 7 },
+  { xCm: 18, yCm: 1, widthCm: 14, heightCm: 7 },
+  { xCm: 1.5, yCm: 10.5, widthCm: 14, heightCm: 7 },
+  { xCm: 18, yCm: 10.5, widthCm: 14, heightCm: 7 },
+];
+
+function chartVisualOf(spec: { chartType: ChartType; series: ChartSeries[] }): ChartVisual {
+  return {
+    chartType: spec.chartType,
+    categories: [...EXPECTED_FIXTURE_CHARTS.categories],
+    series: spec.series.map((s) => ({ name: s.name, color: s.color, values: [...s.values] })),
+    options: { legend: "right", dataLabels: false, gridlines: true },
+  };
+}
+
+/** A minimal but parseable out-of-catalogue OOXML chart part (`c:bar3DChart`). */
+const PPTX_UNSUPPORTED_CHART =
+  `<c:chartSpace xmlns:c="${CHART_URI}" xmlns:a="${A_NS}" xmlns:r="${R_NS}">` +
+  `<c:chart><c:plotArea><c:layout/><c:bar3DChart><c:barDir val="col"/></c:bar3DChart></c:plotArea></c:chart></c:chartSpace>`;
+
+function pptxChartGraphicFrame(id: number, rId: string, rect: { xCm: number; yCm: number; widthCm: number; heightCm: number }): string {
+  return (
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Chart ${id}"/>` +
+    `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="${EMU(rect.xCm)}" y="${EMU(rect.yCm)}"/><a:ext cx="${EMU(rect.widthCm)}" cy="${EMU(rect.heightCm)}"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="${CHART_URI}">` +
+    `<c:chart xmlns:c="${CHART_URI}" xmlns:r="${R_NS}" r:id="${rId}"/>` +
+    `</a:graphicData></a:graphic></p:graphicFrame>`
+  );
+}
+
+export async function buildPptxChartsFixtureBytes(): Promise<Uint8Array> {
+  const base = createBlankPresentation();
+  base.slides[0].frames = [];
+  const parts = await unzip((await writePptx(base)).bytes);
+
+  const partXml = [
+    chartPartXml(chartVisualOf(EXPECTED_FIXTURE_CHARTS.column)),
+    chartPartXml(chartVisualOf(EXPECTED_FIXTURE_CHARTS.line)),
+    chartPartXml(chartVisualOf(EXPECTED_FIXTURE_CHARTS.pie)),
+    PPTX_UNSUPPORTED_CHART,
+  ];
+  const frames: string[] = [];
+  const relRows: string[] = [];
+  const ctRows: string[] = [];
+  partXml.forEach((xml, i) => {
+    const n = i + 1;
+    const partName = `ppt/charts/chart${n}.xml`;
+    const rId = `rId${50 + n}`;
+    parts.set(partName, encoder.encode(xml));
+    frames.push(pptxChartGraphicFrame(10 + n, rId, CHART_RECTS[i]));
+    relRows.push(`<Relationship Id="${rId}" Type="${CHART_REL_TYPE}" Target="../charts/chart${n}.xml"/>`);
+    ctRows.push(`<Override PartName="/${partName}" ContentType="${CHART_PART_CONTENT_TYPE}"/>`);
+  });
+
+  const slide1 = decoder.decode(parts.get("ppt/slides/slide1.xml")!).replace("</p:spTree>", `${frames.join("")}</p:spTree>`);
+  parts.set("ppt/slides/slide1.xml", encoder.encode(slide1));
+  const relsPath = "ppt/slides/_rels/slide1.xml.rels";
+  const rels = decoder.decode(parts.get(relsPath)!).replace("</Relationships>", `${relRows.join("")}</Relationships>`);
+  parts.set(relsPath, encoder.encode(rels));
+  const ct = decoder.decode(parts.get("[Content_Types].xml")!).replace("</Types>", `${ctRows.join("")}</Types>`);
+  parts.set("[Content_Types].xml", encoder.encode(ct));
+
+  return zip([...parts].map(([name, data]) => ({ name, data })));
+}
+
+/** The out-of-catalogue ODP chart object: a valid `office:chart` whose
+ * `chart:class` is out of catalogue (`chart:surface`). */
+function odpUnsupportedChartContent(): string {
+  return odfChartContentXml(chartVisualOf({ chartType: "columnClustered", series: [EXPECTED_FIXTURE_CHARTS.column.series[0]] }), 14, 7).replace(
+    'chart:class="chart:bar"',
+    'chart:class="chart:surface"',
+  );
+}
+
+export async function buildOdpChartsFixtureBytes(): Promise<Uint8Array> {
+  const base = createBlankPresentation();
+  base.format = "odp";
+  base.slides[0].frames = [];
+  const parts = await unzip((await writeOdp(base)).bytes);
+
+  const objectContent = [
+    odfChartContentXml(chartVisualOf(EXPECTED_FIXTURE_CHARTS.column), 14, 7),
+    odfChartContentXml(chartVisualOf(EXPECTED_FIXTURE_CHARTS.line), 14, 7),
+    odfChartContentXml(chartVisualOf(EXPECTED_FIXTURE_CHARTS.pie), 14, 7),
+    odpUnsupportedChartContent(),
+  ];
+  const frames: string[] = [];
+  const manifestRows: string[] = [];
+  objectContent.forEach((xml, i) => {
+    const n = i + 1;
+    const dir = `Object ${n}`;
+    parts.set(`${dir}/content.xml`, encoder.encode(xml));
+    const r = CHART_RECTS[i];
+    frames.push(
+      `<draw:frame presentation:class="chart"${geom(r.xCm, r.yCm, r.widthCm, r.heightCm)}>` +
+        `<draw:object xlink:href="./${dir}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame>`,
+    );
+    manifestRows.push(
+      `<manifest:file-entry manifest:full-path="${dir}/" manifest:media-type="${ODF_CHART_MEDIA_TYPE}"/>` +
+        `<manifest:file-entry manifest:full-path="${dir}/content.xml" manifest:media-type="text/xml"/>`,
+    );
+  });
+
+  const content = decoder.decode(parts.get("content.xml")!).replace("</draw:page>", `${frames.join("")}</draw:page>`);
+  parts.set("content.xml", encoder.encode(content));
+  const manifest = decoder
+    .decode(parts.get("META-INF/manifest.xml")!)
+    .replace("</manifest:manifest>", `${manifestRows.join("")}</manifest:manifest>`);
+  parts.set("META-INF/manifest.xml", encoder.encode(manifest));
+
+  // `mimetype` must stay first and STOREd in an ODF package.
+  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }

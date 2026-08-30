@@ -106,7 +106,7 @@ export function planOdfChartWrite(
       }
       const objectDir = sourceDir ?? freshObjectDir();
       const needsRegeneration = forceRegenerate || !sourceDir || (block.edited === true && block.unsupportedChartXml === undefined);
-      const xml = needsRegeneration ? odfChartContentXml(block) : null;
+      const xml = needsRegeneration ? odfChartContentXml(block, block.widthCm, block.heightCm) : null;
       const partName = `${objectDir}/content.xml`;
       if (xml !== null) {
         if (sourceDir) {

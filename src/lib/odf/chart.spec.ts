@@ -40,12 +40,12 @@ function baseChart(overrides: Partial<Chart> = {}): Chart {
 }
 
 function roundTripPart(chart: Chart): ReturnType<typeof parseOdfChartXml> {
-  const xml = odfChartContentXml(chart);
+  const xml = odfChartContentXml(chart, chart.widthCm, chart.heightCm);
   return parseOdfChartXml(xml);
 }
 
 function roundTripFrame(chart: Chart) {
-  const partXml = odfChartContentXml(chart);
+  const partXml = odfChartContentXml(chart, chart.widthCm, chart.heightCm);
   const parts = new Map([[CONTENT_PART_PATH, new TextEncoder().encode(partXml)]]);
   const frameXml = chartFrameXml(chart, `./${OBJECT_DIR}`);
   return parseChartFrame(wrap(frameXml), parts);
@@ -97,14 +97,14 @@ describe("odfChartContentXml / parseOdfChartXml — catalogue round trip", () =>
 
   it("legend 'none' round-trips with no chart:legend element", () => {
     const chart = baseChart({ options: { legend: "none", dataLabels: false, gridlines: false } });
-    const xml = odfChartContentXml(chart);
+    const xml = odfChartContentXml(chart, chart.widthCm, chart.heightCm);
     expect(xml).not.toContain("<chart:legend");
     const parsed = roundTripPart(chart);
     expect(parsed!.options.legend).toBe("none");
   });
 
   it("uses chart:chart, chart:plot-area and table:table data (AC-37)", () => {
-    const xml = odfChartContentXml(baseChart());
+    const xml = odfChartContentXml(baseChart(), 12, 7.5);
     expect(xml).toContain("<chart:chart");
     expect(xml).toContain("<chart:plot-area");
     expect(xml).toContain("<table:table");
@@ -112,9 +112,9 @@ describe("odfChartContentXml / parseOdfChartXml — catalogue round trip", () =>
   });
 
   it("distinguishes columnClustered/columnStacked/barClustered via vertical+stacked", () => {
-    expect(odfChartContentXml(baseChart({ chartType: "columnClustered" }))).toContain('chart:vertical="true" chart:stacked="false"');
-    expect(odfChartContentXml(baseChart({ chartType: "columnStacked" }))).toContain('chart:vertical="true" chart:stacked="true"');
-    expect(odfChartContentXml(baseChart({ chartType: "barClustered" }))).toContain('chart:vertical="false" chart:stacked="false"');
+    expect(odfChartContentXml(baseChart({ chartType: "columnClustered" }), 12, 7.5)).toContain('chart:vertical="true" chart:stacked="false"');
+    expect(odfChartContentXml(baseChart({ chartType: "columnStacked" }), 12, 7.5)).toContain('chart:vertical="true" chart:stacked="true"');
+    expect(odfChartContentXml(baseChart({ chartType: "barClustered" }), 12, 7.5)).toContain('chart:vertical="false" chart:stacked="false"');
   });
 
   it("returns null for malformed XML", () => {
@@ -152,7 +152,7 @@ describe("parseChartFrame — the draw:frame/draw:object wrapper", () => {
 
   it("captures the raw XML as unsupportedChartXml for an out-of-catalogue chart", () => {
     const chart = baseChart();
-    const badXml = odfChartContentXml(chart).replace('chart:class="chart:bar"', 'chart:class="chart:stock"');
+    const badXml = odfChartContentXml(chart, chart.widthCm, chart.heightCm).replace('chart:class="chart:bar"', 'chart:class="chart:stock"');
     const parts = new Map([[CONTENT_PART_PATH, new TextEncoder().encode(badXml)]]);
     const frameXml = chartFrameXml(chart, `./${OBJECT_DIR}`);
     const parsed = parseChartFrame(wrap(frameXml), parts);
@@ -184,7 +184,7 @@ describe("equalStructural of a full round trip", () => {
       options: { title: "T", legend: "top", dataLabels: true, gridlines: true, valueAxisMin: 0, valueAxisMax: 10 },
     });
     const first = roundTripPart(chart)!;
-    const rewritten = odfChartContentXml({ ...chart, chartType: first.chartType, categories: first.categories, series: first.series, options: first.options });
+    const rewritten = odfChartContentXml({ ...chart, chartType: first.chartType, categories: first.categories, series: first.series, options: first.options }, chart.widthCm, chart.heightCm);
     const second = parseOdfChartXml(rewritten)!;
     expect(equalStructural(first, second)).toBe(true);
   });

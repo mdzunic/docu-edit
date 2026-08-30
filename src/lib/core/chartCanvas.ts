@@ -671,3 +671,31 @@ export function paintChart(
   paintLegend(ctx, chart, series, widthPx, heightPx, titleH);
   ctx.restore();
 }
+
+/** Paints `chart` into a devicePixelRatio-crisp `<canvas>` at `widthPx` ×
+ * `heightPx` CSS pixels — the chart-flavoured sibling of
+ * `paintShapeIntoCanvas` (SPEC-092 AC-11). The CSS size stays the model px so
+ * the slide-stage transform scales it, while the backing store is multiplied
+ * by devicePixelRatio so the extra device pixels paint crisply. An
+ * `unsupportedChartXml` chart paints `paintChart`'s dashed placeholder. */
+export function paintChartIntoCanvas(
+  canvas: HTMLCanvasElement,
+  chart: ChartVisual,
+  widthPx: number,
+  heightPx: number,
+): void {
+  const surfaceW = Math.max(1, Math.ceil(widthPx));
+  const surfaceH = Math.max(1, Math.ceil(heightPx));
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(surfaceW * dpr));
+  canvas.height = Math.max(1, Math.round(surfaceH * dpr));
+  canvas.style.width = `${surfaceW}px`;
+  canvas.style.height = `${surfaceH}px`;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, surfaceW, surfaceH);
+  paintChart(ctx, chart, surfaceW, surfaceH);
+}

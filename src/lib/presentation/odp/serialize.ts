@@ -18,6 +18,7 @@ import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { escapeXmlAttribute, escapeXmlText } from "../../core/xml";
 import {
   DEFAULT_TABLE_CELL_PADDING_CM,
+  type ChartFrame,
   type FrameStroke,
   type ImageFrame,
   type PlaceholderRole,
@@ -296,7 +297,13 @@ export function serializePage(
   if (slide.animations !== undefined) {
     let n = 1;
     for (const frame of slide.frames) {
-      if (frame.kind === "text" || frame.kind === "shape" || frame.kind === "image" || frame.kind === "table") {
+      const animatable =
+        frame.kind === "text" ||
+        frame.kind === "shape" ||
+        frame.kind === "image" ||
+        frame.kind === "table" ||
+        (frame.kind === "chart" && !frame.xml);
+      if (animatable) {
         wireIdFor.set(frame.id, `de-f${n++}`);
       }
     }
@@ -412,12 +419,38 @@ function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireI
       return imageFrameXml(frame, registry, wireId);
     case "table":
       return tableFrameXml(frame, registry, wireId);
+    case "chart":
+      // Untouched chart re-emits verbatim (byte-identical, AC-21); a touched
+      // one emits the canonical slide-flavoured draw:frame + draw:object.
+      return frame.xml ?? serializeOdpChartFrame(frame, chartObjectHref(frame.sourcePart), wireId);
     case "group":
     case "foreign":
       return frame.xml; // verbatim (AC-39)
     default:
       return "";
   }
+}
+
+/** The `./Object N` href a chart frame's `draw:object` points at, derived from
+ * its `sourcePart` ("Object 1/content.xml" → "./Object 1"); "" for a chart
+ * created here (the writer mints the directory and rewrites this). */
+function chartObjectHref(sourcePart?: string): string {
+  if (!sourcePart) {
+    return "";
+  }
+  return `./${sourcePart.replace(/\/content\.xml$/, "")}`;
+}
+
+/** The canonical slide-flavoured `draw:frame` + `draw:object` for a touched
+ * chart (SPEC-092 AC-21): `presentation:class="chart"`, geometry via
+ * `svg:x/y/width/height` (not `text:anchor-type` — that is the text product's
+ * container), holding the `draw:object` reference alone. */
+export function serializeOdpChartFrame(frame: ChartFrame, objectHref: string, wireId?: string): string {
+  return (
+    `<draw:frame presentation:class="chart"${idAttrs(wireId)}${geomAttrs(frame)}>` +
+    `<draw:object xlink:href="${escapeXmlAttribute(objectHref)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    `</draw:frame>`
+  );
 }
 
 // --- table frame (SPEC-091) -------------------------------------------------

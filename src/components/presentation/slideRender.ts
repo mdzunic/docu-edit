@@ -20,6 +20,7 @@ import {
 import { slideOutline } from "../../lib/presentation/slideModel";
 import type { ShapeVisual } from "../../lib/core/shapes";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
+import type { ChartVisual } from "../../lib/core/charts";
 
 /** pt → px at 96/72, the ratio the text editor uses. */
 const PT_TO_PX = 96 / 72;
@@ -92,6 +93,8 @@ export function frameAccessibleName(frame: SlideFrame): string {
       return shapeDefinition(frame.geometry)?.label ?? "Shape";
     case "table":
       return "Table";
+    case "chart":
+      return "Chart";
     default:
       return frame.role ? "Placeholder" : "Text box";
   }
@@ -216,6 +219,29 @@ export function shapeVisualOf(frame: SlideFrame): ShapeVisual | null {
   }
   if (frame.adjustments && frame.adjustments.length > 0) {
     visual.adjustments = frame.adjustments;
+  }
+  return visual;
+}
+
+// --- charts (SPEC-092) ------------------------------------------------------
+/** A chart frame as a `ChartVisual` for `paintChart`, or null for a non-chart.
+ * The frame IS a `ChartVisual` (it extends it), so this narrows and hands the
+ * painter the chart-type/categories/series/options (and `unsupportedChartXml`,
+ * which makes `paintChart` draw its dashed "Chart not supported" placeholder).
+ * Rotation is left to the frame's CSS transform, so the canvas paints
+ * unrotated — the same rule `shapeVisualOf` follows. */
+export function chartVisualOf(frame: SlideFrame): ChartVisual | null {
+  if (frame.kind !== "chart") {
+    return null;
+  }
+  const visual: ChartVisual = {
+    chartType: frame.chartType,
+    categories: frame.categories,
+    series: frame.series,
+    options: frame.options,
+  };
+  if (frame.unsupportedChartXml !== undefined) {
+    visual.unsupportedChartXml = frame.unsupportedChartXml;
   }
   return visual;
 }

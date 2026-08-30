@@ -9,8 +9,10 @@
 import { computed, nextTick, onMounted, useTemplateRef, watch } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
+import { paintChartIntoCanvas } from "../../lib/core/chartCanvas";
 import {
   asResolver,
+  chartVisualOf,
   asSlideFrame,
   framePositionStyle,
   groupChildren,
@@ -97,6 +99,7 @@ const showPrompt = computed(() => !props.editing && isEmptyTextPlaceholder(frame
 const promptText = computed(() => placeholderPrompt(frame.value));
 
 const canvasEl = useTemplateRef("canvasEl");
+const chartCanvasEl = useTemplateRef("chartCanvasEl");
 const editHost = useTemplateRef("editHost");
 const tableFrameEl = useTemplateRef("tableFrameEl");
 
@@ -171,7 +174,9 @@ function onFrameMousedown(event = new MouseEvent("mousedown")) {
 }
 
 function onFrameDblclick(event = new MouseEvent("dblclick")) {
-  if (frame.value.kind !== "text") return;
+  // A text frame opens a caret session; a chart frame opens its data sheet
+  // (SPEC-092 AC-14) — the parent's start-edit handler routes by frame kind.
+  if (frame.value.kind !== "text" && frame.value.kind !== "chart") return;
   event.stopPropagation();
   // Pass the click's viewport coordinates so the session drops the caret at the
   // click point rather than the end of the frame (AC-1).
@@ -200,10 +205,32 @@ function paint() {
   }
 }
 
-// paintShapeIntoCanvas sizes the backing store at devicePixelRatio, so the
-// shape stays crisp at dpr ≥ 2 (AC-43); repaint whenever the frame changes.
+// The chart branch paints through the same devicePixelRatio-crisp canvas
+// machinery as the shape branch (SPEC-092 AC-11); an unsupported chart draws
+// paintChart's dashed placeholder (AC-12).
+function paintChartFrame() {
+  const el = chartCanvasEl.value;
+  const visual = chartVisualOf(frame.value);
+  if (!el || !visual) {
+    return;
+  }
+  try {
+    paintChartIntoCanvas(el, visual, cmToPx(frame.value.widthCm), cmToPx(frame.value.heightCm));
+  } catch {
+    // A host without a real 2D canvas (jsdom) can't paint; rendering must
+    // never break the view.
+  }
+}
+
+// paintShapeIntoCanvas/paintChartIntoCanvas size the backing store at
+// devicePixelRatio, so the frame stays crisp at dpr ≥ 2 (AC-43); repaint
+// whenever the frame changes.
 onMounted(paint);
-watch(() => props.frame, paint, { deep: true });
+onMounted(paintChartFrame);
+watch(() => props.frame, () => {
+  paint();
+  paintChartFrame();
+}, { deep: true });
 </script>
 
 <template>
@@ -314,6 +341,27 @@ watch(() => props.frame, paint, { deep: true });
         >{{ run.text }}</span>
       </div>
     </div>
+  </div>
+
+  <!-- Chart frame (SPEC-092): painted into a dpr-crisp canvas, exactly as the
+       shape frame; double-click opens the data sheet (the parent decides). -->
+  <div
+    v-else-if="kind === 'chart'"
+    class="frame chart-frame"
+    :class="{ 'is-selected': selected }"
+    :style="[position, playStyle]"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
+    @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
+    @dblclick="onFrameDblclick"
+  >
+    <canvas
+      ref="chartCanvasEl"
+      class="chart-canvas"
+    />
   </div>
 
   <!-- Group frame: children already in slide space, rendered read-only -->
@@ -548,6 +596,16 @@ watch(() => props.frame, paint, { deep: true });
 }
 
 .shape-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.chart-frame {
+  overflow: hidden;
+}
+
+.chart-canvas {
   position: absolute;
   top: 0;
   left: 0;

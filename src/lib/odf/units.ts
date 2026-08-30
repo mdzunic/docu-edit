@@ -13,6 +13,10 @@ import { odfLengthToCm, odfLengthToPt, odfPercentage } from "../core/odfXml";
 // existing `odf/*` importer keeps its import path. The WRITER direction (the
 // byte-exact round-trip searches below) stays odf-local.
 export { odfLengthToCm, odfLengthToPt, odfPercentage, odfColorToCss } from "../core/odfXml";
+// `cmToOdfLength` moved to core/odfXml.ts (SPEC-092) so the hoisted chart-part
+// codec can emit `svg:width` without importing `../odf/*`; re-exported here so
+// every existing `odf/*` importer keeps its path.
+export { cmToOdfLength } from "../core/odfXml";
 
 // --- writer direction ------------------------------------------------------
 // The writer's requirement is stricter than "format the number": the save
@@ -45,20 +49,6 @@ function ulpStep(value: number, steps: number): number {
   }
   BITS_VIEW[0] = negative ? magnitude | 0x8000000000000000n : magnitude;
   return FLOAT_VIEW[0];
-}
-
-/** Formats a centimetre value as an ODF length ("1.27cm") that
- * `odfLengthToCm` parses back to exactly `cm`. Exactness is guaranteed: the
- * cm parse path multiplies by 1, so the full-precision decimal always
- * round-trips — the search just prefers the shortest form. */
-export function cmToOdfLength(cm: number): string {
-  for (let digits = 0; digits <= 17; digits++) {
-    const candidate = `${trimmedFixed(cm, digits)}cm`;
-    if (odfLengthToCm(candidate) === cm) {
-      return candidate;
-    }
-  }
-  return `${cm}cm`;
 }
 
 /** Formats a point value as an ODF length ("12pt") that `odfLengthToPt`

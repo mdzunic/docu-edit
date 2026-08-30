@@ -34,6 +34,7 @@ import {
   xlinkAttr,
 } from "../../core/odfXml";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
+import { CHART_NAMESPACE, parseOdfChartXml } from "../../core/chartPartOdf";
 import type { ShapeGeometry } from "../../core/shapes";
 import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
 import { readOdpAnim } from "./anim";
@@ -450,6 +451,18 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
   }
   const base = frameBase(geom ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
 
+  // A `draw:object` (an embedded chart) is checked before `draw:image` so a
+  // chart's sibling `ObjectReplacements/…` preview image is never mistaken for
+  // the frame's picture (SPEC-092 AC-9a): it stays an untouched preserved part.
+  const object = firstChildElement(frame, DRAW_NAMESPACE, "object");
+  if (object) {
+    const chart = parseChartObject(frame, object, base, ctx);
+    if (chart) {
+      return chart;
+    }
+    return foreignAt(frame, base, "Object"); // unresolvable object (AC-10)
+  }
+
   const image = firstChildElement(frame, DRAW_NAMESPACE, "image");
   if (image) {
     const href = xlinkAttr(image, "href");
@@ -796,6 +809,24 @@ export function parseOdpTableFrameForTest(drawFrameXml: string, autoStylesXml = 
   return frame.kind === "table" ? frame : undefined;
 }
 
+/** Test seam (SPEC-092): parses a chart `draw:frame` against a supplied
+ * `{ partPath → bytes }` parts map. */
+export function parseChartDrawFrameForTest(drawFrameXml: string, parts: Record<string, Uint8Array>): SlideFrame {
+  const wrapped =
+    `<office:document-content ${ODP_TEST_NS} xmlns:xlink="http://www.w3.org/1999/xlink">` +
+    `<office:body><office:presentation><draw:page>${drawFrameXml}</draw:page></office:presentation></office:body>` +
+    `</office:document-content>`;
+  const doc = parseXml(wrapped);
+  const ctx: OdpContext = {
+    styles: new StyleResolver(),
+    masterPh: new Map(),
+    media: new Map(),
+    parts: new Map(Object.entries(parts)),
+  };
+  const frameEl = doc.documentElement.getElementsByTagNameNS(DRAW_NAMESPACE, "frame")[0];
+  return parseDrawFrame(frameEl, ctx);
+}
+
 const ODP_TEST_NS =
   `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
   `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ` +
@@ -898,6 +929,69 @@ function foreignAt(el: Element, base: ReturnType<typeof frameBase>, label: strin
     frame.noBounds = true;
   }
   return frame;
+}
+
+/** Resolves a `draw:frame`'s `draw:object` reference — `xlink:href="./Object 1"`
+ * to `Object 1/content.xml` in the package — into a `ChartFrame` (SPEC-092
+ * AC-9). A parseable in-catalogue object becomes a painted chart; a valid
+ * `office:chart` outside the catalogue becomes an unsupported placeholder
+ * carrying the verbatim `content.xml` (AC-9b); an unresolvable href, or a
+ * resolved part that is not an `office:chart` at all, returns null so the
+ * caller keeps today's "Object" ForeignFrame (AC-10). `xml` retains the source
+ * `draw:frame` so an untouched chart re-emits byte-identically. */
+function parseChartObject(
+  frame: Element,
+  object: Element,
+  base: ReturnType<typeof frameBase>,
+  ctx: OdpContext,
+): SlideFrame | null {
+  const href = xlinkAttr(object, "href");
+  if (!href) {
+    return null;
+  }
+  const objectDir = href.replace(/^\.\//, "").replace(/\/$/, "");
+  const partPath = `${objectDir}/content.xml`;
+  const bytes = ctx.parts.get(partPath);
+  if (!bytes) {
+    return null;
+  }
+  const xmlText = new TextDecoder("utf-8").decode(bytes);
+  const parsed = parseOdfChartXml(xmlText);
+  if (parsed) {
+    return { ...base, kind: "chart", ...parsed, sourcePart: partPath, xml: serializeElement(frame) };
+  }
+  if (!isOfficeChart(xmlText)) {
+    return null; // not a chart object at all — foreign "Object" (AC-10)
+  }
+  return {
+    ...base,
+    kind: "chart",
+    chartType: "columnClustered",
+    categories: [],
+    series: [],
+    options: { legend: "none", dataLabels: false, gridlines: false },
+    unsupportedChartXml: xmlText,
+    sourcePart: partPath,
+    xml: serializeElement(frame),
+  };
+}
+
+/** True when `xmlText` is an `office:document-content` holding an
+ * `office:chart`/`chart:chart` — the test separating AC-9b (out-of-catalogue
+ * chart) from AC-10 (not a chart object). */
+function isOfficeChart(xmlText: string): boolean {
+  let doc: Document;
+  try {
+    doc = parseXml(xmlText);
+  } catch (err) {
+    if (err instanceof XmlParseError) {
+      return false;
+    }
+    throw err;
+  }
+  const body = firstChildElement(doc.documentElement, OFFICE_NAMESPACE, "body");
+  const officeChart = body && firstChildElement(body, OFFICE_NAMESPACE, "chart");
+  return !!officeChart && !!firstChildElement(officeChart, CHART_NAMESPACE, "chart");
 }
 
 function normaliseHref(href: string): string {

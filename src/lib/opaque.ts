@@ -25,6 +25,10 @@ import {
   type Table,
 } from "./documentModel";
 import { parseXml, XmlParseError } from "./core/xml";
+// The chart-feature marker tables moved to core/chartFeatures.ts (SPEC-092)
+// so the presentation rewrite-notice shares them; re-imported here unchanged
+// so collectEditedChartDropRecords and every chartFeature expectation holds.
+import { DOCX_CHART_FEATURE_MARKERS, ODT_CHART_FEATURE_MARKERS } from "./core/chartFeatures";
 import { shapeDefinition } from "./core/shapeCatalogue";
 import {
   diffParagraphFormatting,
@@ -758,37 +762,6 @@ export function collectBarTabDropRecords(model: DocumentModel, target: DocumentF
 }
 
 // --- SPEC-052: chartFeature drops for a same-format save of an edited chart -
-
-interface ChartFeatureMarker {
-  test: (xml: string) => boolean;
-  reason: string;
-}
-
-/** A curated set of XML markers this product's chart model has no field for
- * — checked against an edited chart's *original* part text (before the
- * regenerate-from-model rewrite) so "Rewriting a chart" can report exactly
- * what that rewrite cost, per property, rather than one opaque "changed"
- * notice. Not exhaustive — a real chart part can carry far more than this
- * editor will ever model (themes, every per-point override, every number
- * format) — this is the common, easy-to-name subset; anything outside it is
- * a real loss the report stays silent about, the same honest limit every
- * other "which sub-feature" heuristic in this file already accepts (see
- * nodeKind's own comment). */
-const DOCX_CHART_FEATURE_MARKERS: ChartFeatureMarker[] = [
-  { test: (xml) => /<c:trendline[\s/>]/.test(xml), reason: "a trendline" },
-  { test: (xml) => /<c:errBars[\s/>]/.test(xml), reason: "error bars" },
-  { test: (xml) => /<c:dPt[\s>]/.test(xml), reason: "per-point formatting (individual bar/slice colours or markers)" },
-  { test: (xml) => /formatCode="(?!General")[^"]*"/.test(xml), reason: "a custom number format" },
-  { test: (xml) => (xml.match(/<c:valAx[\s>]/g) ?? []).length > 1, reason: "a secondary axis" },
-  { test: (xml) => /<a:gradFill[\s>]|<a:pattFill[\s>]|<a:blipFill[\s>]/.test(xml), reason: "a gradient, pattern or picture fill" },
-];
-
-const ODT_CHART_FEATURE_MARKERS: ChartFeatureMarker[] = [
-  { test: (xml) => /<chart:regression-curve[\s/>]/.test(xml), reason: "a trendline" },
-  { test: (xml) => /<chart:error-indicator[\s/>]/.test(xml), reason: "error bars" },
-  { test: (xml) => /<chart:data-point[\s>]/.test(xml), reason: "per-point formatting (individual bar/slice colours or markers)" },
-  { test: (xml) => (xml.match(/<chart:axis\b[^>]*dimension="y"/g) ?? []).length > 1, reason: "a secondary axis" },
-];
 
 /** Everything an *edited* chart's regenerated part loses relative to its
  * preserved original — SPEC-052's one exception to "a same-format save

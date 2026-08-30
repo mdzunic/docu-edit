@@ -33,6 +33,7 @@ import {
 import { classifyFromSlots, synthesiseStandardLayouts } from "../layouts";
 import { ODP_MIMETYPE } from "./reader";
 import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
+import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "../../core/chartPartOdf";
 
 /** Every media part referenced by an ImageFrame anywhere in the deck (groups
  * descended), from `model.media` — the writer's source of truth for inserted
@@ -71,6 +72,178 @@ function spliceManifest(manifestXml: string, media: MediaPart[]): string {
 }
 
 export { ODP_MIMETYPE };
+
+interface OdpChartPlan {
+  /** Regenerated `Object N/content.xml` bytes by part name. */
+  partBytes: Map<string, Uint8Array>;
+  /** Fresh object directories (e.g. "Object 3") — appended, and given
+   *  `META-INF/manifest.xml` entries for the object dir and its content.xml. */
+  newObjects: string[];
+}
+
+/** Plans the embedded chart objects a rebuild writes (SPEC-092 AC-21). Every
+ * touched chart frame is regenerated: an `edited` chart's `content.xml` is
+ * rewritten in its `Object N/` directory; a chart created here — or a duplicate
+ * sharing a `sourcePart` (D8) — mints a fresh `Object {n}` past the highest
+ * existing, recorded on the frame so the page serialiser resolves its href.
+ * Untouched and unsupported charts are left alone (verbatim pass-through). An
+ * object still pointed at by such a pass-through frame is *reserved*: a touched
+ * sibling sharing it mints a fresh object rather than regenerating over the
+ * bytes that frame still holds (AC-18a/AC-25). */
+function planOdpCharts(model: PresentationModel, parts: Map<string, Uint8Array>): OdpChartPlan {
+  const partBytes = new Map<string, Uint8Array>();
+  const newObjects: string[] = [];
+  const claimed = new Set<string>();
+  let maxIndex = 0;
+  for (const name of parts.keys()) {
+    const m = /^Object (\d+)\//.exec(name);
+    if (m) {
+      maxIndex = Math.max(maxIndex, Number(m[1]));
+    }
+  }
+  const reserved = passThroughOdpChartParts(model);
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind !== "chart" || frame.xml !== undefined || frame.unsupportedChartXml !== undefined) {
+        continue;
+      }
+      let target = frame.sourcePart;
+      if (!target || claimed.has(target) || reserved.has(target) || !parts.has(target)) {
+        maxIndex += 1;
+        const dir = `Object ${maxIndex}`;
+        target = `${dir}/content.xml`;
+        frame.sourcePart = target;
+        newObjects.push(dir);
+      }
+      claimed.add(target);
+      partBytes.set(target, encode(odfChartContentXml(frame, frame.widthCm, frame.heightCm)));
+    }
+  }
+  return { partBytes, newObjects };
+}
+
+/** The `sourcePart` names of chart frames that pass through byte-identical — an
+ * untouched chart (verbatim `xml`) or an unsupported chart — so the
+ * regeneration pass never overwrites bytes another frame still references. */
+function passThroughOdpChartParts(model: PresentationModel): Set<string> {
+  const reserved = new Set<string>();
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind === "chart" && (frame.xml !== undefined || frame.unsupportedChartXml !== undefined) && frame.sourcePart) {
+        reserved.add(frame.sourcePart);
+      }
+    }
+  }
+  return reserved;
+}
+
+/** Deleted embedded charts: the `Object N/…` parts (and their
+ * `ObjectReplacements/Object N` preview) plus the object directories no
+ * surviving chart frame references any more. Restates `planChartWrite`'s
+ * `orphanedPartNames` rule for the deck writer (AC-20): the caller drops these
+ * parts from the pass-through and their manifest entries so a deleted chart's
+ * content does not survive. Only directories the *manifest* declares as ODF
+ * charts are considered, so a non-chart embedded object is never mistaken for
+ * an orphan. */
+interface OdpChartOrphans {
+  parts: Set<string>;
+  dirs: Set<string>;
+}
+
+function chartObjectDirsInOdpManifest(manifestXml: string): Set<string> {
+  const dirs = new Set<string>();
+  const re = /<manifest:file-entry\b[^>]*\/>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(manifestXml))) {
+    const el = match[0];
+    if (!el.includes(`manifest:media-type="${CHART_OBJECT_CONTENT_TYPE}"`)) {
+      continue;
+    }
+    const path = /manifest:full-path="([^"]+)"/.exec(el)?.[1];
+    if (path && path.endsWith("/")) {
+      dirs.add(path.slice(0, -1));
+    }
+  }
+  return dirs;
+}
+
+function orphanedOdpChartParts(model: PresentationModel, parts: Map<string, Uint8Array>): OdpChartOrphans {
+  const referenced = new Set<string>();
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "chart") {
+        if (frame.sourcePart) {
+          referenced.add(frame.sourcePart.replace(/\/content\.xml$/, ""));
+        }
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  for (const slide of model.slides) {
+    walk(slide.frames);
+  }
+  const manifestXml = decoder.decode(parts.get("META-INF/manifest.xml") ?? new Uint8Array());
+  const dirs = new Set<string>();
+  for (const dir of chartObjectDirsInOdpManifest(manifestXml)) {
+    if (!referenced.has(dir)) {
+      dirs.add(dir);
+    }
+  }
+  const orphanParts = new Set<string>();
+  for (const name of parts.keys()) {
+    for (const dir of dirs) {
+      if (
+        name === `${dir}/` ||
+        name.startsWith(`${dir}/`) ||
+        name === `ObjectReplacements/${dir}` ||
+        name.startsWith(`ObjectReplacements/${dir}/`)
+      ) {
+        orphanParts.add(name);
+        break;
+      }
+    }
+  }
+  return { parts: orphanParts, dirs };
+}
+
+/** `manifestXml` with every `<manifest:file-entry>` for an orphaned object
+ * directory (and its `ObjectReplacements` preview) removed (AC-20). */
+function stripOrphanManifestEntries(manifestXml: string, dirs: Set<string>): string {
+  if (dirs.size === 0) {
+    return manifestXml;
+  }
+  return manifestXml.replace(/<manifest:file-entry\b[^>]*\/>/g, (el) => {
+    const path = /manifest:full-path="([^"]+)"/.exec(el)?.[1];
+    if (!path) {
+      return el;
+    }
+    for (const dir of dirs) {
+      if (
+        path === `${dir}/` ||
+        path.startsWith(`${dir}/`) ||
+        path === `ObjectReplacements/${dir}` ||
+        path.startsWith(`ObjectReplacements/${dir}/`)
+      ) {
+        return "";
+      }
+    }
+    return el;
+  });
+}
+
+/** `<manifest:file-entry>` rows for a chart plan's fresh object directories:
+ * the `Object N/` dir (media type `application/vnd.oasis.opendocument.chart`)
+ * and its `Object N/content.xml` (`text/xml`). */
+function odpChartManifestEntries(plan: OdpChartPlan): string {
+  return plan.newObjects
+    .map(
+      (dir) =>
+        `<manifest:file-entry manifest:full-path="${escapeXmlAttribute(dir)}/" manifest:media-type="${CHART_OBJECT_CONTENT_TYPE}"/>` +
+        `<manifest:file-entry manifest:full-path="${escapeXmlAttribute(dir)}/content.xml" manifest:media-type="text/xml"/>`,
+    )
+    .join("");
+}
 
 const OFFICE_NS = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
@@ -367,9 +540,22 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   const media = structural ? referencedMedia(model) : [];
   const mediaBytes = new Map(media.map((part) => [part.mediaId, base64ToBytes(part.data)]));
   const appended = media.filter((part) => !parts.has(part.mediaId));
+  // Embedded charts (SPEC-092): regenerate a touched chart's Object N/content.xml
+  // and mint fresh objects, splicing their manifest entries.
+  const charts = structural ? planOdpCharts(model, parts) : { partBytes: new Map<string, Uint8Array>(), newObjects: [] };
+  const chartManifest = odpChartManifestEntries(charts);
+  // Deleted charts (SPEC-092 AC-20): drop their Object N parts, preview and
+  // manifest entries so nothing survives verbatim.
+  const orphanCharts = structural
+    ? orphanedOdpChartParts(model, parts)
+    : { parts: new Set<string>(), dirs: new Set<string>() };
+  const manifestChanged = appended.length > 0 || chartManifest.length > 0 || orphanCharts.dirs.size > 0;
 
   for (const [name, data] of parts) {
     if (name === "mimetype") {
+      continue;
+    }
+    if (orphanCharts.parts.has(name)) {
       continue;
     }
     if (name === "content.xml" && contentXml !== undefined) {
@@ -378,8 +564,17 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
       entries.push({ name, data: encode(stylesXml) });
     } else if (name === "meta.xml" && metaXml !== undefined) {
       entries.push({ name, data: encode(metaXml) });
-    } else if (name === "META-INF/manifest.xml" && appended.length > 0) {
-      entries.push({ name, data: encode(spliceManifest(decoder.decode(data), appended)) });
+    } else if (name === "META-INF/manifest.xml" && manifestChanged) {
+      let manifestXml = stripOrphanManifestEntries(decoder.decode(data), orphanCharts.dirs);
+      if (appended.length > 0) {
+        manifestXml = spliceManifest(manifestXml, appended);
+      }
+      if (chartManifest.length > 0) {
+        manifestXml = manifestXml.replace(/<\/manifest:manifest>/, `${chartManifest}</manifest:manifest>`);
+      }
+      entries.push({ name, data: encode(manifestXml) });
+    } else if (charts.partBytes.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     } else if (mediaBytes.has(name)) {
       entries.push({ name, data: mediaBytes.get(name)! });
     } else {
@@ -388,6 +583,10 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   }
   for (const part of appended) {
     entries.push({ name: part.mediaId, data: mediaBytes.get(part.mediaId)! });
+  }
+  for (const dir of charts.newObjects) {
+    const name = `${dir}/content.xml`;
+    entries.push({ name, data: charts.partBytes.get(name)! });
   }
   return { bytes: await zip(entries) };
 }

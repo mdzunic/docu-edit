@@ -7,9 +7,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildOdpAnimationsFixtureBytes,
+  buildOdpChartsFixtureBytes,
   buildOdpFixtureBytes,
   buildOdpTablesFixtureBytes,
   buildPptxAnimationsFixtureBytes,
+  buildPptxChartsFixtureBytes,
   buildPptxFixtureBytes,
   buildPptxTablesFixtureBytes,
   buildSpec089OdpFixtureBytes,
@@ -38,11 +40,17 @@ const tablesPptx = await buildPptxTablesFixtureBytes();
 writeFileSync(join(fixturesDir, "spec091-tables.pptx"), tablesPptx);
 const tablesOdp = await buildOdpTablesFixtureBytes();
 writeFileSync(join(fixturesDir, "spec091-tables.odp"), tablesOdp);
+// SPEC-092 chart fixtures (column/line/pie + one out-of-catalogue chart).
+const chartsPptx = await buildPptxChartsFixtureBytes();
+writeFileSync(join(fixturesDir, "spec092-charts.pptx"), chartsPptx);
+const chartsOdp = await buildOdpChartsFixtureBytes();
+writeFileSync(join(fixturesDir, "spec092-charts.odp"), chartsOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
     `spec089-layouts.pptx (${layoutsPptx.byteLength}B), spec089-layouts.odp (${layoutsOdp.byteLength}B), ` +
-    `spec091-tables.pptx (${tablesPptx.byteLength}B), spec091-tables.odp (${tablesOdp.byteLength}B)`,
+    `spec091-tables.pptx (${tablesPptx.byteLength}B), spec091-tables.odp (${tablesOdp.byteLength}B), ` +
+    `spec092-charts.pptx (${chartsPptx.byteLength}B), spec092-charts.odp (${chartsOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

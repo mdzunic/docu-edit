@@ -39,6 +39,7 @@ import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStand
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { serializeSlideXml } from "./serialize";
 import { applyNotesContentTypes, planNotes } from "./notesWriter";
+import { chartPartXml } from "../../core/chartPartOoxml";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -112,6 +113,8 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
 function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
+  const charts = planCharts(model, parts);
+  const orphanedCharts = orphanedChartParts(model, parts);
   const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
   const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
   const presPath = officeRel ? resolvePartPath("", officeRel.target) : "ppt/presentation.xml";
@@ -123,10 +126,16 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
     if (slide.dirty && slide.partName && parts.has(slide.partName)) {
       const relsPath = relsPathFor(slide.partName);
       const relsXml = decode(parts.get(relsPath) ?? encode(""));
-      const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
-      const newRels = linkImageRels(slide, rels, slide.partName);
+      // A deleted chart leaves a dangling chart relationship: strip it before
+      // re-emitting the rels so nothing points at the excluded part (AC-20).
+      const strippedRelsXml = stripOrphanChartRels(relsXml, slide.partName, orphanedCharts);
+      const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
+      const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName)];
       rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName)));
-      const outRels = relsForLayoutChange(slide, slide.partName, relsXml, newRels, plan);
+      let outRels = relsForLayoutChange(slide, slide.partName, strippedRelsXml, newRels, plan);
+      if (outRels === undefined && strippedRelsXml !== relsXml) {
+        outRels = strippedRelsXml;
+      }
       if (outRels !== undefined) {
         rebuilt.set(relsPath, encode(outRels));
       }
@@ -159,10 +168,12 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
     combinedContentTypes = spliceContentDefaults(combinedContentTypes, media.defaults);
   }
   combinedContentTypes = spliceLayoutOverrides(combinedContentTypes, plan.overrides);
+  combinedContentTypes = spliceLayoutOverrides(combinedContentTypes, chartContentTypeOverrides(charts));
+  combinedContentTypes = removeChartOverrides(combinedContentTypes, orphanedCharts);
 
   const entries: ZipEntryInput[] = [];
   for (const [name, data] of parts) {
-    if (notes.removed.has(name)) {
+    if (notes.removed.has(name) || orphanedCharts.has(name)) {
       continue;
     }
     if (name === "[Content_Types].xml") {
@@ -175,10 +186,19 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       entries.push({ name, data: encode(plan.masterXml.get(name)!) });
     } else if (plan.masterRelsXml.has(name)) {
       entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
+    } else if (charts.partBytes.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     } else if (media.override.has(name)) {
       entries.push({ name, data: media.override.get(name)! });
     } else {
       entries.push({ name, data });
+    }
+  }
+  // Genuinely new chart parts (an inserted chart, or a fresh part for a
+  // duplicate sharing a sourcePart).
+  for (const name of charts.newParts) {
+    if (!parts.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     }
   }
   // New notes parts (notes-slide, its rels, a created notes master + rels).
@@ -291,6 +311,208 @@ function linkImageRels(slide: Slide, rels: Map<string, Relationship>, slidePartN
   };
   walk(slide.frames);
   return added;
+}
+
+// --- charts (SPEC-092) ------------------------------------------------------
+
+const CHART_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const CHART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+
+interface ChartPlan {
+  /** Regenerated chart part bytes by part name: an edited existing part is
+   *  overridden in place, a new/minted part is appended. */
+  partBytes: Map<string, Uint8Array>;
+  /** Part names not already in the package — appended and given a
+   *  `CHART_CONTENT_TYPE` Override. */
+  newParts: Set<string>;
+}
+
+/** Plans the chart parts a rebuild writes (AC-18..AC-19, AC-22a). Every
+ * *touched* chart frame (its verbatim `xml` dropped by an edit or a move) is
+ * regenerated from the model: an `edited` chart's part is rewritten at its
+ * `sourcePart`; a chart created here — or a second frame sharing a `sourcePart`
+ * after a slide duplicate (D8) — mints a fresh `ppt/charts/chart{n}.xml` past
+ * the highest existing index, recorded on the frame so the slide serialiser
+ * resolves its relationship. An untouched chart (verbatim `xml`) and an
+ * unsupported chart (never rewritten) are left alone — their parts pass through
+ * `opaque` byte-identical, workbook and `.rels` included. A part still pointed
+ * at by such a pass-through frame is *reserved*: a touched sibling sharing that
+ * `sourcePart` never regenerates over it but mints a fresh part instead, so a
+ * duplicate-then-edit can never silently overwrite the frame that still holds
+ * the original bytes (AC-18a/AC-25). */
+function planCharts(model: PresentationModel, parts: Map<string, Uint8Array>): ChartPlan {
+  const partBytes = new Map<string, Uint8Array>();
+  const newParts = new Set<string>();
+  const claimed = new Set<string>();
+  let maxIndex = 0;
+  for (const name of parts.keys()) {
+    const m = /^ppt\/charts\/chart(\d+)\.xml$/.exec(name);
+    if (m) {
+      maxIndex = Math.max(maxIndex, Number(m[1]));
+    }
+  }
+  const reserved = passThroughChartParts(model);
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind !== "chart" || frame.xml !== undefined || frame.unsupportedChartXml !== undefined) {
+        continue;
+      }
+      let target = frame.sourcePart;
+      if (!target || claimed.has(target) || reserved.has(target)) {
+        maxIndex += 1;
+        target = `ppt/charts/chart${maxIndex}.xml`;
+        frame.sourcePart = target;
+      }
+      claimed.add(target);
+      partBytes.set(target, encode(chartPartXml(frame)));
+      if (!parts.has(target)) {
+        newParts.add(target);
+      }
+    }
+  }
+  return { partBytes, newParts };
+}
+
+/** The `sourcePart` names of chart frames that pass through byte-identical — an
+ * untouched chart (verbatim `xml`) or an unsupported chart. These parts are off
+ * limits to the regeneration pass so a touched frame can never overwrite the
+ * bytes another frame still references. */
+function passThroughChartParts(model: PresentationModel): Set<string> {
+  const reserved = new Set<string>();
+  for (const slide of model.slides) {
+    for (const frame of slide.frames) {
+      if (frame.kind === "chart" && (frame.xml !== undefined || frame.unsupportedChartXml !== undefined) && frame.sourcePart) {
+        reserved.add(frame.sourcePart);
+      }
+    }
+  }
+  return reserved;
+}
+
+/** Adds a chart relationship to `rels` for any touched chart frame whose
+ * `sourcePart` is not yet resolvable in it (a new part, or a rel the source
+ * slide never carried), minting ids after the highest existing one. Mutates
+ * `rels`; returns the new relationships. Call after `linkImageRels` so the two
+ * never mint the same id. */
+function linkChartRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
+  let maxId = 0;
+  const resolved = new Set<string>();
+  for (const rel of rels.values()) {
+    maxId = Math.max(maxId, relIdNumber(rel.id));
+    if (rel.type === CHART_REL) {
+      resolved.add(resolvePartPath(slidePartName, rel.target));
+    }
+  }
+  const added: Relationship[] = [];
+  for (const frame of slide.frames) {
+    if (frame.kind === "chart" && frame.xml === undefined && frame.sourcePart && !resolved.has(frame.sourcePart)) {
+      maxId += 1;
+      const rel: Relationship = { id: `rId${maxId}`, type: CHART_REL, target: relativeTarget(slidePartName, frame.sourcePart) };
+      rels.set(rel.id, rel);
+      resolved.add(frame.sourcePart);
+      added.push(rel);
+    }
+  }
+  return added;
+}
+
+/** `<Override>` content-type entries for a chart plan's genuinely new parts. */
+function chartContentTypeOverrides(plan: ChartPlan): string[] {
+  return [...plan.newParts].map((name) => `<Override PartName="/${name}" ContentType="${CHART_CONTENT_TYPE}"/>`);
+}
+
+const CHART_PART_NAME_RE = /^ppt\/charts\/chart\d+\.xml$/;
+
+/** Preserved `ppt/charts/chart*.xml` parts — with their `.rels` and the
+ * embedding/style siblings that `.rels` targets — that no surviving chart frame
+ * references any more (a chart frame the user deleted off a live slide). This
+ * restates `planChartWrite`'s `orphanedPartNames` rule for the deck writer
+ * (AC-20): the caller drops these from the verbatim pass-through so a deleted
+ * chart's part, its `.rels` and its embedded workbook do not survive in the
+ * saved package. A part reachable from a *surviving* chart's `.rels` is kept
+ * even if a deleted chart's `.rels` also named it. */
+function orphanedChartParts(model: PresentationModel, parts: Map<string, Uint8Array>): Set<string> {
+  const referenced = new Set<string>();
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "chart") {
+        if (frame.sourcePart) {
+          referenced.add(frame.sourcePart);
+        }
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  for (const slide of model.slides) {
+    walk(slide.frames);
+  }
+  const keep = new Set<string>();
+  for (const name of referenced) {
+    const relsBytes = parts.get(relsPathFor(name));
+    if (!relsBytes) {
+      continue;
+    }
+    keep.add(relsPathFor(name));
+    for (const rel of parseRelationships(decode(relsBytes)).values()) {
+      keep.add(resolvePartPath(name, rel.target));
+    }
+  }
+  const orphaned = new Set<string>();
+  for (const name of parts.keys()) {
+    if (!CHART_PART_NAME_RE.test(name) || referenced.has(name)) {
+      continue;
+    }
+    orphaned.add(name);
+    const relsPath = relsPathFor(name);
+    const relsBytes = parts.get(relsPath);
+    if (!relsBytes) {
+      continue;
+    }
+    if (!keep.has(relsPath)) {
+      orphaned.add(relsPath);
+    }
+    for (const rel of parseRelationships(decode(relsBytes)).values()) {
+      const target = resolvePartPath(name, rel.target);
+      if (!keep.has(target)) {
+        orphaned.add(target);
+      }
+    }
+  }
+  return orphaned;
+}
+
+/** `relsXml` with any chart relationship whose resolved target is orphaned
+ * removed — a slide that kept its other frames but lost a chart must not leave
+ * a dangling relationship to the deleted part (AC-20). Returns the input
+ * unchanged when it names no orphaned chart. */
+function stripOrphanChartRels(relsXml: string, slidePartName: string, orphaned: Set<string>): string {
+  if (!relsXml || orphaned.size === 0) {
+    return relsXml;
+  }
+  return relsXml.replace(/<Relationship\b[^>]*\/>/g, (el) => {
+    const type = /Type="([^"]*)"/.exec(el)?.[1];
+    const target = /Target="([^"]*)"/.exec(el)?.[1];
+    if (type === CHART_REL && target && orphaned.has(resolvePartPath(slidePartName, target))) {
+      return "";
+    }
+    return el;
+  });
+}
+
+/** `[Content_Types].xml` with the `<Override>` entries for orphaned chart parts
+ * removed (their `.rels`/workbook ride Content-Types `<Default>`s, so only the
+ * chart part itself carries an Override). */
+function removeChartOverrides(contentTypesXml: string, orphaned: Set<string>): string {
+  let out = contentTypesXml;
+  for (const name of orphaned) {
+    if (!CHART_PART_NAME_RE.test(name)) {
+      continue;
+    }
+    const escaped = `/${name}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`<Override PartName="${escaped}"[^>]*/>`), "");
+  }
+  return out;
 }
 
 /** The `.rels` XML of a slide with `newRels` appended before `</Relationships>`
@@ -585,6 +807,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     }
   }
 
+  // Deleted charts: their `ppt/charts/*` part, its `.rels` and its embedded
+  // workbook are excluded from the pass-through, and their Content-Types
+  // Override is dropped (added to `removed` so `rebuildContentTypes` prunes it).
+  const orphanedCharts = orphanedChartParts(model, parts);
+  for (const name of orphanedCharts) {
+    removed.add(name);
+  }
+
   // Rebuild presentation.xml.rels: non-slide rels kept with original ids;
   // slide rels renumbered after the highest surviving id, in model order.
   const keptRels = [...origPresRels.values()].filter((rel) => rel.type !== SLIDE_REL);
@@ -616,10 +846,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   // new part names are added.
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
+  const charts = planCharts(model, parts);
   const addedSlidePaths = emitted.filter((entry) => entry.kind !== "verbatim").map((entry) => entry.emitName);
   const rebuiltContentTypes = spliceLayoutOverrides(
-    spliceContentDefaults(rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]), media.defaults),
-    plan.overrides,
+    spliceLayoutOverrides(
+      spliceContentDefaults(rebuildContentTypes(contentTypesXml, addedSlidePaths, [...removed]), media.defaults),
+      plan.overrides,
+    ),
+    chartContentTypeOverrides(charts),
   );
 
   // A dirty slide kept under its own part name is rebuilt in place; one that
@@ -630,10 +864,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     if (entry.kind === "verbatim" && entry.slide.dirty) {
       const relsPath = relsPathFor(entry.emitName);
       const relsXml = decode(parts.get(relsPath) ?? encode(""));
-      const rels = relsXml ? parseRelationships(relsXml) : new Map<string, Relationship>();
-      const newRels = linkImageRels(entry.slide, rels, entry.emitName);
+      const strippedRelsXml = stripOrphanChartRels(relsXml, entry.emitName, orphanedCharts);
+      const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
+      const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
       rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
-      const outRels = relsForLayoutChange(entry.slide, entry.emitName, relsXml, newRels, plan);
+      let outRels = relsForLayoutChange(entry.slide, entry.emitName, strippedRelsXml, newRels, plan);
+      if (outRels === undefined && strippedRelsXml !== relsXml) {
+        outRels = strippedRelsXml;
+      }
       if (outRels !== undefined) {
         rebuiltOwn.set(relsPath, encode(outRels));
       }
@@ -657,7 +895,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const sourceRelsBytes = parts.get(relsPathFor(entry.sourceName));
       const sourceRelsXml = sourceRelsBytes ? stripNotesSlideRel(decode(sourceRelsBytes)) : "";
       const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
-      const newRels = entry.slide.dirty ? linkImageRels(entry.slide, rels, entry.emitName) : [];
+      const newRels = entry.slide.dirty
+        ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)]
+        : [];
       const xml = entry.slide.dirty
         ? encode(slideXml(entry.slide, rels, entry.emitName))
         : parts.get(entry.sourceName)!;
@@ -671,7 +911,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath, plan));
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-      const imageRels = linkImageRels(entry.slide, rels, entry.emitName);
+      const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
       baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
       baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
     }
@@ -745,7 +985,14 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     } else if (plan.masterRelsXml.has(name)) {
       entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
     } else {
-      entries.push({ name, data: rebuiltOwn.get(name) ?? media.override.get(name) ?? data });
+      entries.push({ name, data: rebuiltOwn.get(name) ?? charts.partBytes.get(name) ?? media.override.get(name) ?? data });
+    }
+  }
+  // Genuinely new chart parts (an inserted chart, or a fresh part for a
+  // duplicate sharing a sourcePart).
+  for (const name of charts.newParts) {
+    if (!parts.has(name)) {
+      entries.push({ name, data: charts.partBytes.get(name)! });
     }
   }
   const emittedFresh = new Set<string>();
