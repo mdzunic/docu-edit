@@ -5,6 +5,7 @@ dist/
 test-results/
 playwright-report/
 demo-results/
+demo-videos/
 blob-report/
 .vite/
 coverage/
