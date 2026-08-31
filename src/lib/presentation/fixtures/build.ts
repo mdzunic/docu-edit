@@ -1470,8 +1470,12 @@ function headerFooterFixtureModel(format: "pptx" | "odp"): PresentationModel {
   const h = model.slideHeightCm;
 
   // Slide 0: the title slide, fields suppressed (no field entries + the deck's
-  // showOnTitleSlide=false policy).
-  model.slides[0].frames = [hfBody("Header & footer demo", w, h)];
+  // showOnTitleSlide=false policy). It keeps createBlank's title + subtitle
+  // placeholders so it classifies as the `title` layout (isTitleSlide true).
+  const title0 = model.slides[0].frames.find((f) => f.kind === "text" && f.role === "title");
+  if (title0 && title0.kind === "text") {
+    title0.paragraphs = [{ runs: [{ text: "Header & footer demo" }] }];
+  }
 
   const bodyOne: Slide = {
     id: crypto.randomUUID(),
