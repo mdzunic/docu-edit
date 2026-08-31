@@ -21,7 +21,15 @@ beforeEach(() => {
   }));
 });
 
-afterEach(() => {
+// Navigations the view fires and forgets (exit/redirect replaces) lazy-load
+// other route components; vitest 4 fails the run if those imports settle after
+// the file's environment is torn down, so every navigation is collected here
+// and awaited before teardown.
+const pendingNavigations: Promise<unknown>[] = [];
+
+afterEach(async () => {
+  await Promise.allSettled(pendingNavigations);
+  pendingNavigations.length = 0;
   vi.doUnmock("../lib/idb");
   vi.restoreAllMocks();
 });
@@ -42,8 +50,18 @@ async function mountAt(path: string, model?: PresentationModel) {
   // Spy before mount so the load-time URL sync (clamp reflection) is captured;
   // cross-route navigations resolve lazily in this env, so the spec asserts the
   // router calls rather than the resulting currentRoute.
-  const replace = vi.spyOn(router, "replace");
-  const push = vi.spyOn(router, "push");
+  const realReplace = router.replace.bind(router);
+  const replace = vi.spyOn(router, "replace").mockImplementation((to) => {
+    const nav = realReplace(to);
+    pendingNavigations.push(nav.catch(() => undefined));
+    return nav;
+  });
+  const realPush = router.push.bind(router);
+  const push = vi.spyOn(router, "push").mockImplementation((to) => {
+    const nav = realPush(to);
+    pendingNavigations.push(nav.catch(() => undefined));
+    return nav;
+  });
   const wrapper = mount(PresentationPlayView, { global: { plugins: [router] } });
   await flushPromises();
   await flushPromises();
