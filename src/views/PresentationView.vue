@@ -11,14 +11,12 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vu
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
-import SlideStageArea from "../components/presentation/SlideStageArea.vue";
-import SlideFilmstrip from "../components/presentation/SlideFilmstrip.vue";
+import DeckBody from "../components/presentation/DeckBody.vue";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
-import SlideChartLayer from "../components/presentation/SlideChartLayer.vue";
 import DeckHeader from "../components/presentation/DeckHeader.vue";
 import PresentationDialogs from "../components/presentation/PresentationDialogs.vue";
-import SlidePanelStack from "../components/presentation/SlidePanelStack.vue";
+import HeaderFooterDialog from "../components/presentation/HeaderFooterDialog.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
@@ -38,6 +36,7 @@ import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useDeckActions } from "./presentation/useDeckActions";
 import { useDeckSetup } from "./presentation/useDeckSetup";
+import { useHeaderFooter } from "./presentation/useHeaderFooter";
 
 const route = useRoute();
 const router = useRouter();
@@ -247,6 +246,9 @@ const deckSetup = useDeckSetup({
   reportError: (message) => addToast(message),
 });
 
+// --- header & footer: deck footer/date fields (SPEC-093) -------------------
+const headerFooter = useHeaderFooter({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit });
+
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
 
 onMounted(() => {
@@ -316,10 +318,12 @@ onBeforeUnmount(() => {
         :animate-open="animations.open.value"
         :layout-open="layouts.open.value"
         :table-open="tables.open.value"
+        :header-footer-open="headerFooter.open.value"
         @transition-toggle="transitions.toggle()"
         @animate-toggle="animations.toggle()"
         @layout-toggle="toggleLayout()"
         @table-toggle="tables.toggle()"
+        @header-footer-toggle="headerFooter.show()"
         @bold="stageEdit.editing.toggleBold()"
         @italic="stageEdit.editing.toggleItalic()"
         @underline="stageEdit.editing.toggleUnderline()"
@@ -346,50 +350,32 @@ onBeforeUnmount(() => {
         @set-stroke="stageEdit.setStroke($event)"
       />
 
-      <SlideChartLayer :controller="charts" />
-
-      <div class="deck-body">
-        <SlideFilmstrip
-          :slides="presentation.slides"
-          :width-cm="presentation.slideWidthCm"
-          :height-cm="presentation.slideHeightCm"
-          :media="deckMedia"
-          :current-index="currentIndex"
-          :model="presentation"
-          @select="selectSlide"
-          @add="addSlideAction"
-          @command="filmstrip.onCommand"
-          @reorder="filmstrip.onReorder"
-        />
-        <div class="stage-column">
-          <SlideStageArea
-            :current-slide="currentSlide ?? undefined"
-            :width-cm="presentation.slideWidthCm"
-            :height-cm="presentation.slideHeightCm"
-            :media="deckMedia"
-            :live-label="liveLabel"
-            :stage-edit="stageEdit"
-            :animations="animations"
-            :transitions="transitions"
-            :model="presentation"
-            :slide-index="currentIndex"
-            @add="addSlideAction"
-          />
-          <SlidePanelStack
-            :notes="notes"
-            :transitions="transitions"
-            :animations="animations"
-            :tables="tables"
-            :slide-number="currentIndex + 1"
-            :has-slide="!!currentSlide"
-          />
-        </div>
-      </div>
+      <DeckBody
+        :model="presentation"
+        :current-index="currentIndex"
+        :media="deckMedia"
+        :live-label="liveLabel"
+        :stage-edit="stageEdit"
+        :animations="animations"
+        :transitions="transitions"
+        :notes="notes"
+        :tables="tables"
+        :charts="charts"
+        @select="selectSlide"
+        @add="addSlideAction"
+        @command="filmstrip.onCommand"
+        @reorder="filmstrip.onReorder"
+      />
     </div>
     <PresentationDialogs
       :deck-actions="deckActions"
       :layouts="layouts"
       :deck-setup="deckSetup"
+      :slide-number="currentIndex + 1"
+    />
+    <HeaderFooterDialog
+      v-if="headerFooter.open.value"
+      :controller="headerFooter"
       :slide-number="currentIndex + 1"
     />
   </AppShell>
@@ -424,22 +410,4 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.deck-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(180px, 220px) 1fr;
-}
-
-.deck-body :deep(.filmstrip) {
-  border-right: var(--border-width) solid var(--border-subtle);
-  max-height: 100%;
-}
-
-.stage-column {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 </style>

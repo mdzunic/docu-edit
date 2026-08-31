@@ -34,6 +34,8 @@ const props = defineProps({
   layoutOpen: { type: Boolean, default: false },
   /** Whether the table properties panel is open (SPEC-091). */
   tableOpen: { type: Boolean, default: false },
+  /** Whether the Header & Footer dialog is open (SPEC-093). */
+  headerFooterOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -51,6 +53,7 @@ const emit = defineEmits([
   "animate-toggle",
   "layout-toggle",
   "table-toggle",
+  "header-footer-toggle",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -288,6 +291,14 @@ onBeforeUnmount(() => observer?.disconnect());
         @click="emit('table-toggle')"
       >
         Table
+      </UiToggleButton>
+      <UiToggleButton
+        label="Header & footer"
+        data-testid="slides-header-footer"
+        :pressed="headerFooterOpen"
+        @click="emit('header-footer-toggle')"
+      >
+        Header &amp; footer
       </UiToggleButton>
     </div>
 
