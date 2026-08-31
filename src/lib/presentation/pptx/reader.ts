@@ -1013,6 +1013,32 @@ export function parseTableGraphicFrameForTest(graphicFrameXml: string): TableFra
   return frame.kind === "table" ? frame : undefined;
 }
 
+/** Test seam (SPEC-093): parses one field placeholder `p:sp` into a
+ * `SlideFieldPlaceholder`, so the golden check can assert the reader accepts the
+ * canonical bytes plus attribute-reordered variants. */
+export function parseFieldPlaceholderForTest(
+  spXml: string,
+  kind: SlideFieldKind,
+  deckWidthCm = DEFAULT_SLIDE_WIDTH_CM,
+  deckHeightCm = DEFAULT_SLIDE_HEIGHT_CM,
+): SlideFieldPlaceholder {
+  const xml = spXml.includes("xmlns:p")
+    ? spXml
+    : spXml.replace("<p:sp>", `<p:sp xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}">`);
+  const doc = parseXml(xml);
+  const ctx: SlideContext = {
+    color: { scheme: {}, map: {} },
+    layoutPh: new Map(),
+    masterPh: new Map(),
+    txStyles: new Map(),
+    slideRels: new Map(),
+    slidePartPath: "",
+    media: new Map(),
+    parts: new Map(),
+  };
+  return parseFieldPlaceholder(doc.documentElement, kind, ctx, deckWidthCm, deckHeightCm).entry;
+}
+
 /** Test seam (SPEC-092): parses a chart `p:graphicFrame` against a supplied
  * `{ relId → partPath }` rel map and `{ partPath → bytes }` parts map. */
 export function parseChartGraphicFrameForTest(

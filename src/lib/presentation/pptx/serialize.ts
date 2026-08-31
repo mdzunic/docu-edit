@@ -404,8 +404,9 @@ function rewriteFieldCachedText(spXml: string, text: string): string {
 }
 
 /** The canonical field placeholder `p:sp` (SPEC-093 Reference). A number/auto
- * date is an `<a:fld>`; a footer/fixed date is a plain `<a:r>`. */
-function canonicalFieldSp(rf: ResolvedField, id: number): string {
+ * date is an `<a:fld>`; a footer/fixed date is a plain `<a:r>`. Exported for the
+ * golden check. */
+export function canonicalFieldSp(rf: ResolvedField, id: number): string {
   const kind: SlideFieldKind = rf.field.kind;
   const type = PH_TYPE_OF_KIND[kind];
   const idx = PH_IDX_OF_KIND[kind];

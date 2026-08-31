@@ -152,3 +152,43 @@ describe("seedFrom / spliceAutomaticStyles", () => {
     expect(spliced).toBe(`<a><office:automatic-styles><style:style/></office:automatic-styles><office:body/></a>`);
   });
 });
+
+// --- SPEC-093 field declarations + display fold ----------------------------
+import { planOdpDeclarations } from "./fields";
+import { GOLDEN_ODP_DATE_STYLE, GOLDEN_ODP_DECLS, goldenOdpModel } from "./fieldGolden";
+
+describe("odp field golden (SPEC-093 AC-127/128/134)", () => {
+  it("plans the canonical footer/date-time declaration block + date style", () => {
+    const plan = planOdpDeclarations(goldenOdpModel());
+    expect(plan.declXml).toBe(GOLDEN_ODP_DECLS);
+    expect(plan.dateStyleXml).toBe(GOLDEN_ODP_DATE_STYLE);
+  });
+
+  it("reuses a source declaration name when the value is unchanged (AC-77)", () => {
+    const model = goldenOdpModel();
+    // Source prefix already declares the footer under a non-default name.
+    const prefix = `<office:presentation><presentation:footer-decl presentation:name="ftr7">Confidential</presentation:footer-decl>`;
+    const plan = planOdpDeclarations(model, prefix);
+    expect(plan.declXml).toContain(`presentation:name="ftr7">Confidential`);
+  });
+
+  it("folds the display flags into the drawing-page style + sets use-*-name (AC-78/79)", () => {
+    const model = goldenOdpModel();
+    const plan = planOdpDeclarations(model);
+    const registry = new StyleRegistry();
+    const page = serializePage(model.slides[1], registry, new Set(), "Default", "", undefined, plan.pagePlans.get(model.slides[1]));
+    expect(page).toContain(`presentation:use-footer-name="ftr1"`);
+    expect(page).toContain(`presentation:use-date-time-name="dtd1"`);
+    expect(registry.xml()).toContain(`presentation:display-footer="true"`);
+    expect(registry.xml()).toContain(`presentation:display-page-number="true"`);
+    expect(registry.xml()).toContain(`presentation:display-date-time="true"`);
+  });
+
+  it("never serialises a field placeholder into the draw:page (AC-80)", () => {
+    const model = goldenOdpModel();
+    const plan = planOdpDeclarations(model);
+    const page = serializePage(model.slides[1], new StyleRegistry(), new Set(), "Default", "", undefined, plan.pagePlans.get(model.slides[1]));
+    expect(page).not.toContain(`presentation:class="footer"`);
+    expect(page).not.toContain(`<text:page-number`);
+  });
+});
