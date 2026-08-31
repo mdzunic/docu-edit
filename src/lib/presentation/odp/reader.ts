@@ -1421,7 +1421,7 @@ function odpPageFields(page: Element, ctx: OdpContext): SlideFieldPlaceholder[] 
   };
   const useFooter = presentationAttr(page, "use-footer-name");
   if (useFooter && display.footer !== false && ctx.masterPh.has("footer")) {
-    const entry: SlideFieldPlaceholder = { kind: "footer", ...rect("footer", "footer") };
+    const entry: SlideFieldPlaceholder = { kind: "footer", ...rect("footer", "footer"), align: "center" };
     const text = ctx.decls.footers.get(useFooter);
     if (text) {
       entry.text = text;
@@ -1429,10 +1429,11 @@ function odpPageFields(page: Element, ctx: OdpContext): SlideFieldPlaceholder[] 
     fields.push(entry);
   }
   if (display.pageNumber !== false && ctx.masterPh.has("page-number")) {
-    fields.push({ kind: "slideNumber", ...rect("slideNumber", "page-number") });
+    fields.push({ kind: "slideNumber", ...rect("slideNumber", "page-number"), align: "right" });
   }
   const useDate = presentationAttr(page, "use-date-time-name");
   if (useDate && display.dateTime !== false && ctx.masterPh.has("date-time")) {
+    // The date sits left in the band (left is the default alignment → absent).
     const entry: SlideFieldPlaceholder = { kind: "date", ...rect("date", "date-time") };
     const decl = ctx.decls.dateTimes.get(useDate);
     if (decl) {
