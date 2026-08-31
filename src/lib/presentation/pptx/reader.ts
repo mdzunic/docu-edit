@@ -44,10 +44,13 @@ import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
   DEFAULT_TABLE_CELL_PADDING_CM,
+  type DeckHeaderFooter,
   type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
   type Slide,
+  type SlideFieldKind,
+  type SlideFieldPlaceholder,
   type SlideFill,
   type SlideFrame,
   type SlideLayout,
@@ -57,6 +60,8 @@ import {
   type SlideTableRow,
   type TableFrame,
 } from "../model";
+import { DEFAULT_DATE_FORMAT, defaultFieldRect } from "../headerFooter";
+import { KIND_OF_PH_TYPE, PPTX_DATETIME_TO_FORMAT } from "./fields";
 import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
 import { CHART_RELATIONSHIP, C_NAMESPACE, parseChartXml } from "../../core/chartPartOoxml";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
@@ -433,6 +438,99 @@ function frameBase(
     heightCm: geom.heightCm,
   };
   return geom.rotationDeg ? { ...base, rotationDeg: geom.rotationDeg } : base;
+}
+
+/** The special field `p:ph@type` a `p:sp` carries (`ftr`/`sldNum`/`dt`), or
+ * undefined — SPEC-093 diverts these three out of the frame list. */
+function fieldPhType(sp: Element): "ftr" | "sldNum" | "dt" | undefined {
+  const nvSpPr = pChild(sp, "nvSpPr");
+  const nvPr = nvSpPr && pChild(nvSpPr, "nvPr");
+  const ph = nvPr && pChild(nvPr, "ph");
+  const type = ph?.getAttribute("type") ?? undefined;
+  return type === "ftr" || type === "sldNum" || type === "dt" ? type : undefined;
+}
+
+/** Explicit run look (size/colour/font) declared on a field's `a:fld`/`a:r`
+ * `a:rPr`, kept only when present so a canonical (look-less) field round-trips
+ * to the same absent-look entry. */
+function fieldLook(
+  rPr: Element | undefined,
+  ctx: SlideContext,
+): Pick<SlideFieldPlaceholder, "sizePt" | "color" | "fontFamily"> {
+  const props = readRunProps(rPr, ctx.color);
+  const look: Pick<SlideFieldPlaceholder, "sizePt" | "color" | "fontFamily"> = {};
+  if (props.sizePt !== undefined) look.sizePt = props.sizePt;
+  if (props.color !== undefined) look.color = props.color;
+  if (props.fontFamily !== undefined) look.fontFamily = props.fontFamily;
+  return look;
+}
+
+/** Parses a footer/slide-number/date placeholder `p:sp` into a `Slide.fields`
+ * entry (SPEC-093 AC-7/13): geometry resolves slide-own `a:xfrm` → the
+ * layout/master placeholder map → `DEFAULT_FIELD_BAND`; the cached `a:t` and
+ * `a:fld@type` give the value/wire fields. Returns the entry plus any in-subset
+ * auto-date format to lift to the deck. */
+function parseFieldPlaceholder(
+  sp: Element,
+  kind: SlideFieldKind,
+  ctx: SlideContext,
+  deckWidthCm: number,
+  deckHeightCm: number,
+): { entry: SlideFieldPlaceholder; deckDateFormat?: string } {
+  const nvSpPr = pChild(sp, "nvSpPr");
+  const nvPr = nvSpPr && pChild(nvSpPr, "nvPr");
+  const ph = nvPr && pChild(nvPr, "ph");
+  const phType = ph?.getAttribute("type") ?? undefined;
+  const phIdx = ph?.getAttribute("idx") ?? undefined;
+  const role = roleOf(phType);
+  const spPr = pChild(sp, "spPr");
+  const ownXfrm = parseXfrm(spPr ? firstA(spPr, "xfrm") : undefined);
+  const inherited = inheritedPlaceholder(phType, phIdx, role, ctx);
+  let rect: { xCm: number; yCm: number; widthCm: number; heightCm: number };
+  if (ownXfrm || inherited) {
+    const geom = geometryFor(ownXfrm, phType, phIdx, role, ctx);
+    rect = { xCm: geom.xCm, yCm: geom.yCm, widthCm: geom.widthCm, heightCm: geom.heightCm };
+  } else {
+    const band = defaultFieldRect(kind, deckWidthCm, deckHeightCm);
+    rect = { xCm: band.xCm, yCm: band.yCm, widthCm: band.widthCm, heightCm: band.heightCm };
+  }
+  const entry: SlideFieldPlaceholder = { kind, ...rect };
+  const txBody = pChild(sp, "txBody");
+  const p = txBody ? firstA(txBody, "p") : undefined;
+  const align = alignOf(p ? firstA(p, "pPr") : undefined);
+  if (align === "center" || align === "right") {
+    entry.align = align;
+  }
+  const fld = p ? firstA(p, "fld") : undefined;
+  const run = p ? firstA(p, "r") : undefined;
+  const rPr = fld ? firstA(fld, "rPr") : run ? firstA(run, "rPr") : undefined;
+  Object.assign(entry, fieldLook(rPr, ctx));
+  const cachedEl = fld ? firstA(fld, "t") : run ? firstA(run, "t") : undefined;
+  const cached = cachedEl?.textContent ?? "";
+  let deckDateFormat: string | undefined;
+  if (kind === "footer") {
+    if (cached) {
+      entry.text = cached;
+    }
+  } else if (kind === "date") {
+    const fldType = fld?.getAttribute("type") ?? undefined;
+    if (fldType && fldType !== "slidenum") {
+      const mapped = PPTX_DATETIME_TO_FORMAT[fldType];
+      if (mapped) {
+        deckDateFormat = mapped; // in-subset auto: lift to deck, recomputed live
+      } else {
+        entry.wireType = fldType; // out-of-subset: preserve, render from cache
+        if (cached) {
+          entry.text = cached;
+        }
+      }
+    } else if (cached) {
+      // A plain `a:r` date is a fixed literal on this slide.
+      entry.text = cached;
+    }
+  }
+  // slideNumber: the value is live from index; nothing cached is kept.
+  return { entry, deckDateFormat };
 }
 
 /** Parses one `p:sp` (a shape or placeholder) into a frame. */
@@ -1288,14 +1386,27 @@ export async function parsePptx(
   const firstSlideNumParsed = firstSlideNumRaw !== null && firstSlideNumRaw !== "" ? Number(firstSlideNumRaw) : NaN;
   const firstSlideNumber = Number.isInteger(firstSlideNumParsed) ? firstSlideNumParsed : undefined;
 
+  // Title-slide field policy (SPEC-093): `showSpecialPlsOnTitleSld="0"` hides
+  // every field on the title slide; absent or "1" = show.
+  const showSpecialPlsRaw = mainDoc.documentElement.getAttribute("showSpecialPlsOnTitleSld");
+
   const mainRels = relsFor(info.mainPartPath);
 
   // Collect every media part up-front, keyed by its own path (AC-31/32).
   const media = new Map<string, MediaPart>();
 
-  const deps: BuildDeps = { readPart, parseDoc, relsFor, media, parts };
+  const deps: BuildDeps = {
+    readPart,
+    parseDoc,
+    relsFor,
+    media,
+    parts,
+    deckWidthCm: slideWidthCm,
+    deckHeightCm: slideHeightCm,
+  };
 
   const slides: Slide[] = [];
+  let deckDateFormat: string | undefined;
   const sldIdLst = pChild(mainDoc.documentElement, "sldIdLst");
   for (const sldId of sldIdLst ? childElements(sldIdLst, P_NAMESPACE, "sldId") : []) {
     const relId = sldId.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
@@ -1316,8 +1427,14 @@ export async function parsePptx(
       slides.push({ id: crypto.randomUUID(), frames: [], partName: slidePath });
       continue;
     }
-    slides.push(buildSlide(slideDoc, slidePath, deps));
+    const built = buildSlide(slideDoc, slidePath, deps);
+    slides.push(built.slide);
+    if (built.deckDateFormat && !deckDateFormat) {
+      deckDateFormat = built.deckDateFormat;
+    }
   }
+
+  const headerFooter = assembleHeaderFooter(slides, deckDateFormat, showSpecialPlsRaw);
 
   // The read-derived layout catalogue (SPEC-089 AC-2).
   const layouts = buildLayoutCatalogue(mainDoc, mainRels, info.mainPartPath, slides, deps);
@@ -1351,7 +1468,56 @@ export async function parsePptx(
     opaque.push({ name, data: await bytesToBase64Async(partBytes) });
   }
 
-  return { slides, layouts, slideWidthCm, slideHeightCm, firstSlideNumber, media: [...media.values()], opaque, properties };
+  return {
+    slides,
+    layouts,
+    slideWidthCm,
+    slideHeightCm,
+    firstSlideNumber,
+    headerFooter,
+    media: [...media.values()],
+    opaque,
+    properties,
+  };
+}
+
+/** Assembles the deck-level `headerFooter` from the read slides (SPEC-093):
+ * lifts the common footer text to the deck (divergent slides keep a per-slide
+ * override), takes the auto-date format from the first in-subset date field,
+ * and reads the title-slide policy from `showSpecialPlsOnTitleSld`. */
+function assembleHeaderFooter(
+  slides: Slide[],
+  deckDateFormat: string | undefined,
+  showSpecialPlsRaw: string | null,
+): DeckHeaderFooter | undefined {
+  let deckFooterText: string | undefined;
+  for (const slide of slides) {
+    const footer = slide.fields?.find((field) => field.kind === "footer" && field.text !== undefined && field.text !== "");
+    if (footer) {
+      deckFooterText = footer.text;
+      break;
+    }
+  }
+  if (deckFooterText !== undefined) {
+    for (const slide of slides) {
+      for (const field of slide.fields ?? []) {
+        if (field.kind === "footer" && field.text === deckFooterText) {
+          delete field.text;
+        }
+      }
+    }
+  }
+  const hf: DeckHeaderFooter = {};
+  if (deckFooterText !== undefined) {
+    hf.footerText = deckFooterText;
+  }
+  if (deckDateFormat !== undefined && deckDateFormat !== DEFAULT_DATE_FORMAT) {
+    hf.dateFormat = deckDateFormat;
+  }
+  if (showSpecialPlsRaw === "0") {
+    hf.showOnTitleSlide = false;
+  }
+  return Object.keys(hf).length > 0 ? hf : undefined;
 }
 
 interface BuildDeps {
@@ -1360,10 +1526,20 @@ interface BuildDeps {
   relsFor: (path: string) => Map<string, Relationship>;
   media: Map<string, MediaPart>;
   parts: Map<string, Uint8Array>;
+  /** Deck slide size, so a field placeholder with no resolvable geometry falls
+   *  back to `DEFAULT_FIELD_BAND` (SPEC-093 AC-13). */
+  deckWidthCm: number;
+  deckHeightCm: number;
 }
 
-/** Resolves a slide's layout/master/theme chain and parses its shape tree. */
-function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Slide {
+/** Resolves a slide's layout/master/theme chain and parses its shape tree.
+ * Returns the slide plus any in-subset auto-date format found on it, which
+ * `parsePptx` lifts to the deck-level `headerFooter` (SPEC-093). */
+function buildSlide(
+  slideDoc: Document,
+  slidePath: string,
+  deps: BuildDeps,
+): { slide: Slide; deckDateFormat?: string } {
   const slideRoot = slideDoc.documentElement;
   const slideRels = deps.relsFor(slidePath);
 
@@ -1397,10 +1573,27 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
   // `p:cNvPr id` → minted frame id, so a `p:timing`'s `p:spTgt spid` resolves
   // back to the frame it targets (SPEC-086).
   const frameForSpid = new Map<string, string>();
+  // SPEC-093: footer/slide-number/date placeholders are diverted out of the
+  // frame list into `fields`, their source `p:sp` kept under `p:ph:{type}`.
+  const fields: SlideFieldPlaceholder[] = [];
+  const fieldPreserved: Record<string, string> = {};
+  let deckDateFormat: string | undefined;
   if (spTree) {
     for (const child of Array.from(spTree.children)) {
       if (child.namespaceURI !== P_NAMESPACE) {
         continue;
+      }
+      if (child.localName === "sp") {
+        const phType = fieldPhType(child);
+        if (phType) {
+          const parsed = parseFieldPlaceholder(child, KIND_OF_PH_TYPE[phType], ctx, deps.deckWidthCm, deps.deckHeightCm);
+          fields.push(parsed.entry);
+          fieldPreserved[`p:ph:${phType}`] = serializeElement(child);
+          if (parsed.deckDateFormat && !deckDateFormat) {
+            deckDateFormat = parsed.deckDateFormat;
+          }
+          continue;
+        }
       }
       const frame = parseShapeTreeChild(child, ctx);
       if (frame) {
@@ -1447,14 +1640,18 @@ function buildSlide(slideDoc: Document, slidePath: string, deps: BuildDeps): Sli
       delete preserved["p:timing"];
     }
   }
+  Object.assign(preserved, fieldPreserved);
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
+  }
+  if (fields.length > 0) {
+    slide.fields = fields;
   }
   const notes = readNotes(slideRels, slidePath, deps.parseDoc);
   if (notes) {
     slide.notes = notes;
   }
-  return slide;
+  return { slide, deckDateFormat };
 }
 
 function layoutSpTree(root: Element): Element | undefined {

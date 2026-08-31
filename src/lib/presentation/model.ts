@@ -319,6 +319,59 @@ export interface TableFrame extends SlideFrameBase {
 
 export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | ChartFrame | GroupFrame | ForeignFrame | TableFrame;
 
+/** The three deck-level field kinds SPEC-093 models along a slide's bottom
+ * edge: a footer string, the slide number and the date. */
+export type SlideFieldKind = "footer" | "slideNumber" | "date";
+
+/** The deck-level header/footer values (SPEC-093), shared by every slide that
+ * shows a field. Per-slide *visibility* lives on `Slide.fields`; only the
+ * values and the title-slide policy live here. All-absent is a deck with no
+ * configured footer/date (numbers still count from `firstSlideNumber`). Plain
+ * JSON — `roundTrip.spec.ts`'s `JSON.parse(JSON.stringify(model))` must hold. */
+export interface DeckHeaderFooter {
+  /** The footer text every showing slide displays; absent = none. A per-slide
+   *  `SlideFieldPlaceholder.text` overrides it for that slide. */
+  footerText?: string;
+  /** `"fixed"` = a frozen date string (`dateFixedText`); absent = an
+   *  auto-updating date rendered from `dateFormat` at every render and save. */
+  dateSource?: "fixed";
+  /** The frozen string shown when `dateSource === "fixed"`. */
+  dateFixedText?: string;
+  /** A core `dateTimeFormats` catalogue pattern for the auto date; absent =
+   *  `d MMMM yyyy` (`DEFAULT_DATE_FORMAT`). */
+  dateFormat?: string;
+  /** `false` = suppress every field on the title slide; absent = true. Only
+   *  `false` is ever stored (the absent-is-true rule). */
+  showOnTitleSlide?: false;
+}
+
+/** One field placeholder on a slide (SPEC-093): its presence in `Slide.fields`
+ * IS the slide's visibility for that kind. Geometry and look are resolved once
+ * at read (slide's own `a:xfrm`/`svg:*` → the reader's placeholder maps →
+ * `DEFAULT_FIELD_BAND`), so rendering never re-walks the layout chain. Plain
+ * JSON. `slideNumber` entries never carry `text`. */
+export interface SlideFieldPlaceholder {
+  kind: SlideFieldKind;
+  xCm: number;
+  yCm: number;
+  widthCm: number;
+  heightCm: number;
+  /** Text alignment inside the box; absent = left. */
+  align?: "left" | "center" | "right";
+  sizePt?: number; // effective; absent = 12
+  color?: string; // effective; absent = #595959
+  fontFamily?: string; // effective; absent = renderer default
+  /** A per-slide override of the deck value (footer/date only); absent = the
+   *  deck value. */
+  text?: string;
+  /** pptx `a:fld @type` / odp declaration source, kept verbatim so an
+   *  out-of-subset field (SPEC-093 "Date formats") re-emits unchanged. */
+  wireType?: string;
+  /** odp `style:data-style-name` of an auto date, kept verbatim for the same
+   *  preserve-don't-parse reason. */
+  wireStyleName?: string;
+}
+
 export interface Slide {
   id: string; // minted at read, never serialised
   frames: SlideFrame[]; // z-order, back to front
@@ -371,6 +424,12 @@ export interface Slide {
    *  `presentation:notes`, `anim:*` children and the `draw:page` attribute
    *  string. Keys are those element names. */
   preserved?: Record<string, string>;
+  /** The slide's visible deck fields (SPEC-093): at most one entry per kind
+   *  `footer`/`slideNumber`/`date`. Presence is visibility — absent or `[]`
+   *  means the slide shows none. The pptx reader also keeps each source `p:sp`
+   *  in `preserved["p:ph:ftr"|"p:ph:sldNum"|"p:ph:dt"]` so save re-emits it
+   *  with only its cached `a:t` refreshed. */
+  fields?: SlideFieldPlaceholder[];
 }
 
 /** The root of a presentation. `kind` is the literal discriminant that
@@ -398,6 +457,16 @@ export interface PresentationModel {
    * absent = 1, and only a value ≠ 1 is stored (SPEC-090). Model-only on odp
    * (that format does not serialise it). */
   firstSlideNumber?: number;
+  /** The deck-level footer/date values and title-slide policy (SPEC-093);
+   * absent = a deck with no configured footer/date. Per-slide visibility lives
+   * on each `Slide.fields`. */
+  headerFooter?: DeckHeaderFooter;
+  /** The header/footer values or any slide's field visibility changed since
+   * open → the writers regenerate the field placeholders and (pptx)
+   * `showSpecialPlsOnTitleSld` / (odp) the declaration block. Absent =
+   * unchanged since open; only `true` is stored, like `deckDirty` (SPEC-093).
+   * `stripRetention` clears it. */
+  headerFooterDirty?: true;
   /** Deck-level setup (size, first slide number, properties) changed since
    * open → the writers rebuild the deck-level parts. Absent = unchanged since
    * open; only `true` is stored, exactly like `structureDirty` (SPEC-090). */
@@ -453,6 +522,9 @@ export interface ParsedPresentation {
   /** Slide-number origin from pptx `p:presentation @firstSlideNum`; absent for
    * odp and for a deck that counts from 1 (SPEC-090). */
   firstSlideNumber?: number;
+  /** The deck-level footer/date values the reader resolved (SPEC-093); absent
+   * when the deck configures no footer/date. */
+  headerFooter?: DeckHeaderFooter;
   /** Image bytes referenced by the slides' `ImageFrame`s. */
   media: MediaPart[];
   /** Every source package part, verbatim, in package order. */

@@ -55,6 +55,9 @@ export function assemblePresentation(
     // Only a non-default origin is stored (SPEC-090); absent = counts from 1.
     model.firstSlideNumber = parsed.firstSlideNumber;
   }
+  if (parsed.headerFooter) {
+    model.headerFooter = parsed.headerFooter;
+  }
   if (parsed.media.length > 0) {
     model.media = parsed.media;
   }
