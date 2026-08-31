@@ -37,8 +37,9 @@ import {
 } from "../model";
 import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStandardLayouts } from "../layouts";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
-import { serializeSlideXml } from "./serialize";
+import { resolveSlideFields, serializeSlideXml, type ResolvedField } from "./serialize";
 import { applyNotesContentTypes, planNotes } from "./notesWriter";
+import { now as clockNow } from "../../core/clock";
 import { chartPartXml } from "../../core/chartPartOoxml";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
@@ -74,35 +75,40 @@ export interface WritePptxOptions {
   /** Injectable so tests assert an exact core.xml (the clock-coupled-test
    * rule): the timestamp stamped into a from-scratch docProps/core.xml. */
   modified?: Date;
+  /** The instant a save recomputes its field values against (SPEC-093);
+   * defaults to core `now()`. Beside `modified` so a round-trip test pins it. */
+  now?: Date;
 }
 
 /** Serialises a presentation to `.pptx` bytes (see the module header for the
  * three paths). */
 export async function writePptx(model: PresentationModel, options: WritePptxOptions = {}): Promise<{ bytes: Uint8Array }> {
+  const now = options.now ?? clockNow();
   const hasPackage = model.opaque !== undefined && model.opaque.length > 0;
   if (!hasPackage) {
-    return { bytes: await zip(buildFromScratch(model, options.modified ?? new Date())) };
+    return { bytes: await zip(buildFromScratch(model, options.modified ?? new Date(), now)) };
   }
   const parts = decodedPartBytes(model.opaque);
   const anyDirty = model.slides.some((slide) => slide.dirty === true);
   const anyNotes = model.slides.some((slide) => slide.notesDirty === true);
   const deckDirty = model.deckDirty === true;
-  if (!model.structureDirty && !deckDirty && !anyDirty && !anyNotes) {
+  const headerFooterDirty = model.headerFooterDirty === true;
+  if (!model.structureDirty && !deckDirty && !anyDirty && !anyNotes && !headerFooterDirty) {
     // Nothing changed — re-emit verbatim (AC-51).
     const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
     return { bytes };
   }
   if (!model.structureDirty && !deckDirty) {
-    // Text-only edits: substitute each dirty slide's own part in place —
-    // presentation.xml, its rels and [Content_Types].xml stay byte-verbatim,
-    // and every untouched slide/unmodelled part is copied through (SPEC-081
-    // Dirtying: a text edit does not rebuild the structural parts).
-    return { bytes: await zip(buildTextEditSubstitution(model, parts)) };
+    // Text-only edits (and a header/footer-only change, SPEC-093): substitute
+    // each dirty slide's own part in place; presentation.xml stays byte-verbatim
+    // except the single `showSpecialPlsOnTitleSld` attribute when
+    // `headerFooterDirty`, and every untouched part is copied through.
+    return { bytes: await zip(buildTextEditSubstitution(model, parts, now)) };
   }
   // A deck-level change (size / first slide number / metadata, SPEC-090) rides
   // the substitution path too: it rebuilds presentation.xml (p:sldSz +
   // firstSlideNum) and docProps/core.xml.
-  return { bytes: await zip(buildSubstitution(model, parts, options.modified ?? new Date())) };
+  return { bytes: await zip(buildSubstitution(model, parts, options.modified ?? new Date(), now)) };
 }
 
 /** Rebuilds only the dirty slides' own parts, in place; every other part
@@ -110,7 +116,8 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
  * that gained an inserted image also has its `.rels` re-emitted (with the new
  * image relationship spliced in), the media part added under `ppt/media/`, and
  * the Content-Types extension default added if missing (SPEC-082). */
-function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>): ZipEntryInput[] {
+function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>, now: Date): ZipEntryInput[] {
+  const fieldsBySlide = resolveFieldsBySlide(model, now);
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
   const charts = planCharts(model, parts);
@@ -131,7 +138,7 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       const strippedRelsXml = stripOrphanChartRels(relsXml, slide.partName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
       const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName)];
-      rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName)));
+      rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName, fieldsBySlide.get(slide) ?? [])));
       let outRels = relsForLayoutChange(slide, slide.partName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
         outRels = strippedRelsXml;
@@ -147,6 +154,7 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
   const notes = planNotes({
     model,
     parts,
+    now,
     slidePartFor: (slide) => (slide.partName && parts.has(slide.partName) ? slide.partName : undefined),
     slideRelsXml: (slide) => {
       const relsPath = relsPathFor(slide.partName!);
@@ -178,6 +186,11 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
     }
     if (name === "[Content_Types].xml") {
       entries.push({ name, data: encode(combinedContentTypes) });
+    } else if (name === presPath && model.headerFooterDirty) {
+      // A header/footer-only change touches presentation.xml solely to add/strip
+      // showSpecialPlsOnTitleSld; everything else stays byte-identical (AC-72).
+      const base = notes.parts.get(presPath) ? decode(notes.parts.get(presPath)!) : decode(parts.get(presPath) ?? encode(""));
+      entries.push({ name, data: encode(applyShowSpecialPls(base, model.headerFooter?.showOnTitleSlide)) });
     } else if (notes.parts.has(name)) {
       entries.push({ name, data: notes.parts.get(name)! });
     } else if (rebuilt.has(name)) {
@@ -554,9 +567,49 @@ function spliceContentDefaults(contentTypesXml: string, defaults: string): strin
 
 /** A slide part's XML from its frames (SPEC-081's serialiser). `rels`/`path`
  * resolve an ImageFrame's media back to its `r:embed`; a from-scratch / new
- * slide passes an empty rels map (it bears no images yet). */
-function slideXml(slide: Slide, rels: Map<string, Relationship> = new Map(), path = ""): string {
-  return serializeSlideXml(slide, rels, path);
+ * slide passes an empty rels map (it bears no images yet). `fields` are the
+ * slide's resolved deck field placeholders (SPEC-093), emitted after the
+ * frames. */
+function slideXml(
+  slide: Slide,
+  rels: Map<string, Relationship> = new Map(),
+  path = "",
+  fields: ResolvedField[] = [],
+): string {
+  return serializeSlideXml(slide, rels, path, fields);
+}
+
+/** Every slide's resolved deck field placeholders, keyed by slide object so a
+ * duplicate (a distinct object) still resolves its own live slide number. */
+function resolveFieldsBySlide(model: PresentationModel, now: Date): Map<Slide, ResolvedField[]> {
+  const map = new Map<Slide, ResolvedField[]>();
+  model.slides.forEach((slide, index) => {
+    const fields = resolveSlideFields(model, index, now);
+    if (fields.length > 0) {
+      map.set(slide, fields);
+    }
+  });
+  return map;
+}
+
+/** Whether the deck configures any field (SPEC-093): a deck-level header/footer
+ * or any slide with visible fields — the trigger for the generated master's
+ * `p:hf` and the from-scratch field placeholders. */
+function deckHasFields(model: PresentationModel): boolean {
+  return model.headerFooter !== undefined || model.slides.some((slide) => (slide.fields?.length ?? 0) > 0);
+}
+
+/** Splices `showSpecialPlsOnTitleSld` onto the `p:presentation` start tag — the
+ * SPEC-090 `firstSlideNum` precedent, the rest of presentation.xml byte-
+ * identical (SPEC-093 AC-71/72). `false` writes "0"; absent strips it. */
+function applyShowSpecialPls(presXml: string, showOnTitleSlide: false | undefined): string {
+  return presXml.replace(/<p:presentation\b[^>]*>/, (tag) => {
+    let out = tag.replace(/\s+showSpecialPlsOnTitleSld="[^"]*"/, "");
+    if (showOnTitleSlide === false) {
+      out = out.replace(/\s*>$/, ` showSpecialPlsOnTitleSld="0">`);
+    }
+    return out;
+  });
 }
 
 function slideRelsXml(layoutTarget: string): string {
@@ -587,7 +640,7 @@ function standardLayoutIndexForSlide(slide: Slide): number {
   return inferred >= 0 ? inferred : 0;
 }
 
-function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInput[] {
+function buildFromScratch(model: PresentationModel, modified: Date, now: Date): ZipEntryInput[] {
   const slidePaths = model.slides.map((_, index) => `ppt/slides/slide${index + 1}.xml`);
   // The minimal standard set (SPEC-089 AC-17): slideLayout1..6, in the Reference
   // table order (title/obj/secHead/twoObj/titleOnly/blank), at the deck size.
@@ -628,8 +681,9 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
 
   const sldIdLst = model.slides.map((_, index) => `<p:sldId id="${256 + index}" r:id="${slideRelIds[index]}"/>`).join("");
   const firstSlideNumAttr = model.firstSlideNumber !== undefined ? ` firstSlideNum="${model.firstSlideNumber}"` : "";
+  const showSpecialAttr = model.headerFooter?.showOnTitleSlide === false ? ` showSpecialPlsOnTitleSld="0"` : "";
   const presentation =
-    `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"${firstSlideNumAttr}>` +
+    `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"${firstSlideNumAttr}${showSpecialAttr}>` +
     `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
     `<p:sldIdLst>${sldIdLst}</p:sldIdLst>` +
     `<p:sldSz cx="${cmToEmu(model.slideWidthCm)}" cy="${cmToEmu(model.slideHeightCm)}"/>` +
@@ -642,10 +696,13 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<p:sldLayoutIdLst>` +
     standardLayouts.map((_, i) => `<p:sldLayoutId id="${2147483649 + i}" r:id="rId${i + 1}"/>`).join("") +
     `</p:sldLayoutIdLst>`;
+  // A configured deck declares its fields on the master via `p:hf` (SPEC-093
+  // AC-89), in schema position between the layout-id list and the text styles.
+  const hf = deckHasFields(model) ? `<p:hf sldNum="1" hdr="0" ftr="1" dt="1"/>` : "";
   const masterXml = SLIDE_MASTER_XML.replace(
     /<p:sldLayoutIdLst>.*?<\/p:sldLayoutIdLst>/,
     masterLayoutIdLst,
-  );
+  ).replace("<p:txStyles>", `${hf}<p:txStyles>`);
   const masterRels =
     `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
     standardLayouts
@@ -677,7 +734,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     const rels = new Map<string, Relationship>();
     rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
     const imageRels = linkImageRels(slide, rels, slidePath);
-    entries.push({ name: slidePath, data: encode(slideXml(slide, rels, slidePath)) });
+    entries.push({ name: slidePath, data: encode(slideXml(slide, rels, slidePath, resolveSlideFields(model, index, now))) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
       data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)),
@@ -728,7 +785,8 @@ function relativeTarget(fromPart: string, toPart: string): string {
   return [...up, ...toSegments.slice(i)].join("/");
 }
 
-function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>, modified: Date = new Date()): ZipEntryInput[] {
+function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>, modified: Date, now: Date): ZipEntryInput[] {
+  const fieldsBySlide = resolveFieldsBySlide(model, now);
   // Locate the presentation part through the root relationships.
   const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
   const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
@@ -839,6 +897,9 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     rebuiltPresXml = spliceSldSz(rebuiltPresXml, model);
     rebuiltPresXml = applyFirstSlideNum(rebuiltPresXml, model.firstSlideNumber);
   }
+  if (model.headerFooterDirty) {
+    rebuiltPresXml = applyShowSpecialPls(rebuiltPresXml, model.headerFooter?.showOnTitleSlide);
+  }
 
   // Rebuild [Content_Types].xml: add overrides for added slides, drop overrides
   // for removed parts; everything else byte-verbatim. A dirty slide re-emitted
@@ -867,7 +928,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const strippedRelsXml = stripOrphanChartRels(relsXml, entry.emitName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
       const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
-      rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
+      rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
       let outRels = relsForLayoutChange(entry.slide, entry.emitName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
         outRels = strippedRelsXml;
@@ -899,7 +960,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
         ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)]
         : [];
       const xml = entry.slide.dirty
-        ? encode(slideXml(entry.slide, rels, entry.emitName))
+        ? encode(slideXml(entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? []))
         : parts.get(entry.sourceName)!;
       baseSlideParts.set(entry.emitName, xml);
       if (sourceRelsBytes) {
@@ -912,7 +973,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
       const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
-      baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName)));
+      baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
       baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
     }
   }
@@ -932,6 +993,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   const notes = planNotes({
     model,
     parts,
+    now,
     freshSlides,
     slidePartFor: (slide) => emitNameBySlide.get(slide),
     slideRelsXml: (slide) => {

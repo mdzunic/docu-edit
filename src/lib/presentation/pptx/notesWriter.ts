@@ -24,7 +24,9 @@ import {
   type Relationship,
 } from "../../core/xml";
 import type { PresentationModel, Slide } from "../model";
-import { serializeNotesSlideXml } from "./serialize";
+import { preserveNotesFieldPlaceholders, serializeNotesSlideXml } from "./serialize";
+import { fieldText, slideNumberFor } from "../headerFooter";
+import { now as clockNow } from "../../core/clock";
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -47,6 +49,9 @@ export interface NotesPlanInput {
   model: PresentationModel;
   /** The package's parts (post any structural rebuild the caller already did). */
   parts: Map<string, Uint8Array>;
+  /** The instant a rebuilt notes part recomputes its field placeholders'
+   * cached `a:t` against (SPEC-093); defaults to core `now()` when absent. */
+  now?: Date;
   /** The emitted slide-part path for a model slide, or undefined to skip it
    * (a slide with no part cannot host a notes part in this path). */
   slidePartFor: (slide: Slide) => string | undefined;
@@ -251,8 +256,16 @@ export function planNotes(input: NotesPlanInput): NotesPlan {
     if (hasNotes) {
       if (existing) {
         // Rebuild the existing notes part in place; keep its .rels verbatim.
+        // Its non-body field placeholders (hdr/ftr/dt/sldNum) are preserved with
+        // their cached a:t refreshed (SPEC-093 AC-92/93).
         const notesPath = resolvePartPath(slidePath, existing.target);
-        plan.parts.set(notesPath, encode(serializeNotesSlideXml(slide.notes!)));
+        const index = model.slides.indexOf(slide);
+        const nonBody = preserveNotesFieldPlaceholders(
+          parts.has(notesPath) ? decoder.decode(parts.get(notesPath)) : "",
+          String(slideNumberFor(model, index)),
+          fieldText(model, index, "date", input.now ?? clockNow()),
+        );
+        plan.parts.set(notesPath, encode(serializeNotesSlideXml(slide.notes!, nonBody)));
         if (!hasOverride(input.contentTypesXml, notesPath) && !plan.contentTypeAdditions.includes(`/${notesPath}"`)) {
           plan.contentTypeAdditions += `<Override PartName="/${notesPath}" ContentType="${NOTES_SLIDE_CONTENT_TYPE}"/>`;
         }

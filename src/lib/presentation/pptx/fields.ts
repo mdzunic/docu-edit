@@ -36,6 +36,16 @@ export const PH_NAME_OF_KIND: Record<SlideFieldKind, string> = {
   slideNumber: "Slide Number Placeholder",
 };
 
+/** The fixed `a:fld@id` GUID the canonical `p:sp` writes for a number/date
+ * field. PowerPoint uses a per-field instance GUID; a fixed one per kind keeps
+ * the serialiser deterministic (the golden check pins these exact bytes). Only
+ * `slideNumber`/`date` use `a:fld`; a footer/fixed date writes a plain `a:r`. */
+export const FIELD_GUID: Record<SlideFieldKind, string> = {
+  slideNumber: "{CT5093A1-0000-4000-8000-0000000000EE}",
+  date: "{CT5093A2-0000-4000-8000-0000000000EE}",
+  footer: "",
+};
+
 /** `a:fld@type` (datetime*) → catalogue pattern. Provisional and
  * locale-dependent — the golden fixture is normative (SPEC-093 "Date formats").
  * `MM/dd/yyyy` and `yyyy-MM-dd` have no faithful datetime* equivalent, so on
