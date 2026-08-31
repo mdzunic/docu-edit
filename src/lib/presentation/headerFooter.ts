@@ -279,10 +279,14 @@ export function applyHeaderFooter(
     setFieldVisibility(model, slide, "slideNumber", values.slideNumber);
     setFieldVisibility(model, slide, "date", values.date);
     if (scope.mode === "all") {
-      // Apply to all normalises every slide to the deck values — drop any
-      // per-slide text overrides (AC-48).
+      // Apply to all normalises every slide to the deck footer — drop any
+      // per-slide footer text override (AC-48). A date field's `text` is a
+      // cache (an out-of-subset value), not an override, so it is left alone
+      // (AC-64: never recomputes).
       for (const field of slide.fields ?? []) {
-        delete field.text;
+        if (field.kind === "footer") {
+          delete field.text;
+        }
       }
     }
     markSlideEdited(slide, model.format);
