@@ -25,7 +25,21 @@ export default defineConfig({
     baseURL: "http://localhost:5173",
     headless: false,
     viewport: { width: 1440, height: 900 },
-    launchOptions: { args: ["--window-position=40,40"] },
+    // Software compositing + no occlusion/background throttling: with GPU
+    // compositing, the screencast recorder can drop a promoted layer (the
+    // zoom-transformed page went blank in one recording while the app —
+    // and a Playwright screenshot — rendered it fine), and covering the
+    // demo window with another app degrades captured frames. Recording
+    // fidelity beats raster speed here.
+    launchOptions: {
+      args: [
+        "--window-position=40,40",
+        "--disable-gpu",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-timer-throttling",
+      ],
+    },
     video: { mode: "on", size: { width: 1440, height: 900 } },
     trace: "off",
   },

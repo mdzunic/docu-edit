@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beat, caption, shot, titleCard } from "./tour-helpers";
-import { writeDemoPdf, writeDemoPoster } from "./seed-media";
+import { writeDemoPdf } from "./seed-media";
 
 // ---------------------------------------------------------------------------
 // docu-edit — round two: the library, the themes, the local-first pitch.
@@ -69,9 +69,9 @@ test("docu-edit — library, themes and the local-first story", async ({ page })
 
   // The library entries take their titles from the file names, so the seed
   // files are fixture copies under presentable names — plus a generated
-  // poster PNG and text PDF (seed-media.ts), because the SPEC-107 media
-  // fixtures are parser-minimal (a 1×1 pixel, an empty-page PDF) and would
-  // put blank previews on the demo's cards.
+  // text PDF (seed-media.ts) and a real photograph (golden-gate.jpg),
+  // because the SPEC-107 media fixtures are parser-minimal (a 1×1 pixel,
+  // an empty-page PDF) and would put blank previews on the demo's cards.
   const seedDir = test.info().outputPath("seed");
   mkdirSync(seedDir, { recursive: true });
   const seeded = (fixture: string, niceName: string): string => {
@@ -98,8 +98,8 @@ test("docu-edit — library, themes and the local-first story", async ({ page })
   );
   const pdfSeed = join(seedDir, "Contract.pdf");
   writeDemoPdf(pdfSeed);
-  const posterSeed = join(seedDir, "Launch Poster.png");
-  writeDemoPoster(posterSeed);
+  const photoSeed = join(seedDir, "Golden Gate.jpg");
+  copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "golden-gate.jpg"), photoSeed);
 
   // Keep the editor beats squiggle-free, as in the first tour: the montage
   // opens fixture documents whose text trips the spell checker. Seeding the
@@ -205,10 +205,10 @@ test("docu-edit — library, themes and the local-first story", async ({ page })
   await beat(page, 2000);
   await backToLibrary();
 
-  await caption(page, "…and your images");
+  await caption(page, "…and your photos, stored verbatim to the byte");
   await beat(page, 700);
-  await importFile(posterSeed, "media-workspace");
-  await beat(page, 1800);
+  await importFile(photoSeed, "media-workspace");
+  await beat(page, 2000);
   await backToLibrary();
 
   // -- The redesigned library -----------------------------------------------
@@ -258,6 +258,25 @@ test("docu-edit — library, themes and the local-first story", async ({ page })
   await card("Quarterly Report").dblclick();
   await expect(page.getByTestId("document-content")).toBeVisible();
   const openMs = Date.now() - openStarted;
+  if (process.env.DEMO_DEBUG) {
+    await beat(page, 2500);
+    const dump = await page.evaluate(() => {
+      const pageEl = document.querySelector('[data-testid="document-page"]');
+      const style = pageEl ? getComputedStyle(pageEl) : null;
+      const rect = pageEl?.getBoundingClientRect();
+      return {
+        url: location.pathname,
+        pages: document.querySelectorAll('[data-testid="document-page"]').length,
+        paginationState: document.querySelector('[data-testid="document-pages"]')?.getAttribute("data-pagination-state"),
+        statusBar: !!document.querySelector('[data-testid="status-bar-track-changes"]'),
+        text: (document.querySelector('[data-testid="document-content"]')?.textContent ?? "").slice(0, 40),
+        rect: rect ? { x: rect.x, y: rect.y, w: rect.width, h: rect.height } : null,
+        pageStyle: style ? { opacity: style.opacity, display: style.display, background: style.backgroundColor, visibility: style.visibility } : null,
+      };
+    });
+    console.log("STOPWATCH_DUMP " + JSON.stringify(dump));
+    await page.screenshot({ path: "demo-results/stopwatch-debug.png" });
+  }
   await caption(page, `Opened in ${openMs} ms — straight from local storage, no spinner`);
   await shot(page, "stopwatch-open");
   await beat(page, 3600);
@@ -296,8 +315,8 @@ test("docu-edit — library, themes and the local-first story", async ({ page })
   await beat(page, 3600);
 
   await caption(page, "Friendly to mistakes, too");
-  await card("Launch Poster").click();
-  await expect(page.getByTestId("quick-look-title")).toHaveText("Launch Poster");
+  await card("Golden Gate").click();
+  await expect(page.getByTestId("quick-look-title")).toHaveText("Golden Gate");
   await beat(page, 900);
   await page.getByTestId("quick-look-trash").click();
   await expect(page.getByTestId("library-row")).toHaveCount(5);
