@@ -44,10 +44,12 @@ import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
   DEFAULT_TABLE_CELL_PADDING_CM,
+  type DeckHeaderFooter,
   type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
   type Slide,
+  type SlideFieldPlaceholder,
   type SlideFrame,
   type SlideLayout,
   type SlideParagraph,
@@ -56,6 +58,8 @@ import {
   type SlideTableRow,
   type TableFrame,
 } from "../model";
+import { DEFAULT_DATE_FORMAT, defaultFieldRect } from "../headerFooter";
+import { formatFromOdtDateStyleName } from "../../core/dateTimeFormats";
 import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
 import { classifyLayout } from "../layouts";
 
@@ -104,6 +108,7 @@ class StyleResolver {
   private readonly styles = new Map<string, StyleEntry>();
   private readonly cache = new Map<string, RunProps>();
   private readonly drawingPageTransitions = new Map<string, OdpTransitionAttrs>();
+  private readonly drawingPageDisplays = new Map<string, OdpDisplayFlags>();
   private readonly rawStyles = new Map<string, Element>();
 
   /** The raw `<style:style>` element for a name, for the table reader to read
@@ -138,6 +143,7 @@ class StyleResolver {
       const dpProps = firstChildElement(styleEl, STYLE_NAMESPACE, "drawing-page-properties");
       if (dpProps) {
         this.drawingPageTransitions.set(name, readDrawingPageTransition(dpProps));
+        this.drawingPageDisplays.set(name, readDrawingPageDisplay(dpProps));
       }
     }
     this.styles.set(name, entry);
@@ -151,6 +157,12 @@ class StyleResolver {
     }
     const attrs = this.drawingPageTransitions.get(name);
     return attrs && attrs.smilType ? attrs : undefined;
+  }
+
+  /** The `presentation:display-*` field flags a page's drawing-page style
+   * carries (SPEC-093); an absent flag is left undefined (read as "show"). */
+  drawingPageDisplay(name: string | null | undefined): OdpDisplayFlags {
+    return (name ? this.drawingPageDisplays.get(name) : undefined) ?? {};
   }
 
   private resolveGraphic(name: string | null | undefined): GraphicProps {
@@ -283,6 +295,70 @@ function readDrawingPageTransition(props: Element): OdpTransitionAttrs {
   return attrs;
 }
 
+/** A page's `presentation:display-footer`/`display-page-number`/
+ * `display-date-time` flags (SPEC-093); absent leaves the field undefined,
+ * read as "show" (the ODF default — confirmed by the golden fixture). */
+interface OdpDisplayFlags {
+  footer?: boolean;
+  pageNumber?: boolean;
+  dateTime?: boolean;
+}
+
+function readDrawingPageDisplay(props: Element): OdpDisplayFlags {
+  const flags: OdpDisplayFlags = {};
+  const footer = presentationAttr(props, "display-footer");
+  if (footer !== null) flags.footer = footer === "true";
+  const pageNumber = presentationAttr(props, "display-page-number");
+  if (pageNumber !== null) flags.pageNumber = pageNumber === "true";
+  const dateTime = presentationAttr(props, "display-date-time");
+  if (dateTime !== null) flags.dateTime = dateTime === "true";
+  return flags;
+}
+
+/** One `presentation:date-time-decl` (SPEC-093): its source, the auto date's
+ * `style:data-style-name`, and the fixed text. */
+interface OdpDateDecl {
+  source: "fixed" | "current-date";
+  dataStyleName?: string;
+  text: string;
+}
+
+/** The deck's `office:presentation` field declarations (SPEC-093): footer name
+ * → text, and date-time name → decl. `presentation:header-decl` is preserved
+ * untouched (it rides the envelope prefix) and is not modelled (AC-95). */
+interface OdpDecls {
+  footers: Map<string, string>;
+  dateTimes: Map<string, OdpDateDecl>;
+}
+
+function readDeclarations(presentation: Element): OdpDecls {
+  const footers = new Map<string, string>();
+  const dateTimes = new Map<string, OdpDateDecl>();
+  for (const child of Array.from(presentation.children)) {
+    if (child.namespaceURI !== PRESENTATION_NS) {
+      continue;
+    }
+    const name = presentationAttr(child, "name");
+    if (!name) {
+      continue;
+    }
+    if (child.localName === "footer-decl") {
+      footers.set(name, child.textContent ?? "");
+    } else if (child.localName === "date-time-decl") {
+      const decl: OdpDateDecl = {
+        source: presentationAttr(child, "source") === "fixed" ? "fixed" : "current-date",
+        text: child.textContent ?? "",
+      };
+      const dataStyle = styleAttr(child, "data-style-name");
+      if (dataStyle) {
+        decl.dataStyleName = dataStyle;
+      }
+      dateTimes.set(name, decl);
+    }
+  }
+  return { footers, dateTimes };
+}
+
 function mergeProps(base: RunProps, over: RunProps): RunProps {
   return {
     bold: over.bold ?? base.bold,
@@ -408,15 +484,34 @@ interface OdpContext {
   masterPh: Map<string, Geometry>;
   media: Map<string, MediaPart>;
   parts: Map<string, Uint8Array>;
+  /** The deck's field declarations (SPEC-093), resolved per page. */
+  decls: OdpDecls;
+  /** Deck slide size, for the `DEFAULT_FIELD_BAND` geometry fallback. */
+  deckWidthCm: number;
+  deckHeightCm: number;
 }
 
 function frameBase(geom: Geometry): { id: string; xCm: number; yCm: number; widthCm: number; heightCm: number } {
   return { id: crypto.randomUUID(), xCm: geom.xCm, yCm: geom.yCm, widthCm: geom.widthCm, heightCm: geom.heightCm };
 }
 
+/** The deck field kind a `presentation:class` denotes (SPEC-093), or undefined. */
+function fieldClassKind(cls: string | null): "footer" | "slideNumber" | "date" | undefined {
+  if (cls === "footer") return "footer";
+  if (cls === "page-number") return "slideNumber";
+  if (cls === "date-time") return "date";
+  return undefined;
+}
+
 /** Parses one shape element into a frame, or null for a non-shape. */
 function parseFrameChild(el: Element, ctx: OdpContext): SlideFrame | null {
   if (el.namespaceURI !== DRAW_NAMESPACE) {
+    return null;
+  }
+  // SPEC-093: a page-level footer/page-number/date-time frame is not an
+  // ordinary frame — the page's field entries are synthesised from its display
+  // flags + declarations (odpPageFields), so drop it here.
+  if (el.localName === "frame" && fieldClassKind(presentationAttr(el, "class")) !== undefined) {
     return null;
   }
   switch (el.localName) {
@@ -803,7 +898,15 @@ export function parseOdpTableFrameForTest(drawFrameXml: string, autoStylesXml = 
   const doc = parseXml(wrapped);
   const styles = new StyleResolver();
   addStylesFrom(doc.documentElement, styles);
-  const ctx: OdpContext = { styles, masterPh: new Map(), media: new Map(), parts: new Map() };
+  const ctx: OdpContext = {
+    styles,
+    masterPh: new Map(),
+    media: new Map(),
+    parts: new Map(),
+    decls: { footers: new Map(), dateTimes: new Map() },
+    deckWidthCm: DEFAULT_SLIDE_WIDTH_CM,
+    deckHeightCm: DEFAULT_SLIDE_HEIGHT_CM,
+  };
   const frameEl = doc.documentElement.getElementsByTagNameNS(DRAW_NAMESPACE, "frame")[0];
   const frame = parseDrawFrame(frameEl, ctx);
   return frame.kind === "table" ? frame : undefined;
@@ -822,6 +925,9 @@ export function parseChartDrawFrameForTest(drawFrameXml: string, parts: Record<s
     masterPh: new Map(),
     media: new Map(),
     parts: new Map(Object.entries(parts)),
+    decls: { footers: new Map(), dateTimes: new Map() },
+    deckWidthCm: DEFAULT_SLIDE_WIDTH_CM,
+    deckHeightCm: DEFAULT_SLIDE_HEIGHT_CM,
   };
   const frameEl = doc.documentElement.getElementsByTagNameNS(DRAW_NAMESPACE, "frame")[0];
   return parseDrawFrame(frameEl, ctx);
@@ -1080,9 +1186,10 @@ export async function parseOdp(
 
   const masterPh = buildMasterPlaceholders(stylesDoc);
   const { widthCm, heightCm } = pageSize(stylesDoc, contentDoc);
+  const decls = readDeclarations(presentation);
 
   const media = new Map<string, MediaPart>();
-  const ctx: OdpContext = { styles, masterPh, media, parts };
+  const ctx: OdpContext = { styles, masterPh, media, parts, decls, deckWidthCm: widthCm, deckHeightCm: heightCm };
 
   // Split content.xml around its draw:pages (SPEC-080): the writer's
   // splice-equality envelope + each page's EXACT source substring, so
@@ -1129,16 +1236,60 @@ export async function parseOdp(
     opaque.push({ name, data: await bytesToBase64Async(partBytes) });
   }
 
+  const headerFooter = assembleOdpHeaderFooter(slides, decls);
+
   return {
     slides,
     layouts,
     slideWidthCm: widthCm,
     slideHeightCm: heightCm,
+    headerFooter,
     media: [...media.values()],
     opaque,
     properties,
     odpContentEnvelope: { prefix, suffix },
   };
+}
+
+/** Assembles the deck-level `headerFooter` from the odp declarations + read
+ * slides (SPEC-093): the footer default is the first footer decl (divergent
+ * pages keep a per-slide override); the date default comes from the auto date
+ * decl's data style (or a deck-wide fixed decl when no auto one exists). */
+function assembleOdpHeaderFooter(slides: Slide[], decls: OdpDecls): DeckHeaderFooter | undefined {
+  const hf: DeckHeaderFooter = {};
+  const firstFooter = [...decls.footers.values()][0];
+  if (firstFooter !== undefined && firstFooter !== "") {
+    hf.footerText = firstFooter;
+    for (const slide of slides) {
+      for (const field of slide.fields ?? []) {
+        if (field.kind === "footer" && field.text === firstFooter) {
+          delete field.text;
+        }
+      }
+    }
+  }
+  const dates = [...decls.dateTimes.values()];
+  const autoDecl = dates.find((decl) => decl.source === "current-date");
+  const fixedDecl = dates.find((decl) => decl.source === "fixed");
+  if (autoDecl) {
+    const format = autoDecl.dataStyleName ? formatFromOdtDateStyleName(autoDecl.dataStyleName) : null;
+    if (format && format !== DEFAULT_DATE_FORMAT) {
+      hf.dateFormat = format;
+    }
+  } else if (fixedDecl) {
+    hf.dateSource = "fixed";
+    if (fixedDecl.text) {
+      hf.dateFixedText = fixedDecl.text;
+    }
+    for (const slide of slides) {
+      for (const field of slide.fields ?? []) {
+        if (field.kind === "date" && field.text === fixedDecl.text) {
+          delete field.text;
+        }
+      }
+    }
+  }
+  return Object.keys(hf).length > 0 ? hf : undefined;
 }
 
 /** Splits a content.xml string into everything before its first `draw:page`,
@@ -1246,7 +1397,61 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
   }
+  const fields = odpPageFields(page, ctx);
+  if (fields.length > 0) {
+    slide.fields = fields;
+  }
   return slide;
+}
+
+/** The deck field placeholders a page shows (SPEC-093): synthesised from its
+ * `presentation:display-*` flags + `use-*-name` declarations, geometry from the
+ * master placeholders (`OdpContext.masterPh`) with a `DEFAULT_FIELD_BAND`
+ * fallback. Presence in the returned list IS the page's visibility. */
+function odpPageFields(page: Element, ctx: OdpContext): SlideFieldPlaceholder[] {
+  const fields: SlideFieldPlaceholder[] = [];
+  const display = ctx.styles.drawingPageDisplay(drawAttr(page, "style-name"));
+  const rect = (kind: SlideFieldPlaceholder["kind"], cls: string): Pick<SlideFieldPlaceholder, "xCm" | "yCm" | "widthCm" | "heightCm"> => {
+    const master = ctx.masterPh.get(cls);
+    if (master) {
+      return { xCm: master.xCm, yCm: master.yCm, widthCm: master.widthCm, heightCm: master.heightCm };
+    }
+    const band = defaultFieldRect(kind, ctx.deckWidthCm, ctx.deckHeightCm);
+    return { xCm: band.xCm, yCm: band.yCm, widthCm: band.widthCm, heightCm: band.heightCm };
+  };
+  const useFooter = presentationAttr(page, "use-footer-name");
+  if (useFooter && display.footer !== false && ctx.masterPh.has("footer")) {
+    const entry: SlideFieldPlaceholder = { kind: "footer", ...rect("footer", "footer"), align: "center" };
+    const text = ctx.decls.footers.get(useFooter);
+    if (text) {
+      entry.text = text;
+    }
+    fields.push(entry);
+  }
+  if (display.pageNumber !== false && ctx.masterPh.has("page-number")) {
+    fields.push({ kind: "slideNumber", ...rect("slideNumber", "page-number"), align: "right" });
+  }
+  const useDate = presentationAttr(page, "use-date-time-name");
+  if (useDate && display.dateTime !== false && ctx.masterPh.has("date-time")) {
+    // The date sits left in the band (left is the default alignment → absent).
+    const entry: SlideFieldPlaceholder = { kind: "date", ...rect("date", "date-time") };
+    const decl = ctx.decls.dateTimes.get(useDate);
+    if (decl) {
+      if (decl.source === "fixed") {
+        // A fixed date on this page — a per-slide literal (the deck stays auto
+        // unless every page is fixed, folded to the deck in assembleOdpHeaderFooter).
+        if (decl.text) {
+          entry.text = decl.text;
+        }
+      } else if (decl.dataStyleName && !formatFromOdtDateStyleName(decl.dataStyleName)) {
+        // A foreign data style (Impress's D1) is out-of-subset — preserve it,
+        // render the default pattern (ODF caches nothing).
+        entry.wireStyleName = decl.dataStyleName;
+      }
+    }
+    fields.push(entry);
+  }
+  return fields;
 }
 
 /** The plain-text speaker notes of a page (SPEC-083, AC-3/4): the

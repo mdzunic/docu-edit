@@ -9,7 +9,7 @@
 // edits through the same `record`.
 import { ref, type Ref } from "vue";
 import type { DocumentProperties } from "../../lib/core/documentProperties";
-import type { PresentationModel, Slide } from "../../lib/presentation/model";
+import type { DeckHeaderFooter, PresentationModel, Slide } from "../../lib/presentation/model";
 
 /** The most undo steps a view keeps; the oldest is dropped past this (AC-43). */
 export const MAX_UNDO_STEPS = 100;
@@ -23,6 +23,12 @@ interface DeckSnapshot {
   firstSlideNumber?: number;
   deckDirty?: true;
   properties?: DocumentProperties;
+  /** SPEC-093: the deck footer/date values + dirty flag restore together with
+   * the per-slide field visibility carried on the cloned `slides`, so one undo
+   * of a Header & Footer apply reverts everything rather than stranding the
+   * deck values. */
+  headerFooter?: DeckHeaderFooter;
+  headerFooterDirty?: true;
 }
 
 interface Snapshot {
@@ -73,6 +79,12 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
     if (model.properties) {
       deck.properties = structuredClone(model.properties);
     }
+    if (model.headerFooter) {
+      deck.headerFooter = structuredClone(model.headerFooter);
+    }
+    if (model.headerFooterDirty) {
+      deck.headerFooterDirty = true;
+    }
     const snap: Snapshot = { slides: structuredClone(model.slides), deck };
     if (model.structureDirty) {
       snap.structureDirty = true;
@@ -105,6 +117,16 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
       model.properties = snap.deck.properties;
     } else {
       delete model.properties;
+    }
+    if (snap.deck.headerFooter) {
+      model.headerFooter = snap.deck.headerFooter;
+    } else {
+      delete model.headerFooter;
+    }
+    if (snap.deck.headerFooterDirty) {
+      model.headerFooterDirty = true;
+    } else {
+      delete model.headerFooterDirty;
     }
     deps.onApply();
   }

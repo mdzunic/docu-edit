@@ -10,9 +10,11 @@ import {
   buildOdpChartsFixtureBytes,
   buildOdpFixtureBytes,
   buildOdpTablesFixtureBytes,
+  buildOdpHeaderFooterFixtureBytes,
   buildPptxAnimationsFixtureBytes,
   buildPptxChartsFixtureBytes,
   buildPptxFixtureBytes,
+  buildPptxHeaderFooterFixtureBytes,
   buildPptxTablesFixtureBytes,
   buildSpec089OdpFixtureBytes,
   buildSpec089PptxFixtureBytes,
@@ -45,12 +47,19 @@ const chartsPptx = await buildPptxChartsFixtureBytes();
 writeFileSync(join(fixturesDir, "spec092-charts.pptx"), chartsPptx);
 const chartsOdp = await buildOdpChartsFixtureBytes();
 writeFileSync(join(fixturesDir, "spec092-charts.odp"), chartsOdp);
+// SPEC-093 header/footer fixtures (title suppressed + per-slide footer override
+// + out-of-subset date).
+const hfPptx = await buildPptxHeaderFooterFixtureBytes();
+writeFileSync(join(fixturesDir, "spec093-headers-footers.pptx"), hfPptx);
+const hfOdp = await buildOdpHeaderFooterFixtureBytes();
+writeFileSync(join(fixturesDir, "spec093-headers-footers.odp"), hfOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
     `spec089-layouts.pptx (${layoutsPptx.byteLength}B), spec089-layouts.odp (${layoutsOdp.byteLength}B), ` +
     `spec091-tables.pptx (${tablesPptx.byteLength}B), spec091-tables.odp (${tablesOdp.byteLength}B), ` +
-    `spec092-charts.pptx (${chartsPptx.byteLength}B), spec092-charts.odp (${chartsOdp.byteLength}B)`,
+    `spec092-charts.pptx (${chartsPptx.byteLength}B), spec092-charts.odp (${chartsOdp.byteLength}B), ` +
+    `spec093-headers-footers.pptx (${hfPptx.byteLength}B), spec093-headers-footers.odp (${hfOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

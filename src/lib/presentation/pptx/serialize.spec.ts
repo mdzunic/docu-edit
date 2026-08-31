@@ -137,3 +137,81 @@ describe("serializeSlideXml — foreign, group, image", () => {
     expect(xml).toContain(`<a:blip r:embed="rId2"/>`);
   });
 });
+
+// --- SPEC-093 deck field placeholders --------------------------------------
+import { canonicalFieldSp, resolveSlideFields } from "./serialize";
+import { parseFieldPlaceholderForTest } from "./reader";
+import {
+  GOLDEN_DATE_ENTRY,
+  GOLDEN_DATE_RF,
+  GOLDEN_DATE_SP,
+  GOLDEN_FOOTER_ENTRY,
+  GOLDEN_FOOTER_RF,
+  GOLDEN_FOOTER_SP,
+  GOLDEN_FOOTER_SP_REORDERED,
+  GOLDEN_SLIDENUM_ENTRY,
+  GOLDEN_SLIDENUM_RF,
+  GOLDEN_SLIDENUM_SP,
+} from "./fieldGolden";
+import type { PresentationModel } from "../model";
+
+describe("pptx field golden (SPEC-093 AC-127..129)", () => {
+  it("serialises each canonical field p:sp exactly (write direction)", () => {
+    expect(canonicalFieldSp(GOLDEN_FOOTER_RF, 5)).toBe(GOLDEN_FOOTER_SP);
+    expect(canonicalFieldSp(GOLDEN_SLIDENUM_RF, 6)).toBe(GOLDEN_SLIDENUM_SP);
+    expect(canonicalFieldSp(GOLDEN_DATE_RF, 7)).toBe(GOLDEN_DATE_SP);
+  });
+
+  it("reads each canonical field p:sp back to its entry (read direction)", () => {
+    expect(parseFieldPlaceholderForTest(GOLDEN_FOOTER_SP, "footer")).toEqual(GOLDEN_FOOTER_ENTRY);
+    expect(parseFieldPlaceholderForTest(GOLDEN_SLIDENUM_SP, "slideNumber")).toEqual(GOLDEN_SLIDENUM_ENTRY);
+    expect(parseFieldPlaceholderForTest(GOLDEN_DATE_SP, "date")).toEqual(GOLDEN_DATE_ENTRY);
+  });
+
+  it("accepts an attribute-reordered PowerPoint-flavoured variant", () => {
+    expect(parseFieldPlaceholderForTest(GOLDEN_FOOTER_SP_REORDERED, "footer")).toEqual(GOLDEN_FOOTER_ENTRY);
+  });
+});
+
+describe("pptx field serialisation (SPEC-093 AC-66/67/68/69)", () => {
+  const deck = (slide: Slide): PresentationModel => ({
+    kind: "presentation",
+    id: "d",
+    title: "D",
+    format: "pptx",
+    slides: [slide],
+    slideWidthCm: 25.4,
+    slideHeightCm: 19.05,
+  });
+
+  it("rewrites only the cached a:t inside a preserved field p:sp", () => {
+    const preserved = GOLDEN_SLIDENUM_SP; // cached "3"
+    const slide: Slide = {
+      id: "s",
+      frames: [],
+      fields: [{ kind: "slideNumber", xCm: 2, yCm: 18, widthCm: 8, heightCm: 1, align: "right" }],
+      preserved: { "p:ph:sldNum": preserved },
+    };
+    const model = deck(slide);
+    const fields = resolveSlideFields(model, 0, new Date(2026, 4, 14));
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml", fields);
+    // The preserved p:sp is re-emitted with only its a:t refreshed to the live number "1".
+    expect(xml).toContain(`type="slidenum"><a:t>1</a:t></a:fld>`);
+    expect(xml).toContain(`name="Slide Number Placeholder"`);
+  });
+
+  it("emits a plain a:r for a footer and a:fld for a number", () => {
+    const slide: Slide = {
+      id: "s",
+      frames: [],
+      fields: [
+        { kind: "footer", xCm: 2, yCm: 18, widthCm: 8, heightCm: 1, align: "center", text: "Confidential" },
+        { kind: "slideNumber", xCm: 2, yCm: 18, widthCm: 8, heightCm: 1, align: "right" },
+      ],
+    };
+    const model = deck(slide);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml", resolveSlideFields(model, 0, new Date()));
+    expect(xml).toContain(`<a:r><a:rPr lang="en-US"/><a:t>Confidential</a:t></a:r>`);
+    expect(xml).toContain(`type="slidenum">`);
+  });
+});

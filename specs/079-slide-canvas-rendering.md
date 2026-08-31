@@ -46,8 +46,10 @@ into the preservation fields the Reference defines, and otherwise ignored.
 Vertical text, columns in text bodies, autofit shrink-to-fit (`normAutofit`
 font scaling is applied when declared with an explicit `fontScale`,
 otherwise text may overflow its frame — accepted), RTL layout, tab stops
-inside slide text, fields beyond slide-number/date placeholders rendering
-their literal cached text. Gradient/image fills beyond the stated
+inside slide text (SPEC-093 now models slide-number/date/footer placeholders
+as live deck fields, superseding SPEC-079's frozen cached text; an `a:fld`/
+`text:date` outside a field placeholder still renders its literal cached
+text). Gradient/image fills beyond the stated
 approximations. Embedded fonts. Hyperlinks on slides render as plain
 styled text. Charts/tables/SmartArt/video render as labelled placeholder
 boxes only. Editing or rendering master/layout views.

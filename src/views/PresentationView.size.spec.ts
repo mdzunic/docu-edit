@@ -29,12 +29,16 @@
 //                    dialogs) and useFilmstripCommands (the filmstrip intent
 //                    dispatch) to pay for the useSlideCharts + SlideChartLayer
 //                    chart wiring (view at 442 lines)
+//   2026-08-31  430  SPEC-093 — extracted DeckBody (the filmstrip + stage +
+//                    panel-stack workspace body) to pay for the Header & Footer
+//                    wiring (useHeaderFooter + HeaderFooterDialog + toolbar
+//                    button + the deckFields resolver) (view at 426 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 445;
+const LINE_BUDGET = 430;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

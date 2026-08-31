@@ -10,7 +10,7 @@
 // defineProps<{...}>() generics (espree lints .vue scripts).
 import { computed, nextTick, ref, useTemplateRef } from "vue";
 import SlideStage from "./SlideStage.vue";
-import { anchorPoint, asSlides, filmstripLabel, filmstripThumbScale, focusSelector, menuButtons } from "./slideRender";
+import { anchorPoint, asSlides, asStageFieldsBySlide, filmstripLabel, filmstripThumbScale, focusSelector, menuButtons } from "./slideRender";
 
 const props = defineProps({
   slides: { type: Array, default: () => [] },
@@ -18,6 +18,10 @@ const props = defineProps({
   heightCm: { type: Number, required: true },
   media: { type: Array, default: () => [] },
   currentIndex: { type: Number, default: 0 },
+  /** SPEC-093: each slide's pre-resolved field band (footer/number/date), so a
+   * thumbnail's number agrees with the live slide index after a structural
+   * change. Indexed to match `slides`. */
+  fieldsBySlide: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(["select", "add", "command", "reorder"]);
@@ -36,6 +40,7 @@ const MENU_ITEMS = [
 ];
 
 const slides = computed(() => asSlides(props.slides));
+const fieldsBySlide = computed(() => asStageFieldsBySlide(props.fieldsBySlide));
 const scale = computed(() => filmstripThumbScale(props.widthCm, THUMB_WIDTH_PX));
 
 const listboxRef = useTemplateRef("listbox");
@@ -245,6 +250,7 @@ function announceMove(from = 0, to = 0) {
             :media="media"
             :scale="scale"
             :interactive="false"
+            :fields="fieldsBySlide[index] || []"
           />
         </div>
         <button

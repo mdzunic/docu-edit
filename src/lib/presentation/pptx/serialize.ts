@@ -14,8 +14,11 @@ import {
   DEFAULT_TABLE_CELL_PADDING_CM,
   type ChartFrame,
   type ImageFrame,
+  type PresentationModel,
   type ShapeFrame,
   type Slide,
+  type SlideFieldKind,
+  type SlideFieldPlaceholder,
   type SlideFill,
   type SlideFrame,
   type SlideParagraph,
@@ -26,6 +29,8 @@ import {
 } from "../model";
 import { writePptxTransition } from "../transitions";
 import { writePptxTiming } from "./timing";
+import { DEFAULT_DATE_FORMAT, fieldText, isTitleSlide } from "../headerFooter";
+import { FIELD_GUID, FORMAT_TO_PPTX_DATETIME, PH_IDX_OF_KIND, PH_NAME_OF_KIND, PH_TYPE_OF_KIND } from "./fields";
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -63,6 +68,7 @@ export function serializeSlideXml(
   slide: Slide,
   rels: Map<string, Relationship>,
   slidePartPath: string,
+  fields: ResolvedField[] = [],
 ): string {
   const rootAttrs = slide.preserved?.["@root"] ?? STANDARD_ROOT_ATTRS;
   let nextId = 2; // p:cNvPr id=1 is the group scaffold.
@@ -80,6 +86,10 @@ export function serializeSlideXml(
   const shapes = slide.frames
     .map((frame) => frameXml(frame, () => nextId++, rels, slidePartPath))
     .join("");
+  // SPEC-093: the deck field placeholders follow the frame shapes — each
+  // rewritten from its preserved `p:sp` (only the cached `a:t` refreshed) or,
+  // for a newly-enabled field, built canonical.
+  const fieldSps = fields.map((rf) => fieldPlaceholderXml(rf, slide, () => nextId++)).join("");
   const bg = slide.preserved?.["p:bg"] ?? "";
   const clrMapOvr = slide.preserved?.["p:clrMapOvr"] ?? `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>`;
   // A modelled transition wins over any preserved one (they are never both
@@ -98,6 +108,7 @@ export function serializeSlideXml(
     `<p:cSld>${bg}<p:spTree>` +
     `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
     shapes +
+    fieldSps +
     `</p:spTree></p:cSld>` +
     clrMapOvr +
     transition +
@@ -117,7 +128,7 @@ const NOTES_ROOT_ATTRS = ` xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"
  * idx="1"`) carrying one `a:p` per notes entry (single run, no explicit rPr,
  * so formatting is flat). Geometry is the default `p:notesSz`
  * (6858000×9144000 EMU) with a body placeholder inset by ~1.32cm margins. */
-export function serializeNotesSlideXml(notes: string[]): string {
+export function serializeNotesSlideXml(notes: string[], nonBodyPlaceholders = ""): string {
   const sldImg =
     `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/>` +
     `<p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr>` +
@@ -140,8 +151,37 @@ export function serializeNotesSlideXml(notes: string[]): string {
     `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>` +
     sldImg +
     bodySp +
+    nonBodyPlaceholders +
     `</p:spTree></p:cSld></p:notes>`
   );
+}
+
+/** Re-emits a source notes part's non-body field placeholders — `p:ph` of type
+ * `hdr`/`ftr`/`dt`/`sldNum` (SPEC-093 AC-92/93), which the SPEC-083 rebuild used
+ * to drop — refreshing a `slidenum`/`datetime*` field's cached `a:t` the same
+ * way a slide's does (a plain hdr/ftr run stays verbatim). */
+export function preserveNotesFieldPlaceholders(
+  sourceNotesXml: string,
+  slideNumberText: string,
+  dateText: string,
+): string {
+  const out: string[] = [];
+  for (const match of sourceNotesXml.matchAll(/<p:sp(?:\s[^>]*)?>[\s\S]*?<\/p:sp>/g)) {
+    const sp = match[0];
+    if (!/<p:ph\b[^>]*\btype="(?:hdr|ftr|dt|sldNum)"/.test(sp)) {
+      continue;
+    }
+    const fld = /<a:fld\b[^>]*\btype="([^"]*)"/.exec(sp);
+    const type = fld?.[1];
+    if (type === "slidenum") {
+      out.push(rewriteFieldCachedText(sp, slideNumberText));
+    } else if (type?.startsWith("datetime")) {
+      out.push(rewriteFieldCachedText(sp, dateText));
+    } else {
+      out.push(sp);
+    }
+  }
+  return out.join("");
 }
 
 function frameXml(
@@ -290,6 +330,101 @@ function runXml(run: SlideRun): string {
   const color = `<a:solidFill><a:srgbClr val="${hex(run.color ?? DEFAULT_COLOR)}"/></a:solidFill>`;
   const latin = run.fontFamily ? `<a:latin typeface="${escapeXmlAttribute(run.fontFamily)}"/>` : "";
   return `<a:r><a:rPr lang="en-US"${sz}${b}${i}${u}>${color}${latin}</a:rPr><a:t>${escapeXmlText(run.text)}</a:t></a:r>`;
+}
+
+// --- deck field placeholders (SPEC-093) ------------------------------------
+
+/** A resolved field ready to serialise: the entry, its freshly computed text,
+ * and the `a:fld@type` to emit (`slidenum`/`datetime*`), or undefined for a
+ * plain `a:r` (footer text and a fixed/plain date). */
+export interface ResolvedField {
+  field: SlideFieldPlaceholder;
+  text: string;
+  fldType?: string;
+}
+
+/** The `a:fld@type` a field emits, or undefined for a plain recomputed `a:r`
+ * (SPEC-093 AC-67/68/69). A number is `slidenum`; a footer and a fixed/
+ * per-slide-literal date are plain runs; an auto date maps its deck format to a
+ * `datetime*` (or a plain `a:r` for the two formats with no faithful mapping);
+ * an out-of-subset date keeps its verbatim wire type. */
+export function fieldEmitType(model: PresentationModel, field: SlideFieldPlaceholder): string | undefined {
+  if (field.kind === "slideNumber") {
+    return "slidenum";
+  }
+  if (field.kind === "footer") {
+    return undefined;
+  }
+  if (field.wireType) {
+    return field.wireType;
+  }
+  if (model.headerFooter?.dateSource === "fixed" || field.text !== undefined) {
+    return undefined;
+  }
+  return FORMAT_TO_PPTX_DATETIME[model.headerFooter?.dateFormat ?? DEFAULT_DATE_FORMAT];
+}
+
+/** The field placeholders to emit for a slide (SPEC-093): none on a suppressed
+ * title slide (AC-26), otherwise every `Slide.fields` entry with its resolved
+ * text + wire type. */
+export function resolveSlideFields(model: PresentationModel, slideIndex: number, instant: Date): ResolvedField[] {
+  const slide = model.slides[slideIndex];
+  if (!slide?.fields || slide.fields.length === 0) {
+    return [];
+  }
+  if (isTitleSlide(model, slideIndex) && model.headerFooter?.showOnTitleSlide === false) {
+    return [];
+  }
+  return slide.fields.map((field) => ({
+    field,
+    text: fieldText(model, slideIndex, field.kind, instant),
+    fldType: fieldEmitType(model, field),
+  }));
+}
+
+/** One field placeholder `p:sp`: the preserved source `p:sp` with only its
+ * cached `a:t` refreshed (AC-66), or — when the slide has no preserved copy
+ * (a newly-enabled field) — the canonical `p:sp` (AC-70). */
+function fieldPlaceholderXml(rf: ResolvedField, slide: Slide, mintId: () => number): string {
+  const preserved = slide.preserved?.[`p:ph:${PH_TYPE_OF_KIND[rf.field.kind]}`];
+  if (preserved) {
+    return rewriteFieldCachedText(preserved, rf.text);
+  }
+  return canonicalFieldSp(rf, mintId());
+}
+
+/** Replaces the first `<a:t>…</a:t>` (or self-closing `<a:t/>`) with the fresh
+ * value, leaving the rest of the preserved `p:sp` byte-for-byte. */
+function rewriteFieldCachedText(spXml: string, text: string): string {
+  const replacement = `<a:t>${escapeXmlText(text)}</a:t>`;
+  if (/<a:t>[\s\S]*?<\/a:t>/.test(spXml)) {
+    return spXml.replace(/<a:t>[\s\S]*?<\/a:t>/, () => replacement);
+  }
+  return spXml.replace(/<a:t\/>/, () => replacement);
+}
+
+/** The canonical field placeholder `p:sp` (SPEC-093 Reference). A number/auto
+ * date is an `<a:fld>`; a footer/fixed date is a plain `<a:r>`. Exported for the
+ * golden check. */
+export function canonicalFieldSp(rf: ResolvedField, id: number): string {
+  const kind: SlideFieldKind = rf.field.kind;
+  const type = PH_TYPE_OF_KIND[kind];
+  const idx = PH_IDX_OF_KIND[kind];
+  const name = PH_NAME_OF_KIND[kind];
+  const algn = rf.field.align === "center" ? "ctr" : rf.field.align === "right" ? "r" : "l";
+  const xfrm =
+    `<a:xfrm><a:off x="${cmToEmu(rf.field.xCm)}" y="${cmToEmu(rf.field.yCm)}"/>` +
+    `<a:ext cx="${cmToEmu(rf.field.widthCm)}" cy="${cmToEmu(rf.field.heightCm)}"/></a:xfrm>`;
+  const inner = rf.fldType
+    ? `<a:fld id="${FIELD_GUID[kind]}" type="${rf.fldType}"><a:t>${escapeXmlText(rf.text)}</a:t></a:fld>`
+    : `<a:r><a:rPr lang="en-US"/><a:t>${escapeXmlText(rf.text)}</a:t></a:r>`;
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"/>` +
+    `<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>` +
+    `<p:nvPr><p:ph type="${type}" sz="quarter" idx="${idx}"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr>${xfrm}</p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="${algn}"/>${inner}</a:p></p:txBody></p:sp>`
+  );
 }
 
 // --- shape frame -----------------------------------------------------------

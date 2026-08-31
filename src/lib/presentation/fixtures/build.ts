@@ -17,6 +17,7 @@ import { writePptxTiming } from "../pptx/timing";
 import { writeOdpAnim } from "../odp/anim";
 import { GOLDEN_PAGE_LAYOUT_NAMES, LAYOUT_GOLDEN } from "../odp/layoutGolden";
 import { createBlankPresentation } from "../slides";
+import { defaultFieldRect } from "../headerFooter";
 import { createTableFrame } from "../tables";
 import { writePptx } from "../pptx/writer";
 import { writeOdp } from "../odp/writer";
@@ -24,7 +25,7 @@ import { unzip } from "../../core/zip";
 import { chartPartXml } from "../../core/chartPartOoxml";
 import { odfChartContentXml } from "../../core/chartPartOdf";
 import type { ChartSeries, ChartType, ChartVisual } from "../../core/charts";
-import type { SlideAnimation } from "../model";
+import type { DeckHeaderFooter, PresentationModel, Slide, SlideAnimation, SlideFieldPlaceholder } from "../model";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -1411,4 +1412,115 @@ export async function buildOdpChartsFixtureBytes(): Promise<Uint8Array> {
   // `mimetype` must stay first and STOREd in an ODF package.
   const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+}
+
+// ============================================================================
+// SPEC-093 header/footer fixtures
+// ============================================================================
+// Built through the from-scratch writers (createBlankPresentation + configure +
+// write), not hand-authored bytes, so e2e and unit assertions never drift. A
+// four-slide deck: a title slide with fields suppressed (AC-97), two body
+// slides showing footer/slide-number/date (one carrying a per-slide footer
+// override, AC-98), and a slide with a deliberately out-of-subset date
+// (`datetime13` on pptx / an Impress `D1` data style on odp) pinning the
+// preserve-don't-parse path (AC-99). The four mini-deck slides above are
+// untouched.
+
+/** The deck-level header/footer the SPEC-093 fixtures configure (the pptx
+ * read-back; odp cannot represent `showOnTitleSlide` so its round-trip drops
+ * that one key). Auto date in the default `d MMMM yyyy` so the e2e's
+ * Apply-to-all keeps the default and AC-111 can pin the rendered value. */
+export const EXPECTED_HEADER_FOOTER: DeckHeaderFooter = {
+  footerText: "Confidential",
+  showOnTitleSlide: false,
+};
+
+/** The per-slide footer override the fixture's third slide carries (AC-98). */
+export const EXPECTED_HEADER_FOOTER_OVERRIDE = "Draft copy";
+
+function hfField(kind: SlideFieldPlaceholder["kind"], w: number, h: number, extra: Partial<SlideFieldPlaceholder> = {}): SlideFieldPlaceholder {
+  const rect = defaultFieldRect(kind, w, h);
+  const entry: SlideFieldPlaceholder = { kind, xCm: rect.xCm, yCm: rect.yCm, widthCm: rect.widthCm, heightCm: rect.heightCm, ...extra };
+  if (rect.align !== "left" && entry.align === undefined) {
+    entry.align = rect.align;
+  }
+  return entry;
+}
+
+function hfBody(title: string, w: number, h: number): Slide["frames"][number] {
+  return {
+    id: crypto.randomUUID(),
+    kind: "text",
+    role: "title",
+    paragraphs: [{ runs: [{ text: title }] }],
+    xCm: w * 0.08,
+    yCm: h * 0.08,
+    widthCm: w * 0.84,
+    heightCm: h * 0.16,
+  };
+}
+
+/** The fixture model, parameterised by format for the out-of-subset date's wire
+ * form (pptx keeps a `datetime13` cached string; odp keeps a foreign `D1` data
+ * style, ODF caching nothing). */
+function headerFooterFixtureModel(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  const w = model.slideWidthCm;
+  const h = model.slideHeightCm;
+
+  // Slide 0: the title slide, fields suppressed (no field entries + the deck's
+  // showOnTitleSlide=false policy). It keeps createBlank's title + subtitle
+  // placeholders so it classifies as the `title` layout (isTitleSlide true).
+  const title0 = model.slides[0].frames.find((f) => f.kind === "text" && f.role === "title");
+  if (title0 && title0.kind === "text") {
+    title0.paragraphs = [{ runs: [{ text: "Header & footer demo" }] }];
+  }
+
+  const bodyOne: Slide = {
+    id: crypto.randomUUID(),
+    frames: [hfBody("Agenda", w, h)],
+    fields: [hfField("footer", w, h), hfField("slideNumber", w, h), hfField("date", w, h)],
+  };
+  const bodyTwo: Slide = {
+    id: crypto.randomUUID(),
+    frames: [hfBody("Details", w, h)],
+    fields: [
+      hfField("footer", w, h, { text: EXPECTED_HEADER_FOOTER_OVERRIDE }),
+      hfField("slideNumber", w, h),
+      hfField("date", w, h),
+    ],
+  };
+  const outOfSubsetDate: SlideFieldPlaceholder =
+    format === "pptx"
+      ? hfField("date", w, h, { wireType: "datetime13", text: "14.5.2026" })
+      : hfField("date", w, h, { wireStyleName: "D1" });
+  const bodyThree: Slide = {
+    id: crypto.randomUUID(),
+    frames: [hfBody("Appendix", w, h)],
+    fields: [hfField("footer", w, h), hfField("slideNumber", w, h), outOfSubsetDate],
+  };
+
+  model.slides.push(bodyOne, bodyTwo, bodyThree);
+  const headerFooter: DeckHeaderFooter = { footerText: "Confidential", showOnTitleSlide: false };
+  model.headerFooter = headerFooter;
+  return model;
+}
+
+/** A fixed instant so the checked-in fixtures are byte-deterministic across
+ * regenerations (both the recomputed field values and the meta/core stamp). */
+const HEADER_FOOTER_FIXTURE_INSTANT = new Date(Date.UTC(2026, 4, 14, 9, 0, 0));
+
+export async function buildPptxHeaderFooterFixtureBytes(): Promise<Uint8Array> {
+  return (await writePptx(headerFooterFixtureModel("pptx"), {
+    now: HEADER_FOOTER_FIXTURE_INSTANT,
+    modified: HEADER_FOOTER_FIXTURE_INSTANT,
+  })).bytes;
+}
+
+export async function buildOdpHeaderFooterFixtureBytes(): Promise<Uint8Array> {
+  return (await writeOdp(headerFooterFixtureModel("odp"), {
+    now: HEADER_FOOTER_FIXTURE_INSTANT,
+    modified: HEADER_FOOTER_FIXTURE_INSTANT,
+  })).bytes;
 }

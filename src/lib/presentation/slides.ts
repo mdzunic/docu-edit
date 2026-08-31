@@ -217,6 +217,10 @@ export function stripRetention(model: PresentationModel): PresentationModel {
   // builds from scratch, so there is no deck-level part to rebuild; but
   // firstSlideNumber is content and is kept (SPEC-090).
   delete copy.deckDirty;
+  // headerFooterDirty is retention too (SPEC-093 AC-86): the from-scratch writer
+  // emits the fields from the model unconditionally, so the flag has no meaning
+  // on a stripped copy. The headerFooter values + Slide.fields are content, kept.
+  delete copy.headerFooterDirty;
   return copy;
 }
 

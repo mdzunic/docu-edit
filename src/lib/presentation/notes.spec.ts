@@ -202,3 +202,37 @@ describe("notes round trip (AC-26)", () => {
     expect(after.get("ppt/notesSlides/notesSlide1.xml")).toBe(before.get("ppt/notesSlides/notesSlide1.xml"));
   });
 });
+
+// --- SPEC-093 notes non-body placeholder delta (AC-92/93/123/135) ----------
+import { preserveNotesFieldPlaceholders } from "./pptx/serialize";
+
+describe("notes non-body placeholders (SPEC-093 AC-92/93)", () => {
+  const NOTES_SOURCE =
+    `<p:notes><p:cSld><p:spTree>` +
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>` +
+    `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>old</a:t></a:r></a:p></p:txBody></p:sp>` +
+    `<p:sp><p:nvSpPr><p:cNvPr id="4" name="Footer Placeholder"/><p:cNvSpPr/><p:nvPr><p:ph type="ftr"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Notes footer</a:t></a:r></a:p></p:txBody></p:sp>` +
+    `<p:sp><p:nvSpPr><p:cNvPr id="5" name="Slide Number Placeholder"/><p:cNvSpPr/><p:nvPr><p:ph type="sldNum"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:fld id="{x}" type="slidenum"><a:t>7</a:t></a:fld></a:p></p:txBody></p:sp>` +
+    `</p:spTree></p:cSld></p:notes>`;
+
+  it("re-emits the source's hdr/ftr/dt/sldNum placeholders, refreshing a slidenum a:t", () => {
+    const nonBody = preserveNotesFieldPlaceholders(NOTES_SOURCE, "12", "14 May 2026");
+    // Footer preserved verbatim (a plain run stays), slide number refreshed to 12.
+    expect(nonBody).toContain(`type="ftr"`);
+    expect(nonBody).toContain(`<a:t>Notes footer</a:t>`);
+    expect(nonBody).toContain(`type="slidenum"><a:t>12</a:t></a:fld>`);
+    // The body/sldImg placeholders are NOT re-emitted here (the scaffold owns them).
+    expect(nonBody).not.toContain(`type="body"`);
+    expect(nonBody).not.toContain(`type="sldImg"`);
+  });
+
+  it("the notes-slide serialiser splices the preserved placeholders after the body", () => {
+    const nonBody = preserveNotesFieldPlaceholders(NOTES_SOURCE, "3", "14 May 2026");
+    const xml = serializeNotesSlideXml(["My note"], nonBody);
+    expect(xml).toContain(`<a:t>My note</a:t>`);
+    expect(xml).toContain(`type="ftr"`);
+    expect(xml).toContain(`type="slidenum"><a:t>3</a:t></a:fld>`);
+    // Non-body placeholders come after the body scaffold, before the spTree close.
+    expect(xml.indexOf(`type="body"`)).toBeLessThan(xml.indexOf(`type="ftr"`));
+  });
+});

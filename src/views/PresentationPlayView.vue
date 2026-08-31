@@ -11,6 +11,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SlideStage from "../components/presentation/SlideStage.vue";
+import { stageFields } from "../components/presentation/slideRender";
+import { now } from "../lib/clock";
 import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { emptyTwoStageView, transitionAnimates } from "../components/presentation/transitionStyles";
 import UiButton from "../components/ui/UiButton.vue";
@@ -62,6 +64,11 @@ function buildCountAt(index = 0) {
 }
 const playback = usePlayback({ slideCount, reducedMotion, start: routeStartIndex(), buildCountAt });
 const currentSlide = computed(() => presentation.value?.slides[playback.current.value.slideIndex] ?? null);
+// SPEC-093: the playing slide's resolved deck field band.
+const currentFields = computed(() => {
+  const model = presentation.value;
+  return model && !playback.atEnd.value ? stageFields(model, playback.current.value.slideIndex, now()) : [];
+});
 
 // --- build playback (SPEC-086): frames hidden until their build plays --------
 const buildPreview = useBuildPreview();
@@ -439,6 +446,7 @@ onBeforeUnmount(() => {
       :scale="stageScale"
       :interactive="false"
       :frame-styles="buildPreview.frameStyles.value"
+      :fields="currentFields"
     />
 
     <div
