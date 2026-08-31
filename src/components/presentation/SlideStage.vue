@@ -215,7 +215,6 @@ const previewStyle = computed(() => {
   overflow: hidden;
   white-space: nowrap;
   pointer-events: none;
-  line-height: 1.1;
 }
 
 .sr-only {

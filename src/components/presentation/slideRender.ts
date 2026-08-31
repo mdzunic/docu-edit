@@ -73,11 +73,6 @@ export function stageFields(model: PresentationModel, slideIndex: number, instan
     }));
 }
 
-/** Coerces a `.vue` script's runtime model prop to `PresentationModel | null`. */
-export function asPresentationModel(value: unknown): PresentationModel | null {
-  return (value ?? null) as PresentationModel | null;
-}
-
 /** Coerces a `.vue` template's runtime pre-resolved field list to `StageField[]`. */
 export function asStageFields(value: unknown): StageField[] {
   return (value ?? []) as StageField[];

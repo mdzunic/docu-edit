@@ -171,13 +171,13 @@ function setSource(value = "auto") {
 .hf-form {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-3);
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .text-input {
@@ -188,10 +188,10 @@ function setSource(value = "auto") {
 .date-group {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-2);
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-1);
-  padding: 0.5rem 0.6rem;
+  padding: var(--space-3);
   margin: 0;
 }
 
@@ -202,12 +202,12 @@ function setSource(value = "auto") {
 .radio {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .note {
   margin: 0;
-  font-size: 0.8rem;
-  color: var(--text-muted, #666);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 </style>
