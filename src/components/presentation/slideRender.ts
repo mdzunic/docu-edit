@@ -78,6 +78,16 @@ export function asPresentationModel(value: unknown): PresentationModel | null {
   return (value ?? null) as PresentationModel | null;
 }
 
+/** Coerces a `.vue` template's runtime pre-resolved field list to `StageField[]`. */
+export function asStageFields(value: unknown): StageField[] {
+  return (value ?? []) as StageField[];
+}
+
+/** Coerces a runtime array-of-field-lists (one per slide) for the filmstrip. */
+export function asStageFieldsBySlide(value: unknown): StageField[][] {
+  return (value ?? []) as StageField[][];
+}
+
 // --- prop coercion (the `as*` pattern, like documentModel's asShape) --------
 export function asSlide(value: unknown): Slide {
   return value as Slide;

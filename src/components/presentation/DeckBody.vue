@@ -4,17 +4,22 @@
 // stack — the block below the editing bars. Extracted from PresentationView.vue
 // to pay for the Header & Footer wiring while keeping the view a thin hub
 // (PresentationView.size.spec.ts). A dumb component: every controller/command it
-// needs is passed in, and it re-emits the filmstrip intents unchanged. Runtime
-// prop declarations, not the generic forms (espree lints .vue scripts).
+// needs is passed in (as reactive props read off the deck's shallowRef, so an
+// in-place mutation + triggerRef still updates the filmstrip/stage), and it
+// re-emits the filmstrip intents unchanged. Runtime prop declarations, not the
+// generic forms (espree lints .vue scripts).
 import { computed } from "vue";
 import SlideChartLayer from "./SlideChartLayer.vue";
 import SlideFilmstrip from "./SlideFilmstrip.vue";
 import SlideStageArea from "./SlideStageArea.vue";
 import SlidePanelStack from "./SlidePanelStack.vue";
-import { asPresentationModel } from "./slideRender";
+import { asStageFieldsBySlide } from "./slideRender";
 
 const props = defineProps({
-  model: { type: Object, default: null },
+  slides: { type: Array, default: () => [] },
+  widthCm: { type: Number, required: true },
+  heightCm: { type: Number, required: true },
+  currentSlide: { type: Object, default: null },
   currentIndex: { type: Number, default: 0 },
   media: { type: Array, default: () => [] },
   liveLabel: { type: String, default: "" },
@@ -24,14 +29,13 @@ const props = defineProps({
   notes: { type: Object, required: true },
   tables: { type: Object, required: true },
   charts: { type: Object, required: true },
+  /** SPEC-093: each slide's pre-resolved deck field band, indexed to `slides`. */
+  fieldsBySlide: { type: Array, default: () => [] },
 });
 
 defineEmits(["select", "add", "command", "reorder"]);
 
-const slides = computed(() => asPresentationModel(props.model)?.slides ?? []);
-const widthCm = computed(() => asPresentationModel(props.model)?.slideWidthCm ?? 0);
-const heightCm = computed(() => asPresentationModel(props.model)?.slideHeightCm ?? 0);
-const currentSlide = computed(() => slides.value[props.currentIndex] ?? null);
+const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[props.currentIndex] ?? []);
 </script>
 
 <template>
@@ -43,7 +47,7 @@ const currentSlide = computed(() => slides.value[props.currentIndex] ?? null);
       :height-cm="heightCm"
       :media="media"
       :current-index="currentIndex"
-      :model="model"
+      :fields-by-slide="fieldsBySlide"
       @select="$emit('select', $event)"
       @add="$emit('add')"
       @command="$emit('command', $event)"
@@ -59,8 +63,7 @@ const currentSlide = computed(() => slides.value[props.currentIndex] ?? null);
         :stage-edit="stageEdit"
         :animations="animations"
         :transitions="transitions"
-        :model="model"
-        :slide-index="currentIndex"
+        :fields="currentFields"
         @add="$emit('add')"
       />
       <SlidePanelStack

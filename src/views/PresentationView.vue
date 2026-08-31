@@ -12,6 +12,8 @@ import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import DeckBody from "../components/presentation/DeckBody.vue";
+import { stageFields } from "../components/presentation/slideRender";
+import { now } from "../lib/clock";
 import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
 import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
 import DeckHeader from "../components/presentation/DeckHeader.vue";
@@ -118,6 +120,12 @@ const liveLabel = computed(() =>
   presentation.value ? `Slide ${currentIndex.value + 1} of ${slideTotal.value}` : "",
 );
 const deckMedia = computed(() => presentation.value?.media ?? []);
+// SPEC-093: each slide's resolved field band, read off the deck's shallowRef so
+// a commit (triggerRef) recomputes footers/numbers/dates live (AC-27/30/31).
+const deckFields = computed(() => {
+  const model = presentation.value;
+  return model ? model.slides.map((_, index) => stageFields(model, index, now())) : [];
+});
 
 function selectSlide(index = 0) {
   if (index >= 0 && index < slideTotal.value) {
@@ -351,7 +359,10 @@ onBeforeUnmount(() => {
       />
 
       <DeckBody
-        :model="presentation"
+        :slides="presentation.slides"
+        :width-cm="presentation.slideWidthCm"
+        :height-cm="presentation.slideHeightCm"
+        :current-slide="currentSlide ?? undefined"
         :current-index="currentIndex"
         :media="deckMedia"
         :live-label="liveLabel"
@@ -361,6 +372,7 @@ onBeforeUnmount(() => {
         :notes="notes"
         :tables="tables"
         :charts="charts"
+        :fields-by-slide="deckFields"
         @select="selectSlide"
         @add="addSlideAction"
         @command="filmstrip.onCommand"

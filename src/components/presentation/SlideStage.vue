@@ -11,8 +11,7 @@
 import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import SlideFrameView from "./SlideFrameView.vue";
 import FrameSelectionOverlay from "./FrameSelectionOverlay.vue";
-import { asMediaParts, asPresentationModel, asSlide, cmPx, mediaResolver, stageFields, surfaceBackground } from "./slideRender";
-import { now } from "../../lib/clock";
+import { asMediaParts, asSlide, asStageFields, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
 
 const props = defineProps({
   /** The Slide to render (presentation model). */
@@ -44,11 +43,11 @@ const props = defineProps({
    * layers on during a show/preview. Absent in the editor (frames fully
    * visible, AC-25). */
   frameStyles: { type: Object, default: () => ({}) },
-  /** SPEC-093: the deck + this slide's index, so the shared surface renders the
-   * footer/slide-number/date band live through `fieldText` (the number stays
-   * correct after a structural change). Absent (index < 0) = no field band. */
-  model: { type: Object, default: null },
-  slideIndex: { type: Number, default: -1 },
+  /** SPEC-093: the slide's pre-resolved deck fields (footer/slide-number/date),
+   * computed by the parent from `fieldText` so this shared surface stays
+   * framework-neutral and updates under the deck's shallowRef commit. Empty on a
+   * suppressed title slide. */
+  fields: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits([
@@ -89,11 +88,7 @@ onBeforeUnmount(() => emit("surface-mounted", null));
 
 const slide = computed(() => asSlide(props.slide));
 const frames = computed(() => slide.value.frames);
-const stageFieldList = computed(() => {
-  const model = asPresentationModel(props.model);
-  if (!model || props.slideIndex < 0) return [];
-  return stageFields(model, props.slideIndex, now());
-});
+const stageFieldList = computed(() => asStageFields(props.fields));
 const resolveMedia = computed(() => mediaResolver(asMediaParts(props.media)));
 const selectedFrame = computed(() => frames.value.find((frame) => frame.id === props.selectedFrameId) ?? null);
 const showOverlay = computed(() => selectedFrame.value !== null && props.editingFrameId !== selectedFrame.value?.id);
