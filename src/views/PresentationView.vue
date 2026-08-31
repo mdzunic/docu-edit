@@ -355,6 +355,7 @@ onBeforeUnmount(() => {
           :height-cm="presentation.slideHeightCm"
           :media="deckMedia"
           :current-index="currentIndex"
+          :model="presentation"
           @select="selectSlide"
           @add="addSlideAction"
           @command="filmstrip.onCommand"
@@ -370,6 +371,8 @@ onBeforeUnmount(() => {
             :stage-edit="stageEdit"
             :animations="animations"
             :transitions="transitions"
+            :model="presentation"
+            :slide-index="currentIndex"
             @add="addSlideAction"
           />
           <SlidePanelStack

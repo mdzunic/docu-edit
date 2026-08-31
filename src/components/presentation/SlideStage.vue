@@ -11,7 +11,8 @@
 import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import SlideFrameView from "./SlideFrameView.vue";
 import FrameSelectionOverlay from "./FrameSelectionOverlay.vue";
-import { asMediaParts, asSlide, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
+import { asMediaParts, asPresentationModel, asSlide, cmPx, mediaResolver, stageFields, surfaceBackground } from "./slideRender";
+import { now } from "../../lib/clock";
 
 const props = defineProps({
   /** The Slide to render (presentation model). */
@@ -43,6 +44,11 @@ const props = defineProps({
    * layers on during a show/preview. Absent in the editor (frames fully
    * visible, AC-25). */
   frameStyles: { type: Object, default: () => ({}) },
+  /** SPEC-093: the deck + this slide's index, so the shared surface renders the
+   * footer/slide-number/date band live through `fieldText` (the number stays
+   * correct after a structural change). Absent (index < 0) = no field band. */
+  model: { type: Object, default: null },
+  slideIndex: { type: Number, default: -1 },
 });
 
 const emit = defineEmits([
@@ -83,6 +89,11 @@ onBeforeUnmount(() => emit("surface-mounted", null));
 
 const slide = computed(() => asSlide(props.slide));
 const frames = computed(() => slide.value.frames);
+const stageFieldList = computed(() => {
+  const model = asPresentationModel(props.model);
+  if (!model || props.slideIndex < 0) return [];
+  return stageFields(model, props.slideIndex, now());
+});
 const resolveMedia = computed(() => mediaResolver(asMediaParts(props.media)));
 const selectedFrame = computed(() => frames.value.find((frame) => frame.id === props.selectedFrameId) ?? null);
 const showOverlay = computed(() => selectedFrame.value !== null && props.editingFrameId !== selectedFrame.value?.id);
@@ -140,6 +151,14 @@ const previewStyle = computed(() => {
         @edit-mounted="(el) => emit('edit-mounted', el)"
         @edit-unmounted="() => emit('edit-unmounted')"
       />
+      <div
+        v-for="(field, index) in stageFieldList"
+        :key="`slide-field-${index}`"
+        class="slide-field"
+        data-testid="slide-field"
+        :data-field-kind="field.kindToken"
+        :style="field.style"
+      >{{ field.text }}</div>
       <FrameSelectionOverlay
         v-if="showOverlay && selectedFrame"
         :frame="selectedFrame"
@@ -190,6 +209,18 @@ const previewStyle = computed(() => {
   border: var(--border-width) dashed var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   pointer-events: none;
+}
+
+/* SPEC-093 deck field band: a positioned, non-interactive label. Horizontal
+ * alignment rides `justify-content` in the inline style (per the field). */
+.slide-field {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1.1;
 }
 
 .sr-only {

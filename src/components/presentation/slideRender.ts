@@ -18,6 +18,8 @@ import {
   type TableFrame,
 } from "../../lib/presentation/model";
 import { slideOutline } from "../../lib/presentation/slideModel";
+import { fieldKindToken, visibleFields } from "../../lib/presentation/headerFooter";
+import type { PresentationModel } from "../../lib/presentation/model";
 import type { ShapeVisual } from "../../lib/core/shapes";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
 import type { ChartVisual } from "../../lib/core/charts";
@@ -30,6 +32,50 @@ const DEFAULT_FONT_SIZE_PT = 18;
 /** A centimetre length as a px string (the model's own cm → CSS px). */
 export function cmPx(cm: number): string {
   return `${cmToPx(cm)}px`;
+}
+
+/** The default field look (SPEC-093 `DEFAULT_FIELD_BAND`). */
+const DEFAULT_FIELD_SIZE_PT = 12;
+const DEFAULT_FIELD_COLOR = "#595959";
+const JUSTIFY_FOR_ALIGN: Record<"left" | "center" | "right", string> = {
+  left: "flex-start",
+  center: "center",
+  right: "flex-end",
+};
+
+/** One deck field positioned on the stage (SPEC-093): its DOM token, resolved
+ * text and inline style. */
+export interface StageField {
+  kindToken: string;
+  text: string;
+  style: Record<string, string>;
+}
+
+/** The visible deck fields a slide renders at `instant` (SPEC-093 AC-27/28):
+ * every surface (stage, filmstrip, play view, build preview) resolves through
+ * `fieldText`, so a suppressed title slide or an off field yields no element. */
+export function stageFields(model: PresentationModel, slideIndex: number, instant: Date): StageField[] {
+  return visibleFields(model, slideIndex, instant)
+    .filter(({ text }) => text !== "")
+    .map(({ field, text }) => ({
+      kindToken: fieldKindToken(field.kind),
+      text,
+      style: {
+        left: cmPx(field.xCm),
+        top: cmPx(field.yCm),
+        width: cmPx(field.widthCm),
+        height: cmPx(field.heightCm),
+        "justify-content": JUSTIFY_FOR_ALIGN[field.align ?? "left"],
+        "font-size": `${(field.sizePt ?? DEFAULT_FIELD_SIZE_PT) * PT_TO_PX}px`,
+        color: field.color ?? DEFAULT_FIELD_COLOR,
+        ...(field.fontFamily ? { "font-family": field.fontFamily } : {}),
+      },
+    }));
+}
+
+/** Coerces a `.vue` script's runtime model prop to `PresentationModel | null`. */
+export function asPresentationModel(value: unknown): PresentationModel | null {
+  return (value ?? null) as PresentationModel | null;
 }
 
 // --- prop coercion (the `as*` pattern, like documentModel's asShape) --------

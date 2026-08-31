@@ -439,6 +439,8 @@ onBeforeUnmount(() => {
       :scale="stageScale"
       :interactive="false"
       :frame-styles="buildPreview.frameStyles.value"
+      :model="presentation"
+      :slide-index="playback.current.value.slideIndex"
     />
 
     <div

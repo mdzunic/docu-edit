@@ -22,6 +22,9 @@ const props = defineProps({
   stageEdit: { type: Object, required: true },
   animations: { type: Object, required: true },
   transitions: { type: Object, required: true },
+  /** SPEC-093: the deck + current index, so the stage renders the field band. */
+  model: { type: Object, default: null },
+  slideIndex: { type: Number, default: -1 },
 });
 const emit = defineEmits(["add"]);
 const s = props.stageEdit;
@@ -77,6 +80,8 @@ onBeforeUnmount(() => {
       :media="media"
       :scale="stageScale"
       :live-label="liveLabel"
+      :model="model"
+      :slide-index="slideIndex"
       :selected-frame-id="s.selection.selectedFrameId.value ?? undefined"
       :editing-frame-id="s.editing.editingFrameId.value ?? undefined"
       :editing-cell="s.editing.editingCell.value ?? undefined"

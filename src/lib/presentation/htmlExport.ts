@@ -36,6 +36,8 @@ import {
 } from "./animations";
 import { effectiveDirection, effectiveDurationMs } from "./transitions";
 import { advanceKeys, backKeys, firstKeys, lastKeys } from "./playbackKeys";
+import { fieldKindToken, visibleFields } from "./headerFooter";
+import { now } from "../core/clock";
 
 /** pt → px at 96/72 — the ratio the stage renderer uses. */
 const PT_TO_PX = 96 / 72;
@@ -174,6 +176,40 @@ interface EmitContext {
   media: Map<string, MediaPart>;
   fidOf: Map<string, string>;
   counter: { n: number };
+  /** SPEC-093: the deck + save-time instant, so each slide's field band renders
+   * through `fieldText` (AC-27/124) rather than any cached string. */
+  model: PresentationModel;
+  instant: Date;
+}
+
+const FIELD_JUSTIFY: Record<"left" | "center" | "right", string> = {
+  left: "flex-start",
+  center: "center",
+  right: "flex-end",
+};
+
+/** The deck field band for a slide (SPEC-093 AC-27/28): one positioned label
+ * per visible field, resolved through `fieldText`. Empty on a suppressed title
+ * slide or an off field. */
+function renderFields(ctx: EmitContext, index: number): string {
+  return visibleFields(ctx.model, index, ctx.instant)
+    .filter(({ text }) => text !== "")
+    .map(({ field, text }) => {
+      const style = [
+        "position:absolute",
+        `left:${num(cmToPx(field.xCm))}px`,
+        `top:${num(cmToPx(field.yCm))}px`,
+        `width:${num(cmToPx(field.widthCm))}px`,
+        `height:${num(cmToPx(field.heightCm))}px`,
+        "display:flex;align-items:center;overflow:hidden;white-space:nowrap",
+        `justify-content:${FIELD_JUSTIFY[field.align ?? "left"]}`,
+        `font-size:${num((field.sizePt ?? 12) * (96 / 72))}px`,
+        `color:${validColor(field.color) ?? "#595959"}`,
+        ...(field.fontFamily ? [`font-family:${field.fontFamily}`] : []),
+      ];
+      return `<div class="slide-field" data-testid="slide-field" data-field-kind="${fieldKindToken(field.kind)}" style="${esc(style.join(";"))}">${esc(text)}</div>`;
+    })
+    .join("");
 }
 
 function nextFid(ctx: EmitContext, frame: SlideFrame): string {
@@ -345,7 +381,7 @@ function renderSlide(slide: Slide, index: number, widthPx: number, heightPx: num
     `aria-hidden="true"`,
     `inert`,
   ];
-  return `<section ${attrs.join(" ")}>${frames}</section>`;
+  return `<section ${attrs.join(" ")}>${frames}${renderFields(ctx, index)}</section>`;
 }
 
 // --- notes ------------------------------------------------------------------
@@ -397,6 +433,8 @@ export function exportPresentationHtml(model: PresentationModel, options: HtmlEx
     media: new Map((model.media ?? []).map((part) => [part.mediaId, part])),
     fidOf: new Map(),
     counter: { n: 0 },
+    model,
+    instant: now(),
   };
   const sections = model.slides.map((slide, index) => renderSlide(slide, index, widthPx, heightPx, ctx)).join("");
   const title = esc(model.title || DEFAULT_PRESENTATION_TITLE);

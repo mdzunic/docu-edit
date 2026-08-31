@@ -18,6 +18,9 @@ const props = defineProps({
   heightCm: { type: Number, required: true },
   media: { type: Array, default: () => [] },
   currentIndex: { type: Number, default: 0 },
+  /** SPEC-093: the deck, so each thumbnail renders its live field band (its
+   * slide number agrees after a structural change). */
+  model: { type: Object, default: null },
 });
 
 const emit = defineEmits(["select", "add", "command", "reorder"]);
@@ -245,6 +248,8 @@ function announceMove(from = 0, to = 0) {
             :media="media"
             :scale="scale"
             :interactive="false"
+            :model="model"
+            :slide-index="index"
           />
         </div>
         <button
