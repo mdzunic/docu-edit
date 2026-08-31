@@ -61,7 +61,7 @@ function spanAttr(span = 1) {
       <col
         v-for="(widthCm, colIndex) in block.columnWidthsCm"
         :key="colIndex"
-        :style="{ width: tableColumnWidth(asTable(block), colIndex) }"
+        :style="{ width: tableColumnWidth(asTable(block), Number(colIndex)) }"
       >
     </colgroup>
     <tbody>
@@ -76,9 +76,9 @@ function spanAttr(span = 1) {
           :key="entry.colIndex"
           class="doc-table-cell"
           :class="{
-            'cell-selected': isCellInRange(asCellRange(cellRange), section, blockIndex, rowIndex, entry.colIndex),
+            'cell-selected': isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex),
           }"
-          :style="tableCellDisplayStyle(entry.cell, isCellInRange(asCellRange(cellRange), section, blockIndex, rowIndex, entry.colIndex))"
+          :style="tableCellDisplayStyle(entry.cell, isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex))"
           :colspan="spanAttr(entry.cell.colSpan)"
           :rowspan="spanAttr(entry.cell.rowSpan)"
           :data-row="rowIndex"

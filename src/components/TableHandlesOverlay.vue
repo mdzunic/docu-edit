@@ -48,7 +48,7 @@ const emit = defineEmits(["handle", "column-resize", "row-resize"]);
       type="button"
       class="table-handle delete"
       :data-testid="`table-handle-delete-col-${colIndex}`"
-      :aria-label="`Delete column ${colIndex + 1}`"
+      :aria-label="`Delete column ${Number(colIndex) + 1}`"
       :style="{
         left: `${col.left + col.width / 2 - 8}px`,
         top: `${geometry.top - 20}px`,
@@ -83,7 +83,7 @@ const emit = defineEmits(["handle", "column-resize", "row-resize"]);
       type="button"
       class="table-handle delete"
       :data-testid="`table-handle-delete-row-${rowIndex}`"
-      :aria-label="`Delete row ${rowIndex + 1}`"
+      :aria-label="`Delete row ${Number(rowIndex) + 1}`"
       :style="{
         left: `${geometry.left - 20}px`,
         top: `${row.top + row.height / 2 - 8}px`,

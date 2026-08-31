@@ -5,7 +5,7 @@
 // properties as percentages of an inherited value ("130%").
 
 import { CM_PER_INCH, POINTS_PER_INCH } from "../core/units";
-import { odfLengthToCm, odfLengthToPt, odfPercentage } from "../core/odfXml";
+import { odfLengthToPt, odfPercentage } from "../core/odfXml";
 
 // The measured-value PARSERS (odfLengthToCm/odfLengthToPt/odfPercentage/
 // odfColorToCss) moved to core/odfXml.ts (SPEC-079) so the product-neutral

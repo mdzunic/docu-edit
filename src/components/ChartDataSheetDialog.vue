@@ -256,9 +256,9 @@ function apply() {
                 class="cell-input"
                 :data-testid="`chart-data-cell-${rowIndex}-${colIndex}`"
                 :value="cell"
-                @input="onCellInput(rowIndex, colIndex, $event)"
+                @input="onCellInput(rowIndex, Number(colIndex), $event)"
                 @change="onCellCommit"
-                @paste="onPaste(rowIndex, colIndex, $event)"
+                @paste="onPaste(rowIndex, Number(colIndex), $event)"
               >
             </td>
             <td class="row-actions">
@@ -281,12 +281,12 @@ function apply() {
               class="col-actions"
             >
               <button
-                v-if="colIndex > 0"
+                v-if="Number(colIndex) > 0"
                 type="button"
                 class="icon-button"
                 :data-testid="`chart-data-remove-col-${colIndex}`"
                 title="Delete column"
-                @click="removeColumn(colIndex)"
+                @click="removeColumn(Number(colIndex))"
               >
                 ✕
               </button>

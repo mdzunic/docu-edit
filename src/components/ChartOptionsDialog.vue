@@ -213,7 +213,7 @@ function apply() {
           type="color"
           :data-testid="`chart-options-series-color-${index}`"
           :value="s.color"
-          @input="onSeriesColorInput(index, $event)"
+          @input="onSeriesColorInput(Number(index), $event)"
         >
         <span>{{ s.name }}</span>
       </label>
