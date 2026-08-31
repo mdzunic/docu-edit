@@ -33,6 +33,7 @@ import {
 } from "../model";
 import { odpTransitionProps } from "../transitions";
 import { writeOdpAnim } from "./anim";
+import { odpDisplayProps, type OdpPageFieldPlan } from "./fields";
 
 const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
   title: "title",
@@ -260,6 +261,7 @@ export function serializePage(
   master: string,
   styleSource = "",
   layoutName?: string,
+  fieldPlan?: OdpPageFieldPlan,
 ): string {
   let attrs = slide.preserved?.["@page"];
   if (attrs) {
@@ -279,13 +281,25 @@ export function serializePage(
   if (layoutName !== undefined) {
     attrs = setPresentationPageLayoutName(attrs, layoutName);
   }
-  // A modelled transition mints a fresh drawing-page style (copying the
-  // original style's fill/background) and repoints `draw:style-name` at it, so
-  // the replaced original's smil attributes never re-emit (SPEC-085 AC-11).
-  if (slide.transition) {
+  // SPEC-093: a header/footer change stamps this page's declaration references
+  // (`use-*-name`, stripped when the field is off) and folds its display flags
+  // into the drawing-page style below. Field placeholders are never emitted as
+  // frames (AC-80).
+  if (fieldPlan) {
+    attrs = setPresentationName(attrs, "use-footer-name", fieldPlan.footerName);
+    attrs = setPresentationName(attrs, "use-date-time-name", fieldPlan.dateName);
+  }
+  // A modelled transition and/or a field display change mints a fresh
+  // drawing-page style (copying the original style's fill/background, minus any
+  // replaced transition or stale display flags) and repoints `draw:style-name`
+  // at it (SPEC-085 AC-11 / SPEC-093 AC-79).
+  const smilProps = slide.transition ? odpTransitionProps(slide.transition) : "";
+  const displayProps = fieldPlan ? odpDisplayProps(fieldPlan) : "";
+  if (smilProps || displayProps) {
     const originalStyle = drawAttr(attrs, "draw:style-name");
     const baseProps = originalStyle ? drawingPageBaseProps(styleSource, originalStyle) : "";
-    const styleName = registry.drawingPageStyle(odpTransitionProps(slide.transition), baseProps);
+    const props = [smilProps, displayProps].filter((p) => p.length > 0).join(" ");
+    const styleName = registry.drawingPageStyle(props, baseProps);
     attrs = setDrawStyleName(attrs, styleName);
   }
   // When the page carries modelled animations, its animatable frames get a
@@ -323,6 +337,13 @@ function setDrawStyleName(attrs: string, styleName: string): string {
     return attrs.replace(/draw:style-name="[^"]*"/, `draw:style-name="${styleName}"`);
   }
   return `${attrs} draw:style-name="${styleName}"`;
+}
+
+/** Sets/replaces a `presentation:{localName}` attribute in a page's attribute
+ * string, or strips it when `value` is undefined (SPEC-093 `use-*-name`). */
+function setPresentationName(attrs: string, localName: string, value: string | undefined): string {
+  const stripped = attrs.replace(new RegExp(`\\s*presentation:${localName}="[^"]*"`), "");
+  return value === undefined ? stripped : `${stripped} presentation:${localName}="${escapeXmlAttribute(value)}"`;
 }
 
 /** Sets/replaces `presentation:presentation-page-layout-name` in a page's
@@ -364,9 +385,13 @@ function drawingPageBaseProps(source: string, styleName: string): string {
       name.startsWith("smil:") ||
       name === "presentation:transition-type" ||
       name === "presentation:transition-speed" ||
-      name === "presentation:duration"
+      name === "presentation:duration" ||
+      name === "presentation:display-footer" ||
+      name === "presentation:display-page-number" ||
+      name === "presentation:display-date-time" ||
+      name === "presentation:display-header"
     ) {
-      continue; // drop the transition being replaced
+      continue; // drop the transition / stale display flags being replaced
     }
     kept.push(`${name}="${attr[2]}"`);
   }

@@ -33,6 +33,7 @@ import {
 import { classifyFromSlots, synthesiseStandardLayouts } from "../layouts";
 import { ODP_MIMETYPE } from "./reader";
 import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
+import { deckHasFields, NUMBER_NS, odpMasterPlaceholders, planOdpDeclarations } from "./fields";
 import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "../../core/chartPartOdf";
 
 /** Every media part referenced by an ImageFrame anywhere in the deck (groups
@@ -488,6 +489,12 @@ export interface WriteOdpOptions {
   /** Injectable so tests assert an exact meta.xml (the clock-coupled-test
    * rule): the timestamp stamped into a from-scratch meta.xml. */
   modified?: Date;
+  /** Beside `modified` for API symmetry with `WritePptxOptions` (SPEC-093
+   * AC-116). ODF date fields carry no cached value — an auto date is a
+   * `presentation:source="current-date"` declaration Impress renders live and a
+   * fixed date stores its literal — so nothing here is recomputed from it; the
+   * option exists so a cross-format round-trip test can pass the same instant. */
+  now?: Date;
 }
 
 /** Serialises a presentation to `.odp` bytes (see the module header). */
@@ -498,10 +505,15 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   }
   const parts = decodedPartBytes(model.opaque);
   const deckDirty = model.deckDirty === true;
-  // A deck-level change (SPEC-090) joins the structural condition: it rewrites
-  // styles.xml's page-layout size + meta.xml (and, in scale mode, dirties the
-  // slides so content.xml re-emits their geometry too).
-  const structural = model.structureDirty === true || deckDirty || model.slides.some((slide) => slide.dirty === true);
+  // A deck-level change (SPEC-090) or a header/footer change (SPEC-093) joins
+  // the structural condition: it rewrites styles.xml's page-layout size +
+  // meta.xml, or regenerates content.xml's declaration block (and, in scale
+  // mode, dirties the slides so content.xml re-emits their geometry too).
+  const structural =
+    model.structureDirty === true ||
+    deckDirty ||
+    model.headerFooterDirty === true ||
+    model.slides.some((slide) => slide.dirty === true);
   const mimetype = parts.get("mimetype") ?? encode(ODP_MIMETYPE);
   const entries: ZipEntryInput[] = [{ name: "mimetype", data: mimetype, store: true }];
 
@@ -608,6 +620,10 @@ function rebuildContentXml(
   // style's fill/background when a transition mints its replacement (AC-11).
   const styleSource = envelope.prefix + envelope.suffix + model.slides.map((s) => s.sourceXml ?? "").join("");
   registry.seedFrom(styleSource);
+  // SPEC-093: a header/footer change regenerates the declaration block in a copy
+  // of the prefix (reusing unchanged source names so verbatim pages stay valid)
+  // and stamps each rebuilt page with its declaration references + display flags.
+  const declPlan = model.headerFooterDirty ? planOdpDeclarations(model, envelope.prefix) : undefined;
   let lastMaster = "Default";
   const pages = model.slides.map((slide) => {
     if (slide.sourceXml) {
@@ -627,10 +643,23 @@ function rebuildContentXml(
     const master = preservedMaster ?? lastMaster;
     lastMaster = master;
     const layoutName = slide.layoutKey ? layoutPlan.nameForKey.get(slide.layoutKey) : undefined;
-    return serializePage(slide, registry, usedNames, master, styleSource, layoutName);
+    return serializePage(slide, registry, usedNames, master, styleSource, layoutName, declPlan?.pagePlans.get(slide));
   });
-  const content = envelope.prefix + pages.join("") + envelope.suffix;
-  return registry.hasStyles() ? spliceAutomaticStyles(content, registry.xml()) : content;
+  const prefix = declPlan ? regenerateDeclarations(envelope.prefix, declPlan.declXml) : envelope.prefix;
+  const content = prefix + pages.join("") + envelope.suffix;
+  const autoStyles = registry.xml() + (declPlan?.dateStyleXml ?? "");
+  return autoStyles.length > 0 ? spliceAutomaticStyles(content, autoStyles) : content;
+}
+
+/** Strips the source prefix's footer/date-time declarations and appends the
+ * regenerated block just before the first `draw:page` (SPEC-093 AC-74);
+ * `presentation:header-decl` is left untouched (AC-95). */
+function regenerateDeclarations(prefix: string, declXml: string): string {
+  const stripped = prefix
+    .replace(/<presentation:footer-decl\b[\s\S]*?<\/presentation:footer-decl>/g, "")
+    .replace(/<presentation:date-time-decl\b[^>]*\/>/g, "")
+    .replace(/<presentation:date-time-decl\b[\s\S]*?<\/presentation:date-time-decl>/g, "");
+  return stripped + declXml;
 }
 
 /** The value of an attribute like `draw:name="…"` in a page's markup. */
@@ -694,34 +723,42 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
   const pageLayoutStyles = standardLayouts
     .map((layout, i) => authorPageLayoutStyle(layoutStyleNames[i], layout))
     .join("");
+  // SPEC-093: a configured deck emits its declarations, per-page display flags,
+  // and the number:date-style an auto date needs.
+  const declPlan = deckHasFields(model) ? planOdpDeclarations(model) : undefined;
   const pages = model.slides
     .map((slide) => {
       const idx = standardIndexForSlide(slide, standardLayouts);
-      return serializePage(slide, registry, used, "Default", "", layoutStyleNames[idx]);
+      return serializePage(slide, registry, used, "Default", "", layoutStyleNames[idx], declPlan?.pagePlans.get(slide));
     })
     .join("");
 
+  const numberNs = declPlan?.dateStyleXml ? ` xmlns:number="${NUMBER_NS}"` : "";
   const base =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}"` +
     ` xmlns:draw="${DRAW_NS}" xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:xlink="http://www.w3.org/1999/xlink"` +
-    ` xmlns:presentation="${PRESENTATION_NS}" xmlns:smil="${SMIL_NS}" xmlns:table="${TABLE_NS}" office:version="1.2">` +
+    ` xmlns:presentation="${PRESENTATION_NS}" xmlns:smil="${SMIL_NS}" xmlns:table="${TABLE_NS}"${numberNs} office:version="1.2">` +
     `<office:automatic-styles></office:automatic-styles>` +
-    `<office:body><office:presentation>${pages}</office:presentation></office:body>` +
+    `<office:body><office:presentation>${declPlan?.declXml ?? ""}${pages}</office:presentation></office:body>` +
     `</office:document-content>`;
-  const content = registry.hasStyles() ? spliceAutomaticStyles(base, registry.xml()) : base;
+  const autoStyles = registry.xml() + (declPlan?.dateStyleXml ?? "");
+  const content = autoStyles.length > 0 ? spliceAutomaticStyles(base, autoStyles) : base;
 
+  const stylesTextNs = declPlan ? ` xmlns:text="${TEXT_NS}"` : "";
   const styles =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-styles xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:draw="${DRAW_NS}"` +
-    ` xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:presentation="${PRESENTATION_NS}" office:version="1.2">` +
+    ` xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:presentation="${PRESENTATION_NS}"${stylesTextNs} office:version="1.2">` +
     `<office:styles>${pageLayoutStyles}</office:styles>` +
     `<office:automatic-styles>` +
     `<style:page-layout style:name="PL1"><style:page-layout-properties fo:page-width="${model.slideWidthCm}cm"` +
     ` fo:page-height="${model.slideHeightCm}cm"/></style:page-layout>` +
     `</office:automatic-styles>` +
     `<office:master-styles>` +
-    `<style:master-page style:name="Default" style:page-layout-name="PL1"/>` +
+    (declPlan
+      ? `<style:master-page style:name="Default" style:page-layout-name="PL1">${odpMasterPlaceholders(model)}</style:master-page>`
+      : `<style:master-page style:name="Default" style:page-layout-name="PL1"/>`) +
     `</office:master-styles>` +
     `</office:document-styles>`;
 
