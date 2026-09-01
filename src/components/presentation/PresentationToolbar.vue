@@ -38,6 +38,8 @@ const props = defineProps({
   headerFooterOpen: { type: Boolean, default: false },
   /** Whether the Design (theme) panel is open (SPEC-094). */
   themeOpen: { type: Boolean, default: false },
+  /** The deck theme (SPEC-094): renders the colour picker's theme row. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits([
@@ -194,6 +196,7 @@ onBeforeUnmount(() => observer?.disconnect());
           :mixed="colorMixed"
           :recent="recentColors"
           :disabled="!enabled"
+          :theme="theme"
           @select="(color) => emit('color', color)"
         />
       </div>

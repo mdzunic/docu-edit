@@ -18,6 +18,7 @@
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
+import type { ModelColor } from "../../lib/core/theme";
 import {
   applyParagraphFormat,
   applyRunFormat,
@@ -102,7 +103,7 @@ export interface SlideTextEditing {
   toggleUnderline: () => void;
   setFontFamily: (family: string) => void;
   setFontSize: (sizePt: number) => void;
-  setColor: (color: string) => void;
+  setColor: (color: ModelColor) => void;
   setAlign: (align: NonNullable<TextFrame["paragraphs"][number]["align"]>) => void;
   toggleBulletCmd: () => void;
   indent: (delta: 1 | -1) => void;
@@ -530,7 +531,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     runCommand("Font", (owner, range) => applyRunFormat(owner, range, { fontFamily: family }));
   const setFontSize = (sizePt: number): void =>
     runCommand("Font size", (owner, range) => applyRunFormat(owner, range, { sizePt }));
-  const setColor = (color: string): void =>
+  const setColor = (color: ModelColor): void =>
     runCommand("Text colour", (owner, range) => applyRunFormat(owner, range, { color }));
   const setAlign = (align: NonNullable<TextFrame["paragraphs"][number]["align"]>): void =>
     paragraphCommand("Align", { align });

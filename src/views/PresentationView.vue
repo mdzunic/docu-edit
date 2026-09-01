@@ -296,6 +296,7 @@ onBeforeUnmount(() => {
         :table-open="tables.open.value"
         :header-footer-open="headerFooter.open.value"
         :theme-open="themePanel.open.value"
+        :theme="presentation.theme"
         @theme-toggle="themePanel.toggle()"
         @transition-toggle="transitions.toggle()"
         @animate-toggle="animations.toggle()"
@@ -316,6 +317,7 @@ onBeforeUnmount(() => {
 
       <SlideInsertBar
         :selected-frame="stageEdit.selection.selectedFrame.value ?? undefined"
+        :theme="presentation.theme"
         :armed-kind="stageEdit.insertion.armed.value?.kind ?? ''"
         @insert-text-box="stageEdit.insertion.armTextBox()"
         @insert-shape="stageEdit.insertion.armShape($event)"
