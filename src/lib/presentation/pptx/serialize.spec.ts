@@ -257,7 +257,7 @@ describe("serializeSlideXml — theme references (SPEC-094)", () => {
   });
 
   it("writes refs through a parseable p:clrMapOvr override and literals under an unparseable one (AC-22/23)", () => {
-    const ref = { runs: [{ text: "T", color: { theme: "accent1" } }] };
+    const ref: TextFrame["paragraphs"][number] = { runs: [{ text: "T", color: { theme: "accent1" } }] };
     const withOverride = textSlide([titleFrame([ref])], {
       "p:clrMapOvr": '<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" accent1="accent1" accent2="accent1"/></p:clrMapOvr>',
     });
