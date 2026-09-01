@@ -25,7 +25,7 @@ import {
 } from "../../lib/presentation/frames";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
 import type { FrameSelection } from "./useFrameSelection";
-import { applyGuides, clientToCm, resizeRect, type ResizeHandle, type StageGuides } from "./stageMath";
+import { applyGuides, clientToCm, DRAG_ENGAGE_CM, resizeRect, type ResizeHandle, type StageGuides } from "./stageMath";
 
 export interface FrameManipulationDeps {
   model: Ref<PresentationModel | null>;
@@ -107,12 +107,10 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
 
   // --- move (pointer drag) --------------------------------------------------
 
-  // A pointer travels at least this far (cm) before a press counts as a drag
-  // rather than a click — so a click/double-click that selects or opens a text
-  // session is never swallowed by pointer capture (the reason we do NOT capture
-  // the pointer up front).
-  const DRAG_ENGAGE_CM = (3 * 2.54) / 96;
-
+  // A pointer travels at least DRAG_ENGAGE_CM (stageMath) before a press
+  // counts as a drag rather than a click — so a click/double-click that
+  // selects or opens a text session is never swallowed by pointer capture
+  // (the reason we do NOT capture the pointer up front).
   function onFramePointerDown(frameId: string, event: PointerEvent): void {
     if (deps.isEditing()) return;
     const frame = frameById(frameId);
