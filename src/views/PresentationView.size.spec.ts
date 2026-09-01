@@ -45,12 +45,18 @@
 //                    and the deck load/upgrade flow into useDeckLoad, paying
 //                    for the Align/Group/Position insert-bar hookups; the
 //                    spec mandates a drop of at least 30 (view at 377 lines)
+//   2026-09-01  380  SPEC-095 — extracted the window-keydown onMounted/
+//                    onBeforeUnmount block into useWindowKeys, paying for the
+//                    Media panel wiring (useSlideMedia via useEditingPanels, the
+//                    <MediaPanel> mount, the slides-media toolbar toggle and the
+//                    insert-media hookup); the spec mandates a drop of at least
+//                    10 (view at 374 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 390;
+const LINE_BUDGET = 380;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

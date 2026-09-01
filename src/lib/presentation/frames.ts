@@ -954,3 +954,50 @@ export function setFrameStroke(
 function clampStroke(stroke: FrameStroke): FrameStroke {
   return { color: stroke.color, widthPt: clamp(stroke.widthPt, MIN_STROKE_WIDTH_PT, MAX_STROKE_WIDTH_PT) };
 }
+
+// --- media panel edits (SPEC-095) -------------------------------------------
+
+/** Applies `mutate` to the selected media frame's modelled flags and marks the
+ * frame edited (drops its verbatim `sourceXml`, dirties the slide) — the model
+ * half of the Media panel's flag edits. Returns true when a media frame was
+ * found. The caller (`useSlideMedia`) records one undo entry and commits. */
+export function editMediaFrame(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  mutate: (frame: MediaFrame) => void,
+): boolean {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "media") {
+    return false;
+  }
+  mutate(frame);
+  markFrameEdited(slide, frame, model.format);
+  return true;
+}
+
+/** Replaces a media frame's poster still (AC-28): mints a collision-free
+ * `mediaId` for the image, adds it to `model.media`, points `posterMediaId` at
+ * it, and marks the frame edited. Returns true on success. The caller bumps
+ * media and commits. */
+export function setMediaPoster(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  poster: MediaPart,
+): boolean {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "media") {
+    return false;
+  }
+  const mediaId = mintMediaId(model, poster.contentType);
+  if (!model.media) {
+    model.media = [];
+  }
+  model.media.push({ mediaId, contentType: poster.contentType, data: poster.data });
+  frame.posterMediaId = mediaId;
+  markFrameEdited(slide, frame, model.format);
+  return true;
+}

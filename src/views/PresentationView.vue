@@ -7,7 +7,7 @@
 // of preparation-milestone records. It still redirects a text-document id to
 // /doc/:id (DocumentView does the reverse). Runtime declarations, not
 // defineProps<{...}>() generics — espree lints .vue scripts.
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
@@ -33,6 +33,7 @@ import { useDeckTheme } from "./presentation/useDeckTheme";
 import { useFilmstripCommands } from "./presentation/useFilmstripCommands";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
+import { useWindowKeys } from "./presentation/useWindowKeys";
 import { useDeckActions } from "./presentation/useDeckActions";
 import { useDeckSetup } from "./presentation/useDeckSetup";
 import { useHeaderFooter } from "./presentation/useHeaderFooter";
@@ -144,12 +145,14 @@ const notes = useNotes({
 });
 
 // --- transition/animation/table/chart panels (SPEC-085/086/091/092) --------
-const { transitions, animations, tables, charts } = useEditingPanels({
+const { transitions, animations, tables, charts, media } = useEditingPanels({
   model: presentation,
   currentSlide,
   currentIndex,
   record: slideUndo.record,
   commit,
+  bumpMedia,
+  reportError: (message) => addToast(message),
   stageEdit,
 });
 
@@ -194,18 +197,7 @@ const deckSetup = useDeckSetup({
 const headerFooter = useHeaderFooter({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit });
 
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
-
-onMounted(() => {
-  window.addEventListener("keydown", stageEdit.onGlobalKeydown);
-  window.addEventListener("keydown", notes.onGlobalKeydown);
-  window.addEventListener("keydown", deckActions.onPresentShortcut);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener("keydown", stageEdit.onGlobalKeydown);
-  window.removeEventListener("keydown", notes.onGlobalKeydown);
-  window.removeEventListener("keydown", deckActions.onPresentShortcut);
-});
+useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut]);
 
 </script>
 
@@ -262,6 +254,7 @@ onBeforeUnmount(() => {
         :animate-open="animations.open.value"
         :layout-open="layouts.open.value"
         :table-open="tables.open.value"
+        :media-open="media.open.value"
         :header-footer-open="headerFooter.open.value"
         :theme-open="themePanel.open.value"
         :theme="presentation.theme"
@@ -270,6 +263,7 @@ onBeforeUnmount(() => {
         @animate-toggle="animations.toggle()"
         @layout-toggle="toggleLayout()"
         @table-toggle="tables.toggle()"
+        @media-toggle="media.toggle()"
         @header-footer-toggle="headerFooter.show()"
         @bold="stageEdit.editing.toggleBold()"
         @italic="stageEdit.editing.toggleItalic()"
@@ -295,6 +289,7 @@ onBeforeUnmount(() => {
         @insert-text-box="stageEdit.insertion.armTextBox()"
         @insert-shape="stageEdit.insertion.armShape($event)"
         @insert-image="stageEdit.insertion.insertImageFile($event)"
+        @insert-media="stageEdit.insertion.insertMediaFile($event)"
         @insert-table="(rows, cols) => stageEdit.insertion.insertTable(rows, cols)"
         @insert-chart="charts.pickChartType($event)"
         @arrange="stageEdit.manipulation.arrange($event)"
@@ -322,6 +317,7 @@ onBeforeUnmount(() => {
         :notes="notes"
         :tables="tables"
         :charts="charts"
+        :media-panel="media"
         :fields-by-slide="deckFields"
         :theme="themePanel.displayTheme.value"
         @select="selectSlide"

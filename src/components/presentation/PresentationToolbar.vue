@@ -34,6 +34,7 @@ const props = defineProps({
   layoutOpen: { type: Boolean, default: false },
   /** Whether the table properties panel is open (SPEC-091). */
   tableOpen: { type: Boolean, default: false },
+  mediaOpen: { type: Boolean, default: false },
   /** Whether the Header & Footer dialog is open (SPEC-093). */
   headerFooterOpen: { type: Boolean, default: false },
   /** Whether the Design (theme) panel is open (SPEC-094). */
@@ -56,6 +57,7 @@ const emit = defineEmits([
   "theme-toggle",
   "transition-toggle",
   "animate-toggle",
+  "media-toggle",
   "layout-toggle",
   "table-toggle",
   "header-footer-toggle",
@@ -305,6 +307,14 @@ onBeforeUnmount(() => observer?.disconnect());
         @click="emit('table-toggle')"
       >
         Table
+      </UiToggleButton>
+      <UiToggleButton
+        label="Media"
+        data-testid="slides-media-toggle"
+        :pressed="mediaOpen"
+        @click="emit('media-toggle')"
+      >
+        Media
       </UiToggleButton>
       <UiToggleButton
         label="Header & footer"

@@ -24,6 +24,7 @@ const props = defineProps({
   transitions: { type: Object, required: true },
   notes: { type: Object, required: true },
   tables: { type: Object, required: true },
+  mediaPanel: { type: Object, required: true },
   currentIndex: { type: Number, default: 0 },
   fields: { type: Array, default: () => [] },
 });
@@ -62,6 +63,7 @@ const arrange = computed(() => s.arrange);
       :transitions="transitions"
       :animations="animations"
       :tables="tables"
+      :media="mediaPanel"
       :slide-number="currentIndex + 1"
       :has-slide="!!currentSlide"
     />
