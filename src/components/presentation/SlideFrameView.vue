@@ -17,6 +17,7 @@ import {
   asSlideFrame,
   framePositionStyle,
   groupChildren,
+  groupOriginStyle,
   imageSrc,
   isEmptyTextPlaceholder,
   isForeignVisible,
@@ -87,6 +88,7 @@ const position = computed(() => framePositionStyle(frame.value));
 const paragraphs = computed(() => markedParagraphs(frame.value));
 const textFill = computed(() => textFrameFill(frame.value, deckTheme.value));
 const children = computed(() => groupChildren(frame.value));
+const groupOrigin = computed(() => groupOriginStyle(frame.value));
 const foreignVisible = computed(() => isForeignVisible(frame.value));
 const tableColumns = computed(() => tableColumnWidths(frame.value));
 const tableRows = computed(() => tableRenderRows(frame.value, deckTheme.value));
@@ -371,7 +373,9 @@ watch([() => props.frame, deckTheme], () => {
     />
   </div>
 
-  <!-- Group frame: children already in slide space, rendered read-only -->
+  <!-- Group frame: the box carries its real geometry (so a rotate transform
+       spins about the group's own centre, SPEC-096 AC-45); the origin shim
+       re-expresses the children's absolute slide-space coordinates inside it. -->
   <div
     v-else-if="kind === 'group'"
     class="frame group-frame"
@@ -384,14 +388,19 @@ watch([() => props.frame, deckTheme], () => {
     @mousedown="onFrameMousedown"
     @pointerdown="onFramePointerdown"
   >
-    <SlideFrameView
-      v-for="child in children"
-      :key="child.id"
-      :frame="child"
-      :resolve-media="resolveMedia"
-      :top-level="false"
-      :theme="theme"
-    />
+    <div
+      class="group-origin"
+      :style="groupOrigin"
+    >
+      <SlideFrameView
+        v-for="child in children"
+        :key="child.id"
+        :frame="child"
+        :resolve-media="resolveMedia"
+        :top-level="false"
+        :theme="theme"
+      />
+    </div>
   </div>
 
   <!-- Table frame: a real <table> with a colgroup and merged cells (AC-4) -->
@@ -630,14 +639,22 @@ watch([() => props.frame, deckTheme], () => {
 }
 
 .group-frame {
-  /* The group box itself paints nothing; children position against the stage
-     via their own absolute slide-space coordinates. */
-  position: absolute;
-  left: 0 !important;
-  top: 0 !important;
-  width: 0 !important;
-  height: 0 !important;
+  /* The group box paints nothing itself and occupies its real geometry (the
+     inline position style) so a rotate transform spins about its own centre
+     (SPEC-096 AC-45). The empty box area stays click-through — only the
+     children (whose events bubble back up to this wrapper) hit. */
   overflow: visible;
+  pointer-events: none;
+}
+
+/* Children hit-test normally; a NESTED group's own wrapper stays
+   click-through like the outer one (the later rule wins the specificity tie). */
+.group-frame .frame {
+  pointer-events: auto;
+}
+
+.group-frame .group-frame {
+  pointer-events: none;
 }
 
 .table-frame {

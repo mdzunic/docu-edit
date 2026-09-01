@@ -10,7 +10,13 @@
 // core/arrange.ts; this composable owns the DOM listeners and the command
 // wiring.
 import { ref, type ComputedRef, type Ref } from "vue";
-import { DEFAULT_TABLE_ROW_HEIGHT_CM, type PresentationModel, type Slide, type SlideFrame } from "../../lib/presentation/model";
+import {
+  DEFAULT_TABLE_ROW_HEIGHT_CM,
+  type PresentationModel,
+  type ShapeFrame,
+  type Slide,
+  type SlideFrame,
+} from "../../lib/presentation/model";
 import {
   GUIDE_SNAP_CM,
   NUDGE_LARGE_STEP_CM,
@@ -295,15 +301,21 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
 
     const startDeg = normalizeRotationDeg(frame.rotationDeg ?? 0);
     const centre = { x: frame.xCm + frame.widthCm / 2, y: frame.yCm + frame.heightCm / 2 };
+    const noun = frameNoun(frame);
     let moved = false;
     dragging.value = true;
     rotatingDeg.value = startDeg;
 
+    // refresh() re-identifies the slide's frame objects (bumpCurrentSlide), so
+    // the frame captured at pointer-down goes stale after the first move —
+    // every mutation must re-resolve the CURRENT object by id.
     const restore = (): void => {
+      const f = frameById(frameId);
+      if (!f) return;
       if (startDeg === 0) {
-        delete frame.rotationDeg;
+        delete f.rotationDeg;
       } else {
-        frame.rotationDeg = startDeg;
+        f.rotationDeg = startDeg;
       }
     };
     const cleanup = (): void => {
@@ -315,7 +327,8 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
     };
     const onMove = (move: PointerEvent): void => {
       const now = pointerCm(move);
-      if (!now) return;
+      const f = frameById(frameId);
+      if (!now || !f) return;
       moved = true;
       // deg = atan2 about the centre + 90 (the handle sits above the frame).
       let deg = normalizeRotationDeg((Math.atan2(now.yCm - centre.y, now.xCm - centre.x) * 180) / Math.PI + 90);
@@ -325,9 +338,9 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
       // Live preview mutates the frame directly (no dirty flag until the
       // gesture commits — an Escape must leave a clean model).
       if (deg === 0) {
-        delete frame.rotationDeg;
+        delete f.rotationDeg;
       } else {
-        frame.rotationDeg = deg;
+        f.rotationDeg = deg;
       }
       rotatingDeg.value = deg;
       deps.refresh();
@@ -341,7 +354,7 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
       deps.refresh();
     };
     const onUp = (): void => {
-      const finalDeg = normalizeRotationDeg(frame.rotationDeg ?? 0);
+      const finalDeg = normalizeRotationDeg(frameById(frameId)?.rotationDeg ?? 0);
       cleanup();
       if (!moved || finalDeg === startDeg) {
         restore();
@@ -351,7 +364,7 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
       // One undo entry per gesture: restore the pre-gesture state, record it,
       // then apply the final angle as the command.
       restore();
-      deps.record(`Rotate ${frameNoun(frame)}`);
+      deps.record(`Rotate ${noun}`);
       setFrameRotation(model, deps.currentIndex.value, frameId, finalDeg);
       deps.commit();
     };
@@ -373,29 +386,38 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
     let moved = false;
     dragging.value = true;
 
+    // Same staleness discipline as the rotate gesture: refresh() re-identifies
+    // frame objects, so every mutation re-resolves the current one by id.
+    const shapeById = (): ShapeFrame | null => {
+      const f = frameById(frameId);
+      return f && f.kind === "shape" ? f : null;
+    };
     const restore = (): void => {
+      const f = shapeById();
+      if (!f) return;
       if (startStored) {
-        frame.adjustments = startStored;
+        f.adjustments = startStored;
       } else {
-        delete frame.adjustments;
+        delete f.adjustments;
       }
     };
     const onMove = (move: PointerEvent): void => {
       const now = pointerCm(move);
-      if (!now || frame.widthCm <= 0 || frame.heightCm <= 0) return;
+      const f = shapeById();
+      if (!now || !f || f.widthCm <= 0 || f.heightCm <= 0) return;
       // Map the pointer into the shape's own unrotated unit square.
       const local = unrotatePoint(
-        { x: now.xCm - frame.xCm, y: now.yCm - frame.yCm },
-        frame.widthCm,
-        frame.heightCm,
-        frame.rotationDeg ?? 0,
+        { x: now.xCm - f.xCm, y: now.yCm - f.yCm },
+        f.widthCm,
+        f.heightCm,
+        f.rotationDeg ?? 0,
       );
-      const value = adjustmentValueFromPoint(frame.geometry, index, local.x / frame.widthCm, local.y / frame.heightCm);
+      const value = adjustmentValueFromPoint(f.geometry, index, local.x / f.widthCm, local.y / f.heightCm);
       if (value === null) return;
       moved = true;
-      const next = resolvedShapeAdjustments(frame.geometry, frame.adjustments);
+      const next = resolvedShapeAdjustments(f.geometry, f.adjustments);
       next[index] = value;
-      frame.adjustments = next; // live, no dirty flag until commit
+      f.adjustments = next; // live, no dirty flag until commit
       deps.refresh();
     };
     const onUp = (): void => {
@@ -403,7 +425,7 @@ export function useFrameManipulation(deps: FrameManipulationDeps) {
       window.removeEventListener("pointerup", onUp);
       dragging.value = false;
       if (!moved) return;
-      const final = frame.adjustments ? [...frame.adjustments] : [];
+      const final = [...(shapeById()?.adjustments ?? [])];
       restore();
       deps.record("Adjust shape");
       setFrameAdjustments(model, deps.currentIndex.value, frameId, final);

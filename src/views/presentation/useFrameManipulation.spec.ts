@@ -1,7 +1,7 @@
 // View spec: the keyboard paths of the frame-manipulation composable (nudge,
 // delete, duplicate, arrange, ungroup) over a real blank deck — no DOM surface
 // needed, so it exercises the command wiring directly.
-import { computed, shallowRef } from "vue";
+import { computed, shallowRef, triggerRef } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import { createBlankPresentation } from "../../lib/presentation/slides";
 import { insertShapeFrame, insertTableFrame } from "../../lib/presentation/frames";
@@ -225,6 +225,15 @@ function multiSetup() {
   const selection = useFrameSelection({ currentSlide });
   const record = vi.fn();
   const commit = vi.fn();
+  // The real refresh() re-identifies the slide and every frame
+  // (useSlideRender.bumpCurrentSlide) before re-rendering, so a gesture that
+  // holds a frame reference across a refresh goes stale. Mimic that here —
+  // a no-op stub let exactly that bug through QA once (SPEC-096 AC-27).
+  const refresh = vi.fn(() => {
+    const slide = model.value!.slides[0];
+    model.value!.slides[0] = { ...slide, frames: slide.frames.map((f) => ({ ...f })) };
+    triggerRef(model);
+  });
   const surface = {
     getBoundingClientRect: () => ({
       left: 0,
@@ -241,7 +250,7 @@ function multiSetup() {
     isEditing: () => false,
     surface: () => surface,
     record,
-    refresh: vi.fn(),
+    refresh,
     commit,
   });
   const at = (id: string) => model.value!.slides[0].frames.find((f) => f.id === id)!;
@@ -315,9 +324,14 @@ describe("useFrameManipulation rotate gesture (SPEC-096)", () => {
     window.dispatchEvent(ptr("pointermove", 15, 11));
     expect(at(a).rotationDeg).toBe(90);
     expect(manip.rotatingDeg.value).toBe(90);
+    // A second move must keep tracking even though refresh() re-identified
+    // the frame after the first one (pointer due south → 180°).
+    window.dispatchEvent(ptr("pointermove", 11, 15));
+    expect(at(a).rotationDeg).toBe(180);
+    expect(manip.rotatingDeg.value).toBe(180);
     expect(record).not.toHaveBeenCalled(); // records only on release
-    window.dispatchEvent(ptr("pointerup", 15, 11));
-    expect(at(a).rotationDeg).toBe(90);
+    window.dispatchEvent(ptr("pointerup", 11, 15));
+    expect(at(a).rotationDeg).toBe(180);
     expect(manip.rotatingDeg.value).toBeNull();
     expect(record).toHaveBeenCalledTimes(1);
     expect(commit).toHaveBeenCalledTimes(1);
@@ -339,12 +353,32 @@ describe("useFrameManipulation rotate gesture (SPEC-096)", () => {
     const a = add(10, 10);
     selection.select(a);
     manip.onRotateHandlePointerDown(a, ptr("pointerdown", 11, 9));
+    // Two moves, so the restore must reach the CURRENT frame object — the
+    // one refresh() re-identified — not the pointer-down capture.
     window.dispatchEvent(ptr("pointermove", 15, 11));
-    expect(at(a).rotationDeg).toBe(90);
+    window.dispatchEvent(ptr("pointermove", 11, 15));
+    expect(at(a).rotationDeg).toBe(180);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(at(a).rotationDeg).toBeUndefined();
     expect(manip.rotatingDeg.value).toBeNull();
-    window.dispatchEvent(ptr("pointerup", 15, 11));
+    window.dispatchEvent(ptr("pointerup", 11, 15));
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("Escape restores a NON-ZERO starting angle after several moves", () => {
+    const { model, selection, manip, record, at, add } = multiSetup();
+    const a = add(10, 10);
+    const frame = model.value!.slides[0].frames.find((f) => f.id === a)!;
+    frame.rotationDeg = 30;
+    selection.select(a);
+    manip.onRotateHandlePointerDown(a, ptr("pointerdown", 11, 9));
+    window.dispatchEvent(ptr("pointermove", 15, 11)); // 90°
+    window.dispatchEvent(ptr("pointermove", 11, 15)); // 180°
+    expect(at(a).rotationDeg).toBe(180);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(at(a).rotationDeg).toBe(30);
+    window.dispatchEvent(ptr("pointerup", 11, 15));
+    expect(at(a).rotationDeg).toBe(30);
     expect(record).not.toHaveBeenCalled();
   });
 });
@@ -360,8 +394,11 @@ describe("useFrameManipulation adjustment handles (SPEC-096)", () => {
   it("dragging a handle stores the fraction live and commits one entry", () => {
     const { manip, record, commit, at, id } = roundRectSetup();
     manip.onAdjustPointerDown(id, 0, ptr("pointerdown", 4, 4));
-    // roundRect's corner-radius adjustment rides the x axis: pointer at 30%
-    // of the width.
+    // roundRect's corner-radius adjustment rides the x axis: pointer at 20%
+    // then 30% of the width — the second move must still track after
+    // refresh() re-identified the frame.
+    window.dispatchEvent(ptr("pointermove", 4 + 8 * 0.2, 4));
+    expect((at(id) as ShapeFrame).adjustments![0]).toBeCloseTo(0.2, 2);
     window.dispatchEvent(ptr("pointermove", 4 + 8 * 0.3, 4));
     const live = (at(id) as ShapeFrame).adjustments![0];
     expect(live).toBeCloseTo(0.3, 2);

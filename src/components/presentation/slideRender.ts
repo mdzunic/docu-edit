@@ -184,6 +184,15 @@ export function framePositionStyle(frame: SlideFrame): Record<string, string> {
   return style;
 }
 
+/** The origin shim inside a group's box: children carry absolute SLIDE-space
+ * coordinates, so the shim shifts the positioning context back to the stage's
+ * origin. The group box itself then occupies its real geometry, which makes a
+ * `rotate()` transform on it spin about the group's own centre (SPEC-096
+ * AC-45) instead of whatever corner a zero-sized wrapper would pin. */
+export function groupOriginStyle(frame: SlideFrame): Record<string, string> {
+  return { position: "absolute", left: cmPx(-frame.xCm), top: cmPx(-frame.yCm) };
+}
+
 /** A text frame's own background colour, or "transparent". Scheme references
  * resolve through `resolveColor` (SPEC-094 AC-13). */
 export function textFrameFill(frame: SlideFrame, theme: DocumentTheme = DEFAULT_THEME): string {
