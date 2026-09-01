@@ -59,7 +59,9 @@ Aligning and distributing members or a multi-selection — the natural next
 spec, which this one unblocks. A marquee / rubber-band selection gesture —
 Shift-click (SPEC-051) remains the only multi-select. Word's "Regroup"
 (re-forming the last ungrouped set from memory). Applying fill or outline to
-a container and fanning it out to members. Flips: a container or member
+a container and fanning it out to members — resolved by SPEC-073, whose
+`formatDrawings` fan-out styles every member recursively in one undo entry
+(sealed containers stay excluded). Flips: a container or member
 carrying `flipH`/`flipV` is preserved per SPEC-008 rather than modelled.
 Word's drawing canvas `wpc:wpc` — unchanged from SPEC-051: preserved, never
 created, never ungrouped. Editing the content of a preserved member.

@@ -117,9 +117,16 @@ export interface Image extends DrawingPlacement {
 export interface Shape extends DrawingPlacement {
   type: "shape"
   geometry: ShapeGeometry                    // the closed set in "Shape catalogue"
-  /** "#rrggbb"; absent means no fill. */
-  fill?: string
-  outline?: { color: string; widthPt: number; dash: "solid" | "dash" | "dot" }
+  /** Absent means no fill. SPEC-073 widened this from the original
+   *  `"#rrggbb"` string to the full `ShapeFill` union (solid/gradient/
+   *  picture/pattern/none) with `normaliseShapeFill` migrating stored
+   *  strings on load; this spec's geometry/anchoring/wrap/selection/text
+   *  and preservation rules are unchanged. */
+  fill?: ShapeFill
+  /** SPEC-073 widened the outline with alpha/join/cap/compound/arrowheads
+   *  and three more dash values; the three dash values here keep their
+   *  spelling and meaning. */
+  outline?: ShapeOutline
   /** Text inside the shape. Absent for a shape that holds none, e.g. a line.
    *  `blocks` so a shape can hold lists and tables, not only paragraphs. */
   text?: { blocks: Block[]; vAlign: "top" | "middle" | "bottom" }
