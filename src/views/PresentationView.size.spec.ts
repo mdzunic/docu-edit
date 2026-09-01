@@ -33,12 +33,19 @@
 //                    panel-stack workspace body) to pay for the Header & Footer
 //                    wiring (useHeaderFooter + HeaderFooterDialog + toolbar
 //                    button + the deckFields resolver) (view at 426 lines)
+//   2026-09-01  420  SPEC-094 — extracted useEditingPanels (the transition/
+//                    animation/table/chart controller wiring; the stage-fit
+//                    code the spec names for extraction already lives in
+//                    SlideStageArea since SPEC-089, so this is its sanctioned
+//                    equivalent) to pay for the Design-panel wiring
+//                    (useDeckTheme + ThemesPanel + toolbar toggle)
+//                    (view at 399 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 430;
+const LINE_BUDGET = 420;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

@@ -19,6 +19,7 @@ import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
 import DeckHeader from "../components/presentation/DeckHeader.vue";
 import PresentationDialogs from "../components/presentation/PresentationDialogs.vue";
 import HeaderFooterDialog from "../components/presentation/HeaderFooterDialog.vue";
+import ThemesPanel from "../components/presentation/ThemesPanel.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
@@ -29,10 +30,8 @@ import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
-import { useTransitions } from "./presentation/useTransitions";
-import { useAnimations } from "./presentation/useAnimations";
-import { useTables } from "./presentation/useTables";
-import { useSlideCharts } from "./presentation/useSlideCharts";
+import { useEditingPanels } from "./presentation/useEditingPanels";
+import { useDeckTheme } from "./presentation/useDeckTheme";
 import { useFilmstripCommands } from "./presentation/useFilmstripCommands";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
@@ -176,49 +175,18 @@ const notes = useNotes({
   commit,
 });
 
-// --- slide transitions (SPEC-085) ------------------------------------------
-const transitions = useTransitions({
+// --- transition/animation/table/chart panels (SPEC-085/086/091/092) --------
+const { transitions, animations, tables, charts } = useEditingPanels({
   model: presentation,
   currentSlide,
   currentIndex,
   record: slideUndo.record,
   commit,
+  stageEdit,
 });
 
-// --- frame animations (SPEC-086) -------------------------------------------
-const animations = useAnimations({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  selectedFrameId: stageEdit.selection.selectedFrameId,
-  selectFrame: stageEdit.selection.select,
-});
-
-// --- table editing (SPEC-091) ----------------------------------------------
-const tables = useTables({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  selectedFrame: stageEdit.selection.selectedFrame,
-  selectFrame: stageEdit.selection.select,
-});
-watch(stageEdit.editing.activeCell, (c) => c && tables.setCurrentCell(c.row, c.col)); // panel anchor = editing cell
-
-// --- chart editing (SPEC-092) ----------------------------------------------
-const charts = useSlideCharts({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  selectedFrame: stageEdit.selection.selectedFrame,
-  selectFrame: stageEdit.selection.select,
-});
-stageEdit.setChartEditHandler(charts.openDataSheet); // double-click a chart → data sheet
+// --- deck theme: the Design panel (SPEC-094) -------------------------------
+const themePanel = useDeckTheme({ model: presentation, record: slideUndo.record, commit });
 
 // --- slide layouts + Reset slide (SPEC-089) --------------------------------
 const layouts = useSlideLayouts({
@@ -327,6 +295,8 @@ onBeforeUnmount(() => {
         :layout-open="layouts.open.value"
         :table-open="tables.open.value"
         :header-footer-open="headerFooter.open.value"
+        :theme-open="themePanel.open.value"
+        @theme-toggle="themePanel.toggle()"
         @transition-toggle="transitions.toggle()"
         @animate-toggle="animations.toggle()"
         @layout-toggle="toggleLayout()"
@@ -373,12 +343,14 @@ onBeforeUnmount(() => {
         :tables="tables"
         :charts="charts"
         :fields-by-slide="deckFields"
-        :theme="presentation.theme"
+        :theme="themePanel.displayTheme.value"
         @select="selectSlide"
         @add="addSlideAction"
         @command="filmstrip.onCommand"
         @reorder="filmstrip.onReorder"
       />
+
+      <ThemesPanel :controller="themePanel" />
     </div>
     <PresentationDialogs
       :deck-actions="deckActions"

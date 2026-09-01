@@ -36,6 +36,8 @@ const props = defineProps({
   tableOpen: { type: Boolean, default: false },
   /** Whether the Header & Footer dialog is open (SPEC-093). */
   headerFooterOpen: { type: Boolean, default: false },
+  /** Whether the Design (theme) panel is open (SPEC-094). */
+  themeOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -49,6 +51,7 @@ const emit = defineEmits([
   "bullet",
   "indent",
   "outdent",
+  "theme-toggle",
   "transition-toggle",
   "animate-toggle",
   "layout-toggle",
@@ -260,6 +263,14 @@ onBeforeUnmount(() => observer?.disconnect());
       role="group"
       aria-label="Slide"
     >
+      <UiToggleButton
+        label="Design"
+        data-testid="slides-theme-toggle"
+        :pressed="themeOpen"
+        @click="emit('theme-toggle')"
+      >
+        Design
+      </UiToggleButton>
       <UiToggleButton
         label="Transition"
         data-testid="slides-transition-toggle"

@@ -129,6 +129,9 @@ export interface Preferences {
   /** Whether the presentation editor's table properties panel is expanded
    * (SPEC-091). Per-device, default collapsed. */
   presentationTableOpen: boolean;
+  /** Whether the presentation editor's Design (theme) panel is expanded
+   * (SPEC-094). Per-device, default collapsed. */
+  presentationThemeOpen: boolean;
   /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
   snapToGuides: boolean;
   /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
@@ -196,6 +199,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationNotesOpen: false,
   presentationTransitionsOpen: false,
   presentationAnimationsOpen: false,
+  presentationThemeOpen: false, // SPEC-094 Design panel
   presentationTableOpen: false,
   snapToGuides: true,
   snapToGrid: false,
@@ -269,6 +273,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationNotesOpen: isBoolean,
   presentationTransitionsOpen: isBoolean,
   presentationAnimationsOpen: isBoolean,
+  presentationThemeOpen: isBoolean,
   presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,
   snapToGrid: isBoolean,
