@@ -28,6 +28,22 @@ export interface SlideRenderDeps {
 }
 
 export function useSlideRender(deps: SlideRenderDeps) {
+  // SPEC-095: `model.media` is one IndexedDB record whose write latch skips only
+  // while the array reference is unchanged, so re-slicing it on every commit
+  // rewrites a 20 MB clip whole on every nudge/keystroke. This flag gates the
+  // re-slice: a media-mutating command sets it via `bumpMedia()` before its
+  // `commit()`, and only then is the media reference (and its store record)
+  // refreshed. Cleared each commit.
+  let mediaDirty = false;
+
+  /** Marks `model.media` as changed so the next `commit()` re-slices it (and the
+   * store persists the record). Every path that mutates `model.media` — an image
+   * insert (SPEC-082), a media insert, "Replace poster…" — must call this before
+   * `commit()`, or a just-inserted clip would not render (AC-13). */
+  function bumpMedia(): void {
+    mediaDirty = true;
+  }
+
   /** Replaces the current slide + its frames with fresh object identities so
    * the stage re-renders their geometry/style (the shallowRef trick). */
   function bumpCurrentSlide(): void {
@@ -60,15 +76,18 @@ export function useSlideRender(deps: SlideRenderDeps) {
     // and undo snapshots stay in step.
     bumpCurrentSlide();
     model.slides = model.slides.slice();
-    // A fresh media reference too, so the stage's media resolver rebuilds and a
-    // just-inserted image resolves and renders immediately.
-    if (model.media) {
+    // A fresh media reference ONLY when a media-mutating command asked for it
+    // (bumpMedia), so the stage's media resolver rebuilds and a just-inserted
+    // image/clip renders immediately — while a plain nudge/keystroke leaves the
+    // reference (and the store's media record) untouched (SPEC-095 AC-12).
+    if (mediaDirty && model.media) {
       model.media = model.media.slice();
     }
+    mediaDirty = false;
     touchDocument(model.id);
     triggerRef(deps.model);
     void nextTick(deps.recomputeScale);
   }
 
-  return { commit, refresh, bumpCurrentSlide };
+  return { commit, refresh, bumpCurrentSlide, bumpMedia };
 }

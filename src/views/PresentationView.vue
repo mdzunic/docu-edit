@@ -66,7 +66,7 @@ const { addToast } = useToasts();
 // view stays within its size budget; it owns the shallowRef re-identification.
 // SlideStageArea owns the fit scaling now (SPEC-089) and recomputes reactively
 // from the current slide + deck size, so the render trio needs no scale hook.
-const { commit, refresh } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => {} });
+const { commit, refresh, bumpMedia } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => {} });
 
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
 const canUndo = slideUndo.canUndo;
@@ -126,6 +126,7 @@ const stageEdit = usePresentationEditing({
   currentIndex,
   record: slideUndo.record,
   commit,
+  bumpMedia,
   refresh,
   undo: slideUndo.undo,
   redo: slideUndo.redo,

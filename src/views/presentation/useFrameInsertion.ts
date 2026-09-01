@@ -10,11 +10,19 @@ import { DRAW_DRAG_THRESHOLD_CM, drawGestureBox } from "../../lib/core/shapes";
 import type { ShapeGeometry } from "../../lib/core/shapes";
 import { decodeImageDimensions } from "../../lib/core/imageDimensions";
 import type { MediaPart } from "../../lib/core/media";
+import {
+  isAcceptedMediaType,
+  MAX_MEDIA_SIZE_BYTES,
+  MEDIA_ACCEPT_ATTR,
+  MEDIA_TOO_LARGE_MESSAGE,
+} from "../../lib/core/media";
+import { mediaKindForContentType } from "../../lib/presentation/mediaFrames";
 import { bytesToBase64 } from "../../lib/core/packageParts";
 import {
   DEFAULT_TEXT_BOX_SIZE_CM,
   insertImageFrame,
   insertImageRect,
+  insertMediaFrame,
   insertShapeFrame,
   insertTableFrame,
   insertTextBoxFrame,
@@ -39,6 +47,8 @@ export interface FrameInsertionDeps {
   surface: () => HTMLElement | null;
   record: (label?: string) => void;
   commit: () => void;
+  /** Marks `model.media` changed so `commit` re-slices it (SPEC-095 AC-13). */
+  bumpMedia: () => void;
   /** Opens the new text box into an editing session (AC-12). */
   startEditing: (frameId: string) => void;
   /** Reports a broken/unreadable image (AC-9). */
@@ -183,6 +193,47 @@ export function useFrameInsertion(deps: FrameInsertionDeps) {
       return;
     }
     deps.selection.select(id);
+    // A media-array mutation: gate the commit's re-slice so the new part renders
+    // immediately (SPEC-095 AC-13 — the path this spec's commit gate must not
+    // regress).
+    deps.bumpMedia();
+    deps.commit();
+  }
+
+  // --- media picker (SPEC-095) ----------------------------------------------
+
+  /** Inserts an audio/video clip picked from disk (AC-15/16/17): an unsupported
+   * type, an unreadable file or one over the 25 MB ceiling reports through
+   * `reportError` and changes nothing; otherwise it lands a MediaFrame at the
+   * per-kind box and selects it. */
+  async function insertMediaFile(file: File): Promise<void> {
+    const model = deps.model.value;
+    if (!model) return;
+    const contentType = file.type;
+    if (!isAcceptedMediaType(contentType)) {
+      deps.reportError("That file isn't a supported audio or video clip.");
+      return;
+    }
+    let buffer: Uint8Array;
+    try {
+      buffer = new Uint8Array(await file.arrayBuffer());
+    } catch {
+      deps.reportError("That media file couldn't be read.");
+      return;
+    }
+    if (buffer.length > MAX_MEDIA_SIZE_BYTES) {
+      deps.reportError(MEDIA_TOO_LARGE_MESSAGE);
+      return;
+    }
+    const media: MediaPart = { mediaId: "", contentType, data: bytesToBase64(buffer) };
+    deps.record("Insert media");
+    const id = insertMediaFrame(model, deps.currentIndex.value, media, mediaKindForContentType(contentType));
+    if (!id) {
+      deps.reportError("That clip couldn't be inserted.");
+      return;
+    }
+    deps.selection.select(id);
+    deps.bumpMedia();
     deps.commit();
   }
 
@@ -195,7 +246,9 @@ export function useFrameInsertion(deps: FrameInsertionDeps) {
     disarm,
     onSurfacePointerDown,
     insertImageFile,
+    insertMediaFile,
     insertTable,
     accept: PRESENTATION_IMAGE_ACCEPT,
+    mediaAccept: MEDIA_ACCEPT_ATTR,
   };
 }
