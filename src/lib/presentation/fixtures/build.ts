@@ -1846,8 +1846,16 @@ function mediaFixtureModel(format: "pptx" | "odp"): PresentationModel {
   const slide = model.slides[0];
   slide.frames = [];
   const audioId = insertMediaFrame(model, 0, { mediaId: "", contentType: "audio/wav", data: WAV_BASE64 }, "audio")!;
-  insertMediaFrame(model, 0, { mediaId: "", contentType: "video/mp4", data: SYNTHETIC_MP4_BASE64 }, "video");
+  const videoId = insertMediaFrame(model, 0, { mediaId: "", contentType: "video/mp4", data: SYNTHETIC_MP4_BASE64 }, "video")!;
   setMediaPoster(model, 0, audioId, { mediaId: "", contentType: "image/png", data: POSTER_PNG_BASE64 });
+  // Distinct, non-overlapping boxes so each clip is separately clickable on the
+  // stage (insertMediaFrame centres them, which would stack audio under video).
+  const audio = slide.frames.find((f) => f.id === audioId)!;
+  audio.xCm = 1;
+  audio.yCm = 1;
+  const video = slide.frames.find((f) => f.id === videoId)!;
+  video.xCm = 2;
+  video.yCm = 8;
   slide.frames.push({
     id: crypto.randomUUID(),
     kind: "media",
