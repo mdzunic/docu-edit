@@ -4,7 +4,15 @@
 // transition/animation data attributes, key-table equality with playbackKeys,
 // size accounting, and no-mutation of a deep-frozen model.
 import { describe, expect, it } from "vitest";
-import { exportPresentationHtml, htmlFileName, keyTableJson, esc, validColor } from "./htmlExport";
+import {
+  exportPresentationHtml,
+  htmlFileName,
+  keyTableJson,
+  esc,
+  validColor,
+  mediaExportSummary,
+  HTML_EXPORT_MEDIA_BUDGET_BYTES,
+} from "./htmlExport";
 import { advanceKeys, backKeys, firstKeys, lastKeys } from "./playbackKeys";
 import type { PresentationModel, Slide, SlideFrame } from "./model";
 
@@ -259,6 +267,71 @@ describe("exportPresentationHtml — size accounting (AC-52)", () => {
     );
     expect(html.length).toBeLessThan(16 * 1024 * 1024);
     expect(html.length).toBeGreaterThan(1_000_000);
+  });
+});
+
+describe("exportPresentationHtml — media budget (SPEC-095 AC-47/48/50)", () => {
+  function mediaFrame(over: Partial<Extract<SlideFrame, { kind: "media" }>> = {}): SlideFrame {
+    return { id: "med1", kind: "media", media: "video", xCm: 0, yCm: 0, widthCm: 16, heightCm: 9, mediaId: "clip1", ...over };
+  }
+
+  it("embeds a clip as a data: URI while under the budget", () => {
+    const html = exportPresentationHtml(
+      baseModel([slide("s1", [mediaFrame({ contentType: "video/mp4" })])], {
+        media: [{ mediaId: "clip1", contentType: "video/mp4", data: "AAAA" }],
+      }),
+      { includeNotes: false },
+    );
+    expect(html).toContain("<video controls");
+    expect(html).toContain("src=\"data:video/mp4;base64,AAAA\"");
+    expect(html).not.toContain("Media omitted from this export");
+  });
+
+  it("embeds audio as an <audio controls> data: URI", () => {
+    const html = exportPresentationHtml(
+      baseModel([slide("s1", [mediaFrame({ media: "audio", contentType: "audio/wav" })])], {
+        media: [{ mediaId: "clip1", contentType: "audio/wav", data: "BBBB" }],
+      }),
+      { includeNotes: false },
+    );
+    expect(html).toContain("<audio controls");
+    expect(html).toContain("src=\"data:audio/wav;base64,BBBB\"");
+  });
+
+  it("omits every clip past the budget, emitting the poster plate and no payload", () => {
+    const big = "A".repeat(HTML_EXPORT_MEDIA_BUDGET_BYTES + 1000);
+    const html = exportPresentationHtml(
+      baseModel([slide("s1", [mediaFrame({ contentType: "video/mp4", posterMediaId: "poster1" })])], {
+        media: [
+          { mediaId: "clip1", contentType: "video/mp4", data: big },
+          { mediaId: "poster1", contentType: "image/png", data: "PPPP" },
+        ],
+      }),
+      { includeNotes: false },
+    );
+    expect(html).toContain("Media omitted from this export");
+    expect(html).not.toContain("<video");
+    // No clip payload survives; the poster still embeds.
+    expect(html).not.toContain(big);
+    expect(html).toContain("data:image/png;base64,PPPP");
+  });
+
+  it("mediaExportSummary reports count and the omit decision", () => {
+    const under = baseModel([slide("s1", [mediaFrame()])], {
+      media: [{ mediaId: "clip1", contentType: "video/mp4", data: "AAAA" }],
+    });
+    expect(mediaExportSummary(under)).toEqual({ count: 1, totalBase64Bytes: 4, omitted: false });
+
+    const big = "A".repeat(HTML_EXPORT_MEDIA_BUDGET_BYTES + 1);
+    const over = baseModel([slide("s1", [mediaFrame()])], {
+      media: [{ mediaId: "clip1", contentType: "video/mp4", data: big }],
+    });
+    expect(mediaExportSummary(over).omitted).toBe(true);
+    expect(mediaExportSummary(over).count).toBe(1);
+
+    // A linked clip has no payload — it counts but adds no bytes.
+    const linked = baseModel([slide("s1", [mediaFrame({ mediaId: undefined, linkTarget: "far.mp4" })])]);
+    expect(mediaExportSummary(linked)).toEqual({ count: 1, totalBase64Bytes: 0, omitted: false });
   });
 });
 
