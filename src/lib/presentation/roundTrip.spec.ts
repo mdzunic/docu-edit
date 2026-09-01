@@ -240,9 +240,16 @@ describe("SPEC-079 frame model", () => {
   });
 
   it("resolves a themed schemeClr fill through clrMap + lumMod/lumOff (AC-17/18/25)", async () => {
-    const ellipse = (await pptxSlides())[3].frames[3] as ShapeFrame;
+    // SPEC-094 re-expresses this SPEC-079 pin: the fill is now the RECORDED
+    // reference (accent1 + lumMod 60% / lumOff 40%), and the maths is proven
+    // unchanged by resolving it back to the exact same literal as before.
+    const model = await parsePptx(await buildPptxFixtureBytes());
+    const ellipse = model.slides[3].frames[3] as ShapeFrame;
     expect(ellipse.geometry).toBe("ellipse");
-    expect(ellipse.fill).toEqual({ type: "solid", color: FIXTURE_SHAPE_FILL });
+    expect(ellipse.fill).toEqual({ type: "solid", color: { theme: "accent1", lumMod: 0.6, lumOff: 0.4 } });
+    const { resolveColor, DEFAULT_THEME } = await import("../core/theme");
+    const fill = ellipse.fill as { type: "solid"; color: import("../core/theme").ThemeColorRef };
+    expect(resolveColor(fill.color, model.theme ?? DEFAULT_THEME)).toBe(FIXTURE_SHAPE_FILL);
   });
 
   it("resolves odp effective formatting through the parent-style chain (AC-19/20)", async () => {

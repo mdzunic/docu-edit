@@ -45,6 +45,7 @@ import {
   DEFAULT_SLIDE_WIDTH_CM,
   DEFAULT_TABLE_CELL_PADDING_CM,
   type DeckHeaderFooter,
+  type DeckTheme,
   type LayoutSlot,
   type ParsedPresentation,
   type PlaceholderRole,
@@ -65,6 +66,8 @@ import { KIND_OF_PH_TYPE, PPTX_DATETIME_TO_FORMAT } from "./fields";
 import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
 import { CHART_RELATIONSHIP, C_NAMESPACE, parseChartXml } from "../../core/chartPartOoxml";
 import { parseClrMap, parseClrScheme, resolveFirstColor, type ColorContext } from "./color";
+import { colorRefFrom, fontRefFrom, readDeckTheme } from "./theme";
+import { DEFAULT_THEME, type ModelColor, type ModelFont } from "../../core/theme";
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
 import { readPptxTiming } from "./timing";
@@ -135,19 +138,24 @@ interface PlaceholderInfo {
   role: PlaceholderRole;
 }
 
-/** A resolved run-property set (partial: only the fields a source declares). */
+/** A resolved run-property set (partial: only the fields a source declares).
+ * SPEC-094: colour/font may be a scheme reference when the deck has a theme. */
 interface RunProps {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
-  fontFamily?: string;
+  fontFamily?: ModelFont;
   sizePt?: number;
-  color?: string;
+  color?: ModelColor;
 }
 
 /** Everything a slide's frames resolve their effective values against. */
 interface SlideContext {
   color: ColorContext;
+  /** Present when the deck's theme was captured AND this slide's chain ends in
+   * that same theme part: `a:schemeClr`/`+mj-lt`/`+mn-lt` then read as
+   * references through this clrMap (SPEC-094 AC-14/16). Absent = literals. */
+  themeCapture?: { map: Record<string, string> };
   layoutPh: Map<string, PlaceholderInfo>;
   masterPh: Map<string, PlaceholderInfo>;
   /** Master `p:txStyles`: role → level (0-based) → defRPr element. */
@@ -161,8 +169,46 @@ interface SlideContext {
   parts: Map<string, Uint8Array>;
 }
 
+/** The first colour element (`a:srgbClr`/`a:sysClr`/`a:schemeClr`) inside a
+ * fill container, or undefined. */
+function firstColorElement(container: Element): Element | undefined {
+  for (const child of Array.from(container.children)) {
+    if (child.namespaceURI === A_NAMESPACE && ["srgbClr", "sysClr", "schemeClr"].includes(child.localName)) {
+      return child;
+    }
+  }
+  return undefined;
+}
+
+/** Reads a fill container's solid colour: SPEC-079's resolution stays the
+ * normative effective value, and when the deck has a captured theme an
+ * `a:schemeClr` additionally records the reference (SPEC-094 AC-14) — any
+ * transform outside lumMod/lumOff/shade/tint keeps it a literal (AC-15). */
+function readSolidColor(
+  container: Element,
+  color: ColorContext,
+  capture: { map: Record<string, string> } | undefined,
+): ModelColor | undefined {
+  const resolved = resolveFirstColor(container, color);
+  if (!capture) {
+    return resolved;
+  }
+  const el = firstColorElement(container);
+  if (el && el.localName === "schemeClr") {
+    const ref = colorRefFrom(el, capture.map);
+    if (ref) {
+      return ref;
+    }
+  }
+  return resolved;
+}
+
 /** Reads a run/defRPr-shaped element's own declared properties. */
-function readRunProps(rPr: Element | undefined, color: ColorContext): RunProps {
+function readRunProps(
+  rPr: Element | undefined,
+  color: ColorContext,
+  capture?: { map: Record<string, string> },
+): RunProps {
   if (!rPr) {
     return {};
   }
@@ -186,13 +232,17 @@ function readRunProps(rPr: Element | undefined, color: ColorContext): RunProps {
   const latin = firstA(rPr, "latin");
   const typeface = latin?.getAttribute("typeface");
   if (typeface) {
-    props.fontFamily = typeface;
+    // `+mj-lt`/`+mn-lt` become theme font references on a themed deck
+    // (SPEC-094 AC-16); on an unthemed one the baked minor-latin literal
+    // stands in (nothing to reference).
+    const ref = capture ? fontRefFrom(typeface) : undefined;
+    props.fontFamily = ref ?? typeface;
   }
   const solidFill = firstA(rPr, "solidFill");
   if (solidFill) {
-    const resolved = resolveFirstColor(solidFill, color);
-    if (resolved) {
-      props.color = resolved;
+    const value = readSolidColor(solidFill, color, capture);
+    if (value) {
+      props.color = value;
     }
   }
   return props;
@@ -231,9 +281,10 @@ function resolveRun(
   shapeLstStyle: Element | undefined,
   ctx: SlideContext,
 ): SlideRun {
-  // Built-in defaults (AC-16).
+  // Built-in defaults (SPEC-079 AC-16); on a themed deck the inherited default
+  // font is a `minor` reference rather than the baked literal (SPEC-094 AC-16).
   let props: RunProps = {
-    fontFamily: ctx.themeMinorLatin,
+    fontFamily: ctx.themeCapture ? { theme: "minor" } : ctx.themeMinorLatin,
     sizePt: DEFAULT_FONT_SIZE_PT,
     color: DEFAULT_COLOR,
   };
@@ -241,12 +292,12 @@ function resolveRun(
   // layout/master placeholder's own lstStyle.
   if (role) {
     const styleLevels = ctx.txStyles.get(role);
-    props = mergeProps(props, readRunProps(styleLevels?.[level], ctx.color));
+    props = mergeProps(props, readRunProps(styleLevels?.[level], ctx.color, ctx.themeCapture));
   }
   // Shape's own lstStyle (AC-14).
-  props = mergeProps(props, readRunProps(lstStyleDefRPr(shapeLstStyle, level), ctx.color));
+  props = mergeProps(props, readRunProps(lstStyleDefRPr(shapeLstStyle, level), ctx.color, ctx.themeCapture));
   // The run's own rPr (AC-13).
-  props = mergeProps(props, readRunProps(rPr, ctx.color));
+  props = mergeProps(props, readRunProps(rPr, ctx.color, ctx.themeCapture));
 
   const run: SlideRun = { text };
   if (props.bold) run.bold = true;
@@ -340,7 +391,7 @@ function fillOf(spPr: Element | undefined, ctx: SlideContext): SlideFill | undef
   }
   const solidFill = firstA(spPr, "solidFill");
   if (solidFill) {
-    const color = resolveFirstColor(solidFill, ctx.color);
+    const color = readSolidColor(solidFill, ctx.color, ctx.themeCapture);
     if (color) {
       return { type: "solid", color };
     }
@@ -362,7 +413,7 @@ function fillOf(spPr: Element | undefined, ctx: SlideContext): SlideFill | undef
 }
 
 /** The stroke a `p:spPr/a:ln` describes, or undefined for none. */
-function strokeOf(spPr: Element | undefined, ctx: SlideContext): { color: string; widthPt: number } | undefined {
+function strokeOf(spPr: Element | undefined, ctx: SlideContext): { color: ModelColor; widthPt: number } | undefined {
   if (!spPr) {
     return undefined;
   }
@@ -371,7 +422,7 @@ function strokeOf(spPr: Element | undefined, ctx: SlideContext): { color: string
     return undefined;
   }
   const solidFill = firstA(ln, "solidFill");
-  const color = solidFill ? resolveFirstColor(solidFill, ctx.color) : undefined;
+  const color = solidFill ? readSolidColor(solidFill, ctx.color, ctx.themeCapture) : undefined;
   if (!color) {
     return undefined;
   }
@@ -457,11 +508,13 @@ function fieldLook(
   rPr: Element | undefined,
   ctx: SlideContext,
 ): Pick<SlideFieldPlaceholder, "sizePt" | "color" | "fontFamily"> {
+  // No capture context: a field's look keeps plain literals (SlideFieldPlaceholder
+  // is not widened by SPEC-094).
   const props = readRunProps(rPr, ctx.color);
   const look: Pick<SlideFieldPlaceholder, "sizePt" | "color" | "fontFamily"> = {};
   if (props.sizePt !== undefined) look.sizePt = props.sizePt;
-  if (props.color !== undefined) look.color = props.color;
-  if (props.fontFamily !== undefined) look.fontFamily = props.fontFamily;
+  if (typeof props.color === "string") look.color = props.color;
+  if (typeof props.fontFamily === "string") look.fontFamily = props.fontFamily;
   return look;
 }
 
@@ -790,7 +843,7 @@ function applyTcPr(cell: SlideTableCell, tcPr: Element, ctx: SlideContext): void
   } else {
     const solidFill = firstA(tcPr, "solidFill");
     if (solidFill) {
-      const color = resolveFirstColor(solidFill, ctx.color);
+      const color = readSolidColor(solidFill, ctx.color, ctx.themeCapture);
       if (color) {
         cell.fill = { type: "solid", color };
       }
@@ -1335,6 +1388,8 @@ interface ChainDocs {
   layoutRoot?: Element;
   masterRoot?: Element;
   themeRoot?: Element;
+  /** The resolved theme part path, when the chain reached one (SPEC-094). */
+  themePath?: string;
 }
 
 /** Parses a `.pptx` file's bytes into the slide model. Throws
@@ -1423,6 +1478,7 @@ export async function parsePptx(
 
   const deps: BuildDeps = {
     readPart,
+    themeHolder: {},
     parseDoc,
     relsFor,
     media,
@@ -1494,7 +1550,7 @@ export async function parsePptx(
     opaque.push({ name, data: await bytesToBase64Async(partBytes) });
   }
 
-  return {
+  const parsed: ParsedPresentation = {
     slides,
     layouts,
     slideWidthCm,
@@ -1505,6 +1561,10 @@ export async function parsePptx(
     opaque,
     properties,
   };
+  if (deps.themeHolder.theme) {
+    parsed.theme = deps.themeHolder.theme;
+  }
+  return parsed;
 }
 
 /** Assembles the deck-level `headerFooter` from the read slides (SPEC-093):
@@ -1548,6 +1608,9 @@ function assembleHeaderFooter(
 
 interface BuildDeps {
   readPart: (path: string) => string | undefined;
+  /** Mutable deck-theme holder (SPEC-094): the FIRST master's theme is the
+   * deck's editable one; later chains reaching a different part read literals. */
+  themeHolder: { theme?: DeckTheme };
   parseDoc: (path: string) => Document | undefined;
   relsFor: (path: string) => Map<string, Relationship>;
   media: Map<string, MediaPart>;
@@ -1578,8 +1641,20 @@ function buildSlide(
     map: chain.masterRoot ? parseClrMap(chain.masterRoot) : {},
   };
 
+  // SPEC-094: the first master's theme becomes the deck theme; a slide whose
+  // chain ends in THAT part reads its scheme colours/fonts as references. A
+  // slide hanging off a different theme part (a second master) keeps literals,
+  // so its rendered colours cannot drift when the deck theme is edited.
+  if (!deps.themeHolder.theme && chain.themeRoot && chain.themePath) {
+    deps.themeHolder.theme = readDeckTheme(chain.themeRoot, chain.masterRoot, chain.themePath, DEFAULT_THEME);
+  }
+  const deckTheme = deps.themeHolder.theme;
+  const themeCapture =
+    deckTheme && chain.themePath === deckTheme.partName ? { map: deckTheme.colorMap ?? {} } : undefined;
+
   const ctx: SlideContext = {
     color,
+    themeCapture,
     layoutPh: buildPlaceholderMap(chain.layoutRoot ? layoutSpTree(chain.layoutRoot) : undefined),
     masterPh: buildPlaceholderMap(chain.masterRoot ? layoutSpTree(chain.masterRoot) : undefined),
     txStyles: buildTxStyles(chain.masterRoot),
@@ -1830,16 +1905,18 @@ function resolveChain(slidePath: string, slideRels: Map<string, Relationship>, d
   const masterRel = Array.from(layoutRels.values()).find((r) => r.type === SLIDE_MASTER_RELATIONSHIP);
   let masterRoot: Element | undefined;
   let themeRoot: Element | undefined;
+  let themePath: string | undefined;
   if (masterRel) {
     const masterPath = resolvePartPath(layoutPath, masterRel.target);
     masterRoot = deps.parseDoc(masterPath)?.documentElement;
     const masterRels = deps.relsFor(masterPath);
     const themeRel = Array.from(masterRels.values()).find((r) => r.type === THEME_RELATIONSHIP);
     if (themeRel) {
-      themeRoot = deps.parseDoc(resolvePartPath(masterPath, themeRel.target))?.documentElement;
+      themePath = resolvePartPath(masterPath, themeRel.target);
+      themeRoot = deps.parseDoc(themePath)?.documentElement;
     }
   }
-  return { layoutRoot, masterRoot, themeRoot };
+  return { layoutRoot, masterRoot, themeRoot, themePath };
 }
 
 /** Captures the verbatim preservation fields SPEC-081 re-emits: the root

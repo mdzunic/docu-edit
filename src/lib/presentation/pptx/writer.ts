@@ -39,6 +39,7 @@ import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStand
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { resolveSlideFields, serializeSlideXml, type ResolvedField } from "./serialize";
 import { applyNotesContentTypes, planNotes } from "./notesWriter";
+import { spliceThemeXml } from "./theme";
 import { now as clockNow } from "../../core/clock";
 import { chartPartXml } from "../../core/chartPartOoxml";
 
@@ -93,7 +94,8 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
   const anyNotes = model.slides.some((slide) => slide.notesDirty === true);
   const deckDirty = model.deckDirty === true;
   const headerFooterDirty = model.headerFooterDirty === true;
-  if (!model.structureDirty && !deckDirty && !anyDirty && !anyNotes && !headerFooterDirty) {
+  const themeDirty = model.theme?.dirty === true;
+  if (!model.structureDirty && !deckDirty && !anyDirty && !anyNotes && !headerFooterDirty && !themeDirty) {
     // Nothing changed — re-emit verbatim (AC-51).
     const bytes = await zip([...parts].map(([name, data]) => ({ name, data })));
     return { bytes };
@@ -118,6 +120,7 @@ export async function writePptx(model: PresentationModel, options: WritePptxOpti
  * the Content-Types extension default added if missing (SPEC-082). */
 function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>, now: Date): ZipEntryInput[] {
   const fieldsBySlide = resolveFieldsBySlide(model, now);
+  const themeSplice = planThemeSplice(model, parts);
   const contentTypesXml = decode(parts.get("[Content_Types].xml") ?? encode(""));
   const media = planMedia(model, parts, contentTypesXml);
   const charts = planCharts(model, parts);
@@ -138,7 +141,10 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       const strippedRelsXml = stripOrphanChartRels(relsXml, slide.partName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
       const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName)];
-      rebuilt.set(slide.partName, encode(serializeSlideXml(slide, rels, slide.partName, fieldsBySlide.get(slide) ?? [])));
+      rebuilt.set(
+        slide.partName,
+        encode(serializeSlideXml(slide, rels, slide.partName, fieldsBySlide.get(slide) ?? [], model.theme)),
+      );
       let outRels = relsForLayoutChange(slide, slide.partName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
         outRels = strippedRelsXml;
@@ -195,6 +201,10 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       entries.push({ name, data: notes.parts.get(name)! });
     } else if (rebuilt.has(name)) {
       entries.push({ name, data: rebuilt.get(name)! });
+    } else if (themeSplice.has(name)) {
+      // SPEC-094: an edited theme rewrites its part IN PLACE — only the colour
+      // scheme and font typefaces move; every other part stays byte-verbatim.
+      entries.push({ name, data: themeSplice.get(name)! });
     } else if (plan.masterXml.has(name)) {
       entries.push({ name, data: encode(plan.masterXml.get(name)!) });
     } else if (plan.masterRelsXml.has(name)) {
@@ -571,12 +581,25 @@ function spliceContentDefaults(contentTypesXml: string, defaults: string): strin
  * slide's resolved deck field placeholders (SPEC-093), emitted after the
  * frames. */
 function slideXml(
+  model: PresentationModel,
   slide: Slide,
   rels: Map<string, Relationship> = new Map(),
   path = "",
   fields: ResolvedField[] = [],
 ): string {
-  return serializeSlideXml(slide, rels, path, fields);
+  return serializeSlideXml(slide, rels, path, fields, model.theme);
+}
+
+/** The in-place rewritten theme part for an edited deck theme (SPEC-094
+ * AC-25..27), keyed by part name; empty when the theme is untouched or the
+ * package has no such part. */
+function planThemeSplice(model: PresentationModel, parts: Map<string, Uint8Array>): Map<string, Uint8Array> {
+  const out = new Map<string, Uint8Array>();
+  const theme = model.theme;
+  if (theme?.dirty === true && theme.partName && parts.has(theme.partName)) {
+    out.set(theme.partName, encode(spliceThemeXml(decode(parts.get(theme.partName)!), theme)));
+  }
+  return out;
 }
 
 /** Every slide's resolved deck field placeholders, keyed by slide object so a
@@ -719,7 +742,7 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     { name: "ppt/_rels/presentation.xml.rels", data: encode(presentationRels) },
     { name: "ppt/slideMasters/slideMaster1.xml", data: encode(masterXml) },
     { name: "ppt/slideMasters/_rels/slideMaster1.xml.rels", data: encode(masterRels) },
-    { name: "ppt/theme/theme1.xml", data: encode(THEME_XML) },
+    { name: "ppt/theme/theme1.xml", data: encode(model.theme ? spliceThemeXml(THEME_XML, model.theme) : THEME_XML) },
   ];
   standardLayouts.forEach((layout, i) => {
     entries.push({ name: layoutPaths[i], data: encode(authorLayoutXml(layout)) });
@@ -734,7 +757,7 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     const rels = new Map<string, Relationship>();
     rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
     const imageRels = linkImageRels(slide, rels, slidePath);
-    entries.push({ name: slidePath, data: encode(slideXml(slide, rels, slidePath, resolveSlideFields(model, index, now))) });
+    entries.push({ name: slidePath, data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now))) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
       data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)),
@@ -787,6 +810,7 @@ function relativeTarget(fromPart: string, toPart: string): string {
 
 function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Array>, modified: Date, now: Date): ZipEntryInput[] {
   const fieldsBySlide = resolveFieldsBySlide(model, now);
+  const themeSplice = planThemeSplice(model, parts);
   // Locate the presentation part through the root relationships.
   const rootRels = parseRelationships(decode(parts.get("_rels/.rels") ?? encode("")));
   const officeRel = [...rootRels.values()].find((rel) => rel.type === OFFICE_DOCUMENT_REL);
@@ -928,7 +952,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const strippedRelsXml = stripOrphanChartRels(relsXml, entry.emitName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
       const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
-      rebuiltOwn.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
+      rebuiltOwn.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
       let outRels = relsForLayoutChange(entry.slide, entry.emitName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
         outRels = strippedRelsXml;
@@ -960,7 +984,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
         ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)]
         : [];
       const xml = entry.slide.dirty
-        ? encode(slideXml(entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? []))
+        ? encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? []))
         : parts.get(entry.sourceName)!;
       baseSlideParts.set(entry.emitName, xml);
       if (sourceRelsBytes) {
@@ -973,7 +997,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
       const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
-      baseSlideParts.set(entry.emitName, encode(slideXml(entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
+      baseSlideParts.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
       baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
     }
   }
@@ -1047,7 +1071,15 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     } else if (plan.masterRelsXml.has(name)) {
       entries.push({ name, data: encode(plan.masterRelsXml.get(name)!) });
     } else {
-      entries.push({ name, data: rebuiltOwn.get(name) ?? charts.partBytes.get(name) ?? media.override.get(name) ?? data });
+      entries.push({
+        name,
+        data:
+          rebuiltOwn.get(name) ??
+          themeSplice.get(name) ??
+          charts.partBytes.get(name) ??
+          media.override.get(name) ??
+          data,
+      });
     }
   }
   // Genuinely new chart parts (an inserted chart, or a fresh part for a
