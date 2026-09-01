@@ -90,10 +90,13 @@ function onSurfaceMousedown() {
 
 function onSurfacePointerdown(event = new PointerEvent("pointerdown")) {
   // While a tool is armed, a pointerdown on the empty surface starts a draw
-  // gesture; otherwise it starts the marquee (SPEC-096).
+  // gesture; otherwise it starts the marquee (SPEC-096). A press that
+  // BUBBLED up from a frame or the selection chrome must not start a
+  // marquee — its sub-threshold release would wrongly deselect the frame
+  // that was just pressed.
   if (props.armed) {
     emit("surface-draw", event);
-  } else {
+  } else if (event.target === event.currentTarget) {
     emit("surface-marquee", event);
   }
 }

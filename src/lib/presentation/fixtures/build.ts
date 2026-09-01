@@ -1676,17 +1676,19 @@ export async function buildSpec094OdpFixtureBytes(): Promise<Uint8Array> {
 // group (pinning the confirm-to-release path; pptx only — odp models no group
 // rotation). The four mini-deck slides above are never touched.
 
-/** The three unaligned shapes' boxes in cm ([x, y, w, h], z-order). */
+/** The three unaligned shapes' boxes in cm ([x, y, w, h], z-order) —
+ * deliberately ragged: x all different, vertical gaps 0cm and 5cm so a
+ * Distribute vertically visibly equalises them (e2e). */
 export const SPEC096_SHAPE_BOXES: [number, number, number, number][] = [
   [2, 2, 4, 2],
-  [9, 5, 3, 3],
-  [16, 9, 5, 2],
+  [9, 4, 3, 3],
+  [14, 12, 5, 2],
 ];
 /** The rotated image's box and rotation. */
 export const SPEC096_IMAGE_BOX: [number, number, number, number] = [24, 2, 4, 3];
 export const SPEC096_IMAGE_ROTATION = 37;
 /** The tuned roundRect: box + its stored corner-radius fraction. */
-export const SPEC096_ROUND_RECT_BOX: [number, number, number, number] = [2, 13, 6, 3];
+export const SPEC096_ROUND_RECT_BOX: [number, number, number, number] = [2, 16, 6, 2.5];
 export const SPEC096_ADJUSTMENT = 0.4;
 /** The non-identity verbatim group's slide-space box (chExt is HALF the ext,
  * so its one child maps through a ×2 scale). */
