@@ -773,7 +773,10 @@ function onShadowPreset(id = "none") {
   flex-direction: column;
   gap: 10px;
   min-width: 260px;
-  max-height: 60vh;
+  /* The popover host sits mid-viewport; a hard cap keeps every control
+     reachable (the panel scrolls) rather than spilling past the viewport
+     bottom where a click cannot land. */
+  max-height: min(46vh, 340px);
   overflow-y: auto;
   padding: 4px 2px;
 }
