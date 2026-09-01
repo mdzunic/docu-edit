@@ -446,6 +446,7 @@ onBeforeUnmount(() => {
       :media="presentation.media ?? []"
       :scale="stageScale"
       :interactive="false"
+      :playback-mode="true"
       :frame-styles="buildPreview.frameStyles.value"
       :fields="currentFields"
       :theme="presentation.theme"

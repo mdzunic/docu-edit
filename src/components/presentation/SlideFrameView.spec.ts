@@ -55,3 +55,61 @@ describe("SlideFrameView group frame (SPEC-096)", () => {
     expect(childEl.style.top).toBe(cmPx(4));
   });
 });
+
+describe("SlideFrameView media frame (SPEC-095)", () => {
+  const mediaFrame = (over = {}) => ({
+    id: "m1",
+    xCm: 1,
+    yCm: 1,
+    widthCm: 16,
+    heightCm: 9,
+    kind: "media",
+    media: "video",
+    ...over,
+  });
+
+  it("renders a slide-media-frame with the poster when one exists (AC-18)", () => {
+    const wrapper = mount(SlideFrameView, {
+      props: {
+        frame: mediaFrame({ mediaId: "m.mp4", posterMediaId: "p", contentType: "video/mp4" }),
+        resolveMedia: (id: string) => `data:image/png;base64,${id}`,
+      },
+    });
+    expect(wrapper.find("[data-testid='slide-media-frame']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='media-poster']").exists()).toBe(true);
+  });
+
+  it("shows the link placeholder for a linked clip (AC-32)", () => {
+    const wrapper = mount(SlideFrameView, {
+      props: {
+        frame: mediaFrame({ linkTarget: "../far/remote.mp4", contentType: "video/mp4" }),
+        resolveMedia: () => "",
+      },
+    });
+    expect(wrapper.find("[data-testid='media-link-placeholder']").exists()).toBe(true);
+    expect(wrapper.text()).toContain("remote.mp4");
+  });
+
+  it("shows the oversize chip for an oversize clip (AC-11)", () => {
+    const wrapper = mount(SlideFrameView, {
+      props: {
+        frame: mediaFrame({ mediaId: "big.mp4", oversize: true, contentType: "video/mp4" }),
+        resolveMedia: () => "",
+      },
+    });
+    expect(wrapper.find("[data-testid='media-oversize']").text()).toContain("Not loaded");
+  });
+
+  it("shows media-unsupported when the browser can't play the codec (AC-33)", () => {
+    // jsdom's canPlayType returns "" for everything, so any embedded clip is
+    // unsupported here — the poster still shows.
+    const wrapper = mount(SlideFrameView, {
+      props: {
+        frame: mediaFrame({ mediaId: "m.mp4", posterMediaId: "p", contentType: "video/mp4" }),
+        resolveMedia: (id: string) => `data:image/png;base64,${id}`,
+      },
+    });
+    expect(wrapper.find("[data-testid='media-unsupported']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='media-poster']").exists()).toBe(true);
+  });
+});

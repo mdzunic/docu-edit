@@ -47,6 +47,9 @@ const props = defineProps({
   /** False for the filmstrip thumbnails: their frames render read-only, with
    * no selection chrome, focus, test hooks or pointer handling. */
   interactive: { type: Boolean, default: true },
+  /** SPEC-095: true in SPEC-084 playback (not the editor), so an autoStart media
+   * frame that is currently visible plays under the autoplay policy. */
+  playbackMode: { type: Boolean, default: false },
   /** SPEC-086 playback: per-frame inline styles (by frame id) the build engine
    * layers on during a show/preview. Absent in the editor (frames fully
    * visible, AC-25). */
@@ -171,6 +174,7 @@ const previewStyle = computed(() => {
         :armed="armed"
         :top-level="interactive"
         :play-style="frameStyles[frame.id] || null"
+        :playback-mode="playbackMode"
         :theme="theme"
         @select="(id, ev) => emit('frame-select', id, ev)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
