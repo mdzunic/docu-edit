@@ -68,8 +68,11 @@ describe("applyDeckSize scale (SPEC-090)", () => {
     // child scales but WITHOUT dx/dy (absorbed by the group's move)
     expect(g.children[0].xCm).toBeCloseTo(4 * s, 3);
     expect(g.children[0].widthCm).toBeCloseTo(5 * s, 3);
-    // group xml unchanged
-    expect(g.xml).toBe("<x/>");
+    // SPEC-096: scaling is a child-geometry change, so the verbatim xml is
+    // dropped and the serialisers rebuild the group at the scaled geometry
+    // (present = verbatim, absent = authored). Before SPEC-096 the xml was
+    // kept — and re-emitted stale at the old scale.
+    expect(g.xml).toBeUndefined();
   });
 
   it("scales foreign frame bounds while leaving its xml verbatim", () => {

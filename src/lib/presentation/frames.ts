@@ -14,13 +14,16 @@
 // text product or a Vue module (boundary.spec.ts).
 import { pxToCm } from "../core/units";
 import { extensionForContentType, type MediaPart } from "../core/media";
-import { LINE_GEOMETRIES, type ShapeGeometry } from "../core/shapes";
+import { LINE_GEOMETRIES, normalizeRotationDeg, type ShapeGeometry } from "../core/shapes";
+import { rotatedBounds } from "../core/shapeGeometry";
+import { resolvedShapeAdjustments } from "../core/shapeCatalogue";
 import { MIN_COLUMN_WIDTH_CM } from "../core/tables";
 import { markSlideEdited } from "./text";
 import { createTableFrame, scaleTableGrid, setColumnWidths, setRowHeight } from "./tables";
 import { removeAnimationsForFrame } from "./animations";
 import type {
   FrameStroke,
+  GroupFrame,
   ImageFrame,
   PresentationModel,
   ShapeFrame,
@@ -295,11 +298,46 @@ export function insertImageRect(
 
 // --- move / nudge -----------------------------------------------------------
 
+/** A frame's axis-aligned box in slide space, folding in its rotation
+ * (SPEC-096 AC — clamps, marquee intersection and guide activation all use
+ * `rotatedBounds`). */
+export function frameRotatedBox(frame: SlideFrame): FrameRect {
+  const box = rotatedBounds(frame.widthCm, frame.heightCm, frame.rotationDeg ?? 0);
+  return { xCm: frame.xCm - box.padX, yCm: frame.yCm - box.padY, widthCm: box.width, heightCm: box.height };
+}
+
 /** Clamps a frame's position so at least `FRAME_MIN_ON_SLIDE_CM` of it stays
- * on the slide (AC-18), on the frame's axis-aligned box. */
+ * on the slide (AC-18), on the frame's rotated axis-aligned box. */
 function clampToSlide(frame: SlideFrame, slideWidthCm: number, slideHeightCm: number): void {
-  frame.xCm = r3(clamp(frame.xCm, FRAME_MIN_ON_SLIDE_CM - frame.widthCm, slideWidthCm - FRAME_MIN_ON_SLIDE_CM));
-  frame.yCm = r3(clamp(frame.yCm, FRAME_MIN_ON_SLIDE_CM - frame.heightCm, slideHeightCm - FRAME_MIN_ON_SLIDE_CM));
+  const box = rotatedBounds(frame.widthCm, frame.heightCm, frame.rotationDeg ?? 0);
+  const x = clamp(
+    frame.xCm - box.padX,
+    FRAME_MIN_ON_SLIDE_CM - box.width,
+    slideWidthCm - FRAME_MIN_ON_SLIDE_CM,
+  );
+  const y = clamp(
+    frame.yCm - box.padY,
+    FRAME_MIN_ON_SLIDE_CM - box.height,
+    slideHeightCm - FRAME_MIN_ON_SLIDE_CM,
+  );
+  translateFrame(frame, r3(x + box.padX) - frame.xCm, r3(y + box.padY) - frame.yCm);
+}
+
+/** Shifts a frame — and, for a group, its slide-space children with it — by a
+ * raw delta. A group's children moving is a child-geometry change, so its
+ * verbatim `xml` is deleted (SPEC-096: the only way that field ever changes);
+ * a chart's verbatim container likewise. */
+function translateFrame(frame: SlideFrame, dxCm: number, dyCm: number): void {
+  if (dxCm === 0 && dyCm === 0) {
+    return;
+  }
+  frame.xCm = r3(frame.xCm + dxCm);
+  frame.yCm = r3(frame.yCm + dyCm);
+  dropChartContainerXml(frame);
+  if (frame.kind === "group") {
+    delete frame.xml;
+    frame.children.forEach((child) => translateFrame(child, dxCm, dyCm));
+  }
 }
 
 /** Moves a frame by `(dxCm, dyCm)`, clamped to the slide (AC-16/17/18).
@@ -316,8 +354,7 @@ export function moveFrame(
   if (!slide || !frame) {
     return null;
   }
-  frame.xCm += dxCm;
-  frame.yCm += dyCm;
+  translateFrame(frame, dxCm, dyCm);
   clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
   dropChartContainerXml(frame);
   touch(model, slide);
@@ -338,12 +375,43 @@ export function setFramePosition(
   if (!slide || !frame) {
     return null;
   }
-  frame.xCm = xCm;
-  frame.yCm = yCm;
+  translateFrame(frame, xCm - frame.xCm, yCm - frame.yCm);
   clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
   dropChartContainerXml(frame);
   touch(model, slide);
   return frame.id;
+}
+
+/** Moves several frames by one shared delta, clamped on the UNION of their
+ * rotated boxes against `FRAME_MIN_ON_SLIDE_CM` — never per frame, so
+ * relative positions cannot shift (SPEC-096 AC-13). Returns the moved ids. */
+export function moveFrames(
+  model: PresentationModel,
+  slideIndex: number,
+  frameIds: readonly string[],
+  dxCm: number,
+  dyCm: number,
+): string[] | null {
+  const slide = slideAt(model, slideIndex);
+  if (!slide) {
+    return null;
+  }
+  const frames = slide.frames.filter((frame) => frameIds.includes(frame.id));
+  if (frames.length === 0) {
+    return null;
+  }
+  const boxes = frames.map(frameRotatedBox);
+  const minX = Math.min(...boxes.map((b) => b.xCm));
+  const minY = Math.min(...boxes.map((b) => b.yCm));
+  const maxX = Math.max(...boxes.map((b) => b.xCm + b.widthCm));
+  const maxY = Math.max(...boxes.map((b) => b.yCm + b.heightCm));
+  const dx = clamp(minX + dxCm, FRAME_MIN_ON_SLIDE_CM - (maxX - minX), model.slideWidthCm - FRAME_MIN_ON_SLIDE_CM) - minX;
+  const dy = clamp(minY + dyCm, FRAME_MIN_ON_SLIDE_CM - (maxY - minY), model.slideHeightCm - FRAME_MIN_ON_SLIDE_CM) - minY;
+  for (const frame of frames) {
+    translateFrame(frame, r3(dx), r3(dy));
+  }
+  touch(model, slide);
+  return frames.map((frame) => frame.id);
 }
 
 // --- resize -----------------------------------------------------------------
@@ -369,6 +437,11 @@ export function resizeFrame(
     // proportions (SPEC-091 AC-8c) — before overwriting widthCm/heightCm.
     scaleTableGrid(frame, nextWidth / frame.widthCm, nextHeight / frame.heightCm);
   }
+  if (frame.kind === "group") {
+    // Children live in slide space, so a group resize scales them with the
+    // box — a child-geometry change that drops the verbatim xml (SPEC-096).
+    scaleGroupChildren(frame, { xCm: r3(rect.xCm), yCm: r3(rect.yCm), widthCm: nextWidth, heightCm: nextHeight });
+  }
   frame.xCm = r3(rect.xCm);
   frame.yCm = r3(rect.yCm);
   frame.widthCm = nextWidth;
@@ -376,6 +449,26 @@ export function resizeFrame(
   dropChartContainerXml(frame);
   touch(model, slide);
   return frame.id;
+}
+
+/** Scales a group's slide-space children from the group's current box to
+ * `next`, recursively, deleting every affected group's verbatim `xml`. */
+function scaleGroupChildren(group: GroupFrame, next: FrameRect): void {
+  const sx = group.widthCm > 0 ? next.widthCm / group.widthCm : 1;
+  const sy = group.heightCm > 0 ? next.heightCm / group.heightCm : 1;
+  delete group.xml;
+  const scale = (frame: SlideFrame): void => {
+    frame.xCm = r3(next.xCm + (frame.xCm - group.xCm) * sx);
+    frame.yCm = r3(next.yCm + (frame.yCm - group.yCm) * sy);
+    frame.widthCm = r3(frame.widthCm * sx);
+    frame.heightCm = r3(frame.heightCm * sy);
+    dropChartContainerXml(frame);
+    if (frame.kind === "group") {
+      delete frame.xml;
+      frame.children.forEach(scale);
+    }
+  };
+  group.children.forEach(scale);
 }
 
 /** Live column-boundary drag (SPEC-091 AC-8a). `boundary` is the index of the
@@ -432,6 +525,114 @@ export function resizeTableRowBoundary(
   return frame.id;
 }
 
+// --- rotation / adjustments (SPEC-096) --------------------------------------
+
+/** Sets a frame's rotation in whole degrees 0–359 (`normalizeRotationDeg`).
+ * Zero deletes the field. Rotating a GROUP is rigid and composes entirely
+ * onto its children ("Rotation maths"): each child's centre rotates about the
+ * group centre and each child's own rotation gains the delta —
+ * `GroupFrame.rotationDeg` itself is deleted rather than written, and the
+ * group box is recomputed as the children's rotated union. Returns the id. */
+export function setFrameRotation(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  rotationDeg: number,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame) {
+    return null;
+  }
+  const deg = normalizeRotationDeg(rotationDeg);
+  if (frame.kind === "group") {
+    rotateGroupChildren(frame, deg - normalizeRotationDeg(frame.rotationDeg ?? 0));
+  } else if (deg === 0) {
+    delete frame.rotationDeg;
+  } else {
+    frame.rotationDeg = deg;
+  }
+  dropChartContainerXml(frame);
+  touch(model, slide);
+  return frame.id;
+}
+
+/** Composes a rotation delta onto a group's children (SPEC-096 "Group
+ * rotation"): rigid about the group centre, then the group's own rotation is
+ * deleted and its box recomputed from the children. */
+function rotateGroupChildren(group: GroupFrame, deltaDeg: number): void {
+  delete group.xml;
+  delete group.rotationDeg;
+  if (deltaDeg === 0) {
+    return;
+  }
+  const cx = group.xCm + group.widthCm / 2;
+  const cy = group.yCm + group.heightCm / 2;
+  const rad = (deltaDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const spin = (frame: SlideFrame): void => {
+    const fcx = frame.xCm + frame.widthCm / 2 - cx;
+    const fcy = frame.yCm + frame.heightCm / 2 - cy;
+    const nx = cx + fcx * cos - fcy * sin;
+    const ny = cy + fcx * sin + fcy * cos;
+    frame.xCm = r3(nx - frame.widthCm / 2);
+    frame.yCm = r3(ny - frame.heightCm / 2);
+    dropChartContainerXml(frame);
+    if (frame.kind === "group") {
+      delete frame.xml;
+      frame.children.forEach(spin);
+    } else {
+      const deg = normalizeRotationDeg((frame.rotationDeg ?? 0) + deltaDeg);
+      if (deg === 0) {
+        delete frame.rotationDeg;
+      } else {
+        frame.rotationDeg = deg;
+      }
+    }
+  };
+  group.children.forEach(spin);
+  const union = unionRotatedBox(group.children);
+  if (union) {
+    group.xCm = union.xCm;
+    group.yCm = union.yCm;
+    group.widthCm = union.widthCm;
+    group.heightCm = union.heightCm;
+  }
+}
+
+/** The union of the frames' rotated axis-aligned boxes, or null when empty. */
+function unionRotatedBox(frames: readonly SlideFrame[]): FrameRect | null {
+  if (frames.length === 0) {
+    return null;
+  }
+  const boxes = frames.map(frameRotatedBox);
+  const minX = Math.min(...boxes.map((b) => b.xCm));
+  const minY = Math.min(...boxes.map((b) => b.yCm));
+  const maxX = Math.max(...boxes.map((b) => b.xCm + b.widthCm));
+  const maxY = Math.max(...boxes.map((b) => b.yCm + b.heightCm));
+  return { xCm: r3(minX), yCm: r3(minY), widthCm: r3(maxX - minX), heightCm: r3(maxY - minY) };
+}
+
+/** Sets a shape's adjustment values, stored as the 0..1-style fractions
+ * `resolvedShapeAdjustments` resolves (each clamped to its declared range).
+ * A no-op returning null for a non-shape. Returns the frame id. */
+export function setFrameAdjustments(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  adjustments: readonly number[],
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "shape") {
+    return null;
+  }
+  frame.adjustments = resolvedShapeAdjustments(frame.geometry, adjustments);
+  touch(model, slide);
+  return frame.id;
+}
+
 // --- delete / duplicate -----------------------------------------------------
 
 /** Removes a frame. Returns the id the view should select next (the previous
@@ -473,8 +674,9 @@ export function duplicateFrame(model: PresentationModel, slideIndex: number, fra
   }
   const copy = structuredClone(frame);
   remintIds(copy);
-  copy.xCm = r3(frame.xCm + DUPLICATE_OFFSET_CM);
-  copy.yCm = r3(frame.yCm + DUPLICATE_OFFSET_CM);
+  // A group's children shift with the copy (slide-space coordinates), which
+  // deletes the copy's verbatim xml — the original keeps its own.
+  translateFrame(copy, DUPLICATE_OFFSET_CM, DUPLICATE_OFFSET_CM);
   clampToSlide(copy, model.slideWidthCm, model.slideHeightCm);
   // A duplicated chart shares the source's `sourcePart` (legal — the writer
   // mints a fresh part for the later claimant, D8) but its verbatim container
@@ -524,6 +726,92 @@ export function reorderFrame(
   dropChartContainerXml(moved);
   touch(model, slide);
   return frameId;
+}
+
+/** Reorders several frames as ONE contiguous block (SPEC-096 AC-16/17/18):
+ * lifts the selected frames out of z-order and re-inserts them together —
+ * relative order preserved — at the target end/step. A no-op leaving the
+ * order (and the slide) untouched when the block already sits at that end.
+ * Returns the frame ids (kept selected). */
+export function reorderFrames(
+  model: PresentationModel,
+  slideIndex: number,
+  frameIds: readonly string[],
+  target: ReorderTarget,
+): string[] | null {
+  const slide = slideAt(model, slideIndex);
+  if (!slide) {
+    return null;
+  }
+  const wanted = new Set(frameIds);
+  const block = slide.frames.filter((frame) => wanted.has(frame.id));
+  if (block.length === 0) {
+    return null;
+  }
+  const rest = slide.frames.filter((frame) => !wanted.has(frame.id));
+  // How many non-selected frames sit below the block's bottom/top member.
+  const indexOf = new Map(slide.frames.map((frame, i) => [frame.id, i]));
+  const bottom = indexOf.get(block[0].id)!;
+  const top = indexOf.get(block[block.length - 1].id)!;
+  const restBelow = (position: number): number => rest.filter((frame) => indexOf.get(frame.id)! < position).length;
+  let insertAt: number;
+  if (target === "front") {
+    insertAt = rest.length;
+  } else if (target === "back") {
+    insertAt = 0;
+  } else if (target === "forward") {
+    insertAt = Math.min(restBelow(top) + 1, rest.length);
+  } else {
+    insertAt = Math.max(restBelow(bottom) - 1, 0);
+  }
+  const next = [...rest.slice(0, insertAt), ...block, ...rest.slice(insertAt)];
+  if (next.every((frame, i) => frame === slide.frames[i])) {
+    return block.map((frame) => frame.id); // already at that end — untouched
+  }
+  slide.frames = next;
+  block.forEach(dropChartContainerXml);
+  touch(model, slide);
+  return block.map((frame) => frame.id);
+}
+
+// --- group / ungroup --------------------------------------------------------
+
+/** Replaces two or more selected top-level frames with ONE authored
+ * `GroupFrame` (SPEC-096 AC-40): the group sits at the children's rotated
+ * union box, carries them as `children` in slide space (z-order preserved)
+ * and NO `xml`; it lands at the topmost member's z-position. Any animation
+ * targeting a grouped frame is dropped (grouped frames are unanimatable).
+ * Returns the new group's id, or null for fewer than two matches. */
+export function groupFrames(
+  model: PresentationModel,
+  slideIndex: number,
+  frameIds: readonly string[],
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  if (!slide) {
+    return null;
+  }
+  const wanted = new Set(frameIds);
+  const children = slide.frames.filter((frame) => wanted.has(frame.id));
+  if (children.length < 2) {
+    return null;
+  }
+  const box = unionRotatedBox(children)!;
+  const group: GroupFrame = {
+    id: crypto.randomUUID(),
+    ...box,
+    kind: "group",
+    children,
+  };
+  const topIndex = slide.frames.findIndex((frame) => frame === children[children.length - 1]);
+  const removedBelow = children.length - 1; // every other member sits below the top one
+  slide.frames = slide.frames.filter((frame) => !wanted.has(frame.id));
+  slide.frames.splice(topIndex - removedBelow, 0, group);
+  for (const child of children) {
+    slide.animations = removeAnimationsForFrame(slide.animations, child.id);
+  }
+  touch(model, slide);
+  return group.id;
 }
 
 // --- ungroup ----------------------------------------------------------------

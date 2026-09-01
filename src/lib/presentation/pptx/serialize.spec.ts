@@ -278,3 +278,113 @@ describe("serializeSlideXml — theme references (SPEC-094)", () => {
     expect(xml).toContain('<a:srgbClr val="4472C4"/>');
   });
 });
+
+// --- SPEC-096: authored groups, adjustments, the single-pass id mint --------
+
+import { serializeNotesSlideXml } from "./serialize";
+import { parseShapeTreeChildForTest } from "./reader";
+import {
+  ADJ_GOLDEN,
+  ADJ_GOLDEN_REORDERED,
+  GOLDEN_ADJ_FRAME,
+  GOLDEN_GROUP_FRAME,
+  GROUP_GOLDEN,
+  GROUP_GOLDEN_REORDERED,
+} from "./groupGolden";
+import type { GroupFrame, ShapeFrame } from "../model";
+
+describe("pptx group/adjustment goldens (SPEC-096)", () => {
+  it("serialises an authored group exactly as GROUP_GOLDEN (write direction)", () => {
+    const slide = textSlide([structuredClone(GOLDEN_GROUP_FRAME)]);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).toContain(GROUP_GOLDEN);
+  });
+
+  it("serialises a tuned shape exactly as ADJ_GOLDEN (write direction)", () => {
+    const slide = textSlide([structuredClone(GOLDEN_ADJ_FRAME)]);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).toContain(ADJ_GOLDEN);
+  });
+
+  it("reads GROUP_GOLDEN back: identity chOff/chExt keeps children in slide space", () => {
+    for (const golden of [GROUP_GOLDEN, GROUP_GOLDEN_REORDERED]) {
+      const frame = parseShapeTreeChildForTest(golden) as GroupFrame;
+      expect(frame.kind).toBe("group");
+      expect(frame.xml).toBeTruthy(); // read-side groups are verbatim until edited
+      expect([frame.xCm, frame.yCm, frame.widthCm, frame.heightCm]).toEqual([2, 2, 8, 4]);
+      const [rect, ellipse] = frame.children as ShapeFrame[];
+      expect([rect.xCm, rect.yCm, rect.widthCm, rect.heightCm]).toEqual([2, 2, 3, 2]);
+      expect(rect.fill).toEqual({ type: "solid", color: "#ff0000" });
+      expect([ellipse.xCm, ellipse.yCm]).toEqual([7, 4]);
+      expect(ellipse.geometry).toBe("ellipse");
+    }
+  });
+
+  it("reads ADJ_GOLDEN (and its reordered variant) back to the stored fraction", () => {
+    for (const golden of [ADJ_GOLDEN, ADJ_GOLDEN_REORDERED]) {
+      const frame = parseShapeTreeChildForTest(golden) as ShapeFrame;
+      expect(frame.kind).toBe("shape");
+      expect(frame.geometry).toBe("roundRect");
+      expect(frame.adjustments).toEqual([0.25]);
+    }
+  });
+
+  it("maps a NON-identity chOff/chExt into slide space (the mapping pin)", () => {
+    const grp =
+      `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="2" name="G"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+      `<p:grpSpPr><a:xfrm><a:off x="720000" y="720000"/><a:ext cx="1440000" cy="1440000"/>` +
+      `<a:chOff x="0" y="0"/><a:chExt cx="720000" cy="720000"/></a:xfrm></p:grpSpPr>` +
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="S"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="360000" y="360000"/><a:ext cx="360000" cy="360000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp></p:grpSp>`;
+    const frame = parseShapeTreeChildForTest(grp) as GroupFrame;
+    // scale 2: child (1cm,1cm,1cm,1cm) in child space → (4cm,4cm,2cm,2cm).
+    const child = frame.children[0];
+    expect([child.xCm, child.yCm, child.widthCm, child.heightCm]).toEqual([4, 4, 2, 2]);
+  });
+});
+
+describe("pptx single-pass wire-id mint (SPEC-096)", () => {
+  const animatedShape = (id: string): ShapeFrame => ({
+    id,
+    kind: "shape",
+    geometry: "rect",
+    xCm: 20,
+    yCm: 10,
+    widthCm: 4,
+    heightCm: 2,
+  });
+
+  it("an authored group claims a scaffold id plus one per descendant; the animated shape after it targets its own p:cNvPr id", () => {
+    const shape = animatedShape("anim-shape");
+    const slide = textSlide([structuredClone(GOLDEN_GROUP_FRAME), shape]);
+    slide.animations = [{ frameId: "anim-shape", effect: "appear", trigger: "click" }];
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    // Group scaffold 2, its children 3 and 4 — the shape is 5, and the
+    // timing must target 5, not the 3 a stale pre-pass would have minted.
+    expect(xml).toContain('<p:cNvPr id="5" name="Shape 5"/>');
+    expect(xml).toContain('<p:spTgt spid="5"/>');
+  });
+
+  it("a group still carrying verbatim xml claims no id", () => {
+    const verbatim: GroupFrame = {
+      ...structuredClone(GOLDEN_GROUP_FRAME),
+      xml: "<p:grpSp>verbatim</p:grpSp>",
+    };
+    const shape = animatedShape("anim-shape");
+    const slide = textSlide([verbatim, shape]);
+    slide.animations = [{ frameId: "anim-shape", effect: "appear", trigger: "click" }];
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).toContain("<p:grpSp>verbatim</p:grpSp>");
+    expect(xml).toContain('<p:cNvPr id="2" name="Shape 2"/>');
+    expect(xml).toContain('<p:spTgt spid="2"/>');
+  });
+});
+
+describe("notes part avLst sites stay untouched (SPEC-096)", () => {
+  it("serializeNotesSlideXml still emits its two bare <a:avLst/> placeholders", () => {
+    const xml = serializeNotesSlideXml(["hello"]);
+    expect(xml.match(/<a:avLst\/>/g)).toHaveLength(2);
+    expect(xml).not.toContain("<a:gd");
+  });
+});

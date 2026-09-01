@@ -14,6 +14,7 @@
 //
 // Framework-free; imports only presentation siblings and src/lib/core.
 import { GEOMETRY_TO_DRAW_TYPE } from "../../core/drawingMl";
+import { adjustmentToGuideValue, resolvedShapeAdjustments } from "../../core/shapeCatalogue";
 import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { escapeXmlAttribute, escapeXmlText } from "../../core/xml";
 import {
@@ -493,11 +494,23 @@ function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireI
       // one emits the canonical slide-flavoured draw:frame + draw:object.
       return frame.xml ?? serializeOdpChartFrame(frame, chartObjectHref(frame.sourcePart), wireId);
     case "group":
+      // Verbatim (still carrying its source xml) re-emits unchanged; an
+      // authored group rebuilds as draw:g, whose children keep their OWN
+      // svg:x/svg:y — a draw:g has no box of its own (SPEC-096).
+      return frame.xml ?? `<draw:g>${frame.children.map((child) => frameXml(child, registry)).join("")}</draw:g>`;
     case "foreign":
       return frame.xml; // verbatim (AC-39)
     default:
       return "";
   }
+}
+
+/** Serialises a `GroupFrame` (with its generated automatic styles) — the test
+ * seam the golden spec pins (SPEC-096, both directions). */
+export function serializeOdpGroupFrame(frame: Slide["frames"][number]): { frame: string; autoStyles: string } {
+  const registry = new StyleRegistry();
+  const xml = frameXml(frame, registry);
+  return { frame: xml, autoStyles: registry.xml() };
 }
 
 /** The `./Object N` href a chart frame's `draw:object` points at, derived from
@@ -647,8 +660,24 @@ function shapeFrameXml(frame: ShapeFrame, registry: StyleRegistry, wireId?: stri
   const drawType = GEOMETRY_TO_DRAW_TYPE[frame.geometry] ?? "non-primitive";
   return (
     `<draw:custom-shape${ids}${styleAttr}${geom}>${text}` +
-    `<draw:enhanced-geometry draw:type="${escapeXmlAttribute(drawType)}"/></draw:custom-shape>`
+    `<draw:enhanced-geometry draw:type="${escapeXmlAttribute(drawType)}"${modifiersAttr(frame)}/></draw:custom-shape>`
   );
+}
+
+/** A shape's stored adjustments as `draw:modifiers` (SPEC-096): the same
+ * 100000ths scale `adjustmentToGuideValue` uses for OOXML guides —
+ * deliberately OUR OWN convention, promising a faithful round trip through
+ * this reader/writer pair rather than byte-parity with Impress. "" when the
+ * shape stores none. */
+function modifiersAttr(frame: ShapeFrame): string {
+  if (!frame.adjustments || frame.adjustments.length === 0) {
+    return "";
+  }
+  const resolved = resolvedShapeAdjustments(frame.geometry, frame.adjustments);
+  if (resolved.length === 0) {
+    return "";
+  }
+  return ` draw:modifiers="${resolved.map((v) => adjustmentToGuideValue(v)).join(" ")}"`;
 }
 
 /** Splices generated automatic styles into a content.xml string: before the

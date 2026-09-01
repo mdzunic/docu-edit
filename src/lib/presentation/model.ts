@@ -224,10 +224,11 @@ export interface ShapeFrame extends SlideFrameBase {
 export interface GroupFrame extends SlideFrameBase {
   kind: "group";
   children: SlideFrame[]; // coordinates already in slide space
-  /** The whole source element (`p:grpSp` / `draw:g`), verbatim — what the
-   *  writers re-emit; children exist for rendering only until SPEC-082's
-   *  ungroup command drops the xml and promotes them. */
-  xml: string;
+  /** The whole source `p:grpSp` / `draw:g`, verbatim. ABSENT means an authored
+   *  group the serialisers rebuild — exactly `Slide.sourceXml`'s discipline
+   *  (SPEC-096). Any command changing membership, child geometry or rotation
+   *  deletes it first — the only way this field ever changes. */
+  xml?: string;
 }
 
 export interface ForeignFrame extends SlideFrameBase {

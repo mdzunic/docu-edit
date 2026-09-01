@@ -34,6 +34,8 @@ import {
   xlinkAttr,
 } from "../../core/odfXml";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
+import { guideValueToAdjustment } from "../../core/shapeCatalogue";
+import { normalizeRotationDeg } from "../../core/shapes";
 import { CHART_NAMESPACE, parseOdfChartXml } from "../../core/chartPartOdf";
 import type { ShapeGeometry } from "../../core/shapes";
 import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
@@ -511,6 +513,36 @@ function frameBase(geom: Geometry): { id: string; xCm: number; yCm: number; widt
   return { id: crypto.randomUUID(), xCm: geom.xCm, yCm: geom.yCm, widthCm: geom.widthCm, heightCm: geom.heightCm };
 }
 
+/** SPEC-096: the inverse of the serialiser's `draw:transform="rotate(r)"` —
+ * ODF's rotate is counter-clockwise radians, so `rotationDeg =
+ * normalizeRotationDeg(-r × 180/π)`. A `draw:transform` carrying anything but
+ * a lone `rotate(…)` (a translate, skew or matrix) is NOT modelled: rotation
+ * stays 0 and the frame parses exactly as it does today. */
+function rotationOf(el: Element): number {
+  const transform = drawAttr(el, "transform");
+  if (!transform) {
+    return 0;
+  }
+  const match = /^\s*rotate\s*\(\s*(-?[0-9.eE+-]+)\s*\)\s*$/.exec(transform);
+  if (!match) {
+    return 0;
+  }
+  const r = Number(match[1]);
+  if (!Number.isFinite(r)) {
+    return 0;
+  }
+  return normalizeRotationDeg((-r * 180) / Math.PI);
+}
+
+/** Stamps a parsed frame with the element's modelled rotation, if any. */
+function withRotation<T extends { rotationDeg?: number }>(frame: T, el: Element): T {
+  const deg = rotationOf(el);
+  if (deg !== 0) {
+    frame.rotationDeg = deg;
+  }
+  return frame;
+}
+
 /** The deck field kind a `presentation:class` denotes (SPEC-093), or undefined. */
 function fieldClassKind(cls: string | null): "footer" | "slideNumber" | "date" | undefined {
   if (cls === "footer") return "footer";
@@ -582,7 +614,7 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
       const out: SlideFrame = { ...base, kind: "image", mediaId: partPath };
       const stroke = ctx.styles.stroke(drawAttr(frame, "style-name"));
       if (stroke) out.stroke = stroke;
-      return out;
+      return withRotation(out, frame);
     }
     return foreignAt(frame, base, "Media");
   }
@@ -591,7 +623,7 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
   if (table) {
     const parsed = parseOdpTable(table, base, frame, ctx);
     if (parsed) {
-      return parsed;
+      return withRotation(parsed, frame);
     }
     return foreignAt(frame, base, "Table"); // out of subset (AC-3b)
   }
@@ -605,7 +637,7 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
     if (fill) out.fill = { type: "solid", color: fill };
     const stroke = ctx.styles.stroke(drawAttr(frame, "style-name"));
     if (stroke) out.stroke = stroke;
-    return out;
+    return withRotation(out, frame);
   }
   return foreignAt(frame, base, "Object");
 }
@@ -949,6 +981,34 @@ export function parseChartDrawFrameForTest(drawFrameXml: string, parts: Record<s
   return parseDrawFrame(frameEl, ctx);
 }
 
+/** Test seam (SPEC-096 golden): parses one standalone shape/group element
+ * (`draw:g`, `draw:custom-shape`, `draw:rect`…) into a SlideFrame, so the
+ * goldens can assert the reader accepts the canonical bytes plus
+ * attribute-reordered variants. `styles` is optional automatic-styles markup
+ * (e.g. the golden's `de-G1`) resolved for fills/strokes. */
+export function parseFrameChildForTest(elementXml: string, styles = ""): SlideFrame | null {
+  const wrapped =
+    `<office:document-content ${ODP_TEST_NS} xmlns:xlink="http://www.w3.org/1999/xlink">` +
+    `<office:automatic-styles>${styles}</office:automatic-styles>` +
+    `<office:body><office:presentation><draw:page>${elementXml}</draw:page></office:presentation></office:body>` +
+    `</office:document-content>`;
+  const doc = parseXml(wrapped);
+  const resolver = new StyleResolver();
+  addStylesFrom(doc.documentElement, resolver);
+  const ctx: OdpContext = {
+    styles: resolver,
+    masterPh: new Map(),
+    media: new Map(),
+    parts: new Map(),
+    decls: { footers: new Map(), dateTimes: new Map() },
+    deckWidthCm: DEFAULT_SLIDE_WIDTH_CM,
+    deckHeightCm: DEFAULT_SLIDE_HEIGHT_CM,
+  };
+  const pages = doc.documentElement.getElementsByTagNameNS(DRAW_NAMESPACE, "page");
+  const first = pages[0]?.firstElementChild;
+  return first ? parseFrameChild(first, ctx) : null;
+}
+
 const ODP_TEST_NS =
   `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
   `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ` +
@@ -968,7 +1028,22 @@ function parseCustomShape(el: Element, ctx: OdpContext): SlideFrame {
   if (!geom || !geometry) {
     return foreignAt(el, base, "Object");
   }
-  return shapeFrame(el, base, geometry, ctx);
+  const frame = shapeFrame(el, base, geometry, ctx);
+  // SPEC-096: `draw:modifiers` parses back to the stored adjustment fractions
+  // (the serialiser's own 100000ths convention — see modifiersAttr).
+  const modifiers = enhanced ? drawAttr(enhanced, "modifiers") : null;
+  if (modifiers && frame.kind === "shape") {
+    const adjustments = modifiers
+      .trim()
+      .split(/\s+/)
+      .map(Number)
+      .filter((n) => Number.isFinite(n))
+      .map(guideValueToAdjustment);
+    if (adjustments.length > 0) {
+      frame.adjustments = adjustments;
+    }
+  }
+  return frame;
 }
 
 function parseBasicShape(el: Element, ctx: OdpContext): SlideFrame {
@@ -995,7 +1070,7 @@ function shapeFrame(
   const textBox = firstChildElement(el, DRAW_NAMESPACE, "text-box") ?? el;
   const paragraphs = parseTextBox(textBox, undefined, ctx.styles);
   if (paragraphs.length > 0) frame.paragraphs = paragraphs;
-  return frame;
+  return withRotation(frame, el);
 }
 
 function parseLine(el: Element, ctx: OdpContext): SlideFrame {
