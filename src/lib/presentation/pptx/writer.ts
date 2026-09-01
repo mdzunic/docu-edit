@@ -37,6 +37,7 @@ import {
 } from "../model";
 import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStandardLayouts } from "../layouts";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
+import { AUDIO_RELATIONSHIP, MEDIA_RELATIONSHIP, VIDEO_RELATIONSHIP } from "./mediaWire";
 import { resolveSlideFields, serializeSlideXml, type ResolvedField } from "./serialize";
 import { applyNotesContentTypes, planNotes } from "./notesWriter";
 import { spliceThemeXml } from "./theme";
@@ -140,7 +141,7 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       // re-emitting the rels so nothing points at the excluded part (AC-20).
       const strippedRelsXml = stripOrphanChartRels(relsXml, slide.partName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
-      const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName)];
+      const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName), ...linkMediaRels(slide, rels, slide.partName)];
       rebuilt.set(
         slide.partName,
         encode(serializeSlideXml(slide, rels, slide.partName, fieldsBySlide.get(slide) ?? [], model.theme)),
@@ -242,15 +243,24 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
 
 // --- inserted media (SPEC-082) ---------------------------------------------
 
-/** Every media part referenced by an ImageFrame anywhere in the deck (groups
- * descended), from `model.media` — the writers' source of truth for inserted
- * image parts. */
+/** Every media part referenced by an ImageFrame or MediaFrame anywhere in the
+ * deck (groups descended), from `model.media` — the writers' source of truth for
+ * inserted image AND audio/video parts (SPEC-095: a media frame contributes its
+ * clip `mediaId` and its `posterMediaId`, or an inserted clip's part is silently
+ * dropped from the saved package). */
 function referencedMedia(model: PresentationModel): MediaPart[] {
   const used = new Set<string>();
   const walk = (frames: SlideFrame[]): void => {
     for (const frame of frames) {
       if (frame.kind === "image") {
         used.add(frame.mediaId);
+      } else if (frame.kind === "media") {
+        if (frame.mediaId) {
+          used.add(frame.mediaId);
+        }
+        if (frame.posterMediaId) {
+          used.add(frame.posterMediaId);
+        }
       } else if (frame.kind === "group") {
         walk(frame.children);
       }
@@ -436,6 +446,75 @@ function linkChartRels(slide: Slide, rels: Map<string, Relationship>, slidePartN
       added.push(rel);
     }
   }
+  return added;
+}
+
+/** Adds the audio/video relationships a REBUILT `MediaFrame` needs (SPEC-095):
+ * the poster's image rel, and — for an embedded clip — a `video`/`audio` rel
+ * plus the modern `media` rel to the same part (or, for a linked clip, a
+ * `video`/`audio` rel to the external target). A clip re-emitting its verbatim
+ * `sourceXml` already carries its own rels in the slide's `.rels`, so this only
+ * fires for a frame the writer rebuilds. Minted after `linkImageRels`/
+ * `linkChartRels` so the ids never collide. Mutates `rels`. */
+function linkMediaRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
+  let maxId = 0;
+  const resolvedImage = new Set<string>();
+  const resolvedByType = new Map<string, Set<string>>();
+  const seen = (type: string): Set<string> => {
+    let set = resolvedByType.get(type);
+    if (!set) {
+      set = new Set<string>();
+      resolvedByType.set(type, set);
+    }
+    return set;
+  };
+  for (const rel of rels.values()) {
+    maxId = Math.max(maxId, relIdNumber(rel.id));
+    if (rel.type === IMAGE_REL) {
+      resolvedImage.add(resolvePartPath(slidePartName, rel.target));
+    } else if (rel.type === VIDEO_RELATIONSHIP || rel.type === AUDIO_RELATIONSHIP || rel.type === MEDIA_RELATIONSHIP) {
+      seen(rel.type).add(rel.target);
+    }
+  }
+  const added: Relationship[] = [];
+  const mint = (type: string, target: string): void => {
+    if (seen(type).has(target)) {
+      return;
+    }
+    seen(type).add(target);
+    maxId += 1;
+    const rel: Relationship = { id: `rId${maxId}`, type, target };
+    rels.set(rel.id, rel);
+    added.push(rel);
+  };
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "media" && frame.sourceXml === undefined) {
+        if (frame.posterMediaId && !resolvedImage.has(frame.posterMediaId)) {
+          resolvedImage.add(frame.posterMediaId);
+          maxId += 1;
+          const rel: Relationship = {
+            id: `rId${maxId}`,
+            type: IMAGE_REL,
+            target: relativeTarget(slidePartName, frame.posterMediaId),
+          };
+          rels.set(rel.id, rel);
+          added.push(rel);
+        }
+        const fileType = frame.media === "audio" ? AUDIO_RELATIONSHIP : VIDEO_RELATIONSHIP;
+        if (frame.mediaId) {
+          const target = relativeTarget(slidePartName, frame.mediaId);
+          mint(fileType, target);
+          mint(MEDIA_RELATIONSHIP, target);
+        } else if (frame.linkTarget) {
+          mint(fileType, frame.linkTarget);
+        }
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  walk(slide.frames);
   return added;
 }
 
@@ -756,7 +835,7 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     const layoutTarget = `../slideLayouts/slideLayout${standardLayoutIndexForSlide(slide) + 1}.xml`;
     const rels = new Map<string, Relationship>();
     rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-    const imageRels = linkImageRels(slide, rels, slidePath);
+    const imageRels = [...linkImageRels(slide, rels, slidePath), ...linkMediaRels(slide, rels, slidePath)];
     entries.push({ name: slidePath, data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now))) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
@@ -951,7 +1030,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const relsXml = decode(parts.get(relsPath) ?? encode(""));
       const strippedRelsXml = stripOrphanChartRels(relsXml, entry.emitName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
-      const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
+      const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)];
       rebuiltOwn.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
       let outRels = relsForLayoutChange(entry.slide, entry.emitName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
@@ -981,7 +1060,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const sourceRelsXml = sourceRelsBytes ? stripNotesSlideRel(decode(sourceRelsBytes)) : "";
       const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
       const newRels = entry.slide.dirty
-        ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)]
+        ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)]
         : [];
       const xml = entry.slide.dirty
         ? encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? []))
@@ -996,7 +1075,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath, plan));
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-      const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName)];
+      const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)];
       baseSlideParts.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
       baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
     }
