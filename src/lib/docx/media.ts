@@ -232,10 +232,19 @@ export function planMediaWriteForBlocks(
 ): MediaWritePlan & { nextCounter: number } {
   const referenced: string[] = [];
   const seen = new Set<string>();
+  const add = (mediaId: string) => {
+    if (!seen.has(mediaId)) {
+      seen.add(mediaId);
+      referenced.push(mediaId);
+    }
+  };
   for (const block of blocks) {
-    if (block.type === "image" && !seen.has(block.mediaId)) {
-      seen.add(block.mediaId);
-      referenced.push(block.mediaId);
+    if (block.type === "image") {
+      add(block.mediaId);
+    } else if (block.type === "shape" && block.fill?.kind === "picture") {
+      // SPEC-073 AC-4: a picture-filled shape references media exactly the
+      // way an Image does — one part, one relationship, shared.
+      add(block.fill.mediaId);
     }
   }
   // A header/footer part's own rels file starts numbering at rId1 — it has

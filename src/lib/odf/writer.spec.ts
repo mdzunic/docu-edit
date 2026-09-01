@@ -383,7 +383,7 @@ describe("writeOdt — Shape (SPEC-051)", () => {
         widthCm: 4,
         heightCm: 4,
         wrap: "square",
-        fill: "#00cc44",
+        fill: { kind: "solid", color: "#00cc44" },
         outline: { color: "#cc0000", widthPt: 3, dash: "dash" },
         altText: "A green star",
       },
@@ -399,7 +399,7 @@ describe("writeOdt — Shape (SPEC-051)", () => {
       return;
     }
     expect(shape.geometry).toBe("star5");
-    expect(shape.fill).toBe("#00cc44");
+    expect(shape.fill).toEqual({ kind: "solid", color: "#00cc44" });
     expect(shape.outline?.color).toBe("#cc0000");
     expect(shape.outline?.dash).toBe("dash");
     expect(shape.altText).toBe("A green star");

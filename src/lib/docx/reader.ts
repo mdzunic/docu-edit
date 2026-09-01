@@ -93,7 +93,7 @@ import {
   type Relationship,
 } from "../core/xml";
 import { isFloatingDrawing } from "../drawingAnchors";
-import { parseDrawing, type ParsedDrawing } from "./drawing";
+import { blipMediaResolver, parseDrawing, type ParsedDrawing } from "./drawing";
 import { ensureMediaEncoded, pendingMediaByteLength } from "../core/media";
 import { parseShapeDrawing } from "./shape";
 import { parseGroupDrawing, type ParsedGroupDrawing } from "./group";
@@ -850,6 +850,7 @@ function shapeRunDrawing(
   styleCatalog: StyleCatalog,
   numberingCatalog: NumberingCatalog,
   links: LinkReadContext | undefined,
+  resolveBlip?: (embedId: string) => string | null,
 ): Shape | null {
   const drawing = runDrawingElement(rEl);
   if (!drawing) {
@@ -857,6 +858,7 @@ function shapeRunDrawing(
   }
   const parsed = parseShapeDrawing(drawing, {
     parseParagraph: (pEl) => parseParagraph(pEl, styleCatalog, numberingCatalog, links),
+    resolveBlip,
   });
   return parsed?.shape ?? null;
 }
@@ -1376,7 +1378,7 @@ function parseBodyParagraphBlocks(
         media.push(parsed.media);
         continue;
       }
-      const shape = shapeRunDrawing(child, styleCatalog, numberingCatalog, links);
+      const shape = shapeRunDrawing(child, styleCatalog, numberingCatalog, links, blipMediaResolver(ctx, media));
       if (shape) {
         flush();
         blocks.push(shape);

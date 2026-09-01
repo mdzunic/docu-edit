@@ -183,13 +183,13 @@ describe("insertShape (AC-3..AC-9)", () => {
       geometry: "rect",
       widthCm: 3,
       heightCm: 2,
-      fill: "#ff0000",
+      fill: { kind: "solid", color: "#ff0000" },
       outline: { color: "#000000", widthPt: 1, dash: "solid" },
       text: { blocks: [paragraph("hi")], vAlign: "top" },
     };
     const { model: next } = insertShape(model, selectionAt(0, 0), spec);
     const inserted = next.sections[0].blocks[0] as Shape;
-    expect(inserted.fill).toBe("#ff0000");
+    expect(inserted.fill).toEqual({ kind: "solid", color: "#ff0000" });
     expect(inserted.outline).toEqual({ color: "#000000", widthPt: 1, dash: "solid" });
     expect(inserted.text?.blocks).toHaveLength(1);
   });
@@ -485,12 +485,12 @@ describe("setShapeFill", () => {
 
   it("sets a solid fill colour", () => {
     const model = doc(shape(), paragraph(""));
-    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, "#00ff00");
-    expect(shapeAt(next, location)?.fill).toBe("#00ff00");
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, { kind: "solid", color: "#00ff00" });
+    expect(shapeAt(next, location)?.fill).toEqual({ kind: "solid", color: "#00ff00" });
   });
 
   it("undefined clears the fill (no key at all)", () => {
-    const model = doc(shape({ fill: "#00ff00" }), paragraph(""));
+    const model = doc(shape({ fill: { kind: "solid", color: "#00ff00" } }), paragraph(""));
     const { model: next } = setShapeFill(model, selectionAt(0, 0), location, undefined);
     expect(shapeAt(next, location)?.fill).toBeUndefined();
     expect("fill" in shapeAt(next, location)!).toBe(false);

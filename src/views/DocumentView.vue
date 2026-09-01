@@ -353,7 +353,7 @@ import {
 import { pxToCm } from "../lib/core/units";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
 import { shapeAt } from "../lib/shapes";
-import { asNudgeDirection } from "../lib/core/shapes";
+import { asNudgeDirection, shapeFillBaseColor } from "../lib/core/shapes";
 import { chartAt } from "../lib/charts";
 import {
   asImageHandle,
@@ -4017,7 +4017,7 @@ function handleMenuCommand(id = "") {
       :lift="shapeToolbarStyle().placement === 'above'"
     >
       <ShapeToolbar
-        :fill="shapeAt(doc, shapeSelection)?.fill || ''"
+        :fill="shapeFillBaseColor(shapeAt(doc, shapeSelection)?.fill) || ''"
         :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
         :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
         :outline-dash="shapeAt(doc, shapeSelection)?.outline?.dash || 'solid'"

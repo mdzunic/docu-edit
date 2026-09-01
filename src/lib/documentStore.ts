@@ -11,6 +11,7 @@ import type { MediaModel } from "./media/model";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
 import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
+import { normaliseShapeFill } from "./core/shapes";
 import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
 import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
 import type { CaretPosition } from "./textEditing";
@@ -288,11 +289,39 @@ function stripMedia<M extends StoredModel>(model: M): M {
  * Absent when nothing was ever persisted for it (a document with no
  * images never gets a MediaRecord — see persistMedia's skip). */
 function rejoinMedia(model: StoredModel, media: MediaPart[] | undefined): StoredModel {
+  normaliseStoredShapeFills(model);
   if (media === undefined || media.length === 0) {
     return model;
   }
   model.media = media;
   return model;
+}
+
+/** SPEC-073 migration (AC-30): a model stored by an earlier version carries
+ * legacy `"#rrggbb"` string shape fills; normalise them to the `ShapeFill`
+ * union here on the document-store read path (rejoinMedia runs on every
+ * hydration: initLibrary, refreshDocumentFromStorage, loadDraft), so nothing
+ * downstream — commands, render, writers — ever sees the string form.
+ * Mutates in place, like rejoinMedia itself: these run on freshly
+ * deserialised records nothing else holds yet. */
+function normaliseStoredShapeFills(model: StoredModel): void {
+  if (isPresentationModel(model) || isMediaModel(model) || !Array.isArray(model.sections)) {
+    return;
+  }
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      if (block.type === "shape") {
+        const fill = normaliseShapeFill(block.fill);
+        if (fill !== block.fill) {
+          if (fill) {
+            block.fill = fill;
+          } else {
+            delete block.fill;
+          }
+        }
+      }
+    }
+  }
 }
 
 // Fire-and-forget write-through: a failed write must not break the in-memory

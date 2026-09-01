@@ -5,7 +5,14 @@
 import { DEFAULT_LANGUAGE } from "./core/language";
 import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
 import type { OpaquePart } from "./core/packageParts";
-import type { ArrowheadKind, ShapeGeometry, ShapeOutline } from "./core/shapes";
+import type {
+  ArrowheadKind,
+  ArrowheadSize,
+  ShapeFill,
+  ShapeGeometry,
+  ShapeOutline,
+  ShapeShadow,
+} from "./core/shapes";
 import type { ShapePath } from "./core/shapePath";
 import type { ConnectorKind } from "./core/connectors";
 import type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
@@ -967,10 +974,21 @@ export interface ShapeTextFrame {
 export interface Shape extends DrawingPlacement {
   type: "shape";
   geometry: ShapeGeometry;
-  /** "#rrggbb"; absent means no fill. */
-  fill?: string;
+  /** Absent means no fill. SPEC-073 widened this from a "#rrggbb" string to
+   * the `ShapeFill` union — legacy stored strings are migrated on load by
+   * `normaliseShapeFill` (the document-store read path), so the field is
+   * never `string | ShapeFill` (AC-29). */
+  fill?: ShapeFill;
   /** Absent means no outline. */
   outline?: ShapeOutline;
+  /** Outer shadow (SPEC-073 AC-8); absent means none. */
+  shadow?: ShapeShadow;
+  /** Verbatim source styling the model could not express (SPEC-073 AC-35):
+   * the unparsed `a:spPr`/`a:effectLst` property elements (.docx) or
+   * graphic-style properties (.odt), re-emitted unchanged on a SAME-format
+   * save. Never re-emitted cross-format; each unexpressible property reports
+   * a `"shapeStyle"` DropRecord instead. */
+  unsupportedStyleXml?: string;
   /** Text inside the shape. Absent for a shape that holds none, e.g. a line
    * or arrow. */
   text?: ShapeTextFrame;
@@ -1078,6 +1096,14 @@ export interface Connector extends DrawingPlacement {
   startArrow?: ArrowheadKind;
   /** Defaults to "triangle" when absent (an arrow at the end). */
   endArrow?: ArrowheadKind;
+  /** Arrowhead sizes (SPEC-073 AC-14); absent means "medium". */
+  startArrowSize?: ArrowheadSize;
+  endArrowSize?: ArrowheadSize;
+  /** Outer shadow (SPEC-073 AC-11); absent means none. */
+  shadow?: ShapeShadow;
+  /** Verbatim unmodelled source styling (SPEC-073 AC-35) — same contract as
+   * `Shape.unsupportedStyleXml`. */
+  unsupportedStyleXml?: string;
   /** Pending tracked insertion/deletion of this connector block (SPEC-039). */
   changes?: BlockTrackedChanges;
 }

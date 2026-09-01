@@ -203,7 +203,7 @@ describe("parseDocx — a wpg:wgp group flattens into its members", () => {
   it("reads each member's own appearance and alt text", async () => {
     const shape = (await blocksOf([simple]))[0] as Shape;
     expect(shape.geometry).toBe("rect");
-    expect(shape.fill).toBe("#4472c4");
+    expect(shape.fill).toEqual({ kind: "solid", color: "#4472c4" });
     // A member's alt text is on its own cNvPr, not the container's docPr.
     expect(shape.altText).toBe("member 10");
   });

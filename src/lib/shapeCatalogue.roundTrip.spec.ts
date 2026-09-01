@@ -21,7 +21,7 @@ function shape(overrides: Partial<Shape>): Shape {
     offsetYCm: 1,
     relativeToH: "column",
     relativeToV: "paragraph",
-    fill: "#4472c4",
+    fill: { kind: "solid", color: "#4472c4" },
     outline: { color: "#2e5395", widthPt: 1, dash: "solid" },
     ...overrides,
   };

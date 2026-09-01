@@ -195,7 +195,7 @@ describe("parseDocx — mc:AlternateContent-wrapped drawings", () => {
     expect(blocks.map((block) => block.type)).toEqual(["shape", "paragraph"]);
     const shape = blocks[0] as Shape;
     expect(shape.geometry).toBe("rect");
-    expect(shape.fill).toBe("#4472c4");
+    expect(shape.fill).toEqual({ kind: "solid", color: "#4472c4" });
   });
 
   it("reads a wrapped drawing identically to the same drawing written bare", async () => {
@@ -303,7 +303,7 @@ describe("writeDocx — after an mc:AlternateContent read", () => {
     const before = parsed.sections[0].blocks[0] as Shape;
     const after = reread.sections[0].blocks[0] as Shape;
     expect(after.geometry).toBe(before.geometry);
-    expect(after.fill).toBe(before.fill);
+    expect(after.fill).toEqual(before.fill);
     expect(after.widthCm).toBeCloseTo(before.widthCm, 5);
     // The wrapper is not re-emitted: the shape is modelled now, so it is
     // written as this project's own bare `w:drawing`.

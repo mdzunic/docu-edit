@@ -36,7 +36,7 @@ import {
   parseXfrm,
   type GroupChildMapping,
 } from "../core/drawingMl";
-import { imageFromPic } from "./drawing";
+import { blipMediaResolver, imageFromPic } from "./drawing";
 import { shapeFromWsp, type ShapeTextContext } from "./shape";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -338,8 +338,13 @@ export function parseGroupDrawing(drawingEl: Element, ctx: GroupDrawingContext):
   }
 
   const parsed: ParsedGroupDrawing = { blocks: [], media: [] };
+  // SPEC-073: member picture fills resolve through the same media walk as
+  // member pictures, deduplicated into this group's own media list.
+  const memberCtx: GroupDrawingContext = ctx.resolveBlip
+    ? ctx
+    : { ...ctx, resolveBlip: blipMediaResolver(ctx, parsed.media) };
   const mapping = rootedMapping(firstChildElement(wgp, WPG_NAMESPACE, "grpSpPr"));
-  if (!collectMembers(wgp, mapping, placement, ctx, parsed)) {
+  if (!collectMembers(wgp, mapping, placement, memberCtx, parsed)) {
     return null;
   }
   // An empty group carries nothing to render and nothing to group; leaving it

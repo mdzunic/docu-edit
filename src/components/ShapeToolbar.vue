@@ -89,7 +89,7 @@ watch(
 function onFillInput(event = new Event("input")) {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
-    emit("fill", target.value);
+    emit("fill", { kind: "solid", color: target.value });
   }
 }
 

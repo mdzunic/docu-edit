@@ -109,7 +109,7 @@ import {
 import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
-import { LINE_GEOMETRIES, asShapeGeometry, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
+import { LINE_GEOMETRIES, asShapeGeometry, type ShapeFill, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
 import { useDrawingGuides } from "./useDrawingGuides";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
@@ -1001,7 +1001,7 @@ export function useShapes(deps: ShapesDeps) {
     void nextTick().then(remeasureShapeHandles);
   }
 
-  function handleShapeFill(fill: string | undefined) {
+  function handleShapeFill(fill: ShapeFill | undefined) {
     const location = shapeSelection.value;
     if (!location) {
       return;

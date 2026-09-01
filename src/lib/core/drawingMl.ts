@@ -179,3 +179,36 @@ export function childrenA(parent: Element, localName: string): Element[] {
     (child) => child.namespaceURI === DRAWINGML_NAMESPACE && child.localName === localName,
   );
 }
+
+// --- shape pattern-fill presets (SPEC-073) ----------------------------------
+
+/** The closed set of pattern-fill presets both formats express (SPEC-073
+ * AC-1 pattern fills): OOXML `a:pattFill/@prst` names on the left, the ODF
+ * `draw:hatch` (style + angle) each writes as on the right. Any other OOXML
+ * preset still round-trips `.docx` → `.docx` (the model carries the preset
+ * string verbatim); only a cross-format save is limited to this table and
+ * reports a `"shapeStyle"` drop outside it. Angles are ODF's
+ * counter-clockwise-from-horizontal `draw:rotation` in degrees. */
+export const PATTERN_PRESET_TO_ODF_HATCH: Record<
+  string,
+  { style: "single" | "double"; angleDeg: number }
+> = {
+  ltHorz: { style: "single", angleDeg: 0 },
+  ltVert: { style: "single", angleDeg: 90 },
+  ltUpDiag: { style: "single", angleDeg: 45 },
+  ltDnDiag: { style: "single", angleDeg: 135 },
+  smGrid: { style: "double", angleDeg: 0 },
+  diagCross: { style: "double", angleDeg: 45 },
+};
+
+/** The pattern preset an ODF hatch (style + rotation degrees) maps back to,
+ * or undefined for a hatch outside the closed table (a triple hatch, an
+ * angle we do not model) — the reader then preserves it verbatim. */
+export function odfHatchToPatternPreset(style: string, angleDeg: number): string | undefined {
+  for (const [preset, hatch] of Object.entries(PATTERN_PRESET_TO_ODF_HATCH)) {
+    if (hatch.style === style && hatch.angleDeg === ((angleDeg % 180) + 180) % 180) {
+      return preset;
+    }
+  }
+  return undefined;
+}

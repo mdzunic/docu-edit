@@ -4,8 +4,8 @@
 // drawing.ts's own split (parse.../...Xml) so the two modules read side by
 // side; this one never touches Image, drawing.ts never touches Shape.
 import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
-import type { ShapeGeometry, ShapeOutline } from "../core/shapes";
-import { LINE_GEOMETRIES } from "../core/shapes";
+import type { ShapeFill, ShapeGeometry, ShapeOutline } from "../core/shapes";
+import { LINE_GEOMETRIES, shapeFillBaseColor } from "../core/shapes";
 import { adjustmentToGuideValue, guideValueToAdjustment } from "../core/shapeCatalogue";
 import {
   GEOMETRY_TO_DRAW_TYPE,
@@ -79,7 +79,7 @@ function resolveGraphicStyleProps(
   el: Element,
   contentDoc: Document,
   stylesDoc: Document | undefined,
-): { fill?: string; outline?: ShapeOutline; wrap: ImageWrapMode } {
+): { fill?: ShapeFill; outline?: ShapeOutline; wrap: ImageWrapMode } {
   const styleName = drawAttr(el, "style-name");
   let props: Element | undefined;
   const find = (doc: Document | undefined) => {
@@ -95,7 +95,7 @@ function resolveGraphicStyleProps(
   };
   props = find(contentDoc) ?? find(stylesDoc);
 
-  let fill: string | undefined;
+  let fill: ShapeFill | undefined;
   let outline: ShapeOutline | undefined;
   let wrap: ImageWrapMode = "inline";
   if (props) {
@@ -107,7 +107,7 @@ function resolveGraphicStyleProps(
     if (fillAttr === "solid") {
       const color = drawAttr(props, "fill-color");
       if (color) {
-        fill = color.toLowerCase();
+        fill = { kind: "solid", color: color.toLowerCase() };
       }
     }
     const strokeAttr = drawAttr(props, "stroke");
@@ -287,9 +287,11 @@ export function parseShapeElement(
 }
 
 function graphicPropertiesXml(shape: Shape): string {
-  const fillAttrs = shape.fill
-    ? ` draw:fill="solid" draw:fill-color="${escapeXmlAttribute(shape.fill)}"`
-    : ' draw:fill="none"';
+  const fillColor = shapeFillBaseColor(shape.fill);
+  const fillAttrs =
+    shape.fill && shape.fill.kind !== "none" && fillColor
+      ? ` draw:fill="solid" draw:fill-color="${escapeXmlAttribute(fillColor)}"`
+      : ' draw:fill="none"';
   let strokeAttrs = ' draw:stroke="none"';
   if (shape.outline) {
     const widthCm = (shape.outline.widthPt / 72) * 2.54;

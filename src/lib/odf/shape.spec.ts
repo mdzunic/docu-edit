@@ -203,7 +203,7 @@ describe("parseShapeElement — fill/outline/wrap resolved through the graphic s
   it("reads a solid fill colour from draw:fill/draw:fill-color", () => {
     const { el, doc } = customShapeWithStyle('draw:fill="solid" draw:fill-color="#ff0000"');
     const result = parseShapeElement(el, doc, undefined, readCtx)!;
-    expect(result.shape.fill).toBe("#ff0000");
+    expect(result.shape.fill).toEqual({ kind: "solid", color: "#ff0000" });
   });
 
   it("fill='none' means no fill", () => {
@@ -278,7 +278,7 @@ describe("parseShapeElement — fill/outline/wrap resolved through the graphic s
     );
     const el = contentDoc.documentElement.firstElementChild!;
     const result = parseShapeElement(el, contentDoc, stylesDoc, readCtx)!;
-    expect(result.shape.fill).toBe("#00ff00");
+    expect(result.shape.fill).toEqual({ kind: "solid", color: "#00ff00" });
   });
 });
 
@@ -403,8 +403,8 @@ describe("shapeElementXml round-trips through parseShapeElement", () => {
   });
 
   it("round-trips fill end-to-end through the real writer+reader", () => {
-    const result = roundTrip(baseShape({ fill: "#336699" }))!;
-    expect(result.shape.fill).toBe("#336699");
+    const result = roundTrip(baseShape({ fill: { kind: "solid", color: "#336699" } }))!;
+    expect(result.shape.fill).toEqual({ kind: "solid", color: "#336699" });
   });
 
   it("round-trips an outline end-to-end", () => {
@@ -487,7 +487,7 @@ describe("path shapes round-trip through draw:enhanced-path (SPEC-071 AC-27)", (
   };
 
   it("emits a non-primitive enhanced-geometry with viewBox and enhanced-path", () => {
-    const xml = shapeElementXml(baseShape({ geometry: "rect", path, fill: "#00ff00" }), "gr1", writeCtx);
+    const xml = shapeElementXml(baseShape({ geometry: "rect", path, fill: { kind: "solid", color: "#00ff00" } }), "gr1", writeCtx);
     expect(xml).toContain('draw:type="non-primitive"');
     expect(xml).toContain('svg:viewBox="0 0 21600 21600"');
     expect(xml).toContain("draw:enhanced-path=");
@@ -495,7 +495,7 @@ describe("path shapes round-trip through draw:enhanced-path (SPEC-071 AC-27)", (
   });
 
   it("reads back into an equal ShapePath, no unsupportedGeometryXml", () => {
-    const parsed = roundTrip(baseShape({ geometry: "rect", path, fill: "#00ff00" }));
+    const parsed = roundTrip(baseShape({ geometry: "rect", path, fill: { kind: "solid", color: "#00ff00" } }));
     expect(parsed?.shape.path).toEqual(path);
     expect(parsed?.shape.unsupportedGeometryXml).toBeUndefined();
     expect(parsed?.shape.geometry).toBe("rect");

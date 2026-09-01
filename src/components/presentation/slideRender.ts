@@ -284,7 +284,7 @@ export function shapeVisualOf(frame: SlideFrame, theme: DocumentTheme = DEFAULT_
   }
   const visual: ShapeVisual = { geometry: frame.geometry };
   if (frame.fill && frame.fill.type === "solid") {
-    visual.fill = resolveColor(frame.fill.color, theme);
+    visual.fill = { kind: "solid", color: resolveColor(frame.fill.color, theme) };
   }
   if (frame.stroke) {
     visual.outline = { color: resolveColor(frame.stroke.color, theme), widthPt: frame.stroke.widthPt, dash: "solid" };

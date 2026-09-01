@@ -71,7 +71,7 @@ describe("paintShape — Line/Arrow outline (AC-15)", () => {
 
 /** The calls paintShape makes for a filled 3cm x 2cm callout of `geometry`. */
 function paintCalls(geometry: Shape["geometry"]): string[] {
-  const shape: Shape = { type: "shape", geometry, widthCm: 3, heightCm: 2, wrap: "square", fill: "#ffffff" };
+  const shape: Shape = { type: "shape", geometry, widthCm: 3, heightCm: 2, wrap: "square", fill: { kind: "solid", color: "#ffffff" } };
   const ctx = fakeCtx() as unknown as { calls: string[] };
   paintShape(ctx as unknown as CanvasRenderingContext2D, shape, 120, 80);
   return ctx.calls;
@@ -176,7 +176,7 @@ describe("paintShape — path (SPEC-071)", () => {
 
   it("fills a closed path with the non-zero winding rule", () => {
     const ctx = pathCtx();
-    paintShape(ctx as unknown as CanvasRenderingContext2D, triShape({ fill: "#abcdef" }), 100, 100);
+    paintShape(ctx as unknown as CanvasRenderingContext2D, triShape({ fill: { kind: "solid", color: "#abcdef" } }), 100, 100);
     expect(ctx.calls).toContain("fill:nonzero");
   });
 

@@ -176,6 +176,31 @@ export interface PicMediaContext {
   parts: Map<string, Uint8Array>;
 }
 
+/** A shape picture-fill's `a:blip/@r:embed` resolver (SPEC-073 AC-4): the
+ * same relationship→part→MediaPart walk imageFromPic does, packaged for
+ * shape.ts's styling parser. Deduplicates into `media` by part path, so a
+ * picture fill and an Image of the same file share one MediaPart. */
+export function blipMediaResolver(ctx: PicMediaContext, media: MediaPart[]): (embedId: string) => string | null {
+  return (embedId) => {
+    const rel = ctx.mainRels.get(embedId);
+    if (!rel || rel.type !== IMAGE_RELATIONSHIP) {
+      return null;
+    }
+    const partPath = resolvePartPath(ctx.mainPartPath, rel.target);
+    const bytes = ctx.parts.get(partPath);
+    const contentType = contentTypeForPartName(partPath);
+    if (!bytes || !contentType) {
+      return null;
+    }
+    if (!media.some((part) => part.mediaId === partPath)) {
+      const part: MediaPart = { mediaId: partPath, contentType, data: "" };
+      registerPendingMedia(part, bytes);
+      media.push(part);
+    }
+    return partPath;
+  };
+}
+
 /** Builds an Image + MediaPart from a bare `pic:pic` and an
  * externally-resolved box — everything the picture markup itself carries, and
  * nothing that lives on a container. Null when the blip does not resolve to

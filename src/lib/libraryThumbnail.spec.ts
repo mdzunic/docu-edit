@@ -252,7 +252,7 @@ describe("buildThumbnail (SPEC-067)", () => {
       widthCm: 4,
       heightCm: 4,
       wrap: "inline",
-      fill: "#ff8800",
+      fill: { kind: "solid", color: "#ff8800" },
       outline: { color: "#123456", widthPt: 2, dash: "solid" },
       rotationDeg: 30,
       unsupportedGeometryXml: "<a:custGeom>big preserved xml</a:custGeom>",
@@ -262,7 +262,7 @@ describe("buildThumbnail (SPEC-067)", () => {
     const line = thumb.lines[0]?.shape;
     expect(line?.shape).toEqual({
       geometry: "ellipse",
-      fill: "#ff8800",
+      fill: { kind: "solid", color: "#ff8800" },
       outline: { color: "#123456", widthPt: 2, dash: "solid" },
       rotationDeg: 30,
       // Presence alone drives the dashed placeholder; the XML never enters

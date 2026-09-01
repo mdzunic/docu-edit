@@ -49,6 +49,9 @@ const XML_STRING_KEYS = new Set([
   // (SPEC-056 opaqueMath.source, AC-49) — compared with the same C14N pass
   // SPEC-008 applies to preserved XML.
   "source",
+  // Verbatim unmodelled shape styling (SPEC-073 AC-35) — re-serialised on a
+  // same-format save, so C14N comparison, not byte identity.
+  "unsupportedStyleXml",
 ]);
 
 /** Model fields holding arrays of XML strings. */

@@ -275,7 +275,7 @@ describe("parseShapeDrawing — fill and outline", () => {
 
   it("parses a solid fill colour", () => {
     const xml = shapeWithSpPrXml('<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>');
-    expect(parseShapeDrawing(drawingElement(xml), readCtx)!.shape.fill).toBe("#ff0000");
+    expect(parseShapeDrawing(drawingElement(xml), readCtx)!.shape.fill).toEqual({ kind: "solid", color: "#ff0000" });
   });
 
   it("no solidFill means no fill", () => {
@@ -431,9 +431,9 @@ describe("shapeDrawingXml round-trips through parseShapeDrawing", () => {
   });
 
   it("round-trips fill", () => {
-    const source = baseShape({ fill: "#336699" });
+    const source = baseShape({ fill: { kind: "solid", color: "#336699" } });
     const parsed = roundTrip(source)!;
-    expect(parsed.shape.fill).toBe("#336699");
+    expect(parsed.shape.fill).toEqual({ kind: "solid", color: "#336699" });
   });
 
   it("round-trips an outline (colour/width/dash)", () => {
@@ -445,7 +445,7 @@ describe("shapeDrawingXml round-trips through parseShapeDrawing", () => {
   });
 
   it("a Line's spPr never carries a fillXml element, even when a fill colour is set (fill is meaningless for a zero-area geometry)", () => {
-    const xml = shapeDrawingXml(baseShape({ geometry: "line", fill: "#ff0000", outline: { color: "#000000", widthPt: 1, dash: "solid" } }), 1, writeCtx);
+    const xml = shapeDrawingXml(baseShape({ geometry: "line", fill: { kind: "solid", color: "#ff0000" }, outline: { color: "#000000", widthPt: 1, dash: "solid" } }), 1, writeCtx);
     // The only a:solidFill in the document is the outline's own — fillXml
     // is skipped entirely for a line geometry (isLine short-circuits it),
     // so the shape's #ff0000 fill never appears anywhere in the XML.
@@ -504,7 +504,7 @@ describe("path shapes round-trip through a:custGeom (SPEC-071 AC-26)", () => {
   };
 
   it("emits a:custGeom with moveTo/lnTo/cubicBezTo/close on a 21600 grid", () => {
-    const xml = shapeDrawingXml(baseShape({ geometry: "rect", path, fill: "#ff0000" }), 7, writeCtx);
+    const xml = shapeDrawingXml(baseShape({ geometry: "rect", path, fill: { kind: "solid", color: "#ff0000" } }), 7, writeCtx);
     expect(xml).toContain("<a:custGeom>");
     expect(xml).toContain('<a:path w="21600" h="21600">');
     expect(xml).toContain("<a:moveTo><a:pt");
@@ -518,7 +518,7 @@ describe("path shapes round-trip through a:custGeom (SPEC-071 AC-26)", () => {
   });
 
   it("reads back into an equal ShapePath, no unsupportedGeometryXml", () => {
-    const result = roundTrip(baseShape({ geometry: "rect", path, fill: "#ff0000" }));
+    const result = roundTrip(baseShape({ geometry: "rect", path, fill: { kind: "solid", color: "#ff0000" } }));
     expect(result?.shape.path).toEqual(path);
     expect(result?.shape.unsupportedGeometryXml).toBeUndefined();
     expect(result?.shape.geometry).toBe("rect");

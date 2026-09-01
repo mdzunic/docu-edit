@@ -17,14 +17,17 @@ import {
   isToc,
   isTof,
   mergeRunFormatting,
+  type Connector,
   type DocumentFormat,
   type DocumentModel,
   type Paragraph,
   type Run,
   type RunFormatting,
+  type Shape,
   type Table,
 } from "./documentModel";
 import { parseXml, XmlParseError } from "./core/xml";
+import { PATTERN_PRESET_TO_ODF_HATCH } from "./core/drawingMl";
 // The chart-feature marker tables moved to core/chartFeatures.ts (SPEC-092)
 // so the presentation rewrite-notice shares them; re-imported here unchanged
 // so collectEditedChartDropRecords and every chartFeature expectation holds.
@@ -72,6 +75,10 @@ export type DropKind =
   // SPEC-051: a shape geometry outside the catalogue that a cross-format
   // save cannot carry into the target format (AC-61).
   | "shapeGeometry"
+  // SPEC-073: a shape styling property one format cannot express — an
+  // unmodelled preserved property crossing formats, or a modelled one the
+  // target has no vocabulary for (AC-34).
+  | "shapeStyle"
   // SPEC-052: a property of an *edited* chart the model has no field for —
   // the one case a same-format save can report a non-empty `dropped` for
   // (see "Rewriting a chart" — an untouched chart still reports nothing).
@@ -131,6 +138,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   svgImage: "SVG image",
   tabStop: "Bar tab stop",
   shapeGeometry: "Shape geometry",
+  shapeStyle: "Shape styling",
   chartFeature: "Chart feature",
   trackedPropertyChange: "Tracked table property change",
   pageSetup: "Page setup",
@@ -252,6 +260,9 @@ const REASONS: Record<DropKind, string> = {
   svgImage: "Word (.docx) cannot store SVG images and this one could not be converted to PNG",
   tabStop: "OpenDocument Text has no bar tab stop — the vertical rule it draws is lost",
   shapeGeometry: "this shape's geometry is outside the catalogue and cannot be converted between formats",
+  // Overridden per call by shapeStyleDropReason with the specific property;
+  // this generic text is the fallback.
+  shapeStyle: "this shape styling property cannot be expressed in the target format",
   // Overridden per call by collectEditedChartDropRecords with the specific
   // lost property; this generic text is the fallback record() would use if
   // anything ever routes a chartFeature drop through it instead.
@@ -317,6 +328,49 @@ function liveConvertibleChartSourceParts(model: DocumentModel): Set<string> {
   return parts;
 }
 
+/** SPEC-073 AC-34: the styling properties of a shape/connector that a
+ * cross-format save into `target` cannot express, each named so the
+ * conversion report lists the specific loss rather than a silent flatten.
+ * Preserved unmodelled styling (`unsupportedStyleXml`) is verbatim source
+ * XML this module never translates, so it drops on any format change;
+ * modelled properties drop only where the target lacks the vocabulary —
+ * ODF has no compound line, no gradient past two stops, no per-stop
+ * transparency and only the closed hatch table of pattern presets. */
+function lostShapeStyleProperties(block: Shape | Connector, target: DocumentFormat): string[] {
+  const lost: string[] = [];
+  if (block.unsupportedStyleXml) {
+    lost.push("unmodelled styling from the source file");
+  }
+  if (target === "odt") {
+    if (block.outline?.compound && block.outline.compound !== "single") {
+      lost.push("the outline's compound (multi-line) style");
+    }
+    if (isShape(block)) {
+      const fill = block.fill;
+      if (fill?.kind === "gradient") {
+        if (fill.gradient.stops.length > 2) {
+          lost.push("the gradient's intermediate stops");
+        }
+        if (fill.gradient.stops.some((stop) => stop.alpha !== undefined && stop.alpha < 1)) {
+          lost.push("the gradient's per-stop transparency");
+        }
+      }
+      if (fill?.kind === "pattern" && !PATTERN_PRESET_TO_ODF_HATCH[fill.preset]) {
+        lost.push(`the "${fill.preset}" pattern preset`);
+      }
+    }
+  }
+  return lost;
+}
+
+function shapeStyleDrop(property: string, location: string, target: DocumentFormat): DropRecord {
+  return {
+    kind: "shapeStyle",
+    location,
+    reason: `Not preserved when saving as ${FORMAT_LABELS[target]}: the target format cannot express ${property}`,
+  };
+}
+
 function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat, target: DocumentFormat): DropRecord[] {
   const dropped: DropRecord[] = [];
   const convertibleChartParts = liveConvertibleChartSourceParts(model);
@@ -360,6 +414,11 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           continue;
         }
         if (isShape(blockAt)) {
+          if (source !== target) {
+            for (const property of lostShapeStyleProperties(blockAt, target)) {
+              dropped.push(shapeStyleDrop(property, `paragraph ${paragraphNumber}`, target));
+            }
+          }
           // An unsupported geometry (SPEC-008 preservation) is verbatim XML
           // this module never translates between formats — any cross-format
           // save of it drops the geometry (SPEC-051 AC-61); a same-format
@@ -398,6 +457,11 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
           continue;
         }
         if (isConnector(blockAt)) {
+          if (source !== target) {
+            for (const property of lostShapeStyleProperties(blockAt, target)) {
+              dropped.push(shapeStyleDrop(property, `paragraph ${paragraphNumber}`, target));
+            }
+          }
           // SPEC-070 AC-16/AC-32: a connector converts cleanly between formats
           // (its own preset + attachment refs). The one lossy case is an
           // endpoint attached to a *non-shape* drawing saved to `.odt`, whose
