@@ -18,6 +18,8 @@ import {
   buildPptxTablesFixtureBytes,
   buildSpec089OdpFixtureBytes,
   buildSpec089PptxFixtureBytes,
+  buildSpec094OdpFixtureBytes,
+  buildSpec094PptxFixtureBytes,
 } from "../src/lib/presentation/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -53,13 +55,19 @@ const hfPptx = await buildPptxHeaderFooterFixtureBytes();
 writeFileSync(join(fixturesDir, "spec093-headers-footers.pptx"), hfPptx);
 const hfOdp = await buildOdpHeaderFooterFixtureBytes();
 writeFileSync(join(fixturesDir, "spec093-headers-footers.odp"), hfOdp);
+// SPEC-094 deck-theme fixtures (mixed refs/literals + the preserve-path slide).
+const themesPptx = await buildSpec094PptxFixtureBytes();
+writeFileSync(join(fixturesDir, "spec094-themes.pptx"), themesPptx);
+const themesOdp = await buildSpec094OdpFixtureBytes();
+writeFileSync(join(fixturesDir, "spec094-themes.odp"), themesOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
     `spec089-layouts.pptx (${layoutsPptx.byteLength}B), spec089-layouts.odp (${layoutsOdp.byteLength}B), ` +
     `spec091-tables.pptx (${tablesPptx.byteLength}B), spec091-tables.odp (${tablesOdp.byteLength}B), ` +
     `spec092-charts.pptx (${chartsPptx.byteLength}B), spec092-charts.odp (${chartsOdp.byteLength}B), ` +
-    `spec093-headers-footers.pptx (${hfPptx.byteLength}B), spec093-headers-footers.odp (${hfOdp.byteLength}B)`,
+    `spec093-headers-footers.pptx (${hfPptx.byteLength}B), spec093-headers-footers.odp (${hfOdp.byteLength}B), ` +
+    `spec094-themes.pptx (${themesPptx.byteLength}B), spec094-themes.odp (${themesOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

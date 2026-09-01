@@ -226,13 +226,13 @@ function onFont(which = "major", event = new Event("change")) {
 
 .theme-accents {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .accent-swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 2px;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: var(--radius-sm);
   border: var(--border-width) solid var(--border-subtle);
 }
 

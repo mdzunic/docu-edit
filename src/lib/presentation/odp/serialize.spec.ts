@@ -192,3 +192,32 @@ describe("odp field golden (SPEC-093 AC-127/128/134)", () => {
     expect(page).not.toContain(`<text:page-number`);
   });
 });
+
+// --- SPEC-094: the de-theme-* parent link -----------------------------------
+
+describe("StyleRegistry — theme references (SPEC-094)", () => {
+  it("an untransformed colour ref parents its styles on the scheme styles, beside the literal", () => {
+    const registry = new StyleRegistry();
+    registry.textStyle({ text: "T", color: { theme: "accent1" } });
+    registry.graphicStyle({ fill: { type: "solid", color: { theme: "accent2" } } });
+    const xml = registry.xml();
+    expect(xml).toContain('style:parent-style-name="de-theme-text-accent1"');
+    expect(xml).toContain('fo:color="#4472c4"');
+    expect(xml).toContain('style:parent-style-name="de-theme-accent2"');
+    expect(xml).toContain('draw:fill-color="#ed7d31"');
+  });
+
+  it("a transformed ref writes the literal alone — the stated odp loss", () => {
+    const registry = new StyleRegistry();
+    registry.graphicStyle({ fill: { type: "solid", color: { theme: "accent1", lumMod: 0.6, lumOff: 0.4 } } });
+    const xml = registry.xml();
+    expect(xml).not.toContain("parent-style-name");
+    expect(xml).toContain('draw:fill-color="#8faadc"');
+  });
+
+  it("a theme font ref resolves to its family name — the stated odp loss", () => {
+    const registry = new StyleRegistry();
+    registry.textStyle({ text: "T", fontFamily: { theme: "major" } });
+    expect(registry.xml()).toContain('style:font-name="Calibri Light"');
+  });
+});

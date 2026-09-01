@@ -170,14 +170,17 @@ export function slideClrMapMode(
   if (preservedClrMapOvr === undefined) {
     return deckMap ?? {};
   }
-  if (/<a:masterClrMapping\s*\/?\s*>/.test(preservedClrMapOvr)) {
+  // The preserved string may carry serialiser-added xmlns attributes.
+  if (/<a:masterClrMapping\b[^>]*\/?>/.test(preservedClrMapOvr)) {
     return deckMap ?? {};
   }
-  const override = /<a:overrideClrMapping((?:\s+[\w:]+="[^"]*")*)\s*\/?>/.exec(preservedClrMapOvr);
+  const override = /<a:overrideClrMapping((?:\s+[\w:-]+="[^"]*")*)\s*\/?>/.exec(preservedClrMapOvr);
   if (override) {
     const map: Record<string, string> = {};
-    for (const attr of override[1].matchAll(/([\w:]+)="([^"]*)"/g)) {
-      map[attr[1]] = attr[2];
+    for (const attr of override[1].matchAll(/([\w:-]+)="([^"]*)"/g)) {
+      if (!attr[1].startsWith("xmlns")) {
+        map[attr[1]] = attr[2];
+      }
     }
     if (Object.keys(map).length > 0) {
       return map;
