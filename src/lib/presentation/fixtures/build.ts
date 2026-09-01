@@ -25,7 +25,8 @@ import { unzip } from "../../core/zip";
 import { chartPartXml } from "../../core/chartPartOoxml";
 import { odfChartContentXml } from "../../core/chartPartOdf";
 import type { ChartSeries, ChartType, ChartVisual } from "../../core/charts";
-import type { DeckHeaderFooter, PresentationModel, Slide, SlideAnimation, SlideFieldPlaceholder } from "../model";
+import type { DeckHeaderFooter, PresentationModel, Slide, SlideAnimation, SlideFieldPlaceholder, SlideRun, TextFrame } from "../model";
+import { DEFAULT_THEME } from "../../core/theme";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -1523,4 +1524,145 @@ export async function buildOdpHeaderFooterFixtureBytes(): Promise<Uint8Array> {
     now: HEADER_FOOTER_FIXTURE_INSTANT,
     modified: HEADER_FOOTER_FIXTURE_INSTANT,
   })).bytes;
+}
+
+// ============================================================================
+// SPEC-094 deck-theme fixtures
+// ============================================================================
+// Built through the from-scratch writers (createBlankPresentation + a themed
+// model + write), never mutating the four mini-deck slides above. Slide 1
+// mixes every reference kind the spec models — an accent1 fill, an
+// accent1 + lumMod 60% / lumOff 40% shape, a `+mn-lt` run, a `+mj-lt` title
+// (whose colour is a dk2 reference so a theme apply visibly recolours it) and
+// an explicitly-coloured run. Slide 2 pins the preserve path: pptx carries a
+// `p:clrMapOvr` this editor cannot parse (its refs write literals, the panel
+// says "opted out"); odp carries an unrecognised extension theme block riding
+// verbatim inside styles.xml.
+
+/** The references slide 1 carries, exported so the round-trip and e2e specs
+ * assert the exact same objects. */
+export const SPEC094_REFS = {
+  titleColor: { theme: "dk2" },
+  titleFont: { theme: "major" },
+  bodyFont: { theme: "minor" },
+  accentFill: { theme: "accent1" },
+  lighterFill: { theme: "accent1", lumMod: 0.6, lumOff: 0.4 },
+} as const;
+
+/** The literal the explicitly-coloured run keeps through every theme apply. */
+export const SPEC094_LITERAL_RUN_COLOR = "#ff0000";
+
+/** A `p:clrMapOvr` this editor cannot parse — the slide-2 opt-out (AC-23/24). */
+export const SPEC094_CLR_MAP_OVR = `<p:clrMapOvr><p:extLst uri="urn:example:unparsed"/></p:clrMapOvr>`;
+
+/** The unrecognised extension theme block the odp twin's styles.xml carries —
+ * a shape this spec does not claim to know, preserved verbatim. */
+export const SPEC094_ODP_EXTENSION_BLOCK =
+  `<loext:theme xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"` +
+  ` loext:name="Vendor"><loext:color-table loext:name="Vendor"/></loext:theme>`;
+
+function spec094TextFrame(
+  text: string,
+  box: [number, number, number, number],
+  run: Omit<SlideRun, "text">,
+  role?: "title",
+): TextFrame {
+  const frame: TextFrame = {
+    id: crypto.randomUUID(),
+    kind: "text",
+    xCm: box[0],
+    yCm: box[1],
+    widthCm: box[2],
+    heightCm: box[3],
+    paragraphs: [{ runs: [{ text, ...run }] }],
+  };
+  if (role) {
+    frame.role = role;
+    frame.phType = "title";
+  }
+  return frame;
+}
+
+/** The mixed themed deck (AC-53/54), parameterised by format. */
+function spec094FixtureModel(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Theme fixture";
+  model.theme = {
+    name: DEFAULT_THEME.name,
+    colors: { ...DEFAULT_THEME.colors },
+    fonts: { ...DEFAULT_THEME.fonts },
+  };
+
+  const mixed: Slide = {
+    id: crypto.randomUUID(),
+    frames: [
+      spec094TextFrame("Theme fixture", [2, 1, 29, 3], {
+        color: SPEC094_REFS.titleColor,
+        fontFamily: SPEC094_REFS.titleFont,
+        sizePt: 40,
+      }, "title"),
+      spec094TextFrame("Body follows the theme", [2, 5, 20, 2], { fontFamily: SPEC094_REFS.bodyFont }),
+      {
+        id: crypto.randomUUID(),
+        kind: "shape",
+        geometry: "rect",
+        xCm: 2,
+        yCm: 9,
+        widthCm: 8,
+        heightCm: 5,
+        fill: { type: "solid", color: { ...SPEC094_REFS.accentFill } },
+      },
+      {
+        id: crypto.randomUUID(),
+        kind: "shape",
+        geometry: "ellipse",
+        xCm: 12,
+        yCm: 9,
+        widthCm: 8,
+        heightCm: 5,
+        fill: { type: "solid", color: { ...SPEC094_REFS.lighterFill } },
+      },
+      spec094TextFrame("Fixed red", [22, 9, 8, 2], { color: SPEC094_LITERAL_RUN_COLOR }),
+    ],
+  };
+
+  const preservePath: Slide = {
+    id: crypto.randomUUID(),
+    frames: [
+      spec094TextFrame("Preserve path", [2, 1, 20, 2], { color: "#004488" }),
+    ],
+  };
+  if (format === "pptx") {
+    preservePath.preserved = { "p:clrMapOvr": SPEC094_CLR_MAP_OVR };
+  }
+
+  model.slides = [mixed, preservePath];
+  return model;
+}
+
+const SPEC094_FIXTURE_INSTANT = new Date(Date.UTC(2026, 8, 1, 9, 0, 0));
+
+export async function buildSpec094PptxFixtureBytes(): Promise<Uint8Array> {
+  return (await writePptx(spec094FixtureModel("pptx"), {
+    now: SPEC094_FIXTURE_INSTANT,
+    modified: SPEC094_FIXTURE_INSTANT,
+  })).bytes;
+}
+
+/** The odp twin, with the unrecognised extension theme block spliced verbatim
+ * into styles.xml's `office:styles` after the write (the preserve pin). */
+export async function buildSpec094OdpFixtureBytes(): Promise<Uint8Array> {
+  const bytes = (await writeOdp(spec094FixtureModel("odp"), {
+    now: SPEC094_FIXTURE_INSTANT,
+    modified: SPEC094_FIXTURE_INSTANT,
+  })).bytes;
+  const parts = await unzip(bytes);
+  const styles = new TextDecoder().decode(parts.get("styles.xml")!);
+  parts.set(
+    "styles.xml",
+    encoder.encode(styles.replace("</office:styles>", `${SPEC094_ODP_EXTENSION_BLOCK}</office:styles>`)),
+  );
+  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }

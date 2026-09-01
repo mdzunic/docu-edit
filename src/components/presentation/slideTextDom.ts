@@ -6,6 +6,7 @@
 // renderer (a rendering concern), NOT under src/lib/presentation — it touches
 // the DOM and only needs the model's plain types.
 import type { SlideParagraph, SlideRun } from "../../lib/presentation/model";
+import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme } from "../../lib/core/theme";
 
 const PT_TO_PX = 96 / 72;
 
@@ -20,7 +21,11 @@ type RunMarks = Omit<SlideRun, "text">;
  * bullet/indent glued to the paragraph's DOM element across a keystroke that
  * changes the paragraph count (Enter, Backspace-merge), rather than matching by
  * a shifting array index. */
-export function renderEditableParagraphs(host: HTMLElement, paragraphs: SlideParagraph[]): void {
+export function renderEditableParagraphs(
+  host: HTMLElement,
+  paragraphs: SlideParagraph[],
+  theme: DocumentTheme = DEFAULT_THEME,
+): void {
   const doc = host.ownerDocument;
   host.textContent = "";
   const paras = paragraphs.length > 0 ? paragraphs : [{ runs: [] as SlideRun[] }];
@@ -36,21 +41,24 @@ export function renderEditableParagraphs(host: HTMLElement, paragraphs: SlidePar
       block.appendChild(doc.createElement("br"));
     } else {
       for (const run of para.runs) {
-        block.appendChild(runSpan(doc, run));
+        block.appendChild(runSpan(doc, run, theme));
       }
     }
     host.appendChild(block);
   }
 }
 
-function runSpan(doc: Document, run: SlideRun): HTMLSpanElement {
+function runSpan(doc: Document, run: SlideRun, theme: DocumentTheme): HTMLSpanElement {
   const span = doc.createElement("span");
   if (run.bold) span.style.fontWeight = "700";
   if (run.italic) span.style.fontStyle = "italic";
   if (run.underline) span.style.textDecoration = "underline";
-  if (run.fontFamily) span.style.fontFamily = `'${run.fontFamily}', sans-serif`;
+  // Refs resolve into the editing DOM (the DOM only carries literal CSS); the
+  // read-back normaliser then sees literals, so an edited run's marks are the
+  // effective values (SPEC-094 — only the edited frame is affected).
+  if (run.fontFamily) span.style.fontFamily = `'${resolveFont(run.fontFamily, theme)}', sans-serif`;
   if (run.sizePt !== undefined) span.style.fontSize = `${run.sizePt * PT_TO_PX}px`;
-  if (run.color) span.style.color = run.color;
+  if (run.color) span.style.color = resolveColor(run.color, theme);
   span.textContent = run.text;
   return span;
 }

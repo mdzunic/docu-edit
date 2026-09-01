@@ -22,6 +22,7 @@ import {
   surfaceBackground,
   textFrameFill,
 } from "../presentation/slideRender";
+import { DEFAULT_THEME, resolveColor, resolveFont } from "../../lib/core/theme";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { paintChart } from "../../lib/core/chartCanvas";
 import { cmToPx } from "../../lib/core/units";
@@ -33,6 +34,7 @@ const props = defineProps({
 });
 
 const slide = computed(() => props.presentation.slides[0] ?? { frames: [] });
+const deckTheme = computed(() => props.presentation.theme ?? DEFAULT_THEME);
 const naturalWidth = computed(() => Math.max(1, cmToPx(props.presentation.slideWidthCm)));
 const naturalHeight = computed(() => Math.max(1, cmToPx(props.presentation.slideHeightCm)));
 const aspect = computed(() => naturalWidth.value / naturalHeight.value);
@@ -98,9 +100,9 @@ function frameStyle(frame = Object()) {
 
 function textStyle(frame = Object()) {
   const style = framePositionOnly(frame);
-  style.background = textFrameFill(frame);
+  style.background = textFrameFill(frame, deckTheme.value);
   if (frame.stroke) {
-    style.border = `${(frame.stroke.widthPt * 96) / 72}px solid ${frame.stroke.color}`;
+    style.border = `${(frame.stroke.widthPt * 96) / 72}px solid ${resolveColor(frame.stroke.color, deckTheme.value)}`;
   }
   return style;
 }
@@ -111,7 +113,10 @@ function framePositionOnly(frame = Object()) {
 
 function runStyle(run = Object()) {
   const style = Object();
-  style.color = run.color || "#000000";
+  style.color = "#000000";
+  if (run.color) {
+    style.color = resolveColor(run.color, deckTheme.value);
+  }
   style.fontSize = `${((run.sizePt || 18) * 96) / 72}px`;
   if (run.bold) {
     style.fontWeight = "700";
@@ -123,7 +128,7 @@ function runStyle(run = Object()) {
     style.textDecoration = "underline";
   }
   if (run.fontFamily) {
-    style.fontFamily = run.fontFamily;
+    style.fontFamily = resolveFont(run.fontFamily, deckTheme.value);
   }
   return style;
 }
@@ -141,7 +146,7 @@ function paintShapeFrame(el = Object(), frame = Object()) {
   if (!(el instanceof HTMLCanvasElement)) {
     return;
   }
-  const visual = shapeVisualOf(frame);
+  const visual = shapeVisualOf(frame, deckTheme.value);
   if (!visual) {
     return;
   }
@@ -206,7 +211,7 @@ const FOREIGN_FILL = "#e9e7e6";
         width: `${naturalWidth}px`,
         height: `${naturalHeight}px`,
         transform: `scale(${scale})`,
-        background: surfaceBackground(slide),
+        background: surfaceBackground(slide, deckTheme),
       }"
     >
       <template

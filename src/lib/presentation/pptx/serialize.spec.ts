@@ -215,3 +215,66 @@ describe("pptx field serialisation (SPEC-093 AC-66/67/68/69)", () => {
     expect(xml).toContain(`type="slidenum">`);
   });
 });
+
+// --- SPEC-094: theme reference emission (AC-21) -----------------------------
+
+describe("serializeSlideXml — theme references (SPEC-094)", () => {
+  const DECK_THEME = {
+    name: "Office",
+    colors: {
+      dk1: "#000000", lt1: "#ffffff", dk2: "#44546a", lt2: "#e7e6e6",
+      accent1: "#4472c4", accent2: "#ed7d31", accent3: "#a5a5a5", accent4: "#ffc000",
+      accent5: "#5b9bd5", accent6: "#70ad47", hlink: "#0563c1", folHlink: "#954f72",
+    },
+    fonts: { major: "Calibri Light", minor: "Calibri" },
+    colorMap: { bg1: "lt1", tx1: "dk1", bg2: "lt2", tx2: "dk2", accent1: "accent1" },
+  } as const;
+
+  it("writes a run colour ref as a:schemeClr through the clrMap, in canonical transform order", () => {
+    const slide = textSlide([
+      titleFrame([{ runs: [{ text: "T", color: { theme: "dk1", lumMod: 0.6, lumOff: 0.4 } }] }]),
+    ]);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml", [], structuredClone(DECK_THEME));
+    expect(xml).toContain('<a:schemeClr val="tx1"><a:lumMod val="60000"/><a:lumOff val="40000"/></a:schemeClr>');
+  });
+
+  it("writes a theme font ref as +mn-lt / +mj-lt", () => {
+    const slide = textSlide([
+      titleFrame([{ runs: [{ text: "T", fontFamily: { theme: "minor" } }, { text: "U", fontFamily: { theme: "major" } }] }]),
+    ]);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml", [], structuredClone(DECK_THEME));
+    expect(xml).toContain('<a:latin typeface="+mn-lt"/>');
+    expect(xml).toContain('<a:latin typeface="+mj-lt"/>');
+  });
+
+  it("still writes a literal as a:srgbClr beside a ref (AC-19)", () => {
+    const slide = textSlide([
+      titleFrame([{ runs: [{ text: "T", color: { theme: "accent1" } }, { text: "U", color: "#ff0000" }] }]),
+    ]);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml", [], structuredClone(DECK_THEME));
+    expect(xml).toContain('<a:schemeClr val="accent1"/>');
+    expect(xml).toContain('<a:srgbClr val="FF0000"/>');
+  });
+
+  it("writes refs through a parseable p:clrMapOvr override and literals under an unparseable one (AC-22/23)", () => {
+    const ref: TextFrame["paragraphs"][number] = { runs: [{ text: "T", color: { theme: "accent1" } }] };
+    const withOverride = textSlide([titleFrame([ref])], {
+      "p:clrMapOvr": '<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" accent1="accent1" accent2="accent1"/></p:clrMapOvr>',
+    });
+    const overrideXml = serializeSlideXml(withOverride, NO_RELS, "ppt/slides/slide1.xml", [], structuredClone(DECK_THEME));
+    expect(overrideXml).toContain('<a:schemeClr val="accent1"/>');
+    const optedOut = textSlide([titleFrame([ref])], {
+      "p:clrMapOvr": "<p:clrMapOvr><p:garbage/></p:clrMapOvr>",
+    });
+    const literalXml = serializeSlideXml(optedOut, NO_RELS, "ppt/slides/slide1.xml", [], structuredClone(DECK_THEME));
+    expect(literalXml).not.toContain("a:schemeClr");
+    expect(literalXml).toContain('<a:srgbClr val="4472C4"/>'); // the resolved accent1
+  });
+
+  it("with no deck theme, a (stray) ref writes its Office-resolved literal", () => {
+    const slide = textSlide([titleFrame([{ runs: [{ text: "T", color: { theme: "accent1" } }] }])]);
+    const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).not.toContain("a:schemeClr");
+    expect(xml).toContain('<a:srgbClr val="4472C4"/>');
+  });
+});

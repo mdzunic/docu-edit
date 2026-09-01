@@ -22,6 +22,8 @@ const props = defineProps({
   widthCm: { type: Number, required: true },
   heightCm: { type: Number, required: true },
   media: { type: Array, default: () => [] },
+  /** SPEC-094: the deck's theme, threaded to the stage surfaces. */
+  theme: { type: Object, default: null },
   scale: { type: Number, default: 1 },
   /** When true, no animation runs — the layer completes on the next tick
    * (an instant cut) so reduced-motion users get no movement (AC-16). */
@@ -127,6 +129,7 @@ function onIncomingTransitionEnd() {
         :media="media"
         :scale="scale"
         :interactive="false"
+        :theme="theme"
       />
     </div>
     <div
@@ -142,6 +145,7 @@ function onIncomingTransitionEnd() {
         :media="media"
         :scale="scale"
         :interactive="false"
+        :theme="theme"
       />
     </div>
   </div>

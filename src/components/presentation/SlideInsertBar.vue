@@ -20,6 +20,8 @@ const props = defineProps({
   /** The selected frame, or null. Enables Arrange/Style and (for a group)
    * Ungroup, and feeds the style popover. */
   selectedFrame: { type: Object, default: null },
+  /** SPEC-094: the deck theme, for the style popover's theme swatches. */
+  theme: { type: Object, default: null },
   /** The armed insertion tool ("textbox" | "shape"), for active styling. */
   armedKind: { type: String, default: "" },
 });
@@ -357,6 +359,7 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           >
             <FrameStylePopover
               :frame="selectedFrame"
+              :theme="theme"
               @set-fill="(fill) => emit('set-fill', fill)"
               @set-stroke="(stroke) => emit('set-stroke', stroke)"
             />

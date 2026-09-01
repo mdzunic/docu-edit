@@ -19,6 +19,8 @@ const props = defineProps({
   widthCm: { type: Number, required: true },
   heightCm: { type: Number, required: true },
   media: { type: Array, default: () => [] },
+  /** SPEC-094: the deck's theme, threaded to the stage surfaces. */
+  theme: { type: Object, default: null },
   scale: { type: Number, default: 1 },
 });
 
@@ -102,6 +104,7 @@ onBeforeUnmount(() => buildPreview.stop());
         :scale="scale"
         :interactive="false"
         :frame-styles="buildPreview.frameStyles.value"
+        :theme="theme"
       />
     </div>
   </div>

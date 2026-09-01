@@ -62,6 +62,8 @@ import { DEFAULT_DATE_FORMAT, defaultFieldRect } from "../headerFooter";
 import { formatFromOdtDateStyleName } from "../../core/dateTimeFormats";
 import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/tables";
 import { classifyLayout } from "../layouts";
+import { DEFAULT_THEME, type ModelColor } from "../../core/theme";
+import { readOdpTheme, themeParentSlot } from "./theme";
 
 export class OdpOpenError extends Error {}
 
@@ -84,12 +86,14 @@ interface RunProps {
   underline?: boolean;
   fontFamily?: string;
   sizePt?: number;
-  color?: string;
+  /** SPEC-094: a `de-theme-text-*`-parented style's colour reads as a ref. */
+  color?: ModelColor;
 }
 
 interface GraphicProps {
   fill?: string; // "solid" | "none" | ...
-  fillColor?: string;
+  /** SPEC-094: a `de-theme-*`-parented style's fill reads as a ref. */
+  fillColor?: ModelColor;
   stroke?: string; // "solid" | "none" | "dash"
   strokeColor?: string;
   strokeWidthPt?: number;
@@ -139,6 +143,18 @@ class StyleResolver {
     if (graphicProps) {
       entry.graphic = readGraphicProps(graphicProps);
     }
+    // SPEC-094: a style parented on a `de-theme-*` scheme style carries a
+    // colour REFERENCE — the literal it also declares is the resolved value
+    // the writer put beside the link for other readers.
+    const themeSlot = themeParentSlot(parent);
+    if (themeSlot) {
+      if (entry.text.color !== undefined) {
+        entry.text.color = { theme: themeSlot };
+      }
+      if (entry.graphic.fillColor !== undefined) {
+        entry.graphic.fillColor = { theme: themeSlot };
+      }
+    }
     if (styleAttr(styleEl, "family") === "drawing-page") {
       const dpProps = firstChildElement(styleEl, STYLE_NAMESPACE, "drawing-page-properties");
       if (dpProps) {
@@ -179,7 +195,7 @@ class StyleResolver {
 
   /** The resolved solid fill colour of a graphic style, or undefined when the
    * style has no fill (draw:fill="none") or no colour. */
-  fillColor(name: string | null | undefined): string | undefined {
+  fillColor(name: string | null | undefined): ModelColor | undefined {
     const graphic = this.resolveGraphic(name);
     if (graphic.fill === "none") {
       return undefined;
@@ -532,7 +548,7 @@ function parseFrameChild(el: Element, ctx: OdpContext): SlideFrame | null {
   }
 }
 
-function graphicFillColor(el: Element, ctx: OdpContext): string | undefined {
+function graphicFillColor(el: Element, ctx: OdpContext): ModelColor | undefined {
   const styleName = drawAttr(el, "style-name");
   return styleName ? ctx.styles.fillColor(styleName) : undefined;
 }
@@ -1184,6 +1200,9 @@ export async function parseOdp(
     }
   }
 
+  // SPEC-094: the deck theme rides styles.xml's `de-theme-*` block.
+  const theme = stylesBytes ? readOdpTheme(decodeUtf8(stylesBytes), DEFAULT_THEME) : undefined;
+
   const masterPh = buildMasterPlaceholders(stylesDoc);
   const { widthCm, heightCm } = pageSize(stylesDoc, contentDoc);
   const decls = readDeclarations(presentation);
@@ -1238,7 +1257,7 @@ export async function parseOdp(
 
   const headerFooter = assembleOdpHeaderFooter(slides, decls);
 
-  return {
+  const parsed: ParsedPresentation = {
     slides,
     layouts,
     slideWidthCm: widthCm,
@@ -1249,6 +1268,10 @@ export async function parseOdp(
     properties,
     odpContentEnvelope: { prefix, suffix },
   };
+  if (theme) {
+    parsed.theme = theme;
+  }
+  return parsed;
 }
 
 /** Assembles the deck-level `headerFooter` from the odp declarations + read

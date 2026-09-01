@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef } from "vue";
 import { parseColorInput, TEXT_COLOR_PALETTE } from "../lib/core/colors";
+import {
+  resolveColor,
+  THEME_SWATCH_SLOTS,
+  THEME_SWATCH_VARIANTS,
+  themeSlotLabel,
+} from "../lib/core/theme";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
@@ -15,6 +21,10 @@ const props = defineProps({
   /** Recently applied colours, most recent first (SPEC-013 AC). */
   recent: { type: Array, default: () => [] },
   disabled: { type: Boolean, default: false },
+  /** Optional DocumentTheme (SPEC-094): when present, a theme row renders
+   * ABOVE the standard palette — ten scheme swatches with five lumMod/lumOff
+   * variants each; picking one emits the ThemeColorRef, not its hex. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits(["select"]);
@@ -39,6 +49,43 @@ const { menuStyle } = useFloatingMenu({
 // The runtime Array prop arrives untyped; String() gives the template the
 // string list it needs (espree bars a PropType<string[]> annotation here).
 const recentColors = computed(() => props.recent.map(String));
+
+// SPEC-094: the theme rows — one column per scheme slot, the base swatch above
+// its five lightness variants, each cell carrying the reference it stores and
+// the hex it merely displays. Empty when no theme is passed (the word
+// processor's picker and unthemed decks stay exactly as they were).
+const themeRows = computed(() => {
+  const theme = props.theme;
+  if (!theme) {
+    return [];
+  }
+  const doc = Object(theme);
+  const base = THEME_SWATCH_SLOTS.map((slot) => ({
+    key: slot,
+    name: themeSlotLabel(slot),
+    hex: resolveColor({ theme: slot }, doc),
+    reference: { theme: slot },
+  }));
+  const variantRows = THEME_SWATCH_VARIANTS.map((variant) =>
+    THEME_SWATCH_SLOTS.map((slot) => {
+      const reference = Object({ theme: slot });
+      if (variant.lumMod !== undefined) reference.lumMod = variant.lumMod;
+      if (variant.lumOff !== undefined) reference.lumOff = variant.lumOff;
+      return {
+        key: `${slot}:${variant.label}`,
+        name: `${themeSlotLabel(slot)}, ${variant.label}`,
+        hex: resolveColor(reference, doc),
+        reference,
+      };
+    }),
+  );
+  return [base, ...variantRows];
+});
+
+function pickTheme(reference = Object()) {
+  emit("select", reference);
+  open.value = false;
+}
 
 function toggle() {
   if (props.disabled) {
@@ -132,6 +179,37 @@ function handleCustomKeydown(event = new KeyboardEvent("keydown")) {
       :style="menuStyle"
       @dismiss="open = false"
     >
+      <!-- Theme row (SPEC-094): scheme swatches ABOVE the standard palette;
+           each stores its ThemeColorRef, so the colour follows the theme. -->
+      <template v-if="themeRows.length > 0">
+        <div class="section-label">
+          Theme colours
+        </div>
+        <div
+          v-for="(row, rowIndex) in themeRows"
+          :key="`theme-row-${rowIndex}`"
+          class="swatch-grid theme-row"
+          data-testid="text-color-theme-row"
+        >
+          <button
+            v-for="cell in row"
+            :key="cell.key"
+            type="button"
+            class="swatch"
+            data-testid="text-color-theme-swatch"
+            :data-theme-slot="cell.reference.theme"
+            :data-color="cell.hex"
+            :title="cell.name"
+            :aria-label="cell.name"
+            :style="{ background: cell.hex }"
+            @mousedown.prevent
+            @click="pickTheme(cell.reference)"
+          />
+        </div>
+        <div class="section-label">
+          Standard
+        </div>
+      </template>
       <!-- Swatches prevent mousedown so the editor selection stays live;
            the custom input must NOT — it needs focus to be typed into. -->
       <div
@@ -263,6 +341,10 @@ function handleCustomKeydown(event = new KeyboardEvent("keydown")) {
   display: grid;
   grid-template-columns: repeat(10, 1.125rem);
   gap: var(--space-2);
+}
+
+.theme-row + .theme-row {
+  margin-top: var(--space-1);
 }
 
 .swatch {

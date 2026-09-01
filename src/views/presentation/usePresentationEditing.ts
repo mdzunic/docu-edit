@@ -7,6 +7,7 @@ import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFill } from "../../lib/presentation/model";
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
+import type { ModelColor } from "../../lib/core/theme";
 import { setFrameFill, setFrameStroke } from "../../lib/presentation/frames";
 import { advanceKeys, backKeys } from "../../lib/presentation/playbackKeys";
 import type { FrameStroke } from "../../lib/presentation/model";
@@ -151,9 +152,13 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     selection.clear();
   }
 
-  function setColor(color: string): void {
+  function setColor(color: ModelColor): void {
     editing.setColor(color);
-    recentColors.value = pushRecentColor(color, recentColors.value);
+    // A theme swatch stores the reference (SPEC-094 AC-49); only literals
+    // enter the recents strip, which stays hex-only.
+    if (typeof color === "string") {
+      recentColors.value = pushRecentColor(color, recentColors.value);
+    }
   }
 
   function onGlobalKeydown(event: KeyboardEvent): void {

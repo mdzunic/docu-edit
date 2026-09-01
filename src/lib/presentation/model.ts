@@ -15,6 +15,7 @@
 // colours lowercase `#rrggbb` hex), so the document store persists both
 // products' models through the same IndexedDB machinery.
 import type { CellBorders, CellVerticalAlign } from "../core/tables";
+import type { DocumentTheme, ModelColor, ModelFont } from "../core/theme";
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
@@ -126,32 +127,48 @@ export interface SlideLayout {
   masterName?: string;
 }
 
+/** The deck's theme (SPEC-094): the shared `DocumentTheme` plus the wiring a
+ * presentation package needs — the first master's `p:clrMap`, the theme part's
+ * path, and the edited flag the writers read. Plain serialisable data. */
+export interface DeckTheme extends DocumentTheme {
+  /** pptx `p:clrMap` from the first master: "bg1"|"tx1"|"bg2"|"tx2"|
+   *  "accent1".."folHlink" → scheme slot. Absent = identity. */
+  colorMap?: Record<string, string>;
+  /** "ppt/theme/theme1.xml" | "styles.xml". */
+  partName?: string;
+  /** Edited since open → the writers rewrite that part in place. */
+  dirty?: true;
+}
+
 /** A resolved frame/background fill. Only the two forms this spec renders —
  * a solid colour and "no fill"; gradients resolve to their first stop's
- * colour and image/pattern fills to white before they reach here. */
+ * colour and image/pattern fills to white before they reach here. SPEC-094
+ * widens `color` to `ModelColor` — a scheme reference resolves through
+ * `resolveColor` at every render/serialise point; the string form stays valid. */
 export type SlideFill =
-  | { type: "solid"; color: string }
+  | { type: "solid"; color: ModelColor }
   | { type: "none" };
 
 /** A frame's outline (border): a solid colour and a point width. Shapes have
  * carried one since SPEC-079; SPEC-082 lets text boxes and images take one
  * too (their style popovers edit stroke), so it is a shared type. */
 export interface FrameStroke {
-  color: string;
+  color: ModelColor;
   widthPt: number;
 }
 
 /** One run of text with its EFFECTIVE formatting already resolved (the run's
  * own properties, else the shape/placeholder/theme chain). Absent optional
- * fields render with the renderer's defaults noted below. */
+ * fields render with the renderer's defaults noted below. SPEC-094 widens
+ * `color`/`fontFamily` to scheme references; the string forms stay valid. */
 export interface SlideRun {
   text: string;
   bold?: true;
   italic?: true;
   underline?: true;
-  fontFamily?: string; // effective; absent = renderer default stack
+  fontFamily?: ModelFont; // effective; absent = renderer default stack
   sizePt?: number; // effective; absent = 18
-  color?: string; // effective; absent = #000000
+  color?: ModelColor; // effective; absent = #000000
 }
 
 /** One paragraph (visual line) of a text body. An explicit line break
@@ -443,6 +460,11 @@ export interface PresentationModel {
   title: string;
   format: PresentationFormat;
   slides: Slide[];
+  /** The deck's theme (SPEC-094): scheme + fonts read from the theme part
+   * (pptx) / the `de-theme-*` block (odp). Absent = an unthemed deck —
+   * everything resolves against `DEFAULT_THEME` and every colour stays a
+   * literal; nothing is retroactively converted to a reference. */
+  theme?: DeckTheme;
   /** The deck's read-derived layout catalogue (SPEC-089), in package order
    * with every master's layouts flattened and de-duplicated by `key`. Absent
    * means a deck stored before SPEC-089 (re-derived on the next open); `[]`
@@ -514,6 +536,8 @@ export const DEFAULT_SLIDE_HEIGHT_CM = 19.05;
  * side's `ParsedDocxDocument`/`ParsedOdtDocument` vs `assembleDocumentModel`. */
 export interface ParsedPresentation {
   slides: Slide[];
+  /** The deck's theme (SPEC-094); absent when the package declares no scheme. */
+  theme?: DeckTheme;
   /** The deck's read-derived layout catalogue (SPEC-089); `[]` when the
    * package carries no layout parts. */
   layouts: SlideLayout[];
