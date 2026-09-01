@@ -6,7 +6,7 @@
 // theme, the odp loss note and the pptx `p:clrMapOvr` opt-out note. The model
 // mutation rules live in `lib/presentation/theme.ts`; this composable only
 // sequences record → mutate → commit and holds the transient panel state.
-import { computed, ref, shallowRef, type ComputedRef, type ShallowRef } from "vue";
+import { computed, ref, shallowRef, type ShallowRef } from "vue";
 import { BUILT_IN_THEMES, type DocumentTheme, type ThemeColorSlot } from "../../lib/core/theme";
 import type { DeckTheme, PresentationModel } from "../../lib/presentation/model";
 import {
