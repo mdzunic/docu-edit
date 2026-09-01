@@ -18,12 +18,17 @@ import {
   insertImageFrame,
   insertImageRect,
   insertShapeFrame,
+  groupFrames,
   insertTableFrame,
   insertTextBoxFrame,
   mediaExtension,
   moveFrame,
+  moveFrames,
   reorderFrame,
+  reorderFrames,
   resizeFrame,
+  setFrameAdjustments,
+  setFrameRotation,
   resizeTableColumnBoundary,
   resizeTableRowBoundary,
   setFrameFill,
@@ -348,6 +353,237 @@ describe("ungroup", () => {
 });
 
 type ForeignChild = Extract<SlideFrame, { kind: "foreign" }>;
+
+// --- SPEC-096: multi-selection commands, rotation, groups -------------------
+
+/** A blank deck with the placeholder frames cleared, so index maths below is
+ * over exactly the frames each test inserts. */
+function bare(): PresentationModel {
+  const model = blank();
+  model.slides[0].frames = [];
+  return model;
+}
+
+function shapeAt(model: PresentationModel, x: number, y: number, w = 2, h = 2): string {
+  return insertShapeFrame(model, 0, "rect", { xCm: x, yCm: y, widthCm: w, heightCm: h })!;
+}
+
+describe("moveFrames (SPEC-096)", () => {
+  it("moves every frame by the same delta in slide space", () => {
+    const model = bare();
+    const a = shapeAt(model, 1, 1);
+    const b = shapeAt(model, 5, 5);
+    moveFrames(model, 0, [a, b], 2, 1);
+    const [fa, fb] = model.slides[0].frames;
+    expect([fa.xCm, fa.yCm]).toEqual([3, 2]);
+    expect([fb.xCm, fb.yCm]).toEqual([7, 6]);
+  });
+
+  it("clamps on the UNION box so relative positions never shift (AC-13)", () => {
+    const model = bare();
+    const a = shapeAt(model, 1, 1);
+    const b = shapeAt(model, 5, 5);
+    moveFrames(model, 0, [a, b], -100, 0);
+    const [fa, fb] = model.slides[0].frames;
+    // Union spans x 1..7 → clamped so its right edge keeps 1cm on slide:
+    // minX = 1 - 6 + ... union width 6, minX clamped to 1 − 6 = −5.
+    expect(fb.xCm - fa.xCm).toBe(4); // relative gap intact
+    expect(fb.xCm + fb.widthCm).toBe(FRAME_MIN_ON_SLIDE_CM);
+  });
+
+  it("uses the rotated box for the clamp (AC-30)", () => {
+    const model = bare();
+    const a = shapeAt(model, 2, 2, 6, 2);
+    setFrameRotation(model, 0, a, 90);
+    // Rotated 90° the 6×2 frame's axis-aligned box is 2×6 (padX −2), so the
+    // clamp must keep 1cm of the ROTATED box on the slide.
+    moveFrames(model, 0, [a], -100, 0);
+    const frame = model.slides[0].frames[0];
+    const padX = (2 - 6) / 2;
+    const boxRight = frame.xCm - padX + 2;
+    expect(boxRight).toBeCloseTo(FRAME_MIN_ON_SLIDE_CM, 3);
+  });
+});
+
+describe("setFrameRotation (SPEC-096)", () => {
+  it("stores whole degrees 0–359 and deletes zero", () => {
+    const model = bare();
+    const id = shapeAt(model, 2, 2);
+    setFrameRotation(model, 0, id, 37.4);
+    expect(model.slides[0].frames[0].rotationDeg).toBe(37);
+    setFrameRotation(model, 0, id, 360);
+    expect(model.slides[0].frames[0].rotationDeg).toBeUndefined();
+    setFrameRotation(model, 0, id, -90);
+    expect(model.slides[0].frames[0].rotationDeg).toBe(270);
+  });
+
+  it("composes a group rotation onto the children and deletes the group's own (AC-45)", () => {
+    const model = bare();
+    const a = shapeAt(model, 2, 2, 2, 2); // centre (3,3)
+    const b = shapeAt(model, 6, 2, 2, 2); // centre (7,3)
+    const groupId = groupFrames(model, 0, [a, b])!;
+    setFrameRotation(model, 0, groupId, 90);
+    const group = model.slides[0].frames[0] as GroupFrame;
+    expect(group.rotationDeg).toBeUndefined();
+    expect(group.xml).toBeUndefined();
+    const [ca, cb] = group.children;
+    // Group centre (5,3); rotating 90° cw sends (3,3)→(5,1) and (7,3)→(5,5).
+    expect([ca.xCm + 1, ca.yCm + 1]).toEqual([5, 1]);
+    expect([cb.xCm + 1, cb.yCm + 1]).toEqual([5, 5]);
+    expect(ca.rotationDeg).toBe(90);
+    expect(cb.rotationDeg).toBe(90);
+  });
+});
+
+describe("setFrameAdjustments (SPEC-096)", () => {
+  it("stores clamped fractions on a shape and is a no-op elsewhere", () => {
+    const model = bare();
+    const id = insertShapeFrame(model, 0, "roundRect", { xCm: 1, yCm: 1, widthCm: 4, heightCm: 2 })!;
+    setFrameAdjustments(model, 0, id, [0.3]);
+    expect((model.slides[0].frames[0] as ShapeFrame).adjustments).toEqual([0.3]);
+    setFrameAdjustments(model, 0, id, [99]);
+    const clamped = (model.slides[0].frames[0] as ShapeFrame).adjustments![0];
+    expect(clamped).toBeLessThanOrEqual(0.5);
+    const text = insertTextBoxFrame(model, 0, { xCm: 1, yCm: 5, widthCm: 2, heightCm: 1 })!;
+    expect(setFrameAdjustments(model, 0, text, [0.5])).toBeNull();
+  });
+});
+
+describe("groupFrames (SPEC-096)", () => {
+  it("replaces the frames with one authored group at their union box, order kept (AC-40)", () => {
+    const model = bare();
+    const a = shapeAt(model, 2, 2, 2, 2);
+    const b = shapeAt(model, 6, 4, 2, 3);
+    const c = shapeAt(model, 10, 1, 1, 1); // stays outside the group
+    const groupId = groupFrames(model, 0, [a, b])!;
+    const frames = model.slides[0].frames;
+    expect(frames).toHaveLength(2);
+    const group = frames.find((f) => f.id === groupId) as GroupFrame;
+    expect(group.kind).toBe("group");
+    expect(group.xml).toBeUndefined();
+    expect({ x: group.xCm, y: group.yCm, w: group.widthCm, h: group.heightCm }).toEqual({
+      x: 2,
+      y: 2,
+      w: 6,
+      h: 5,
+    });
+    expect(group.children.map((f) => f.id)).toEqual([a, b]);
+    expect(frames.map((f) => f.id)).toEqual([groupId, c]);
+    expect(model.slides[0].dirty).toBe(true);
+  });
+
+  it("needs at least two matching top-level frames", () => {
+    const model = bare();
+    const a = shapeAt(model, 2, 2);
+    expect(groupFrames(model, 0, [a])).toBeNull();
+    expect(groupFrames(model, 0, ["nope", "nada"])).toBeNull();
+  });
+
+  it("drops animations targeting the grouped frames (out of scope: animating groups)", () => {
+    const model = bare();
+    const a = shapeAt(model, 2, 2);
+    const b = shapeAt(model, 6, 2);
+    const c = shapeAt(model, 10, 2);
+    model.slides[0].animations = [
+      { frameId: a, effect: "appear", trigger: "click" },
+      { frameId: c, effect: "fadeIn", trigger: "click" },
+    ];
+    groupFrames(model, 0, [a, b]);
+    expect(model.slides[0].animations).toEqual([{ frameId: c, effect: "fadeIn", trigger: "click" }]);
+  });
+});
+
+describe("group xml deletion on every mutating path (SPEC-096 AC-41)", () => {
+  function verbatimGroup(model: PresentationModel): GroupFrame {
+    const child: ShapeFrame = { id: "vc", xCm: 2, yCm: 2, widthCm: 2, heightCm: 2, kind: "shape", geometry: "rect" };
+    const group: GroupFrame = {
+      id: "vg",
+      xCm: 2,
+      yCm: 2,
+      widthCm: 2,
+      heightCm: 2,
+      kind: "group",
+      children: [child],
+      xml: "<p:grpSp>verbatim</p:grpSp>",
+    };
+    model.slides[0].frames.push(group);
+    return group;
+  }
+
+  it("move shifts the children with the box and deletes xml", () => {
+    const model = bare();
+    const group = verbatimGroup(model);
+    moveFrame(model, 0, "vg", 1, 1);
+    expect(group.xml).toBeUndefined();
+    expect([group.children[0].xCm, group.children[0].yCm]).toEqual([3, 3]);
+  });
+
+  it("resize scales the children into the new box and deletes xml", () => {
+    const model = bare();
+    const group = verbatimGroup(model);
+    resizeFrame(model, 0, "vg", { xCm: 2, yCm: 2, widthCm: 4, heightCm: 6 });
+    expect(group.xml).toBeUndefined();
+    expect(group.children[0].widthCm).toBe(4);
+    expect(group.children[0].heightCm).toBe(6);
+  });
+
+  it("rotation composes onto children and deletes xml", () => {
+    const model = bare();
+    const group = verbatimGroup(model);
+    setFrameRotation(model, 0, "vg", 90);
+    expect(group.xml).toBeUndefined();
+  });
+
+  it("duplicate's copy loses the xml (its geometry moved); the original keeps it", () => {
+    const model = bare();
+    const group = verbatimGroup(model);
+    const copyId = duplicateFrame(model, 0, "vg")!;
+    const copy = model.slides[0].frames.find((f) => f.id === copyId) as GroupFrame;
+    expect(copy.xml).toBeUndefined();
+    expect(copy.children[0].xCm).toBe(2.5);
+    expect(group.xml).toBe("<p:grpSp>verbatim</p:grpSp>");
+  });
+});
+
+describe("reorderFrames (SPEC-096)", () => {
+  function fourShapes(model: PresentationModel): string[] {
+    return [shapeAt(model, 1, 1), shapeAt(model, 4, 1), shapeAt(model, 7, 1), shapeAt(model, 10, 1)];
+  }
+
+  it("moves a block to front preserving relative order (AC-17)", () => {
+    const model = bare();
+    const [a, b, c, d] = fourShapes(model);
+    reorderFrames(model, 0, [a, c], "front");
+    expect(model.slides[0].frames.map((f) => f.id)).toEqual([b, d, a, c]);
+  });
+
+  it("moves a block to back preserving relative order", () => {
+    const model = bare();
+    const [a, b, c, d] = fourShapes(model);
+    reorderFrames(model, 0, [b, d], "back");
+    expect(model.slides[0].frames.map((f) => f.id)).toEqual([b, d, a, c]);
+  });
+
+  it("moves a block one step forward / backward contiguously", () => {
+    const model = bare();
+    const [a, b, c, d] = fourShapes(model);
+    reorderFrames(model, 0, [a, b], "forward");
+    expect(model.slides[0].frames.map((f) => f.id)).toEqual([c, a, b, d]);
+    reorderFrames(model, 0, [a, b], "backward");
+    expect(model.slides[0].frames.map((f) => f.id)).toEqual([a, b, c, d]);
+  });
+
+  it("is a no-op (slide untouched) when the block already sits at that end (AC-18)", () => {
+    const model = bare();
+    const [a, b, c, d] = fourShapes(model);
+    delete model.slides[0].dirty;
+    reorderFrames(model, 0, [c, d], "front");
+    expect(model.slides[0].frames.map((f) => f.id)).toEqual([a, b, c, d]);
+    expect(model.slides[0].dirty).toBeUndefined();
+    reorderFrames(model, 0, [a, b], "back");
+    expect(model.slides[0].dirty).toBeUndefined();
+  });
+});
 
 describe("fill / stroke", () => {
   it("sets a shape fill including No fill (AC-37)", () => {

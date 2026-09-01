@@ -4,7 +4,16 @@
 // gesture maths without mounting a component — the composables
 // (useFrameInsertion / useFrameManipulation) call into it and own the DOM.
 import { cmToPx } from "../../lib/core/units";
+import { guideCandidates, snapRect, type Rect } from "../../lib/core/arrange";
+import { unrotatePoint } from "../../lib/core/shapeGeometry";
 import type { FrameRect } from "../../lib/presentation/frames";
+
+/** How far a pointer travels (cm) before a press counts as a drag rather
+ * than a click — 3px at 96dpi. Hoisted from useFrameManipulation's drag
+ * closure (SPEC-096) so the marquee gesture shares the same threshold.
+ * Deliberately NOT expressed in terms of core/shapes' DRAW_DRAG_THRESHOLD_CM:
+ * "a drag has begun" and "a drawn box is worth keeping" may diverge. */
+export const DRAG_ENGAGE_CM = (3 * 2.54) / 96;
 
 /** The eight resize handles, named by compass point (nw = top-left). Corner
  * handles (four-letter) keep aspect under the Shift/image rule. */
@@ -90,43 +99,106 @@ export interface StageGuides {
   vertical: number[];
   /** Slide y-positions to draw a horizontal guide at (cm). */
   horizontal: number[];
+  /** What each fired guide belongs to, aligned with `vertical`/`horizontal`
+   * (SPEC-096 AC — `data-guide-kind`). Absent entries render as "slide". */
+  verticalKinds?: ("slide" | "frame")[];
+  horizontalKinds?: ("slide" | "frame")[];
 }
 
-/** Snaps a dragged rect to the slide's centrelines and zero-margin edges when
- * within `thresholdCm`, returning the snapped rect and the guides that fired
- * (AC-19/20). At most one snap per axis, centre taking priority over edges. */
+/** Snaps a dragged rect to the slide's centrelines and zero-margin edges —
+ * and, when `others` is given (SPEC-096), to any other top-level frame's
+ * edges and centres — when within `thresholdCm`, returning the snapped rect
+ * and the guides that fired (AC-19/20). At most one snap per axis, the
+ * slide's centre/edges taking priority over frame lines. Re-expressed over
+ * core/arrange's `guideCandidates`/`snapRect`; the four-argument behaviour
+ * is unchanged. */
 export function applyGuides(
   rect: FrameRect,
   slideWidthCm: number,
   slideHeightCm: number,
   thresholdCm: number,
+  others: Rect[] = [],
 ): { rect: FrameRect; guides: StageGuides } {
-  const guides: StageGuides = { vertical: [], horizontal: [] };
-  let { xCm, yCm } = rect;
-
-  const centerX = xCm + rect.widthCm / 2;
-  const xTargets: { line: number; x: number; dist: number }[] = [
-    { line: slideWidthCm / 2, x: slideWidthCm / 2 - rect.widthCm / 2, dist: Math.abs(centerX - slideWidthCm / 2) },
-    { line: 0, x: 0, dist: Math.abs(xCm) },
-    { line: slideWidthCm, x: slideWidthCm - rect.widthCm, dist: Math.abs(xCm + rect.widthCm - slideWidthCm) },
-  ];
-  const xSnap = xTargets.filter((t) => t.dist <= thresholdCm).sort((a, b) => a.dist - b.dist)[0];
-  if (xSnap) {
-    xCm = xSnap.x;
-    guides.vertical.push(xSnap.line);
+  const container: Rect = { xCm: 0, yCm: 0, widthCm: slideWidthCm, heightCm: slideHeightCm };
+  const snapped = snapRect(rect, guideCandidates(others, container), thresholdCm);
+  const guides: StageGuides = { vertical: [], horizontal: [], verticalKinds: [], horizontalKinds: [] };
+  for (const fired of snapped.fired) {
+    // A line coinciding with the slide's own centre/edges reads as a slide
+    // guide; everything else came from a frame.
+    const slideLines =
+      fired.axis === "x" ? [0, slideWidthCm / 2, slideWidthCm] : [0, slideHeightCm / 2, slideHeightCm];
+    const kind = slideLines.includes(fired.line) ? "slide" : "frame";
+    if (fired.axis === "x") {
+      guides.vertical.push(fired.line);
+      guides.verticalKinds!.push(kind);
+    } else {
+      guides.horizontal.push(fired.line);
+      guides.horizontalKinds!.push(kind);
+    }
   }
+  return { rect: { ...rect, xCm: snapped.rect.xCm, yCm: snapped.rect.yCm }, guides };
+}
 
-  const centerY = yCm + rect.heightCm / 2;
-  const yTargets: { line: number; y: number; dist: number }[] = [
-    { line: slideHeightCm / 2, y: slideHeightCm / 2 - rect.heightCm / 2, dist: Math.abs(centerY - slideHeightCm / 2) },
-    { line: 0, y: 0, dist: Math.abs(yCm) },
-    { line: slideHeightCm, y: slideHeightCm - rect.heightCm, dist: Math.abs(yCm + rect.heightCm - slideHeightCm) },
-  ];
-  const ySnap = yTargets.filter((t) => t.dist <= thresholdCm).sort((a, b) => a.dist - b.dist)[0];
-  if (ySnap) {
-    yCm = ySnap.y;
-    guides.horizontal.push(ySnap.line);
+// --- rotated resize (SPEC-096) ----------------------------------------------
+
+/** The corner (or edge midpoint) opposite `handle`, in the rect's own
+ * unrotated coordinates — the point that stays fixed in slide space. */
+function anchorPoint(handle: ResizeHandle, rect: FrameRect): { x: number; y: number } {
+  const x = handle.includes("w")
+    ? rect.xCm + rect.widthCm
+    : handle.includes("e")
+      ? rect.xCm
+      : rect.xCm + rect.widthCm / 2;
+  const y = handle.includes("n")
+    ? rect.yCm + rect.heightCm
+    : handle.includes("s")
+      ? rect.yCm
+      : rect.yCm + rect.heightCm / 2;
+  return { x, y };
+}
+
+function rotateVec(dx: number, dy: number, deg: number): { x: number; y: number } {
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+}
+
+/** Resize of a possibly-rotated frame ("Rotation maths"): the pointer maps
+ * into the frame's unrotated local space with `unrotatePoint` about the
+ * original centre, `resizeRect` runs unchanged there, and the result is
+ * translated so the corner opposite the dragged handle stays fixed in slide
+ * space. At 0° this is bit-identical to `resizeRect`. */
+export function resizeRotatedRect(
+  handle: ResizeHandle,
+  orig: FrameRect,
+  rotationDeg: number,
+  pointer: { xCm: number; yCm: number },
+  aspect: boolean,
+): FrameRect {
+  if (!rotationDeg) {
+    return resizeRect(handle, orig, pointer, aspect);
   }
-
-  return { rect: { ...rect, xCm, yCm }, guides };
+  const rel = unrotatePoint(
+    { x: pointer.xCm - orig.xCm, y: pointer.yCm - orig.yCm },
+    orig.widthCm,
+    orig.heightCm,
+    rotationDeg,
+  );
+  const local = resizeRect(handle, orig, { xCm: orig.xCm + rel.x, yCm: orig.yCm + rel.y }, aspect);
+  // The anchor's slide-space position before the drag…
+  const anchor = anchorPoint(handle, orig);
+  const c0 = { x: orig.xCm + orig.widthCm / 2, y: orig.yCm + orig.heightCm / 2 };
+  const spun = rotateVec(anchor.x - c0.x, anchor.y - c0.y, rotationDeg);
+  const anchorSlide = { x: c0.x + spun.x, y: c0.y + spun.y };
+  // …pins the new rect: newCentre = anchor + R(θ)·(localCentre − localAnchor).
+  const localAnchor = anchorPoint(handle, local);
+  const localCentre = { x: local.xCm + local.widthCm / 2, y: local.yCm + local.heightCm / 2 };
+  const d = rotateVec(localCentre.x - localAnchor.x, localCentre.y - localAnchor.y, rotationDeg);
+  return {
+    xCm: anchorSlide.x + d.x - local.widthCm / 2,
+    yCm: anchorSlide.y + d.y - local.heightCm / 2,
+    widthCm: local.widthCm,
+    heightCm: local.heightCm,
+  };
 }

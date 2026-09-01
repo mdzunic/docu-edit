@@ -221,3 +221,77 @@ describe("StyleRegistry — theme references (SPEC-094)", () => {
     expect(registry.xml()).toContain('style:font-name="Calibri Light"');
   });
 });
+
+// --- SPEC-096: authored draw:g, draw:modifiers, rotation ---------------------
+
+import { serializeOdpGroupFrame } from "./serialize";
+import { parseFrameChildForTest } from "./reader";
+import {
+  ADJ_GOLDEN as ODP_ADJ_GOLDEN,
+  ADJ_GOLDEN_REORDERED as ODP_ADJ_GOLDEN_REORDERED,
+  GOLDEN_ADJ_FRAME,
+  GOLDEN_GROUP_FRAME,
+  GROUP_GOLDEN as ODP_GROUP_GOLDEN,
+  GROUP_GOLDEN_AUTO_STYLES,
+  GROUP_GOLDEN_REORDERED as ODP_GROUP_GOLDEN_REORDERED,
+} from "./groupGolden";
+import type { GroupFrame, ShapeFrame, SlideFrame } from "../model";
+
+describe("odp group/adjustment goldens (SPEC-096)", () => {
+  it("serialises an authored group exactly as GROUP_GOLDEN (write direction)", () => {
+    const { frame, autoStyles } = serializeOdpGroupFrame(structuredClone(GOLDEN_GROUP_FRAME) as SlideFrame);
+    expect(frame).toBe(ODP_GROUP_GOLDEN);
+    expect(autoStyles).toBe(GROUP_GOLDEN_AUTO_STYLES);
+  });
+
+  it("serialises the tuned roundRect exactly as ADJ_GOLDEN, draw:modifiers in our 100000ths", () => {
+    const { frame, autoStyles } = serializeOdpGroupFrame(structuredClone(GOLDEN_ADJ_FRAME));
+    expect(frame).toBe(ODP_ADJ_GOLDEN);
+    expect(autoStyles).toBe("");
+  });
+
+  it("reads GROUP_GOLDEN (and reordered) back: children keep their own svg geometry", () => {
+    for (const golden of [ODP_GROUP_GOLDEN, ODP_GROUP_GOLDEN_REORDERED]) {
+      const frame = parseFrameChildForTest(golden, GROUP_GOLDEN_AUTO_STYLES) as GroupFrame;
+      expect(frame.kind).toBe("group");
+      expect(frame.xml).toBeTruthy(); // read-side groups stay verbatim until edited
+      // A draw:g has no box of its own — bounds are the children's union.
+      expect([frame.xCm, frame.yCm, frame.widthCm, frame.heightCm]).toEqual([2, 2, 8, 4]);
+      const [rect, ellipse] = frame.children as ShapeFrame[];
+      expect([rect.xCm, rect.yCm, rect.widthCm, rect.heightCm]).toEqual([2, 2, 3, 2]);
+      expect(rect.fill).toEqual({ type: "solid", color: "#ff0000" });
+      expect(ellipse.geometry).toBe("ellipse");
+    }
+  });
+
+  it("reads ADJ_GOLDEN (and reordered) back to the stored fractions", () => {
+    for (const golden of [ODP_ADJ_GOLDEN, ODP_ADJ_GOLDEN_REORDERED]) {
+      const frame = parseFrameChildForTest(golden) as ShapeFrame;
+      expect(frame.kind).toBe("shape");
+      expect(frame.geometry).toBe("roundRect");
+      expect(frame.adjustments).toEqual([0.25]);
+    }
+  });
+});
+
+describe("odp draw:transform rotation (SPEC-096)", () => {
+  it("reads a lone rotate(r) as clockwise degrees (r is ccw radians)", () => {
+    const quarter = (-90 * Math.PI) / 180; // 90° clockwise → rotate(-π/2)
+    const xml = `<draw:custom-shape draw:transform="rotate(${quarter.toFixed(6)})" svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="2cm"><draw:enhanced-geometry draw:type="round-rectangle"/></draw:custom-shape>`;
+    const frame = parseFrameChildForTest(xml) as ShapeFrame;
+    expect(frame.rotationDeg).toBe(90);
+  });
+
+  it("round-trips the serialiser's own rotate() through the reader", () => {
+    const rotated: ShapeFrame = { ...(structuredClone(GOLDEN_ADJ_FRAME)), rotationDeg: 37 };
+    const { frame } = serializeOdpGroupFrame(rotated);
+    const back = parseFrameChildForTest(frame) as ShapeFrame;
+    expect(back.rotationDeg).toBe(37);
+  });
+
+  it("does not model a transform carrying anything but a lone rotate()", () => {
+    const xml = `<draw:custom-shape draw:transform="rotate(0.5) translate(1cm 2cm)" svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="2cm"><draw:enhanced-geometry draw:type="round-rectangle"/></draw:custom-shape>`;
+    const frame = parseFrameChildForTest(xml) as ShapeFrame;
+    expect(frame.rotationDeg).toBeUndefined();
+  });
+});

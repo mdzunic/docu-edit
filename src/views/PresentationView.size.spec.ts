@@ -40,12 +40,17 @@
 //                    equivalent) to pay for the Design-panel wiring
 //                    (useDeckTheme + ThemesPanel + toolbar toggle)
 //                    (view at 399 lines)
+//   2026-09-01  390  SPEC-096 — extracted the .stage-column block (which had
+//                    moved into DeckBody with SPEC-093) into SlideStageColumn
+//                    and the deck load/upgrade flow into useDeckLoad, paying
+//                    for the Align/Group/Position insert-bar hookups; the
+//                    spec mandates a drop of at least 30 (view at 377 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 420;
+const LINE_BUDGET = 390;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

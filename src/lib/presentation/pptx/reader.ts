@@ -1066,6 +1066,28 @@ export function parseTableGraphicFrameForTest(graphicFrameXml: string): TableFra
   return frame.kind === "table" ? frame : undefined;
 }
 
+/** Test seam (SPEC-096 golden): parses a standalone `p:sp`/`p:grpSp` string
+ * into a SlideFrame through a minimal context, so the group/adjustment
+ * goldens can assert the reader accepts the canonical bytes plus
+ * attribute-reordered variants. */
+export function parseShapeTreeChildForTest(elementXml: string): SlideFrame | null {
+  const xml = elementXml.includes("xmlns:p")
+    ? elementXml
+    : elementXml.replace(/^<(p:sp|p:grpSp)>/, `<$1 xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}">`);
+  const doc = parseXml(xml);
+  const ctx: SlideContext = {
+    color: { scheme: {}, map: {} },
+    layoutPh: new Map(),
+    masterPh: new Map(),
+    txStyles: new Map(),
+    slideRels: new Map(),
+    slidePartPath: "",
+    media: new Map(),
+    parts: new Map(),
+  };
+  return parseShapeTreeChild(doc.documentElement, ctx);
+}
+
 /** Test seam (SPEC-093): parses one field placeholder `p:sp` into a
  * `SlideFieldPlaceholder`, so the golden check can assert the reader accepts the
  * canonical bytes plus attribute-reordered variants. */

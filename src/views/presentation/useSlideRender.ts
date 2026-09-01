@@ -8,8 +8,16 @@
 // re-renders AND persists write-through. Every editing composable in the view
 // (undo, slide/frame commands, notes, transitions, animations) shares them.
 import { nextTick, triggerRef, type Ref, type ShallowRef } from "vue";
-import type { PresentationModel } from "../../lib/presentation/model";
+import type { PresentationModel, SlideFrame } from "../../lib/presentation/model";
 import { touchDocument } from "../../lib/documentStore";
+
+/** A fresh object identity for a frame AND its group descendants — a group
+ * command (rotate, resize, ungroup-undo) mutates the children in place, and a
+ * shallow spread would hand the stage the same child objects, leaving them
+ * rendered stale (SPEC-096). */
+function reidentifyFrame(frame: SlideFrame): SlideFrame {
+  return frame.kind === "group" ? { ...frame, children: frame.children.map(reidentifyFrame) } : { ...frame };
+}
 
 export interface SlideRenderDeps {
   model: ShallowRef<PresentationModel | null>;
@@ -26,7 +34,7 @@ export function useSlideRender(deps: SlideRenderDeps) {
     const model = deps.model.value;
     const slide = model?.slides[deps.currentIndex.value];
     if (!model || !slide) return;
-    model.slides[deps.currentIndex.value] = { ...slide, frames: slide.frames.map((frame) => ({ ...frame })) };
+    model.slides[deps.currentIndex.value] = { ...slide, frames: slide.frames.map(reidentifyFrame) };
   }
 
   /** Re-render the stage without persisting — the live preview during a drag or

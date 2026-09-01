@@ -17,9 +17,19 @@ import { PRESENTATION_IMAGE_ACCEPT } from "../../views/presentation/useFrameInse
 import { MAX_TABLE_COLS, MAX_TABLE_ROWS, PICKER_MAX_COLS, PICKER_MAX_ROWS } from "../../lib/core/tables";
 
 const props = defineProps({
-  /** The selected frame, or null. Enables Arrange/Style and (for a group)
-   * Ungroup, and feeds the style popover. */
+  /** The selected (anchor) frame, or null. Enables Arrange/Style and (for a
+   * group) Ungroup, and feeds the style popover. */
   selectedFrame: { type: Object, default: null },
+  /** SPEC-096: how many frames are selected (drives Align/Group/Distribute). */
+  selectedCount: { type: Number, default: 0 },
+  /** SPEC-096: whether any selected frame is a group (shows Ungroup). */
+  hasGroup: { type: Boolean, default: false },
+  /** SPEC-096: distribute needs ≥3 selected frames. */
+  canDistribute: { type: Boolean, default: false },
+  /** Why distribute is disabled ("" when enabled). */
+  distributeReason: { type: String, default: "" },
+  /** SPEC-096: the active align reference ("selection"|"container"|"first"). */
+  alignReference: { type: String, default: "selection" },
   /** SPEC-094: the deck theme, for the style popover's theme swatches. */
   theme: { type: Object, default: null },
   /** The armed insertion tool ("textbox" | "shape"), for active styling. */
@@ -33,7 +43,12 @@ const emit = defineEmits([
   "insert-table",
   "insert-chart",
   "arrange",
+  "align",
+  "distribute",
+  "align-reference",
+  "group",
   "ungroup",
+  "position-toggle",
   "set-fill",
   "set-stroke",
 ]);
@@ -41,12 +56,40 @@ const emit = defineEmits([
 const hasSelection = computed(() => props.selectedFrame !== null);
 const selectedKind = computed(() => (props.selectedFrame ? asSlideFrame(props.selectedFrame).kind : ""));
 const canStyle = computed(() => ["shape", "text", "image"].includes(selectedKind.value));
-const isGroup = computed(() => selectedKind.value === "group");
+const showUngroup = computed(() => props.hasGroup || selectedKind.value === "group");
+const canGroup = computed(() => props.selectedCount >= 2);
 
 // --- popovers --------------------------------------------------------------
 const galleryOpen = ref(false);
 const arrangeOpen = ref(false);
+const alignOpen = ref(false);
 const styleOpen = ref(false);
+
+// SPEC-096: the Align menu's items (align edges + distribute).
+const ALIGN_ITEMS = [
+  { edge: "left", testid: "align-left", label: "Align left" },
+  { edge: "centerX", testid: "align-center-x", label: "Align centre" },
+  { edge: "right", testid: "align-right", label: "Align right" },
+  { edge: "top", testid: "align-top", label: "Align top" },
+  { edge: "middleY", testid: "align-middle-y", label: "Align middle" },
+  { edge: "bottom", testid: "align-bottom", label: "Align bottom" },
+];
+
+function pickAlign(edge = "left") {
+  emit("align", edge);
+  alignOpen.value = false;
+}
+function pickDistribute(axis = "x") {
+  if (!props.canDistribute) return;
+  emit("distribute", axis);
+  alignOpen.value = false;
+}
+function onReferenceChange(event = new Event("change")) {
+  const target = event.target;
+  if (target instanceof HTMLSelectElement) {
+    emit("align-reference", target.value);
+  }
+}
 
 function pickShape(geometry = "rect") {
   emit("insert-shape", asShapeGeometry(geometry));
@@ -371,14 +414,115 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
           />
         </div>
 
+        <!-- SPEC-096: Align / Distribute over the selection -->
+        <div class="popover-host">
+          <button
+            type="button"
+            class="tb-btn"
+            aria-haspopup="menu"
+            :aria-expanded="alignOpen"
+            :disabled="!hasSelection"
+            data-testid="align-menu"
+            @click="alignOpen = !alignOpen"
+          >
+            Align ▾
+          </button>
+          <div
+            v-if="alignOpen"
+            class="popover"
+            role="menu"
+            data-testid="align-popover"
+          >
+            <label class="align-reference-label">
+              Align to
+              <select
+                class="align-reference"
+                data-testid="align-reference"
+                :value="selectedCount <= 1 ? 'container' : alignReference"
+                :disabled="selectedCount <= 1"
+                @change="onReferenceChange"
+              >
+                <option
+                  v-if="selectedCount > 1"
+                  value="selection"
+                >Selection</option>
+                <option value="container">Slide</option>
+                <option
+                  v-if="selectedCount > 1"
+                  value="first"
+                >First selected</option>
+              </select>
+            </label>
+            <button
+              v-for="item in ALIGN_ITEMS"
+              :key="item.edge"
+              type="button"
+              role="menuitem"
+              class="menu-item"
+              :data-testid="item.testid"
+              @click="pickAlign(item.edge)"
+            >
+              {{ item.label }}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="menu-item"
+              data-testid="distribute-h"
+              :aria-disabled="!canDistribute"
+              :title="distributeReason || undefined"
+              @click="pickDistribute('x')"
+            >
+              Distribute horizontally
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="menu-item"
+              data-testid="distribute-v"
+              :aria-disabled="!canDistribute"
+              :title="distributeReason || undefined"
+              @click="pickDistribute('y')"
+            >
+              Distribute vertically
+            </button>
+          </div>
+          <div
+            v-if="alignOpen"
+            class="popover-backdrop"
+            @click="alignOpen = false"
+          />
+        </div>
+
+        <!-- SPEC-096: authored group creation / release -->
         <button
-          v-if="isGroup"
+          type="button"
+          class="tb-btn"
+          :disabled="!canGroup"
+          data-testid="group-button"
+          @click="emit('group')"
+        >
+          Group
+        </button>
+        <button
+          v-if="showUngroup"
           type="button"
           class="tb-btn"
           data-testid="ungroup-button"
           @click="emit('ungroup')"
         >
           Ungroup
+        </button>
+
+        <!-- SPEC-096: the numeric keyboard/touch path for every gesture -->
+        <button
+          type="button"
+          class="tb-btn"
+          :disabled="!hasSelection"
+          data-testid="slides-position-toggle"
+          @click="emit('position-toggle')"
+        >
+          Position and size…
         </button>
       </div>
     </Teleport>
@@ -566,6 +710,29 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
 .menu-item:hover,
 .menu-item:focus-visible {
   background: var(--surface-sunken);
+}
+
+.menu-item[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.align-reference-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.align-reference {
+  height: 1.8rem;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-primary);
 }
 
 .tb-overflow {

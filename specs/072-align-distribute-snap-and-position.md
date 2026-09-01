@@ -28,6 +28,13 @@ for each; SPEC-064 makes measurement units app-wide and needs a dialog to
 show them in. A position dialog is where drawings become accessible to
 keyboard and touch users rather than pointer-only.
 
+Narrowed by adoption (SPEC-096): the pure align/distribute/snap rect
+algebra now has one product-neutral home in `src/lib/core/arrange.ts`
+(`Rect`, `alignRects`, `distributeRects`, `guideCandidates`, `snapRect`)
+— this spec consumes it for the text side rather than duplicating it.
+Snap-to-grid, its preference and user-placed ruler guides stay this
+spec's own.
+
 ## Acceptance criteria
 - [ ] With two or more drawings selected, six align commands — left, centre, right, top, middle, bottom — align them to the selection's bounding box, per "What alignment aligns to"
 - [ ] With a single drawing selected, the same six commands align it to the page's **content area** (margins), and a modifier-free menu affordance switches the reference between margin, page and column, per that section

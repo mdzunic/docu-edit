@@ -7,7 +7,7 @@
 // of preparation-milestone records. It still redirects a text-document id to
 // /doc/:id (DocumentView does the reverse). Runtime declarations, not
 // defineProps<{...}>() generics — espree lints .vue scripts.
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import UiButton from "../components/ui/UiButton.vue";
@@ -22,10 +22,8 @@ import HeaderFooterDialog from "../components/presentation/HeaderFooterDialog.vu
 import ThemesPanel from "../components/presentation/ThemesPanel.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
-import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
-import { isLegacyPresentationModel } from "../lib/presentation/model";
-import { upgradePresentationModel } from "../lib/presentation/open";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
+import { useDeckLoad } from "./presentation/useDeckLoad";
 import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useSlideCommands } from "./presentation/useSlideCommands";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
@@ -47,17 +45,18 @@ const router = useRouter();
 useTheme();
 
 const presentationId = computed(() => String(route.params.id ?? ""));
-
-// A legacy (preparation-milestone) model still holds outline-shaped slides,
-// which the frame renderer cannot draw — hide it until loadPresentation has
-// upgraded it, so the filmstrip/stage only ever see the frame model.
-function initialModel() {
-  const model = getPresentation(presentationId.value) ?? null;
-  return model && isLegacyPresentationModel(model) ? null : model;
-}
-
-const presentation = shallowRef(initialModel());
 const currentIndex = ref(0);
+
+// Deck loading + legacy upgrade live in useDeckLoad (SPEC-096 extraction);
+// start() runs after deckActions exists (it reads the ?return selection).
+const deckLoad = useDeckLoad({
+  presentationId,
+  router,
+  returnIndex: () => deckActions.returnIndex(),
+  currentIndex,
+  resetUndo: () => slideUndo.reset(),
+});
+const presentation = deckLoad.presentation;
 
 const { addToast } = useToasts();
 
@@ -81,31 +80,6 @@ const slideCommands = useSlideCommands({
 
 function addSlideAction() {
   slideCommands.add(currentIndex.value);
-}
-
-async function loadPresentation() {
-  // A text document's id belongs to the word processor — hand it over.
-  if (documentKindOf(presentationId.value) === "text") {
-    void router.replace(`/doc/${presentationId.value}`);
-    return;
-  }
-  let model = getPresentation(presentationId.value) ?? null;
-  // Preparation-milestone records upgrade on open (AC-54..56).
-  if (model && isLegacyPresentationModel(model)) {
-    try {
-      const upgraded = await upgradePresentationModel(model);
-      storePresentation(upgraded);
-      model = getPresentation(presentationId.value) ?? upgraded;
-    } catch {
-      // Reading stays tolerant: if the retained package cannot be re-parsed,
-      // keep the record as-is rather than blanking the view.
-    }
-  }
-  presentation.value = model;
-  // Reselect the slide the play view was showing on exit (SPEC-084 `?return`),
-  // else the first slide.
-  currentIndex.value = deckActions.returnIndex();
-  slideUndo.reset(); // the undo stack is per-open-view (AC-45)
 }
 
 const title = computed(() => presentation.value?.title ?? "No document");
@@ -143,14 +117,7 @@ const deckActions = useDeckActions({
   reportError: (message) => addToast(message),
 });
 
-// main.ts awaits initLibrary() before mounting, so re-syncing after it resolves
-// matters only when the view is mounted directly (tests). These run after
-// deckActions is defined so loadPresentation's return-selection read is safe.
-void loadPresentation();
-void initLibrary().then(loadPresentation);
-watch(presentationId, () => {
-  void loadPresentation();
-});
+deckLoad.start();
 
 // --- selection + text editing + toolbar (SPEC-081) -------------------------
 const stageEdit = usePresentationEditing({
@@ -316,7 +283,12 @@ onBeforeUnmount(() => {
       />
 
       <SlideInsertBar
-        :selected-frame="stageEdit.selection.selectedFrame.value ?? undefined"
+        :selected-frame="stageEdit.selection.anchorFrame.value ?? undefined"
+        :selected-count="stageEdit.arrange.selectedCount.value"
+        :has-group="stageEdit.selection.selectedFrameIds.value.some((id) => currentSlide?.frames.find((f) => f.id === id)?.kind === 'group')"
+        :can-distribute="stageEdit.arrange.canDistribute.value"
+        :distribute-reason="stageEdit.arrange.distributeReason.value"
+        :align-reference="stageEdit.arrange.alignReference.value"
         :theme="presentation.theme"
         :armed-kind="stageEdit.insertion.armed.value?.kind ?? ''"
         @insert-text-box="stageEdit.insertion.armTextBox()"
@@ -325,7 +297,12 @@ onBeforeUnmount(() => {
         @insert-table="(rows, cols) => stageEdit.insertion.insertTable(rows, cols)"
         @insert-chart="charts.pickChartType($event)"
         @arrange="stageEdit.manipulation.arrange($event)"
-        @ungroup="stageEdit.manipulation.ungroup()"
+        @align="stageEdit.arrange.align($event)"
+        @distribute="stageEdit.arrange.distribute($event)"
+        @align-reference="stageEdit.arrange.alignReference.value = $event"
+        @group="stageEdit.arrange.group()"
+        @ungroup="stageEdit.arrange.ungroup()"
+        @position-toggle="stageEdit.arrange.openPosition()"
         @set-fill="stageEdit.setFill($event)"
         @set-stroke="stageEdit.setStroke($event)"
       />

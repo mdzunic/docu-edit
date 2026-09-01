@@ -7,6 +7,7 @@
 //
 // Framework-free; imports only presentation siblings and src/lib/core.
 import { GEOMETRY_TO_PRST } from "../../core/drawingMl";
+import { adjustmentGuideName, adjustmentToGuideValue, resolvedShapeAdjustments } from "../../core/shapeCatalogue";
 import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { cmToEmu } from "../../core/units";
 import { escapeXmlAttribute, escapeXmlText, resolvePartPath, type Relationship } from "../../core/xml";
@@ -15,6 +16,7 @@ import {
   type ChartFrame,
   type DeckTheme,
   type FrameStroke,
+  type GroupFrame,
   type ImageFrame,
   type PresentationModel,
   type ShapeFrame,
@@ -115,25 +117,27 @@ export function serializeSlideXml(
   const tc: SlideColorWrite = deckTheme
     ? { theme: deckTheme, mode: slideClrMapMode(slide.preserved?.["p:clrMapOvr"], deckTheme.colorMap) }
     : LITERAL_WRITE;
-  let nextId = 2; // p:cNvPr id=1 is the group scaffold.
-  // Map each rebuilt frame to the `p:cNvPr id` the shapes get (2,3,… in
-  // z-order, minted only for the text/shape/image frames the serialiser
-  // rebuilds — group/foreign frames re-emit verbatim and consume no id), so
-  // the timing's `p:spTgt spid` references match (SPEC-086 wire ids).
+  let nextId = 2; // p:cNvPr id=1 is the spTree scaffold.
+  // SPEC-096 wire ids, a SINGLE pass by construction: ids are minted as the
+  // shapes serialise, and each frame's id lands in `spidFor` at the same
+  // moment its `p:cNvPr` is written — an authored group claims a scaffold id
+  // plus one per descendant (descendants included in the map, addressable
+  // even though grouping never makes them animatable), while a group or
+  // chart still carrying verbatim `xml` claims none. The emitted ids and the
+  // timing's `p:spTgt spid` references cannot drift (SPEC-086 wire ids).
   const spidFor = new Map<string, number>();
-  for (const frame of slide.frames) {
-    if (mintsCNvPr(frame)) {
-      spidFor.set(frame.id, nextId++);
+  const mint = (frameId?: string): number => {
+    const id = nextId++;
+    if (frameId !== undefined) {
+      spidFor.set(frameId, id);
     }
-  }
-  nextId = 2;
-  const shapes = slide.frames
-    .map((frame) => frameXml(frame, () => nextId++, rels, slidePartPath, tc))
-    .join("");
+    return id;
+  };
+  const shapes = slide.frames.map((frame) => frameXml(frame, mint, rels, slidePartPath, tc)).join("");
   // SPEC-093: the deck field placeholders follow the frame shapes — each
   // rewritten from its preserved `p:sp` (only the cached `a:t` refreshed) or,
   // for a newly-enabled field, built canonical.
-  const fieldSps = fields.map((rf) => fieldPlaceholderXml(rf, slide, () => nextId++)).join("");
+  const fieldSps = fields.map((rf) => fieldPlaceholderXml(rf, slide, () => mint())).join("");
   const bg = slide.preserved?.["p:bg"] ?? "";
   const clrMapOvr = slide.preserved?.["p:clrMapOvr"] ?? `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>`;
   // A modelled transition wins over any preserved one (they are never both
@@ -230,26 +234,29 @@ export function preserveNotesFieldPlaceholders(
 
 function frameXml(
   frame: SlideFrame,
-  mintId: () => number,
+  mint: (frameId?: string) => number,
   rels: Map<string, Relationship>,
   slidePartPath: string,
   tc: SlideColorWrite,
 ): string {
   switch (frame.kind) {
     case "text":
-      return textFrameXml(frame, mintId(), tc);
+      return textFrameXml(frame, mint(frame.id), tc);
     case "shape":
-      return shapeFrameXml(frame, mintId(), tc);
+      return shapeFrameXml(frame, mint(frame.id), tc);
     case "image":
-      return imageFrameXml(frame, mintId(), rels, slidePartPath, tc);
+      return imageFrameXml(frame, mint(frame.id), rels, slidePartPath, tc);
     case "table":
-      return tableFrameXml(frame, mintId(), tc);
+      return tableFrameXml(frame, mint(frame.id), tc);
     case "chart":
       // An untouched chart re-emits its verbatim graphicFrame (byte-identical,
       // AC-18/AC-19); a touched one emits the canonical graphicFrame against
       // the chart part's relationship id (SPEC-092).
-      return frame.xml ?? serializeChartFrame(frame, mintId(), chartRelIdFor(frame, rels, slidePartPath) ?? "");
+      return frame.xml ?? serializeChartFrame(frame, mint(frame.id), chartRelIdFor(frame, rels, slidePartPath) ?? "");
     case "group":
+      // Verbatim (still carrying its source xml) re-emits unchanged and
+      // claims no id; an authored group rebuilds as p:grpSp (SPEC-096).
+      return frame.xml ?? groupFrameXml(frame, mint, rels, slidePartPath, tc);
     case "foreign":
       return frame.xml; // re-emitted verbatim, in z-order (AC-35)
     default:
@@ -257,15 +264,31 @@ function frameXml(
   }
 }
 
-/** Whether a frame mints a `p:cNvPr id` when serialised (so the animation
- * `spid` pre-pass reserves ids in the same order the real pass mints them). A
- * chart that re-emits verbatim `xml` consumes no id, exactly like group/
- * foreign. */
-function mintsCNvPr(frame: SlideFrame): boolean {
-  if (frame.kind === "chart") {
-    return !frame.xml;
-  }
-  return frame.kind === "text" || frame.kind === "shape" || frame.kind === "image" || frame.kind === "table";
+/** An authored group's `p:grpSp` (SPEC-096, "Groups and adjustments on the
+ * wire"): the scaffold claims one minted id, each descendant its own, and
+ * `a:chOff`/`a:chExt` are written IDENTICAL to `a:off`/`a:ext` so
+ * `mapGroupChild`'s scale is exactly 1 and the children's slide-space EMU
+ * survive re-parse unchanged. */
+function groupFrameXml(
+  frame: GroupFrame,
+  mint: (frameId?: string) => number,
+  rels: Map<string, Relationship>,
+  slidePartPath: string,
+  tc: SlideColorWrite,
+): string {
+  const id = mint(frame.id);
+  const x = cmToEmu(frame.xCm);
+  const y = cmToEmu(frame.yCm);
+  const cx = cmToEmu(frame.widthCm);
+  const cy = cmToEmu(frame.heightCm);
+  const children = frame.children.map((child) => frameXml(child, mint, rels, slidePartPath, tc)).join("");
+  return (
+    `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${id}" name="Group ${id}"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+    `<p:grpSpPr><a:xfrm>` +
+    `<a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/>` +
+    `<a:chOff x="${x}" y="${y}"/><a:chExt cx="${cx}" cy="${cy}"/>` +
+    `</a:xfrm></p:grpSpPr>${children}</p:grpSp>`
+  );
 }
 
 /** The relationship id whose chart part is `frame.sourcePart`, or undefined
@@ -474,12 +497,30 @@ export function canonicalFieldSp(rf: ResolvedField, id: number): string {
 
 // --- shape frame -----------------------------------------------------------
 
+/** A shape's `a:avLst` — the ONE of this file's `<a:avLst/>` sites that ever
+ * carries adjustments (SPEC-096): real `a:gd` guides when the frame stores
+ * adjustment fractions, the empty element otherwise. Text/image frames and
+ * the notes-part placeholders keep their bare `<a:avLst/>` untouched. */
+function avLstXml(frame: ShapeFrame): string {
+  if (!frame.adjustments || frame.adjustments.length === 0) {
+    return `<a:avLst/>`;
+  }
+  const resolved = resolvedShapeAdjustments(frame.geometry, frame.adjustments);
+  if (resolved.length === 0) {
+    return `<a:avLst/>`;
+  }
+  const gds = resolved
+    .map((v, i) => `<a:gd name="${adjustmentGuideName(i, resolved.length)}" fmla="val ${adjustmentToGuideValue(v)}"/>`)
+    .join("");
+  return `<a:avLst>${gds}</a:avLst>`;
+}
+
 function shapeFrameXml(frame: ShapeFrame, id: number, tc: SlideColorWrite): string {
   const prst = GEOMETRY_TO_PRST[frame.geometry] ?? "rect";
   const nvSpPr =
     `<p:nvSpPr><p:cNvPr id="${id}" name="Shape ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`;
   const spPr =
-    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>${fillXml(frame.fill, tc)}${strokeXml(frame.stroke, tc)}</p:spPr>`;
+    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}">${avLstXml(frame)}</a:prstGeom>${fillXml(frame.fill, tc)}${strokeXml(frame.stroke, tc)}</p:spPr>`;
   const txBody = frame.paragraphs && frame.paragraphs.length > 0 ? txBodyXml(frame.paragraphs, tc) : "";
   return `<p:sp>${nvSpPr}${spPr}${txBody}</p:sp>`;
 }

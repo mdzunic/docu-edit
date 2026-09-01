@@ -91,6 +91,12 @@ export function asSlide(value: unknown): Slide {
 export function asSlideFrame(value: unknown): SlideFrame {
   return value as SlideFrame;
 }
+export function asSlideFrames(value: unknown): SlideFrame[] {
+  return (value ?? []) as SlideFrame[];
+}
+export function asStrings(value: unknown): string[] {
+  return (value ?? []) as string[];
+}
 export function asMediaParts(value: unknown): MediaPart[] {
   return (value ?? []) as MediaPart[];
 }
@@ -176,6 +182,15 @@ export function framePositionStyle(frame: SlideFrame): Record<string, string> {
     style.transformOrigin = "center";
   }
   return style;
+}
+
+/** The origin shim inside a group's box: children carry absolute SLIDE-space
+ * coordinates, so the shim shifts the positioning context back to the stage's
+ * origin. The group box itself then occupies its real geometry, which makes a
+ * `rotate()` transform on it spin about the group's own centre (SPEC-096
+ * AC-45) instead of whatever corner a zero-sized wrapper would pin. */
+export function groupOriginStyle(frame: SlideFrame): Record<string, string> {
+  return { position: "absolute", left: cmPx(-frame.xCm), top: cmPx(-frame.yCm) };
 }
 
 /** A text frame's own background colour, or "transparent". Scheme references

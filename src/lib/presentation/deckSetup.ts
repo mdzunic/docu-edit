@@ -69,7 +69,10 @@ function scaleFrame(frame: SlideFrame, s: number, dx: number, dy: number): void 
   } else if (frame.kind === "group") {
     // Children carry their own slide-space bounds; their centring offset is
     // absorbed by the group's own move, so nested frames scale WITHOUT a
-    // second dx/dy translation.
+    // second dx/dy translation. Scaling is a child-geometry change, so a
+    // verbatim group's xml is dropped and the serialisers rebuild it
+    // (SPEC-096's discipline: present = verbatim, absent = authored).
+    delete frame.xml;
     for (const child of frame.children) {
       scaleFrame(child, s, 0, 0);
     }

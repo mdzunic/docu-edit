@@ -422,7 +422,7 @@ for the word processor (SPEC-115).
 | Slide sorter / grid view, copy-paste of slides across decks | SPEC-080's out of scope |
 | Per-paragraph text builds, emphasis effects, motion paths | SPEC-086's out of scope |
 | Transition/build import from Keynote onto SPEC-085/086 models | SPEC-087 drops and counts them |
-| Rotation editing, adjustment handles, multi-select on slides | SPEC-082's out of scope |
+| ~~Rotation editing, adjustment handles, multi-select on slides~~ (shipped by SPEC-096) | SPEC-082's out of scope |
 | Embedded audio/video on slides | SPEC-088 keeps placeholders |
 | Keynote ’09 (`index.apxl`), .pages/.numbers products | SPEC-087 rejects with pointers |
 | Deck export to PDF; HTML export via the generation API | SPEC-034 is text-only; SPEC-088 names the API follow-up |

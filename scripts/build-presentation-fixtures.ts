@@ -20,6 +20,8 @@ import {
   buildSpec089PptxFixtureBytes,
   buildSpec094OdpFixtureBytes,
   buildSpec094PptxFixtureBytes,
+  buildSpec096OdpFixtureBytes,
+  buildSpec096PptxFixtureBytes,
 } from "../src/lib/presentation/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -60,6 +62,12 @@ const themesPptx = await buildSpec094PptxFixtureBytes();
 writeFileSync(join(fixturesDir, "spec094-themes.pptx"), themesPptx);
 const themesOdp = await buildSpec094OdpFixtureBytes();
 writeFileSync(join(fixturesDir, "spec094-themes.odp"), themesOdp);
+// SPEC-096 object fixtures (unaligned shapes, rotated image, tuned roundRect,
+// verbatim groups incl. the non-identity chOff/chExt + rotated pins).
+const objectsPptx = await buildSpec096PptxFixtureBytes();
+writeFileSync(join(fixturesDir, "spec096-objects.pptx"), objectsPptx);
+const objectsOdp = await buildSpec096OdpFixtureBytes();
+writeFileSync(join(fixturesDir, "spec096-objects.odp"), objectsOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
@@ -67,7 +75,8 @@ console.log(
     `spec091-tables.pptx (${tablesPptx.byteLength}B), spec091-tables.odp (${tablesOdp.byteLength}B), ` +
     `spec092-charts.pptx (${chartsPptx.byteLength}B), spec092-charts.odp (${chartsOdp.byteLength}B), ` +
     `spec093-headers-footers.pptx (${hfPptx.byteLength}B), spec093-headers-footers.odp (${hfOdp.byteLength}B), ` +
-    `spec094-themes.pptx (${themesPptx.byteLength}B), spec094-themes.odp (${themesOdp.byteLength}B)`,
+    `spec094-themes.pptx (${themesPptx.byteLength}B), spec094-themes.odp (${themesOdp.byteLength}B), ` +
+    `spec096-objects.pptx (${objectsPptx.byteLength}B), spec096-objects.odp (${objectsOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

@@ -34,13 +34,12 @@ meaningful — both need frames users can own and target.
 - [ ] e2e (`e2e/SPEC-082.spec.ts`): blank deck → insert a text box, type in it → insert a shape by drag → nudge it with arrows → send it to back → insert an image (fixture PNG via the picker) → download, reopen → all three frames present with expected stacking and positions
 
 ## Out of scope
-Rotation *editing* (rendering only, per SPEC-079). Connectors between
-slide shapes, adjustment-handle dragging on the stage (values imported
-from files still apply; a follow-up mirrors SPEC-069's handles),
-multi-select and marquee, group *creation*, image cropping/replace,
+Connectors between slide shapes, image cropping/replace,
 alt-text authoring, copy/paste of frames across slides/decks, gradients
 and shape effects (SPEC-073 depth stays text-side for now), theme-aware
-fill palettes, snapping to other frames (slide centrelines/edges only).
+fill palettes. (Rotation editing, adjustment-handle dragging,
+multi-select and marquee, group creation and snapping to other frames
+were out of scope here originally; SPEC-096 ships them all.)
 
 ## Reference
 
@@ -74,7 +73,10 @@ to `model.media`, mints `mediaId` per the naming rule below),
 `deleteFrame`, `duplicateFrame`, `reorderFrame(model, slideIndex,
 frameId, "front"|"forward"|"backward"|"back")`,
 `ungroupFrame(model, slideIndex, frameId)`,
-`setFrameFill`, `setFrameStroke`. Each dirties the slide (and for odp
+`setFrameFill`, `setFrameStroke`, and — since SPEC-096 —
+`groupFrames(model, slideIndex, frameIds)` and
+`reorderFrames(model, slideIndex, frameIds, target)` (a multi-selection
+moved as one contiguous block). Each dirties the slide (and for odp
 drops `sourceXml`), returns what the view selects. Geometry stays cm;
 hit-testing on rotated frames goes through `unrotatePoint`.
 
@@ -100,6 +102,10 @@ before `</manifest:manifest>`.
   `xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"`.
 - Ungrouped slides simply serialise the promoted frames — no group
   element remains.
+- The shape serialiser's bare `<a:avLst/>` shortcut became a REAL
+  adjustment list with SPEC-096: stored adjustment fractions emit one
+  `a:gd name="adj…" fmla="val N"` guide each (and odp's
+  `draw:enhanced-geometry` gains `draw:modifiers`).
 
 ### View wiring
 `src/views/presentation/useFrameManipulation.ts` (drag/resize/nudge/
@@ -113,7 +119,10 @@ modules, build a slim presentation gallery over `core` and file the
 duplication note). Pointer interactions must have touch equivalents per
 SPEC-068's conventions (pointer events, no hover-only affordances).
 Style popover: `FrameStylePopover.vue` using the design-system colour
-picker primitives.
+picker primitives. The drag-engage threshold (`DRAG_ENGAGE_CM`, 3px at
+96dpi) started as a function-local const in `useFrameManipulation.ts`;
+SPEC-096 hoisted it to a module-scope export of `stageMath.ts` (same
+value, no behaviour change) so the marquee gesture shares it.
 
 ### Tests
 - `presentation/frames.spec.ts`: every command — clamping, aspect rules,

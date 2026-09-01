@@ -11,8 +11,7 @@
 import { computed } from "vue";
 import SlideChartLayer from "./SlideChartLayer.vue";
 import SlideFilmstrip from "./SlideFilmstrip.vue";
-import SlideStageArea from "./SlideStageArea.vue";
-import SlidePanelStack from "./SlidePanelStack.vue";
+import SlideStageColumn from "./SlideStageColumn.vue";
 import { asStageFieldsBySlide } from "./slideRender";
 
 const props = defineProps({
@@ -56,29 +55,23 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
       @command="$emit('command', $event)"
       @reorder="$emit('reorder', $event)"
     />
-    <div class="stage-column">
-      <SlideStageArea
-        :current-slide="currentSlide ?? undefined"
-        :width-cm="widthCm"
-        :height-cm="heightCm"
-        :media="media"
-        :live-label="liveLabel"
-        :stage-edit="stageEdit"
-        :theme="theme"
-        :animations="animations"
-        :transitions="transitions"
-        :fields="currentFields"
-        @add="$emit('add')"
-      />
-      <SlidePanelStack
-        :notes="notes"
-        :transitions="transitions"
-        :animations="animations"
-        :tables="tables"
-        :slide-number="currentIndex + 1"
-        :has-slide="!!currentSlide"
-      />
-    </div>
+    <!-- The .stage-column block lives in SlideStageColumn (SPEC-096) -->
+    <SlideStageColumn
+      :current-slide="currentSlide ?? undefined"
+      :width-cm="widthCm"
+      :height-cm="heightCm"
+      :media="media"
+      :live-label="liveLabel"
+      :stage-edit="stageEdit"
+      :theme="theme"
+      :animations="animations"
+      :transitions="transitions"
+      :notes="notes"
+      :tables="tables"
+      :current-index="currentIndex"
+      :fields="currentFields"
+      @add="$emit('add')"
+    />
   </div>
 </template>
 
@@ -92,11 +85,5 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
 .deck-body :deep(.filmstrip) {
   border-right: var(--border-width) solid var(--border-subtle);
   max-height: 100%;
-}
-.stage-column {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 </style>
