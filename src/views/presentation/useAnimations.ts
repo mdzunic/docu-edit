@@ -45,9 +45,12 @@ export interface AnimationsDeps {
 }
 
 /** The frame kinds an animation may target (AC out-of-scope: group/foreign
- * cannot be animated). */
+ * cannot be animated). SPEC-095 adds media — a clip can enter/exit like any
+ * other frame (its own playback duration is never a build step). */
 function isAnimatableKind(kind: string): boolean {
-  return kind === "text" || kind === "image" || kind === "shape" || kind === "table";
+  return (
+    kind === "text" || kind === "image" || kind === "shape" || kind === "table" || kind === "media"
+  );
 }
 
 export interface AnimationRow {

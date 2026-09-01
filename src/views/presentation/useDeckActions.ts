@@ -8,7 +8,7 @@
 import { computed, ref, type Ref } from "vue";
 import type { Router, RouteLocationNormalizedLoaded } from "vue-router";
 import { downloadPresentation } from "../../lib/presentation/download";
-import { exportPresentationHtml, htmlFileName } from "../../lib/presentation/htmlExport";
+import { exportPresentationHtml, htmlFileName, mediaExportSummary } from "../../lib/presentation/htmlExport";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { presentationFormatLabel } from "../../lib/format";
 import type { PresentationModel, PresentationFormat } from "../../lib/presentation/model";
@@ -54,6 +54,22 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
       htmlDialogOpen.value = true;
     }
   }
+
+  /** SPEC-095 AC-49: the dialog's media note — the count and reason when the
+   * deck's clips exceed the 8 MB budget and will export as poster plates; "" when
+   * nothing is omitted. */
+  const htmlMediaNote = computed(() => {
+    const model = deps.model.value;
+    if (!model) {
+      return "";
+    }
+    const summary = mediaExportSummary(model);
+    if (!summary.omitted || summary.count === 0) {
+      return "";
+    }
+    const clips = summary.count === 1 ? "1 media clip" : `${summary.count} media clips`;
+    return `${clips} will be omitted from this export (over the 8 MB media budget) and shown as poster plates.`;
+  });
 
   function cancelHtmlExport(): void {
     htmlDialogOpen.value = false;
@@ -103,6 +119,7 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
     download,
     downloadCopy,
     htmlDialogOpen,
+    htmlMediaNote,
     openHtmlExport,
     cancelHtmlExport,
     confirmHtmlExport,
