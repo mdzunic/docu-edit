@@ -12,9 +12,10 @@ import { readOdfMimetype } from "../../core/packageDetect";
 import { parseOdfCustomProperties, parseOdfMeta } from "../../core/odfMeta";
 import type { DocumentProperties } from "../../core/documentProperties";
 import type { MediaPart } from "../../core/media";
-import { contentTypeForPartName } from "../../core/media";
+import { contentTypeForPartName, MAX_MEDIA_SIZE_BYTES } from "../../core/media";
+import { mediaKindForContentType } from "../mediaFrames";
 import { unzip, ZipError } from "../../core/zip";
-import { escapeXmlAttribute, firstChildElement, parseXml, serializeElement, XmlParseError } from "../../core/xml";
+import { childElements, escapeXmlAttribute, firstChildElement, parseXml, serializeElement, XmlParseError } from "../../core/xml";
 import {
   DRAW_NAMESPACE,
   OFFICE_NAMESPACE,
@@ -49,11 +50,13 @@ import {
   type DeckHeaderFooter,
   type LayoutSlot,
   type ParsedPresentation,
+  type MediaFrame,
   type PlaceholderRole,
   type Slide,
   type SlideFieldPlaceholder,
   type SlideFrame,
   type SlideLayout,
+  type SlideMediaKind,
   type SlideParagraph,
   type SlideRun,
   type SlideTableCell,
@@ -594,6 +597,14 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
   }
   const base = frameBase(geom ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
 
+  // A `draw:plugin` (or a media-typed `draw:object`) is an audio/video clip
+  // (SPEC-095), checked before the chart-object branch so a media object is
+  // never mistaken for a chart.
+  const media = parseMediaFrame(frame, base, ctx);
+  if (media) {
+    return withRotation(media, frame);
+  }
+
   // A `draw:object` (an embedded chart) is checked before `draw:image` so a
   // chart's sibling `ObjectReplacements/…` preview image is never mistaken for
   // the frame's picture (SPEC-092 AC-9a): it stays an untouched preserved part.
@@ -981,6 +992,28 @@ export function parseChartDrawFrameForTest(drawFrameXml: string, parts: Record<s
   return parseDrawFrame(frameEl, ctx);
 }
 
+/** Test seam (SPEC-095 golden): parses a standalone media `draw:frame` against
+ * a supplied `{ partPath → bytes }` parts map, so the golden can assert
+ * draw:plugin → MediaFrame, a tolerant variant, and preserve-don't-parse. */
+export function parseMediaFrameForTest(drawFrameXml: string, parts: Record<string, Uint8Array> = {}): SlideFrame {
+  const wrapped =
+    `<office:document-content ${ODP_TEST_NS} xmlns:xlink="http://www.w3.org/1999/xlink">` +
+    `<office:body><office:presentation><draw:page>${drawFrameXml}</draw:page></office:presentation></office:body>` +
+    `</office:document-content>`;
+  const doc = parseXml(wrapped);
+  const ctx: OdpContext = {
+    styles: new StyleResolver(),
+    masterPh: new Map(),
+    media: new Map(),
+    parts: new Map(Object.entries(parts)),
+    decls: { footers: new Map(), dateTimes: new Map() },
+    deckWidthCm: DEFAULT_SLIDE_WIDTH_CM,
+    deckHeightCm: DEFAULT_SLIDE_HEIGHT_CM,
+  };
+  const frameEl = doc.documentElement.getElementsByTagNameNS(DRAW_NAMESPACE, "frame")[0];
+  return parseDrawFrame(frameEl, ctx);
+}
+
 /** Test seam (SPEC-096 golden): parses one standalone shape/group element
  * (`draw:g`, `draw:custom-shape`, `draw:rect`…) into a SlideFrame, so the
  * goldens can assert the reader accepts the canonical bytes plus
@@ -1206,6 +1239,106 @@ function collectMedia(partPath: string, ctx: OdpContext): boolean {
   const contentType = contentTypeForPartName(partPath) ?? "image/png";
   ctx.media.set(partPath, { mediaId: partPath, contentType, data: base64Sync(raw) });
   return true;
+}
+
+/** The `draw:plugin` or media-typed `draw:object` inside a `draw:frame`, else
+ * undefined (SPEC-095). A `draw:object` is media only when its `draw:mime-type`
+ * is `video/*` / `audio/*`, so a chart object is never caught here. */
+function mediaChildOf(frame: Element): { el: Element; mimeType: string | undefined } | undefined {
+  const plugin = firstChildElement(frame, DRAW_NAMESPACE, "plugin");
+  if (plugin) {
+    return { el: plugin, mimeType: drawAttr(plugin, "mime-type") ?? undefined };
+  }
+  const object = firstChildElement(frame, DRAW_NAMESPACE, "object");
+  const mime = object ? drawAttr(object, "mime-type") : null;
+  if (object && mime && (mime.startsWith("video/") || mime.startsWith("audio/"))) {
+    return { el: object, mimeType: mime };
+  }
+  return undefined;
+}
+
+/** A `draw:frame` carrying `draw:plugin`/media `draw:object` becomes a
+ * MediaFrame (AC-5/6): `xlink:href` through `normaliseHref`, `draw:mime-type` →
+ * contentType, `presentation:play-full-screen` → fullScreen, the `draw:param`
+ * rows → playback flags, a sibling `draw:image` → posterMediaId; the verbatim
+ * source is kept for byte-exact re-emit. Undefined for a non-media frame. */
+function parseMediaFrame(
+  frame: Element,
+  base: ReturnType<typeof frameBase>,
+  ctx: OdpContext,
+): MediaFrame | undefined {
+  const media = mediaChildOf(frame);
+  if (!media) {
+    return undefined;
+  }
+  const href = xlinkAttr(media.el, "href");
+  const partPath = href ? normaliseHref(href) : undefined;
+  const contentType = media.mimeType ?? (partPath ? contentTypeForPartName(partPath) : undefined);
+  const kind: SlideMediaKind = mediaKindForContentType(contentType);
+  const out: MediaFrame = { ...base, kind: "media", media: kind };
+
+  const raw = partPath ? ctx.parts.get(partPath) : undefined;
+  if (partPath && raw) {
+    if (raw.length > MAX_MEDIA_SIZE_BYTES) {
+      out.oversize = true;
+    } else {
+      if (!ctx.media.has(partPath)) {
+        ctx.media.set(partPath, {
+          mediaId: partPath,
+          contentType: contentType ?? "application/octet-stream",
+          data: base64Sync(raw),
+        });
+      }
+      out.mediaId = partPath;
+    }
+  } else if (href) {
+    // Resolves outside the package — a linked clip, never fetched (AC-32).
+    out.linkTarget = href;
+  }
+  if (contentType) {
+    out.contentType = contentType;
+  }
+  if (presentationAttr(frame, "play-full-screen") === "true") {
+    out.fullScreen = true;
+  }
+  for (const param of childElements(media.el, DRAW_NAMESPACE, "param")) {
+    const name = drawAttr(param, "name");
+    const value = drawAttr(param, "value");
+    if (name === "Loop" && value === "true") {
+      out.loop = true;
+    } else if (name === "Mute" && value === "true") {
+      out.muted = true;
+    } else if (name === "AutoPlay" && value === "true") {
+      out.autoStart = true;
+    } else if (name === "Volume" && value) {
+      const n = Number(value);
+      if (Number.isFinite(n)) {
+        out.volume = n;
+      }
+    } else if (name === "VolumeDB" && value && out.volume === undefined) {
+      // Impress emits decibels (0 = full, negative = quieter); map to 0..100.
+      const db = Number(value);
+      if (Number.isFinite(db)) {
+        out.volume = Math.max(0, Math.min(100, Math.round(100 * 10 ** (db / 20))));
+      }
+    }
+  }
+
+  const posterImage = firstChildElement(frame, DRAW_NAMESPACE, "image");
+  if (posterImage) {
+    const posterHref = xlinkAttr(posterImage, "href");
+    const posterPath = posterHref ? normaliseHref(posterHref) : undefined;
+    if (posterPath && collectMedia(posterPath, ctx)) {
+      out.posterMediaId = posterPath;
+    }
+  }
+
+  const stroke = ctx.styles.stroke(drawAttr(frame, "style-name"));
+  if (stroke) {
+    out.stroke = stroke;
+  }
+  out.sourceXml = serializeElement(frame);
+  return out;
 }
 
 function base64Sync(bytes: Uint8Array): string {

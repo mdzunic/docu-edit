@@ -47,6 +47,15 @@ function referencedMedia(model: PresentationModel): MediaPart[] {
     for (const frame of frames) {
       if (frame.kind === "image") {
         used.add(frame.mediaId);
+      } else if (frame.kind === "media") {
+        // SPEC-095: a media frame's clip AND poster parts, or an inserted clip
+        // would be dropped from the saved package / its manifest entry omitted.
+        if (frame.mediaId) {
+          used.add(frame.mediaId);
+        }
+        if (frame.posterMediaId) {
+          used.add(frame.posterMediaId);
+        }
       } else if (frame.kind === "group") {
         walk(frame.children);
       }
