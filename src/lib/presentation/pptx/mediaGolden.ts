@@ -69,7 +69,7 @@ export const GOLDEN_AUDIO_RELS: Relationship[] = [
 /** The canonical rebuilt video `p:pic` (id=2, the first shape a slide mints). */
 export const MEDIA_VIDEO_PIC_GOLDEN =
   `<p:pic><p:nvPicPr><p:cNvPr id="2" name="Video 2"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>` +
-  `<p:nvPr><a:videoFile r:link="rId3"/>` +
+  `<p:nvPr><a:videoFile r:link="rId3" contentType="video/mp4"/>` +
   `<p:extLst>` +
   `<p:ext uri="{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"><p14:media xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" r:embed="rId4"/></p:ext>` +
   `<p:ext uri="{7B2F1A6C-3E4D-4F5A-8B9C-0D1E2F3A4B5C}"><de:media xmlns:de="urn:docu-edit:pptx:media:2026" autoStart="1" loop="1" mute="1" vol="80" fullScreen="1"/></p:ext>` +
@@ -81,7 +81,7 @@ export const MEDIA_VIDEO_PIC_GOLDEN =
 /** The canonical rebuilt audio `p:pic` (id=2, no poster, no flags). */
 export const MEDIA_AUDIO_PIC_GOLDEN =
   `<p:pic><p:nvPicPr><p:cNvPr id="2" name="Audio 2"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>` +
-  `<p:nvPr><a:audioFile r:link="rId2"/>` +
+  `<p:nvPr><a:audioFile r:link="rId2" contentType="audio/wav"/>` +
   `<p:extLst><p:ext uri="{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"><p14:media xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" r:embed="rId3"/></p:ext></p:extLst>` +
   `</p:nvPr></p:nvPicPr>` +
   `<p:blipFill><a:blip/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +

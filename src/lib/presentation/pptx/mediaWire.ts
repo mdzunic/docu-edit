@@ -64,9 +64,12 @@ export function mediaFlagsExtXml(frame: MediaFrame): string {
  * `mediaRid` is the modern `p14:media` embed (embedded clips only). */
 export function mediaNvPrXml(frame: MediaFrame, rids: { sourceRid?: string; mediaRid?: string }): string {
   const fileTag = frame.media === "audio" ? "a:audioFile" : "a:videoFile";
+  // The content type rides on the file element too, so a LINKED clip (no
+  // embedded part to sniff it from) recovers it on read.
+  const ct = frame.contentType ? ` contentType="${escapeXmlAttribute(frame.contentType)}"` : "";
   const sourceRef = rids.sourceRid
-    ? `<${fileTag} r:link="${escapeXmlAttribute(rids.sourceRid)}"/>`
-    : `<${fileTag}/>`;
+    ? `<${fileTag} r:link="${escapeXmlAttribute(rids.sourceRid)}"${ct}/>`
+    : `<${fileTag}${ct}/>`;
   const flags = mediaFlagsExtXml(frame);
   const p14 = rids.mediaRid
     ? `<p:ext uri="${P14_MEDIA_EXT_URI}"><p14:media xmlns:p14="${escapeXmlAttribute(P14_NAMESPACE)}" r:embed="${escapeXmlAttribute(rids.mediaRid)}"/></p:ext>`

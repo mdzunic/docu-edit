@@ -795,6 +795,13 @@ function parseMediaPic(
     linkTarget = rel.target;
     break;
   }
+  if (!contentType && fileEl) {
+    // A linked clip has no part to sniff — recover the type from the wire.
+    const declared = fileEl.getAttribute("contentType");
+    if (declared) {
+      contentType = declared;
+    }
+  }
 
   const kind: SlideMediaKind = audioFile ? "audio" : videoFile ? "video" : mediaKindForContentType(contentType);
   const frame: MediaFrame = { ...base, kind: "media", media: kind };
