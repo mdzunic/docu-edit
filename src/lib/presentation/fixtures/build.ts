@@ -1666,3 +1666,140 @@ export async function buildSpec094OdpFixtureBytes(): Promise<Uint8Array> {
   const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }
+
+// --- SPEC-096 object fixtures (spec096-objects) -----------------------------
+// A one-slide deck for the multi-select / rotate / adjust / group work:
+// three deliberately unaligned shapes, a 37°-rotated image, a roundRect with
+// a non-default adjustment — all written through the real writers — plus,
+// spliced verbatim into the written slide/page, a group whose a:chOff/a:chExt
+// DIFFER from a:off/a:ext (pinning the child mapping) and a ROTATED verbatim
+// group (pinning the confirm-to-release path; pptx only — odp models no group
+// rotation). The four mini-deck slides above are never touched.
+
+/** The three unaligned shapes' boxes in cm ([x, y, w, h], z-order). */
+export const SPEC096_SHAPE_BOXES: [number, number, number, number][] = [
+  [2, 2, 4, 2],
+  [9, 5, 3, 3],
+  [16, 9, 5, 2],
+];
+/** The rotated image's box and rotation. */
+export const SPEC096_IMAGE_BOX: [number, number, number, number] = [24, 2, 4, 3];
+export const SPEC096_IMAGE_ROTATION = 37;
+/** The tuned roundRect: box + its stored corner-radius fraction. */
+export const SPEC096_ROUND_RECT_BOX: [number, number, number, number] = [2, 13, 6, 3];
+export const SPEC096_ADJUSTMENT = 0.4;
+/** The non-identity verbatim group's slide-space box (chExt is HALF the ext,
+ * so its one child maps through a ×2 scale). */
+export const SPEC096_GROUP_BOX: [number, number, number, number] = [20, 12, 4, 3];
+/** The rotated verbatim group's box + rotation (pptx only). */
+export const SPEC096_ROTATED_GROUP_BOX: [number, number, number, number] = [28, 12, 4, 3];
+export const SPEC096_ROTATED_GROUP_DEG = 45;
+
+const SPEC096_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGMw7jhj3HGGAUIBACiuBh3+iAU4AAAAAElFTkSuQmCC";
+
+function spec096Model(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Objects fixture";
+  const mediaId = format === "odp" ? "Pictures/image1.png" : "ppt/media/image1.png";
+  const fills = ["#4472c4", "#c00000", "#00b050"];
+  const slide: Slide = {
+    id: crypto.randomUUID(),
+    frames: [
+      ...SPEC096_SHAPE_BOXES.map(([x, y, w, h], i) => ({
+        id: crypto.randomUUID(),
+        kind: "shape" as const,
+        geometry: "rect" as const,
+        xCm: x,
+        yCm: y,
+        widthCm: w,
+        heightCm: h,
+        fill: { type: "solid" as const, color: fills[i] },
+      })),
+      {
+        id: crypto.randomUUID(),
+        kind: "image" as const,
+        xCm: SPEC096_IMAGE_BOX[0],
+        yCm: SPEC096_IMAGE_BOX[1],
+        widthCm: SPEC096_IMAGE_BOX[2],
+        heightCm: SPEC096_IMAGE_BOX[3],
+        rotationDeg: SPEC096_IMAGE_ROTATION,
+        mediaId,
+      },
+      {
+        id: crypto.randomUUID(),
+        kind: "shape" as const,
+        geometry: "roundRect" as const,
+        xCm: SPEC096_ROUND_RECT_BOX[0],
+        yCm: SPEC096_ROUND_RECT_BOX[1],
+        widthCm: SPEC096_ROUND_RECT_BOX[2],
+        heightCm: SPEC096_ROUND_RECT_BOX[3],
+        adjustments: [SPEC096_ADJUSTMENT],
+        fill: { type: "solid" as const, color: "#ffc000" },
+      },
+    ],
+  };
+  model.slides = [slide];
+  model.media = [{ mediaId, contentType: "image/png", data: SPEC096_PNG_BASE64 }];
+  return model;
+}
+
+/** The verbatim pptx groups spliced into the written slide: one whose
+ * chOff/chExt are NOT the identity mapping (child in a half-scale child
+ * space), and one carrying a 45° rotation on its own xfrm. */
+function spec096PptxGroupsXml(): string {
+  const [gx, gy, gw, gh] = SPEC096_GROUP_BOX;
+  const [rx, ry, rw, rh] = SPEC096_ROTATED_GROUP_BOX;
+  const nonIdentity =
+    `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="90" name="Fixture Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+    `<p:grpSpPr><a:xfrm><a:off x="${EMU(gx)}" y="${EMU(gy)}"/><a:ext cx="${EMU(gw)}" cy="${EMU(gh)}"/>` +
+    `<a:chOff x="0" y="0"/><a:chExt cx="${EMU(gw / 2)}" cy="${EMU(gh / 2)}"/></a:xfrm></p:grpSpPr>` +
+    `<p:sp><p:nvSpPr><p:cNvPr id="91" name="GChild 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${EMU(gw / 4)}" cy="${EMU(gh / 2)}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>` +
+    `</p:grpSp>`;
+  const rotated =
+    `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="92" name="Rotated Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+    `<p:grpSpPr><a:xfrm rot="${SPEC096_ROTATED_GROUP_DEG * 60000}"><a:off x="${EMU(rx)}" y="${EMU(ry)}"/><a:ext cx="${EMU(rw)}" cy="${EMU(rh)}"/>` +
+    `<a:chOff x="${EMU(rx)}" y="${EMU(ry)}"/><a:chExt cx="${EMU(rw)}" cy="${EMU(rh)}"/></a:xfrm></p:grpSpPr>` +
+    `<p:sp><p:nvSpPr><p:cNvPr id="93" name="GChild 2"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="${EMU(rx)}" y="${EMU(ry)}"/><a:ext cx="${EMU(rw / 2)}" cy="${EMU(rh)}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>` +
+    `</p:grpSp>`;
+  return nonIdentity + rotated;
+}
+
+/** The verbatim odp group spliced into the written page (a draw:g has no box
+ * of its own — its bounds are the children's union). */
+const SPEC096_ODP_GROUP =
+  `<draw:g>` +
+  `<draw:rect svg:x="20cm" svg:y="12cm" svg:width="2cm" svg:height="1.5cm"/>` +
+  `<draw:rect svg:x="22cm" svg:y="13.5cm" svg:width="2cm" svg:height="1.5cm"/>` +
+  `</draw:g>`;
+
+const SPEC096_FIXTURE_INSTANT = new Date(Date.UTC(2026, 8, 1, 9, 0, 0));
+
+export async function buildSpec096PptxFixtureBytes(): Promise<Uint8Array> {
+  const bytes = (
+    await writePptx(spec096Model("pptx"), { now: SPEC096_FIXTURE_INSTANT, modified: SPEC096_FIXTURE_INSTANT })
+  ).bytes;
+  const parts = await unzip(bytes);
+  const slide = new TextDecoder().decode(parts.get("ppt/slides/slide1.xml")!);
+  parts.set(
+    "ppt/slides/slide1.xml",
+    encoder.encode(slide.replace("</p:spTree>", `${spec096PptxGroupsXml()}</p:spTree>`)),
+  );
+  return zip([...parts].map(([name, data]) => ({ name, data })));
+}
+
+export async function buildSpec096OdpFixtureBytes(): Promise<Uint8Array> {
+  const bytes = (
+    await writeOdp(spec096Model("odp"), { now: SPEC096_FIXTURE_INSTANT, modified: SPEC096_FIXTURE_INSTANT })
+  ).bytes;
+  const parts = await unzip(bytes);
+  const content = new TextDecoder().decode(parts.get("content.xml")!);
+  parts.set("content.xml", encoder.encode(content.replace("</draw:page>", `${SPEC096_ODP_GROUP}</draw:page>`)));
+  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+}

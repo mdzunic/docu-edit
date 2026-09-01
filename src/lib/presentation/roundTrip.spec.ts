@@ -690,3 +690,42 @@ describe("SPEC-090: deck setup round-trip", () => {
     }
   });
 });
+
+// --- SPEC-096: object edits keep every untouched part byte-verbatim ---------
+// The fuller object round trips (rotate/adjust/group/align → reopen) live in
+// objectsRoundTrip.spec.ts; here the mini-deck pins that a SPEC-096 group
+// command rebuilds ONLY the edited slide part and that a second write of the
+// reopened deck is byte-stable.
+import { groupFrames } from "./frames";
+
+describe("SPEC-096 group command over the mini-deck (pptx)", () => {
+  it("grouping on slide 4 leaves every other part byte-verbatim; second write byte-stable", async () => {
+    const bytes = await buildPptxFixtureBytes();
+    const model = await readPresentationBytes(bytes, "pptx", "Deck");
+    const source = await unzip(bytes);
+    const slide4 = model.slides[3];
+    // Group two frames of modelled kinds (slide 4 carries an ellipse, an
+    // image and text placeholders among others).
+    const targets = slide4.frames.filter((f) => f.kind === "shape" || f.kind === "image" || f.kind === "text").slice(0, 2);
+    expect(targets.length).toBeGreaterThanOrEqual(2);
+    groupFrames(model, 3, targets.map((f) => f.id));
+    const first = await writePptx(model);
+    const written = await unzip(first.bytes);
+    for (const [name, data] of source) {
+      if (name === "ppt/slides/slide4.xml") {
+        expect(equalBytes(written.get(name)!, data)).toBe(false); // rebuilt
+        continue;
+      }
+      expect(equalBytes(written.get(name)!, data), `part ${name} must stay byte-verbatim`).toBe(true);
+    }
+    // Second write of the reopened deck: identical slide-part bytes.
+    const reopened = await readPresentationBytes(first.bytes, "pptx", "Deck");
+    const second = await writePptx(reopened);
+    const again = await writePptx(await readPresentationBytes(second.bytes, "pptx", "Deck"));
+    const a = await unzip(second.bytes);
+    const b = await unzip(again.bytes);
+    for (const name of [...a.keys()].filter((n) => n.startsWith("ppt/slides/slide"))) {
+      expect(equalBytes(a.get(name)!, b.get(name)!), name).toBe(true);
+    }
+  });
+});
