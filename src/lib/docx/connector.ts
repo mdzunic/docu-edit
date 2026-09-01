@@ -11,7 +11,7 @@ import type { Block, Connector, ConnectorKind, Section } from "../documentModel"
 import { isConnector } from "../documentModel";
 import type { ArrowheadKind, ArrowheadSize, ShapeOutline } from "../core/shapes";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
-import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
+import { cssColorToOoxml } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
 import { outerShdwXml, parseShapeStyle, splitPreservedStyle, srgbClrXml } from "./shape";
 
@@ -22,7 +22,6 @@ const DE_NAMESPACE = "urn:docu-edit:shape";
 
 const EMU_PER_POINT = 12700;
 const ptToEmu = (pt: number): number => Math.round(pt * EMU_PER_POINT);
-const emuToPt = (emu: number): number => emu / EMU_PER_POINT;
 const degToOoxmlRot = (deg: number): number => Math.round(deg * 60000);
 const ooxmlRotToDeg = (rot: number): number => Math.round(rot / 60000);
 

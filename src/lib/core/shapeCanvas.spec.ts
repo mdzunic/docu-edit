@@ -369,12 +369,7 @@ describe("SPEC-073 outline alpha/join/cap and arrowheads (AC-6, AC-14)", () => {
     const ctx = richCtx();
     paintShape(
       ctx,
-      {
-        type: "shape",
-        geometry: "line",
-        widthCm: 3,
-        heightCm: 0,
-        wrap: "inline",
+      baseLine({
         outline: {
           color: "#000000",
           widthPt: 1,
@@ -382,7 +377,7 @@ describe("SPEC-073 outline alpha/join/cap and arrowheads (AC-6, AC-14)", () => {
           startArrow: { kind: "triangle", size: "medium" },
           endArrow: { kind: "diamond", size: "large" },
         },
-      },
+      }),
       100,
       0,
     );

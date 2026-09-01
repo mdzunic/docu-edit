@@ -35,7 +35,6 @@ function shape(overrides: Partial<Shape> = {}): Shape {
     relativeToV: "paragraph",
     offsetXCm: 1,
     offsetYCm: 1,
-    zOrder: 0,
     ...overrides,
   };
 }
@@ -104,6 +103,16 @@ function styledModel(format: "docx" | "odt"): DocumentModel {
       ],
     },
   ];
+  if (format === "docx") {
+    // The .docx anchor always carries relativeHeight, which reads back as
+    // zOrder 0 — bake it in so save → reopen is an identity there. The .odt
+    // writer/reader carry no z-order for an unstacked shape.
+    for (const block of model.sections[0].blocks) {
+      if (isShape(block)) {
+        block.zOrder = 0;
+      }
+    }
+  }
   return model;
 }
 

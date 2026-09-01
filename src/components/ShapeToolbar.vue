@@ -503,13 +503,13 @@ function onZOrderChange(event = new Event("change")) {
 }
 .shape-style-popover {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + var(--space-2));
   left: 0;
   z-index: 40;
-  background: #fff;
-  border: 1px solid #d0d0d4;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-  padding: 10px;
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  padding: var(--space-4);
 }
 </style>

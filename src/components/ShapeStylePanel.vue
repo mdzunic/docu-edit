@@ -771,69 +771,70 @@ function onShadowPreset(id = "none") {
 .shape-style-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
   min-width: 260px;
   /* The popover host sits mid-viewport; a hard cap keeps every control
      reachable (the panel scrolls) rather than spilling past the viewport
      bottom where a click cannot land. */
   max-height: min(46vh, 340px);
   overflow-y: auto;
-  padding: 4px 2px;
+  padding: var(--space-2) var(--space-1);
 }
 .panel-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid #e3e3e6;
-  padding-top: 6px;
+  gap: var(--space-2);
+  border-top: var(--border-width) solid var(--border-subtle);
+  padding-top: var(--space-2);
 }
 .panel-section:first-child {
   border-top: none;
   padding-top: 0;
 }
 .section-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #5f6368;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .preset-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 .preset-button {
   font: inherit;
-  font-size: 12px;
-  padding: 3px 8px;
-  border: 1px solid #d0d0d4;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-base);
+  color: var(--text-primary);
   cursor: pointer;
 }
 .preset-button:hover {
-  background: #f1f3f4;
+  background: var(--surface-selected);
 }
 .inline-field {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
 }
 .inline-field input[type="color"] {
-  inline-size: 32px;
-  block-size: 24px;
+  inline-size: var(--space-7);
+  block-size: var(--space-6);
   padding: 0;
-  border: 1px solid #d0d0d4;
-  border-radius: 4px;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
   background: none;
 }
 .num {
   inline-size: 56px;
   font: inherit;
-  font-size: 12px;
-  padding: 2px 4px;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
 }
 .slider-field input[type="range"] {
   flex: 1;
@@ -841,23 +842,24 @@ function onShadowPreset(id = "none") {
 .gradient-editor {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 .gradient-stop {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 .stop-remove {
   font: inherit;
-  border: 1px solid #d0d0d4;
-  border-radius: 4px;
-  background: #fff;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-base);
+  color: var(--text-primary);
   cursor: pointer;
-  padding: 0 6px;
+  padding: 0 var(--space-2);
 }
 .arrow-row {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
 }
 </style>

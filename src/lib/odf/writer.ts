@@ -103,7 +103,14 @@ import { escapeXml, firstChildElement, parseXml, serializeElement } from "../cor
 import { ODT_MIMETYPE } from "./reader";
 import { planAnchoredDrawings } from "../drawingAnchors";
 import { drawFrameXml, graphicStyleXml } from "./drawing";
-import { shapeElementXml, shapeGraphicStyleXml } from "./shape";
+import {
+  createOdfDrawingDefs,
+  ODF_DRAWING_DEF_LOCAL_NAMES,
+  shapeElementXml,
+  shapeGraphicStyleXml,
+  type OdfDrawingDefs,
+  type OdfShapeStyleWriteContext,
+} from "./shape";
 import { connectorElementXml, connectorGraphicStyleXml, odfDrawId } from "./connector";
 import { chartFrameXml } from "./chart";
 import { chartObjectDirsInManifest, planOdfChartWrite, type OdfChartWritePlan } from "./chartWritePlan";
@@ -113,6 +120,7 @@ import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from
 import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
 import {
+  DRAW_NAMESPACE,
   FO_NAMESPACE,
   NUMBER_NAMESPACE,
   OFFICE_NAMESPACE,
@@ -567,7 +575,7 @@ interface AutomaticStyles {
   userFieldNames(): string[];
 }
 
-function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
+function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeStyleWriteContext): AutomaticStyles {
   const takenNames = new Set<string>();
   // SPEC-053: date/time number styles (deduped by format) and the user-field
   // names a `docProperty` field references.
@@ -890,13 +898,13 @@ function createAutomaticStyles(model: DocumentModel): AutomaticStyles {
 
     shapeStyleNameFor(shape: Shape): string {
       const name = claimName("shfr", "");
-      defs.push(shapeGraphicStyleXml(name, shape));
+      defs.push(shapeGraphicStyleXml(name, shape, shapeStyleCtx));
       return name;
     },
 
     connectorStyleNameFor(connector: Connector): string {
       const name = claimName("cnfr", "");
-      defs.push(connectorGraphicStyleXml(name, connector));
+      defs.push(connectorGraphicStyleXml(name, connector, shapeStyleCtx));
       return name;
     },
   };
@@ -2010,9 +2018,22 @@ export function buildContentXml(
   masterNames?: (string | null)[],
   chartPlan: OdfChartWritePlan = planOdfChartWrite(model, new Set()),
   formulaPlan: OdfFormulaWritePlan = planOdfFormulaWrite(model),
+  drawingDefs: OdfDrawingDefs = createOdfDrawingDefs(),
 ): string {
   const includeOpaque = model.format === "odt";
-  const styles = createAutomaticStyles(model);
+  // SPEC-073: shape/connector graphic styles reference shared drawing
+  // definitions (gradients, hatches, fill images, markers, dash patterns)
+  // through this registry; the caller (writeOdt) reads the collected
+  // definitions back out for styles.xml once the content is built. Preserved
+  // unmodelled styling is only re-emitted on a same-format save (AC-35) — a
+  // cross-format model's unsupportedStyleXml is the other format's
+  // vocabulary, reported centrally as dropped instead.
+  const shapeStyleCtx: OdfShapeStyleWriteContext = {
+    defs: drawingDefs,
+    hrefForMedia: (mediaId) => mediaPlan.hrefFor(mediaId) || undefined,
+    includePreserved: includeOpaque,
+  };
+  const styles = createAutomaticStyles(model, shapeStyleCtx);
   const blockXml: string[] = [];
   // Footnotes/endnotes (SPEC-031): note reference runs anywhere in the body
   // emit their text:note through this context; cleared before returning.
@@ -2937,7 +2958,73 @@ export function patchOdtDefaultLanguage(model: DocumentModel, originalStylesXml:
   return `${XML_DECLARATION}${serializeElement(root)}`;
 }
 
-export function buildStylesXml(model: DocumentModel): string {
+/** A preserved styles.xml with the save's shared drawing definitions
+ * (SPEC-073) managed inside `<office:styles>`, or null when nothing needs
+ * changing. Every existing definition whose draw:name starts with "de" is a
+ * stale definition a previous save of THIS editor wrote — removed and
+ * replaced by the fresh set collected while content.xml was built. Foreign
+ * definitions keep their names untouched; a preserved definition riding in
+ * some block's unsupportedStyleXml re-enters through the defs registry but
+ * is skipped here when the part still defines that name (no duplicates). */
+export function patchOdtShapeDefs(originalStylesXml: string, drawingDefsXml: string): string | null {
+  let stylesDoc: Document;
+  try {
+    stylesDoc = parseXml(originalStylesXml);
+  } catch {
+    return null;
+  }
+  const root = stylesDoc.documentElement;
+  let officeStyles = firstChildElement(root, OFFICE_NAMESPACE, "styles");
+  let changed = false;
+  if (officeStyles) {
+    for (const child of Array.from(officeStyles.children)) {
+      if (
+        child.namespaceURI === DRAW_NAMESPACE &&
+        ODF_DRAWING_DEF_LOCAL_NAMES.has(child.localName) &&
+        (child.getAttributeNS(DRAW_NAMESPACE, "name") ?? "").startsWith("de")
+      ) {
+        officeStyles.removeChild(child);
+        changed = true;
+      }
+    }
+  }
+  if (drawingDefsXml !== "") {
+    if (!officeStyles) {
+      officeStyles = stylesDoc.createElementNS(OFFICE_NAMESPACE, "office:styles");
+      root.insertBefore(
+        officeStyles,
+        firstChildElement(root, OFFICE_NAMESPACE, "automatic-styles") ?? null,
+      );
+    }
+    // Each definition element declares its own namespaces (see shape.ts's
+    // DEF_*_XMLNS), so the plain DOCUMENT_XMLNS wrapper suffices to parse.
+    let wrapper: Document;
+    try {
+      wrapper = parseXml(`<office:document-styles${DOCUMENT_XMLNS}>${drawingDefsXml}</office:document-styles>`);
+    } catch {
+      return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
+    }
+    for (const def of Array.from(wrapper.documentElement.children)) {
+      const name = def.getAttributeNS(DRAW_NAMESPACE, "name");
+      const exists =
+        name !== null &&
+        Array.from(officeStyles.children).some(
+          (el) =>
+            el.namespaceURI === DRAW_NAMESPACE &&
+            el.localName === def.localName &&
+            el.getAttributeNS(DRAW_NAMESPACE, "name") === name,
+        );
+      if (exists) {
+        continue;
+      }
+      officeStyles.appendChild(stylesDoc.importNode(def, true));
+      changed = true;
+    }
+  }
+  return changed ? `${XML_DECLARATION}${serializeElement(root)}` : null;
+}
+
+export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): string {
   const { fontFamily, fontSizePt, language, defaultTabStopCm } = model.defaultStyles;
   // The document's default tab interval (SPEC-054): style:tab-stop-distance on
   // the default paragraph style. Omitted when the model carries no explicit
@@ -2983,6 +3070,10 @@ export function buildStylesXml(model: DocumentModel): string {
     namedStyles +
     notesConfigurationXml("footnote", model.footnoteSettings) +
     notesConfigurationXml("endnote", model.endnoteSettings) +
+    // SPEC-073: the shared drawing definitions (draw:gradient/draw:hatch/
+    // draw:fill-image/draw:marker/draw:stroke-dash) the content's graphic
+    // styles reference by name — collected while content.xml was built.
+    drawingDefsXml +
     "</office:styles>" +
     "<office:automatic-styles>" +
     pageLayouts +
@@ -3421,7 +3512,12 @@ export async function writeOdt(
     ? formulaObjectDirsInManifest(decoder.decode(preservedManifestBytes))
     : new Set<string>();
   const formulaPlan = planOdfFormulaWrite(model, preservedFormulaObjectDirs);
-  const content = buildContentXml(model, mediaPlan, sectionNames.masters, chartPlan, formulaPlan);
+  // SPEC-073: the shared drawing definitions (gradients, hatches, fill
+  // images, markers, dash patterns) shape/connector graphic styles reference
+  // — the registry fills while content.xml is built, then the definitions
+  // land in styles.xml `<office:styles>` (fresh build or preserved patch).
+  const drawingDefs = createOdfDrawingDefs();
+  const content = buildContentXml(model, mediaPlan, sectionNames.masters, chartPlan, formulaPlan, drawingDefs);
 
   if (preservedParts.size === 0) {
     const bytes = await zip([
@@ -3429,7 +3525,7 @@ export async function writeOdt(
       // can read it from the raw bytes at a fixed offset.
       { name: "mimetype", data: encoder.encode(ODT_MIMETYPE), store: true },
       { name: "content.xml", data: encoder.encode(content) },
-      { name: "styles.xml", data: encoder.encode(buildStylesXml(model)) },
+      { name: "styles.xml", data: encoder.encode(buildStylesXml(model, drawingDefs.defsXml())) },
       { name: "meta.xml", data: encoder.encode(buildMetaXml(metaInput, modified)) },
       { name: "settings.xml", data: encoder.encode(buildSettingsXml()) },
       {
@@ -3480,6 +3576,10 @@ export async function writeOdt(
       patchOdtNotesConfiguration(model, patchedStyles ?? originalStyles) ?? patchedStyles;
     patchedStyles =
       patchOdtDefaultLanguage(model, patchedStyles ?? originalStyles) ?? patchedStyles;
+    // Shared drawing definitions (SPEC-073) last: stale de-named defs from a
+    // previous save are replaced by the set this content build collected.
+    patchedStyles =
+      patchOdtShapeDefs(patchedStyles ?? originalStyles, drawingDefs.defsXml()) ?? patchedStyles;
   }
 
   const entries: ZipEntryInput[] = [
