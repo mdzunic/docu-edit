@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_DRAWING_POSITION,
   deleteShape,
+  formatDrawings,
   duplicateShape,
   ensureShapeTextFrame,
   freshGroupOrdinal,
@@ -1421,5 +1422,94 @@ describe("arrangeDrawings (SPEC-072)", () => {
       { location: { section: 0, block: 0 }, offsetXCm: 9, offsetYCm: 9 },
     ]);
     expect(shapeAt(model, { section: 0, block: 0 })?.offsetXCm).toBe(1);
+  });
+});
+
+// --- SPEC-073: formatDrawings fan-out (AC-26, AC-27) -------------------------
+
+describe("formatDrawings — one-command styling fan-out (SPEC-073)", () => {
+  const patch = {
+    fill: { kind: "solid", color: "#dae3f3" } as const,
+    outline: { color: "#4472c4", widthPt: 1, dash: "solid" } as const,
+    shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 } as const,
+  };
+
+  it("applies fill/outline/shadow to every member of a multi-selection in one CommandResult", () => {
+    const model = doc(shape(), shape({ offsetXCm: 5 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [
+      { section: 0, block: 0 },
+      { section: 0, block: 1 },
+    ], patch);
+    for (const block of [0, 1]) {
+      const s = shapeAt(next, { section: 0, block });
+      expect(s?.fill).toEqual(patch.fill);
+      expect(s?.outline).toEqual(patch.outline);
+      expect(s?.shadow).toEqual(patch.shadow);
+    }
+  });
+
+  it("a container location fans out to every group member (AC-26)", () => {
+    const model = doc(shape({ groupOrdinal: 1 }), shape({ groupOrdinal: 1, offsetXCm: 5 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    expect(shapeAt(next, { section: 0, block: 0 })?.fill).toEqual(patch.fill);
+    expect(shapeAt(next, { section: 0, block: 1 })?.fill).toEqual(patch.fill);
+  });
+
+  it("a connector member takes outline only (AC-26)", () => {
+    const model = doc(shape({ groupOrdinal: 1 }), paragraph(""));
+    const connector = {
+      type: "connector",
+      kind: "straight",
+      start: { xCm: 0, yCm: 0 },
+      end: { xCm: 3, yCm: 0 },
+      widthCm: 3,
+      heightCm: 0,
+      wrap: "infront",
+      groupOrdinal: 1,
+    };
+    model.sections[0].blocks.splice(1, 0, connector as never);
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    const member = next.sections[0].blocks[1] as { outline?: unknown; fill?: unknown; shadow?: unknown };
+    expect(member.outline).toEqual(patch.outline);
+    expect(member.fill).toBeUndefined();
+    expect(member.shadow).toBeUndefined();
+  });
+
+  it("a line geometry member skips the fill (no area to fill)", () => {
+    const model = doc(shape({ geometry: "line", heightCm: 0, groupOrdinal: 1 }), shape({ groupOrdinal: 1 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 1 }], patch);
+    expect(shapeAt(next, { section: 0, block: 0 })?.fill).toBeUndefined();
+    expect(shapeAt(next, { section: 0, block: 0 })?.outline).toEqual(patch.outline);
+  });
+
+  it("an image member is skipped entirely", () => {
+    const model = doc(shape({ groupOrdinal: 1 }), image({ groupOrdinal: 1 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    const member = next.sections[0].blocks[1] as Image & { fill?: unknown };
+    expect(member.fill).toBeUndefined();
+  });
+
+  it("a sealed container is excluded — nothing in it is rewritten (AC-27)", () => {
+    const preserved = shape({ groupOrdinal: 1, unsupportedGeometryXml: "<a:custGeom/>" });
+    const model = doc(shape({ groupOrdinal: 1, fill: { kind: "solid", color: "#ff0000" } }), preserved, paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    expect(shapeAt(next, { section: 0, block: 0 })?.fill).toEqual({ kind: "solid", color: "#ff0000" });
+    expect(shapeAt(next, { section: 0, block: 1 })?.fill).toBeUndefined();
+  });
+
+  it("null clears a property; an absent key leaves it untouched", () => {
+    const model = doc(
+      shape({
+        fill: { kind: "solid", color: "#ff0000" },
+        outline: { color: "#000000", widthPt: 1, dash: "solid" },
+        shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 },
+      }),
+      paragraph(""),
+    );
+    const { model: next } = formatDrawings(model, selectionAt(1, 0), [{ section: 0, block: 0 }], { shadow: null });
+    const s = shapeAt(next, { section: 0, block: 0 });
+    expect(s?.shadow).toBeUndefined();
+    expect(s?.fill).toEqual({ kind: "solid", color: "#ff0000" });
+    expect(s?.outline).toEqual({ color: "#000000", widthPt: 1, dash: "solid" });
   });
 });
