@@ -13,6 +13,8 @@ import { escapeXmlAttribute, escapeXmlText, resolvePartPath, type Relationship }
 import {
   DEFAULT_TABLE_CELL_PADDING_CM,
   type ChartFrame,
+  type DeckTheme,
+  type FrameStroke,
   type ImageFrame,
   type PresentationModel,
   type ShapeFrame,
@@ -28,6 +30,15 @@ import {
   type TextFrame,
 } from "../model";
 import { writePptxTransition } from "../transitions";
+import {
+  DEFAULT_THEME,
+  isThemeColor,
+  isThemeFont,
+  resolveColor,
+  type ModelColor,
+  type ModelFont,
+} from "../../core/theme";
+import { schemeClrXml, slideClrMapMode, type SlideColorWrite } from "./theme";
 import { writePptxTiming } from "./timing";
 import { DEFAULT_DATE_FORMAT, fieldText, isTitleSlide } from "../headerFooter";
 import { FIELD_GUID, FORMAT_TO_PPTX_DATETIME, PH_IDX_OF_KIND, PH_NAME_OF_KIND, PH_TYPE_OF_KIND } from "./fields";
@@ -56,6 +67,33 @@ function hex(color: string): string {
   return color.replace(/^#/, "").toUpperCase();
 }
 
+/** The default colour-write context: no theme, so any (unexpected) ref
+ * resolves against Office and writes its literal. */
+const LITERAL_WRITE: SlideColorWrite = { theme: DEFAULT_THEME, mode: "literal" };
+
+/** A `ModelColor` as its DrawingML colour element (SPEC-094 AC-17/19/23): a
+ * literal writes `a:srgbClr`; a ref writes `a:schemeClr` through the slide's
+ * colour map — or its resolved literal when the slide opted out. */
+function colorElementXml(color: ModelColor, tc: SlideColorWrite): string {
+  if (isThemeColor(color)) {
+    if (tc.mode === "literal") {
+      return `<a:srgbClr val="${hex(resolveColor(color, tc.theme))}"/>`;
+    }
+    return schemeClrXml(color, tc.mode);
+  }
+  return `<a:srgbClr val="${hex(color)}"/>`;
+}
+
+/** A `ModelFont` as its `a:latin` element (AC-20): a ref writes the
+ * `+mj-lt`/`+mn-lt` placeholder typeface, a literal the family name. */
+function latinXml(font: ModelFont, tc: SlideColorWrite): string {
+  if (isThemeFont(font)) {
+    return `<a:latin typeface="${font.theme === "major" ? "+mj-lt" : "+mn-lt"}"/>`;
+  }
+  void tc;
+  return `<a:latin typeface="${escapeXmlAttribute(font)}"/>`;
+}
+
 function capitalise(text: string): string {
   return text.length > 0 ? text[0].toUpperCase() + text.slice(1) : text;
 }
@@ -69,8 +107,14 @@ export function serializeSlideXml(
   rels: Map<string, Relationship>,
   slidePartPath: string,
   fields: ResolvedField[] = [],
+  deckTheme?: DeckTheme,
 ): string {
   const rootAttrs = slide.preserved?.["@root"] ?? STANDARD_ROOT_ATTRS;
+  // SPEC-094: refs write through the deck clrMap, a parseable p:clrMapOvr's
+  // override map, or — when the override cannot be parsed — as literals.
+  const tc: SlideColorWrite = deckTheme
+    ? { theme: deckTheme, mode: slideClrMapMode(slide.preserved?.["p:clrMapOvr"], deckTheme.colorMap) }
+    : LITERAL_WRITE;
   let nextId = 2; // p:cNvPr id=1 is the group scaffold.
   // Map each rebuilt frame to the `p:cNvPr id` the shapes get (2,3,… in
   // z-order, minted only for the text/shape/image frames the serialiser
@@ -84,7 +128,7 @@ export function serializeSlideXml(
   }
   nextId = 2;
   const shapes = slide.frames
-    .map((frame) => frameXml(frame, () => nextId++, rels, slidePartPath))
+    .map((frame) => frameXml(frame, () => nextId++, rels, slidePartPath, tc))
     .join("");
   // SPEC-093: the deck field placeholders follow the frame shapes — each
   // rewritten from its preserved `p:sp` (only the cached `a:t` refreshed) or,
@@ -189,16 +233,17 @@ function frameXml(
   mintId: () => number,
   rels: Map<string, Relationship>,
   slidePartPath: string,
+  tc: SlideColorWrite,
 ): string {
   switch (frame.kind) {
     case "text":
-      return textFrameXml(frame, mintId());
+      return textFrameXml(frame, mintId(), tc);
     case "shape":
-      return shapeFrameXml(frame, mintId());
+      return shapeFrameXml(frame, mintId(), tc);
     case "image":
-      return imageFrameXml(frame, mintId(), rels, slidePartPath);
+      return imageFrameXml(frame, mintId(), rels, slidePartPath, tc);
     case "table":
-      return tableFrameXml(frame, mintId());
+      return tableFrameXml(frame, mintId(), tc);
     case "chart":
       // An untouched chart re-emits its verbatim graphicFrame (byte-identical,
       // AC-18/AC-19); a touched one emits the canonical graphicFrame against
@@ -265,21 +310,21 @@ function xfrmXml(frame: SlideFrame): string {
   );
 }
 
-function fillXml(fill: SlideFill | undefined): string {
+function fillXml(fill: SlideFill | undefined, tc: SlideColorWrite): string {
   if (!fill) return "";
   if (fill.type === "none") return `<a:noFill/>`;
-  return `<a:solidFill><a:srgbClr val="${hex(fill.color)}"/></a:solidFill>`;
+  return `<a:solidFill>${colorElementXml(fill.color, tc)}</a:solidFill>`;
 }
 
 /** A frame's `a:ln` outline, or "" for none. */
-function strokeXml(stroke: { color: string; widthPt: number } | undefined): string {
+function strokeXml(stroke: FrameStroke | undefined, tc: SlideColorWrite): string {
   if (!stroke) return "";
-  return `<a:ln w="${Math.round(stroke.widthPt * 12700)}"><a:solidFill><a:srgbClr val="${hex(stroke.color)}"/></a:solidFill></a:ln>`;
+  return `<a:ln w="${Math.round(stroke.widthPt * 12700)}"><a:solidFill>${colorElementXml(stroke.color, tc)}</a:solidFill></a:ln>`;
 }
 
 // --- text frame ------------------------------------------------------------
 
-function textFrameXml(frame: TextFrame, id: number): string {
+function textFrameXml(frame: TextFrame, id: number, tc: SlideColorWrite): string {
   const phAttrs =
     (frame.phType ? ` type="${escapeXmlAttribute(frame.phType)}"` : "") +
     (frame.phIdx !== undefined ? ` idx="${frame.phIdx}"` : "");
@@ -288,19 +333,19 @@ function textFrameXml(frame: TextFrame, id: number): string {
   const nvSpPr =
     `<p:nvSpPr><p:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"/>` +
     `<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>${ph}</p:nvPr></p:nvSpPr>`;
-  const spPr = `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml(frame.fill)}${strokeXml(frame.stroke)}</p:spPr>`;
-  return `<p:sp>${nvSpPr}${spPr}${txBodyXml(frame.paragraphs)}</p:sp>`;
+  const spPr = `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml(frame.fill, tc)}${strokeXml(frame.stroke, tc)}</p:spPr>`;
+  return `<p:sp>${nvSpPr}${spPr}${txBodyXml(frame.paragraphs, tc)}</p:sp>`;
 }
 
 /** A `p:txBody` from a frame's paragraphs. An empty body emits a single empty
  * `a:p` (the from-scratch placeholder shape). */
-function txBodyXml(paragraphs: SlideParagraph[]): string {
-  const body = paragraphs.length > 0 ? paragraphs.map(paragraphXml).join("") : `<a:p/>`;
+function txBodyXml(paragraphs: SlideParagraph[], tc: SlideColorWrite): string {
+  const body = paragraphs.length > 0 ? paragraphs.map((para) => paragraphXml(para, tc)).join("") : `<a:p/>`;
   return `<p:txBody><a:bodyPr/><a:lstStyle/>${body}</p:txBody>`;
 }
 
-function paragraphXml(para: SlideParagraph): string {
-  const runs = para.runs.length > 0 ? para.runs.map(runXml).join("") : `<a:endParaRPr lang="en-US"/>`;
+function paragraphXml(para: SlideParagraph, tc: SlideColorWrite): string {
+  const runs = para.runs.length > 0 ? para.runs.map((run) => runXml(run, tc)).join("") : `<a:endParaRPr lang="en-US"/>`;
   return `<a:p>${pPrXml(para)}${runs}</a:p>`;
 }
 
@@ -322,13 +367,13 @@ function pPrXml(para: SlideParagraph): string {
 /** A run's `a:r`. Every effective value is written explicitly (fidelity AC):
  * `sz` and `a:solidFill` always (the reader drops the 18pt / #000000 defaults
  * back to `undefined`), `b`/`i`/`u` when set, `a:latin` when a family is set. */
-function runXml(run: SlideRun): string {
+function runXml(run: SlideRun, tc: SlideColorWrite): string {
   const sz = ` sz="${Math.round((run.sizePt ?? DEFAULT_SIZE_PT) * 100)}"`;
   const b = run.bold ? ` b="1"` : "";
   const i = run.italic ? ` i="1"` : "";
   const u = run.underline ? ` u="sng"` : "";
-  const color = `<a:solidFill><a:srgbClr val="${hex(run.color ?? DEFAULT_COLOR)}"/></a:solidFill>`;
-  const latin = run.fontFamily ? `<a:latin typeface="${escapeXmlAttribute(run.fontFamily)}"/>` : "";
+  const color = `<a:solidFill>${colorElementXml(run.color ?? DEFAULT_COLOR, tc)}</a:solidFill>`;
+  const latin = run.fontFamily ? latinXml(run.fontFamily, tc) : "";
   return `<a:r><a:rPr lang="en-US"${sz}${b}${i}${u}>${color}${latin}</a:rPr><a:t>${escapeXmlText(run.text)}</a:t></a:r>`;
 }
 
@@ -429,13 +474,13 @@ export function canonicalFieldSp(rf: ResolvedField, id: number): string {
 
 // --- shape frame -----------------------------------------------------------
 
-function shapeFrameXml(frame: ShapeFrame, id: number): string {
+function shapeFrameXml(frame: ShapeFrame, id: number, tc: SlideColorWrite): string {
   const prst = GEOMETRY_TO_PRST[frame.geometry] ?? "rect";
   const nvSpPr =
     `<p:nvSpPr><p:cNvPr id="${id}" name="Shape ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`;
   const spPr =
-    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>${fillXml(frame.fill)}${strokeXml(frame.stroke)}</p:spPr>`;
-  const txBody = frame.paragraphs && frame.paragraphs.length > 0 ? txBodyXml(frame.paragraphs) : "";
+    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>${fillXml(frame.fill, tc)}${strokeXml(frame.stroke, tc)}</p:spPr>`;
+  const txBody = frame.paragraphs && frame.paragraphs.length > 0 ? txBodyXml(frame.paragraphs, tc) : "";
   return `<p:sp>${nvSpPr}${spPr}${txBody}</p:sp>`;
 }
 
@@ -446,13 +491,14 @@ function imageFrameXml(
   id: number,
   rels: Map<string, Relationship>,
   slidePartPath: string,
+  tc: SlideColorWrite,
 ): string {
   const embed = embedIdFor(frame.mediaId, rels, slidePartPath);
   const blip = embed ? `<a:blip r:embed="${escapeXmlAttribute(embed)}"/>` : `<a:blip/>`;
   return (
     `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="Picture ${id}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
     `<p:blipFill>${blip}<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
-    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${strokeXml(frame.stroke)}</p:spPr></p:pic>`
+    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${strokeXml(frame.stroke, tc)}</p:spPr></p:pic>`
   );
 }
 
@@ -495,7 +541,7 @@ function borderLnXml(tag: string, side: BorderSide | undefined): string {
 /** A cell's `a:tcPr`: the preserved verbatim string when the cell has one
  * (AC-12), else regenerated from the modelled borders / padding / anchor /
  * fill. */
-function tcPrXml(cell: SlideTableCell): string {
+function tcPrXml(cell: SlideTableCell, tc: SlideColorWrite): string {
   if (cell.pptxTcPr) {
     return cell.pptxTcPr;
   }
@@ -508,14 +554,14 @@ function tcPrXml(cell: SlideTableCell): string {
     borderLnXml("a:lnR", cell.borders?.right) +
     borderLnXml("a:lnT", cell.borders?.top) +
     borderLnXml("a:lnB", cell.borders?.bottom);
-  const fill = cell.fill ? fillXml(cell.fill) : "";
+  const fill = cell.fill ? fillXml(cell.fill, tc) : "";
   return `<a:tcPr${mar}${anchor}>${borders}${fill}</a:tcPr>`;
 }
 
 /** A table cell's `a:txBody` (the DrawingML-namespaced counterpart of a shape's
  * `p:txBody`). An empty cell emits a single empty `a:p`. */
-function cellTxBodyXml(paragraphs: SlideParagraph[]): string {
-  const body = paragraphs.length > 0 ? paragraphs.map(paragraphXml).join("") : `<a:p/>`;
+function cellTxBodyXml(paragraphs: SlideParagraph[], tc: SlideColorWrite): string {
+  const body = paragraphs.length > 0 ? paragraphs.map((para) => paragraphXml(para, tc)).join("") : `<a:p/>`;
   return `<a:txBody><a:bodyPr/><a:lstStyle/>${body}</a:txBody>`;
 }
 
@@ -555,11 +601,11 @@ function pXfrmXml(frame: TableFrame): string {
 
 /** Serialises a `TableFrame` to its `p:graphicFrame` XML with the given
  * `p:cNvPr` id — the test seam the golden spec pins (SPEC-091 AC-16). */
-export function serializeTableFrame(frame: TableFrame, id: number): string {
-  return tableFrameXml(frame, id);
+export function serializeTableFrame(frame: TableFrame, id: number, deckTheme?: DeckTheme): string {
+  return tableFrameXml(frame, id, deckTheme ? { theme: deckTheme, mode: deckTheme.colorMap ?? {} } : LITERAL_WRITE);
 }
 
-function tableFrameXml(frame: TableFrame, id: number): string {
+function tableFrameXml(frame: TableFrame, id: number, tc: SlideColorWrite): string {
   const grid = computeOwnerGrid(frame);
   const gridCols = frame.columnWidthsCm.map((w) => `<a:gridCol w="${cmToEmu(w)}"/>`).join("");
   const rows = frame.rows
@@ -575,7 +621,7 @@ function tableFrameXml(frame: TableFrame, id: number): string {
           }
           const gs = cell.colSpan && cell.colSpan > 1 ? ` gridSpan="${cell.colSpan}"` : "";
           const rs = cell.rowSpan && cell.rowSpan > 1 ? ` rowSpan="${cell.rowSpan}"` : "";
-          return `<a:tc${gs}${rs}>${cellTxBodyXml(cell.paragraphs)}${tcPrXml(cell)}</a:tc>`;
+          return `<a:tc${gs}${rs}>${cellTxBodyXml(cell.paragraphs, tc)}${tcPrXml(cell, tc)}</a:tc>`;
         })
         .join("");
       return `<a:tr${h}>${cells}</a:tr>`;

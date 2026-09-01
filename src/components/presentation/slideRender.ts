@@ -20,6 +20,7 @@ import {
 import { slideOutline } from "../../lib/presentation/slideModel";
 import { fieldKindToken, visibleFields } from "../../lib/presentation/headerFooter";
 import type { PresentationModel } from "../../lib/presentation/model";
+import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme } from "../../lib/core/theme";
 import type { ShapeVisual } from "../../lib/core/shapes";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
 import type { ChartVisual } from "../../lib/core/charts";
@@ -102,6 +103,10 @@ export function asResolver(value: unknown): (mediaId: string) => string {
 export function asNumber(value: unknown): number {
   return Number(value) || 0;
 }
+/** Coerces a template's runtime theme prop; absent = Office (SPEC-094 AC-7). */
+export function asTheme(value: unknown): DocumentTheme {
+  return (value ?? DEFAULT_THEME) as DocumentTheme;
+}
 export function asString(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
@@ -173,19 +178,20 @@ export function framePositionStyle(frame: SlideFrame): Record<string, string> {
   return style;
 }
 
-/** A text frame's own background colour, or "transparent". */
-export function textFrameFill(frame: SlideFrame): string {
+/** A text frame's own background colour, or "transparent". Scheme references
+ * resolve through `resolveColor` (SPEC-094 AC-13). */
+export function textFrameFill(frame: SlideFrame, theme: DocumentTheme = DEFAULT_THEME): string {
   if (frame.kind === "text" && frame.fill && frame.fill.type === "solid") {
-    return frame.fill.color;
+    return resolveColor(frame.fill.color, theme);
   }
   return "transparent";
 }
 
 /** The slide surface background — always light (white unless the deck says
  * otherwise). */
-export function surfaceBackground(slide: Slide): string {
+export function surfaceBackground(slide: Slide, theme: DocumentTheme = DEFAULT_THEME): string {
   const bg = slide.background;
-  return bg && bg.type === "solid" ? bg.color : "#ffffff";
+  return bg && bg.type === "solid" ? resolveColor(bg.color, theme) : "#ffffff";
 }
 
 // --- text ------------------------------------------------------------------
@@ -242,14 +248,14 @@ export function paragraphStyle(para: SlideParagraph): Record<string, string> {
   };
 }
 
-export function runStyle(run: SlideRun): Record<string, string> {
+export function runStyle(run: SlideRun, theme: DocumentTheme = DEFAULT_THEME): Record<string, string> {
   const style: Record<string, string> = {};
   if (run.bold) style.fontWeight = "700";
   if (run.italic) style.fontStyle = "italic";
   if (run.underline) style.textDecoration = "underline";
-  if (run.fontFamily) style.fontFamily = `'${run.fontFamily}', sans-serif`;
+  if (run.fontFamily) style.fontFamily = `'${resolveFont(run.fontFamily, theme)}', sans-serif`;
   style.fontSize = `${(run.sizePt ?? DEFAULT_FONT_SIZE_PT) * PT_TO_PX}px`;
-  style.color = run.color ?? "#000000";
+  style.color = run.color ? resolveColor(run.color, theme) : "#000000";
   return style;
 }
 
@@ -257,16 +263,16 @@ export function runStyle(run: SlideRun): Record<string, string> {
 /** A shape frame as a ShapeVisual for `paintShapeIntoCanvas`, or null for a
  * non-shape. Rotation is left to the frame's CSS transform (AC-36), so the
  * canvas paints unrotated. */
-export function shapeVisualOf(frame: SlideFrame): ShapeVisual | null {
+export function shapeVisualOf(frame: SlideFrame, theme: DocumentTheme = DEFAULT_THEME): ShapeVisual | null {
   if (frame.kind !== "shape") {
     return null;
   }
   const visual: ShapeVisual = { geometry: frame.geometry };
   if (frame.fill && frame.fill.type === "solid") {
-    visual.fill = frame.fill.color;
+    visual.fill = resolveColor(frame.fill.color, theme);
   }
   if (frame.stroke) {
-    visual.outline = { color: frame.stroke.color, widthPt: frame.stroke.widthPt, dash: "solid" };
+    visual.outline = { color: resolveColor(frame.stroke.color, theme), widthPt: frame.stroke.widthPt, dash: "solid" };
   }
   if (frame.adjustments && frame.adjustments.length > 0) {
     visual.adjustments = frame.adjustments;
@@ -375,10 +381,16 @@ function bandFillFor(frame: TableFrame, rowIndex: number): string | undefined {
   return (rowIndex - bodyStart) % 2 === 1 ? BAND_FILL : undefined;
 }
 
-function effectiveCellFill(frame: TableFrame, rowIndex: number, row: SlideTableRow, colIndex: number): string {
+function effectiveCellFill(
+  frame: TableFrame,
+  rowIndex: number,
+  row: SlideTableRow,
+  colIndex: number,
+  theme: DocumentTheme,
+): string {
   const cell = row.cells[colIndex];
   if (cell.fill) {
-    return cell.fill.type === "solid" ? cell.fill.color : "transparent";
+    return cell.fill.type === "solid" ? resolveColor(cell.fill.color, theme) : "transparent";
   }
   if (isHeaderRow(frame, rowIndex, row)) {
     return HEADER_FILL;
@@ -411,7 +423,7 @@ export interface TableCellRender {
 
 /** The table's rows as arrays of visible owner cells (covered slots dropped),
  * each carrying the colspan/rowspan its owner claims and its effective style. */
-export function tableRenderRows(frame: SlideFrame): TableCellRender[][] {
+export function tableRenderRows(frame: SlideFrame, theme: DocumentTheme = DEFAULT_THEME): TableCellRender[][] {
   const table = tableOf(frame);
   if (!table) {
     return [];
@@ -437,7 +449,7 @@ export function tableRenderRows(frame: SlideFrame): TableCellRender[][] {
           borderRight: borderCss(cell.borders?.right),
           padding: cmPx(cell.paddingCm ?? DEFAULT_TABLE_CELL_PADDING_CM),
           verticalAlign: cell.verticalAlign ?? "top",
-          background: effectiveCellFill(table, r, row, c),
+          background: effectiveCellFill(table, r, row, c, theme),
         },
         paragraphs: markParagraphList(cell.paragraphs),
       });

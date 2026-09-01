@@ -17,6 +17,8 @@ const props = defineProps({
   widthCm: { type: Number, required: true },
   heightCm: { type: Number, required: true },
   media: { type: Array, default: () => [] },
+  /** SPEC-094: the deck's theme, threaded to the stage surfaces. */
+  theme: { type: Object, default: null },
   currentIndex: { type: Number, default: 0 },
   /** SPEC-093: each slide's pre-resolved field band (footer/number/date), so a
    * thumbnail's number agrees with the live slide index after a structural
@@ -251,6 +253,7 @@ function announceMove(from = 0, to = 0) {
             :scale="scale"
             :interactive="false"
             :fields="fieldsBySlide[index] || []"
+            :theme="theme"
           />
         </div>
         <button

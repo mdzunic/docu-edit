@@ -22,6 +22,8 @@ const props = defineProps({
   currentSlide: { type: Object, default: null },
   currentIndex: { type: Number, default: 0 },
   media: { type: Array, default: () => [] },
+  /** SPEC-094: the deck's theme, threaded to the stage surfaces. */
+  theme: { type: Object, default: null },
   liveLabel: { type: String, default: "" },
   stageEdit: { type: Object, required: true },
   animations: { type: Object, required: true },
@@ -48,6 +50,7 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
       :media="media"
       :current-index="currentIndex"
       :fields-by-slide="fieldsBySlide"
+      :theme="theme"
       @select="$emit('select', $event)"
       @add="$emit('add')"
       @command="$emit('command', $event)"
@@ -61,6 +64,7 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
         :media="media"
         :live-label="liveLabel"
         :stage-edit="stageEdit"
+        :theme="theme"
         :animations="animations"
         :transitions="transitions"
         :fields="currentFields"

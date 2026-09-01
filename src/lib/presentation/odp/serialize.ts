@@ -32,6 +32,15 @@ import {
   type TextFrame,
 } from "../model";
 import { odpTransitionProps } from "../transitions";
+import {
+  DEFAULT_THEME,
+  isThemeColor,
+  resolveColor,
+  resolveFont,
+  type DocumentTheme,
+  type ThemeColorRef,
+} from "../../core/theme";
+import { themeGraphicParent, themeTextParent } from "./theme";
 import { writeOdpAnim } from "./anim";
 import { odpDisplayProps, type OdpPageFieldPlan } from "./fields";
 
@@ -53,7 +62,21 @@ function alignValue(align: NonNullable<SlideParagraph["align"]>): string {
 
 /** Collects the automatic styles a page rebuild generates, de-duplicated by
  * their property signature and named in the reserved `de-` namespace. */
+/** Whether a ref carries no transforms — only these have a faithful
+ * `de-theme-*` parent in odp (SPEC-094: a transformed ref writes the literal
+ * alone and loses its reference on re-open — the stated loss). */
+function isPlainRef(ref: ThemeColorRef): boolean {
+  return ref.lumMod === undefined && ref.lumOff === undefined && ref.shade === undefined && ref.tint === undefined;
+}
+
 export class StyleRegistry {
+  /** The deck theme refs resolve against; Office when the deck has none. */
+  private readonly theme: DocumentTheme;
+
+  constructor(theme: DocumentTheme = DEFAULT_THEME) {
+    this.theme = theme;
+  }
+
   private readonly paraStyles: string[] = [];
   private readonly textStyles: string[] = [];
   private readonly graphicStyles: string[] = [];
@@ -113,40 +136,59 @@ export class StyleRegistry {
       props.push(`style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"`);
     }
     if (run.fontFamily) {
-      const f = escapeXmlAttribute(run.fontFamily);
+      // A theme font ref resolves to its family name — the stated odp loss
+      // (SPEC-094): ODF has no font placeholder, so the ref does not survive.
+      const f = escapeXmlAttribute(resolveFont(run.fontFamily, this.theme));
       props.push(`style:font-name="${f}" fo:font-family="${f}"`);
     }
     if (run.sizePt !== undefined) props.push(`fo:font-size="${run.sizePt}pt"`);
-    if (run.color) props.push(`fo:color="${escapeXmlAttribute(run.color)}"`);
+    // A colour ref writes its resolved literal (other readers see the right
+    // colour); an UNTRANSFORMED ref also parents the automatic style on the
+    // `de-theme-text-{slot}` scheme style, which the reader maps back to a ref.
+    let parent = "";
+    if (run.color) {
+      props.push(`fo:color="${escapeXmlAttribute(resolveColor(run.color, this.theme))}"`);
+      if (isThemeColor(run.color) && isPlainRef(run.color)) {
+        parent = ` style:parent-style-name="${themeTextParent(run.color.theme)}"`;
+      }
+    }
     if (props.length === 0) return undefined;
-    const key = props.join(" ");
+    const key = `${parent}::${props.join(" ")}`;
     const cached = this.textCache.get(key);
     if (cached) return cached;
     const name = `de-T${++this.tCount}`;
     this.textCache.set(key, name);
     this.textStyles.push(
-      `<style:style style:name="${name}" style:family="text"><style:text-properties ${key}/></style:style>`,
+      `<style:style style:name="${name}" style:family="text"${parent}><style:text-properties ${props.join(" ")}/></style:style>`,
     );
     return name;
   }
 
   graphicStyle(style: { fill?: SlideFill; stroke?: FrameStroke }): string | undefined {
     const props: string[] = [];
-    if (style.fill?.type === "solid") props.push(`draw:fill="solid" draw:fill-color="${escapeXmlAttribute(style.fill.color)}"`);
-    else if (style.fill?.type === "none") props.push(`draw:fill="none"`);
+    let parent = "";
+    if (style.fill?.type === "solid") {
+      const color = style.fill.color;
+      props.push(`draw:fill="solid" draw:fill-color="${escapeXmlAttribute(resolveColor(color, this.theme))}"`);
+      if (isThemeColor(color) && isPlainRef(color)) {
+        parent = ` style:parent-style-name="${themeGraphicParent(color.theme)}"`;
+      }
+    } else if (style.fill?.type === "none") props.push(`draw:fill="none"`);
     if (style.stroke) {
+      // A stroke ref has no faithful parent (the scheme styles carry fill), so
+      // it writes its resolved literal — part of the stated odp loss.
       props.push(
-        `draw:stroke="solid" svg:stroke-color="${escapeXmlAttribute(style.stroke.color)}" svg:stroke-width="${(style.stroke.widthPt / 72 * 2.54).toFixed(3)}cm"`,
+        `draw:stroke="solid" svg:stroke-color="${escapeXmlAttribute(resolveColor(style.stroke.color, this.theme))}" svg:stroke-width="${(style.stroke.widthPt / 72 * 2.54).toFixed(3)}cm"`,
       );
     }
     if (props.length === 0) return undefined;
-    const key = props.join(" ");
+    const key = `${parent}::${props.join(" ")}`;
     const cached = this.graphicCache.get(key);
     if (cached) return cached;
     const name = `de-G${++this.gCount}`;
     this.graphicCache.set(key, name);
     this.graphicStyles.push(
-      `<style:style style:name="${name}" style:family="graphic"><style:graphic-properties ${key}/></style:style>`,
+      `<style:style style:name="${name}" style:family="graphic"${parent}><style:graphic-properties ${props.join(" ")}/></style:style>`,
     );
     return name;
   }
@@ -188,7 +230,9 @@ export class StyleRegistry {
    * / borders, or undefined when the cell has no modelled non-default look. */
   tableCellStyle(cell: SlideTableCell): string | undefined {
     const props: string[] = [];
-    if (cell.fill?.type === "solid") props.push(`fo:background-color="${escapeXmlAttribute(cell.fill.color)}"`);
+    // A cell fill ref writes its resolved literal only — table-cell styles
+    // cannot parent the graphic-family scheme styles (the stated odp loss).
+    if (cell.fill?.type === "solid") props.push(`fo:background-color="${escapeXmlAttribute(resolveColor(cell.fill.color, this.theme))}"`);
     else if (cell.fill?.type === "none") props.push(`fo:background-color="transparent"`);
     if (cell.paddingCm !== undefined && cell.paddingCm !== DEFAULT_TABLE_CELL_PADDING_CM) {
       props.push(`fo:padding="${cell.paddingCm}cm"`);

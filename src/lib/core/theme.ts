@@ -178,6 +178,31 @@ export function resolveFont(font: ModelFont, theme: DocumentTheme): string {
   return font.theme === "major" ? theme.fonts.major : theme.fonts.minor;
 }
 
+/** Structural equality over `ModelColor`s (two equal refs are the same colour
+ * even as distinct objects — run coalescing and toolbars fold by this). */
+export function sameModelColor(a: ModelColor | undefined, b: ModelColor | undefined): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!isThemeColor(a) || !isThemeColor(b)) {
+    return false;
+  }
+  return (
+    a.theme === b.theme && a.lumMod === b.lumMod && a.lumOff === b.lumOff && a.shade === b.shade && a.tint === b.tint
+  );
+}
+
+/** Structural equality over `ModelFont`s. */
+export function sameModelFont(a: ModelFont | undefined, b: ModelFont | undefined): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!isThemeFont(a) || !isThemeFont(b)) {
+    return false;
+  }
+  return a.theme === b.theme;
+}
+
 // --- built-in themes ---------------------------------------------------------
 
 /** Office — the default theme every unthemed document resolves against. */

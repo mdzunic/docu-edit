@@ -18,6 +18,8 @@ const props = defineProps({
   widthCm: { type: Number, required: true },
   heightCm: { type: Number, required: true },
   media: { type: Array, default: () => [] },
+  /** SPEC-094: the deck's theme, threaded to the stage surfaces. */
+  theme: { type: Object, default: null },
   liveLabel: { type: String, default: "" },
   stageEdit: { type: Object, required: true },
   animations: { type: Object, required: true },
@@ -86,6 +88,7 @@ onBeforeUnmount(() => {
       :guides="s.manipulation.guides.value"
       :draw-preview="s.insertion.preview.value ?? undefined"
       :armed="s.insertion.isArmed.value"
+      :theme="theme"
       @frame-select="s.onFrameSelect"
       @frame-start-edit="s.onStartEdit"
       @frame-start-edit-cell="s.onStartEditCell"
@@ -120,6 +123,7 @@ onBeforeUnmount(() => {
       :height-cm="heightCm"
       :media="media"
       :scale="stageScale"
+      :theme="theme"
     />
     <SlideTransitionLayer
       v-if="transitions.previewState.value"
@@ -131,6 +135,7 @@ onBeforeUnmount(() => {
       :height-cm="heightCm"
       :media="media"
       :scale="stageScale"
+      :theme="theme"
       @done="transitions.onPreviewDone()"
     />
   </div>

@@ -33,6 +33,8 @@ import {
 import { classifyFromSlots, synthesiseStandardLayouts } from "../layouts";
 import { ODP_MIMETYPE } from "./reader";
 import { drawAttr, serializePage, spliceAutomaticStyles, StyleRegistry } from "./serialize";
+import { odpThemeBlockXml, spliceOdpThemeStyles } from "./theme";
+import { deckThemeOf } from "../theme";
 import { deckHasFields, NUMBER_NS, odpMasterPlaceholders, planOdpDeclarations } from "./fields";
 import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "../../core/chartPartOdf";
 
@@ -534,6 +536,12 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
       stylesXml = spliceOfficeStyles(stylesXml, layoutPlan.styleBlocks);
     }
   }
+  // SPEC-094: an edited theme rewrites styles.xml's `de-theme-*` block in
+  // place — the only styles.xml change a theme apply makes, so an untouched
+  // deck's styles.xml stays byte-verbatim.
+  if (model.theme?.dirty === true && parts.has("styles.xml")) {
+    stylesXml = spliceOdpThemeStyles(stylesXml ?? decoder.decode(parts.get("styles.xml")!), model.theme);
+  }
   if (deckDirty) {
     const rewritten = rewriteOdpDeckSize(stylesXml, contentXml, model);
     stylesXml = rewritten.stylesXml ?? stylesXml;
@@ -613,7 +621,7 @@ function rebuildContentXml(
   layoutPlan: OdpLayoutPlan = { nameForKey: new Map(), styleBlocks: [] },
 ): string {
   const usedNames = new Set<string>();
-  const registry = new StyleRegistry();
+  const registry = new StyleRegistry(deckThemeOf(model));
   // A source that (pathologically) already uses `de-`-prefixed names cannot
   // collide with a generated one — seed the counters past every such name.
   // The same string doubles as the lookup source for an original drawing-page
@@ -715,7 +723,7 @@ function standardIndexForSlide(slide: PresentationModel["slides"][number], stand
 
 function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInput[] {
   const used = new Set<string>();
-  const registry = new StyleRegistry();
+  const registry = new StyleRegistry(deckThemeOf(model));
   // The minimal standard set (SPEC-089 AC-17): six page-layout styles in
   // styles.xml, each page stamped with the one its content implies.
   const standardLayouts = synthesiseStandardLayouts(model.slideWidthCm, model.slideHeightCm);
@@ -750,7 +758,7 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<office:document-styles xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:draw="${DRAW_NS}"` +
     ` xmlns:fo="${FO_NS}" xmlns:svg="${SVG_NS}" xmlns:presentation="${PRESENTATION_NS}"${stylesTextNs} office:version="1.2">` +
-    `<office:styles>${pageLayoutStyles}</office:styles>` +
+    `<office:styles>${pageLayoutStyles}${model.theme ? odpThemeBlockXml(model.theme) : ""}</office:styles>` +
     `<office:automatic-styles>` +
     `<style:page-layout style:name="PL1"><style:page-layout-properties fo:page-width="${model.slideWidthCm}cm"` +
     ` fo:page-height="${model.slideHeightCm}cm"/></style:page-layout>` +

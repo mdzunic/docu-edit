@@ -11,7 +11,7 @@
 import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import SlideFrameView from "./SlideFrameView.vue";
 import FrameSelectionOverlay from "./FrameSelectionOverlay.vue";
-import { asMediaParts, asSlide, asStageFields, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
+import { asMediaParts, asSlide, asStageFields, asTheme, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
 
 const props = defineProps({
   /** The Slide to render (presentation model). */
@@ -48,6 +48,9 @@ const props = defineProps({
    * framework-neutral and updates under the deck's shallowRef commit. Empty on a
    * suppressed title slide. */
   fields: { type: Array, default: () => [] },
+  /** SPEC-094: the deck's theme, threaded to every frame so scheme references
+   * resolve at render. Null/absent = Office. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits([
@@ -102,7 +105,7 @@ const surfaceStyle = computed(() => ({
   width: cmPx(props.widthCm),
   height: cmPx(props.heightCm),
   transform: `scale(${props.scale})`,
-  background: surfaceBackground(slide.value),
+  background: surfaceBackground(slide.value, asTheme(props.theme)),
 }));
 
 const previewStyle = computed(() => {
@@ -137,6 +140,7 @@ const previewStyle = computed(() => {
         :armed="armed"
         :top-level="interactive"
         :play-style="frameStyles[frame.id] || null"
+        :theme="theme"
         @select="(id) => emit('frame-select', id)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @start-edit-cell="(id, row, col, point) => emit('frame-start-edit-cell', id, row, col, point)"

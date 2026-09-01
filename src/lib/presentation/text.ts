@@ -11,6 +11,16 @@
 // siblings and src/lib/core.
 import type { PresentationFormat, SlideParagraph, SlideRun } from "./model";
 import { paragraphText } from "./slideModel";
+import {
+  DEFAULT_THEME,
+  resolveColor,
+  resolveFont,
+  sameModelColor,
+  sameModelFont,
+  type DocumentTheme,
+  type ModelColor,
+  type ModelFont,
+} from "../core/theme";
 
 /** The minimum a formatting command needs: a paragraph list to edit. A
  * `TextFrame` satisfies it, and so does a `SlideTableCell` (SPEC-091 AC-6a) —
@@ -41,9 +51,9 @@ export interface RunFormatPatch {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
-  fontFamily?: string;
+  fontFamily?: ModelFont;
   sizePt?: number;
-  color?: string;
+  color?: ModelColor;
 }
 
 /** The paragraph-level formatting a command sets. `align:"left"`, `bullet:null`
@@ -76,9 +86,9 @@ function marksEqual(a: RunMarks, b: RunMarks): boolean {
     !!a.bold === !!b.bold &&
     !!a.italic === !!b.italic &&
     !!a.underline === !!b.underline &&
-    a.fontFamily === b.fontFamily &&
+    sameModelFont(a.fontFamily, b.fontFamily) &&
     a.sizePt === b.sizePt &&
-    a.color === b.color
+    sameModelColor(a.color, b.color)
   );
 }
 
@@ -282,7 +292,11 @@ function fold<T>(current: FieldState<T> | "unset", value: T): FieldState<T> | "u
  * folded over every covered character, each paragraph field over every touched
  * paragraph (AC-24). A collapsed caret reads the character to its left (or the
  * run at the caret when at a paragraph start). */
-export function selectionFormatState(frame: ParagraphOwner, range: TextRange): SelectionFormatState {
+export function selectionFormatState(
+  frame: ParagraphOwner,
+  range: TextRange,
+  theme: DocumentTheme = DEFAULT_THEME,
+): SelectionFormatState {
   const norm = normalizeRange(frame, range);
   let bold: FieldState<boolean> | "unset" = "unset";
   let italic: FieldState<boolean> | "unset" = "unset";
@@ -317,9 +331,11 @@ export function selectionFormatState(frame: ParagraphOwner, range: TextRange): S
       bold = fold(bold, !!m.bold);
       italic = fold(italic, !!m.italic);
       underline = fold(underline, !!m.underline);
-      fontFamily = fold(fontFamily, m.fontFamily ?? "");
+      // The toolbar reflects EFFECTIVE values, so refs fold resolved (the
+      // single-resolution-point rule, SPEC-094 AC-13).
+      fontFamily = fold(fontFamily, m.fontFamily ? resolveFont(m.fontFamily, theme) : "");
       sizePt = fold(sizePt, m.sizePt ?? DEFAULT_SIZE_PT);
-      color = fold(color, m.color ?? "");
+      color = fold(color, m.color ? resolveColor(m.color, theme) : "");
     }
   }
 

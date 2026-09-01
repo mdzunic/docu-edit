@@ -12,6 +12,7 @@ import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { paintChartIntoCanvas } from "../../lib/core/chartCanvas";
 import {
   asResolver,
+  asTheme,
   chartVisualOf,
   asSlideFrame,
   framePositionStyle,
@@ -57,6 +58,9 @@ const props = defineProps({
    * layered onto the frame's position during a build preview/show. Null in the
    * editor, where frames always render fully visible (AC-25). */
   playStyle: { type: Object, default: null },
+  /** SPEC-094: the deck's theme, so scheme references resolve at render.
+   * Null/absent = Office (`DEFAULT_THEME`). */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits([
@@ -71,6 +75,7 @@ const emit = defineEmits([
 ]);
 
 const frame = computed(() => asSlideFrame(props.frame));
+const deckTheme = computed(() => asTheme(props.theme));
 const kind = computed(() => frame.value.kind);
 // AC-51/52/53: each top-level frame is a focusable element with a role, an
 // accessible name and the `slide-frame` test id; children carry none.
@@ -80,11 +85,11 @@ const ariaName = computed(() => (props.topLevel ? frameAccessibleName(frame.valu
 const tabIndex = computed(() => (props.topLevel ? 0 : undefined));
 const position = computed(() => framePositionStyle(frame.value));
 const paragraphs = computed(() => markedParagraphs(frame.value));
-const textFill = computed(() => textFrameFill(frame.value));
+const textFill = computed(() => textFrameFill(frame.value, deckTheme.value));
 const children = computed(() => groupChildren(frame.value));
 const foreignVisible = computed(() => isForeignVisible(frame.value));
 const tableColumns = computed(() => tableColumnWidths(frame.value));
-const tableRows = computed(() => tableRenderRows(frame.value));
+const tableRows = computed(() => tableRenderRows(frame.value, deckTheme.value));
 const tableRowHeightsPx = computed(() => tableRowHeights(frame.value));
 // AC-8a/b: a selected (not editing) table exposes drag handles on its internal
 // column/row boundaries; suppressed while a text session or insertion is active.
@@ -193,7 +198,7 @@ function onFramePointerdown(event = new PointerEvent("pointerdown")) {
 
 function paint() {
   const el = canvasEl.value;
-  const visual = shapeVisualOf(frame.value);
+  const visual = shapeVisualOf(frame.value, deckTheme.value);
   if (!el || !visual) {
     return;
   }
@@ -227,7 +232,7 @@ function paintChartFrame() {
 // whenever the frame changes.
 onMounted(paint);
 onMounted(paintChartFrame);
-watch(() => props.frame, () => {
+watch([() => props.frame, deckTheme], () => {
   paint();
   paintChartFrame();
 }, { deep: true });
@@ -281,7 +286,7 @@ watch(() => props.frame, () => {
         <span
           v-for="(run, runIndex) in entry.para.runs"
           :key="runIndex"
-          :style="runStyle(run)"
+          :style="runStyle(run, deckTheme)"
         >{{ run.text }}</span>
       </div>
     </template>
@@ -337,7 +342,7 @@ watch(() => props.frame, () => {
         <span
           v-for="(run, runIndex) in entry.para.runs"
           :key="runIndex"
-          :style="runStyle(run)"
+          :style="runStyle(run, deckTheme)"
         >{{ run.text }}</span>
       </div>
     </div>
@@ -383,6 +388,7 @@ watch(() => props.frame, () => {
       :frame="child"
       :resolve-media="resolveMedia"
       :top-level="false"
+      :theme="theme"
     />
   </div>
 
@@ -452,7 +458,7 @@ watch(() => props.frame, () => {
                 <span
                   v-for="(run, runIndex) in entry.para.runs"
                   :key="runIndex"
-                  :style="runStyle(run)"
+                  :style="runStyle(run, deckTheme)"
                 >{{ run.text }}</span>
               </div>
             </template>

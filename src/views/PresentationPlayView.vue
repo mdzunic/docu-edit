@@ -435,6 +435,7 @@ onBeforeUnmount(() => {
       :media="presentation.media ?? []"
       :scale="stageScale"
       :reduced-motion="reducedMotion"
+      :theme="presentation.theme"
       @done="onTransitionDone"
     />
     <SlideStage
@@ -447,6 +448,7 @@ onBeforeUnmount(() => {
       :interactive="false"
       :frame-styles="buildPreview.frameStyles.value"
       :fields="currentFields"
+      :theme="presentation.theme"
     />
 
     <div

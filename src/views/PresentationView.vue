@@ -373,6 +373,7 @@ onBeforeUnmount(() => {
         :tables="tables"
         :charts="charts"
         :fields-by-slide="deckFields"
+        :theme="presentation.theme"
         @select="selectSlide"
         @add="addSlideAction"
         @command="filmstrip.onCommand"

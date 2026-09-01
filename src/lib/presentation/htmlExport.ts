@@ -38,6 +38,8 @@ import { effectiveDirection, effectiveDurationMs } from "./transitions";
 import { advanceKeys, backKeys, firstKeys, lastKeys } from "./playbackKeys";
 import { fieldKindToken, visibleFields } from "./headerFooter";
 import { now } from "../core/clock";
+import { resolveColor, resolveFont, type DocumentTheme } from "../core/theme";
+import { deckThemeOf } from "./theme";
 
 /** pt → px at 96/72 — the ratio the stage renderer uses. */
 const PT_TO_PX = 96 / 72;
@@ -110,28 +112,28 @@ function markedParagraphs(paragraphs: SlideParagraph[]): { para: SlideParagraph;
   });
 }
 
-function runStyle(run: SlideRun): string {
+function runStyle(run: SlideRun, theme: DocumentTheme): string {
   const parts: string[] = [];
   if (run.bold) parts.push("font-weight:700");
   if (run.italic) parts.push("font-style:italic");
   if (run.underline) parts.push("text-decoration:underline");
-  const family = run.fontFamily ? safeFamily(run.fontFamily) : "";
+  const family = run.fontFamily ? safeFamily(resolveFont(run.fontFamily, theme)) : "";
   if (family) parts.push(`font-family:'${family}', ${SYSTEM_STACK}`);
   parts.push(`font-size:${num((run.sizePt ?? DEFAULT_FONT_SIZE_PT) * PT_TO_PX)}px`);
-  parts.push(`color:${validColor(run.color) ?? "#000000"}`);
+  parts.push(`color:${validColor(run.color ? resolveColor(run.color, theme) : undefined) ?? "#000000"}`);
   return parts.join(";");
 }
 
 const ALIGNMENTS = new Set(["left", "center", "right", "justify"]);
 
-function renderParagraph(entry: { para: SlideParagraph; marker: string }, centered: boolean): string {
+function renderParagraph(entry: { para: SlideParagraph; marker: string }, centered: boolean, theme: DocumentTheme): string {
   const align = centered ? "center" : entry.para.align && ALIGNMENTS.has(entry.para.align) ? entry.para.align : "left";
   const styleParts = [`text-align:${align}`];
   if (!centered && entry.para.level) {
     styleParts.push(`margin-left:${px(entry.para.level * LEVEL_INDENT_CM)}`);
   }
   const marker = entry.marker && !centered ? `<span class="marker" aria-hidden="true">${esc(entry.marker)} </span>` : "";
-  const runs = entry.para.runs.map((run) => `<span style="${esc(runStyle(run))}">${esc(run.text)}</span>`).join("");
+  const runs = entry.para.runs.map((run) => `<span style="${esc(runStyle(run, theme))}">${esc(run.text)}</span>`).join("");
   return `<div class="para" style="${esc(styleParts.join(";"))}">${marker}${runs}</div>`;
 }
 
@@ -147,14 +149,14 @@ function positionStyle(frame: SlideFrame): string[] {
 
 // --- shapes -----------------------------------------------------------------
 
-function renderShape(frame: ShapeFrame, fid: string): string {
+function renderShape(frame: ShapeFrame, fid: string, theme: DocumentTheme): string {
   const style = positionStyle(frame);
   const w = cmToPx(frame.widthCm);
   const h = cmToPx(frame.heightCm);
   const def = shapeDefinition(frame.geometry);
   const d = shapeSvgPath(frame.geometry, w, h, frame.adjustments);
-  const fill = frame.fill && frame.fill.type === "solid" ? validColor(frame.fill.color) : undefined;
-  const stroke = frame.stroke ? validColor(frame.stroke.color) : undefined;
+  const fill = frame.fill && frame.fill.type === "solid" ? validColor(resolveColor(frame.fill.color, theme)) : undefined;
+  const stroke = frame.stroke ? validColor(resolveColor(frame.stroke.color, theme)) : undefined;
   const pathAttrs: string[] = [`d="${esc(d)}"`, `fill="${fill ?? "none"}"`, 'fill-rule="evenodd"'];
   if (stroke) {
     pathAttrs.push(`stroke="${stroke}"`, `stroke-width="${num((frame.stroke?.widthPt ?? 1) * PT_TO_PX)}"`);
@@ -165,7 +167,7 @@ function renderShape(frame: ShapeFrame, fid: string): string {
     `<svg class="shape-svg" width="${num(w)}" height="${num(h)}" viewBox="0 0 ${num(w)} ${num(h)}" ` +
     `preserveAspectRatio="none" aria-hidden="true"><path ${pathAttrs.join(" ")}/></svg>`;
   const paragraphs = frame.paragraphs && frame.paragraphs.length > 0
-    ? `<div class="shape-text">${markedParagraphs(frame.paragraphs).map((e) => renderParagraph(e, true)).join("")}</div>`
+    ? `<div class="shape-text">${markedParagraphs(frame.paragraphs).map((e) => renderParagraph(e, true, theme)).join("")}</div>`
     : "";
   return `<div class="frame shape" data-fid="${fid}" style="${esc(style.join(";"))}">${svg}${paragraphs}</div>`;
 }
@@ -218,11 +220,11 @@ function nextFid(ctx: EmitContext, frame: SlideFrame): string {
   return fid;
 }
 
-function renderTextFrame(frame: TextFrame, fid: string): string {
+function renderTextFrame(frame: TextFrame, fid: string, theme: DocumentTheme): string {
   const style = positionStyle(frame);
-  const fill = frame.fill && frame.fill.type === "solid" ? validColor(frame.fill.color) : undefined;
+  const fill = frame.fill && frame.fill.type === "solid" ? validColor(resolveColor(frame.fill.color, theme)) : undefined;
   if (fill) style.push(`background:${fill}`);
-  const body = markedParagraphs(frame.paragraphs).map((e) => renderParagraph(e, false)).join("");
+  const body = markedParagraphs(frame.paragraphs).map((e) => renderParagraph(e, false, theme)).join("");
   return `<div class="frame text" data-fid="${fid}" style="${esc(style.join(";"))}">${body}</div>`;
 }
 
@@ -245,7 +247,7 @@ function renderForeignFrame(frame: Extract<SlideFrame, { kind: "foreign" }>, fid
   return `<div class="frame foreign" data-fid="${fid}" style="${esc(style.join(";"))}"><span class="foreign-label">${esc(frame.label)}</span></div>`;
 }
 
-function renderTableFrame(frame: TableFrame, fid: string): string {
+function renderTableFrame(frame: TableFrame, fid: string, theme: DocumentTheme): string {
   const style = positionStyle(frame);
   const cols = frame.columnWidthsCm
     .map((cm) => `<col style="width:${px(cm)}">`)
@@ -260,10 +262,10 @@ function renderTableFrame(frame: TableFrame, fid: string): string {
             cell.rowSpan && cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : "",
           ].join("");
           const cellStyle: string[] = [];
-          const fill = cell.fill && cell.fill.type === "solid" ? validColor(cell.fill.color) : undefined;
+          const fill = cell.fill && cell.fill.type === "solid" ? validColor(resolveColor(cell.fill.color, theme)) : undefined;
           if (fill) cellStyle.push(`background:${fill}`);
           cellStyle.push(`vertical-align:${cell.verticalAlign ?? "top"}`);
-          const body = markedParagraphs(cell.paragraphs).map((e) => renderParagraph(e, false)).join("");
+          const body = markedParagraphs(cell.paragraphs).map((e) => renderParagraph(e, false, theme)).join("");
           return `<td${spanAttrs} style="${esc(cellStyle.join(";"))}">${body}</td>`;
         })
         .join("");
@@ -279,19 +281,20 @@ function renderTableFrame(frame: TableFrame, fid: string): string {
 
 function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
   const fid = nextFid(ctx, frame);
+  const theme = deckThemeOf(ctx.model);
   switch (frame.kind) {
     case "text":
-      return renderTextFrame(frame, fid);
+      return renderTextFrame(frame, fid, theme);
     case "image":
       return renderImageFrame(frame, fid, ctx);
     case "shape":
-      return renderShape(frame, fid);
+      return renderShape(frame, fid, theme);
     case "group":
       return renderGroupFrame(frame, fid, ctx);
     case "foreign":
       return renderForeignFrame(frame, fid);
     case "table":
-      return renderTableFrame(frame, fid);
+      return renderTableFrame(frame, fid, theme);
     case "chart":
       return renderChartFrame(frame, fid);
   }
@@ -350,9 +353,9 @@ function slideAnimData(slide: Slide, fidOf: Map<string, string>): AnimData[] {
 
 // --- slide sections ---------------------------------------------------------
 
-function surfaceBackground(slide: Slide): string {
+function surfaceBackground(slide: Slide, theme: DocumentTheme): string {
   const bg = slide.background;
-  return (bg && bg.type === "solid" ? validColor(bg.color) : undefined) ?? "#ffffff";
+  return (bg && bg.type === "solid" ? validColor(resolveColor(bg.color, theme)) : undefined) ?? "#ffffff";
 }
 
 function renderSlide(slide: Slide, index: number, widthPx: number, heightPx: number, ctx: EmitContext): string {
@@ -377,7 +380,7 @@ function renderSlide(slide: Slide, index: number, widthPx: number, heightPx: num
     `data-transition-ms="${ms}"`,
     `data-advance-after="${advanceAfter}"`,
     `data-anim="${esc(JSON.stringify(anims))}"`,
-    `style="width:${num(widthPx)}px;height:${num(heightPx)}px;background:${surfaceBackground(slide)}"`,
+    `style="width:${num(widthPx)}px;height:${num(heightPx)}px;background:${surfaceBackground(slide, deckThemeOf(ctx.model))}"`,
     `aria-hidden="true"`,
     `inert`,
   ];

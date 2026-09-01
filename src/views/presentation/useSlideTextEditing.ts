@@ -17,6 +17,7 @@
 // edges.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
+import { deckThemeOf } from "../../lib/presentation/theme";
 import {
   applyParagraphFormat,
   applyRunFormat,
@@ -215,7 +216,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     } else {
       range = wholeFrameRange(owner);
     }
-    return selectionFormatState(owner, range);
+    return selectionFormatState(owner, range, deckThemeOf(deps.model.value));
   });
 
   // --- session lifecycle ----------------------------------------------------
@@ -326,7 +327,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     const el = host.value;
     const owner = editingOwner.value;
     if (!el || !owner) return;
-    renderEditableParagraphs(el, owner.paragraphs);
+    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value));
     el.focus();
     // A double-click drops the caret at the click point (AC-1); a select-all
     // start (Enter-to-edit selects nothing, but a keyboard entry may) or a
