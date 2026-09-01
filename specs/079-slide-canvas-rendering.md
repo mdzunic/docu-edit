@@ -149,10 +149,12 @@ export interface ShapeFrame extends SlideFrameBase {
 export interface GroupFrame extends SlideFrameBase {
   kind: "group";
   children: SlideFrame[];          // coordinates already in slide space
-  /** The whole source element (`p:grpSp` / `draw:g`), verbatim — what the
-   *  writers re-emit; children exist for rendering only until SPEC-082's
-   *  ungroup command drops the xml and promotes them. */
-  xml: string;
+  /** The whole source element (`p:grpSp` / `draw:g`), verbatim. SPEC-096
+   *  made it optional: PRESENT = the verbatim source the writers re-emit,
+   *  ABSENT = an authored group the serialisers rebuild (identity chOff/
+   *  chExt). Any command changing membership, child geometry or rotation
+   *  deletes it; SPEC-082's ungroup remains its other exit. */
+  xml?: string;
 }
 
 export interface ForeignFrame extends SlideFrameBase {

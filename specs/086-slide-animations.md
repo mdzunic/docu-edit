@@ -77,11 +77,17 @@ require an initiating click; the panel normalises row 1's trigger).
 Canonical timing must reference shapes. pptx: every rebuilt slide's
 shapes get deterministic `p:cNvPr id` values (2, 3, … in z-order —
 SPEC-081 already mints these); `p:spTgt spid` uses them, and the reader
-resolves targets back through them. odp: rebuilt frames carry
-`xml:id="de-f{n}"` (and matching `draw:id`), referenced by
-`smil:targetElement`; the reader resolves either attribute. Reading a
-file whose timing targets a shape the slide doesn't contain →
-unrecognised (preserve).
+resolves targets back through them. Since SPEC-096 the mint is a SINGLE
+pass by construction — ids land in `spidFor` at the moment each
+`p:cNvPr` is emitted — and an authored group claims a scaffold id plus
+one per descendant (descendants are in the map too, addressable though
+never animatable); a group still carrying verbatim `xml` claims none.
+The map's contents grew, its `p:spTgt spid` contract did not. odp:
+rebuilt frames carry `xml:id="de-f{n}"` (and matching `draw:id`),
+referenced by `smil:targetElement`; the reader resolves either
+attribute (`wireIdFor` was a single pass already and is unchanged, as
+is the animatable-kind predicate). Reading a file whose timing targets
+a shape the slide doesn't contain → unrecognised (preserve).
 
 ### Canonical `p:timing` (write; read tolerantly)
 ```

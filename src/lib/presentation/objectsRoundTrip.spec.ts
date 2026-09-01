@@ -12,11 +12,7 @@ import { describe, expect, it } from "vitest";
 import { equalBytes } from "../core/equality";
 import { equalStructural, firstStructuralDifference, equalSemantic } from "../equality";
 import { unzip } from "../core/zip";
-import {
-  buildSpec096OdpFixtureBytes,
-  buildSpec096PptxFixtureBytes,
-  SPEC096_ADJUSTMENT,
-} from "./fixtures/build";
+import { buildSpec096OdpFixtureBytes, buildSpec096PptxFixtureBytes } from "./fixtures/build";
 import { readPresentationBytes } from "./open";
 import { writePptx } from "./pptx/writer";
 import { writeOdp } from "./odp/writer";
