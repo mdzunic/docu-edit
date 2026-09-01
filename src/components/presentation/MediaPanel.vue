@@ -146,27 +146,27 @@ function onPosterChange(event = new Event("change")) {
 .media-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.75rem;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 .media-empty {
   margin: 0;
-  color: var(--color-text-muted, #666);
-  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
 }
 .media-controls {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-3);
 }
 .media-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
+  gap: var(--space-3);
+  font-size: var(--text-md);
 }
 .media-row.checkbox {
-  gap: 0.4rem;
+  gap: var(--space-2);
 }
 .media-row > span:first-child {
   min-width: 4rem;
@@ -185,7 +185,7 @@ function onPosterChange(event = new Event("change")) {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: calc(-1 * var(--border-width));
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
