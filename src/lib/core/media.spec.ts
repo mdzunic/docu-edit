@@ -3,12 +3,17 @@
 // packages share them; the AC references are SPEC-024's).
 import { describe, it, expect } from "vitest";
 import {
+  ACCEPTED_MEDIA_MIME_TYPES,
   CONTENT_TYPE_BY_EXTENSION,
   contentTypeForPartName,
   encodePendingMediaInBackground,
   ensureMediaEncoded,
   extensionForContentType,
   flushPendingMedia,
+  isAcceptedMediaType,
+  MAX_MEDIA_SIZE_BYTES,
+  MEDIA_ACCEPT_ATTR,
+  MEDIA_TOO_LARGE_MESSAGE,
   mediaDataUri,
   pendingMediaByteLength,
   registerPendingMedia,
@@ -45,8 +50,64 @@ describe("contentTypeForPartName / extensionForContentType (AC-1, AC-2)", () => 
     expect(extensionForContentType("image/bmp")).toBe("png");
   });
 
-  it("CONTENT_TYPE_BY_EXTENSION covers the four accepted formats", () => {
-    expect(Object.keys(CONTENT_TYPE_BY_EXTENSION).sort()).toEqual(["gif", "jpeg", "jpg", "png", "svg"]);
+  it("CONTENT_TYPE_BY_EXTENSION covers the image and media (SPEC-095) extensions", () => {
+    expect(Object.keys(CONTENT_TYPE_BY_EXTENSION).sort()).toEqual([
+      "gif",
+      "jpeg",
+      "jpg",
+      "m4a",
+      "mp3",
+      "mp4",
+      "ogg",
+      "png",
+      "svg",
+      "wav",
+      "webm",
+      "webp",
+    ]);
+  });
+});
+
+// SPEC-095: the audio/video half of the media vocabulary, plus the
+// extension/content-type rows the writers need so a clip never rides in a
+// `.png`-named part.
+describe("media (audio/video) vocabulary (SPEC-095)", () => {
+  it("accepts the broad container types and rejects others", () => {
+    expect([...ACCEPTED_MEDIA_MIME_TYPES]).toEqual([
+      "video/mp4",
+      "video/webm",
+      "video/ogg",
+      "audio/mpeg",
+      "audio/mp4",
+      "audio/ogg",
+      "audio/wav",
+    ]);
+    expect(MEDIA_ACCEPT_ATTR).toBe("video/mp4,video/webm,video/ogg,audio/mpeg,audio/mp4,audio/ogg,audio/wav");
+    expect(isAcceptedMediaType("video/mp4")).toBe(true);
+    expect(isAcceptedMediaType("audio/wav")).toBe(true);
+    expect(isAcceptedMediaType("video/quicktime")).toBe(false);
+    expect(isAcceptedMediaType("image/png")).toBe(false);
+  });
+
+  it("caps inserted media at 25 MB with a message", () => {
+    expect(MAX_MEDIA_SIZE_BYTES).toBe(25 * 1024 * 1024);
+    expect(MEDIA_TOO_LARGE_MESSAGE).toContain("25 MB");
+  });
+
+  it("maps media extensions to content types and back", () => {
+    expect(contentTypeForPartName("ppt/media/media1.mp4")).toBe("video/mp4");
+    expect(contentTypeForPartName("ppt/media/media1.webm")).toBe("video/webm");
+    expect(contentTypeForPartName("ppt/media/media1.m4a")).toBe("audio/mp4");
+    expect(contentTypeForPartName("ppt/media/media1.mp3")).toBe("audio/mpeg");
+    expect(contentTypeForPartName("Pictures/clip.wav")).toBe("audio/wav");
+    expect(contentTypeForPartName("Pictures/poster.webp")).toBe("image/webp");
+
+    expect(extensionForContentType("video/mp4")).toBe("mp4");
+    expect(extensionForContentType("video/webm")).toBe("webm");
+    expect(extensionForContentType("audio/mpeg")).toBe("mp3");
+    expect(extensionForContentType("audio/mp4")).toBe("m4a");
+    expect(extensionForContentType("audio/wav")).toBe("wav");
+    expect(extensionForContentType("image/webp")).toBe("webp");
   });
 });
 

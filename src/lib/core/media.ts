@@ -156,6 +156,42 @@ export function isAcceptedImageType(mimeType: string): boolean {
   return (ACCEPTED_IMAGE_MIME_TYPES as readonly string[]).includes(mimeType);
 }
 
+// --- audio/video media (SPEC-095) ------------------------------------------
+
+/** The audio/video container MIME types "Insert media" accepts (SPEC-095),
+ * as both a type list and an `<input accept>` string. Deliberately the
+ * broadly-supported containers: we play exactly what a plain
+ * `<video>`/`<audio>` element plays and never transcode, so the browser's own
+ * `canPlayType` (core/mediaPlayback.ts) still decides playability per codec at
+ * render time — a container we accept but the browser cannot decode degrades
+ * to a labelled poster, never an error. */
+export const ACCEPTED_MEDIA_MIME_TYPES = [
+  "video/mp4",
+  "video/webm",
+  "video/ogg",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/ogg",
+  "audio/wav",
+] as const;
+
+export const MEDIA_ACCEPT_ATTR = ACCEPTED_MEDIA_MIME_TYPES.join(",");
+
+/** Whether a file's declared MIME type is one "Insert media" accepts. */
+export function isAcceptedMediaType(mimeType: string): boolean {
+  return (ACCEPTED_MEDIA_MIME_TYPES as readonly string[]).includes(mimeType);
+}
+
+/** Media inserted over this is rejected (SPEC-095): a clip persists whole in a
+ * single IndexedDB record, so the ceiling keeps one insert from bloating the
+ * store, and sits well under `openDocument`'s 50 MB whole-file limit — an
+ * over-ceiling clip could therefore only ever arrive already inside an opened
+ * deck (where it is preserved with `oversize: true`, never rejected). */
+export const MAX_MEDIA_SIZE_BYTES = 25 * 1024 * 1024;
+
+/** Shown when a rejected clip is too large (SPEC-095). */
+export const MEDIA_TOO_LARGE_MESSAGE = "That media file is too large (limit 25 MB)";
+
 /** Whether a candidate image's byte length exceeds the 10 MB limit (AC-33). */
 export function isImageTooLarge(byteLength: number): boolean {
   return byteLength > MAX_IMAGE_SIZE_BYTES;
@@ -193,6 +229,18 @@ export const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
   jpeg: "image/jpeg",
   gif: "image/gif",
   svg: "image/svg+xml",
+  // WebP (a picker-accepted image, SPEC-082) and the audio/video containers
+  // SPEC-095 carries — so a media part path types correctly and never gets a
+  // `.png` extension. `.ogg` is the audio spelling (video is rare and shares
+  // the extension); the video↔audio split for a clip is decided by its
+  // relationship type (pptx) / draw:mime-type (odp), not the extension.
+  webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  ogg: "audio/ogg",
+  m4a: "audio/mp4",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
 };
 
 /** The file extension a media content type is written with, the inverse of
@@ -203,10 +251,19 @@ const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
   "image/jpeg": "jpeg",
   "image/gif": "gif",
   "image/svg+xml": "svg",
+  // WebP (SPEC-082) and the audio/video containers SPEC-095 carries.
+  "image/webp": "webp",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/ogg": "ogg",
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/ogg": "ogg",
+  "audio/wav": "wav",
 };
 
 /** The MIME type a media part path's extension implies (case-insensitive),
- * or undefined for an extension no accepted image format uses. */
+ * or undefined for an extension no accepted image/media format uses. */
 export function contentTypeForPartName(partName: string): string | undefined {
   const dot = partName.lastIndexOf(".");
   if (dot < 0) {
