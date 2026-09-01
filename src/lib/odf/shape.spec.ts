@@ -953,6 +953,32 @@ describe("SPEC-073 preservation — unmodelled graphic-properties survive verbat
     expect(defs.defsXml()).toContain('draw:style="triple"');
   });
 
+  it("an edited modelled fill wins over stale preserved fill attrs — no resurrection, no orphaned companions (AC-36 one-source)", () => {
+    // Same unmodelled triple-hatch document, but the user then picks a solid
+    // red fill: the canvas shows red, so the save must write red — never the
+    // preserved hatch reference. The edit path clears the preserved slot
+    // (shapes.spec.ts); the writer's model-first guard covers any stale
+    // leftover, tested here directly with the leftover still in place.
+    const contentDoc = wrapDoc(
+      `<draw:hatch draw:name="Odd Hatch" draw:style="triple" draw:color="#123456" draw:rotation="150"/>` +
+        `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="hatch" draw:fill-hatch-name="Odd Hatch" draw:fill-color="#ffffff" draw:auto-grow-height="true"/></style:style>` +
+        `<draw:custom-shape text:anchor-type="as-char" draw:style-name="gr1" svg:width="5cm" svg:height="3cm"><draw:enhanced-geometry draw:type="rectangle"/></draw:custom-shape>`,
+    );
+    const el = contentDoc.documentElement.lastElementChild!;
+    const shape = parseShapeElement(el, contentDoc, undefined, readCtx)!.shape;
+    expect(shape.fill).toBeUndefined();
+    const edited: Shape = { ...shape, fill: { kind: "solid", color: "#ff0000" } };
+    const defs = createOdfDrawingDefs();
+    const styleXml = shapeGraphicStyleXml("gr1", edited, { defs });
+    expect(styleXml).toContain('draw:fill="solid"');
+    expect(styleXml).toContain('draw:fill-color="#ff0000"');
+    expect(styleXml).not.toContain("fill-hatch-name");
+    // Non-fill preserved styling still merges in untouched.
+    expect(styleXml).toContain('draw:auto-grow-height="true"');
+    // The hatch definition rode along only for the replaced fill.
+    expect(defs.defsXml()).not.toContain("Odd Hatch");
+  });
+
   it("a shape with no foreign styling has no unsupportedStyleXml after a round trip of our own output", () => {
     const styled = baseShape({
       wrap: "square",

@@ -804,11 +804,52 @@ describe("SPEC-073 preservation of unmodelled styling (AC-35, AC-36)", () => {
     expect(parsed.shape.unsupportedStyleXml).toContain("a:glow");
     expect(parsed.shape.unsupportedStyleXml).not.toContain("outerShdw");
     // The writer merges the model's shadow and the preserved glow into ONE
-    // effectLst.
+    // effectLst — and in CT_EffectList's sequence order: glow (position 3)
+    // must precede outerShdw (position 5), or the output is out-of-schema
+    // OOXML a strict consumer flags as unreadable (AC-36 "schema order").
     const rewritten = shapeDrawingXml(parsed.shape, 1, writeCtx);
     expect(rewritten.match(/<a:effectLst>/g)).toHaveLength(1);
     expect(rewritten).toContain("a:glow");
     expect(rewritten).toContain("a:outerShdw");
+    expect(rewritten.indexOf("<a:glow")).toBeLessThan(rewritten.indexOf("<a:outerShdw"));
+  });
+
+  it("a preserved reflection re-emits AFTER the modelled outerShdw (CT_EffectList order, AC-36)", () => {
+    const effects =
+      "<a:effectLst>" +
+      '<a:outerShdw blurRad="50800" dist="38100" dir="5400000"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw>' +
+      '<a:reflection blurRad="6350" stA="52000" endA="300"/>' +
+      "</a:effectLst>";
+    const parsed = parseShapeDrawing(drawingElement(wsp(effects)), readCtx)!;
+    expect(parsed.shape.shadow).toBeDefined();
+    const rewritten = shapeDrawingXml(parsed.shape, 1, writeCtx);
+    expect(rewritten.indexOf("<a:outerShdw")).toBeLessThan(rewritten.indexOf("<a:reflection"));
+  });
+
+  it("an edited modelled fill wins over a stale preserved scheme-colour fill (AC-36 one-source)", () => {
+    // Open a doc whose fill the model cannot hold (schemeClr -> preserved),
+    // then the user picks a solid red: the canvas shows red, so the save
+    // must write red — never resurrect the preserved theme fill. The edit
+    // path clears the preserved slot (see shapes.spec.ts); the writer's
+    // model-first guard covers any stale leftover, tested here directly.
+    const schemeFill = '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>';
+    const parsed = parseShapeDrawing(drawingElement(wsp(schemeFill)), readCtx)!;
+    const edited: typeof parsed.shape = { ...parsed.shape, fill: { kind: "solid", color: "#ff0000" } };
+    const rewritten = shapeDrawingXml(edited, 1, writeCtx);
+    expect(rewritten).toContain('<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>');
+    expect(rewritten).not.toContain("schemeClr");
+  });
+
+  it("an edited modelled outline wins over a stale preserved a:ln (AC-36 one-source)", () => {
+    const gradientStroke = '<a:ln w="25400"><a:gradFill><a:gsLst/></a:gradFill></a:ln>';
+    const parsed = parseShapeDrawing(drawingElement(wsp(gradientStroke)), readCtx)!;
+    expect(parsed.shape.outline).toBeUndefined();
+    expect(parsed.shape.unsupportedStyleXml).toContain("gradFill");
+    const edited: typeof parsed.shape = { ...parsed.shape, outline: { color: "#2e5395", widthPt: 1, dash: "solid" } };
+    const rewritten = shapeDrawingXml(edited, 1, writeCtx);
+    expect(rewritten).toContain('<a:ln w="12700">');
+    expect(rewritten).not.toContain("gradFill");
+    expect(rewritten.match(/<a:ln[ >]/g)).toHaveLength(1);
   });
 
   it("scene3d/sp3d append after effectLst in schema order", () => {

@@ -24,6 +24,7 @@ import {
   type Shape,
 } from "./documentModel";
 import { type ShapeFill, type ShapeGeometry, type ShapeOutline, type ShapeShadow } from "./core/shapes";
+import { clearPreservedStyleSlots, type PreservedStyleSlots } from "./preservedStyle";
 import {
   anchoredParagraph,
   ordinalForParagraph,
@@ -502,6 +503,18 @@ export function nudgeShape(
   return moveShape(model, selection, location, dx, dy);
 }
 
+/** An edit just gave the model a value (possibly "none") for the given
+ * styling slots — the preserved unparsed styling occupying those slots must
+ * go with it (AC-36 one-source; see preservedStyle.ts). */
+function clearPreservedSlots(block: Shape | Connector, slots: PreservedStyleSlots): void {
+  const cleared = clearPreservedStyleSlots(block.unsupportedStyleXml, slots);
+  if (cleared !== undefined) {
+    block.unsupportedStyleXml = cleared;
+  } else {
+    delete block.unsupportedStyleXml;
+  }
+}
+
 export function setShapeFill(
   model: DocumentModel,
   selection: ModelSelection,
@@ -519,6 +532,7 @@ export function setShapeFill(
   } else {
     delete updated.fill;
   }
+  clearPreservedSlots(updated, { fill: true });
   replaceShape(next, location, updated);
   return { model: next, selection };
 }
@@ -541,6 +555,7 @@ export function setShapeShadow(
   } else {
     delete updated.shadow;
   }
+  clearPreservedSlots(updated, { shadow: true });
   replaceShape(next, location, updated);
   return { model: next, selection };
 }
@@ -562,6 +577,7 @@ export function setShapeOutline(
   } else {
     delete updated.outline;
   }
+  clearPreservedSlots(updated, { outline: true });
   replaceShape(next, location, updated);
   return { model: next, selection };
 }
@@ -950,12 +966,14 @@ export function formatDrawings(
       continue;
     }
     const updated = { ...block };
+    const applied: PreservedStyleSlots = {};
     if (patch.outline !== undefined) {
       if (patch.outline) {
         updated.outline = { ...patch.outline };
       } else {
         delete updated.outline;
       }
+      applied.outline = true;
     }
     if (isShape(updated)) {
       if (patch.fill !== undefined && !LINE_GEOMETRIES.has(updated.geometry)) {
@@ -964,6 +982,7 @@ export function formatDrawings(
         } else {
           delete updated.fill;
         }
+        applied.fill = true;
       }
       if (patch.shadow !== undefined) {
         if (patch.shadow) {
@@ -971,7 +990,11 @@ export function formatDrawings(
         } else {
           delete updated.shadow;
         }
+        applied.shadow = true;
       }
+    }
+    if (applied.fill || applied.outline || applied.shadow) {
+      clearPreservedSlots(updated, applied);
     }
     next.sections[location.section].blocks.splice(location.block, 1, updated);
   }

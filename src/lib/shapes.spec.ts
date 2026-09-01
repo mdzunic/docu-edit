@@ -25,6 +25,7 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setShapeShadow,
   arrangeDrawings,
   setShapePosition,
   setShapeRotation,
@@ -512,6 +513,70 @@ describe("setShapeOutline", () => {
     const model = doc(shape({ outline }), paragraph(""));
     const { model: next } = setShapeOutline(model, selectionAt(0, 0), location, undefined);
     expect("outline" in shapeAt(next, location)!).toBe(false);
+  });
+});
+
+// --- SPEC-073 AC-36: style edits clear the preserved slot they replace ----------
+
+describe("style edits over preserved unparsed styling (AC-36 one-source)", () => {
+  const location: ShapeLocation = { section: 0, block: 0 };
+  const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+  // A .docx-flavour preserved set: a scheme-colour fill, a gradient-stroke
+  // a:ln, an unmodelled glow effect and an unparseable outerShdw.
+  const preserved =
+    `<a:solidFill xmlns:a="${A_NS}"><a:schemeClr val="accent1"/></a:solidFill>` +
+    `<a:ln xmlns:a="${A_NS}" w="25400"><a:gradFill><a:gsLst/></a:gradFill></a:ln>` +
+    `<a:glow xmlns:a="${A_NS}" rad="63500"><a:srgbClr val="00FF00"/></a:glow>` +
+    `<a:outerShdw xmlns:a="${A_NS}" blurRad="9"><a:schemeClr val="accent2"/></a:outerShdw>`;
+
+  it("setShapeFill clears the preserved fill slot so the edit cannot be resurrected on save", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, { kind: "solid", color: "#ff0000" });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("solidFill");
+    expect(kept).toContain("a:ln");
+    expect(kept).toContain("a:glow");
+  });
+
+  it("setShapeFill to NONE also clears the preserved fill slot (undefined fill must not resurrect it)", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, undefined);
+    expect(shapeAt(next, location)!.unsupportedStyleXml).not.toContain("solidFill");
+  });
+
+  it("setShapeOutline clears the preserved a:ln slot only", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeOutline(model, selectionAt(0, 0), location, { color: "#000000", widthPt: 1, dash: "solid" });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("<a:ln");
+    expect(kept).toContain("solidFill");
+    expect(kept).toContain("a:glow");
+  });
+
+  it("setShapeShadow clears a preserved outerShdw but keeps the glow", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeShadow(model, selectionAt(0, 0), location, { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("outerShdw");
+    expect(kept).toContain("a:glow");
+  });
+
+  it("formatDrawings clears exactly the slots its patch applies, per target", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(1, 0), [location], { fill: { kind: "solid", color: "#ff0000" } });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("solidFill");
+    // Slots the patch does not touch survive untouched.
+    expect(kept).toContain("<a:ln");
+    expect(kept).toContain("a:glow");
+    expect(kept).toContain("outerShdw");
+  });
+
+  it("the whole preserved field is deleted when every element sat in a cleared slot", () => {
+    const fillOnly = `<a:solidFill xmlns:a="${A_NS}"><a:schemeClr val="accent1"/></a:solidFill>`;
+    const model = doc(shape({ unsupportedStyleXml: fillOnly }), paragraph(""));
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, { kind: "solid", color: "#ff0000" });
+    expect("unsupportedStyleXml" in shapeAt(next, location)!).toBe(false);
   });
 });
 

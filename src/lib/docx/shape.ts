@@ -243,7 +243,7 @@ function avLstXml(shape: Shape): string {
   return `<a:avLst>${gds}</a:avLst>`;
 }
 
-const FILL_ELEMENT_NAMES = new Set(["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"]);
+export const FILL_ELEMENT_NAMES = new Set(["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"]);
 const EFFECT_CHILD_NAMES = new Set([
   "blur",
   "fillOverlay",
@@ -779,7 +779,10 @@ const MODEL_DASH_TO_OOXML: Record<ShapeOutline["dash"], string> = {
   longDashDot: "lgDashDot",
 };
 
-function dashXml(dash: ShapeOutline["dash"]): string {
+/** The `a:prstDash` for a model dash value — shared with connector.ts so the
+ * two writers cannot drift (a connector's longDash/dashDot must round-trip
+ * exactly like a shape's, AC-2/AC-32). */
+export function dashXml(dash: ShapeOutline["dash"]): string {
   const val = MODEL_DASH_TO_OOXML[dash];
   return val ? `<a:prstDash val="${val}"/>` : "";
 }
@@ -885,19 +888,35 @@ export function outerShdwXml(shadow: ShapeShadow): string {
   );
 }
 
+/** CT_EffectList is an ordered sequence — blur, fillOverlay, glow, innerShdw,
+ * outerShdw, prstShdw, reflection, softEdge — so a preserved effect must land
+ * on the correct side of the modelled `a:outerShdw` (AC-36 "schema order"). */
+const EFFECTS_BEFORE_OUTER_SHADOW = new Set(["blur", "fillOverlay", "glow", "innerShdw"]);
+
+/** An empty split — the shape carried no `unsupportedStyleXml`. */
+export function emptyPreservedStyle(): PreservedStyleSplit {
+  return { fill: [], ln: [], effectsBefore: [], effectsAfter: [], other: [] };
+}
+
+export interface PreservedStyleSplit {
+  fill: string[];
+  ln: string[];
+  /** Effect children that schema-precede `a:outerShdw` (blur/fillOverlay/glow/innerShdw). */
+  effectsBefore: string[];
+  /** `a:outerShdw` itself and everything after it (prstShdw/reflection/softEdge). */
+  effectsAfter: string[];
+  other: string[];
+}
+
 /** `unsupportedStyleXml`'s sibling elements, split by where the writer must
  * re-emit each: a preserved fill or `a:ln` replaces the modelled emission
- * slot; effect children merge into the one `a:effectLst`; everything else
+ * slot; effect children merge into the one `a:effectLst` around the modelled
+ * shadow's slot, keeping CT_EffectList's sequence valid; everything else
  * appends after it in stored order (AC-36 "schema order" — scene3d/sp3d/
  * extLst follow effectLst in CT_ShapeProperties). An unparseable string
  * degrades to the trailing slot rather than being dropped. */
-export function splitPreservedStyle(xml: string): {
-  fill: string[];
-  ln: string[];
-  effects: string[];
-  other: string[];
-} {
-  const out = { fill: [] as string[], ln: [] as string[], effects: [] as string[], other: [] as string[] };
+export function splitPreservedStyle(xml: string): PreservedStyleSplit {
+  const out = emptyPreservedStyle();
   let doc: Document;
   try {
     doc = parseXml(`<de:wrap xmlns:de="urn:docu-edit:shape">${xml}</de:wrap>`);
@@ -914,12 +933,48 @@ export function splitPreservedStyle(xml: string): {
     } else if (child.localName === "ln") {
       out.ln.push(serialized);
     } else if (EFFECT_CHILD_NAMES.has(child.localName)) {
-      out.effects.push(serialized);
+      (EFFECTS_BEFORE_OUTER_SHADOW.has(child.localName) ? out.effectsBefore : out.effectsAfter).push(serialized);
     } else {
       out.other.push(serialized);
     }
   }
   return out;
+}
+
+/** Removes the named property slots from a `.docx` `unsupportedStyleXml`
+ * string (AC-36 "exactly one source per property"): when an edit gives the
+ * MODEL a value for fill/outline/shadow, the preserved (unparsed) element
+ * occupying that slot must go, or a later save would resurrect the old
+ * styling over the user's visible edit. Only the slot's own elements are
+ * touched — a preserved glow stays when the shadow slot clears. Returns
+ * undefined when nothing survives; an unparseable string returns unchanged
+ * (nothing to remove surgically, and dropping it would lose content). */
+export function clearPreservedDocxStyle(
+  xml: string,
+  slots: { fill?: boolean; outline?: boolean; shadow?: boolean },
+): string | undefined {
+  let doc: Document;
+  try {
+    doc = parseXml(`<de:wrap xmlns:de="${DE_NAMESPACE}">${xml}</de:wrap>`);
+  } catch {
+    return xml;
+  }
+  const kept: string[] = [];
+  for (const child of Array.from(doc.documentElement.children)) {
+    if (child.namespaceURI === A_NAMESPACE) {
+      if (slots.fill && FILL_ELEMENT_NAMES.has(child.localName)) {
+        continue;
+      }
+      if (slots.outline && child.localName === "ln") {
+        continue;
+      }
+      if (slots.shadow && child.localName === "outerShdw") {
+        continue;
+      }
+    }
+    kept.push(serializeElement(child));
+  }
+  return kept.length > 0 ? kept.join("") : undefined;
 }
 
 /** Serialises a Shape's text frame's blocks into `wps:txbx/w:txbxContent`
@@ -992,24 +1047,30 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
 
   // SPEC-073 AC-36: modelled properties write from the model; preserved
   // (unparsed) ones re-emit verbatim in their schema slots — a preserved
-  // fill/ln takes the modelled emission's place (the model then holds no
-  // value for it), effect children join the one effectLst, the rest follow.
+  // fill/ln fills the modelled emission's slot only while the model holds no
+  // value for it (an edit sets the model AND clears the preserved slot, see
+  // clearPreservedShapeStyle; the model-first guard here covers any stale
+  // leftover so the on-screen styling always wins), effect children join the
+  // one effectLst around the modelled shadow's sequence position, the rest
+  // follow.
   const preserved = shape.unsupportedStyleXml
     ? splitPreservedStyle(shape.unsupportedStyleXml)
-    : { fill: [], ln: [], effects: [], other: [] };
-  const fillPart =
-    preserved.fill.length > 0
-      ? preserved.fill.join("")
-      : isLine
-        ? ""
-        : fillXml(shape.fill, ctx.relIdForMedia);
-  const lnPart =
-    preserved.ln.length > 0
+    : emptyPreservedStyle();
+  const fillPart = isLine
+    ? preserved.fill.join("")
+    : shape.fill
+      ? fillXml(shape.fill, ctx.relIdForMedia)
+      : preserved.fill.length > 0
+        ? preserved.fill.join("")
+        : fillXml(undefined, ctx.relIdForMedia);
+  const lnPart = shape.outline
+    ? outlineXml(shape.outline, isArrow && !shape.outline.endArrow)
+    : preserved.ln.length > 0
       ? preserved.ln.join("")
-      : outlineXml(shape.outline, isArrow && !shape.outline?.endArrow);
+      : outlineXml(undefined, isArrow);
   const effectPart =
-    shape.shadow || preserved.effects.length > 0
-      ? `<a:effectLst>${shape.shadow ? outerShdwXml(shape.shadow) : ""}${preserved.effects.join("")}</a:effectLst>`
+    shape.shadow || preserved.effectsBefore.length > 0 || preserved.effectsAfter.length > 0
+      ? `<a:effectLst>${preserved.effectsBefore.join("")}${shape.shadow ? outerShdwXml(shape.shadow) : ""}${preserved.effectsAfter.join("")}</a:effectLst>`
       : "";
 
   const spPr =

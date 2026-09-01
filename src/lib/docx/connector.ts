@@ -9,11 +9,11 @@
 // unknown attributes).
 import type { Block, Connector, ConnectorKind, Section } from "../documentModel";
 import { isConnector } from "../documentModel";
-import type { ArrowheadKind, ArrowheadSize, ShapeOutline } from "../core/shapes";
+import type { ArrowheadKind, ArrowheadSize } from "../core/shapes";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cssColorToOoxml } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
-import { outerShdwXml, parseShapeStyle, splitPreservedStyle, srgbClrXml } from "./shape";
+import { dashXml, emptyPreservedStyle, outerShdwXml, parseShapeStyle, splitPreservedStyle, srgbClrXml } from "./shape";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -336,16 +336,6 @@ export function resolveDocxConnectorAttachments(model: { sections: Section[] }):
   }
 }
 
-function dashXml(dash: ShapeOutline["dash"]): string {
-  if (dash === "dash") {
-    return '<a:prstDash val="dash"/>';
-  }
-  if (dash === "dot") {
-    return '<a:prstDash val="sysDot"/>';
-  }
-  return "";
-}
-
 function arrowXml(kind: ArrowheadKind | undefined, localName: "headEnd" | "tailEnd", size?: ArrowheadSize): string {
   if (kind === undefined) {
     return "";
@@ -434,7 +424,19 @@ export function connectorDrawingXml(connector: Connector, docPrId: number, targe
 
   const preservedStyle = connector.unsupportedStyleXml
     ? splitPreservedStyle(connector.unsupportedStyleXml)
-    : { fill: [] as string[], ln: [] as string[], effects: [] as string[], other: [] as string[] };
+    : emptyPreservedStyle();
+  // AC-36 one-source, mirroring shapeDrawingXml: a preserved a:ln fills the
+  // slot only while the model has no outline (an outline edit clears the
+  // preserved slot; this guard covers stale leftovers), and preserved effects
+  // re-emit around the modelled outerShdw's CT_EffectList sequence position.
+  const lnPart =
+    !connector.outline && preservedStyle.ln.length > 0
+      ? preservedStyle.ln.join("")
+      : connectorOutlineXml(connector);
+  const effectPart =
+    connector.shadow || preservedStyle.effectsBefore.length > 0 || preservedStyle.effectsAfter.length > 0
+      ? `<a:effectLst>${preservedStyle.effectsBefore.join("")}${connector.shadow ? outerShdwXml(connector.shadow) : ""}${preservedStyle.effectsAfter.join("")}</a:effectLst>`
+      : "";
   const cxnSp =
     `<wps:cxnSp xmlns:wps="${WPS_NAMESPACE}">` +
     `<wps:cNvCnPr>${stCxn}${endCxn}</wps:cNvCnPr>` +
@@ -442,10 +444,8 @@ export function connectorDrawingXml(connector: Connector, docPrId: number, targe
     `<a:xfrm${rotAttr}${flipH}${flipV}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     `<a:prstGeom prst="${prst}">${adj}</a:prstGeom>` +
     preservedStyle.fill.join("") +
-    (preservedStyle.ln.length > 0 ? preservedStyle.ln.join("") : connectorOutlineXml(connector)) +
-    (connector.shadow || preservedStyle.effects.length > 0
-      ? `<a:effectLst>${connector.shadow ? outerShdwXml(connector.shadow) : ""}${preservedStyle.effects.join("")}</a:effectLst>`
-      : "") +
+    lnPart +
+    effectPart +
     preservedStyle.other.join("") +
     "</wps:spPr>" +
     "</wps:cxnSp>";

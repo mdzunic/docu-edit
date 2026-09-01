@@ -26,6 +26,7 @@ import {
   type Shape,
 } from "./documentModel";
 import type { ArrowheadKind, ArrowheadSize, ShapeOutline } from "./core/shapes";
+import { clearPreservedStyleSlots } from "./preservedStyle";
 import {
   clampSite,
   clipCentreSite,
@@ -490,6 +491,19 @@ export function setConnectorKind(
   });
 }
 
+/** An outline (or arrowhead — arrows live inside the outline's `a:ln`/marker
+ * slot in both formats) edit just gave the model the whole stroke; a
+ * preserved unparsed `a:ln`/stroke attrs must go with it, or a same-format
+ * save would resurrect the old stroke over the edit (AC-36 one-source). */
+function clearPreservedOutlineSlot(connector: Connector): void {
+  const cleared = clearPreservedStyleSlots(connector.unsupportedStyleXml, { outline: true });
+  if (cleared !== undefined) {
+    connector.unsupportedStyleXml = cleared;
+  } else {
+    delete connector.unsupportedStyleXml;
+  }
+}
+
 export function setConnectorOutline(
   model: DocumentModel,
   selection: ModelSelection,
@@ -498,6 +512,7 @@ export function setConnectorOutline(
 ): CommandResult {
   return editConnector(model, selection, location, (c) => {
     c.outline = { ...outline };
+    clearPreservedOutlineSlot(c);
   });
 }
 
@@ -525,6 +540,7 @@ export function setConnectorArrowheads(
     if (ends.endArrowSize !== undefined) {
       c.endArrowSize = ends.endArrowSize;
     }
+    clearPreservedOutlineSlot(c);
   });
 }
 

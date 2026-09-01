@@ -58,8 +58,10 @@ const SHAPE_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}
 // --- SPEC-073: shared drawing definitions (styles.xml <office:styles>) ------
 // ODF expresses gradients, hatches, bitmap fills, arrow markers and dash
 // patterns as NAMED definition elements a graphic style references by name.
-// Every definition this writer mints is prefixed "de" so a later save can
-// tell its own (regenerated) definitions from a foreign document's.
+// Every definition this writer mints is named "de" + an UpperCamelCase tail
+// (matching writer.ts's MINTED_DEF_NAME) so a later save can tell its own
+// (regenerated) definitions from a foreign document's — including a foreign
+// name that merely begins with lowercase "de", which must survive untouched.
 
 /** The definition elements the defs pre-pass manages inside styles.xml's
  * `<office:styles>` (all in the draw: namespace). */
@@ -1047,9 +1049,114 @@ function parsePreservedStyle(xml: string | undefined): Element | undefined {
   }
 }
 
+/** Whether an `unsupportedStyleXml` string is this module's synthetic
+ * `style:graphic-properties` element (the `.odt` preserved-style flavour, vs
+ * `.docx`'s run of `a:*` property elements). */
+export function isPreservedGraphicStyleXml(xml: string): boolean {
+  return parsePreservedStyle(xml) !== undefined;
+}
+
+/** The definition-element kinds that only ever ride in a preserved
+ * graphic-properties FOR ITS FILL (parseGraphicStyleProps inlines the
+ * gradient/hatch/fill-image definition beside the unparsed referencing
+ * attributes) — cleared together with the fill slot. Marker and stroke-dash
+ * defs never ride here (foreign markers keep only their name attribute; the
+ * definition stays in styles.xml). */
+const FILL_DEF_LOCAL_NAMES = new Set(["gradient", "hatch", "fill-image", "opacity"]);
+
+function isPreservedFillAttr(ns: string | null, local: string): boolean {
+  if (ns === DRAW_NAMESPACE) {
+    return (
+      local === "fill" ||
+      local.startsWith("fill-") ||
+      local === "opacity" ||
+      local === "opacity-name" ||
+      local === "gradient-step-count" ||
+      local === "secondary-fill-color" ||
+      local === "tile-repeat-offset"
+    );
+  }
+  return ns === STYLE_NAMESPACE && local === "repeat";
+}
+
+function isPreservedOutlineAttr(ns: string | null, local: string): boolean {
+  if (ns === DRAW_NAMESPACE) {
+    return local === "stroke" || local.startsWith("stroke-") || local.startsWith("marker-");
+  }
+  return ns === SVG_NAMESPACE && local.startsWith("stroke");
+}
+
+function isPreservedShadowAttr(ns: string | null, local: string): boolean {
+  if (ns === DRAW_NAMESPACE) {
+    return local === "shadow" || local.startsWith("shadow-");
+  }
+  return ns === DE_NAMESPACE && local === "shadow-blur-pt";
+}
+
+/** Strips the named property slots off a preserved graphic-properties
+ * element in place (AC-36 "exactly one source per property" — see
+ * clearPreservedOdfGraphicStyle). */
+function removeGraphicStyleSlots(el: Element, slots: { fill?: boolean; outline?: boolean; shadow?: boolean }): void {
+  for (const attr of Array.from(el.attributes)) {
+    const matches =
+      (slots.fill && isPreservedFillAttr(attr.namespaceURI, attr.localName)) ||
+      (slots.outline && isPreservedOutlineAttr(attr.namespaceURI, attr.localName)) ||
+      (slots.shadow && isPreservedShadowAttr(attr.namespaceURI, attr.localName));
+    if (matches) {
+      el.removeAttributeNode(attr);
+    }
+  }
+  if (slots.fill) {
+    for (const child of Array.from(el.children)) {
+      if (child.namespaceURI === DRAW_NAMESPACE && FILL_DEF_LOCAL_NAMES.has(child.localName)) {
+        el.removeChild(child);
+      }
+    }
+  }
+}
+
+/** Whether a preserved graphic-properties element still carries anything
+ * worth keeping (any non-xmlns attribute or any child element). */
+function graphicStyleIsEmpty(el: Element): boolean {
+  return (
+    el.children.length === 0 &&
+    !Array.from(el.attributes).some((attr) => attr.namespaceURI !== XMLNS_NAMESPACE)
+  );
+}
+
+/** Removes the named property slots from an `.odt` `unsupportedStyleXml`
+ * string (AC-36 "exactly one source per property"): when an edit gives the
+ * MODEL a value for fill/outline/shadow, the preserved (unparsed) attributes
+ * occupying that slot — and, for a fill, any gradient/hatch/fill-image
+ * definition riding along for it — must go, or a later save would resurrect
+ * the old styling over the user's visible edit. Other preserved attributes
+ * and children are untouched. Returns undefined when nothing survives; a
+ * string that is not this module's synthetic element returns unchanged. */
+export function clearPreservedOdfGraphicStyle(
+  xml: string,
+  slots: { fill?: boolean; outline?: boolean; shadow?: boolean },
+): string | undefined {
+  const el = parsePreservedStyle(xml);
+  if (!el) {
+    return xml;
+  }
+  removeGraphicStyleSlots(el, slots);
+  return graphicStyleIsEmpty(el) ? undefined : serializeElement(el);
+}
+
 function graphicPropertiesXml(shape: Shape, ctx: OdfShapeStyleWriteContext): string {
   const defs = ctx.defs ?? createOdfDrawingDefs();
-  const preserved = ctx.includePreserved !== false ? parsePreservedStyle(shape.unsupportedStyleXml) : undefined;
+  let preserved = ctx.includePreserved !== false ? parsePreservedStyle(shape.unsupportedStyleXml) : undefined;
+  if (preserved && (shape.fill || shape.shadow)) {
+    // AC-36 one-source, model-first: an edit that set a modelled fill/shadow
+    // clears the preserved slot (clearPreservedOdfGraphicStyle); this strips
+    // any stale leftover so the merge below cannot resurrect old styling —
+    // or inject its orphaned companion attrs — over the user's visible edit.
+    removeGraphicStyleSlots(preserved, { fill: shape.fill !== undefined, shadow: shape.shadow !== undefined });
+    if (graphicStyleIsEmpty(preserved)) {
+      preserved = undefined;
+    }
+  }
   // A fill the reader could not model left its draw:fill attrs in the
   // preserved set (AC-35) — the writer must then not fight them with its own.
   const preservedHasFill = preserved !== undefined && preserved.hasAttributeNS(DRAW_NAMESPACE, "fill");

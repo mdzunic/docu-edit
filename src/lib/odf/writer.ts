@@ -2960,12 +2960,18 @@ export function patchOdtDefaultLanguage(model: DocumentModel, originalStylesXml:
 
 /** A preserved styles.xml with the save's shared drawing definitions
  * (SPEC-073) managed inside `<office:styles>`, or null when nothing needs
- * changing. Every existing definition whose draw:name starts with "de" is a
- * stale definition a previous save of THIS editor wrote — removed and
- * replaced by the fresh set collected while content.xml was built. Foreign
- * definitions keep their names untouched; a preserved definition riding in
- * some block's unsupportedStyleXml re-enters through the defs registry but
- * is skipped here when the part still defines that name (no duplicates). */
+ * changing. Every existing definition matching this editor's minting scheme —
+ * "de" + an UpperCamelCase tail (deGrad1, deHatch2, deArrowTriangleMed,
+ * deDashLongDash) — is a stale definition a previous save of THIS editor
+ * wrote: removed and replaced by the fresh set collected while content.xml
+ * was built. The uppercase requirement keeps a foreign definition whose name
+ * merely begins with lowercase "de" (e.g. "decorative") untouched — deleting
+ * it would strand any preserved shape that references it. A preserved
+ * definition riding in some block's unsupportedStyleXml re-enters through
+ * the defs registry but is skipped here when the part still defines that
+ * name (no duplicates). */
+const MINTED_DEF_NAME = /^de[A-Z]/;
+
 export function patchOdtShapeDefs(originalStylesXml: string, drawingDefsXml: string): string | null {
   let stylesDoc: Document;
   try {
@@ -2981,7 +2987,7 @@ export function patchOdtShapeDefs(originalStylesXml: string, drawingDefsXml: str
       if (
         child.namespaceURI === DRAW_NAMESPACE &&
         ODF_DRAWING_DEF_LOCAL_NAMES.has(child.localName) &&
-        (child.getAttributeNS(DRAW_NAMESPACE, "name") ?? "").startsWith("de")
+        MINTED_DEF_NAME.test(child.getAttributeNS(DRAW_NAMESPACE, "name") ?? "")
       ) {
         officeStyles.removeChild(child);
         changed = true;

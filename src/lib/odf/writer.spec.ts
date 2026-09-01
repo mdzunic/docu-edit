@@ -9,6 +9,7 @@ import {
   buildMetaXml,
   ODT_MIMETYPE,
   odtFileName,
+  patchOdtShapeDefs,
   UNTITLED_ODT_TITLE,
   writeOdt,
 } from "./writer";
@@ -529,6 +530,27 @@ describe("writeOdt — shape styling definitions in styles.xml (SPEC-073)", () =
     }
     expect(shape.fill?.kind).toBe("gradient");
     expect(shape.unsupportedStyleXml).toBeUndefined();
+  });
+
+  it("patchOdtShapeDefs removes only THIS editor's minted definitions — a foreign name merely starting with lowercase 'de' survives", () => {
+    // "decorative"/"delta" are foreign gradient names an .odt can legally
+    // carry; deleting them would strand any preserved shape that references
+    // them (never discard content we did not parse). Only the editor's own
+    // "de"+UpperCamelCase minting scheme (deGrad1, deDashDot, ...) is stale.
+    const stylesXml =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"' +
+      ' xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">' +
+      "<office:styles>" +
+      '<draw:gradient draw:name="decorative" draw:style="linear" draw:start-color="#101010" draw:end-color="#202020"/>' +
+      '<draw:gradient draw:name="de" draw:style="linear"/>' +
+      '<draw:gradient draw:name="deGrad1" draw:style="linear"/>' +
+      '<draw:stroke-dash draw:name="deDashDot"/>' +
+      "</office:styles></office:document-styles>";
+    const patched = patchOdtShapeDefs(stylesXml, "")!;
+    expect(patched).toContain('draw:name="decorative"');
+    expect(patched).toContain('draw:name="de"');
+    expect(patched).not.toContain("deGrad1");
+    expect(patched).not.toContain("deDashDot");
   });
 
   it("a picture fill writes the media part, the draw:fill-image definition and style:repeat, and reopens as a picture fill", async () => {
