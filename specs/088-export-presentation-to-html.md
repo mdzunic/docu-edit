@@ -35,7 +35,9 @@ in Node and stays in `src/lib/` per the repo's layering rule.
 
 ## Out of scope
 Print stylesheets / PDF-via-HTML, editing anything in the exported file,
-embedding video/audio (foreign frames stay placeholders), font
+~~embedding video/audio (foreign frames stay placeholders)~~ (superseded by
+SPEC-095: media embeds as `data:` URIs within `HTML_EXPORT_MEDIA_BUDGET_BYTES`,
+else exports as a poster plate captioned "Media omitted from this export"), font
 embedding/subsetting, notes rendered for a second screen, analytics or
 remote control, service workers, an index/overview grid, exporting a
 subset of slides, `.zip` multi-file export (single file only), RTL

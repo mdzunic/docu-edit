@@ -192,6 +192,14 @@ function applyMediaVolume(event = new Event("loadedmetadata")) {
 watch(mediaShouldAutoStart, (should) => {
   if (should) startPlayback();
 }, { immediate: true });
+// An exit effect (or any build) that hides the target pauses it (AC-41).
+watch(mediaBuildHidden, (hidden) => {
+  if (hidden && props.playbackMode) {
+    const el = mediaEl.value;
+    if (el instanceof HTMLMediaElement) el.pause();
+    mediaActivated.value = false;
+  }
+});
 // Deselecting stops editor inline playback (AC-21).
 watch(
   () => props.selected,
