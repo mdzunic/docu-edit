@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { shallowRef } from "vue";
 import { MAX_UNDO_STEPS, usePresentationUndo } from "./usePresentationUndo";
 import { addSlide, createBlankPresentation, deleteSlide } from "../../lib/presentation/slides";
+import { applyTheme } from "../../lib/presentation/theme";
+import { BUILT_IN_THEMES } from "../../lib/core/theme";
 import type { PresentationModel } from "../../lib/presentation/model";
 
 function setup() {
@@ -16,6 +18,27 @@ function setup() {
 }
 
 describe("usePresentationUndo", () => {
+  it("puts the old theme back on undo of an Apply theme — absent key deleted (SPEC-094 AC-35/36)", () => {
+    const { model, undo } = setup();
+    // An unthemed deck: apply → undo must DELETE the key, not leave a theme.
+    undo.record("Apply theme");
+    applyTheme(model.value!, BUILT_IN_THEMES[1]);
+    expect(model.value!.theme?.name).toBe("Facet");
+    undo.undo();
+    expect(model.value!.theme).toBeUndefined();
+    undo.redo();
+    expect(model.value!.theme?.name).toBe("Facet");
+
+    // A themed deck: a second apply undoes back to the FIRST theme, so the
+    // deck cannot be left recoloured.
+    undo.record("Apply theme");
+    applyTheme(model.value!, BUILT_IN_THEMES[2]);
+    expect(model.value!.theme?.name).toBe("Ion");
+    undo.undo();
+    expect(model.value!.theme?.name).toBe("Facet");
+    expect(model.value!.theme?.dirty).toBe(true); // still an edited theme
+  });
+
   it("undoes and redoes a structural command (AC-40/41)", () => {
     const { model, undo } = setup();
     expect(undo.canUndo.value).toBe(false);
