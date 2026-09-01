@@ -4,7 +4,7 @@
 // rotation-handle drag, keyboard nudge/duplicate, and z-order/grouping.
 // Mirrors useImages.ts's shape closely — see its own header comment for the
 // pattern this follows.
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, provide, ref, watch } from "vue";
 import {
   caretSelection,
   commitShapeModel,
@@ -53,8 +53,7 @@ import {
   rotateGroup,
   setShapeAdjustments,
   setShapeAltText,
-  setShapeFill,
-  setShapeOutline,
+  formatDrawings,
   setDrawingGeometry,
   type DrawingGeometry,
   setShapePath,
@@ -65,6 +64,7 @@ import {
   shapeHasVisibleText,
   shapesInPaintOrder,
   ungroupShapes,
+  type DrawingStylePatch,
   type ParagraphSpan,
   type ShapeLocation,
   type ZOrderCommand,
@@ -109,7 +109,18 @@ import {
 import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
 import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
-import { LINE_GEOMETRIES, asShapeGeometry, type ShapeFill, type ShapeGeometry, type ShapeOutline } from "../../lib/core/shapes";
+import {
+  LINE_GEOMETRIES,
+  SHAPE_STYLE_PRESETS,
+  asShapeGeometry,
+  shapeFillBaseColor,
+  type ShapeFill,
+  type ShapeGeometry,
+  type ShapeOutline,
+  type ShapeShadow,
+} from "../../lib/core/shapes";
+import { mediaDataUri } from "../../lib/core/media";
+import { ImageInsertError, prepareImageInsert } from "../../lib/imageInsert";
 import { useDrawingGuides } from "./useDrawingGuides";
 import type { CaretPosition } from "../../lib/textEditing";
 import type { CommandResult } from "../../lib/commands";
@@ -1002,20 +1013,213 @@ export function useShapes(deps: ShapesDeps) {
   }
 
   function handleShapeFill(fill: ShapeFill | undefined) {
-    const location = shapeSelection.value;
-    if (!location) {
-      return;
-    }
-    applyShapeEdit((model, selection) => setShapeFill(model, selection, location, fill), "shape fill");
+    applyStylePatch({ fill: fill ?? null }, "shape fill");
   }
 
   function handleShapeOutline(outline: ShapeOutline | undefined) {
+    applyStylePatch({ outline: outline ?? null }, "shape outline");
+  }
+
+  // --- SPEC-073 full styling: snapshot, fan-out, presets, previews ----------
+
+  /** The styling snapshot ShapeStylePanel renders (toolbar popover and the
+   * Format dialog both read it). */
+  function shapeToolbarStyling(): Record<string, unknown> {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    if (!shape) {
+      return {};
+    }
+    return {
+      fill: shape.fill,
+      outline: shape.outline,
+      shadow: shape.shadow,
+      isLine: LINE_GEOMETRIES.has(shape.geometry),
+      isContainer: shape.groupOrdinal !== undefined,
+    };
+  }
+
+  /** Applies a styling patch as exactly one labelled undo entry (AC-24):
+   * a multi-selection or a container fans out through formatDrawings —
+   * recursively to group members, sealed containers excluded, connectors
+   * outline-only (AC-26/27/28) — under the mandated "format drawings"
+   * label; a plain single selection keeps its specific label. */
+  function applyStylePatch(patch: DrawingStylePatch, label: string) {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    if (!model || !location) {
+      return;
+    }
+    const multi = shapeMultiSelection.value;
+    const seeds = multi.length >= 2 ? multi : [location];
+    const grouped =
+      multi.length >= 2 || shapeAt(model, location)?.groupOrdinal !== undefined;
+    applyShapeEdit(
+      (m, selection) => formatDrawings(m, selection, seeds, patch),
+      grouped ? "format drawings" : label,
+    );
+  }
+
+  function handleShapeShadow(shadow: ShapeShadow | undefined) {
+    applyStylePatch({ shadow: shadow ?? null }, "shape shadow");
+  }
+
+  /** One-click style preset (AC-18): the whole (fill, outline, shadow)
+   * triple in a single undo entry. */
+  function handleShapeStylePreset(id: string) {
+    const preset = SHAPE_STYLE_PRESETS.find((entry) => entry.id === id);
+    if (!preset) {
+      return;
+    }
+    applyStylePatch(
+      {
+        fill: preset.fill ? { ...preset.fill } : null,
+        outline: preset.outline ? { ...preset.outline } : null,
+        shadow: preset.shadow ? { ...preset.shadow } : null,
+      },
+      "shape style",
+    );
+  }
+
+  /** Live slider preview (AC-25): repaints the selected shape's own canvas
+   * with the patched visual without touching the model — the slider's
+   * `change` event then commits exactly once through applyStylePatch. */
+  function previewShapeStyle(patch: { fill?: ShapeFill; outline?: ShapeOutline }) {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    const root = contentRoot.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    if (!shape || !root || !location) {
+      return;
+    }
+    const el = root.querySelector(
+      `.doc-shape-anchor[data-section="${location.section}"][data-block="${location.block}"] .doc-shape`,
+    );
+    if (el instanceof HTMLElement) {
+      previewShapeCanvas(el, { ...shape, ...patch }, shape.widthCm, shape.heightCm);
+    }
+  }
+
+  function handlePreviewFill(fill: ShapeFill) {
+    previewShapeStyle({ fill });
+  }
+  function handlePreviewOutline(outline: ShapeOutline) {
+    previewShapeStyle({ outline });
+  }
+
+  /** Picture fill (AC-4): picks an image file through the SPEC-024 insert
+   * pipeline (same validation, same SVG conversion), registers the media
+   * part and sets the fill — one undo entry; the part is shared with any
+   * Image of the same bytes by the media walk on save. */
+  function handlePickPictureFill() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/svg+xml";
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (file) {
+        void applyPictureFill(file);
+      }
+    });
+    input.click();
+  }
+
+  async function applyPictureFill(file: File) {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    let prepared: Awaited<ReturnType<typeof prepareImageInsert>>;
+    try {
+      prepared = await prepareImageInsert(file, model.format === "odt" ? "odt" : "docx");
+    } catch (error) {
+      if (error instanceof ImageInsertError) {
+        deps.addToast(error.message);
+        return;
+      }
+      throw error;
+    }
     const location = shapeSelection.value;
     if (!location) {
       return;
     }
-    applyShapeEdit((model, selection) => setShapeOutline(model, selection, location, outline), "shape outline");
+    const target = location;
+    const media = prepared.media;
+    applyShapeEdit((m, selection) => {
+      const result = formatDrawings(m, selection, [target], {
+        fill: { kind: "picture", mediaId: media.mediaId, mode: "stretch" },
+      });
+      if (!result.model.media?.some((part) => part.mediaId === media.mediaId)) {
+        result.model.media = [
+          ...(result.model.media ?? []),
+          { mediaId: media.mediaId, contentType: media.contentType, data: media.data },
+        ];
+      }
+      return result;
+    }, "shape fill");
   }
+
+  // SPEC-073 picture-fill rendering: DocShapeBlock resolves a fill's mediaId
+  // to a data URI through this injection (absent outside the editor).
+  provide("shapeMediaSrc", (mediaId: string) =>
+    mediaDataUri(doc.value?.media?.find((part) => part.mediaId === mediaId)),
+  );
+
+  /** The Format → Drawing → Shape formatting… dialog (AC-17). */
+  const shapeFormatOpen = ref(false);
+  function openShapeFormat() {
+    if (shapeSelection.value) {
+      shapeFormatOpen.value = true;
+    }
+  }
+  watch(shapeSelection, (location) => {
+    if (!location) {
+      shapeFormatOpen.value = false;
+    }
+  });
+
+  /** Every display prop ShapeToolbarIsland's ShapeToolbar reads — one
+   * object so DocumentView's template stays a single wiring line. */
+  function shapeToolbarState(): Record<string, unknown> {
+    const model = doc.value;
+    const location = shapeSelection.value;
+    const shape = model && location ? shapeAt(model, location) : null;
+    return {
+      fill: shapeFillBaseColor(shape?.fill) || "",
+      outlineColor: shape?.outline?.color || "",
+      outlineWidthPt: shape?.outline?.widthPt ?? 1,
+      outlineDash: shape?.outline?.dash || "solid",
+      rotationDeg: shape?.rotationDeg ?? 0,
+      wrap: shape?.wrap || "inline",
+      altText: shape?.altText || "",
+      grouped: shape?.groupOrdinal !== undefined,
+      canGroup: canGroupSelection(),
+      styling: shapeToolbarStyling(),
+    };
+  }
+
+  /** The event-handler set both styling hosts (toolbar popover + dialog)
+   * share, bound with `v-on` in DocumentView. Kebab keys match the emitted
+   * event names. */
+  const shapeToolbarOn = {
+    fill: handleShapeFill,
+    outline: handleShapeOutline,
+    shadow: handleShapeShadow,
+    "style-preset": handleShapeStylePreset,
+    "preview-fill": handlePreviewFill,
+    "preview-outline": handlePreviewOutline,
+    "pick-picture": handlePickPictureFill,
+    rotation: handleShapeRotationInput,
+    wrap: handleShapeWrap,
+    "alt-text": handleShapeAltText,
+    "z-order": handleShapeZOrder,
+    group: () => handleGroupSelected(currentGroupMembers()),
+    ungroup: handleUngroupSelected,
+    options: openShapePosition,
+    delete: handleShapeDelete,
+    duplicate: handleShapeDuplicate,
+  };
 
   function handleShapeRotationInput(deg: number) {
     const location = shapeSelection.value;
@@ -2430,6 +2634,16 @@ export function useShapes(deps: ShapesDeps) {
     handleShapeNudge,
     handleShapeFill,
     handleShapeOutline,
+    handleShapeShadow,
+    handleShapeStylePreset,
+    handlePreviewFill,
+    handlePreviewOutline,
+    handlePickPictureFill,
+    shapeToolbarStyling,
+    shapeToolbarState,
+    shapeToolbarOn,
+    shapeFormatOpen,
+    openShapeFormat,
     handleShapeRotationInput,
     handleShapeWrap,
     handleShapeAltText,

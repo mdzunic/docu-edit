@@ -22,6 +22,7 @@ const emit = defineEmits([
 ]);
 
 const ARROWHEADS = ["none", "triangle", "open", "stealth", "diamond", "oval"];
+const ARROW_SIZES = ["small", "medium", "large"];
 const KINDS = ["straight", "elbow", "curved"];
 const WRAPS = ["square", "topAndBottom", "behind", "infront"];
 
@@ -57,6 +58,12 @@ function onStartArrow(event = new Event("change")) {
 }
 function onEndArrow(event = new Event("change")) {
   emit("set-arrowheads", { endArrow: valueOf(event) });
+}
+function onStartArrowSize(event = new Event("change")) {
+  emit("set-arrowheads", { startArrowSize: valueOf(event) });
+}
+function onEndArrowSize(event = new Event("change")) {
+  emit("set-arrowheads", { endArrowSize: valueOf(event) });
 }
 function onWrap(event = new Event("change")) {
   emit("set-wrap", valueOf(event));
@@ -120,6 +127,15 @@ function onAltText(event = new Event("input")) {
       <option value="dot">
         dot
       </option>
+      <option value="dashDot">
+        dashDot
+      </option>
+      <option value="longDash">
+        longDash
+      </option>
+      <option value="longDashDot">
+        longDashDot
+      </option>
     </select>
     <select
       data-testid="connector-start-arrow"
@@ -136,6 +152,20 @@ function onAltText(event = new Event("input")) {
       </option>
     </select>
     <select
+      data-testid="connector-start-arrow-size"
+      :value="model.startArrowSize ?? 'medium'"
+      aria-label="Start arrowhead size"
+      @change="onStartArrowSize"
+    >
+      <option
+        v-for="a in ARROW_SIZES"
+        :key="a"
+        :value="a"
+      >
+        {{ a }}
+      </option>
+    </select>
+    <select
       data-testid="connector-end-arrow"
       :value="model.endArrow ?? 'triangle'"
       aria-label="End arrowhead"
@@ -143,6 +173,20 @@ function onAltText(event = new Event("input")) {
     >
       <option
         v-for="a in ARROWHEADS"
+        :key="a"
+        :value="a"
+      >
+        {{ a }}
+      </option>
+    </select>
+    <select
+      data-testid="connector-end-arrow-size"
+      :value="model.endArrowSize ?? 'medium'"
+      aria-label="End arrowhead size"
+      @change="onEndArrowSize"
+    >
+      <option
+        v-for="a in ARROW_SIZES"
         :key="a"
         :value="a"
       >

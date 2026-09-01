@@ -25,7 +25,7 @@ import {
   type Section,
   type Shape,
 } from "./documentModel";
-import type { ArrowheadKind, ShapeOutline } from "./core/shapes";
+import type { ArrowheadKind, ArrowheadSize, ShapeOutline } from "./core/shapes";
 import {
   clampSite,
   clipCentreSite,
@@ -505,7 +505,12 @@ export function setConnectorArrowheads(
   model: DocumentModel,
   selection: ModelSelection,
   location: ConnectorLocation,
-  ends: { startArrow?: ArrowheadKind; endArrow?: ArrowheadKind },
+  ends: {
+    startArrow?: ArrowheadKind;
+    endArrow?: ArrowheadKind;
+    startArrowSize?: ArrowheadSize;
+    endArrowSize?: ArrowheadSize;
+  },
 ): CommandResult {
   return editConnector(model, selection, location, (c) => {
     if (ends.startArrow !== undefined) {
@@ -513,6 +518,12 @@ export function setConnectorArrowheads(
     }
     if (ends.endArrow !== undefined) {
       c.endArrow = ends.endArrow;
+    }
+    if (ends.startArrowSize !== undefined) {
+      c.startArrowSize = ends.startArrowSize;
+    }
+    if (ends.endArrowSize !== undefined) {
+      c.endArrowSize = ends.endArrowSize;
     }
   });
 }

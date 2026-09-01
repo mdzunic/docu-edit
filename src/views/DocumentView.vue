@@ -28,7 +28,7 @@ import HeaderFooterOptionsDialog from "../components/HeaderFooterOptionsDialog.v
 import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
-import ShapeToolbar from "../components/ShapeToolbar.vue";
+import ShapeToolbarIsland from "../components/ShapeToolbarIsland.vue";
 import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
 import FreeformDrawPreview from "../components/FreeformDrawPreview.vue";
 import PointEditOverlay from "../components/PointEditOverlay.vue";
@@ -353,7 +353,7 @@ import {
 import { pxToCm } from "../lib/core/units";
 import { prepareImageInsert, ImageInsertError } from "../lib/imageInsert";
 import { shapeAt } from "../lib/shapes";
-import { asNudgeDirection, shapeFillBaseColor } from "../lib/core/shapes";
+import { asNudgeDirection } from "../lib/core/shapes";
 import { chartAt } from "../lib/charts";
 import {
   asImageHandle,
@@ -782,12 +782,7 @@ const {
   handleShapeDelete,
   handleShapeDuplicate,
   handleShapeNudge,
-  handleShapeFill,
-  handleShapeOutline,
-  handleShapeRotationInput,
-  handleShapeWrap,
-  handleShapeAltText,
-  handleShapeZOrder,
+  shapeToolbarState, shapeToolbarOn, shapeFormatOpen, openShapeFormat,
   shapePositionOpen,
   shapePositionInitial,
   openShapePosition,
@@ -3180,6 +3175,7 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ...drawingArrange.commands,
   // Format → Drawing → Position and size… (SPEC-072 AC-35).
   ["drawing.position-size", openShapePosition],
+  ["drawing.shape-formatting", openShapeFormat],
   ["format.multilevel-link-headings", handleLinkHeadingNumbering],
   ["format.multilevel-define-list", openDefineList],
   ["format.text-color", openTextColorMenu],
@@ -4007,43 +4003,19 @@ function handleMenuCommand(id = "") {
         @delete="deleteImageWithCaptionPrompt"
       />
     </ContextualToolbar>
-    <ContextualToolbar
+    <ShapeToolbarIsland
       v-if="shapeSelection && shapeHandles && doc && shapeAt(doc, shapeSelection) && !movingShape"
-      class="print-exclude"
-      testid="shape-toolbar"
-      label="Shape formatting"
-      :left="shapeToolbarStyle().left"
-      :top="shapeToolbarStyle().top"
-      :lift="shapeToolbarStyle().placement === 'above'"
-    >
-      <ShapeToolbar
-        :fill="shapeFillBaseColor(shapeAt(doc, shapeSelection)?.fill) || ''"
-        :outline-color="shapeAt(doc, shapeSelection)?.outline?.color || ''"
-        :outline-width-pt="shapeAt(doc, shapeSelection)?.outline?.widthPt ?? 1"
-        :outline-dash="shapeAt(doc, shapeSelection)?.outline?.dash || 'solid'"
-        :rotation-deg="shapeAt(doc, shapeSelection)?.rotationDeg ?? 0"
-        :wrap="shapeAt(doc, shapeSelection)?.wrap || 'inline'"
-        :alt-text="shapeAt(doc, shapeSelection)?.altText || ''"
-        :grouped="shapeAt(doc, shapeSelection)?.groupOrdinal !== undefined"
-        :can-group="canGroupSelection()"
-        :can-align="!drawingArrange.alignDisabledReason.value"
-        :can-distribute="!drawingArrange.distributeDisabledReason.value"
-        @align="(edge) => editorCommands.get(`drawing.align-${edge}`)?.()"
-        @distribute="(axis) => editorCommands.get(`drawing.distribute-${axis}`)?.()"
-        @fill="handleShapeFill"
-        @outline="handleShapeOutline"
-        @rotation="handleShapeRotationInput"
-        @wrap="handleShapeWrap"
-        @alt-text="handleShapeAltText"
-        @z-order="handleShapeZOrder"
-        @group="handleGroupSelected(currentGroupMembers())"
-        @ungroup="handleUngroupSelected"
-        @options="openShapePosition"
-        @delete="handleShapeDelete"
-        @duplicate="handleShapeDuplicate"
-        @edit-points="pointEdit.enter"
-      />
-    </ContextualToolbar>
+      :box="shapeToolbarStyle()"
+      :state="shapeToolbarState()"
+      :format-dialog-open="shapeFormatOpen"
+      :can-align="!drawingArrange.alignDisabledReason.value"
+      :can-distribute="!drawingArrange.distributeDisabledReason.value"
+      v-on="shapeToolbarOn"
+      @align="(edge = '') => editorCommands.get(`drawing.align-${edge}`)?.()"
+      @distribute="(axis = '') => editorCommands.get(`drawing.distribute-${axis}`)?.()"
+      @edit-points="pointEdit.enter"
+      @format-dismiss="shapeFormatOpen = false"
+    />
     <ContextualToolbar
       v-if="chartSelection && chartHandles && doc && chartAt(doc, chartSelection)"
       class="print-exclude"

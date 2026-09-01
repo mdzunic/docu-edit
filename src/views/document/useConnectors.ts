@@ -21,7 +21,7 @@ import {
   type ConnectorKind,
   type DocumentModel,
 } from "../../lib/documentModel";
-import type { ArrowheadKind, ShapeOutline } from "../../lib/core/shapes";
+import type { ArrowheadKind, ArrowheadSize, ShapeOutline } from "../../lib/core/shapes";
 import {
   clampSite,
   connectionSitePoint,
@@ -722,7 +722,12 @@ export function useConnectors(deps: ConnectorsDeps) {
     applyConnectorEdit((model, before) => setConnectorOutline(model, before, location, outline), "connector outline");
   }
 
-  function setArrowheads(ends: { startArrow?: ArrowheadKind; endArrow?: ArrowheadKind }) {
+  function setArrowheads(ends: {
+    startArrow?: ArrowheadKind;
+    endArrow?: ArrowheadKind;
+    startArrowSize?: ArrowheadSize;
+    endArrowSize?: ArrowheadSize;
+  }) {
     const location = selected.value;
     if (!location) {
       return;
