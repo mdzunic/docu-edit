@@ -15,6 +15,7 @@ import { useFrameSelection } from "./useFrameSelection";
 import { useSlideTextEditing, type CaretPoint } from "./useSlideTextEditing";
 import { useFrameInsertion } from "./useFrameInsertion";
 import { useFrameManipulation } from "./useFrameManipulation";
+import { useFrameArrange } from "./useFrameArrange";
 import type { ResizeHandle } from "./stageMath";
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -80,17 +81,34 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     commit: deps.commit,
   });
 
+  // Marquee + align/distribute + group/release + Position & Size (SPEC-096),
+  // re-exported as stageEdit.arrange so the view gains only template hookups.
+  const arrange = useFrameArrange({
+    model: deps.model,
+    currentSlide: deps.currentSlide,
+    currentIndex: deps.currentIndex,
+    selection,
+    surface,
+    record: deps.record,
+    refresh: deps.refresh,
+    commit: deps.commit,
+  });
+
   function registerSurface(el: HTMLElement | null): void {
     surfaceEl.value = el;
   }
 
   // --- style popover commands (one undo entry per commit, AC-42) ------------
+  // SPEC-096: fill/stroke apply to EVERY selected frame that supports them
+  // (the commands skip unsupported kinds by returning null), still one entry.
   function withSelected(label: string, apply: (model: PresentationModel, index: number, id: string) => void): void {
     const model = deps.model.value;
-    const id = selection.selectedFrameId.value;
-    if (!model || !id) return;
+    const ids = selection.selectedFrameIds.value;
+    if (!model || ids.length === 0) return;
     deps.record(label);
-    apply(model, deps.currentIndex.value, id);
+    for (const id of ids) {
+      apply(model, deps.currentIndex.value, id);
+    }
     deps.commit();
   }
   function setFill(fill: SlideFill): void {
@@ -124,13 +142,23 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     chartEditHandler = fn;
   }
 
-  function onFrameSelect(id: string): void {
+  function onFrameSelect(id: string, event?: MouseEvent): void {
+    // Shift+click membership is handled by the pointerdown path (toggle) —
+    // the trailing mousedown must not collapse it (SPEC-096 AC-2).
+    if (event?.shiftKey) return;
     if (editing.editingFrameId.value && editing.editingFrameId.value !== id) {
       editing.stopEditing();
     }
-    selection.select(id);
+    // A plain press on a frame already inside a multi-selection keeps the set
+    // (so a drag moves all of it); anything else selects that one frame.
+    if (!selection.isSelected(id)) {
+      selection.select(id);
+    }
   }
   function onStartEdit(id: string, point?: CaretPoint): void {
+    // Enter / double-click collapses a multi-selection to the one frame
+    // before starting its session (SPEC-096 AC-22).
+    selection.select(id);
     const frame = deps.currentSlide.value?.frames.find((f) => f.id === id);
     if (frame?.kind === "chart") {
       chartEditHandler?.(id);
@@ -148,8 +176,14 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     editing.focusCell(id, row, col);
   }
   function onSurfaceDeselect(): void {
+    // A press on empty stage stops any text session immediately; the
+    // SELECTION only clears on release, through the marquee gesture (a
+    // sub-threshold release is the plain deselecting click — SPEC-096).
     if (editing.editingFrameId.value) editing.stopEditing();
-    selection.clear();
+  }
+  /** Pointer-down on empty stage while no tool is armed: the marquee. */
+  function onSurfaceMarquee(event: PointerEvent): void {
+    arrange.onSurfacePointerDown(event);
   }
 
   function setColor(color: ModelColor): void {
@@ -174,6 +208,21 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     if (editing.editingFrameId.value) return;
     if (isTypingTarget(event.target)) return;
 
+    const mod = event.metaKey || event.ctrlKey;
+    // Cmd/Ctrl+A selects every frame on the slide (SPEC-096 AC-3).
+    if (mod && !event.shiftKey && (event.key === "a" || event.key === "A")) {
+      event.preventDefault();
+      selection.selectAll();
+      return;
+    }
+    // Cmd/Ctrl+Shift+G routes through arrange so releasing a rotated
+    // VERBATIM group parks in the pendingRelease confirm (SPEC-096 AC-42).
+    if (mod && event.shiftKey && (event.key === "g" || event.key === "G") && selection.selectedFrameIds.value.length > 0) {
+      event.preventDefault();
+      arrange.ungroup();
+      return;
+    }
+
     // SPEC-082 manipulation keys (nudge / delete / duplicate / ungroup).
     if (manipulation.onKeydown(event)) return;
 
@@ -183,12 +232,16 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
       return;
     }
     if (event.key === "Enter" && selection.selectedFrameId.value !== null) {
-      const frame = selection.selectedFrame.value;
+      const frame = selection.anchorFrame.value;
       if (frame && frame.kind === "text") {
         event.preventDefault();
+        // Collapse a multi-selection to the one frame before its session
+        // starts (SPEC-096 AC-22).
+        selection.select(frame.id);
         editing.startEditing(frame.id);
       } else if (frame && frame.kind === "table") {
         event.preventDefault();
+        selection.select(frame.id);
         const cell = editing.activeCell.value;
         editing.startEditingCell(frame.id, cell?.row ?? 0, cell?.col ?? 0);
       }
@@ -223,12 +276,14 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     editing,
     insertion,
     manipulation,
+    arrange,
     recentColors: computed(() => recentColors.value),
     onFrameSelect,
     onStartEdit,
     onStartEditCell,
     onCellSelect,
     onSurfaceDeselect,
+    onSurfaceMarquee,
     onSurfaceDraw,
     onFramePointerDown,
     onHandlePointerDown,

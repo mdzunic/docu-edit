@@ -212,3 +212,176 @@ describe("useFrameManipulation table boundary drag (AC-8)", () => {
     expect(record).not.toHaveBeenCalled();
   });
 });
+
+// --- SPEC-096: multi-selection commands, rotate + adjust gestures -----------
+
+import type { ShapeFrame } from "../../lib/presentation/model";
+
+function multiSetup() {
+  const model = shallowRef<PresentationModel | null>(createBlankPresentation());
+  model.value!.slides[0].frames = [];
+  const currentIndex = shallowRef(0);
+  const currentSlide = computed(() => model.value?.slides[0] ?? null);
+  const selection = useFrameSelection({ currentSlide });
+  const record = vi.fn();
+  const commit = vi.fn();
+  const surface = {
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width: model.value!.slideWidthCm,
+      height: model.value!.slideHeightCm,
+    }),
+  } as unknown as HTMLElement;
+  const manip = useFrameManipulation({
+    model,
+    currentSlide,
+    currentIndex,
+    selection,
+    isEditing: () => false,
+    surface: () => surface,
+    record,
+    refresh: vi.fn(),
+    commit,
+  });
+  const at = (id: string) => model.value!.slides[0].frames.find((f) => f.id === id)!;
+  const add = (x: number, y: number) => insertShapeFrame(model.value!, 0, "rect", { xCm: x, yCm: y, widthCm: 2, heightCm: 2 })!;
+  return { model, selection, manip, record, commit, at, add };
+}
+
+describe("useFrameManipulation multi-selection (SPEC-096)", () => {
+  it("an arrow nudge moves every selected frame by the same delta in ONE entry", () => {
+    const { selection, manip, record, commit, at, add } = multiSetup();
+    const a = add(2, 2);
+    const b = add(6, 6);
+    selection.selectMany([a, b]);
+    manip.onKeydown(key({ key: "ArrowRight" }));
+    expect(at(a).xCm).toBeCloseTo(2.1, 3);
+    expect(at(b).xCm).toBeCloseTo(6.1, 3);
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith("Move 2 objects");
+    expect(commit).toHaveBeenCalledTimes(1);
+    // Both frames stay selected.
+    expect(selection.selectedFrameIds.value).toEqual([a, b]);
+  });
+
+  it("Cmd/Ctrl+D duplicates the whole selection and leaves the COPIES selected", () => {
+    const { model, selection, manip, at, add } = multiSetup();
+    const a = add(2, 2);
+    const b = add(6, 6);
+    selection.selectMany([a, b]);
+    manip.onKeydown(key({ key: "d", ctrlKey: true }));
+    expect(model.value!.slides[0].frames).toHaveLength(4);
+    const copies = selection.selectedFrameIds.value;
+    expect(copies).toHaveLength(2);
+    expect(copies).not.toContain(a);
+    expect(copies).not.toContain(b);
+    expect(at(copies[0]).xCm).toBeCloseTo(2.5, 3);
+  });
+
+  it("Delete removes every selected frame, animations dropped per target", () => {
+    const { model, selection, manip, add } = multiSetup();
+    const a = add(2, 2);
+    const b = add(6, 6);
+    const keep = add(12, 12);
+    model.value!.slides[0].animations = [
+      { frameId: a, effect: "appear", trigger: "click" },
+      { frameId: keep, effect: "fadeIn", trigger: "click" },
+    ];
+    selection.selectMany([a, b]);
+    manip.onKeydown(key({ key: "Delete" }));
+    expect(model.value!.slides[0].frames.map((f) => f.id)).toEqual([keep]);
+    expect(model.value!.slides[0].animations).toEqual([{ frameId: keep, effect: "fadeIn", trigger: "click" }]);
+  });
+
+  it("arrange moves the multi-selection as one contiguous block", () => {
+    const { model, selection, manip, add } = multiSetup();
+    const a = add(1, 1);
+    const b = add(4, 1);
+    const c = add(7, 1);
+    selection.selectMany([a, c]);
+    manip.arrange("front");
+    expect(model.value!.slides[0].frames.map((f) => f.id)).toEqual([b, a, c]);
+  });
+});
+
+describe("useFrameManipulation rotate gesture (SPEC-096)", () => {
+  it("drags rotationDeg to the pointer angle, one undo entry, readout live", () => {
+    const { selection, manip, record, commit, at, add } = multiSetup();
+    const a = add(10, 10); // centre (11, 11)
+    selection.select(a);
+    manip.onRotateHandlePointerDown(a, ptr("pointerdown", 11, 9));
+    // Pointer due east of the centre → atan2 = 0° + 90 = 90°.
+    window.dispatchEvent(ptr("pointermove", 15, 11));
+    expect(at(a).rotationDeg).toBe(90);
+    expect(manip.rotatingDeg.value).toBe(90);
+    expect(record).not.toHaveBeenCalled(); // records only on release
+    window.dispatchEvent(ptr("pointerup", 15, 11));
+    expect(at(a).rotationDeg).toBe(90);
+    expect(manip.rotatingDeg.value).toBeNull();
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("Shift snaps to the nearest multiple of 15°", () => {
+    const { selection, manip, at, add } = multiSetup();
+    const a = add(10, 10);
+    selection.select(a);
+    manip.onRotateHandlePointerDown(a, ptr("pointerdown", 11, 9));
+    // ~97° unsnapped → 105 with Shift (97/15 = 6.47 → 6…? 97→ round(6.47)=6 → 90).
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 15, clientY: 11.5, shiftKey: true }) as unknown as PointerEvent);
+    expect((at(a).rotationDeg ?? 0) % 15).toBe(0);
+    window.dispatchEvent(ptr("pointerup", 15, 11.5));
+  });
+
+  it("Escape mid-drag restores the starting angle and records nothing", () => {
+    const { selection, manip, record, at, add } = multiSetup();
+    const a = add(10, 10);
+    selection.select(a);
+    manip.onRotateHandlePointerDown(a, ptr("pointerdown", 11, 9));
+    window.dispatchEvent(ptr("pointermove", 15, 11));
+    expect(at(a).rotationDeg).toBe(90);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(at(a).rotationDeg).toBeUndefined();
+    expect(manip.rotatingDeg.value).toBeNull();
+    window.dispatchEvent(ptr("pointerup", 15, 11));
+    expect(record).not.toHaveBeenCalled();
+  });
+});
+
+describe("useFrameManipulation adjustment handles (SPEC-096)", () => {
+  function roundRectSetup() {
+    const s = multiSetup();
+    const id = insertShapeFrame(s.model.value!, 0, "roundRect", { xCm: 4, yCm: 4, widthCm: 8, heightCm: 4 })!;
+    s.selection.select(id);
+    return { ...s, id };
+  }
+
+  it("dragging a handle stores the fraction live and commits one entry", () => {
+    const { manip, record, commit, at, id } = roundRectSetup();
+    manip.onAdjustPointerDown(id, 0, ptr("pointerdown", 4, 4));
+    // roundRect's corner-radius adjustment rides the x axis: pointer at 30%
+    // of the width.
+    window.dispatchEvent(ptr("pointermove", 4 + 8 * 0.3, 4));
+    const live = (at(id) as ShapeFrame).adjustments![0];
+    expect(live).toBeCloseTo(0.3, 2);
+    expect(record).not.toHaveBeenCalled();
+    window.dispatchEvent(ptr("pointerup", 4 + 8 * 0.3, 4));
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith("Adjust shape");
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect((at(id) as ShapeFrame).adjustments![0]).toBeCloseTo(0.3, 2);
+  });
+
+  it("arrow keys nudge by 1% of the range, Shift by 5%, one entry per press", () => {
+    const { manip, record, at, id } = roundRectSetup();
+    const before = (at(id) as ShapeFrame).adjustments?.[0] ?? 0.1667;
+    expect(manip.onAdjustKeydown(id, 0, key({ key: "ArrowRight" }))).toBe(true);
+    const spec = { min: 0, max: 0.5 }; // roundRect corner radius range
+    const oneStep = (spec.max - spec.min) * 0.01;
+    expect((at(id) as ShapeFrame).adjustments![0]).toBeCloseTo(before + oneStep, 4);
+    manip.onAdjustKeydown(id, 0, key({ key: "ArrowRight", shiftKey: true }));
+    expect((at(id) as ShapeFrame).adjustments![0]).toBeCloseTo(before + oneStep + oneStep * 5, 4);
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+});
