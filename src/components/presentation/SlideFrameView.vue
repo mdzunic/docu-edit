@@ -173,9 +173,11 @@ watch(
 
 function onFrameMousedown(event = new MouseEvent("mousedown")) {
   // Select on pointer-down (before focus moves); editing swallows its own.
+  // The event rides along so Shift+click toggling (SPEC-096) is not
+  // collapsed by this trailing mousedown.
   if (props.editing) return;
   event.stopPropagation();
-  emit("select", frame.value.id);
+  emit("select", frame.value.id, event);
 }
 
 function onFrameDblclick(event = new MouseEvent("dblclick")) {

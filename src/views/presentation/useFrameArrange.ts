@@ -19,6 +19,8 @@ import {
 } from "../../lib/presentation/frames";
 import { alignRects, distributeRects, type AlignEdge, type AlignReference, type Rect } from "../../lib/core/arrange";
 import { normalizeRotationDeg } from "../../lib/core/shapes";
+import { asMeasurementUnit } from "../../lib/core/units";
+import { usePreferences } from "../../composables/usePreferences";
 import type { FrameSelection } from "./useFrameSelection";
 import { clientToCm, DRAG_ENGAGE_CM } from "./stageMath";
 
@@ -70,6 +72,9 @@ export function useFrameArrange(deps: FrameArrangeDeps) {
   const alignReference = ref<AlignReference>("selection");
   /** Position & Size dialog visibility. */
   const positionOpen = ref(false);
+  /** The measurement unit the dialog's fields read/write in. */
+  const { preferences } = usePreferences();
+  const unit = computed(() => asMeasurementUnit(preferences.measurementUnit));
 
   const selectedCount = computed(() => deps.selection.selectedFrameIds.value.length);
   const canDistribute = computed(() => selectedCount.value >= 3);
@@ -295,6 +300,7 @@ export function useFrameArrange(deps: FrameArrangeDeps) {
     pendingRelease,
     alignReference,
     positionOpen,
+    unit,
     selectedCount,
     canDistribute,
     distributeReason,

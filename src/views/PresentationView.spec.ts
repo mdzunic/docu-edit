@@ -234,7 +234,13 @@ describe("PresentationView text editing (SPEC-081)", () => {
     const { wrapper } = await mountWith(await freshDeck());
     await frames(wrapper)[0].trigger("mousedown");
     expect(frames(wrapper)[0].classes()).toContain("is-selected");
+    // SPEC-096: a click on empty stage deselects on RELEASE — the press
+    // starts the marquee gesture, and a release still under the drag
+    // threshold is the plain deselecting click (SPEC-082's behaviour kept).
+    await stage(wrapper).get(".stage-surface").trigger("pointerdown", { clientX: 5, clientY: 5 });
     await stage(wrapper).get(".stage-surface").trigger("mousedown");
+    window.dispatchEvent(new MouseEvent("pointerup", { clientX: 5, clientY: 5 }));
+    await flushPromises();
     expect(frames(wrapper)[0].classes()).not.toContain("is-selected");
   });
 

@@ -91,6 +91,12 @@ export function asSlide(value: unknown): Slide {
 export function asSlideFrame(value: unknown): SlideFrame {
   return value as SlideFrame;
 }
+export function asSlideFrames(value: unknown): SlideFrame[] {
+  return (value ?? []) as SlideFrame[];
+}
+export function asStrings(value: unknown): string[] {
+  return (value ?? []) as string[];
+}
 export function asMediaParts(value: unknown): MediaPart[] {
   return (value ?? []) as MediaPart[];
 }

@@ -11,7 +11,8 @@
 import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import SlideFrameView from "./SlideFrameView.vue";
 import FrameSelectionOverlay from "./FrameSelectionOverlay.vue";
-import { asMediaParts, asSlide, asStageFields, asTheme, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
+import SelectionBoundsOverlay from "./SelectionBoundsOverlay.vue";
+import { asMediaParts, asSlide, asStageFields, asStrings, asTheme, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
 
 const props = defineProps({
   /** The Slide to render (presentation model). */
@@ -27,6 +28,13 @@ const props = defineProps({
   /** SPEC-081 selection/editing overlays (the filmstrip thumbnails pass
    * neither, so they stay read-only). */
   selectedFrameId: { type: String, default: null },
+  /** SPEC-096: the whole multi-selection (z-order stable). Two or more draw
+   * selection-bounds in place of frame-selection. */
+  selectedFrameIds: { type: Array, default: () => [] },
+  /** SPEC-096: the live marquee box (slide cm), or null. */
+  marquee: { type: Object, default: null },
+  /** SPEC-096: the live rotation readout angle, or null. */
+  rotatingDeg: { type: Number, default: null },
   editingFrameId: { type: String, default: null },
   /** SPEC-091: the cell of the editing table currently in a session, so its
    * `<td>` renders the in-cell contenteditable host. */
@@ -61,25 +69,32 @@ const emit = defineEmits([
   "table-border-pointerdown",
   "frame-pointerdown",
   "handle-pointerdown",
+  "rotate-pointerdown",
+  "adjust-pointerdown",
+  "adjust-keydown",
   "edit-mounted",
   "edit-unmounted",
   "surface-pointerdown",
   "surface-draw",
+  "surface-marquee",
   "surface-mounted",
 ]);
 
 function onSurfaceMousedown() {
-  // Frames stop propagation on their own pointer-down, so this only fires for a
-  // click on empty surface — deselect (AC-4). Draw gestures are handled on
-  // pointerdown (onSurfacePointerdown) before this fires.
+  // Frames stop propagation on their own pointer-down, so this only fires for
+  // a click on empty surface — it stops any text session (AC-4); the
+  // SELECTION clears on release through the marquee gesture (SPEC-096: a
+  // sub-threshold release is the plain deselecting click).
   emit("surface-pointerdown");
 }
 
 function onSurfacePointerdown(event = new PointerEvent("pointerdown")) {
   // While a tool is armed, a pointerdown on the empty surface starts a draw
-  // gesture; the parent stops propagation so the mousedown deselect is skipped.
+  // gesture; otherwise it starts the marquee (SPEC-096).
   if (props.armed) {
     emit("surface-draw", event);
+  } else {
+    emit("surface-marquee", event);
   }
 }
 
@@ -93,8 +108,21 @@ const slide = computed(() => asSlide(props.slide));
 const frames = computed(() => slide.value.frames);
 const stageFieldList = computed(() => asStageFields(props.fields));
 const resolveMedia = computed(() => mediaResolver(asMediaParts(props.media)));
+const selectedIds = computed(() => asStrings(props.selectedFrameIds));
+const selectedFrames = computed(() => frames.value.filter((frame) => selectedIds.value.includes(frame.id)));
 const selectedFrame = computed(() => frames.value.find((frame) => frame.id === props.selectedFrameId) ?? null);
-const showOverlay = computed(() => selectedFrame.value !== null && props.editingFrameId !== selectedFrame.value?.id);
+// Exactly one selected frame shows the handle chrome; two or more show
+// selection-bounds instead — no resize/rotate/adjust handles (SPEC-096).
+const showOverlay = computed(
+  () => selectedFrames.value.length <= 1 && selectedFrame.value !== null && props.editingFrameId !== selectedFrame.value?.id,
+);
+const showBounds = computed(() => selectedFrames.value.length >= 2);
+
+const marqueeStyle = computed(() => {
+  const m = props.marquee;
+  if (!m) return null;
+  return { left: cmPx(m.xCm), top: cmPx(m.yCm), width: cmPx(m.widthCm), height: cmPx(m.heightCm) };
+});
 
 const viewportStyle = computed(() => ({
   width: cmPx(props.widthCm * props.scale),
@@ -134,14 +162,14 @@ const previewStyle = computed(() => {
         :key="frame.id"
         :frame="frame"
         :resolve-media="resolveMedia"
-        :selected="frame.id === selectedFrameId"
+        :selected="frame.id === selectedFrameId || selectedIds.includes(frame.id)"
         :editing="frame.id === editingFrameId"
         :editing-cell="frame.id === editingFrameId ? editingCell : undefined"
         :armed="armed"
         :top-level="interactive"
         :play-style="frameStyles[frame.id] || null"
         :theme="theme"
-        @select="(id) => emit('frame-select', id)"
+        @select="(id, ev) => emit('frame-select', id, ev)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @start-edit-cell="(id, row, col, point) => emit('frame-start-edit-cell', id, row, col, point)"
         @cell-select="(id, row, col) => emit('frame-cell-select', id, row, col)"
@@ -164,8 +192,23 @@ const previewStyle = computed(() => {
         :guides="guides"
         :width-cm="widthCm"
         :height-cm="heightCm"
+        :rotating-deg="rotatingDeg"
         @handle-pointerdown="(handle, event) => emit('handle-pointerdown', selectedFrameId, handle, event)"
+        @rotate-pointerdown="(event) => emit('rotate-pointerdown', selectedFrameId, event)"
+        @adjust-pointerdown="(index, event) => emit('adjust-pointerdown', selectedFrameId, index, event)"
+        @adjust-keydown="(index, event) => emit('adjust-keydown', selectedFrameId, index, event)"
         @edit-request="(point) => emit('frame-start-edit', selectedFrameId, point)"
+      />
+      <SelectionBoundsOverlay
+        v-if="showBounds"
+        :frames="selectedFrames"
+      />
+      <div
+        v-if="marqueeStyle"
+        class="marquee-box"
+        data-testid="marquee-box"
+        aria-hidden="true"
+        :style="marqueeStyle"
       />
       <div
         v-if="previewStyle"
@@ -207,6 +250,13 @@ const previewStyle = computed(() => {
   position: absolute;
   border: var(--border-width) dashed var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.marquee-box {
+  position: absolute;
+  border: var(--border-width) solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   pointer-events: none;
 }
 
