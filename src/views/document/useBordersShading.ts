@@ -6,7 +6,7 @@
 // DocumentView keeps only the `useBordersShading({ ...editorContext, ... })`
 // wiring call and the template hookup; every decision lives here or in
 // lib/paragraphBorders.ts.
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { applyParagraphBorders, type ModelSelection } from "../../lib/commands";
 import { firstTouchedFormatting } from "../../lib/commands.paragraph";
 import type { ParagraphBorders } from "../../lib/documentModel";
@@ -29,8 +29,20 @@ export function useBordersShading(deps: BordersShadingDeps) {
   const bordersDialogOpen = ref(false);
 
   /** The dialog's seed: the borders and shading of the first paragraph the
-   * selection touches, so reopening it shows what is already applied. */
-  const bordersDialogInitial = computed(() => {
+   * selection touches, so reopening it shows what is already applied.
+   *
+   * A plain ref written by openBordersDialog, NOT a computed: the seed is
+   * derived from the DOM selection (`paragraphSelection` reads
+   * `document.getSelection()` and the view's caret), which Vue cannot track,
+   * so a computed would only re-run when `doc` or `contentRoot` changed.
+   * Moving the caret between two opens without editing left it cached on
+   * the previously inspected paragraph — and OK then stamped THAT
+   * paragraph's borders onto the new selection. Same convention as
+   * usePageSetupDialogs.openPageSetup, which seeds its prefill on open. */
+  const bordersDialogInitial = ref<{ borders?: ParagraphBorders; shadingFill?: string }>({});
+
+  /** The seed for the selection as it is right now. */
+  function currentInitial(): { borders?: ParagraphBorders; shadingFill?: string } {
     const model = doc.value;
     if (!model) {
       return {};
@@ -38,12 +50,14 @@ export function useBordersShading(deps: BordersShadingDeps) {
     const root = contentRoot.value as HTMLElement | null;
     const formatting = firstTouchedFormatting(model, deps.paragraphSelection(root));
     return { borders: formatting.borders, shadingFill: formatting.shadingFill };
-  });
+  }
 
   function openBordersDialog(): void {
     if (!doc.value || !editable.value) {
       return;
     }
+    // Seed at the moment of opening, from the live selection (see above).
+    bordersDialogInitial.value = currentInitial();
     bordersDialogOpen.value = true;
   }
 

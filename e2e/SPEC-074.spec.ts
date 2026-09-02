@@ -409,3 +409,54 @@ test("a bordered paragraph split across a page break keeps its sides, top and bo
   expect(await styleOf(firstFragment, "border-bottom-style")).toBe("none");
   expect(await styleOf(lastFragment, "border-bottom-style")).toBe("solid");
 });
+
+test("reopening Borders and shading after only moving the caret prefills from the NEW paragraph (AC-6, AC-11)", async ({ page }) => {
+  await createDocument(page);
+  const editor = content(page);
+  await editor.click();
+  await page.keyboard.type("Boxed paragraph");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Plain paragraph");
+
+  const boxed = paragraphStarting(page, "Boxed paragraph");
+  const plain = paragraphStarting(page, "Plain paragraph");
+  const dialog = page.getByTestId("borders-shading-dialog");
+
+  async function openDialog(): Promise<void> {
+    await page.getByTestId("menu-title-format").click();
+    await page.getByTestId("format-menu-borders").click();
+    await expect(dialog).toBeVisible();
+  }
+
+  // Box and fill the first paragraph only.
+  await boxed.click();
+  await openDialog();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-apply").click();
+  await expect(dialog).toBeHidden();
+  expect(await styleOf(boxed, "border-left-style")).toBe("solid");
+
+  // Inspect the boxed paragraph and cancel — the seed now reads "box".
+  await boxed.click();
+  await openDialog();
+  await expect(page.getByTestId("borders-preset-box")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("borders-cancel").click();
+  await expect(dialog).toBeHidden();
+
+  // The regression: move the caret to the plain paragraph with NO edit in
+  // between and reopen. The dialog must show what THIS paragraph has —
+  // nothing — not the previous paragraph's box and fill.
+  await plain.click();
+  await openDialog();
+  await expect(page.getByTestId("borders-preset-none")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("borders-shading-on")).not.toBeChecked();
+
+  // ...so an OK that only adds a fill does not also stamp a box onto it.
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-apply").click();
+  await expect(dialog).toBeHidden();
+  expect(await styleOf(plain, "border-left-style")).toBe("none");
+  expect(await styleOf(plain, "background-color")).not.toBe("rgba(0, 0, 0, 0)");
+  expect(await styleOf(boxed, "border-left-style")).toBe("solid");
+});
