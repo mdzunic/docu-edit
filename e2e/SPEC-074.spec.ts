@@ -526,3 +526,82 @@ test("a paragraph inherits its style borders and shading until it sets its own (
   expect(consoleErrors.join("\n")).not.toContain("DataCloneError");
   expect(consoleErrors).toEqual([]);
 });
+
+test("a paragraph can switch its style's box and fill back off (AC-17)", async ({ page }) => {
+  await createDocument(page);
+  const editor = content(page);
+  await editor.click();
+  await page.keyboard.type("Turns the box off");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Keeps the inherited box");
+
+  const off = paragraphStarting(page, "Turns the box off");
+  const kept = paragraphStarting(page, "Keeps the inherited box");
+  const dialog = page.getByTestId("borders-shading-dialog");
+
+  // Normal draws a box and a fill, so every paragraph in this document
+  // inherits both — no paragraph sets anything of its own.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-styles-pane").click();
+  await page.getByTestId("style-modify-Normal").click();
+  await page.getByTestId("style-borders-button").click();
+  await expect(dialog).toBeVisible();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-shading-color").fill("#ffd9d9");
+  await page.getByTestId("borders-apply").click();
+  await page.getByTestId("style-editor-save").click();
+  await waitForPagination(page);
+  expect(await styleOf(off, "border-left-style")).toBe("solid");
+  expect(await styleOf(off, "background-color")).toBe("rgb(255, 217, 217)");
+
+  // The dialog opens showing what the paragraph PAINTS, box included — were
+  // it to show "None" here, OK would strip a box the user never touched.
+  await off.click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("borders-preset-box")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("borders-shading-on")).toBeChecked();
+
+  // The failure this test exists for: None + cleared Fill + OK used to leave
+  // the inherited box and fill painted, because dropping the paragraph's
+  // (absent) value simply re-inherited the style's.
+  await page.getByTestId("borders-preset-none").click();
+  await page.getByTestId("borders-shading-on").uncheck();
+  await page.getByTestId("borders-apply").click();
+  await expect(dialog).toBeHidden();
+  await waitForPagination(page);
+
+  for (const edge of ["top", "bottom", "left", "right"]) {
+    expect(await styleOf(off, `border-${edge}-style`)).toBe("none");
+  }
+  expect(await styleOf(off, "background-color")).toBe("rgba(0, 0, 0, 0)");
+
+  // It is an override on ONE paragraph, not a change to the style: the
+  // neighbour still inherits.
+  expect(await styleOf(kept, "border-left-style")).toBe("solid");
+  expect(await styleOf(kept, "background-color")).toBe("rgb(255, 217, 217)");
+
+  // Reopening shows the paragraph as unbordered and unfilled...
+  await off.click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await expect(page.getByTestId("borders-preset-none")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("borders-shading-on")).not.toBeChecked();
+  await page.getByTestId("borders-cancel").click();
+
+  // ...and the override survives the trip through storage, so it is a real
+  // value in the model rather than a transient render decision.
+  await page.waitForTimeout(300);
+  await page.reload();
+  await expect(content(page).locator("p").first()).toBeVisible();
+  await waitForPagination(page);
+  expect(await styleOf(paragraphStarting(page, "Turns the box off"), "border-left-style")).toBe("none");
+  expect(await styleOf(paragraphStarting(page, "Turns the box off"), "background-color")).toBe(
+    "rgba(0, 0, 0, 0)",
+  );
+  expect(await styleOf(paragraphStarting(page, "Keeps the inherited box"), "border-left-style")).toBe(
+    "solid",
+  );
+});

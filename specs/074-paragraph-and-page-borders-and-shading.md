@@ -220,6 +220,32 @@ that inherit one box merge into one bordered run exactly as two that set it
 directly do; so does the accessibility checker (AC-27), which therefore
 measures contrast against the fill that was actually painted.
 
+Resolving rather than baking means "the paragraph has no borders" and "the
+paragraph inherits its style's borders" can no longer be the same state, so
+**off** is spelled two ways and `applyParagraphBorders` picks per paragraph:
+
+- the absent field, where the style contributes nothing — an ordinary
+  unbordered paragraph carries no husk, and picks up a box its style is
+  given later;
+- a value that is present and paints nothing, where the style *does* draw
+  one: `borders: {}` and `shadingFill: "transparent"`. `withInheritedPaint`
+  stops at any present value, so the style's box stops there too.
+
+Both file formats spell that override, and it round-trips as itself: a
+`w:pBdr` with every edge `w:val="nil"` and `w:shd w:val="clear"
+w:fill="auto"`; `fo:border="none"` and `fo:background-color="transparent"`.
+The `.docx` reader drops such a value again where the style chain (resolved
+through Normal for a paragraph naming no style) had nothing to override —
+Word writes both freely on paragraphs whose style sets neither. The `.odt`
+reader takes them at their word: an ODF automatic style *is* direct
+formatting, and the common style being overridden is not in the chain the
+paragraph resolves through (this product's writer names a paragraph's
+automatic style after its style id, which shadows it).
+
+The dialog therefore seeds from what the paragraph **paints**, not from what
+it sets directly: opening on a style-boxed paragraph shows that box, so OK
+re-applies it rather than silently stripping it.
+
 ### Specs this changes
 - `specs/014-paragraph-alignment-indents-spacing.md` — "Paragraph borders
   and shading" leaves its out-of-scope list. Its alignment, indent, spacing
