@@ -320,6 +320,27 @@ function pageBackgroundStyleFor(model: DocumentModel, page: PageLayout): Record<
   return fill === undefined ? null : { backgroundColor: fill };
 }
 
+/** Every key paragraphBorderStyle can emit (SPEC-074). They go into the
+ * v-memo signature because each one is decided by things that are NOT on the
+ * block: the border run this paragraph belongs to (AC-12 — a neighbour
+ * gaining or losing identical borders changes what THIS paragraph paints)
+ * and where its fragment sits in a page split (AC-14..16). Listing all of
+ * them rather than the visible subset means a run that merges or breaks
+ * always repaints, even when only its collapsed margins change. */
+const BORDER_MEMO_KEYS = [
+  "borderTop",
+  "borderBottom",
+  "borderLeft",
+  "borderRight",
+  "paddingTop",
+  "paddingBottom",
+  "paddingLeft",
+  "paddingRight",
+  "marginTop",
+  "marginBottom",
+  "backgroundColor",
+] as const;
+
 function renderEntryFor(
   model: DocumentModel,
   flatEntry: FlatEntry,
@@ -665,7 +686,7 @@ function renderEntryFor(
     // The bar rules are absolutely positioned inside the paragraph box.
     styleObj.position = "relative";
   }
-  const borderSig = `${styleObj.borderTop ?? ""}|${styleObj.borderBottom ?? ""}|${styleObj.borderLeft ?? ""}|${styleObj.backgroundColor ?? ""}`;
+  const borderSig = BORDER_MEMO_KEYS.map((key) => styleObj[key] ?? "").join("|");
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
     memo: [

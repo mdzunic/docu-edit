@@ -95,9 +95,20 @@ export interface BorderRunFlags {
   bottom: boolean;
   sides: boolean;
   between: boolean;
+  /** Another member of the same run follows this paragraph: the box carries
+   * on below it. Independent of `between` — a "Box" run has no between edge
+   * yet still must not let a margin open at its internal boundaries, or the
+   * side rules break there (AC-12). */
+  continuesBelow: boolean;
 }
 
-const NO_PAINT: BorderRunFlags = { top: false, bottom: false, sides: false, between: false };
+const NO_PAINT: BorderRunFlags = {
+  top: false,
+  bottom: false,
+  sides: false,
+  between: false,
+  continuesBelow: false,
+};
 
 /** Whether two consecutive paragraphs merge into one bordered block: both
  * paint something, their borders are structurally equal, their shading is
@@ -152,6 +163,7 @@ export function borderRuns(blocks: readonly Block[]): BorderRunFlags[] {
         bottom: i === end && borderSideVisible(block.formatting?.borders?.bottom),
         sides: true,
         between: i < end && between,
+        continuesBelow: i < end,
       };
     }
     index = end + 1;
@@ -167,9 +179,14 @@ export function borderRuns(blocks: readonly Block[]): BorderRunFlags[] {
  * top only on the first and the bottom only on the last. */
 export interface BorderPaintEdges extends BorderRunFlags {
   /** This fragment sits directly under a run's internal `between` rule: it
-   * takes the top padding (the rule is right above it) but neither a top
-   * border of its own nor a top margin. */
+   * takes the top padding (the rule is right above it) but no top border of
+   * its own. */
   belowBetween: boolean;
+  /** The box carries on above this fragment — it is a run member with another
+   * member before it. Collapses the top margin so no gap opens in the side
+   * rules (AC-12). Implied by `belowBetween`, but true for a plain "Box" run
+   * as well, which has no `between` edge at all. */
+  continuesAbove: boolean;
 }
 
 /** A standalone paragraph's edges — every side it sets, painted once. Used
@@ -180,7 +197,9 @@ export const ALL_EDGES: BorderPaintEdges = {
   bottom: true,
   sides: true,
   between: false,
+  continuesBelow: false,
   belowBetween: false,
+  continuesAbove: false,
 };
 
 /** The fragment edges for paragraph `index` of `runFlags`, narrowed by where
@@ -194,12 +213,18 @@ export function fragmentEdges(
   lastFragment: boolean,
 ): BorderPaintEdges {
   const flags = runFlags[index] ?? NO_PAINT;
+  // The run's internal boundaries are the paragraph's own first/last edges:
+  // the fragments in between are page-split seams, which the page break —
+  // not a margin — already separates.
+  const previous = runFlags[index - 1] ?? NO_PAINT;
   return {
     top: flags.top && firstFragment,
     bottom: flags.bottom && lastFragment,
     sides: flags.sides,
     between: flags.between && lastFragment,
-    belowBetween: firstFragment && index > 0 && (runFlags[index - 1]?.between ?? false),
+    continuesBelow: flags.continuesBelow && lastFragment,
+    belowBetween: firstFragment && index > 0 && previous.between,
+    continuesAbove: firstFragment && index > 0 && previous.continuesBelow,
   };
 }
 
@@ -258,11 +283,14 @@ export function paragraphBorderStyle(
     Object.assign(style, paragraphMarkColorStyle(formatting));
   }
   // Merged paragraphs must read as one block: no gap can open between two
-  // members of a run, or the page would show through the box (AC-12).
-  if (edges.belowBetween) {
+  // members of a run, or the page would show through the box where the side
+  // rules break (AC-12). This is run membership, not the `between` edge —
+  // a "Box" run draws no internal rule and still must not come apart at a
+  // member's space-before/space-after.
+  if (edges.continuesAbove) {
     style.marginTop = "0";
   }
-  if (edges.between) {
+  if (edges.continuesBelow) {
     style.marginBottom = "0";
   }
   return style;

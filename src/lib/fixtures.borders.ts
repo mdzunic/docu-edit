@@ -11,7 +11,10 @@
 // since both live on the section).
 import { writeDocx } from "./docx/writer";
 import { writeOdt } from "./odf/writer";
-import { createDocument, type BorderSide } from "./documentModel";
+import { createDocument } from "./documentModel";
+// BorderSide's home is core/borders (AC-1), which is where every other
+// module takes it from — documentModel only consumes it.
+import type { BorderSide } from "./core/borders";
 import type { Block, DocumentModel, PageBorders, Paragraph, ParagraphBorders, ParagraphFormatting } from "./documentModel";
 
 /** Pinned so a regenerated fixture's dcterms:modified / dc:date does not

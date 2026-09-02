@@ -78,16 +78,16 @@ describe("paragraphBordersEqual (AC-12's 'identical')", () => {
 describe("borderRuns (AC-12)", () => {
   it("gives a lone bordered paragraph every edge it sets", () => {
     const blocks: Block[] = [para(boxed())];
-    expect(borderRuns(blocks)).toEqual([{ top: true, bottom: true, sides: true, between: false }]);
+    expect(borderRuns(blocks)).toEqual([{ top: true, bottom: true, sides: true, between: false, continuesBelow: false }]);
   });
 
   it("merges three consecutive identical paragraphs into one block", () => {
     const formatting = boxed();
     const blocks: Block[] = [para({ ...formatting }), para({ ...formatting }), para({ ...formatting })];
     expect(borderRuns(blocks)).toEqual([
-      { top: true, bottom: false, sides: true, between: false },
-      { top: false, bottom: false, sides: true, between: false },
-      { top: false, bottom: true, sides: true, between: false },
+      { top: true, bottom: false, sides: true, between: false, continuesBelow: true },
+      { top: false, bottom: false, sides: true, between: false, continuesBelow: true },
+      { top: false, bottom: true, sides: true, between: false, continuesBelow: false },
     ]);
   });
 
@@ -111,9 +111,9 @@ describe("borderRuns (AC-12)", () => {
   it("breaks the run at a paragraph whose borders differ", () => {
     const blocks: Block[] = [para(boxed()), para({ borders: { top: THICK, bottom: THICK } }), para(boxed())];
     const runs = borderRuns(blocks);
-    expect(runs[0]).toEqual({ top: true, bottom: true, sides: true, between: false });
-    expect(runs[1]).toEqual({ top: true, bottom: true, sides: true, between: false });
-    expect(runs[2]).toEqual({ top: true, bottom: true, sides: true, between: false });
+    expect(runs[0]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(runs[1]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(runs[2]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
   });
 
   it("breaks the run at a different shading fill", () => {
@@ -133,15 +133,15 @@ describe("borderRuns (AC-12)", () => {
     const table = { type: "table", rows: [], columnWidthsCm: [] } as unknown as Block;
     const blocks: Block[] = [para(boxed()), table, para(boxed())];
     const runs = borderRuns(blocks);
-    expect(runs[0]).toEqual({ top: true, bottom: true, sides: true, between: false });
-    expect(runs[1]).toEqual({ top: false, bottom: false, sides: false, between: false });
-    expect(runs[2]).toEqual({ top: true, bottom: true, sides: true, between: false });
+    expect(runs[0]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(runs[1]).toEqual({ top: false, bottom: false, sides: false, between: false, continuesBelow: false });
+    expect(runs[2]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
   });
 
   it("gives an unbordered paragraph no edges at all", () => {
     expect(borderRuns([para({}), para(undefined)])).toEqual([
-      { top: false, bottom: false, sides: false, between: false },
-      { top: false, bottom: false, sides: false, between: false },
+      { top: false, bottom: false, sides: false, between: false, continuesBelow: false },
+      { top: false, bottom: false, sides: false, between: false, continuesBelow: false },
     ]);
   });
 
@@ -224,7 +224,9 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
       bottom: false,
       sides: true,
       between: true,
+      continuesBelow: true,
       belowBetween: false,
+      continuesAbove: false,
     });
     expect(style.borderBottom).toBe("3pt solid #ff0000");
     expect(style.marginBottom).toBe("0");
@@ -239,7 +241,9 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
       bottom: true,
       sides: true,
       between: false,
+      continuesBelow: false,
       belowBetween: true,
+      continuesAbove: true,
     });
     expect(style.borderTop).toBe("none");
     expect(style.paddingTop).toBe("4pt");
@@ -252,13 +256,74 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
       bottom: false,
       sides: true,
       between: false,
+      continuesBelow: false,
       belowBetween: false,
+      continuesAbove: false,
     });
     expect(style.borderLeft).toBe("1pt solid #000000");
     expect(style.borderTop).toBe("none");
     expect(style.borderBottom).toBe("none");
     expect(style.paddingTop).toBe("0");
     expect(style.paddingBottom).toBe("0");
+  });
+
+  // The box has to survive paragraph spacing. A "Box" run draws no internal
+  // rule, so nothing tells the members apart visually — but each still
+  // carries its own space-before/space-after, and any margin left standing
+  // between two members breaks the left and right rules there and lets the
+  // page show through the side of the box (AC-12).
+  it("closes the internal boundaries of a run that has no between edge", () => {
+    const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
+    const runs = borderRuns([para({ ...spaced }), para({ ...spaced }), para({ ...spaced })]);
+
+    const first = paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, true));
+    const middle = paragraphBorderStyle(spaced, fragmentEdges(runs, 1, true, true));
+    const last = paragraphBorderStyle(spaced, fragmentEdges(runs, 2, true, true));
+
+    // No internal rule anywhere — this is a plain box, not "All".
+    expect([first, middle, last].map((s) => s.borderBottom)).toEqual([
+      "none",
+      "none",
+      "1pt solid #000000",
+    ]);
+    // ...and no margin at either internal boundary.
+    expect(first.marginBottom).toBe("0");
+    expect(middle.marginTop).toBe("0");
+    expect(middle.marginBottom).toBe("0");
+    expect(last.marginTop).toBe("0");
+    // The run's outer edges keep the paragraph's own spacing: the box as a
+    // whole still sits 8pt from what surrounds it.
+    expect(first.marginTop).toBeUndefined();
+    expect(last.marginBottom).toBeUndefined();
+  });
+
+  it("keeps a lone bordered paragraph's own space before and after", () => {
+    const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
+    const runs = borderRuns([para(spaced)]);
+    const style = paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, true));
+    expect(style.marginTop).toBeUndefined();
+    expect(style.marginBottom).toBeUndefined();
+  });
+
+  it("keeps the margin between two runs that did not merge", () => {
+    const a = boxed({ spaceAfterPt: 8 });
+    const b = boxed({ spaceBeforePt: 8, shadingFill: "#eeeeee" });
+    const runs = borderRuns([para(a), para(b)]);
+    expect(paragraphBorderStyle(a, fragmentEdges(runs, 0, true, true)).marginBottom).toBeUndefined();
+    expect(paragraphBorderStyle(b, fragmentEdges(runs, 1, true, true)).marginTop).toBeUndefined();
+  });
+
+  it("leaves a page-split seam alone — only the run's own boundaries collapse", () => {
+    const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
+    const runs = borderRuns([para({ ...spaced }), para({ ...spaced })]);
+    // The first paragraph continues onto the next page: its opening fragment
+    // is not at the run's internal boundary, its closing fragment is.
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, false)).marginBottom).toBeUndefined();
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 0, false, true)).marginBottom).toBe("0");
+    // ...and the second paragraph's continuation fragment is below a page
+    // break, not below the paragraph it merged with.
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 1, true, true)).marginTop).toBe("0");
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 1, false, true)).marginTop).toBeUndefined();
   });
 });
 

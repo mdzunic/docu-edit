@@ -21,7 +21,8 @@ function harness(model: DocumentModel = createDocument("d")) {
   const applyEdit = vi.fn();
   const deps = {
     doc,
-    contentRoot: ref<Element | null>({ focus: () => {} } as Element),
+    // handlePageSetupApply focuses the canvas on the way out; only that.
+    contentRoot: ref<Element | null>({ focus: () => {} } as unknown as Element),
     editable: ref(true),
     applyEdit,
     paragraphSelection: () => ({ anchor: caret, focus: caret }),
