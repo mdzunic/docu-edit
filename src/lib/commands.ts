@@ -44,6 +44,7 @@ export * from "./commands.breaks";
 export * from "./commands.formatting";
 export {
   adjustIndent,
+  applyParagraphBorders,
   applyParagraphFormat,
   emptyParagraphFormatting,
   emptyParagraphPaginationState,

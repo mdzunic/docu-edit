@@ -24,6 +24,7 @@ import {
 } from "./documentModel";
 import { type BorderLineStyle, type CellBorders } from "./core/tables";
 import { runStyle } from "./renderFormatting";
+import { paragraphBordersEqual } from "./paragraphBorders";
 
 /** The id of the style every unstyled paragraph implicitly has. Word's
  * default-style id, which is also what AC "Normal is always available"
@@ -446,6 +447,9 @@ const PARAGRAPH_KEYS = [
   "lineSpacingPt",
   "lineSpacingRule",
   "direction",
+  // SPEC-074 AC-17: shading is a plain value, compared like the rest;
+  // `borders` is an object and needs the structural comparison below.
+  "shadingFill",
 ] as const;
 
 export function diffParagraphFormatting(
@@ -458,6 +462,13 @@ export function diffParagraphFormatting(
     if (value !== undefined && value !== base[key]) {
       (diff as Record<string, unknown>)[key] = value;
     }
+  }
+  // Borders are inherited from the style until the paragraph sets its own
+  // (SPEC-074 AC-17): a paragraph whose borders are structurally equal to
+  // the style's is carrying no direct formatting, so an identity comparison
+  // (which every freshly-baked object fails) would be wrong here.
+  if (effective.borders !== undefined && !paragraphBordersEqual(effective.borders, base.borders)) {
+    diff.borders = effective.borders;
   }
   return diff;
 }

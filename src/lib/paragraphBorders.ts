@@ -11,6 +11,7 @@ import {
   borderSideCss,
   borderSideVisible,
   borderSidesEqual,
+  type BorderLineStyle,
   type BorderSide,
 } from "./core/borders";
 import {
@@ -382,6 +383,189 @@ export function applyBorderPreset(
     borders.between = { ...line };
   }
   return borders;
+}
+
+// --- the dialog's editable draft (AC-6..AC-9) --------------------------------
+//
+// The Borders and shading dialog edits five independent edges, each with an
+// on/off, a style, a width and a colour, plus four paddings. That state lives
+// here rather than in the `.vue` because espree-parsed `.vue` scripts cannot
+// carry the type annotations it needs (see AppShell.vue) — and because a
+// pure draft is testable without mounting a component.
+
+/** One edge's editable state. `on` is separate from `style: "none"` so
+ * turning an edge off keeps the line the user picked for when it comes back. */
+export interface BorderEdgeDraft {
+  on: boolean;
+  style: BorderLineStyle;
+  widthPt: number;
+  color: string;
+}
+
+/** Every edge and padding the dialog edits. Padding is in points — the
+ * model's unit and OOXML's `@w:space`; the dialog converts for display. */
+export interface BorderDraft {
+  top: BorderEdgeDraft;
+  bottom: BorderEdgeDraft;
+  left: BorderEdgeDraft;
+  right: BorderEdgeDraft;
+  between: BorderEdgeDraft;
+  paddingPt: { top: number; bottom: number; left: number; right: number };
+}
+
+/** Every edge the draft holds, in the order the dialog lists them. */
+export const BORDER_DRAFT_EDGES = ["top", "bottom", "left", "right", "between"] as const;
+
+export type BorderDraftEdge = (typeof BORDER_DRAFT_EDGES)[number];
+
+/** The line an edge seeds from when it has none of its own. */
+const DEFAULT_LINE: BorderSide = { style: "single", widthPt: 1, color: "#000000" };
+
+function edgeDraftFrom(side: BorderSide | undefined): BorderEdgeDraft {
+  const visible = borderSideVisible(side);
+  return {
+    on: visible,
+    style: visible && side ? side.style : DEFAULT_LINE.style,
+    widthPt: visible && side ? side.widthPt : DEFAULT_LINE.widthPt,
+    // "auto" is a file-format value with no colour-input equivalent; it
+    // shows (and, if untouched, re-saves) as the black it always painted as.
+    color: visible && side && side.color !== "auto" ? side.color : DEFAULT_LINE.color,
+  };
+}
+
+/** The dialog's opening state for a paragraph's (or a style's) borders. */
+export function borderDraftFrom(borders: ParagraphBorders | undefined): BorderDraft {
+  return {
+    top: edgeDraftFrom(borders?.top),
+    bottom: edgeDraftFrom(borders?.bottom),
+    left: edgeDraftFrom(borders?.left),
+    right: edgeDraftFrom(borders?.right),
+    between: edgeDraftFrom(borders?.between),
+    paddingPt: {
+      top: paragraphPaddingPt(borders, "top"),
+      bottom: paragraphPaddingPt(borders, "bottom"),
+      left: paragraphPaddingPt(borders, "left"),
+      right: paragraphPaddingPt(borders, "right"),
+    },
+  };
+}
+
+/** The draft as a `ParagraphBorders`, or undefined when no edge paints.
+ * Padding is only carried when it differs from the 4pt default (AC-9), so an
+ * untouched paragraph stays byte-identical through a save. */
+export function bordersFromDraft(draft: BorderDraft): ParagraphBorders | undefined {
+  const borders: ParagraphBorders = {};
+  for (const edge of BORDER_DRAFT_EDGES) {
+    const state = draft[edge];
+    if (state.on) {
+      borders[edge] = { style: state.style, widthPt: state.widthPt, color: state.color };
+    }
+  }
+  const padding = draft.paddingPt;
+  if (
+    padding.top !== DEFAULT_PARAGRAPH_BORDER_PADDING_PT ||
+    padding.bottom !== DEFAULT_PARAGRAPH_BORDER_PADDING_PT ||
+    padding.left !== DEFAULT_PARAGRAPH_BORDER_PADDING_PT ||
+    padding.right !== DEFAULT_PARAGRAPH_BORDER_PADDING_PT
+  ) {
+    borders.paddingPt = { ...padding };
+  }
+  return normaliseParagraphBorders(borders);
+}
+
+/** The draft a preset produces (AC-8), drawing on whichever line the user
+ * already has: switching Box → All keeps their style, width and colour
+ * rather than resetting to a plain hairline. Padding is untouched. */
+export function applyPresetToDraft(preset: ParagraphBorderPreset, draft: BorderDraft): BorderDraft {
+  const line = currentDraftLine(draft);
+  const applied = applyBorderPreset(preset, line, bordersFromDraft(draft));
+  const next: BorderDraft = { ...draft, paddingPt: { ...draft.paddingPt } };
+  for (const edge of BORDER_DRAFT_EDGES) {
+    const side = applied?.[edge];
+    next[edge] = side
+      ? { on: true, style: side.style, widthPt: side.widthPt, color: side.color }
+      : { ...draft[edge], on: false };
+  }
+  return next;
+}
+
+/** The line a preset draws with: the first edge that is on, else the
+ * default hairline. */
+function currentDraftLine(draft: BorderDraft): BorderSide {
+  for (const edge of BORDER_DRAFT_EDGES) {
+    const state = draft[edge];
+    if (state.on) {
+      return { style: state.style, widthPt: state.widthPt, color: state.color };
+    }
+  }
+  return { ...DEFAULT_LINE };
+}
+
+/** Sets one edge's line style from a picker's plain string (AC-7). Choosing
+ * `"none"` is how an edge is switched off from the keyboard; every other
+ * value implies the edge is on. */
+export function setDraftEdgeStyle(draft: BorderDraft, edge: BorderDraftEdge, style: string): BorderDraft {
+  const next = { ...draft, paddingPt: { ...draft.paddingPt } };
+  if (style === "none") {
+    next[edge] = { ...draft[edge], on: false };
+  } else {
+    next[edge] = { ...draft[edge], on: true, style: style as BorderLineStyle };
+  }
+  return next;
+}
+
+/** Sets one edge's width, snapped to the eighth-of-a-point grid `@w:sz`
+ * carries exactly. A non-positive or unparseable entry leaves it alone. */
+export function setDraftEdgeWidth(draft: BorderDraft, edge: BorderDraftEdge, widthPt: number): BorderDraft {
+  if (!Number.isFinite(widthPt) || widthPt <= 0) {
+    return draft;
+  }
+  const next = { ...draft, paddingPt: { ...draft.paddingPt } };
+  next[edge] = { ...draft[edge], widthPt: Math.round(widthPt * 8) / 8 };
+  return next;
+}
+
+/** Typed pass-through for a preset key coming from a `.vue` template's plain
+ * string (espree bars the annotation — see documentModel.asTabStopAlignment). */
+export function asParagraphBorderPreset(value: string): ParagraphBorderPreset {
+  return value as ParagraphBorderPreset;
+}
+
+/** Typed pass-through for an edge key coming from a `.vue` template's plain
+ * string. */
+export function asBorderDraftEdge(value: string): BorderDraftEdge {
+  return value as BorderDraftEdge;
+}
+
+/** Typed empty seed for a `.vue` ref holding a draft (espree bars the
+ * annotation, so the ref takes its type from this factory). */
+export function emptyBorderDraft(): BorderDraft {
+  return borderDraftFrom(undefined);
+}
+
+/** The padding edges as plain strings, for a `.vue` template's `v-for`
+ * (which cannot narrow them back to `BorderEdge` on its own). */
+export const BORDER_PADDING_EDGES: readonly BorderEdge[] = ["top", "bottom", "left", "right"];
+
+/** The dialog's padding fields, held as display text per edge — a typed
+ * record so the `.vue` can index it with a `BorderEdge` from the `v-for`. */
+export type BorderPaddingText = Record<BorderEdge, string>;
+
+/** Typed empty seed for the padding-text ref. */
+export function emptyBorderPaddingText(): BorderPaddingText {
+  return { top: "", bottom: "", left: "", right: "" };
+}
+
+/** Typed pass-through for a padding edge coming from a `.vue` template's
+ * plain string. */
+export function asBorderEdge(value: string): BorderEdge {
+  return value as BorderEdge;
+}
+
+/** Whether an event target is a checked checkbox — the `.vue` templates
+ * cannot narrow `$event.target` themselves (espree, see AppShell.vue). */
+export function isEventTargetChecked(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement && target.checked;
 }
 
 /** Drops a `borders` object that no longer paints anything, so the model

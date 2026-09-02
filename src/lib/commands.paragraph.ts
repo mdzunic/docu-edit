@@ -6,9 +6,11 @@ import {
   type DocumentModel,
   type Paragraph,
   type ParagraphAlignment,
+  type ParagraphBorders,
   type ParagraphDirection,
   type ParagraphFormatting,
 } from "./documentModel";
+import { normaliseParagraphBorders } from "./paragraphBorders";
 import {
   paragraphAt,
   paragraphSlicesInRange,
@@ -221,6 +223,76 @@ export function applyParagraphFormat(
     }
     return nextFormatting;
   });
+}
+
+// --- borders and shading (SPEC-074) ------------------------------------------
+
+/** What the Borders and shading dialog applies. Both fields follow the
+ * `null`-removes convention of ParagraphFormatPatch above: `borders: null`
+ * clears the paragraph's borders, `shadingFill: null` clears its fill ("no
+ * fill", which is distinct from `"#ffffff"` — AC-10). */
+export interface ParagraphBorderPatch {
+  borders?: ParagraphBorders | null;
+  shadingFill?: string | null;
+}
+
+/** Applies borders and/or shading to every paragraph the selection touches
+ * (SPEC-074 AC-11, using SPEC-014's "touched by the selection" rule — the
+ * same `updateTouchedParagraphs` walk every other paragraph format uses).
+ *
+ * Padding is snapped to whole points because that is the finest grid OOXML's
+ * `@w:space` can carry, so the edit survives a save + re-open exactly (the
+ * same reasoning as snapCm/snapPt above). A `borders` object left with
+ * nothing to paint is dropped, so an unbordered paragraph never carries an
+ * empty husk that would stop it merging with an unbordered neighbour. */
+export function applyParagraphBorders(
+  model: DocumentModel,
+  selection: ModelSelection,
+  patch: ParagraphBorderPatch,
+): CommandResult {
+  return updateTouchedParagraphs(model, selection, (formatting) => {
+    const next: ParagraphFormatting = { ...formatting };
+    if (patch.borders !== undefined) {
+      const normalised = patch.borders === null ? undefined : normaliseParagraphBorders(snapBorders(patch.borders));
+      if (normalised === undefined) {
+        delete next.borders;
+      } else {
+        next.borders = normalised;
+      }
+    }
+    if (patch.shadingFill !== undefined) {
+      if (patch.shadingFill === null) {
+        delete next.shadingFill;
+      } else {
+        next.shadingFill = patch.shadingFill;
+      }
+    }
+    return next;
+  });
+}
+
+/** Border widths and paddings on the grid both formats carry exactly:
+ * eighths of a point for the width (`@w:sz`), whole points for the padding
+ * (`@w:space`). */
+function snapBorders(borders: ParagraphBorders): ParagraphBorders {
+  const snapped: ParagraphBorders = {};
+  for (const edge of ["top", "bottom", "left", "right", "between"] as const) {
+    const side = borders[edge];
+    if (side) {
+      snapped[edge] = { ...side, widthPt: Math.round(side.widthPt * 8) / 8 };
+    }
+  }
+  if (borders.paddingPt) {
+    const padding: { top?: number; bottom?: number; left?: number; right?: number } = {};
+    for (const edge of ["top", "bottom", "left", "right"] as const) {
+      const value = borders.paddingPt[edge];
+      if (value !== undefined) {
+        padding[edge] = Math.min(31, Math.max(0, Math.round(value)));
+      }
+    }
+    snapped.paddingPt = padding;
+  }
+  return snapped;
 }
 
 /** Sets the alignment of every touched paragraph (AC-2). */
