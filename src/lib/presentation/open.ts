@@ -49,8 +49,13 @@ export function assemblePresentation(
     slideWidthCm: parsed.slideWidthCm,
     slideHeightCm: parsed.slideHeightCm,
     layouts: parsed.layouts,
-    opaque: parsed.opaque,
   };
+  // Omitted when empty (SPEC-087 AC-14): a Keynote import retains no source
+  // package, and an absent `opaque` is the writers' from-scratch state —
+  // native .pptx/.odp parses always have parts, so nothing changes for them.
+  if (parsed.opaque.length > 0) {
+    model.opaque = parsed.opaque;
+  }
   if (parsed.theme) {
     model.theme = parsed.theme;
   }

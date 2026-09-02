@@ -38,8 +38,15 @@ import {
 import { classifyFromSlots, STANDARD_LAYOUTS, standardLayoutKey, synthesiseStandardLayouts } from "../layouts";
 import { PPTX_MAIN_CONTENT_TYPE } from "./reader";
 import { AUDIO_RELATIONSHIP, MEDIA_RELATIONSHIP, VIDEO_RELATIONSHIP } from "./mediaWire";
-import { resolveSlideFields, serializeSlideXml, type ResolvedField } from "./serialize";
-import { applyNotesContentTypes, planNotes } from "./notesWriter";
+import { resolveSlideFields, serializeNotesSlideXml, serializeSlideXml, type ResolvedField } from "./serialize";
+import {
+  applyNotesContentTypes,
+  NOTES_MASTER_CONTENT_TYPE,
+  NOTES_MASTER_REL,
+  NOTES_MASTER_XML,
+  NOTES_SLIDE_CONTENT_TYPE,
+  planNotes,
+} from "./notesWriter";
 import { spliceThemeXml } from "./theme";
 import { now as clockNow } from "../../core/clock";
 import { chartPartXml } from "../../core/chartPartOoxml";
@@ -744,6 +751,16 @@ function standardLayoutIndexForSlide(slide: Slide): number {
 
 function buildFromScratch(model: PresentationModel, modified: Date, now: Date): ZipEntryInput[] {
   const slidePaths = model.slides.map((_, index) => `ppt/slides/slide${index + 1}.xml`);
+  // Speaker notes (SPEC-083/SPEC-087): a from-scratch deck can carry notes —
+  // a Keynote import is born with them — so each note-bearing slide gets its
+  // notesSlideN part, mirroring what planNotes does on the substitution path.
+  const notesNumberBySlideIndex = new Map<number, number>();
+  model.slides.forEach((slide, index) => {
+    if (slide.notes !== undefined && slide.notes.length > 0) {
+      notesNumberBySlideIndex.set(index, notesNumberBySlideIndex.size + 1);
+    }
+  });
+  const anyNotes = notesNumberBySlideIndex.size > 0;
   // The minimal standard set (SPEC-089 AC-17): slideLayout1..6, in the Reference
   // table order (title/obj/secHead/twoObj/titleOnly/blank), at the deck size.
   const standardLayouts = synthesiseStandardLayouts(model.slideWidthCm, model.slideHeightCm);
@@ -760,6 +777,10 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>` +
     layoutPaths.map((path) => `<Override PartName="/${path}" ContentType="${SLIDE_LAYOUT_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
+    (anyNotes ? `<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="${NOTES_MASTER_CONTENT_TYPE}"/>` : "") +
+    [...notesNumberBySlideIndex.values()]
+      .map((n) => `<Override PartName="/ppt/notesSlides/notesSlide${n}.xml" ContentType="${NOTES_SLIDE_CONTENT_TYPE}"/>`)
+      .join("") +
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
     `</Types>`;
 
@@ -769,9 +790,11 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     `<Relationship Id="rId2" Type="${CORE_PROPERTIES_REL}" Target="docProps/core.xml"/>` +
     `</Relationships>`;
 
-  // presentation.xml.rels: master (rId1), then one slide rel each, then theme.
+  // presentation.xml.rels: master (rId1), then one slide rel each, then the
+  // theme and (when any slide carries notes) the notes master.
   const slideRelIds = model.slides.map((_, index) => `rId${index + 2}`);
   const themeRelId = `rId${model.slides.length + 2}`;
+  const notesMasterRelId = `rId${model.slides.length + 3}`;
   const presentationRels =
     `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
     `<Relationship Id="rId1" Type="${SLIDE_MASTER_REL}" Target="slideMasters/slideMaster1.xml"/>` +
@@ -779,14 +802,17 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
       .map((_, index) => `<Relationship Id="${slideRelIds[index]}" Type="${SLIDE_REL}" Target="slides/slide${index + 1}.xml"/>`)
       .join("") +
     `<Relationship Id="${themeRelId}" Type="${THEME_REL}" Target="theme/theme1.xml"/>` +
+    (anyNotes ? `<Relationship Id="${notesMasterRelId}" Type="${NOTES_MASTER_REL}" Target="notesMasters/notesMaster1.xml"/>` : "") +
     `</Relationships>`;
 
   const sldIdLst = model.slides.map((_, index) => `<p:sldId id="${256 + index}" r:id="${slideRelIds[index]}"/>`).join("");
+  const notesMasterIdLst = anyNotes ? `<p:notesMasterIdLst><p:notesMasterId r:id="${notesMasterRelId}"/></p:notesMasterIdLst>` : "";
   const firstSlideNumAttr = model.firstSlideNumber !== undefined ? ` firstSlideNum="${model.firstSlideNumber}"` : "";
   const showSpecialAttr = model.headerFooter?.showOnTitleSlide === false ? ` showSpecialPlsOnTitleSld="0"` : "";
   const presentation =
     `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"${firstSlideNumAttr}${showSpecialAttr}>` +
     `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
+    notesMasterIdLst +
     `<p:sldIdLst>${sldIdLst}</p:sldIdLst>` +
     `<p:sldSz cx="${cmToEmu(model.slideWidthCm)}" cy="${cmToEmu(model.slideHeightCm)}"/>` +
     `<p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
@@ -836,12 +862,53 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     const rels = new Map<string, Relationship>();
     rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
     const imageRels = [...linkImageRels(slide, rels, slidePath), ...linkMediaRels(slide, rels, slidePath)];
+    const notesNumber = notesNumberBySlideIndex.get(index);
+    const extraRels = [...imageRels];
+    if (notesNumber !== undefined) {
+      const maxRelId = [...rels.values(), ...imageRels].reduce((max, rel) => {
+        const match = /(\d+)$/.exec(rel.id);
+        return match ? Math.max(max, Number(match[1])) : max;
+      }, 0);
+      extraRels.push({
+        id: `rId${maxRelId + 1}`,
+        type: NOTES_SLIDE_REL,
+        target: `../notesSlides/notesSlide${notesNumber}.xml`,
+      });
+    }
     entries.push({ name: slidePath, data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now))) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
-      data: encode(appendRelationships(slideRelsXml(layoutTarget), imageRels)),
+      data: encode(appendRelationships(slideRelsXml(layoutTarget), extraRels)),
     });
   });
+  if (anyNotes) {
+    entries.push({ name: "ppt/notesMasters/notesMaster1.xml", data: encode(NOTES_MASTER_XML) });
+    entries.push({
+      name: "ppt/notesMasters/_rels/notesMaster1.xml.rels",
+      data: encode(
+        `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
+          `<Relationship Id="rId1" Type="${THEME_REL}" Target="../theme/theme1.xml"/>` +
+          `</Relationships>`,
+      ),
+    });
+    model.slides.forEach((slide, index) => {
+      const notesNumber = notesNumberBySlideIndex.get(index);
+      if (notesNumber === undefined) {
+        return;
+      }
+      const notesPath = `ppt/notesSlides/notesSlide${notesNumber}.xml`;
+      entries.push({ name: notesPath, data: encode(serializeNotesSlideXml(slide.notes!)) });
+      entries.push({
+        name: relsPathFor(notesPath),
+        data: encode(
+          `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
+            `<Relationship Id="rId1" Type="${SLIDE_REL}" Target="../slides/slide${index + 1}.xml"/>` +
+            `<Relationship Id="rId2" Type="${NOTES_MASTER_REL}" Target="../notesMasters/notesMaster1.xml"/>` +
+            `</Relationships>`,
+        ),
+      });
+    });
+  }
   for (const part of referencedMedia(model)) {
     entries.push({ name: part.mediaId, data: base64ToBytes(part.data) });
   }
