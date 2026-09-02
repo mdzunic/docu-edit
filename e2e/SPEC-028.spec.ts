@@ -203,6 +203,16 @@ test("inserting a page break scrolls the new page into view (AC-5)", async ({ pa
 });
 
 test("typing that runs past the fold keeps the caret on screen (AC-1)", async ({ page }) => {
+  // ~2,500 individual keystrokes below, each a Playwright protocol round
+  // trip. Alone that finishes in ~13s, but under the suite's fullyParallel
+  // fan-out this test shares the workers and the dev server with the whole
+  // functional suite, and the mechanics alone outgrow the default 30s test
+  // timeout (the 2026-09-02 gate hit exactly that, on a tree where the
+  // per-keystroke cost had not changed). slow() triples the budget; the
+  // assertion this test exists for — the caret stays visible — is untouched,
+  // and typing responsiveness itself is SPEC-047's perf harness's job, not
+  // this test's.
+  test.slow();
   await createDocument(page);
   await content(page).click();
   // Enough lines to fill the visible canvas and then some: an edit must
