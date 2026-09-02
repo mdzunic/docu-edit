@@ -343,14 +343,14 @@ function apply() {
     <template #actions>
       <UiButton
         variant="secondary"
-        testid="borders-cancel"
+        data-testid="borders-cancel"
         @click="emit('cancel')"
       >
         Cancel
       </UiButton>
       <UiButton
         variant="primary"
-        testid="borders-apply"
+        data-testid="borders-apply"
         @click="apply"
       >
         OK

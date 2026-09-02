@@ -17,6 +17,7 @@ import {
   type NamedStyle,
   type Paragraph,
   type ParagraphAlignment,
+  type ParagraphBorders,
   type ParagraphFormatting,
   type RunFormatting,
   type StyleType,
@@ -668,6 +669,32 @@ export interface StyleEditorDraft {
   cellBorderStyle: string;
   cellBorderWidthPt: number;
   cellBorderColor: string;
+  /** Paragraph borders and shading the style carries (SPEC-074 AC-18) —
+   * edited through the same Borders and shading dialog a paragraph uses, so
+   * a style and a paragraph can never disagree about what a border is. */
+  borders?: ParagraphBorders;
+  shadingFill?: string;
+}
+
+/** The paragraph formatting a paragraph style's draft carries: its
+ * alignment, and — SPEC-074 AC-18 — its borders and shading. Undefined when
+ * the style is not a paragraph style or sets none of them, so a style that
+ * says nothing about paragraphs keeps saving nothing. */
+function paragraphFormattingFromDraft(draft: StyleEditorDraft): ParagraphFormatting | undefined {
+  if (draft.type !== "paragraph") {
+    return undefined;
+  }
+  const formatting: ParagraphFormatting = {};
+  if (draft.alignment) {
+    formatting.alignment = draft.alignment as ParagraphAlignment;
+  }
+  if (draft.borders !== undefined) {
+    formatting.borders = draft.borders;
+  }
+  if (draft.shadingFill !== undefined && draft.shadingFill !== "") {
+    formatting.shadingFill = draft.shadingFill;
+  }
+  return Object.keys(formatting).length > 0 ? formatting : undefined;
 }
 
 /** Builds a `commands.createStyle`/`modifyStyle` input from the dialog's
@@ -711,10 +738,7 @@ export function styleFormInputFromDraft(draft: StyleEditorDraft) {
     basedOn: draft.basedOn || undefined,
     next: draft.next || undefined,
     runFormatting,
-    paragraphFormatting:
-      draft.type === "paragraph" && draft.alignment
-        ? { alignment: draft.alignment as ParagraphAlignment }
-        : undefined,
+    paragraphFormatting: paragraphFormattingFromDraft(draft),
     listPresetKey: draft.type === "list" ? draft.listPresetKey : undefined,
     cellShadingFill:
       draft.type === "table" && draft.cellShadingFill.trim() ? draft.cellShadingFill.trim() : undefined,

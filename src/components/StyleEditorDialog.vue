@@ -1,7 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, useTemplateRef } from "vue";
 import { asStringArray, asStyleOptions, noStyleOptions, styleFormInputFromDraft } from "../lib/styles";
+import { asParagraphBorders } from "../lib/documentModel";
+import { detectBorderPreset, noParagraphBorders, noShadingFill } from "../lib/paragraphBorders";
 import BaseDialog from "./BaseDialog.vue";
+import BordersShadingDialog from "./BordersShadingDialog.vue";
+
+/** How the summary line names each preset (SPEC-074 AC-8's vocabulary). */
+const BORDER_PRESET_LABELS = {
+  none: "None",
+  box: "Box",
+  all: "All",
+  topAndBottom: "Top and bottom",
+  custom: "Custom",
+};
 
 // "New style" / "Modify style" (SPEC-042 AC-3, AC-4): one dialog for both —
 // `mode` decides the title/submit label and whether `type` is editable (a
@@ -28,6 +40,9 @@ const props = defineProps({
   initialCellBorderStyle: { type: String, default: "" }, // "" | none | single | double | dashed | dotted
   initialCellBorderWidthPt: { type: Number, default: 1 },
   initialCellBorderColor: { type: String, default: "#000000" },
+  /** The style's own paragraph borders and shading (SPEC-074 AC-18). */
+  initialBorders: { type: Object, default: undefined },
+  initialShadingFill: { type: String, default: "" },
   /** Every other style's { id, name }, for the "based on"/"next" pickers —
    * the caller filters out the style being modified itself. */
   basedOnOptions: { type: Array, default: () => noStyleOptions() },
@@ -65,7 +80,27 @@ const draft = reactive({
   cellBorderStyle: props.initialCellBorderStyle,
   cellBorderWidthPt: props.initialCellBorderWidthPt,
   cellBorderColor: props.initialCellBorderColor,
+  // SPEC-074 AC-18: edited through the shared Borders and shading dialog,
+  // so a style's border controls are literally a paragraph's.
+  borders: asParagraphBorders(props.initialBorders),
+  shadingFill: props.initialShadingFill,
 });
+
+/** The nested Borders and shading dialog (AC-18) — the same component the
+ * Format menu opens, seeded from and writing back to this draft. */
+const bordersOpen = ref(false);
+
+const borderSummary = computed(() => {
+  const preset = detectBorderPreset(draft.borders);
+  const fill = draft.shadingFill ? `, shaded ${draft.shadingFill}` : "";
+  return preset === "none" && !draft.shadingFill ? "None" : `${BORDER_PRESET_LABELS[preset]}${fill}`;
+});
+
+function applyStyleBorders(result = { borders: noParagraphBorders(), shadingFill: noShadingFill() }) {
+  draft.borders = result.borders ?? undefined;
+  draft.shadingFill = result.shadingFill ?? "";
+  bordersOpen.value = false;
+}
 
 // BaseDialog focuses the [autofocus] name input; selecting the prefilled
 // name on top of that (type-to-replace) mirrors RenameDialog.
@@ -267,6 +302,19 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
           </option>
         </select>
       </label>
+      <!-- SPEC-074 AC-18: a style carries borders and shading, edited by the
+           same dialog a paragraph's are. -->
+      <div class="field">
+        <span>Borders and shading</span>
+        <button
+          type="button"
+          class="borders-button"
+          data-testid="style-borders-button"
+          @click="bordersOpen = true"
+        >
+          {{ borderSummary }}…
+        </button>
+      </div>
     </fieldset>
 
     <fieldset
@@ -365,10 +413,29 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
         {{ submitLabel }}
       </button>
     </template>
+    <BordersShadingDialog
+      v-if="bordersOpen"
+      title="Style borders and shading"
+      :initial="{ borders: draft.borders, shadingFill: draft.shadingFill || undefined }"
+      @apply="applyStyleBorders"
+      @cancel="bordersOpen = false"
+    />
   </BaseDialog>
 </template>
 
 <style scoped>
+.borders-button {
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle, #dadce0);
+  border-radius: 4px;
+  background: var(--surface-1, #fff);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+
 /* Fixed 26rem panel with the tall-dialog scroll cap. The actions row now
    sits at the base's 1.25rem gap rather than this dialog's old 0.5rem — a
    deliberate unification with every other dialog's spacing. */

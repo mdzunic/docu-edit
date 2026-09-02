@@ -584,3 +584,14 @@ export function normaliseParagraphBorders(borders: ParagraphBorders | undefined)
     borderSideVisible(borders.between);
   return painted ? borders : undefined;
 }
+
+/** Typed `undefined` seed for a `ParagraphBorders` field in an espree-parsed
+ * `.vue` script's default parameter (see commands.noSelection). */
+export function noParagraphBorders(): ParagraphBorders | null {
+  return null;
+}
+
+/** Typed `null` seed for the shading fill, likewise. */
+export function noShadingFill(): string | null {
+  return null;
+}

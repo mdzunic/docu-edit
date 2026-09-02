@@ -12,6 +12,18 @@ import {
   textAreaTooNarrow,
 } from "../lib/core/pageSetup";
 import { fromCm, parseLengthToCm, roundForDisplay } from "../lib/core/units";
+import {
+  asPageBorderEdge,
+  emptyPageBorderDraft,
+  pageBackgroundFromDraft,
+  pageBorderDraftFrom,
+  pageBordersFromDraft,
+  eventTargetChecked,
+  eventTargetValue,
+  PAGE_BORDER_EDGES,
+} from "../lib/pageBorders";
+import { asPageBorders, asPageBorderAppliesTo, asPageBorderMeasureFrom } from "../lib/documentModel";
+import { BORDER_LINE_STYLES, asBorderLineStyleValue } from "../lib/core/borders";
 import BaseDialog from "./BaseDialog.vue";
 import UiButton from "./ui/UiButton.vue";
 
@@ -37,6 +49,43 @@ const props = defineProps({
 const emit = defineEmits(["apply", "cancel"]);
 
 const unit = ref(String(props.initial.measurementUnit || "cm"));
+// SPEC-074 AC-19: Page setup gains a Borders tab. Two panels, one form —
+// OK still commits everything as one edit, exactly as before.
+const activeTab = ref("page");
+const borderDraft = ref(emptyPageBorderDraft());
+borderDraft.value = pageBorderDraftFrom(
+  asPageBorders(props.initial.pageBorders),
+  typeof props.initial.pageBackground === "string" ? props.initial.pageBackground : undefined,
+);
+
+const BORDER_STYLE_LABELS = {
+  none: "None",
+  single: "Single",
+  thick: "Thick",
+  double: "Double",
+  dashed: "Dashed",
+  dotted: "Dotted",
+  dashDot: "Dash-dot",
+  dashDotDot: "Dash-dot-dot",
+};
+
+const BORDER_EDGE_LABELS = { top: "Top", bottom: "Bottom", left: "Left", right: "Right" };
+
+function toggleBorderEdge(key = "top", on = false) {
+  borderDraft.value[asPageBorderEdge(key)] = on;
+}
+
+function setBorderStyle(value = "single") {
+  borderDraft.value.style = asBorderLineStyleValue(value);
+}
+
+function setMeasureFrom(value = "page") {
+  borderDraft.value.measureFrom = asPageBorderMeasureFrom(value);
+}
+
+function setAppliesTo(value = "allPages") {
+  borderDraft.value.appliesTo = asPageBorderAppliesTo(value);
+}
 // What the edit targets (SPEC-028 AC-20/21): the caret's section or the
 // whole document — commands.PageSetupScope's values.
 const applyTo = ref(String(props.initial.applyTo || "wholeDocument"));
@@ -166,6 +215,9 @@ function apply() {
     margins: margins.value,
     measurementUnit: unit.value,
     applyTo: applyTo.value,
+    // SPEC-074 AC-19..AC-23 — committed with the rest, as one undo step.
+    pageBorders: pageBordersFromDraft(borderDraft.value),
+    pageBackground: pageBackgroundFromDraft(borderDraft.value),
   });
 }
 </script>
@@ -177,7 +229,40 @@ function apply() {
     width="28rem"
     @dismiss="emit('cancel')"
   >
-    <section class="section">
+    <!-- SPEC-074 AC-19: Page setup gains a Borders tab. -->
+    <div
+      class="tabs"
+      role="tablist"
+      aria-label="Page setup sections"
+    >
+      <button
+        type="button"
+        class="tab"
+        role="tab"
+        :class="{ active: activeTab === 'page' }"
+        :aria-selected="activeTab === 'page'"
+        data-testid="page-setup-tab-page"
+        @click="activeTab = 'page'"
+      >
+        Page
+      </button>
+      <button
+        type="button"
+        class="tab"
+        role="tab"
+        :class="{ active: activeTab === 'borders' }"
+        :aria-selected="activeTab === 'borders'"
+        data-testid="page-setup-tab-borders"
+        @click="activeTab = 'borders'"
+      >
+        Borders
+      </button>
+    </div>
+
+    <section
+      v-show="activeTab === 'page'"
+      class="section"
+    >
       <div class="field-row">
         <label class="field">
           <span class="field-label">Paper size</span>
@@ -328,6 +413,142 @@ function apply() {
       </p>
     </section>
 
+    <!-- The Borders tab (SPEC-074 AC-19..AC-23): one line, which edges take
+         it, what its offset measures from, and the page background. -->
+    <section
+      v-show="activeTab === 'borders'"
+      class="section"
+      data-testid="page-setup-borders"
+    >
+      <div class="field-row">
+        <span class="field-label">Edges</span>
+        <label
+          v-for="edge in PAGE_BORDER_EDGES"
+          :key="edge"
+          class="edge-toggle"
+        >
+          <input
+            type="checkbox"
+            :checked="borderDraft[edge]"
+            :data-testid="`page-border-edge-${edge}`"
+            @change="toggleBorderEdge(edge, eventTargetChecked($event.target))"
+          >
+          {{ BORDER_EDGE_LABELS[edge] }}
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Style</span>
+          <select
+            class="field-input"
+            :value="borderDraft.style"
+            data-testid="page-border-style"
+            @change="setBorderStyle(eventTargetValue($event.target))"
+          >
+            <option
+              v-for="style in BORDER_LINE_STYLES"
+              :key="style"
+              :value="style"
+            >
+              {{ BORDER_STYLE_LABELS[style] }}
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Width (pt)</span>
+          <input
+            v-model.number="borderDraft.widthPt"
+            class="field-input"
+            type="number"
+            min="0.25"
+            max="12"
+            step="0.25"
+            data-testid="page-border-width"
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Colour</span>
+          <input
+            v-model="borderDraft.color"
+            class="field-input colour-input"
+            type="color"
+            data-testid="page-border-color"
+          >
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Offset (pt)</span>
+          <input
+            v-model.number="borderDraft.offsetPt"
+            class="field-input"
+            type="number"
+            min="0"
+            max="31"
+            step="1"
+            data-testid="page-border-offset"
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">Measure from</span>
+          <select
+            class="field-input"
+            :value="borderDraft.measureFrom"
+            data-testid="page-border-measure-from"
+            @change="setMeasureFrom(eventTargetValue($event.target))"
+          >
+            <option value="page">
+              Page edge
+            </option>
+            <option value="text">
+              Text
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Apply border to</span>
+          <select
+            class="field-input"
+            :value="borderDraft.appliesTo"
+            data-testid="page-border-applies-to"
+            @change="setAppliesTo(eventTargetValue($event.target))"
+          >
+            <option value="allPages">
+              All pages
+            </option>
+            <option value="firstPage">
+              First page only
+            </option>
+            <option value="exceptFirstPage">
+              All but the first
+            </option>
+          </select>
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="edge-toggle">
+          <input
+            v-model="borderDraft.backgroundOn"
+            type="checkbox"
+            data-testid="page-background-on"
+          >
+          Page background
+        </label>
+        <input
+          v-model="borderDraft.background"
+          class="field-input colour-input"
+          type="color"
+          :disabled="!borderDraft.backgroundOn"
+          data-testid="page-background-color"
+          aria-label="Page background colour"
+        >
+      </div>
+      <p class="hint">
+        Page backgrounds print only when "Print background colours" is chosen
+        in the print preview; page borders always print.
+      </p>
+    </section>
+
     <section class="section">
       <div class="field-row">
         <label class="field">
@@ -369,6 +590,47 @@ function apply() {
 </template>
 
 <style scoped>
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle, #dadce0);
+}
+
+.tab {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.tab.active {
+  border-bottom-color: var(--accent, #1a73e8);
+  color: var(--accent, #1a73e8);
+}
+
+.edge-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.colour-input {
+  width: 46px;
+  height: 28px;
+  padding: 0;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary, #5f6368);
+}
+
 /* This dialog's body is tall, so the panel keeps its own scroll cap (the
    base's .dialog is the short-dialog variant without one). */
 :deep(.dialog) {

@@ -208,6 +208,9 @@ export function useStyleManager(deps: StyleManagerDeps) {
         initialCellBorderStyle: border?.style ?? "",
         initialCellBorderWidthPt: border?.widthPt ?? 1,
         initialCellBorderColor: border?.color ?? "#000000",
+        // SPEC-074 AC-18: the style's own paragraph borders and shading.
+        initialBorders: target?.paragraphFormatting?.borders ?? undefined,
+        initialShadingFill: target?.paragraphFormatting?.shadingFill ?? "",
       };
     }
     const caretNow = getCaretPosition();
@@ -230,6 +233,10 @@ export function useStyleManager(deps: StyleManagerDeps) {
       initialCellBorderStyle: "",
       initialCellBorderWidthPt: 1,
       initialCellBorderColor: "#000000",
+      // A new style is seeded from the caret's paragraph, like every other
+      // field above (SPEC-074 AC-18).
+      initialBorders: caretParagraph?.formatting?.borders ?? undefined,
+      initialShadingFill: caretParagraph?.formatting?.shadingFill ?? "",
     };
   });
 
