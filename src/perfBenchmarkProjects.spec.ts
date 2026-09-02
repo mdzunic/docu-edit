@@ -64,23 +64,38 @@ describe("e2e timing benchmarks run one at a time", () => {
     expect(new Set(levels).size, `benchmark levels ${levels.join(", ")} must all differ`).toBe(benchmarks.length);
   });
 
-  it("chains the benchmarks to each other, never to the functional suite", () => {
+  it("chains the benchmarks to each other or the tests-less head, never to the functional suite", () => {
     // Hanging a benchmark off `chromium`/`compact` would skip its budgets
     // whenever any functional test failed — a red run today, but a green one
-    // on a failures-only re-run with the budgets never taken.
+    // on a failures-only re-run with the budgets never taken. `perf-quiet`
+    // is safe to depend on precisely because it can never fail (next test).
     for (const name of benchmarks) {
       for (const dep of named(name).dependencies ?? []) {
-        expect(benchmarks, `${name} may only depend on another benchmark`).toContain(dep);
+        expect(
+          [...benchmarks, "perf-quiet"],
+          `${name} may only depend on another benchmark or the perf-quiet head`,
+        ).toContain(dep);
       }
     }
   });
 
-  it("leaves the two baseline-gated benchmarks below the head of the chain", () => {
-    // perf-charts is gated on absolute ceilings only, so it tolerates the
-    // busy level-0 window; perf-find and perf-large-document carry
-    // perf-baseline.json rows and must run after the functional suite has
-    // drained, which is what a non-zero level buys them.
-    expect(levelOf(named("perf-find"))).toBeGreaterThan(0);
+  it("heads the chain with a project that matches no tests and so cannot fail", () => {
+    const quiet = named("perf-quiet") as ProjectLike & { testMatch?: RegExp };
+    expect(quiet.dependencies ?? []).toEqual([]);
+    expect(quiet.testMatch).toBeInstanceOf(RegExp);
+    for (const file of ["smoke.spec.ts", "SPEC-052.perf.spec.ts", "SPEC-068.compact.spec.ts"]) {
+      expect(quiet.testMatch?.test(file), `perf-quiet must not own ${file}`).toBe(false);
+    }
+  });
+
+  it("keeps every benchmark past the functional suite's level", () => {
+    // All three carry ceilings calibrated for a quiet machine. perf-charts
+    // originally ran at level 0 on the theory that its absolute ceilings
+    // tolerate the busy window; the 2026-09-02 gate disproved that (its 2s
+    // first-paint ceiling failed twice mid-suite), so the whole chain now
+    // starts after the functional suite has drained.
+    expect(levelOf(named("perf-charts"))).toBeGreaterThan(0);
+    expect(levelOf(named("perf-find"))).toBeGreaterThan(levelOf(named("perf-charts")));
     expect(levelOf(named("perf-large-document"))).toBeGreaterThan(levelOf(named("perf-find")));
   });
 });

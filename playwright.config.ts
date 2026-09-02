@@ -25,18 +25,22 @@ import { defineConfig, devices } from "@playwright/test";
 // at 247ms against 103-131ms for the four that do not — the gate's 229.
 //
 // So the benchmarks are chained into their own levels instead:
-// perf-charts (level 0, alongside the functional suite as before) →
-// perf-find (level 1) → perf-large-document (level 2). Level 1 begins only
-// once EVERY level-0 project has finished, so the two benchmarks that need
-// the quietest window get the whole machine, one at a time, after the
-// functional suite has drained. Deliberately still NOT
-// `dependencies: ["chromium"]`: a dependency also SKIPS its dependents when
-// it fails, and hanging the benchmarks off the functional suite would leave
-// the budgets unmeasured whenever any functional test failed — including on
-// a failures-only re-run (`--last-failed`), where the gate would then go
-// green with the budgets never taken. Chaining benchmark-to-benchmark keeps
-// that risk off the functional suite: the only thing that can skip a later
-// benchmark is an EARLIER BENCHMARK FAILING, which is already a red run.
+// perf-charts (level 1) → perf-find (level 2) → perf-large-document
+// (level 3). Level 1 begins only once EVERY level-0 project — the whole
+// functional suite — has finished, so each benchmark gets the whole
+// machine, one at a time, after the suite has drained. Deliberately still
+// NOT `dependencies: ["chromium"]`: a dependency also SKIPS its dependents
+// when it fails, and hanging the benchmarks off the functional suite would
+// leave the budgets unmeasured whenever any functional test failed —
+// including on a failures-only re-run (`--last-failed`), where the gate
+// would then go green with the budgets never taken. The head of the chain
+// is instead `perf-quiet`, a project whose testMatch matches nothing: it
+// finishes instantly, cannot fail, and exists only to place the first
+// benchmark one level past the functional suite. (perf-charts originally
+// sat at level 0 itself on the theory that its absolute ceilings tolerate
+// a busy machine; the 2026-09-02 gate disproved that — its 2s first-paint
+// ceiling failed twice while sharing the workers and the dev server with
+// the functional suite.)
 const PERF_SPEC = /\.perf\.spec\.ts$/;
 // SPEC-068: the compact touch project owns the *.compact.spec.ts files and runs
 // them at a 390×844 phone viewport with touch emulation. The desktop `chromium`
@@ -77,17 +81,21 @@ export default defineConfig({
       },
       testMatch: COMPACT_SPEC,
     },
-    // The benchmark chain (see the header): one per dependency level, so no
-    // two of them — and, from perf-find on, nothing else in the suite — ever
-    // share the machine with the run being timed. SPEC-052's two samples stay
-    // at level 0, alongside the functional suite as before: they are gated on
-    // absolute ceilings only (2s first paint, 100ms re-render), with no
-    // baseline-relative row to drift, so they are the one benchmark that
-    // tolerates a busy machine — which is what makes them a safe head for the
-    // chain. The cost of the chain is that a perf-charts failure skips the two
-    // below it; that run is already red, so no unmeasured budget can pass as
-    // green.
-    { name: "perf-charts", use: { ...devices["Desktop Chrome"] }, testMatch: /SPEC-052\.perf\.spec\.ts$/ },
+    // The benchmark chain (see the header): one per dependency level, each
+    // starting only after the functional suite and every earlier benchmark
+    // have finished, so nothing shares the machine with the run being timed.
+    // perf-quiet is the chain's tests-less head — it matches no files, so it
+    // completes instantly and cannot fail, and its only job is to hold the
+    // first real benchmark at level 1. The cost of the chain is that a
+    // benchmark failure skips the ones below it; that run is already red, so
+    // no unmeasured budget can pass as green.
+    { name: "perf-quiet", testMatch: /^$/ },
+    {
+      name: "perf-charts",
+      use: { ...devices["Desktop Chrome"] },
+      testMatch: /SPEC-052\.perf\.spec\.ts$/,
+      dependencies: ["perf-quiet"],
+    },
     {
       name: "perf-find",
       use: { ...devices["Desktop Chrome"] },
