@@ -5,6 +5,7 @@ import { asListDefinitions } from "../lib/core/lists";
 import { drawingWrapSpacerStyle, shapeDisplayStyle, shapeTextRectStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintShapeIntoCanvas } from "../lib/core/shapeCanvas";
+import { noShapeMediaSrc, shapeFillIsVisible } from "../lib/core/shapes";
 import { shapeClipPath } from "../lib/core/shapeGeometry";
 import { shapeHasVisibleText } from "../lib/shapes";
 import { shapeTextRenderEntries } from "../lib/pageRender";
@@ -54,6 +55,28 @@ const canvasEl = useTemplateRef("canvasEl");
 // rendered outside the editor (unit tests, print-only trees).
 const documentZoom = inject("documentZoom", ref(1));
 
+// SPEC-073 picture fills: DocumentView (via useShapes) provides a mediaId →
+// data-URI resolver; outside the editor there is none and a picture fill
+// paints nothing. Decoded images are cached per mediaId; a load completion
+// triggers a repaint, so the fill appears as soon as the bitmap is ready.
+const shapeMediaSrc = inject("shapeMediaSrc", noShapeMediaSrc());
+const pictureCache = new Map();
+
+function resolvePicture(mediaId = "") {
+  let img = pictureCache.get(mediaId);
+  if (!img) {
+    const src = typeof shapeMediaSrc === "function" ? shapeMediaSrc(mediaId) : "";
+    if (!src) {
+      return null;
+    }
+    img = new Image();
+    img.onload = repaint;
+    img.src = src;
+    pictureCache.set(mediaId, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+
 function repaint() {
   const shape = asShape(props.block);
   const canvas = canvasEl.value;
@@ -62,7 +85,7 @@ function repaint() {
   }
   const widthPx = Math.max(1, Math.round(cmToPx(shape.widthCm)));
   const heightPx = Math.max(1, Math.round(cmToPx(Math.max(shape.heightCm, 0.05))));
-  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx, documentZoom.value);
+  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx, documentZoom.value, { pictures: resolvePicture });
 }
 
 onMounted(repaint);
@@ -133,7 +156,7 @@ function wrapSpacerStyle() {
  * cosmetic). */
 function proxyStyle() {
   const shape = asShape(props.block);
-  const clip = shapeClipPath(shape.geometry, !!shape.fill, shape.path);
+  const clip = shapeClipPath(shape.geometry, shapeFillIsVisible(shape.fill), shape.path);
   // The selection frame reads its angle from here (see the stylesheet): the
   // proxy itself must stay unrotated, since it is the element every
   // measurement and hit test goes through. Untyped object literal per the
@@ -149,7 +172,7 @@ function proxyStyle() {
  * value Vue's typed `:style` binding never has to widen. */
 function proxyPassthrough() {
   const shape = asShape(props.block);
-  return !shape.fill && !shapeHasVisibleText(shape);
+  return !shapeFillIsVisible(shape.fill) && !shapeHasVisibleText(shape);
 }
 
 /** The shape's text frame as DocBlockEntries entries (AC-17..21): real,

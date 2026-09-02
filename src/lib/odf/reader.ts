@@ -43,7 +43,7 @@ import type {
   EquationSpec,
 } from "../documentModel";
 import type { ListDefinition, ListFormatting, ListLevelDefinition } from "../core/lists";
-import type { MediaPart } from "../core/media";
+import { contentTypeForPartName, type MediaPart } from "../core/media";
 import type {
   BorderLineStyle,
   BorderSide,
@@ -1259,7 +1259,25 @@ function parseBodyTextBlockOrSplit(
     (child) => child.namespaceURI === DRAW_NAMESPACE && child.localName === "frame",
   );
   const hasImage = frameChildren.some((frame) => parseDrawFrame(frame, ctx.parts, ctx.graphicWrapStyles) !== null);
-  const shapeTextCtx = { parseParagraph: (pEl: Element) => parseTextBlock(pEl, catalog, pEl.localName === "h") };
+  const media: MediaPart[] = [];
+  const shapeTextCtx = {
+    parseParagraph: (pEl: Element) => parseTextBlock(pEl, catalog, pEl.localName === "h"),
+    // SPEC-073: a shape's picture fill resolves its Pictures/ href to a
+    // mediaId the same way a draw:image does (drawing.ts) — mediaId is the
+    // part path, bytes eagerly base64-encoded. Duplicates are harmless: the
+    // caller merges media by id. Null (missing part) leaves the fill
+    // preserved verbatim in unsupportedStyleXml.
+    resolveFillImage: (href: string): string | null => {
+      const partPath = href.replace(/^\.\//, "");
+      const bytes = ctx.parts.get(partPath);
+      const contentType = contentTypeForPartName(partPath);
+      if (!bytes || !contentType) {
+        return null;
+      }
+      media.push({ mediaId: partPath, contentType, data: bytesToBase64(bytes) });
+      return partPath;
+    },
+  };
   const hasShape = Array.from(el.children).some(
     (child) =>
       child.namespaceURI === DRAW_NAMESPACE &&
@@ -1296,7 +1314,10 @@ function parseBodyTextBlockOrSplit(
       firstChildElement(frame, DRAW_NAMESPACE, "object") !== undefined && !isFormulaFrame(frame, ctx.parts),
   );
   if (!hasImage && !hasShape && !hasChart && !hasConnector && !hasGroup) {
-    return { blocks: [parseTextBlock(el, catalog, isHeading)], media: [] };
+    // `media` may hold picture-fill parts a probing shape parse registered
+    // even when the shape itself stayed unmodelled — returning them is
+    // harmless (the writer only emits referenced parts).
+    return { blocks: [parseTextBlock(el, catalog, isHeading)], media };
   }
 
   const styleName = textAttr(el, "style-name") ?? undefined;
@@ -1308,7 +1329,6 @@ function parseBodyTextBlockOrSplit(
   }
 
   const blocks: Block[] = [];
-  const media: MediaPart[] = [];
   let segment: Node[] = [];
   const flush = () => {
     if (segment.length === 0) {

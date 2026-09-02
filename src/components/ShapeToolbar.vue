@@ -6,6 +6,7 @@
 // prop/emit declarations per the espree constraint (see AppShell.vue).
 import { computed, ref, watch } from "vue";
 import UiButton from "./ui/UiButton.vue";
+import ShapeStylePanel from "./ShapeStylePanel.vue";
 import { useTier } from "../composables/useResponsiveTier";
 
 const props = defineProps({
@@ -14,18 +15,26 @@ const props = defineProps({
   outlineWidthPt: { type: Number, default: 1 },
   outlineDash: { type: String, default: "solid" },
   rotationDeg: { type: Number, default: 0 },
-  wrap: { type: String, required: true },
+  wrap: { type: String, default: "inline" },
   altText: { type: String, default: "" },
   grouped: { type: Boolean, default: false },
   canGroup: { type: Boolean, default: false },
   /** SPEC-072: whether align / distribute apply to the current selection. */
   canAlign: { type: Boolean, default: false },
   canDistribute: { type: Boolean, default: false },
+  /** SPEC-073: the full styling snapshot ShapeStylePanel renders — { fill,
+   * outline, shadow, isLine, isConnector }. */
+  styling: { type: Object, default: () => ({}) },
 });
 
 const emit = defineEmits([
   "fill",
   "outline",
+  "shadow",
+  "style-preset",
+  "preview-fill",
+  "preview-outline",
+  "pick-picture",
   "rotation",
   "wrap",
   "alt-text",
@@ -78,6 +87,11 @@ const tier = useTier();
 const positionUnavailable = computed(() => tier.value === "compact");
 const POSITION_UNAVAILABLE_REASON = "not available on this screen size";
 
+// SPEC-073 AC-16/AC-17: the toolbar's full styling picker lives in a
+// popover so the quick controls stay one click; the identical panel is also
+// hosted by the Format → Drawing → Shape formatting… dialog.
+const styleOpen = ref(false);
+
 const rotationInput = ref(String(props.rotationDeg));
 watch(
   () => props.rotationDeg,
@@ -89,7 +103,7 @@ watch(
 function onFillInput(event = new Event("input")) {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
-    emit("fill", target.value);
+    emit("fill", { kind: "solid", color: target.value });
   }
 }
 
@@ -171,6 +185,34 @@ function onZOrderChange(event = new Event("change")) {
 
 <template>
   <div class="shape-toolbar-controls">
+    <span class="shape-style-popover-host">
+      <UiButton
+        variant="ghost"
+        data-testid="shape-style-button"
+        :aria-expanded="styleOpen"
+        @mousedown.prevent
+        @click="styleOpen = !styleOpen"
+      >
+        Style
+      </UiButton>
+      <div
+        v-if="styleOpen"
+        class="shape-style-popover"
+        data-testid="shape-style-popover"
+        @mousedown.stop
+      >
+        <ShapeStylePanel
+          :styling="styling"
+          @fill="(value) => emit('fill', value)"
+          @outline="(value) => emit('outline', value)"
+          @shadow="(value) => emit('shadow', value)"
+          @preset="(id) => emit('style-preset', id)"
+          @preview-fill="(value) => emit('preview-fill', value)"
+          @preview-outline="(value) => emit('preview-outline', value)"
+          @pick-picture="emit('pick-picture')"
+        />
+      </div>
+    </span>
     <label
       class="shape-toolbar-field"
       title="Fill colour"
@@ -454,5 +496,20 @@ function onZOrderChange(event = new Event("change")) {
   width: 1px;
   align-self: stretch;
   background: var(--border-default);
+}
+.shape-style-popover-host {
+  position: relative;
+  display: inline-flex;
+}
+.shape-style-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 40;
+  background: var(--surface-base);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  padding: var(--space-4);
 }
 </style>

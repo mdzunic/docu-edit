@@ -700,6 +700,9 @@ interface InlineWriteContext {
    * lazily in document-write order — the same one pool Word itself uses
    * across every tracked-change element kind in a document. */
   changeIds: Map<string, number>;
+  /** The media plan's relationship id for a mediaId (SPEC-073 picture
+   * fills); absent in contexts whose part carries no media relationships. */
+  mediaRelIdFor?: (mediaId: string) => string | undefined;
 }
 
 /** The numeric `w:id` for a tracked-change element (SPEC-039): the same
@@ -840,6 +843,7 @@ function imageParagraphXml(image: Image, mediaPlan: MediaWritePlan, docPrId: num
 function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWriteContext, docPrId: number): string {
   const drawing = shapeDrawingXml(shape, docPrId, {
     paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, ctx),
+    relIdForMedia: ctx.mediaRelIdFor,
   });
   return `<w:p><w:r>${drawing}</w:r></w:p>`;
 }
@@ -2075,6 +2079,9 @@ function* documentBlockXml(
     noteIds: notesPlan.noteIds,
     commentIds: commentsPlan.commentIds,
     changeIds: new Map(),
+    // SPEC-073 picture fills: a shape's a:blipFill resolves its media
+    // relationship through the same plan Image blocks use (AC-4).
+    mediaRelIdFor: (mediaId) => mediaPlan.relIdFor(mediaId) || undefined,
   };
   // SPEC-070: a connector's a:stCxn/a:endCxn must name the docPr id its
   // attached shape will be written under. Pre-compute every drawing's docPr
@@ -2117,6 +2124,7 @@ function* documentBlockXml(
         if (drawing.type === "shape") {
           const drawingContent = shapeDrawingXml(drawing, docPrId++, {
             paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, inlineCtx),
+            relIdForMedia: inlineCtx.mediaRelIdFor,
           });
           return `<w:r>${drawingContent}</w:r>`;
         }

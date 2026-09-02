@@ -5,8 +5,16 @@
 // read side by side; this one never touches Image and drawing.ts never
 // touches Shape, per SPEC-024's "no shipped call site changes".
 import type { Block, Paragraph, Shape } from "../documentModel";
-import type { ShapeOutline } from "../core/shapes";
+import type {
+  ArrowheadKind,
+  ArrowheadSize,
+  ShapeArrowhead,
+  ShapeFill,
+  ShapeOutline,
+  ShapeShadow,
+} from "../core/shapes";
 import { LINE_GEOMETRIES } from "../core/shapes";
+import { parseXml } from "../core/xml";
 import { adjustmentGuideName, adjustmentToGuideValue } from "../core/shapeCatalogue";
 import { GEOMETRY_TO_PRST, PRST_TO_GEOMETRY, parseAvLstAdjustments } from "../core/drawingMl";
 import { arcToCubics, PATH_GRID, quadraticToCubic, type PathStep, type ShapePath, type ShapeSubpath } from "../core/shapePath";
@@ -50,6 +58,11 @@ function ooxmlRotToDeg(rot: number): number {
  * (styleCatalog/numberingCatalog/links live in reader.ts). */
 export interface ShapeTextContext {
   parseParagraph: (pEl: Element) => Paragraph;
+  /** Resolves an `a:blip/@r:embed` relationship id to the media part it
+   * names (registering the part's bytes with the caller's media collection)
+   * — SPEC-073 picture fills. Absent (older callers, unit stubs) preserves
+   * any blipFill verbatim instead. */
+  resolveBlip?: (embedId: string) => string | null;
 }
 
 function vAlignOf(bodyPr: Element | undefined): "top" | "middle" | "bottom" {
@@ -85,31 +98,136 @@ function parseShapeText(wsp: Element, ctx: ShapeTextContext): Shape["text"] | un
   return { blocks, vAlign: vAlignOf(bodyPr) };
 }
 
-function parseOutline(spPr: Element): ShapeOutline | undefined {
-  const ln = firstChildElement(spPr, A_NAMESPACE, "ln");
-  if (!ln) {
+/** An `a:srgbClr` (+ optional `a:alpha` child, D5's 0..1 opacity) parsed
+ * off `parent`'s first solid colour, or null for a colour the model cannot
+ * carry (a schemeClr, no srgbClr at all) — the caller then preserves the
+ * whole property verbatim (AC-35). */
+function parseSolidColor(parent: Element): { color: string; alpha?: number } | null {
+  const srgbClr = firstChildElement(parent, A_NAMESPACE, "srgbClr");
+  const color = srgbClr ? ooxmlColorToCss(srgbClr.getAttribute("val")) : undefined;
+  if (!srgbClr || !color) {
+    return null;
+  }
+  const alphaEl = firstChildElement(srgbClr, A_NAMESPACE, "alpha");
+  const amt = alphaEl ? Number(alphaEl.getAttribute("val")) : NaN;
+  const parsed: { color: string; alpha?: number } = { color };
+  if (Number.isFinite(amt) && amt >= 0 && amt < 100000) {
+    parsed.alpha = amt / 100000;
+  }
+  return parsed;
+}
+
+const OOXML_DASH_TO_MODEL: Record<string, ShapeOutline["dash"]> = {
+  dash: "dash",
+  sysDash: "dot",
+  sysDot: "dot",
+  dashDot: "dashDot",
+  sysDashDot: "dashDot",
+  lgDash: "longDash",
+  lgDashDot: "longDashDot",
+  lgDashDotDot: "longDashDot",
+};
+
+const OOXML_ARROW_TO_MODEL: Record<string, ArrowheadKind> = {
+  none: "none",
+  triangle: "triangle",
+  arrow: "open",
+  stealth: "stealth",
+  diamond: "diamond",
+  oval: "oval",
+};
+
+const MODEL_ARROW_TO_OOXML: Record<ArrowheadKind, string> = {
+  none: "none",
+  triangle: "triangle",
+  open: "arrow",
+  stealth: "stealth",
+  diamond: "diamond",
+  oval: "oval",
+};
+
+const OOXML_ARROW_SIZE: Record<ArrowheadSize, string> = { small: "sm", medium: "med", large: "lg" };
+
+function parseArrowEnd(ln: Element, localName: "headEnd" | "tailEnd"): ShapeArrowhead | undefined {
+  const el = firstChildElement(ln, A_NAMESPACE, localName);
+  const kind = el ? OOXML_ARROW_TO_MODEL[el.getAttribute("type") ?? ""] : undefined;
+  if (!el || !kind || kind === "none") {
     return undefined;
+  }
+  // Only a sized arrow end reads as an explicit outline arrowhead — a bare
+  // `a:tailEnd type="triangle"` is the legacy `arrow`-geometry marker
+  // (SPEC-070), handled by the geometry branch in shapeFromWsp.
+  const len = el.getAttribute("len") ?? el.getAttribute("w");
+  const size: ArrowheadSize = len === "sm" ? "small" : len === "lg" ? "large" : "medium";
+  return { kind, size };
+}
+
+/** Whether an `a:headEnd`/`a:tailEnd` carries explicit size attributes —
+ * the marker distinguishing a SPEC-073 outline arrowhead from SPEC-070's
+ * bare `arrow`-geometry tail. */
+function arrowEndIsExplicit(ln: Element | undefined, localName: "headEnd" | "tailEnd"): boolean {
+  const el = ln ? firstChildElement(ln, A_NAMESPACE, localName) : undefined;
+  return !!el && (el.hasAttribute("w") || el.hasAttribute("len"));
+}
+
+/** Parses an `a:ln` into the widened outline model, or flags it preserved
+ * when its stroke uses vocabulary the model cannot hold (a gradient stroke,
+ * a scheme colour). `noFill` and an absent `ln` are simply "no outline". */
+function parseLn(ln: Element | undefined): { outline?: ShapeOutline; preserved: boolean } {
+  if (!ln) {
+    return { preserved: false };
   }
   if (firstChildElement(ln, A_NAMESPACE, "noFill")) {
-    return undefined;
+    return { preserved: false };
   }
   const solidFill = firstChildElement(ln, A_NAMESPACE, "solidFill");
-  const srgbClr = solidFill ? firstChildElement(solidFill, A_NAMESPACE, "srgbClr") : undefined;
-  const color = srgbClr ? ooxmlColorToCss(srgbClr.getAttribute("val")) : undefined;
-  if (!color) {
-    return undefined;
+  if (!solidFill && (firstChildElement(ln, A_NAMESPACE, "gradFill") || firstChildElement(ln, A_NAMESPACE, "pattFill"))) {
+    return { preserved: true };
+  }
+  const parsed = solidFill ? parseSolidColor(solidFill) : null;
+  if (solidFill && !parsed) {
+    return { preserved: true };
+  }
+  if (!parsed) {
+    return { preserved: false };
   }
   const wAttr = ln.getAttribute("w");
-  const widthPt = wAttr ? emuToPt(Number(wAttr)) : 0.75;
-  let dash: ShapeOutline["dash"] = "solid";
-  const prstDash = firstChildElement(ln, A_NAMESPACE, "prstDash");
-  const val = prstDash?.getAttribute("val");
-  if (val === "dash" || val === "dashDot" || val === "lgDash") {
-    dash = "dash";
-  } else if (val === "sysDot" || val === "sysDash") {
-    dash = "dot";
+  const outline: ShapeOutline = {
+    color: parsed.color,
+    widthPt: wAttr ? emuToPt(Number(wAttr)) : 0.75,
+    dash: OOXML_DASH_TO_MODEL[firstChildElement(ln, A_NAMESPACE, "prstDash")?.getAttribute("val") ?? ""] ?? "solid",
+  };
+  if (parsed.alpha !== undefined) {
+    outline.alpha = parsed.alpha;
   }
-  return { color, widthPt, dash };
+  const cap = ln.getAttribute("cap");
+  if (cap === "rnd") {
+    outline.cap = "round";
+  } else if (cap === "sq") {
+    outline.cap = "square";
+  }
+  const cmpd = ln.getAttribute("cmpd");
+  if (cmpd === "dbl") {
+    outline.compound = "double";
+  } else if (cmpd === "thickThin") {
+    outline.compound = "thickThin";
+  } else if (cmpd === "thinThick") {
+    outline.compound = "thinThick";
+  }
+  if (firstChildElement(ln, A_NAMESPACE, "round")) {
+    outline.join = "round";
+  } else if (firstChildElement(ln, A_NAMESPACE, "bevel")) {
+    outline.join = "bevel";
+  }
+  const startArrow = parseArrowEnd(ln, "headEnd");
+  if (startArrow && arrowEndIsExplicit(ln, "headEnd")) {
+    outline.startArrow = startArrow;
+  }
+  const endArrow = parseArrowEnd(ln, "tailEnd");
+  if (endArrow && arrowEndIsExplicit(ln, "tailEnd")) {
+    outline.endArrow = endArrow;
+  }
+  return { outline, preserved: false };
 }
 
 /** The `a:avLst` a shape's adjustments serialise to (SPEC-069 AC-6a) —
@@ -125,13 +243,191 @@ function avLstXml(shape: Shape): string {
   return `<a:avLst>${gds}</a:avLst>`;
 }
 
-function parseFill(spPr: Element): string | undefined {
-  const solidFill = firstChildElement(spPr, A_NAMESPACE, "solidFill");
-  if (!solidFill) {
-    return undefined;
+export const FILL_ELEMENT_NAMES = new Set(["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"]);
+const EFFECT_CHILD_NAMES = new Set([
+  "blur",
+  "fillOverlay",
+  "glow",
+  "innerShdw",
+  "outerShdw",
+  "prstShdw",
+  "reflection",
+  "softEdge",
+]);
+
+/** Everything the styling parser pulled off one `wps:spPr` (SPEC-073): the
+ * modelled properties plus the verbatim leftovers for `unsupportedStyleXml`
+ * — only *unparsed* property elements land there (AC-36). */
+interface ParsedShapeStyle {
+  fill?: ShapeFill;
+  outline?: ShapeOutline;
+  shadow?: ShapeShadow;
+  preserved: string[];
+}
+
+function parseGradFill(el: Element): ShapeFill | null {
+  const gsLst = firstChildElement(el, A_NAMESPACE, "gsLst");
+  if (!gsLst) {
+    return null;
   }
-  const srgbClr = firstChildElement(solidFill, A_NAMESPACE, "srgbClr");
-  return srgbClr ? ooxmlColorToCss(srgbClr.getAttribute("val")) : undefined;
+  const stops: { position: number; color: string; alpha?: number }[] = [];
+  for (const gs of childElements(gsLst, A_NAMESPACE, "gs")) {
+    const pos = Number(gs.getAttribute("pos"));
+    const parsed = parseSolidColor(gs);
+    if (!Number.isFinite(pos) || !parsed) {
+      return null;
+    }
+    const stop: { position: number; color: string; alpha?: number } = {
+      position: Math.min(1, Math.max(0, pos / 100000)),
+      color: parsed.color,
+    };
+    if (parsed.alpha !== undefined) {
+      stop.alpha = parsed.alpha;
+    }
+    stops.push(stop);
+  }
+  if (stops.length < 2) {
+    return null;
+  }
+  stops.sort((a, b) => a.position - b.position);
+  const pathEl = firstChildElement(el, A_NAMESPACE, "path");
+  if (pathEl) {
+    return { kind: "gradient", gradient: { type: "radial", stops } };
+  }
+  const lin = firstChildElement(el, A_NAMESPACE, "lin");
+  const ang = lin ? Number(lin.getAttribute("ang")) : 0;
+  return {
+    kind: "gradient",
+    gradient: { type: "linear", angleDeg: Number.isFinite(ang) ? Math.round(ang / 60000) : 0, stops },
+  };
+}
+
+const R_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+function parseBlipFill(el: Element, resolveBlip: ((embedId: string) => string | null) | undefined): ShapeFill | null {
+  const blip = firstChildElement(el, A_NAMESPACE, "blip");
+  const embedId = blip?.getAttributeNS(R_NAMESPACE, "embed");
+  const mediaId = embedId && resolveBlip ? resolveBlip(embedId) : null;
+  if (!blip || !mediaId) {
+    return null;
+  }
+  const fill: ShapeFill = {
+    kind: "picture",
+    mediaId,
+    mode: firstChildElement(el, A_NAMESPACE, "tile") ? "tile" : "stretch",
+  };
+  const alphaMod = firstChildElement(blip, A_NAMESPACE, "alphaModFix");
+  const amt = alphaMod ? Number(alphaMod.getAttribute("amt")) : NaN;
+  if (Number.isFinite(amt) && amt >= 0 && amt < 100000) {
+    fill.alpha = amt / 100000;
+  }
+  return fill;
+}
+
+function parsePattFill(el: Element): ShapeFill | null {
+  const prst = el.getAttribute("prst");
+  const fgClr = firstChildElement(el, A_NAMESPACE, "fgClr");
+  const bgClr = firstChildElement(el, A_NAMESPACE, "bgClr");
+  const fg = fgClr ? parseSolidColor(fgClr) : null;
+  const bg = bgClr ? parseSolidColor(bgClr) : null;
+  if (!prst || !fg || !bg) {
+    return null;
+  }
+  return { kind: "pattern", preset: prst, foreground: fg.color, background: bg.color };
+}
+
+function parseOuterShdw(el: Element): ShapeShadow | null {
+  const parsed = parseSolidColor(el);
+  if (!parsed) {
+    return null;
+  }
+  const blurRad = Number(el.getAttribute("blurRad") ?? 0);
+  const dist = Number(el.getAttribute("dist") ?? 0);
+  const dir = Number(el.getAttribute("dir") ?? 0);
+  if (![blurRad, dist, dir].every(Number.isFinite)) {
+    return null;
+  }
+  return {
+    color: parsed.color,
+    alpha: parsed.alpha ?? 1,
+    blurPt: emuToPt(blurRad),
+    distancePt: emuToPt(dist),
+    angleDeg: Math.round(dir / 60000),
+  };
+}
+
+/** Parses every styling property off a `spPr` (SPEC-073): fill, outline,
+ * shadow — and collects the verbatim XML of every property element the
+ * model could not hold: an unparseable fill/outline, non-shadow effects,
+ * scene3d/sp3d/extLst, anything unrecognised. Exactly one source per
+ * property (AC-36): a parsed property never lands in `preserved`. */
+export function parseShapeStyle(
+  spPr: Element,
+  resolveBlip?: (embedId: string) => string | null,
+): ParsedShapeStyle {
+  const style: ParsedShapeStyle = { preserved: [] };
+  for (const child of Array.from(spPr.children)) {
+    if (
+      child.namespaceURI !== A_NAMESPACE ||
+      child.localName === "xfrm" ||
+      child.localName === "prstGeom" ||
+      child.localName === "custGeom"
+    ) {
+      continue;
+    }
+    if (FILL_ELEMENT_NAMES.has(child.localName)) {
+      let fill: ShapeFill | null = null;
+      if (child.localName === "noFill") {
+        continue; // absence — the model's "no fill"
+      }
+      if (child.localName === "solidFill") {
+        const parsed = parseSolidColor(child);
+        if (parsed) {
+          fill = { kind: "solid", color: parsed.color };
+          if (parsed.alpha !== undefined) {
+            fill.alpha = parsed.alpha;
+          }
+        }
+      } else if (child.localName === "gradFill") {
+        fill = parseGradFill(child);
+      } else if (child.localName === "blipFill") {
+        fill = parseBlipFill(child, resolveBlip);
+      } else if (child.localName === "pattFill") {
+        fill = parsePattFill(child);
+      }
+      if (fill) {
+        style.fill = fill;
+      } else {
+        style.preserved.push(serializeElement(child));
+      }
+      continue;
+    }
+    if (child.localName === "ln") {
+      const { outline, preserved } = parseLn(child);
+      if (preserved) {
+        style.preserved.push(serializeElement(child));
+      } else if (outline) {
+        style.outline = outline;
+      }
+      continue;
+    }
+    if (child.localName === "effectLst") {
+      for (const effect of Array.from(child.children)) {
+        if (effect.namespaceURI !== A_NAMESPACE) {
+          continue;
+        }
+        const shadow = effect.localName === "outerShdw" && !style.shadow ? parseOuterShdw(effect) : null;
+        if (shadow) {
+          style.shadow = shadow;
+        } else {
+          style.preserved.push(serializeElement(effect));
+        }
+      }
+      continue;
+    }
+    style.preserved.push(serializeElement(child));
+  }
+  return style;
 }
 
 /** One parsed `w:drawing` holding a shape (`wps:wsp`), the shape-flavoured
@@ -308,14 +604,16 @@ export function shapeFromWsp(wsp: Element, box: WspBox, ctx: ShapeTextContext): 
   }
   const prstGeom = firstChildElement(spPr, A_NAMESPACE, "prstGeom");
   let geometry = PRST_TO_GEOMETRY[prstGeom?.getAttribute("prst") ?? ""];
-  // SPEC-070 "Untangling the arrow preset": a `prst="line"` carrying an
+  // SPEC-070 "Untangling the arrow preset": a `prst="line"` carrying a bare
   // `a:tailEnd` is the model's `arrow` (a line with an end arrowhead). The
   // legacy `straightConnector1` → `arrow` mapping stays in PRST_TO_GEOMETRY
-  // for documents saved before this change.
+  // for documents saved before this change. A tailEnd carrying explicit
+  // size attributes is instead a SPEC-073 outline arrowhead on a plain
+  // line, left to parseShapeStyle (the two writers never emit both forms).
   if (geometry === "line") {
     const lnEl = firstChildElement(spPr, A_NAMESPACE, "ln");
     const tailEnd = lnEl ? firstChildElement(lnEl, A_NAMESPACE, "tailEnd") : undefined;
-    if (tailEnd && tailEnd.getAttribute("type") !== "none") {
+    if (tailEnd && tailEnd.getAttribute("type") !== "none" && !arrowEndIsExplicit(lnEl, "tailEnd")) {
       geometry = "arrow";
     }
   }
@@ -351,13 +649,18 @@ export function shapeFromWsp(wsp: Element, box: WspBox, ctx: ShapeTextContext): 
   if (rotationDeg) {
     shape.rotationDeg = rotationDeg;
   }
-  const fill = parseFill(spPr);
-  if (fill) {
-    shape.fill = fill;
+  const style = parseShapeStyle(spPr, ctx.resolveBlip);
+  if (style.fill) {
+    shape.fill = style.fill;
   }
-  const outline = parseOutline(spPr);
-  if (outline) {
-    shape.outline = outline;
+  if (style.outline) {
+    shape.outline = style.outline;
+  }
+  if (style.shadow) {
+    shape.shadow = style.shadow;
+  }
+  if (style.preserved.length > 0) {
+    shape.unsupportedStyleXml = style.preserved.join("");
   }
   const text = parseShapeText(wsp, ctx);
   if (text) {
@@ -457,40 +760,221 @@ export function parseShapeDrawing(
   return { shape };
 }
 
-function dashXml(dash: ShapeOutline["dash"]): string {
-  if (dash === "dash") {
-    return '<a:prstDash val="dash"/>';
+/** An `a:srgbClr`, with D5's 0..1 opacity written as `a:alpha` in
+ * thousandths of a percent when below fully opaque. */
+export function srgbClrXml(color: string, alpha?: number): string {
+  const val = cssColorToOoxml(color) ?? "000000";
+  if (alpha !== undefined && alpha < 1) {
+    return `<a:srgbClr val="${val}"><a:alpha val="${Math.round(Math.max(0, alpha) * 100000)}"/></a:srgbClr>`;
   }
-  if (dash === "dot") {
-    return '<a:prstDash val="sysDot"/>';
-  }
-  return "";
+  return `<a:srgbClr val="${val}"/>`;
 }
 
-/** The outline `a:ln`. `tailEnd` (SPEC-070 "Untangling the arrow preset") adds
- * an `<a:tailEnd type="triangle"/>` so the model's `arrow` geometry — written
- * as `prst="line"` — reads back as an arrow rather than a plain line. */
-function outlineXml(outline: ShapeOutline | undefined, tailEnd?: string): string {
-  const tail = tailEnd ? `<a:tailEnd type="${tailEnd}"/>` : "";
+const MODEL_DASH_TO_OOXML: Record<ShapeOutline["dash"], string> = {
+  solid: "",
+  dash: "dash",
+  dot: "sysDot",
+  dashDot: "dashDot",
+  longDash: "lgDash",
+  longDashDot: "lgDashDot",
+};
+
+/** The `a:prstDash` for a model dash value — shared with connector.ts so the
+ * two writers cannot drift (a connector's longDash/dashDot must round-trip
+ * exactly like a shape's, AC-2/AC-32). */
+export function dashXml(dash: ShapeOutline["dash"]): string {
+  const val = MODEL_DASH_TO_OOXML[dash];
+  return val ? `<a:prstDash val="${val}"/>` : "";
+}
+
+function arrowEndXml(tag: "headEnd" | "tailEnd", arrow: ShapeArrowhead): string {
+  const size = OOXML_ARROW_SIZE[arrow.size];
+  return `<a:${tag} type="${MODEL_ARROW_TO_OOXML[arrow.kind]}" w="${size}" len="${size}"/>`;
+}
+
+/** The outline `a:ln` (SPEC-073 AC-2/AC-32): width, cap/compound attributes,
+ * colour+alpha, dash, join element and sized arrow ends. `legacyTail`
+ * (SPEC-070 "Untangling the arrow preset") adds the bare
+ * `<a:tailEnd type="triangle"/>` marking the model's `arrow` geometry —
+ * suppressed when an explicit end arrowhead already writes a sized tail. */
+function outlineXml(outline: ShapeOutline | undefined, legacyTail = false): string {
+  const bareTail = legacyTail ? '<a:tailEnd type="triangle"/>' : "";
   if (!outline) {
-    return `<a:ln>${tail || "<a:noFill/>"}</a:ln>`;
+    return `<a:ln>${bareTail || "<a:noFill/>"}</a:ln>`;
   }
-  const color = cssColorToOoxml(outline.color);
-  if (!color) {
-    return `<a:ln>${tail || "<a:noFill/>"}</a:ln>`;
-  }
+  const joinXml =
+    outline.join === "round" ? "<a:round/>" : outline.join === "bevel" ? "<a:bevel/>" : "";
+  const capAttr =
+    outline.cap === "round" ? ' cap="rnd"' : outline.cap === "square" ? ' cap="sq"' : "";
+  const cmpd =
+    outline.compound === "double"
+      ? "dbl"
+      : outline.compound === "thickThin"
+        ? "thickThin"
+        : outline.compound === "thinThick"
+          ? "thinThick"
+          : "";
+  const cmpdAttr = cmpd ? ` cmpd="${cmpd}"` : "";
+  const head = outline.startArrow ? arrowEndXml("headEnd", outline.startArrow) : "";
+  const tail = outline.endArrow ? arrowEndXml("tailEnd", outline.endArrow) : bareTail;
   return (
-    `<a:ln w="${ptToEmu(outline.widthPt)}">` +
-    `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>` +
+    `<a:ln w="${ptToEmu(outline.widthPt)}"${capAttr}${cmpdAttr}>` +
+    `<a:solidFill>${srgbClrXml(outline.color, outline.alpha)}</a:solidFill>` +
     dashXml(outline.dash) +
+    joinXml +
+    head +
     tail +
     "</a:ln>"
   );
 }
 
-function fillXml(fill: string | undefined): string {
-  const color = fill ? cssColorToOoxml(fill) : undefined;
-  return color ? `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>` : "<a:noFill/>";
+/** A `ShapeFill` as its spPr fill element (SPEC-073 AC-32). `relIdForMedia`
+ * resolves a picture fill's mediaId to the relationship the media plan
+ * registered — absent/unresolved falls back to `a:noFill` (the part is not
+ * in the package, so a dangling r:embed would corrupt the file). */
+function fillXml(fill: ShapeFill | undefined, relIdForMedia?: (mediaId: string) => string | undefined): string {
+  if (!fill || fill.kind === "none") {
+    return "<a:noFill/>";
+  }
+  if (fill.kind === "solid") {
+    return `<a:solidFill>${srgbClrXml(fill.color, fill.alpha)}</a:solidFill>`;
+  }
+  if (fill.kind === "gradient") {
+    const stops = fill.gradient.stops
+      .map(
+        (stop) =>
+          `<a:gs pos="${Math.round(Math.min(1, Math.max(0, stop.position)) * 100000)}">${srgbClrXml(stop.color, stop.alpha)}</a:gs>`,
+      )
+      .join("");
+    const shape =
+      fill.gradient.type === "radial"
+        ? '<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>'
+        : `<a:lin ang="${Math.round((fill.gradient.angleDeg ?? 0) * 60000)}" scaled="1"/>`;
+    return `<a:gradFill><a:gsLst>${stops}</a:gsLst>${shape}</a:gradFill>`;
+  }
+  if (fill.kind === "picture") {
+    const relId = relIdForMedia?.(fill.mediaId);
+    if (!relId) {
+      return "<a:noFill/>";
+    }
+    const alphaXml =
+      fill.alpha !== undefined && fill.alpha < 1
+        ? `<a:alphaModFix amt="${Math.round(Math.max(0, fill.alpha) * 100000)}"/>`
+        : "";
+    const blip = alphaXml
+      ? `<a:blip r:embed="${relId}" xmlns:r="${R_NAMESPACE}">${alphaXml}</a:blip>`
+      : `<a:blip r:embed="${relId}" xmlns:r="${R_NAMESPACE}"/>`;
+    const mode =
+      fill.mode === "tile"
+        ? '<a:tile tx="0" ty="0" sx="100000" sy="100000" flip="none" algn="tl"/>'
+        : "<a:stretch><a:fillRect/></a:stretch>";
+    return `<a:blipFill>${blip}${mode}</a:blipFill>`;
+  }
+  return (
+    `<a:pattFill prst="${escapeXmlAttribute(fill.preset)}">` +
+    `<a:fgClr>${srgbClrXml(fill.foreground)}</a:fgClr>` +
+    `<a:bgClr>${srgbClrXml(fill.background)}</a:bgClr>` +
+    "</a:pattFill>"
+  );
+}
+
+/** The `a:outerShdw` for a modelled shadow (SPEC-073 AC-32). */
+export function outerShdwXml(shadow: ShapeShadow): string {
+  return (
+    `<a:outerShdw blurRad="${ptToEmu(shadow.blurPt)}" dist="${ptToEmu(shadow.distancePt)}"` +
+    ` dir="${Math.round(shadow.angleDeg * 60000)}" rotWithShape="0">` +
+    srgbClrXml(shadow.color, shadow.alpha) +
+    "</a:outerShdw>"
+  );
+}
+
+/** CT_EffectList is an ordered sequence — blur, fillOverlay, glow, innerShdw,
+ * outerShdw, prstShdw, reflection, softEdge — so a preserved effect must land
+ * on the correct side of the modelled `a:outerShdw` (AC-36 "schema order"). */
+const EFFECTS_BEFORE_OUTER_SHADOW = new Set(["blur", "fillOverlay", "glow", "innerShdw"]);
+
+/** An empty split — the shape carried no `unsupportedStyleXml`. */
+export function emptyPreservedStyle(): PreservedStyleSplit {
+  return { fill: [], ln: [], effectsBefore: [], effectsAfter: [], other: [] };
+}
+
+export interface PreservedStyleSplit {
+  fill: string[];
+  ln: string[];
+  /** Effect children that schema-precede `a:outerShdw` (blur/fillOverlay/glow/innerShdw). */
+  effectsBefore: string[];
+  /** `a:outerShdw` itself and everything after it (prstShdw/reflection/softEdge). */
+  effectsAfter: string[];
+  other: string[];
+}
+
+/** `unsupportedStyleXml`'s sibling elements, split by where the writer must
+ * re-emit each: a preserved fill or `a:ln` replaces the modelled emission
+ * slot; effect children merge into the one `a:effectLst` around the modelled
+ * shadow's slot, keeping CT_EffectList's sequence valid; everything else
+ * appends after it in stored order (AC-36 "schema order" — scene3d/sp3d/
+ * extLst follow effectLst in CT_ShapeProperties). An unparseable string
+ * degrades to the trailing slot rather than being dropped. */
+export function splitPreservedStyle(xml: string): PreservedStyleSplit {
+  const out = emptyPreservedStyle();
+  let doc: Document;
+  try {
+    doc = parseXml(`<de:wrap xmlns:de="urn:docu-edit:shape">${xml}</de:wrap>`);
+  } catch {
+    out.other.push(xml);
+    return out;
+  }
+  for (const child of Array.from(doc.documentElement.children)) {
+    const serialized = serializeElement(child);
+    if (child.namespaceURI !== A_NAMESPACE) {
+      out.other.push(serialized);
+    } else if (FILL_ELEMENT_NAMES.has(child.localName)) {
+      out.fill.push(serialized);
+    } else if (child.localName === "ln") {
+      out.ln.push(serialized);
+    } else if (EFFECT_CHILD_NAMES.has(child.localName)) {
+      (EFFECTS_BEFORE_OUTER_SHADOW.has(child.localName) ? out.effectsBefore : out.effectsAfter).push(serialized);
+    } else {
+      out.other.push(serialized);
+    }
+  }
+  return out;
+}
+
+/** Removes the named property slots from a `.docx` `unsupportedStyleXml`
+ * string (AC-36 "exactly one source per property"): when an edit gives the
+ * MODEL a value for fill/outline/shadow, the preserved (unparsed) element
+ * occupying that slot must go, or a later save would resurrect the old
+ * styling over the user's visible edit. Only the slot's own elements are
+ * touched — a preserved glow stays when the shadow slot clears. Returns
+ * undefined when nothing survives; an unparseable string returns unchanged
+ * (nothing to remove surgically, and dropping it would lose content). */
+export function clearPreservedDocxStyle(
+  xml: string,
+  slots: { fill?: boolean; outline?: boolean; shadow?: boolean },
+): string | undefined {
+  let doc: Document;
+  try {
+    doc = parseXml(`<de:wrap xmlns:de="${DE_NAMESPACE}">${xml}</de:wrap>`);
+  } catch {
+    return xml;
+  }
+  const kept: string[] = [];
+  for (const child of Array.from(doc.documentElement.children)) {
+    if (child.namespaceURI === A_NAMESPACE) {
+      if (slots.fill && FILL_ELEMENT_NAMES.has(child.localName)) {
+        continue;
+      }
+      if (slots.outline && child.localName === "ln") {
+        continue;
+      }
+      if (slots.shadow && child.localName === "outerShdw") {
+        continue;
+      }
+    }
+    kept.push(serializeElement(child));
+  }
+  return kept.length > 0 ? kept.join("") : undefined;
 }
 
 /** Serialises a Shape's text frame's blocks into `wps:txbx/w:txbxContent`
@@ -498,6 +982,9 @@ function fillXml(fill: string | undefined): string {
  * independent of paragraphXml's own dependency graph. */
 export interface ShapeTextWriteContext {
   paragraphXml: (paragraph: Paragraph) => string;
+  /** The relationship id the media plan registered for a mediaId (SPEC-073
+   * picture fills) — absent for callers whose part carries no media. */
+  relIdForMedia?: (mediaId: string) => string | undefined;
 }
 
 function anchorAttrOf(vAlign: "top" | "middle" | "bottom" | undefined): string {
@@ -558,12 +1045,42 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
   const rotAttr = shape.rotationDeg ? ` rot="${degToOoxmlRot(shape.rotationDeg)}"` : "";
   const isLine = LINE_GEOMETRIES.has(shape.geometry) && !shape.unsupportedGeometryXml && !shape.path;
 
+  // SPEC-073 AC-36: modelled properties write from the model; preserved
+  // (unparsed) ones re-emit verbatim in their schema slots — a preserved
+  // fill/ln fills the modelled emission's slot only while the model holds no
+  // value for it (an edit sets the model AND clears the preserved slot, see
+  // clearPreservedShapeStyle; the model-first guard here covers any stale
+  // leftover so the on-screen styling always wins), effect children join the
+  // one effectLst around the modelled shadow's sequence position, the rest
+  // follow.
+  const preserved = shape.unsupportedStyleXml
+    ? splitPreservedStyle(shape.unsupportedStyleXml)
+    : emptyPreservedStyle();
+  const fillPart = isLine
+    ? preserved.fill.join("")
+    : shape.fill
+      ? fillXml(shape.fill, ctx.relIdForMedia)
+      : preserved.fill.length > 0
+        ? preserved.fill.join("")
+        : fillXml(undefined, ctx.relIdForMedia);
+  const lnPart = shape.outline
+    ? outlineXml(shape.outline, isArrow && !shape.outline.endArrow)
+    : preserved.ln.length > 0
+      ? preserved.ln.join("")
+      : outlineXml(undefined, isArrow);
+  const effectPart =
+    shape.shadow || preserved.effectsBefore.length > 0 || preserved.effectsAfter.length > 0
+      ? `<a:effectLst>${preserved.effectsBefore.join("")}${shape.shadow ? outerShdwXml(shape.shadow) : ""}${preserved.effectsAfter.join("")}</a:effectLst>`
+      : "";
+
   const spPr =
     "<wps:spPr>" +
     `<a:xfrm${rotAttr}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     geomXml +
-    (isLine ? "" : fillXml(shape.fill)) +
-    outlineXml(shape.outline, isArrow ? "triangle" : undefined) +
+    fillPart +
+    lnPart +
+    effectPart +
+    preserved.other.join("") +
     "</wps:spPr>";
 
   const wsp =

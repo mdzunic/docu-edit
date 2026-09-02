@@ -9,10 +9,11 @@
 // unknown attributes).
 import type { Block, Connector, ConnectorKind, Section } from "../documentModel";
 import { isConnector } from "../documentModel";
-import type { ArrowheadKind, ShapeOutline } from "../core/shapes";
+import type { ArrowheadKind, ArrowheadSize } from "../core/shapes";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
-import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
+import { cssColorToOoxml } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
+import { dashXml, emptyPreservedStyle, outerShdwXml, parseShapeStyle, splitPreservedStyle, srgbClrXml } from "./shape";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -21,7 +22,6 @@ const DE_NAMESPACE = "urn:docu-edit:shape";
 
 const EMU_PER_POINT = 12700;
 const ptToEmu = (pt: number): number => Math.round(pt * EMU_PER_POINT);
-const emuToPt = (emu: number): number => emu / EMU_PER_POINT;
 const degToOoxmlRot = (deg: number): number => Math.round(deg * 60000);
 const ooxmlRotToDeg = (rot: number): number => Math.round(rot / 60000);
 
@@ -86,29 +86,6 @@ function docPrIdOf(drawingEl: Element): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function parseOutline(spPr: Element): ShapeOutline | undefined {
-  const ln = firstChildElement(spPr, A_NAMESPACE, "ln");
-  if (!ln || firstChildElement(ln, A_NAMESPACE, "noFill")) {
-    return undefined;
-  }
-  const solidFill = firstChildElement(ln, A_NAMESPACE, "solidFill");
-  const srgbClr = solidFill ? firstChildElement(solidFill, A_NAMESPACE, "srgbClr") : undefined;
-  const color = srgbClr ? ooxmlColorToCss(srgbClr.getAttribute("val")) : undefined;
-  if (!color) {
-    return undefined;
-  }
-  const wAttr = ln.getAttribute("w");
-  const widthPt = wAttr ? emuToPt(Number(wAttr)) : 0.75;
-  let dash: ShapeOutline["dash"] = "solid";
-  const val = firstChildElement(ln, A_NAMESPACE, "prstDash")?.getAttribute("val");
-  if (val === "dash" || val === "dashDot" || val === "lgDash") {
-    dash = "dash";
-  } else if (val === "sysDot" || val === "sysDash") {
-    dash = "dot";
-  }
-  return { color, widthPt, dash };
-}
-
 function parseArrow(ln: Element | undefined, localName: "headEnd" | "tailEnd"): ArrowheadKind | undefined {
   if (!ln) {
     return undefined;
@@ -119,6 +96,20 @@ function parseArrow(ln: Element | undefined, localName: "headEnd" | "tailEnd"): 
     return undefined;
   }
   return OOXML_TO_ARROW[type] ?? "triangle";
+}
+
+/** The explicit arrow size (SPEC-073 AC-14) an end carries, or undefined
+ * for a bare end — absent means "medium" everywhere downstream. */
+function parseArrowSize(ln: Element | undefined, localName: "headEnd" | "tailEnd"): ArrowheadSize | undefined {
+  const end = ln ? firstChildElement(ln, A_NAMESPACE, localName) : undefined;
+  const len = end?.getAttribute("len") ?? end?.getAttribute("w");
+  if (len === "sm") {
+    return "small";
+  }
+  if (len === "lg") {
+    return "large";
+  }
+  return len === "med" ? "medium" : undefined;
 }
 
 /** Parses a `w:drawing` holding a `wps:cxnSp` into a Connector, registering
@@ -254,9 +245,21 @@ export function parseConnectorDrawing(drawingEl: Element): { connector: Connecto
   if (gdMatch) {
     connector.adjustments = [Number(gdMatch[1]) / 100000];
   }
-  const outline = parseOutline(spPr);
-  if (outline) {
-    connector.outline = outline;
+  // SPEC-073: the widened outline (alpha/join/cap/compound/dash), shadow and
+  // unmodelled-property preservation share the shape styling parser. A
+  // connector's arrowheads stay on its own startArrow/endArrow fields
+  // (SPEC-070), so any arrows the outline parser captured are lifted off.
+  const style = parseShapeStyle(spPr);
+  if (style.outline) {
+    delete style.outline.startArrow;
+    delete style.outline.endArrow;
+    connector.outline = style.outline;
+  }
+  if (style.shadow) {
+    connector.shadow = style.shadow;
+  }
+  if (style.preserved.length > 0) {
+    connector.unsupportedStyleXml = style.preserved.join("");
   }
   const ln = firstChildElement(spPr, A_NAMESPACE, "ln");
   const startArrow = parseArrow(ln, "headEnd");
@@ -266,6 +269,14 @@ export function parseConnectorDrawing(drawingEl: Element): { connector: Connecto
   }
   if (endArrow) {
     connector.endArrow = endArrow;
+  }
+  const startSize = parseArrowSize(ln, "headEnd");
+  if (startSize) {
+    connector.startArrowSize = startSize;
+  }
+  const endSize = parseArrowSize(ln, "tailEnd");
+  if (endSize) {
+    connector.endArrowSize = endSize;
   }
 
   // Attachment references (a:stCxn/a:endCxn on wps:cNvCnPr).
@@ -325,26 +336,24 @@ export function resolveDocxConnectorAttachments(model: { sections: Section[] }):
   }
 }
 
-function dashXml(dash: ShapeOutline["dash"]): string {
-  if (dash === "dash") {
-    return '<a:prstDash val="dash"/>';
-  }
-  if (dash === "dot") {
-    return '<a:prstDash val="sysDot"/>';
-  }
-  return "";
-}
-
-function arrowXml(kind: ArrowheadKind | undefined, localName: "headEnd" | "tailEnd"): string {
+function arrowXml(kind: ArrowheadKind | undefined, localName: "headEnd" | "tailEnd", size?: ArrowheadSize): string {
   if (kind === undefined) {
     return "";
   }
-  return `<a:${localName} type="${ARROW_TO_OOXML[kind]}"/>`;
+  if (size === undefined) {
+    // Bare form, exactly as SPEC-070 shipped — byte-stable for connectors
+    // that never chose a size.
+    return `<a:${localName} type="${ARROW_TO_OOXML[kind]}"/>`;
+  }
+  const sz = size === "small" ? "sm" : size === "large" ? "lg" : "med";
+  return `<a:${localName} type="${ARROW_TO_OOXML[kind]}" w="${sz}" len="${sz}"/>`;
 }
 
 function connectorOutlineXml(connector: Connector): string {
   const outline = connector.outline;
-  const arrows = arrowXml(connector.startArrow, "headEnd") + arrowXml(connector.endArrow, "tailEnd");
+  const arrows =
+    arrowXml(connector.startArrow, "headEnd", connector.startArrowSize) +
+    arrowXml(connector.endArrow, "tailEnd", connector.endArrowSize);
   if (!outline) {
     return `<a:ln>${arrows || "<a:noFill/>"}</a:ln>`;
   }
@@ -352,10 +361,21 @@ function connectorOutlineXml(connector: Connector): string {
   if (!color) {
     return `<a:ln>${arrows || "<a:noFill/>"}</a:ln>`;
   }
+  const capAttr = outline.cap === "round" ? ' cap="rnd"' : outline.cap === "square" ? ' cap="sq"' : "";
+  const cmpd =
+    outline.compound === "double"
+      ? "dbl"
+      : outline.compound === "thickThin"
+        ? "thickThin"
+        : outline.compound === "thinThick"
+          ? "thinThick"
+          : "";
+  const joinXml = outline.join === "round" ? "<a:round/>" : outline.join === "bevel" ? "<a:bevel/>" : "";
   return (
-    `<a:ln w="${ptToEmu(outline.widthPt)}">` +
-    `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>` +
+    `<a:ln w="${ptToEmu(outline.widthPt)}"${capAttr}${cmpd ? ` cmpd="${cmpd}"` : ""}>` +
+    `<a:solidFill>${srgbClrXml(outline.color, outline.alpha)}</a:solidFill>` +
     dashXml(outline.dash) +
+    joinXml +
     arrows +
     "</a:ln>"
   );
@@ -402,13 +422,31 @@ export function connectorDrawingXml(connector: Connector, docPrId: number, targe
     ? `<a:endCxn id="${targetIds.end}" idx="${connector.endAttachment.site}"/>`
     : "";
 
+  const preservedStyle = connector.unsupportedStyleXml
+    ? splitPreservedStyle(connector.unsupportedStyleXml)
+    : emptyPreservedStyle();
+  // AC-36 one-source, mirroring shapeDrawingXml: a preserved a:ln fills the
+  // slot only while the model has no outline (an outline edit clears the
+  // preserved slot; this guard covers stale leftovers), and preserved effects
+  // re-emit around the modelled outerShdw's CT_EffectList sequence position.
+  const lnPart =
+    !connector.outline && preservedStyle.ln.length > 0
+      ? preservedStyle.ln.join("")
+      : connectorOutlineXml(connector);
+  const effectPart =
+    connector.shadow || preservedStyle.effectsBefore.length > 0 || preservedStyle.effectsAfter.length > 0
+      ? `<a:effectLst>${preservedStyle.effectsBefore.join("")}${connector.shadow ? outerShdwXml(connector.shadow) : ""}${preservedStyle.effectsAfter.join("")}</a:effectLst>`
+      : "";
   const cxnSp =
     `<wps:cxnSp xmlns:wps="${WPS_NAMESPACE}">` +
     `<wps:cNvCnPr>${stCxn}${endCxn}</wps:cNvCnPr>` +
     "<wps:spPr>" +
     `<a:xfrm${rotAttr}${flipH}${flipV}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     `<a:prstGeom prst="${prst}">${adj}</a:prstGeom>` +
-    connectorOutlineXml(connector) +
+    preservedStyle.fill.join("") +
+    lnPart +
+    effectPart +
+    preservedStyle.other.join("") +
     "</wps:spPr>" +
     "</wps:cxnSp>";
 

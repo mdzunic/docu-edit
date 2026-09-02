@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_DRAWING_POSITION,
   deleteShape,
+  formatDrawings,
   duplicateShape,
   ensureShapeTextFrame,
   freshGroupOrdinal,
@@ -24,6 +25,7 @@ import {
   setShapeAltText,
   setShapeFill,
   setShapeOutline,
+  setShapeShadow,
   arrangeDrawings,
   setShapePosition,
   setShapeRotation,
@@ -183,13 +185,13 @@ describe("insertShape (AC-3..AC-9)", () => {
       geometry: "rect",
       widthCm: 3,
       heightCm: 2,
-      fill: "#ff0000",
+      fill: { kind: "solid", color: "#ff0000" },
       outline: { color: "#000000", widthPt: 1, dash: "solid" },
       text: { blocks: [paragraph("hi")], vAlign: "top" },
     };
     const { model: next } = insertShape(model, selectionAt(0, 0), spec);
     const inserted = next.sections[0].blocks[0] as Shape;
-    expect(inserted.fill).toBe("#ff0000");
+    expect(inserted.fill).toEqual({ kind: "solid", color: "#ff0000" });
     expect(inserted.outline).toEqual({ color: "#000000", widthPt: 1, dash: "solid" });
     expect(inserted.text?.blocks).toHaveLength(1);
   });
@@ -485,12 +487,12 @@ describe("setShapeFill", () => {
 
   it("sets a solid fill colour", () => {
     const model = doc(shape(), paragraph(""));
-    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, "#00ff00");
-    expect(shapeAt(next, location)?.fill).toBe("#00ff00");
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, { kind: "solid", color: "#00ff00" });
+    expect(shapeAt(next, location)?.fill).toEqual({ kind: "solid", color: "#00ff00" });
   });
 
   it("undefined clears the fill (no key at all)", () => {
-    const model = doc(shape({ fill: "#00ff00" }), paragraph(""));
+    const model = doc(shape({ fill: { kind: "solid", color: "#00ff00" } }), paragraph(""));
     const { model: next } = setShapeFill(model, selectionAt(0, 0), location, undefined);
     expect(shapeAt(next, location)?.fill).toBeUndefined();
     expect("fill" in shapeAt(next, location)!).toBe(false);
@@ -511,6 +513,70 @@ describe("setShapeOutline", () => {
     const model = doc(shape({ outline }), paragraph(""));
     const { model: next } = setShapeOutline(model, selectionAt(0, 0), location, undefined);
     expect("outline" in shapeAt(next, location)!).toBe(false);
+  });
+});
+
+// --- SPEC-073 AC-36: style edits clear the preserved slot they replace ----------
+
+describe("style edits over preserved unparsed styling (AC-36 one-source)", () => {
+  const location: ShapeLocation = { section: 0, block: 0 };
+  const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+  // A .docx-flavour preserved set: a scheme-colour fill, a gradient-stroke
+  // a:ln, an unmodelled glow effect and an unparseable outerShdw.
+  const preserved =
+    `<a:solidFill xmlns:a="${A_NS}"><a:schemeClr val="accent1"/></a:solidFill>` +
+    `<a:ln xmlns:a="${A_NS}" w="25400"><a:gradFill><a:gsLst/></a:gradFill></a:ln>` +
+    `<a:glow xmlns:a="${A_NS}" rad="63500"><a:srgbClr val="00FF00"/></a:glow>` +
+    `<a:outerShdw xmlns:a="${A_NS}" blurRad="9"><a:schemeClr val="accent2"/></a:outerShdw>`;
+
+  it("setShapeFill clears the preserved fill slot so the edit cannot be resurrected on save", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, { kind: "solid", color: "#ff0000" });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("solidFill");
+    expect(kept).toContain("a:ln");
+    expect(kept).toContain("a:glow");
+  });
+
+  it("setShapeFill to NONE also clears the preserved fill slot (undefined fill must not resurrect it)", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, undefined);
+    expect(shapeAt(next, location)!.unsupportedStyleXml).not.toContain("solidFill");
+  });
+
+  it("setShapeOutline clears the preserved a:ln slot only", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeOutline(model, selectionAt(0, 0), location, { color: "#000000", widthPt: 1, dash: "solid" });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("<a:ln");
+    expect(kept).toContain("solidFill");
+    expect(kept).toContain("a:glow");
+  });
+
+  it("setShapeShadow clears a preserved outerShdw but keeps the glow", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = setShapeShadow(model, selectionAt(0, 0), location, { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("outerShdw");
+    expect(kept).toContain("a:glow");
+  });
+
+  it("formatDrawings clears exactly the slots its patch applies, per target", () => {
+    const model = doc(shape({ unsupportedStyleXml: preserved }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(1, 0), [location], { fill: { kind: "solid", color: "#ff0000" } });
+    const kept = shapeAt(next, location)!.unsupportedStyleXml!;
+    expect(kept).not.toContain("solidFill");
+    // Slots the patch does not touch survive untouched.
+    expect(kept).toContain("<a:ln");
+    expect(kept).toContain("a:glow");
+    expect(kept).toContain("outerShdw");
+  });
+
+  it("the whole preserved field is deleted when every element sat in a cleared slot", () => {
+    const fillOnly = `<a:solidFill xmlns:a="${A_NS}"><a:schemeClr val="accent1"/></a:solidFill>`;
+    const model = doc(shape({ unsupportedStyleXml: fillOnly }), paragraph(""));
+    const { model: next } = setShapeFill(model, selectionAt(0, 0), location, { kind: "solid", color: "#ff0000" });
+    expect("unsupportedStyleXml" in shapeAt(next, location)!).toBe(false);
   });
 });
 
@@ -1421,5 +1487,94 @@ describe("arrangeDrawings (SPEC-072)", () => {
       { location: { section: 0, block: 0 }, offsetXCm: 9, offsetYCm: 9 },
     ]);
     expect(shapeAt(model, { section: 0, block: 0 })?.offsetXCm).toBe(1);
+  });
+});
+
+// --- SPEC-073: formatDrawings fan-out (AC-26, AC-27) -------------------------
+
+describe("formatDrawings — one-command styling fan-out (SPEC-073)", () => {
+  const patch = {
+    fill: { kind: "solid", color: "#dae3f3" } as const,
+    outline: { color: "#4472c4", widthPt: 1, dash: "solid" } as const,
+    shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 } as const,
+  };
+
+  it("applies fill/outline/shadow to every member of a multi-selection in one CommandResult", () => {
+    const model = doc(shape(), shape({ offsetXCm: 5 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [
+      { section: 0, block: 0 },
+      { section: 0, block: 1 },
+    ], patch);
+    for (const block of [0, 1]) {
+      const s = shapeAt(next, { section: 0, block });
+      expect(s?.fill).toEqual(patch.fill);
+      expect(s?.outline).toEqual(patch.outline);
+      expect(s?.shadow).toEqual(patch.shadow);
+    }
+  });
+
+  it("a container location fans out to every group member (AC-26)", () => {
+    const model = doc(shape({ groupOrdinal: 1 }), shape({ groupOrdinal: 1, offsetXCm: 5 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    expect(shapeAt(next, { section: 0, block: 0 })?.fill).toEqual(patch.fill);
+    expect(shapeAt(next, { section: 0, block: 1 })?.fill).toEqual(patch.fill);
+  });
+
+  it("a connector member takes outline only (AC-26)", () => {
+    const model = doc(shape({ groupOrdinal: 1 }), paragraph(""));
+    const connector = {
+      type: "connector",
+      kind: "straight",
+      start: { xCm: 0, yCm: 0 },
+      end: { xCm: 3, yCm: 0 },
+      widthCm: 3,
+      heightCm: 0,
+      wrap: "infront",
+      groupOrdinal: 1,
+    };
+    model.sections[0].blocks.splice(1, 0, connector as never);
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    const member = next.sections[0].blocks[1] as { outline?: unknown; fill?: unknown; shadow?: unknown };
+    expect(member.outline).toEqual(patch.outline);
+    expect(member.fill).toBeUndefined();
+    expect(member.shadow).toBeUndefined();
+  });
+
+  it("a line geometry member skips the fill (no area to fill)", () => {
+    const model = doc(shape({ geometry: "line", heightCm: 0, groupOrdinal: 1 }), shape({ groupOrdinal: 1 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 1 }], patch);
+    expect(shapeAt(next, { section: 0, block: 0 })?.fill).toBeUndefined();
+    expect(shapeAt(next, { section: 0, block: 0 })?.outline).toEqual(patch.outline);
+  });
+
+  it("an image member is skipped entirely", () => {
+    const model = doc(shape({ groupOrdinal: 1 }), image({ groupOrdinal: 1 }), paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    const member = next.sections[0].blocks[1] as Image & { fill?: unknown };
+    expect(member.fill).toBeUndefined();
+  });
+
+  it("a sealed container is excluded — nothing in it is rewritten (AC-27)", () => {
+    const preserved = shape({ groupOrdinal: 1, unsupportedGeometryXml: "<a:custGeom/>" });
+    const model = doc(shape({ groupOrdinal: 1, fill: { kind: "solid", color: "#ff0000" } }), preserved, paragraph(""));
+    const { model: next } = formatDrawings(model, selectionAt(2, 0), [{ section: 0, block: 0 }], patch);
+    expect(shapeAt(next, { section: 0, block: 0 })?.fill).toEqual({ kind: "solid", color: "#ff0000" });
+    expect(shapeAt(next, { section: 0, block: 1 })?.fill).toBeUndefined();
+  });
+
+  it("null clears a property; an absent key leaves it untouched", () => {
+    const model = doc(
+      shape({
+        fill: { kind: "solid", color: "#ff0000" },
+        outline: { color: "#000000", widthPt: 1, dash: "solid" },
+        shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 },
+      }),
+      paragraph(""),
+    );
+    const { model: next } = formatDrawings(model, selectionAt(1, 0), [{ section: 0, block: 0 }], { shadow: null });
+    const s = shapeAt(next, { section: 0, block: 0 });
+    expect(s?.shadow).toBeUndefined();
+    expect(s?.fill).toEqual({ kind: "solid", color: "#ff0000" });
+    expect(s?.outline).toEqual({ color: "#000000", widthPt: 1, dash: "solid" });
   });
 });

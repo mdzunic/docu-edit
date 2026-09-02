@@ -39,7 +39,7 @@ function shape(x: number, y: number, overrides: Partial<Shape> = {}): Shape {
     offsetXCm: x,
     offsetYCm: y,
     zOrder: 0,
-    fill: "#4472c4",
+    fill: { kind: "solid", color: "#4472c4" },
     outline: { color: "#2e5395", widthPt: 1, dash: "solid" },
     ...overrides,
   };

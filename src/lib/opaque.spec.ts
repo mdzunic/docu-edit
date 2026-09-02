@@ -236,3 +236,101 @@ describe("SPEC-050 — withoutDropped", () => {
     expect((masked.sections[0].blocks[1] as { formatting?: unknown }).formatting).toBeUndefined();
   });
 });
+
+// --- SPEC-073: shapeStyle drops (AC-34) --------------------------------------
+
+describe("shapeStyle DropRecords (SPEC-073 AC-34)", () => {
+  function shapeDoc(overrides: Record<string, unknown>) {
+    const model = { ...createDocument("id-style-drop"), format: "docx" as const };
+    model.sections[0].blocks = [
+      { type: "paragraph", runs: [] },
+      { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides } as never,
+    ];
+    return model;
+  }
+
+  it("has a label for the new kind", () => {
+    expect(DROP_KIND_LABELS.shapeStyle).toBe("Shape styling");
+  });
+
+  it("preserved unmodelled styling drops on any cross-format save, naming it", () => {
+    const model = shapeDoc({ unsupportedStyleXml: '<a:scene3d xmlns:a="x"/>' });
+    const dropped = collectDropRecords(model, "odt");
+    expect(dropped.map((d) => [d.kind, d.location])).toEqual([["shapeStyle", "paragraph 2"]]);
+    expect(dropped[0].reason).toContain("unmodelled styling");
+  });
+
+  it("preserved unmodelled styling reports nothing on a same-format save (AC-35)", () => {
+    const model = shapeDoc({ unsupportedStyleXml: '<a:scene3d xmlns:a="x"/>' });
+    expect(collectDropRecords(model, "docx")).toEqual([]);
+  });
+
+  it("a compound outline drops to .odt, which cannot express it", () => {
+    const model = shapeDoc({ outline: { color: "#000000", widthPt: 1, dash: "solid", compound: "thickThin" } });
+    const dropped = collectDropRecords(model, "odt");
+    expect(dropped.map((d) => d.kind)).toEqual(["shapeStyle"]);
+    expect(dropped[0].reason).toContain("compound");
+  });
+
+  it("a gradient's intermediate stops and per-stop transparency each drop to .odt", () => {
+    const model = shapeDoc({
+      fill: {
+        kind: "gradient",
+        gradient: {
+          type: "linear",
+          angleDeg: 90,
+          stops: [
+            { position: 0, color: "#000000" },
+            { position: 0.5, color: "#888888", alpha: 0.5 },
+            { position: 1, color: "#ffffff" },
+          ],
+        },
+      },
+    });
+    const reasons = collectDropRecords(model, "odt").map((d) => d.reason);
+    expect(reasons.some((r) => r.includes("intermediate stops"))).toBe(true);
+    expect(reasons.some((r) => r.includes("per-stop transparency"))).toBe(true);
+  });
+
+  it("a pattern preset outside the closed hatch table drops to .odt; a mapped one does not", () => {
+    const unmapped = shapeDoc({ fill: { kind: "pattern", preset: "pct50", foreground: "#000000", background: "#ffffff" } });
+    expect(collectDropRecords(unmapped, "odt").map((d) => d.kind)).toEqual(["shapeStyle"]);
+    const mapped = shapeDoc({ fill: { kind: "pattern", preset: "ltUpDiag", foreground: "#000000", background: "#ffffff" } });
+    expect(collectDropRecords(mapped, "odt")).toEqual([]);
+  });
+
+  it("a two-stop opaque gradient, alpha, shadow and arrowheads all convert cleanly (no drops)", () => {
+    const model = shapeDoc({
+      fill: { kind: "solid", color: "#4472c4", alpha: 0.5 },
+      outline: {
+        color: "#2e5395",
+        widthPt: 1,
+        dash: "dashDot",
+        alpha: 0.5,
+        join: "round",
+        cap: "round",
+        startArrow: { kind: "open", size: "large" },
+      },
+      shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 },
+    });
+    expect(collectDropRecords(model, "odt")).toEqual([]);
+  });
+
+  it("a connector with preserved styling reports a shapeStyle drop cross-format", () => {
+    const model = { ...createDocument("id-style-drop-c"), format: "docx" as const };
+    model.sections[0].blocks = [
+      {
+        type: "connector",
+        kind: "straight",
+        start: { xCm: 0, yCm: 0 },
+        end: { xCm: 3, yCm: 0 },
+        widthCm: 3,
+        heightCm: 0,
+        wrap: "infront",
+        unsupportedStyleXml: '<a:scene3d xmlns:a="x"/>',
+      } as never,
+    ];
+    expect(collectDropRecords(model, "odt").map((d) => d.kind)).toEqual(["shapeStyle"]);
+    expect(collectDropRecords(model, "docx")).toEqual([]);
+  });
+});

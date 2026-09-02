@@ -82,6 +82,48 @@ describe("connector docx round-trip", () => {
     expect(back.endArrow).toBe("none");
   });
 
+  it.each([
+    ["dash", "dash"],
+    ["dot", "sysDot"],
+    ["dashDot", "dashDot"],
+    ["longDash", "lgDash"],
+    ["longDashDot", "lgDashDot"],
+  ] as const)("round-trips the %s outline dash through a:prstDash val=%s (SPEC-073 AC-2/AC-11/AC-32)", (model, ooxml) => {
+    const connector = baseConnector({ outline: { color: "#2e5395", widthPt: 1, dash: model } });
+    const xml = connectorDrawingXml(connector, 1, {});
+    expect(xml).toContain(`<a:prstDash val="${ooxml}"/>`);
+    expect(roundTrip(connector)!.outline?.dash).toBe(model);
+  });
+
+  it("a solid dash writes no a:prstDash", () => {
+    expect(connectorDrawingXml(baseConnector(), 1, {})).not.toContain("prstDash");
+  });
+
+  it("a preserved glow re-emits BEFORE the modelled outerShdw (CT_EffectList order, AC-36)", () => {
+    const shadow = { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 };
+    const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    const connector = baseConnector({
+      shadow,
+      unsupportedStyleXml: `<a:glow xmlns:a="${A_NS}" rad="63500"><a:srgbClr val="00FF00"/></a:glow>`,
+    });
+    const xml = connectorDrawingXml(connector, 1, {});
+    expect(xml.match(/<a:effectLst>/g)).toHaveLength(1);
+    expect(xml.indexOf("<a:glow")).toBeLessThan(xml.indexOf("<a:outerShdw"));
+  });
+
+  it("an edited modelled outline wins over a stale preserved a:ln (AC-36 one-source)", () => {
+    const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    const connector = baseConnector({
+      outline: { color: "#ff0000", widthPt: 2, dash: "longDash" },
+      unsupportedStyleXml: `<a:ln xmlns:a="${A_NS}" w="25400"><a:gradFill><a:gsLst/></a:gradFill></a:ln>`,
+    });
+    const xml = connectorDrawingXml(connector, 1, {});
+    expect(xml).not.toContain("gradFill");
+    expect(xml).toContain('<a:srgbClr val="FF0000"/>');
+    expect(xml).toContain('<a:prstDash val="lgDash"/>');
+    expect(xml.match(/<a:ln[ >]/g)).toHaveLength(1);
+  });
+
   it("writes a:stCxn/a:endCxn @id/@idx when attached (AC-24)", () => {
     const connector = baseConnector({
       startAttachment: { target: { block: 0 }, site: 1 },

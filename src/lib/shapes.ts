@@ -23,7 +23,8 @@ import {
   type Paragraph,
   type Shape,
 } from "./documentModel";
-import { type ShapeGeometry, type ShapeOutline } from "./core/shapes";
+import { type ShapeFill, type ShapeGeometry, type ShapeOutline, type ShapeShadow } from "./core/shapes";
+import { clearPreservedStyleSlots, type PreservedStyleSlots } from "./preservedStyle";
 import {
   anchoredParagraph,
   ordinalForParagraph,
@@ -141,7 +142,7 @@ export interface NewShape {
   heightCm: number;
   offsetXCm?: number;
   offsetYCm?: number;
-  fill?: string;
+  fill?: ShapeFill;
   outline?: ShapeOutline;
   text?: Shape["text"];
   /** A custom outline (SPEC-071): a drawn freeform/curve/scribble. */
@@ -502,11 +503,23 @@ export function nudgeShape(
   return moveShape(model, selection, location, dx, dy);
 }
 
+/** An edit just gave the model a value (possibly "none") for the given
+ * styling slots — the preserved unparsed styling occupying those slots must
+ * go with it (AC-36 one-source; see preservedStyle.ts). */
+function clearPreservedSlots(block: Shape | Connector, slots: PreservedStyleSlots): void {
+  const cleared = clearPreservedStyleSlots(block.unsupportedStyleXml, slots);
+  if (cleared !== undefined) {
+    block.unsupportedStyleXml = cleared;
+  } else {
+    delete block.unsupportedStyleXml;
+  }
+}
+
 export function setShapeFill(
   model: DocumentModel,
   selection: ModelSelection,
   location: ShapeLocation,
-  fill: string | undefined,
+  fill: ShapeFill | undefined,
 ): CommandResult {
   const next = cloneContainers(model);
   const shape = shapeAt(next, location);
@@ -519,6 +532,30 @@ export function setShapeFill(
   } else {
     delete updated.fill;
   }
+  clearPreservedSlots(updated, { fill: true });
+  replaceShape(next, location, updated);
+  return { model: next, selection };
+}
+
+/** Sets or clears a shape's outer shadow (SPEC-073 AC-20). */
+export function setShapeShadow(
+  model: DocumentModel,
+  selection: ModelSelection,
+  location: ShapeLocation,
+  shadow: ShapeShadow | undefined,
+): CommandResult {
+  const next = cloneContainers(model);
+  const shape = shapeAt(next, location);
+  if (!shape) {
+    return { model: next, selection };
+  }
+  const updated: Shape = { ...shape };
+  if (shadow) {
+    updated.shadow = shadow;
+  } else {
+    delete updated.shadow;
+  }
+  clearPreservedSlots(updated, { shadow: true });
   replaceShape(next, location, updated);
   return { model: next, selection };
 }
@@ -540,6 +577,7 @@ export function setShapeOutline(
   } else {
     delete updated.outline;
   }
+  clearPreservedSlots(updated, { outline: true });
   replaceShape(next, location, updated);
   return { model: next, selection };
 }
@@ -871,6 +909,96 @@ export function ungroupShapes(
 /** Every drawing sharing a groupOrdinal, in document order. */
 export function groupMembers(model: DocumentModel, groupOrdinal: number): DrawingRef[] {
   return allDrawings(model).filter((d) => d.block.groupOrdinal === groupOrdinal);
+}
+
+/** Whether a group is sealed (SPEC-057): it holds a preserved member, so
+ * neither its members' geometry nor — per SPEC-073 AC-27 — their styling is
+ * rewritten. Flat groupOrdinal model: a preserved shape anywhere in the
+ * group seals it. */
+export function isGroupSealed(model: DocumentModel, groupOrdinal: number): boolean {
+  return groupMembers(model, groupOrdinal).some(
+    (m) => m.block.type === "shape" && m.block.unsupportedGeometryXml !== undefined,
+  );
+}
+
+/** A partial styling patch (SPEC-073 "Applying to a group"): each present
+ * key is applied to every target that can take it; `null` clears the
+ * property; an absent key leaves it untouched. */
+export interface DrawingStylePatch {
+  fill?: ShapeFill | null;
+  outline?: ShapeOutline | null;
+  shadow?: ShapeShadow | null;
+}
+
+/** Applies a styling patch to every drawing reachable from `locations`
+ * (SPEC-073 AC-26): a location inside a group fans out to every member of
+ * that group (the flat model's recursion — a nested container would recurse),
+ * a sealed group is excluded entirely (AC-27), and members that cannot take
+ * a property skip it — a connector takes outline only, an image or chart
+ * takes nothing, a line geometry has no area to fill. One cloned model, one
+ * CommandResult — so the caller records exactly one undo entry. */
+export function formatDrawings(
+  model: DocumentModel,
+  selection: ModelSelection,
+  locations: ShapeLocation[],
+  patch: DrawingStylePatch,
+): CommandResult {
+  const next = cloneContainers(model);
+  const targets = new Map<string, DrawingRef>();
+  for (const seed of locations) {
+    const block = next.sections[seed.section]?.blocks[seed.block];
+    if (!isShape(block) && !isConnector(block) && !isImage(block) && !isChart(block)) {
+      continue;
+    }
+    if (block.groupOrdinal !== undefined) {
+      if (isGroupSealed(next, block.groupOrdinal)) {
+        continue;
+      }
+      for (const member of groupMembers(next, block.groupOrdinal)) {
+        targets.set(`${member.location.section}:${member.location.block}`, member);
+      }
+    } else {
+      targets.set(`${seed.section}:${seed.block}`, { location: seed, block });
+    }
+  }
+  for (const { location, block } of targets.values()) {
+    if (isImage(block) || isChart(block)) {
+      continue;
+    }
+    const updated = { ...block };
+    const applied: PreservedStyleSlots = {};
+    if (patch.outline !== undefined) {
+      if (patch.outline) {
+        updated.outline = { ...patch.outline };
+      } else {
+        delete updated.outline;
+      }
+      applied.outline = true;
+    }
+    if (isShape(updated)) {
+      if (patch.fill !== undefined && !LINE_GEOMETRIES.has(updated.geometry)) {
+        if (patch.fill) {
+          updated.fill = { ...patch.fill };
+        } else {
+          delete updated.fill;
+        }
+        applied.fill = true;
+      }
+      if (patch.shadow !== undefined) {
+        if (patch.shadow) {
+          updated.shadow = { ...patch.shadow };
+        } else {
+          delete updated.shadow;
+        }
+        applied.shadow = true;
+      }
+    }
+    if (applied.fill || applied.outline || applied.shadow) {
+      clearPreservedSlots(updated, applied);
+    }
+    next.sections[location.section].blocks.splice(location.block, 1, updated);
+  }
+  return { model: next, selection };
 }
 
 /** Moves every member of a group by the same page-space delta ("Grouping —

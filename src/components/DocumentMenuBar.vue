@@ -929,6 +929,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
           :disabled="!editable"
           @select="emit('command', 'drawing.position-size')"
         />
+        <MenuItem
+          label="Shape formatting…"
+          testid="drawing-shape-formatting"
+          :disabled="!editable"
+          @select="emit('command', 'drawing.shape-formatting')"
+        />
       </MenuSubmenu>
       <hr class="menu-separator">
       <div class="menu-section-label">

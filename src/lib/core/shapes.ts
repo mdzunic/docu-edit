@@ -7,6 +7,7 @@
 // lib/shapes.ts and lib/documentModel.ts.
 import { SHAPE_DEFINITIONS } from "./shapeCatalogue";
 import type { ShapePath } from "./shapePath";
+import { applyTransform, hexToRgb, rgbToHex } from "./theme";
 
 /** The closed set of geometries the editor draws, resizes and round-trips
  * natively — the "expanded catalogue" of specs/069-shape-catalogue-expansion.md,
@@ -112,18 +113,162 @@ export type ShapeGroup =
   | "Stars and banners"
   | "Callouts";
 
-/** A shape's outline (border) — colour, width in points and dash style. */
+/** A line-end decoration (SPEC-070 "Arrowheads"). `.docx` writes it as
+ * `a:headEnd`/`a:tailEnd @type`, `.odt` as `draw:marker-start`/
+ * `draw:marker-end` referencing a standard marker name. Introduced for
+ * connectors; SPEC-073 extends it to plain lines and shape outlines using
+ * this exact closed union — no new kinds (D1/AC-13). */
+export type ArrowheadKind = "none" | "triangle" | "open" | "stealth" | "diamond" | "oval";
+
+/** Arrowhead size (SPEC-073 D1). "medium" is the default a control applies
+ * when turning an arrowhead on with no size chosen (AC-14). */
+export type ArrowheadSize = "small" | "medium" | "large";
+
+/** One end's arrowhead on a shape outline (SPEC-073). Absent means no
+ * arrowhead (AC-15); connectors keep SPEC-070's own end-arrow default. */
+export interface ShapeArrowhead {
+  kind: ArrowheadKind;
+  size: ArrowheadSize;
+}
+
+/** How much each arrowhead size scales the stroke width the head geometry is
+ * derived from (core/connectors.ts's arrowheadOutline ratios). */
+export const ARROWHEAD_SIZE_FACTORS: Record<ArrowheadSize, number> = {
+  small: 0.75,
+  medium: 1,
+  large: 1.5,
+};
+
+/** A shape's outline (border). SPEC-051's flat colour/width/dash widened by
+ * SPEC-073 ("The outline model"): the three original dash values keep their
+ * spelling and meaning, the union only extends (AC-2). `alpha` follows D5
+ * (0..1 opacity, absent = opaque). */
 export interface ShapeOutline {
   color: string;
   widthPt: number;
-  dash: "solid" | "dash" | "dot";
+  dash: "solid" | "dash" | "dot" | "dashDot" | "longDash" | "longDashDot";
+  alpha?: number;
+  /** Absent = miter, both formats' default. */
+  join?: "round" | "bevel" | "miter";
+  /** Absent = flat. */
+  cap?: "flat" | "round" | "square";
+  compound?: "single" | "double" | "thickThin" | "thinThick";
+  startArrow?: ShapeArrowhead;
+  endArrow?: ShapeArrowhead;
 }
 
-/** A line-end decoration (SPEC-070 "Arrowheads"). `.docx` writes it as
- * `a:headEnd`/`a:tailEnd @type`, `.odt` as `draw:marker-start`/
- * `draw:marker-end` referencing a standard marker name. Introduced here for
- * connectors; SPEC-073 extends it to plain lines and shape outlines. */
-export type ArrowheadKind = "none" | "triangle" | "open" | "stealth" | "diamond" | "oval";
+/** A gradient fill's definition (SPEC-073 "The fill model"). */
+export interface ShapeGradient {
+  type: "linear" | "radial";
+  /** Whole degrees clockwise from "left to right"; linear only. */
+  angleDeg?: number;
+  /** Two or more, ordered by position, first at 0 and last at 1. */
+  stops: Array<{ position: number; color: string; alpha?: number }>;
+}
+
+/** A shape's fill (SPEC-073 AC-1): the full union replacing SPEC-051's flat
+ * `"#rrggbb"` string. `alpha` is 0..1 opacity per D5. A picture fill's
+ * `mediaId` references the same media store `Image` blocks use (SPEC-024),
+ * so the two share one part and one MediaRecord (AC-4). */
+export type ShapeFill =
+  | { kind: "none" }
+  | { kind: "solid"; color: string; alpha?: number }
+  | { kind: "gradient"; gradient: ShapeGradient }
+  | { kind: "picture"; mediaId: string; mode: "stretch" | "tile"; alpha?: number }
+  | { kind: "pattern"; preset: string; foreground: string; background: string };
+
+/** An outer shadow (SPEC-073 AC-8): colour at `alpha` opacity, blurred by
+ * `blurPt`, offset `distancePt` towards `angleDeg` (degrees clockwise, 0 =
+ * right, 90 = down). */
+export interface ShapeShadow {
+  color: string;
+  alpha: number;
+  blurPt: number;
+  distancePt: number;
+  angleDeg: number;
+}
+
+/** The "Lighter 40%" tint of a #rrggbb colour (lumMod 0.6 then lumOff 0.4)
+ * — SPEC-073 D2, reusing core/theme.ts's pure helpers, no new maths. */
+export function lighterTint(hex: string): string {
+  const l = applyTransform(hexToRgb(hex), "lumMod", 0.6);
+  return rgbToHex(applyTransform(l, "lumOff", 0.4));
+}
+
+/** The "Lighter 80%" tint (lumMod 0.2 then lumOff 0.8) — the subtleFilled
+ * preset's fill (D3). */
+function lighterTint80(hex: string): string {
+  const l = applyTransform(hexToRgb(hex), "lumMod", 0.2);
+  return rgbToHex(applyTransform(l, "lumOff", 0.8));
+}
+
+/** Accepts the legacy `"#rrggbb"` string form and the `ShapeFill` union;
+ * returns the union (SPEC-073 AC-30, "Migration"). Anything else — including
+ * a malformed object — is `undefined` (no fill). Called on the document-store
+ * read path, not scattered through render code. */
+export function normaliseShapeFill(value: unknown): ShapeFill | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return /^#[0-9a-fA-F]{6}$/.test(value) ? { kind: "solid", color: value } : undefined;
+  }
+  if (typeof value === "object") {
+    const kind = (value as { kind?: unknown }).kind;
+    if (kind === "none" || kind === "solid" || kind === "gradient" || kind === "picture" || kind === "pattern") {
+      return value as ShapeFill;
+    }
+  }
+  return undefined;
+}
+
+/** Typed `null` seed for the picture-fill media resolver a host injects into
+ * the shape block component (espree bars the annotation in `.vue` scripts —
+ * the noImageLocation pattern). */
+export function noShapeMediaSrc(): ((mediaId: string) => string) | null {
+  return null;
+}
+
+/** Whether a fill paints anything at all — `none` and a malformed union
+ * member do not; every other kind does. Hit-testing and clip-path logic key
+ * off this the way they used to key off a truthy colour string. */
+export function shapeFillIsVisible(fill: ShapeFill | undefined): boolean {
+  return fill !== undefined && fill.kind !== "none";
+}
+
+/** The single flat colour a fill reduces to where only one colour can be
+ * painted (PDF text extraction, library thumbnails): solid → its colour,
+ * gradient → its first stop, pattern → its foreground; none/picture have no
+ * meaningful flat colour. */
+export function shapeFillBaseColor(fill: ShapeFill | undefined): string | undefined {
+  if (!fill) {
+    return undefined;
+  }
+  if (fill.kind === "solid") {
+    return fill.color;
+  }
+  if (fill.kind === "gradient") {
+    return fill.gradient.stops[0]?.color;
+  }
+  if (fill.kind === "pattern") {
+    return fill.foreground;
+  }
+  return undefined;
+}
+
+/** The seeded gradient a fill control builds when switching to "gradient"
+ * with no gradient yet (SPEC-073 AC-22, D2): two linear stops at 90°, the
+ * base colour to its lighter tint. */
+export function seededGradient(base: string): ShapeGradient {
+  return {
+    type: "linear",
+    angleDeg: 90,
+    stops: [
+      { position: 0, color: base },
+      { position: 1, color: lighterTint(base) },
+    ],
+  };
+}
 
 /** Typed pass-through for a shape geometry coming from a `.vue` template's
  * plain string (espree bars the annotation in `.vue` scripts). */
@@ -152,10 +297,13 @@ export const LINE_GEOMETRIES: ReadonlySet<ShapeGeometry> = new Set(
  * (page canvas, slide canvas, gallery icon) can paint one of these. */
 export interface ShapeVisual {
   geometry: ShapeGeometry;
-  /** "#rrggbb"; absent means no fill. */
-  fill?: string;
+  /** Absent means no fill (SPEC-073 widened this from a "#rrggbb" string). */
+  fill?: ShapeFill;
   /** Absent means no outline. */
   outline?: ShapeOutline;
+  /** Outer shadow (SPEC-073); absent means none — the shadow pass is then
+   * skipped entirely (AC-40). */
+  shadow?: ShapeShadow;
   /** Whole degrees clockwise, 0-359; absent means 0. */
   rotationDeg?: number;
   /** Geometry adjustment values (SPEC-069), each a 0..1-style fraction in
@@ -193,11 +341,84 @@ export function defaultClickSizeCm(geometry: ShapeGeometry): { widthCm: number; 
  * point for a shape someone just drew. Matches the accent blue Word/Writer
  * both default new shapes to. Never applied to a text box (AC-9 requires
  * fill/outline absent) or to a Line/Arrow (no area to fill). */
-export const DEFAULT_NEW_SHAPE_FILL = "#4472c4";
+export const DEFAULT_NEW_SHAPE_FILL: ShapeFill = { kind: "solid", color: "#4472c4" };
+
+/** The accent colour the defaults and the D3 style presets derive from —
+ * `DEFAULT_NEW_SHAPE_FILL`'s own colour (SPEC-077 will swap this for a theme
+ * colour; until then it is this literal). */
+const ACCENT = DEFAULT_NEW_SHAPE_FILL.color;
 
 /** The outline a gallery-drawn shape (area or Line/Arrow) starts with —
  * same reasoning as DEFAULT_NEW_SHAPE_FILL. */
 export const DEFAULT_NEW_SHAPE_OUTLINE: ShapeOutline = { color: "#2e5395", widthPt: 1, dash: "solid" };
+
+/** The standard outer shadow (SPEC-073 D4): black at 40% opacity, 4pt blur,
+ * offset 3pt downward — Office's "Offset: Bottom". The shadow toggle applies
+ * it (AC-20) and the `outlinedShadow` preset carries it. */
+export const DEFAULT_SHAPE_SHADOW: ShapeShadow = {
+  color: "#000000",
+  alpha: 0.4,
+  blurPt: 4,
+  distancePt: 3,
+  angleDeg: 90,
+};
+
+/** The nine D4 shadow presets (AC-21): eight directional variants of the
+ * standard shadow differing only in `angleDeg`, plus "No shadow" clearing it. */
+export const SHAPE_SHADOW_PRESETS: { id: string; label: string; shadow?: ShapeShadow }[] = [
+  { id: "none", label: "No shadow" },
+  { id: "bottom", label: "Bottom", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 90 } },
+  { id: "bottomRight", label: "Bottom right", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 45 } },
+  { id: "right", label: "Right", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 0 } },
+  { id: "topRight", label: "Top right", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 315 } },
+  { id: "top", label: "Top", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 270 } },
+  { id: "topLeft", label: "Top left", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 225 } },
+  { id: "left", label: "Left", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 180 } },
+  { id: "bottomLeft", label: "Bottom left", shadow: { ...DEFAULT_SHAPE_SHADOW, angleDeg: 135 } },
+];
+
+/** One of the five style presets (SPEC-073 D3): a coordinated (fill,
+ * outline, shadow) triple applied in one click and one undo entry (AC-18).
+ * An absent member clears the property. */
+export interface ShapeStylePreset {
+  id: "filled" | "subtleFilled" | "outlined" | "outlinedShadow" | "noFill";
+  label: string;
+  fill?: ShapeFill;
+  outline?: ShapeOutline;
+  shadow?: ShapeShadow;
+}
+
+/** The exactly-five preset gallery (AC-18/AC-19), each colour derived from
+ * the accent (`DEFAULT_NEW_SHAPE_FILL`) via core/theme.ts transforms — a
+ * single source, ready for SPEC-077's theme accent. With today's literal
+ * accent `#4472c4` these resolve to D3's table: subtleFilled's fill is the
+ * accent at Lighter 80% (`#dae3f3`). */
+export const SHAPE_STYLE_PRESETS: ShapeStylePreset[] = [
+  {
+    id: "filled",
+    label: "Filled",
+    fill: { kind: "solid", color: ACCENT },
+    outline: { ...DEFAULT_NEW_SHAPE_OUTLINE },
+  },
+  {
+    id: "subtleFilled",
+    label: "Subtle fill",
+    fill: { kind: "solid", color: lighterTint80(ACCENT) },
+    outline: { color: ACCENT, widthPt: 1, dash: "solid" },
+  },
+  {
+    id: "outlined",
+    label: "Outlined",
+    outline: { color: ACCENT, widthPt: 1.5, dash: "solid" },
+  },
+  {
+    id: "outlinedShadow",
+    label: "Outlined + shadow",
+    outline: { color: ACCENT, widthPt: 1.5, dash: "solid" },
+    shadow: { ...DEFAULT_SHAPE_SHADOW },
+  },
+  { id: "noFill", label: "No fill" },
+];
 
 /** Shift-constrained drag size (AC-7, AC-8): an area geometry snaps to a
  * square (a circle for the ellipse — same "square bounding box" rule, the

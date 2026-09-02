@@ -93,8 +93,9 @@ export interface WriteResult { bytes: Uint8Array; dropped: DropRecord[] }
 
 **`DropKind` is an open list, widened by the spec that needs a new member** —
 never reused loosely because an existing member is close enough. Later specs
-have already added `runShading` (SPEC-013), `svgImage` (SPEC-024) and
-`trackedPropertyChange` (SPEC-039); each widening belongs in the PR of the spec
+have already added `runShading` (SPEC-013), `svgImage` (SPEC-024),
+`trackedPropertyChange` (SPEC-039) and `shapeStyle` (SPEC-073 — a shape
+styling property one format cannot express); each widening belongs in the PR of the spec
 that introduces it, and `DROP_KIND_LABELS` in the same module gains the
 matching user-facing label so the conversion report needs no change.
 `dropped` is empty for a same-format save — opaque content round-trips

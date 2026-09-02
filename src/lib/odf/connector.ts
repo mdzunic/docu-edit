@@ -9,10 +9,19 @@
 // round-trip exactly (LibreOffice ignores the unknown attributes).
 import type { Connector, ConnectorKind, Section } from "../documentModel";
 import { isConnector } from "../documentModel";
-import type { ArrowheadKind, ShapeOutline } from "../core/shapes";
-import { escapeXmlAttribute, firstChildElement } from "../core/xml";
+import type { ArrowheadKind, ArrowheadSize } from "../core/shapes";
+import { escapeXmlAttribute, firstChildElement, parseXml } from "../core/xml";
 import { cmToOdfLength, odfLengthToCm } from "./units";
 import { DRAW_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, drawAttr, svgAttr, textAttr } from "../core/odfXml";
+import {
+  createOdfDrawingDefs,
+  mergePreservedGraphicProps,
+  outlineStyleAttrs,
+  parseGraphicStyleProps,
+  shadowStyleAttrs,
+  wrapStyleAttrs,
+  type OdfShapeStyleWriteContext,
+} from "./shape";
 
 const DE_NAMESPACE = "urn:docu-edit:shape";
 const SHAPE_XMLNS = ` xmlns:draw="${DRAW_NAMESPACE}" xmlns:svg="${SVG_NAMESPACE}"`;
@@ -46,38 +55,6 @@ export function stampOdfConnectorTargetId(el: Element, block: object): void {
   if (id) {
     blockDrawId.set(block, id);
   }
-}
-
-function resolveGraphicStroke(
-  el: Element,
-  contentDoc: Document,
-  stylesDoc: Document | undefined,
-): ShapeOutline | undefined {
-  const styleName = drawAttr(el, "style-name");
-  const find = (doc: Document | undefined): Element | undefined => {
-    if (!doc || !styleName) {
-      return undefined;
-    }
-    for (const styleEl of Array.from(doc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
-      if (styleEl.getAttributeNS(STYLE_NAMESPACE, "name") === styleName) {
-        return firstChildElement(styleEl, STYLE_NAMESPACE, "graphic-properties");
-      }
-    }
-    return undefined;
-  };
-  const props = find(contentDoc) ?? find(stylesDoc);
-  if (!props) {
-    return undefined;
-  }
-  const strokeAttr = drawAttr(props, "stroke");
-  if (!strokeAttr || strokeAttr === "none") {
-    return undefined;
-  }
-  const color = svgAttr(props, "stroke-color") ?? "#000000";
-  const widthCm = odfLengthToCm(svgAttr(props, "stroke-width")) ?? 0.03;
-  const widthPt = (widthCm / 2.54) * 72;
-  const dash: ShapeOutline["dash"] = strokeAttr === "dash" ? "dash" : "solid";
-  return { color: color.toLowerCase(), widthPt, dash };
 }
 
 /** Parses a `draw:connector` into a Connector, registering its attachment
@@ -146,9 +123,30 @@ export function parseConnectorElement(
   if (endArrow) {
     connector.endArrow = endArrow;
   }
-  const outline = resolveGraphicStroke(el, contentDoc, stylesDoc);
-  if (outline) {
-    connector.outline = outline;
+  // Arrowhead sizes (SPEC-073) ride in the same de: extension namespace as
+  // the kinds; absent means unset (the renderer's "medium" default).
+  const startArrowSize = el.getAttributeNS(DE_NAMESPACE, "start-arrow-size") as ArrowheadSize | null;
+  if (startArrowSize === "small" || startArrowSize === "medium" || startArrowSize === "large") {
+    connector.startArrowSize = startArrowSize;
+  }
+  const endArrowSize = el.getAttributeNS(DE_NAMESPACE, "end-arrow-size") as ArrowheadSize | null;
+  if (endArrowSize === "small" || endArrowSize === "medium" || endArrowSize === "large") {
+    connector.endArrowSize = endArrowSize;
+  }
+  // SPEC-073: outline (widened vocabulary), shadow and the verbatim
+  // preserved leftovers, through the same shared parse shapes use. Markers
+  // are "consume": a connector's style markers are regenerated from its own
+  // de:start-arrow/de:end-arrow fields on every save. The parsed wrap is
+  // ignored — a connector's wrap stays anchor-derived (SPEC-070).
+  const style = parseGraphicStyleProps(el, contentDoc, stylesDoc, { markers: "consume", parseFill: false });
+  if (style.outline) {
+    connector.outline = style.outline;
+  }
+  if (style.shadow) {
+    connector.shadow = style.shadow;
+  }
+  if (style.unsupportedStyleXml) {
+    connector.unsupportedStyleXml = style.unsupportedStyleXml;
   }
 
   // Attachment references.
@@ -204,31 +202,36 @@ export function resolveOdfConnectorAttachments(model: { sections: Section[] }): 
   }
 }
 
-function connectorGraphicPropertiesXml(connector: Connector): string {
-  let strokeAttrs = ' draw:stroke="none"';
-  if (connector.outline) {
-    const widthCm = (connector.outline.widthPt / 72) * 2.54;
-    strokeAttrs =
-      ` draw:stroke="${connector.outline.dash === "solid" ? "solid" : "dash"}"` +
-      ` svg:stroke-color="${escapeXmlAttribute(connector.outline.color)}"` +
-      ` svg:stroke-width="${cmToOdfLength(widthCm)}"`;
+function parsePreservedConnectorStyle(xml: string | undefined): Element | undefined {
+  if (!xml) {
+    return undefined;
   }
+  try {
+    const el = parseXml(xml).documentElement;
+    return el.namespaceURI === STYLE_NAMESPACE && el.localName === "graphic-properties" ? el : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function connectorGraphicPropertiesXml(connector: Connector, ctx: OdfShapeStyleWriteContext): string {
+  const defs = ctx.defs ?? createOdfDrawingDefs();
+  const strokeAttrs = connector.outline ? outlineStyleAttrs(connector.outline, defs) : ' draw:stroke="none"';
   const markerEnd = connector.endArrow && connector.endArrow !== "none" ? ' draw:marker-end="Arrow" draw:marker-end-width="0.3cm"' : "";
   const markerStart = connector.startArrow && connector.startArrow !== "none" ? ' draw:marker-start="Arrow" draw:marker-start-width="0.3cm"' : "";
-  let wrapAttrs = "";
-  if (connector.wrap === "square") {
-    wrapAttrs = ' style:wrap="parallel" style:number-wrapped-paragraphs="no-limit"';
-  } else if (connector.wrap === "behind") {
-    wrapAttrs = ' style:wrap="run-through" style:run-through="background"';
-  } else if (connector.wrap === "infront") {
-    wrapAttrs = ' style:wrap="run-through" style:run-through="foreground"';
-  }
-  return `<style:graphic-properties${strokeAttrs}${markerStart}${markerEnd}${wrapAttrs} style:vertical-pos="from-top" style:vertical-rel="paragraph" style:horizontal-pos="from-left" style:horizontal-rel="paragraph"/>`;
+  const shadowAttrs = connector.shadow ? shadowStyleAttrs(connector.shadow) : "";
+  const deXmlns = shadowAttrs ? ` xmlns:de="${DE_NAMESPACE}"` : "";
+  // topAndBottom is not a connector wrap (SPEC-070); the shared helper's
+  // square/behind/infront branches are exactly the historic emission.
+  const wrapAttrs = connector.wrap === "topAndBottom" ? "" : wrapStyleAttrs(connector.wrap);
+  const base = `<style:graphic-properties${deXmlns}${strokeAttrs}${markerStart}${markerEnd}${shadowAttrs}${wrapAttrs} style:vertical-pos="from-top" style:vertical-rel="paragraph" style:horizontal-pos="from-left" style:horizontal-rel="paragraph"/>`;
+  const preserved = ctx.includePreserved !== false ? parsePreservedConnectorStyle(connector.unsupportedStyleXml) : undefined;
+  return preserved ? mergePreservedGraphicProps(base, preserved, defs) : base;
 }
 
 /** One generated graphic-family `style:style` for a connector. */
-export function connectorGraphicStyleXml(name: string, connector: Connector): string {
-  return `<style:style style:name="${escapeXmlAttribute(name)}"${SHAPE_XMLNS} style:family="graphic" style:parent-style-name="Graphics">${connectorGraphicPropertiesXml(connector)}</style:style>`;
+export function connectorGraphicStyleXml(name: string, connector: Connector, ctx: OdfShapeStyleWriteContext = {}): string {
+  return `<style:style style:name="${escapeXmlAttribute(name)}"${SHAPE_XMLNS} style:family="graphic" style:parent-style-name="Graphics">${connectorGraphicPropertiesXml(connector, ctx)}</style:style>`;
 }
 
 /** How a connector's attachment targets resolve to their draw:ids. */
@@ -255,6 +258,8 @@ export function connectorElementXml(connector: Connector, styleName: string, ids
   const adjustAttr = connector.adjustments?.[0] !== undefined ? ` de:adjust="${connector.adjustments[0]}"` : "";
   const startArrowAttr = connector.startArrow ? ` de:start-arrow="${connector.startArrow}"` : "";
   const endArrowAttr = connector.endArrow ? ` de:end-arrow="${connector.endArrow}"` : "";
+  const startArrowSizeAttr = connector.startArrowSize ? ` de:start-arrow-size="${connector.startArrowSize}"` : "";
+  const endArrowSizeAttr = connector.endArrowSize ? ` de:end-arrow-size="${connector.endArrowSize}"` : "";
   const startShapeAttr = connector.startAttachment && ids.start
     ? ` draw:start-shape="${escapeXmlAttribute(ids.start)}" draw:start-glue-point="${connector.startAttachment.site}"`
     : "";
@@ -265,7 +270,7 @@ export function connectorElementXml(connector: Connector, styleName: string, ids
   return (
     `<draw:connector${SHAPE_XMLNS} xmlns:xml="http://www.w3.org/XML/1998/namespace" text:anchor-type="${anchorType}"` +
     ` draw:style-name="${escapeXmlAttribute(styleName)}" draw:type="${KIND_TO_DRAW_TYPE[connector.kind]}"${idAttr}` +
-    ` xmlns:de="${DE_NAMESPACE}"${groupAttr}${rotationAttr}${adjustAttr}${startArrowAttr}${endArrowAttr}${startShapeAttr}${endShapeAttr}` +
+    ` xmlns:de="${DE_NAMESPACE}"${groupAttr}${rotationAttr}${adjustAttr}${startArrowAttr}${endArrowAttr}${startArrowSizeAttr}${endArrowSizeAttr}${startShapeAttr}${endShapeAttr}` +
     ` svg:x1="${cmToOdfLength(x1)}" svg:y1="${cmToOdfLength(y1)}" svg:x2="${cmToOdfLength(x2)}" svg:y2="${cmToOdfLength(y2)}">` +
     descXml +
     "</draw:connector>"

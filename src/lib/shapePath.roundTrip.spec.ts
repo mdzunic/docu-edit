@@ -104,10 +104,10 @@ function pathModel(): DocumentModel {
   model.sections[0].blocks = [
     { type: "paragraph", runs: [{ text: "Paths", formatting: {} }] },
     pathShape(freeform),
-    pathShape(closedPoly, { fill: "#4472c4" }),
-    pathShape(closedCurve, { fill: "#70ad47" }),
+    pathShape(closedPoly, { fill: { kind: "solid", color: "#4472c4" } }),
+    pathShape(closedCurve, { fill: { kind: "solid", color: "#70ad47" } }),
     pathShape(scribble),
-    pathShape(mixed, { fill: "#ed7d31" }),
+    pathShape(mixed, { fill: { kind: "solid", color: "#ed7d31" } }),
     { type: "paragraph", runs: [{ text: "End", formatting: {} }] },
   ];
   return model;

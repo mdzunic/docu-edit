@@ -9,6 +9,7 @@ import {
   buildMetaXml,
   ODT_MIMETYPE,
   odtFileName,
+  patchOdtShapeDefs,
   UNTITLED_ODT_TITLE,
   writeOdt,
 } from "./writer";
@@ -383,7 +384,7 @@ describe("writeOdt — Shape (SPEC-051)", () => {
         widthCm: 4,
         heightCm: 4,
         wrap: "square",
-        fill: "#00cc44",
+        fill: { kind: "solid", color: "#00cc44" },
         outline: { color: "#cc0000", widthPt: 3, dash: "dash" },
         altText: "A green star",
       },
@@ -399,7 +400,7 @@ describe("writeOdt — Shape (SPEC-051)", () => {
       return;
     }
     expect(shape.geometry).toBe("star5");
-    expect(shape.fill).toBe("#00cc44");
+    expect(shape.fill).toEqual({ kind: "solid", color: "#00cc44" });
     expect(shape.outline?.color).toBe("#cc0000");
     expect(shape.outline?.dash).toBe("dash");
     expect(shape.altText).toBe("A green star");
@@ -434,6 +435,156 @@ describe("writeOdt — Shape (SPEC-051)", () => {
     expect(() => parseXml(contentXml)).not.toThrow();
     const reopened = await parseOdt(bytes);
     expect(reopened.sections[0].blocks[0].type).toBe("shape");
+  });
+});
+
+// SPEC-073: shape styling depth — the shared drawing definitions a graphic
+// style references by name (draw:gradient/draw:hatch/draw:fill-image) land
+// in styles.xml <office:styles>, on the fresh path AND the preserved-part
+// patch path, and the reader resolves them across parts on reopen.
+describe("writeOdt — shape styling definitions in styles.xml (SPEC-073)", () => {
+  function styledModel(): DocumentModel {
+    const model = createDocument("id-1");
+    model.sections[0].blocks = [
+      {
+        type: "shape",
+        geometry: "rect",
+        widthCm: 4,
+        heightCm: 3,
+        wrap: "square",
+        fill: {
+          kind: "gradient",
+          gradient: {
+            type: "linear",
+            angleDeg: 90,
+            stops: [
+              { position: 0, color: "#ff0000" },
+              { position: 1, color: "#0000ff" },
+            ],
+          },
+        },
+        outline: { color: "#123456", widthPt: 1, dash: "dashDot" },
+        shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 },
+      },
+      {
+        type: "shape",
+        geometry: "ellipse",
+        widthCm: 3,
+        heightCm: 3,
+        wrap: "square",
+        fill: { kind: "pattern", preset: "ltUpDiag", foreground: "#112233", background: "#ffffff" },
+      },
+    ];
+    return model;
+  }
+
+  it("a fresh save puts deGrad/deHatch/deDashDot definitions in office:styles and the reopen round-trips them", async () => {
+    const { bytes } = await writeOdt(styledModel());
+    const stylesXml = await partText(bytes, "styles.xml");
+    expect(stylesXml).toContain('draw:name="deGrad1"');
+    expect(stylesXml).toContain('draw:start-color="#ff0000"');
+    expect(stylesXml).toContain('draw:name="deHatch1"');
+    expect(stylesXml).toContain('draw:name="deDashDot"');
+    const contentXml = await partText(bytes, "content.xml");
+    expect(contentXml).toContain('draw:fill-gradient-name="deGrad1"');
+    expect(contentXml).toContain('draw:fill-hatch-name="deHatch1"');
+
+    const reopened = await parseOdt(bytes);
+    const [gradShape, hatchShape] = reopened.sections[0].blocks;
+    if (gradShape.type !== "shape" || hatchShape.type !== "shape") {
+      throw new Error("expected two shapes");
+    }
+    expect(gradShape.fill).toEqual({
+      kind: "gradient",
+      gradient: {
+        type: "linear",
+        angleDeg: 90,
+        stops: [
+          { position: 0, color: "#ff0000" },
+          { position: 1, color: "#0000ff" },
+        ],
+      },
+    });
+    expect(gradShape.outline?.dash).toBe("dashDot");
+    expect(gradShape.shadow).toEqual({ color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 });
+    expect(gradShape.unsupportedStyleXml).toBeUndefined();
+    expect(hatchShape.fill).toEqual({ kind: "pattern", preset: "ltUpDiag", foreground: "#112233", background: "#ffffff" });
+  });
+
+  it("a same-format save patches the preserved styles.xml: stale de-named definitions are replaced, not duplicated", async () => {
+    const first = await writeOdt(styledModel());
+    const parsed = await parseOdt(first.bytes);
+    const reopenedModel: DocumentModel = {
+      ...modelFrom(parsed),
+      opaque: parsed.opaque,
+      sourceXml: parsed.sourceXml,
+    };
+    const second = await writeOdt(reopenedModel);
+    const stylesXml = await partText(second.bytes, "styles.xml");
+    expect(stylesXml.match(/draw:name="deGrad1"/g)).toHaveLength(1);
+    expect(stylesXml.match(/draw:name="deHatch1"/g)).toHaveLength(1);
+    const again = await parseOdt(second.bytes);
+    const shape = again.sections[0].blocks[0];
+    if (shape.type !== "shape") {
+      throw new Error("expected a shape");
+    }
+    expect(shape.fill?.kind).toBe("gradient");
+    expect(shape.unsupportedStyleXml).toBeUndefined();
+  });
+
+  it("patchOdtShapeDefs removes only THIS editor's minted definitions — a foreign name merely starting with lowercase 'de' survives", () => {
+    // "decorative"/"delta" are foreign gradient names an .odt can legally
+    // carry; deleting them would strand any preserved shape that references
+    // them (never discard content we did not parse). Only the editor's own
+    // "de"+UpperCamelCase minting scheme (deGrad1, deDashDot, ...) is stale.
+    const stylesXml =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"' +
+      ' xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">' +
+      "<office:styles>" +
+      '<draw:gradient draw:name="decorative" draw:style="linear" draw:start-color="#101010" draw:end-color="#202020"/>' +
+      '<draw:gradient draw:name="de" draw:style="linear"/>' +
+      '<draw:gradient draw:name="deGrad1" draw:style="linear"/>' +
+      '<draw:stroke-dash draw:name="deDashDot"/>' +
+      "</office:styles></office:document-styles>";
+    const patched = patchOdtShapeDefs(stylesXml, "")!;
+    expect(patched).toContain('draw:name="decorative"');
+    expect(patched).toContain('draw:name="de"');
+    expect(patched).not.toContain("deGrad1");
+    expect(patched).not.toContain("deDashDot");
+  });
+
+  it("a picture fill writes the media part, the draw:fill-image definition and style:repeat, and reopens as a picture fill", async () => {
+    const model = createDocument("id-1");
+    model.media = [{ mediaId: "m-fill", contentType: "image/png", data: "iVBORw0KGgoAAAANSUhEUg==" }];
+    model.sections[0].blocks = [
+      {
+        type: "shape",
+        geometry: "rect",
+        widthCm: 4,
+        heightCm: 3,
+        wrap: "square",
+        fill: { kind: "picture", mediaId: "m-fill", mode: "tile", alpha: 0.5 },
+      },
+    ];
+    const { bytes } = await writeOdt(model);
+    const stylesXml = await partText(bytes, "styles.xml");
+    expect(stylesXml).toContain('draw:name="deFillImg1"');
+    expect(stylesXml).toContain('xlink:href="Pictures/image1.png"');
+    const contentXml = await partText(bytes, "content.xml");
+    expect(contentXml).toContain('draw:fill="bitmap"');
+    expect(contentXml).toContain('style:repeat="repeat"');
+    expect(contentXml).toContain('draw:opacity="50%"');
+    const parts = await unzip(bytes);
+    expect(parts.has("Pictures/image1.png")).toBe(true);
+
+    const reopened = await parseOdt(bytes);
+    const shape = reopened.sections[0].blocks[0];
+    if (shape.type !== "shape") {
+      throw new Error("expected a shape");
+    }
+    // The reopen re-keys the media by part path, the same way images do.
+    expect(shape.fill).toEqual({ kind: "picture", mediaId: "Pictures/image1.png", mode: "tile", alpha: 0.5 });
+    expect(reopened.media.some((part) => part.mediaId === "Pictures/image1.png")).toBe(true);
   });
 });
 

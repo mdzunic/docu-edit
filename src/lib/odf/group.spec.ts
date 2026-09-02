@@ -144,8 +144,8 @@ describe("parseOdt — a draw:g group flattens into its members", () => {
     expect(second.groupOrdinal).toBe(1);
     expect(first.geometry).toBe("rect");
     expect(second.geometry).toBe("ellipse");
-    expect(first.fill).toBe("#4472c4");
-    expect(second.fill).toBe("#70ad47");
+    expect(first.fill).toEqual({ kind: "solid", color: "#4472c4" });
+    expect(second.fill).toEqual({ kind: "solid", color: "#70ad47" });
     expect(first.altText).toBe("member A");
     expect(second.altText).toBe("member B");
   });
