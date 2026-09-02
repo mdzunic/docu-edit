@@ -5,6 +5,7 @@
 // carry the same property elements) and used for every resolved style chain.
 import type {
   ParagraphAlignment,
+  ParagraphBorders,
   ParagraphFormatting,
   RunFormatting,
   TabLeader,
@@ -16,6 +17,8 @@ import { HIGHLIGHT_NAMES } from "../core/colors";
 import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../core/language";
 import { foAttr, styleAttr, STYLE_NAMESPACE } from "../core/odfXml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
+import { DE_BORDER_NAMESPACE, parseBorderShorthand as parseOdfBorderShorthand } from "./borders";
+import { normaliseParagraphBorders } from "../paragraphBorders";
 
 /** Font families keyed by `style:font-face`'s name — built from the
  * `office:font-face-decls` of content.xml and styles.xml, so a
@@ -335,7 +338,52 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
     }
   }
 
+  // Paragraph borders and shading (SPEC-074 AC-29). `style:join-border` is
+  // read but needs no model slot: its ODF default is `true`, which is the
+  // merge behaviour borderRuns already implements for every paragraph.
+  const borders = parseOdfParagraphBorders(paragraphPropsEl);
+  if (borders !== undefined) {
+    formatting.borders = borders;
+  }
+  const shadingFill = odfColorToCss(foAttr(paragraphPropsEl, "background-color"));
+  if (shadingFill !== undefined) {
+    formatting.shadingFill = shadingFill;
+  }
+
   return formatting;
+}
+
+/** A `style:paragraph-properties` element's borders (SPEC-074 AC-29): each
+ * `fo:border-*` edge, falling back to the `fo:border` shorthand ODF lets a
+ * style set all four with, plus `fo:padding-*` (or `fo:padding`) for the
+ * border-to-text space. The `between` edge has no ODF attribute and rides in
+ * this product's extension namespace (see odf/borders.ts). */
+function parseOdfParagraphBorders(props: Element): ParagraphBorders | undefined {
+  const shorthand = foAttr(props, "border");
+  const paddingAll = odfLengthToPt(foAttr(props, "padding"));
+  const borders: ParagraphBorders = {};
+  const paddingPt: { top?: number; bottom?: number; left?: number; right?: number } = {};
+  let anyPadding = false;
+  for (const edge of ["top", "bottom", "left", "right"] as const) {
+    const side = parseOdfBorderShorthand(foAttr(props, `border-${edge}`) ?? shorthand);
+    if (!side) {
+      continue;
+    }
+    borders[edge] = side;
+    const padding = odfLengthToPt(foAttr(props, `padding-${edge}`)) ?? paddingAll;
+    if (padding !== undefined) {
+      paddingPt[edge] = padding;
+      anyPadding = true;
+    }
+  }
+  const between = parseOdfBorderShorthand(props.getAttributeNS(DE_BORDER_NAMESPACE, "border-between"));
+  if (between) {
+    borders.between = between;
+  }
+  if (anyPadding) {
+    borders.paddingPt = paddingPt;
+  }
+  return normaliseParagraphBorders(borders);
 }
 
 function tabLeaderOf(leaderText: string | null, leaderStyle: string | null): TabLeader | undefined {

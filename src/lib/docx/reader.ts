@@ -48,16 +48,17 @@ import type {
   RefFormat,
   TrackedChangeInfo,
 } from "../documentModel";
+import type { PageBorders } from "../documentModel";
 import type { ListDefinition } from "../core/lists";
 import type { MediaPart } from "../core/media";
 import type {
-  BorderLineStyle,
   BorderSide,
   CellBorders,
   CellVerticalAlign,
   TableAlignment,
   TableWidthMode,
 } from "../core/tables";
+import { parseBorderElement } from "./borders";
 import {
   createDefaultStyles,
   createEquationRun,
@@ -115,7 +116,7 @@ import {
   parseRunPropertiesChange,
 } from "./properties";
 import { ooxmlColorToCss } from "../core/colors";
-import { eighthPointsToPt, twipsToCm } from "../core/units";
+import { twipsToCm } from "../core/units";
 import { parseCoreProperties, parseCustomProperties } from "../core/opcProperties";
 import { OFFICE_DOCUMENT_RELATIONSHIP } from "../core/packageDetect";
 
@@ -1533,40 +1534,11 @@ function parseBodyParagraphBlocks(
   return { blocks, media };
 }
 
-/** OOXML `w:val`s for `w:tcBorders`' children collapse to the model's small
- * enum (SPEC-023): the handful of dashed variants all read as "dashed",
- * "nil"/"none" as "none", and anything else (including "thick", which the
- * model has no separate weight class for) as a plain single line. */
-function mapBorderLineStyle(val: string): BorderLineStyle {
-  const v = val.toLowerCase();
-  if (v === "nil" || v === "none") {
-    return "none";
-  }
-  if (v === "double" || v === "triple") {
-    return "double";
-  }
-  if (v === "dotted") {
-    return "dotted";
-  }
-  if (v.startsWith("dash") || v.includes("dotdash") || v.includes("dotdotdash")) {
-    return "dashed";
-  }
-  return "single";
-}
-
+/** One `CT_Border` element as a `BorderSide` — the shared docx/borders.ts
+ * mapping (SPEC-074 AC-1..3 widened the enum, so cell, paragraph and page
+ * borders all read the same `w:val` table). */
 function parseBorderSide(el: Element | undefined): BorderSide | undefined {
-  if (!el) {
-    return undefined;
-  }
-  const val = wordAttr(el, "val");
-  if (!val) {
-    return undefined;
-  }
-  const style = mapBorderLineStyle(val);
-  const sz = Number(wordAttr(el, "sz") ?? "");
-  const widthPt = style !== "none" && Number.isFinite(sz) && sz > 0 ? eighthPointsToPt(sz) : 0;
-  const color = ooxmlColorToCss(wordAttr(el, "color")) ?? "auto";
-  return { style, widthPt, color };
+  return parseBorderElement(el, wordAttr);
 }
 
 /** A cell's `w:tcBorders` (SPEC-023 AC-10..12, AC-24). OOXML's logical
@@ -2079,6 +2051,49 @@ function parseColumns(sectPr: Element | undefined): SectionColumns | undefined {
     }
   }
   return { count, equalWidth: true, gapCm, separator };
+}
+
+/** A sectPr's `w:pgBorders` (SPEC-074 AC-30): the four edges, the reference
+ * edge `@w:offsetFrom` measures from (AC-21) and which pages take it.
+ * `@w:space` is the same on every edge in practice, so the first edge that
+ * carries one supplies the model's single `offsetPt`. Art borders
+ * (`@w:id`, out of scope per SPEC-074) read as the plain line they sit on
+ * and are preserved verbatim by the sectPr passthrough. */
+function parsePageBorders(sectPr: Element | undefined): PageBorders | undefined {
+  const el = sectPr ? firstChildElement(sectPr, WORD_NAMESPACE, "pgBorders") : undefined;
+  if (!el) {
+    return undefined;
+  }
+  const borders: PageBorders = {};
+  let offsetPt: number | undefined;
+  for (const tag of ["top", "bottom", "left", "right"] as const) {
+    const edgeEl = firstChildElement(el, WORD_NAMESPACE, tag);
+    const side = parseBorderSide(edgeEl);
+    if (!side) {
+      continue;
+    }
+    borders[tag] = side;
+    if (offsetPt === undefined && edgeEl) {
+      const space = Number(wordAttr(edgeEl, "space") ?? "");
+      if (Number.isFinite(space) && space >= 0) {
+        offsetPt = space;
+      }
+    }
+  }
+  if (!borders.top && !borders.bottom && !borders.left && !borders.right) {
+    return undefined;
+  }
+  if (offsetPt !== undefined) {
+    borders.offsetPt = offsetPt;
+  }
+  borders.measureFrom = wordAttr(el, "offsetFrom") === "text" ? "text" : "page";
+  const display = wordAttr(el, "display");
+  if (display === "firstPage") {
+    borders.appliesTo = "firstPage";
+  } else if (display === "notFirstPage") {
+    borders.appliesTo = "exceptFirstPage";
+  }
+  return borders;
 }
 
 function applySectionProperties(sectPr: Element | undefined, base: DefaultStyles): DefaultStyles {
@@ -2809,6 +2824,10 @@ export async function parseDocx(
   if (!body) {
     throw new DocxOpenError(INVALID_DOCX_MESSAGE);
   }
+  // SPEC-074 AC-30: the document-wide page background, applied to every
+  // section below (the model holds it per section).
+  const backgroundEl = firstChildElement(documentXml.documentElement, WORD_NAMESPACE, "background");
+  const pageBackground = backgroundEl ? (ooxmlColorToCss(wordAttr(backgroundEl, "color")) ?? undefined) : undefined;
 
   let stylesDoc: Document | undefined;
   let numberingCatalog: NumberingCatalog = EMPTY_NUMBERING_CATALOG;
@@ -2992,6 +3011,19 @@ export async function parseDocx(
     const columns = parseColumns(sectPrEl);
     if (columns) {
       section.columns = columns;
+    }
+    // SPEC-074 AC-30: page borders, read from the same sectPr the columns
+    // come from.
+    const pageBorders = parsePageBorders(sectPrEl);
+    if (pageBorders) {
+      section.pageBorders = pageBorders;
+    }
+    // The page background is document-wide in OOXML (w:background) but per
+    // section in the model, so every section reads the same value — which is
+    // also what keeps a same-format round trip stable (the writer emits the
+    // first section's, they all agree, and nothing is reported dropped).
+    if (pageBackground !== undefined) {
+      section.pageBackground = pageBackground;
     }
   });
 

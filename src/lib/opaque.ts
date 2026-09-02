@@ -27,6 +27,7 @@ import {
   type Table,
 } from "./documentModel";
 import { parseXml, XmlParseError } from "./core/xml";
+import type { BorderSide } from "./core/borders";
 import { PATTERN_PRESET_TO_ODF_HATCH } from "./core/drawingMl";
 // The chart-feature marker tables moved to core/chartFeatures.ts (SPEC-092)
 // so the presentation rewrite-notice shares them; re-imported here unchanged
@@ -787,11 +788,85 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
     // document has no source format, so this cannot ride on the cross-format
     // gate above.
     dropped.push(...collectBarTabDropRecords(model, target));
+    // Border styles ODF cannot express (SPEC-074 AC-32) — same reasoning as
+    // the bar tabs above: a modelled feature the target format lacks, so
+    // every save to .odt reports it regardless of source.
+    dropped.push(...collectBorderStyleDropRecords(model));
+  }
+  if (target === "docx") {
+    dropped.push(...collectPageBackgroundDropRecords(model));
   }
   if (target === "md") {
     dropped.push(...collectMarkdownDropRecords(model));
   }
   return dropped;
+}
+
+/** The border styles ODF has no keyword for (SPEC-074 AC-32): `dashDot` and
+ * `dashDotDot` write as `dashed`, their nearest equivalent, and each
+ * paragraph (or section page border) that uses one is reported. Exported so
+ * a same-format `.odt` save reports them too — ODF's vocabulary is the
+ * limit, not the conversion. */
+export function collectBorderStyleDropRecords(model: DocumentModel): DropRecord[] {
+  const dropped: DropRecord[] = [];
+  const lost = (side: BorderSide | undefined): boolean =>
+    side !== undefined && (side.style === "dashDot" || side.style === "dashDotDot");
+  const reason =
+    "Not preserved when saving as OpenDocument Text: ODF's border keywords have no dash-dot " +
+    "pattern, so the border is written as its nearest equivalent, dashed.";
+  let paragraphOffset = 0;
+  model.sections.forEach((section, sectionIndex) => {
+    section.blocks.forEach((block, index) => {
+      const paragraphNumber = paragraphOffset + index + 1;
+      const paragraphs =
+        block.type === "table"
+          ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks))
+          : [block];
+      for (const paragraph of paragraphs) {
+        if (paragraph.type !== "paragraph") {
+          continue;
+        }
+        const borders = paragraph.formatting?.borders;
+        if (
+          borders &&
+          (lost(borders.top) || lost(borders.bottom) || lost(borders.left) || lost(borders.right) || lost(borders.between))
+        ) {
+          dropped.push({ kind: "paragraphFormatting", location: `paragraph ${paragraphNumber}`, reason });
+        }
+      }
+    });
+    paragraphOffset += section.blocks.length;
+    const page = section.pageBorders;
+    if (page && (lost(page.top) || lost(page.bottom) || lost(page.left) || lost(page.right))) {
+      dropped.push({ kind: "pageSetup", location: `section ${sectionIndex + 1} page border`, reason });
+    }
+  });
+  return dropped;
+}
+
+/** The page background a `.docx` save cannot carry (SPEC-074 AC-32): OOXML
+ * stores one `w:background` for the whole document while the model holds it
+ * per section, so a save writes the first section's value and reports the
+ * rest. Exported for the same-format `.docx` save, which loses it just as a
+ * converted one does. */
+export function collectPageBackgroundDropRecords(model: DocumentModel): DropRecord[] {
+  if (model.sections.length < 2) {
+    return [];
+  }
+  const first = model.sections[0]?.pageBackground;
+  const disagreeing = model.sections.filter((section) => section.pageBackground !== first);
+  if (disagreeing.length === 0) {
+    return [];
+  }
+  return [
+    {
+      kind: "pageSetup",
+      location: `${disagreeing.length} section${disagreeing.length === 1 ? "" : "s"} after the first`,
+      reason:
+        "Not preserved when saving as Word (.docx): OOXML holds one page background for the whole " +
+        "document, so the first section's colour is written and the others are lost.",
+    },
+  ];
 }
 
 /** One `tabStop` DropRecord per bar tab stop in the model (SPEC-054 AC-38),
