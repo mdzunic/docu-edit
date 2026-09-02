@@ -19,7 +19,6 @@ import {
   type TrackChangesDisplayMode,
 } from "./documentModel";
 import { type ListDefinition } from "./core/lists";
-import { type BorderSide } from "./core/tables";
 import { borderSideCss } from "./core/borders";
 import type { Margins } from "./core/pageSetup";
 import { CM_PER_INCH, POINTS_PER_INCH } from "./core/units";
