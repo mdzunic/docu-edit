@@ -17,7 +17,7 @@ test("'Open document' opens a file picker limited to supported formats (AC-1)", 
   // the app can open.
   await expect(input).toHaveAttribute(
     "accept",
-    ".docx,.odt,.md,.markdown,.pptx,.odp,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
+    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
   );
 });
 

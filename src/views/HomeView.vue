@@ -35,7 +35,7 @@ import {
   initLibrary,
   renameDocument,
   storeDocument,
-  storeMedia,
+  storeOpenedFile,
   storePresentation,
 } from "../lib/documentStore";
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
@@ -282,13 +282,7 @@ async function handleFileChosen(file = null) {
   try {
     const opened = await openAnyDocumentFile(file);
     openError.value = "";
-    if (opened.kind === "presentation") {
-      storePresentation(opened.model);
-    } else if (opened.kind === "media") {
-      storeMedia(opened.model);
-    } else {
-      storeDocument(opened.model);
-    }
+    storeOpenedFile(opened, addToast);
     router.push(editorPathFor(opened.kind, opened.model.id));
   } catch (error) {
     openError.value = error instanceof Error ? error.message : String(error);

@@ -33,8 +33,17 @@ import type { PresentationModel } from "./presentation/model";
 import { assemblePresentation, presentationFormatOf } from "./presentation/open";
 import { parsePptx } from "./presentation/pptx/reader";
 import { parseOdp } from "./presentation/odp/reader";
+import {
+  isIwaPackage,
+  isLegacyKeynote,
+  KEYNOTE_LEGACY_MESSAGE,
+  KEYNOTE_UNREADABLE_MESSAGE,
+  KeynoteOpenError,
+  keynoteImportNotice,
+  parseKeynote,
+} from "./presentation/keynote/reader";
 
-export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError };
+export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError, KeynoteOpenError };
 
 /** A file whose format was recognised but isn't openable where it was
  * handed in — an ODF package of an unsupported kind, or a presentation
@@ -57,7 +66,7 @@ export class FileTooLargeError extends Error {}
  * except Markdown (SPEC-050), which has no content signature at all and is
  * admitted by extension as the deliberate, documented exception (see
  * `openDocumentFile`). */
-export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt, .md, .pptx, .odp, .pdf and image files";
+export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt, .md, .pptx, .odp, .key, .pdf and image files";
 
 const SUPPORTED_EXTENSION_PATTERN = new RegExp(`\\.(${OPENABLE_EXTENSIONS.join("|")})$`, "i");
 
@@ -76,7 +85,7 @@ export function hasTemplateFileExtension(fileName: string): boolean {
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
   const withoutExtension = fileName.replace(
-    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
+    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|key|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
     "",
   );
   return withoutExtension.length > 0 ? withoutExtension : fileName;
@@ -176,7 +185,14 @@ export function assembleDocumentModel(
  * `kind` (see documentKinds.ts). */
 export type OpenedFile =
   | { kind: "text"; model: DocumentModel }
-  | { kind: "presentation"; model: PresentationModel }
+  | {
+      kind: "presentation";
+      model: PresentationModel;
+      /** SPEC-087's non-blocking notice for a Keynote import that dropped
+       * objects/effects; absent when nothing was dropped (and for native
+       * .pptx/.odp opens). Surfaced as a toast by `storeOpenedFile`. */
+      importNotice?: string;
+    }
   | { kind: "media"; model: MediaModel };
 
 /** The shared open pipeline. Unzips at most once for detection (parsers
@@ -234,12 +250,20 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
       throw error;
     }
   }
+  // SPEC-087: a `.key` that fails content detection must never fall through
+  // to the .docx parser and surface a Word error (AC-11) — the one place the
+  // extension steers anything, and only towards a better message.
+  const namedDotKey = /\.key$/i.test(file.name);
   if (parts === null) {
     if ((await detectOdf(bytes)) === "flat") {
       throw new FlatOdfError(FLAT_ODF_MESSAGE);
     }
     if (/\.(md|markdown)$/i.test(file.name)) {
       return text(assembleDocumentModel(title, "md", await parseMd(bytes, options)));
+    }
+    if (namedDotKey) {
+      // Not even a ZIP — a corrupt or truncated Keynote file.
+      throw new KeynoteOpenError(KEYNOTE_UNREADABLE_MESSAGE);
     }
     return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, undefined, { deferMedia: true })));
   }
@@ -257,11 +281,36 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     const parsed = presentationFormat === "pptx" ? await parsePptx(bytes, parts) : await parseOdp(bytes, parts);
     return { kind: "presentation", model: assemblePresentation(title, presentationFormat, parsed) };
   }
+  // SPEC-087: Keynote detection is content-based inside the ZIP funnel,
+  // after the native presentation dispatch so `presentationFormatOf` and
+  // the docx/odf paths are untouched (AC-5..AC-7). iWork '05–'09 gets its
+  // own honest rejection (AC-8) before the IWA check.
+  if (isLegacyKeynote(parts)) {
+    throw new KeynoteOpenError(KEYNOTE_LEGACY_MESSAGE);
+  }
+  if (isIwaPackage(parts)) {
+    if (!allowPresentations) {
+      // Text-only entry points reject a Keynote deck exactly like a native
+      // presentation (spec Funnel integration).
+      throw new UnsupportedFileError(PRESENTATION_NOT_TEXT_MESSAGE);
+    }
+    // A one-way import: the deck lives on as a from-scratch "pptx"
+    // presentation saved via the existing writers.
+    const parsed = await parseKeynote(parts);
+    const model = assemblePresentation(title, "pptx", parsed);
+    const importNotice = keynoteImportNotice(parsed.dropped);
+    return importNotice === null ? { kind: "presentation", model } : { kind: "presentation", model, importNotice };
+  }
   if (info.container === "odf") {
     if (info.mimetype === ODT_MIMETYPE || info.mimetype === OTT_MIMETYPE) {
       return text(assembleDocumentModel(title, "odt", await parseOdt(bytes, parts)));
     }
     throw new UnsupportedFileError(UNSUPPORTED_ODF_MESSAGE);
+  }
+  if (namedDotKey) {
+    // A valid ZIP named .key that is no iWork Archive — still a Keynote
+    // problem, not a Word document (AC-11).
+    throw new KeynoteOpenError(KEYNOTE_UNREADABLE_MESSAGE);
   }
   return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, parts, { deferMedia: true })));
 }

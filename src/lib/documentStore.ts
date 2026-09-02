@@ -8,6 +8,7 @@ import { createDocument, type DocumentModel } from "./documentModel";
 import { kindOfFormat, type DocumentKind, type LibraryFormat } from "./documentKinds";
 import type { PresentationModel } from "./presentation/model";
 import type { MediaModel } from "./media/model";
+import type { OpenedFile } from "./openDocument";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
 import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
@@ -881,6 +882,24 @@ export function storePresentation(model: PresentationModel): void {
  * other kind's. */
 export function storeMedia(model: MediaModel): void {
   storeRecord(model, model.format);
+}
+
+/** Stores whatever the kind-agnostic open path returned, dispatching on
+ * `kind` — the shared tail of the picker, drag-drop and URL open paths. A
+ * Keynote import's non-blocking notice (SPEC-087 AC-37) is handed to
+ * `notify` (the caller's toast) after the model is stored, so it survives
+ * the navigation into the editor. */
+export function storeOpenedFile(opened: OpenedFile, notify?: (message: string) => void): void {
+  if (opened.kind === "presentation") {
+    storePresentation(opened.model);
+    if (opened.importNotice !== undefined) {
+      notify?.(opened.importNotice);
+    }
+  } else if (opened.kind === "media") {
+    storeMedia(opened.model);
+  } else {
+    storeDocument(opened.model);
+  }
 }
 
 function storeRecord(model: StoredModel, format: DocumentFormat): void {

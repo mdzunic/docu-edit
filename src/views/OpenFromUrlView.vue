@@ -5,11 +5,13 @@ import AppShell from "../components/AppShell.vue";
 import { useTheme } from "../composables/useTheme";
 import { openAnyDocumentFile } from "../lib/openDocument";
 import { openDocumentFromUrl } from "../lib/openDocumentFromUrl";
-import { storeDocument, storeMedia, storePresentation } from "../lib/documentStore";
+import { storeOpenedFile } from "../lib/documentStore";
+import { useToasts } from "../composables/useToasts";
 import { editorPathFor, OPEN_FILE_ACCEPT } from "../lib/documentKinds";
 
 const route = useRoute();
 const router = useRouter();
+const { addToast } = useToasts();
 
 // No menu bar here either — read the shared composable so this view is themed
 // by the same tokens and follows the OS live (SPEC-059 AC-53).
@@ -38,13 +40,7 @@ async function run() {
   errorReason.value = "";
   try {
     const opened = await openDocumentFromUrl(url);
-    if (opened.kind === "presentation") {
-      storePresentation(opened.model);
-    } else if (opened.kind === "media") {
-      storeMedia(opened.model);
-    } else {
-      storeDocument(opened.model);
-    }
+    storeOpenedFile(opened, addToast);
     // Replace, not push: reloading /doc/:id afterwards must not re-fetch
     // the URL (AC-16), and the failed /open?url=... entry shouldn't sit in
     // history either.
@@ -71,13 +67,7 @@ async function handleFileChosen() {
   }
   try {
     const opened = await openAnyDocumentFile(file);
-    if (opened.kind === "presentation") {
-      storePresentation(opened.model);
-    } else if (opened.kind === "media") {
-      storeMedia(opened.model);
-    } else {
-      storeDocument(opened.model);
-    }
+    storeOpenedFile(opened, addToast);
     router.replace(editorPathFor(opened.kind, opened.model.id));
   } catch (error) {
     status.value = "error";
