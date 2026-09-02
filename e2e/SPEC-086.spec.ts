@@ -68,9 +68,16 @@ test("add animations, build them in playback, and round-trip the panel", async (
   await expect(stage.getByText("Shape text")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
 
-  // The build settles: the flown-in shape comes to rest (no residual transform).
+  // The build settles: the flown-in shape comes to rest (no residual transform),
+  // and the group itself is no longer in flight. Both matter, and the second is
+  // not implied by the first: the group's settle runs a beat after the last
+  // animation's CSS transition ends, and an advance arriving inside that window
+  // is consumed by AC-24's "complete the group and hold" instead of moving on.
+  // On a loaded machine that window stretches, which is what made this test
+  // flaky before the view published the state to wait for.
   const shapeFrame = stage.locator(".frame").filter({ hasText: "Shape text" });
   await expect(shapeFrame).toHaveCSS("transform", "none");
+  await expect(play).toHaveAttribute("data-building", "false");
 
   // Advance again — now that the group has fully built, this moves to the next
   // slide. (A mid-build advance instead completes the group and holds — AC-24,
