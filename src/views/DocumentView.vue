@@ -2283,6 +2283,7 @@ const {
   forceRealizeAll: printForceRealize,
   rangeMode: printRangeMode,
   rangeText: printRangeText,
+  printBackground,
   rangeError: printRangeError,
   canPrint,
   printablePageCount,
@@ -3620,6 +3621,8 @@ function handleMenuCommand(id = "") {
                 :key="pageIndex"
                 :page-style="pageView.pageStyle"
                 :content-style="pageView.contentStyle"
+                :page-border-style="pageView.pageBorderStyle || undefined"
+                :page-background-style="pageView.pageBackgroundStyle || undefined"
                 :entries="pageView.entries"
                 :columns="pageView.columns"
                 :virtual="pageView.virtual"
@@ -4284,8 +4287,10 @@ function handleMenuCommand(id = "") {
       :range-text="printRangeText"
       :error="printRangeError ?? ''"
       :can-print="canPrint"
+      :print-background="printBackground"
       @update:range-mode="printRangeMode = $event"
       @update:range-text="printRangeText = $event"
+      @update:print-background="printBackground = $event"
       @print="confirmPrint"
       @close="closePrintPreview"
     />

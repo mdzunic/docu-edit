@@ -82,10 +82,7 @@ export function borderSideCss(side: BorderSide | undefined): string {
   if (!side || side.style === "none" || side.widthPt <= 0) {
     return "none";
   }
-  // A double line needs at least 3px of box to show its gap; browsers
-  // collapse a hairline double into a single rule otherwise.
-  const widthPt = side.style === "double" ? Math.max(side.widthPt, 2.25) : side.widthPt;
-  return `${roundWidthPt(widthPt)}pt ${borderStyleCss(side.style)} ${borderColorCss(side.color)}`;
+  return `${roundWidthPt(side.widthPt)}pt ${borderStyleCss(side.style)} ${borderColorCss(side.color)}`;
 }
 
 /** Border widths are held as points with sub-point precision from both

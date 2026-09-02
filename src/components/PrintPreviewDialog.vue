@@ -20,9 +20,17 @@ defineProps({
   /** The current range validation error, or "" (AC-28). */
   error: { type: String, default: "" },
   canPrint: { type: Boolean, required: true },
+  /** "Print background colours" (SPEC-074 AC-25). */
+  printBackground: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["update:range-mode", "update:range-text", "print", "close"]);
+const emit = defineEmits([
+  "update:range-mode",
+  "update:range-text",
+  "update:print-background",
+  "print",
+  "close",
+]);
 
 const printButton = useTemplateRef("printButton");
 
@@ -38,6 +46,11 @@ function chooseCustom() {
 function handleRangeInput(event = new Event("input")) {
   const target = event.target;
   emit("update:range-text", target instanceof HTMLInputElement ? target.value : "");
+}
+
+function handleBackgroundToggle(event = new Event("change")) {
+  const target = event.target;
+  emit("update:print-background", target instanceof HTMLInputElement && target.checked);
 }
 </script>
 
@@ -122,6 +135,17 @@ function handleRangeInput(event = new Event("input")) {
         {{ error }}
       </p>
     </fieldset>
+    <!-- A page background is a screen decoration until asked for on paper
+         (SPEC-074 AC-25); page borders always print, so they get no switch. -->
+    <label class="panel-option">
+      <input
+        type="checkbox"
+        :checked="printBackground"
+        data-testid="print-background"
+        @change="handleBackgroundToggle"
+      >
+      Print background colours
+    </label>
     <footer class="panel-actions">
       <button
         ref="printButton"
@@ -146,6 +170,14 @@ function handleRangeInput(event = new Event("input")) {
 </template>
 
 <style scoped>
+.panel-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
 /* Docked to the top-right of the canvas so the paginated pages stay
    visible beside it — they are the preview. */
 .print-preview-panel {

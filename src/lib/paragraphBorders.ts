@@ -252,6 +252,9 @@ export function paragraphBorderStyle(
 
   if (formatting?.shadingFill !== undefined) {
     style.backgroundColor = formatting.shadingFill;
+    // Formatting marks are drawn on the shading, so the shading is the
+    // surface they contrast against (AC-26).
+    Object.assign(style, paragraphMarkColorStyle(formatting));
   }
   // Merged paragraphs must read as one block: no gap can open between two
   // members of a run, or the page would show through the box (AC-12).
@@ -262,6 +265,47 @@ export function paragraphBorderStyle(
     style.marginBottom = "0";
   }
   return style;
+}
+
+// --- formatting marks on a shaded paragraph (AC-26) --------------------------
+
+/** The canvas's default formatting-mark grey (SPEC-028) — what a mark paints
+ * as on unshaded paper. */
+export const DEFAULT_MARK_COLOR = "#80868b";
+
+/** The mark colour a shaded paragraph needs (SPEC-074 AC-26): formatting
+ * marks are drawn *on the shading*, so the shading — not the page — is the
+ * surface they must contrast against. The default grey survives on light
+ * fills; on a dark one the marks flip to a light grey, which is the only way
+ * a pilcrow stays visible in a dark callout.
+ *
+ * Returned as the `--mark-color` custom property the mark rules read, so the
+ * decision is made once here rather than duplicated across four CSS rules. */
+export function paragraphMarkColorStyle(
+  formatting: ParagraphFormatting | undefined,
+): Record<string, string> {
+  const fill = formatting?.shadingFill;
+  if (fill === undefined) {
+    return {};
+  }
+  return { "--mark-color": isDarkFill(fill) ? "#d0d3d6" : DEFAULT_MARK_COLOR };
+}
+
+/** Whether a `"#rrggbb"` fill is dark enough that the default mark grey
+ * would disappear into it. Relative luminance under the midpoint, the same
+ * sRGB weighting the accessibility checker's contrast maths uses. */
+export function isDarkFill(hex: string): boolean {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) {
+    return false;
+  }
+  const channel = (offset: number): number => {
+    const value = Number.parseInt(clean.slice(offset, offset + 2), 16);
+    return Number.isNaN(value) ? 0 : value / 255;
+  };
+  const linear = (c: number): number => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const luminance = 0.2126 * linear(channel(0)) + 0.7152 * linear(channel(2)) + 0.0722 * linear(channel(4));
+  return luminance < 0.4;
 }
 
 // --- presets (AC-8) ----------------------------------------------------------

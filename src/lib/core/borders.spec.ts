@@ -72,9 +72,9 @@ describe("borderSideCss", () => {
     expect(borderColorCss("#123456")).toBe("#123456");
   });
 
-  it("floors a double line at a width the browser can draw the gap in", () => {
-    expect(borderSideCss(side("double", 0.5))).toBe("2.25pt double #000000");
-    expect(borderSideCss(side("double", 6))).toBe("6pt double #000000");
+  it("emits the model's own width unchanged — SPEC-023's cell rules depend on it", () => {
+    expect(borderSideCss(side("double", 1.5, "#00ff00"))).toBe("1.5pt double #00ff00");
+    expect(borderSideCss(side("dashDot", 2))).toBe("2pt dashed #000000");
   });
 });
 

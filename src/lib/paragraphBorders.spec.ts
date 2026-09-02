@@ -3,12 +3,15 @@ import {
   ALL_EDGES,
   applyBorderPreset,
   borderRuns,
+  DEFAULT_MARK_COLOR,
   detectBorderPreset,
   fragmentEdges,
   hasBorderPaint,
+  isDarkFill,
   normaliseParagraphBorders,
   paragraphBorderStyle,
   paragraphBordersEqual,
+  paragraphMarkColorStyle,
   paragraphPaddingPt,
 } from "./paragraphBorders";
 import type { BorderSide } from "./core/borders";
@@ -302,5 +305,34 @@ describe("normaliseParagraphBorders", () => {
   it("keeps an object with a visible edge", () => {
     const borders: ParagraphBorders = { top: LINE };
     expect(normaliseParagraphBorders(borders)).toBe(borders);
+  });
+});
+
+describe("formatting marks on a shaded paragraph (AC-26)", () => {
+  it("says nothing about a paragraph with no shading", () => {
+    expect(paragraphMarkColorStyle(undefined)).toEqual({});
+    expect(paragraphMarkColorStyle({ borders: { top: LINE } })).toEqual({});
+  });
+
+  it("keeps the default grey on a light fill", () => {
+    expect(paragraphMarkColorStyle({ shadingFill: "#f5f5f5" })["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
+    expect(paragraphMarkColorStyle({ shadingFill: "#fff2cc" })["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
+  });
+
+  it("flips to a light grey on a dark fill, so the pilcrow stays visible", () => {
+    expect(paragraphMarkColorStyle({ shadingFill: "#1f1f1f" })["--mark-color"]).toBe("#d0d3d6");
+    expect(paragraphMarkColorStyle({ shadingFill: "#20365c" })["--mark-color"]).toBe("#d0d3d6");
+  });
+
+  it("rides on the paragraph's own style object, beside the shading", () => {
+    const style = paragraphBorderStyle({ shadingFill: "#1f1f1f" }, ALL_EDGES);
+    expect(style.backgroundColor).toBe("#1f1f1f");
+    expect(style["--mark-color"]).toBe("#d0d3d6");
+  });
+
+  it("reads luminance, not brightness of one channel", () => {
+    expect(isDarkFill("#ffff00")).toBe(false);
+    expect(isDarkFill("#0000ff")).toBe(true);
+    expect(isDarkFill("not-a-colour")).toBe(false);
   });
 });

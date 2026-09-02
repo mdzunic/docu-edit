@@ -41,6 +41,14 @@ const props = defineProps({
    * its blocks off-DOM instead. */
   virtual: { type: Boolean, default: false },
   cellRange: { type: Object, default: null },
+  /** The section's page border box (SPEC-074 AC-22), or null. Absolutely
+   * positioned inside the page at its own offset, independent of the
+   * margins, and inert — it is decoration, never a hit target. */
+  pageBorderStyle: { type: Object, default: null },
+  /** The section's page background (SPEC-074 AC-24), or null. Its own layer
+   * behind everything so the print path can drop it without touching the
+   * page box's own styling (AC-25). */
+  pageBackgroundStyle: { type: Object, default: null },
   headerEntries: { type: Array, default: () => noRenderEntries() },
   footerEntries: { type: Array, default: () => noRenderEntries() },
   headerStyle: { type: Object, default: null },
@@ -135,6 +143,28 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
     :data-print-hidden="printHidden ? '1' : undefined"
     :style="pageStyle"
   >
+    <!-- Page background (SPEC-074 AC-24): behind the whole page, including
+         its margins and the header/footer bands. Excluded from print unless
+         "print background colours" is on (AC-25) — see App.vue's @media
+         print rule keyed off .page-background. -->
+    <div
+      v-if="pageBackgroundStyle"
+      class="page-background"
+      data-testid="page-background"
+      data-canvas-ignore="1"
+      aria-hidden="true"
+      :style="pageBackgroundStyle"
+    />
+    <!-- Page border (SPEC-074 AC-22): every page of the section, at the
+         section's own offset from the page edge or the text area. -->
+    <div
+      v-if="pageBorderStyle"
+      class="page-border"
+      data-testid="page-border"
+      data-canvas-ignore="1"
+      aria-hidden="true"
+      :style="pageBorderStyle"
+    />
     <div
       class="page-header-band"
       data-testid="page-header-band"
@@ -364,6 +394,24 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
 
 .page:last-child {
   margin-bottom: 0;
+}
+
+/* Page background and border (SPEC-074 AC-22, AC-24): two inert decoration
+   layers inside the page box. The background covers the whole sheet — the
+   page element's own white paper stays underneath, so a background with any
+   transparency still reads against paper rather than the workspace. */
+.page-background {
+  position: absolute;
+  inset: 0;
+  /* Negative, so it paints above .page's own white paper but below the
+     in-flow content — .page is its own stacking context (see above), which
+     is what stops it escaping behind the sheet entirely. */
+  z-index: -1;
+  pointer-events: none;
+}
+
+.page-border {
+  z-index: 1;
 }
 
 /* The content area: padding carries the page margins (inline style), so the

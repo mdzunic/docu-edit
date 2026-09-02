@@ -7,6 +7,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   type Chart,
   type Image,
+  type PageBorders,
   type Paragraph,
   type ParagraphFormatting,
   type Run,
@@ -19,6 +20,10 @@ import {
 } from "./documentModel";
 import { type ListDefinition } from "./core/lists";
 import { type BorderSide } from "./core/tables";
+import { borderSideCss } from "./core/borders";
+import type { Margins } from "./core/pageSetup";
+import { CM_PER_INCH, POINTS_PER_INCH } from "./core/units";
+import { ALL_EDGES, paragraphBorderStyle, type BorderPaintEdges } from "./paragraphBorders";
 import { listIndentCm } from "./core/lists";
 import { definedTextIndentCm } from "./core/listDefinitions";
 import { authorColor } from "./trackChangesIdentity";
@@ -137,10 +142,16 @@ export function displayParagraphFormatting(
   return paragraph.formatting;
 }
 
+/** A paragraph's inline CSS. `edges` (SPEC-074) says which border edges this
+ * *fragment* paints — the paginated canvas passes the run/page-break-aware
+ * set (see paragraphBorders.fragmentEdges); every other render path (a shape's
+ * text frame, a table cell, the outline preview) takes the default, which
+ * paints each edge the paragraph sets, once. */
 export function paragraphStyle(
   paragraph: Paragraph,
   listDefinitions: readonly ListDefinition[] = [],
   displayMode: TrackChangesDisplayMode = "all",
+  edges: BorderPaintEdges = ALL_EDGES,
 ): Record<string, string> {
   const formatting = displayParagraphFormatting(paragraph, displayMode);
   const style: Record<string, string> = { whiteSpace: "pre-wrap" };
@@ -193,7 +204,62 @@ export function paragraphStyle(
   } else if (formatting.lineSpacing !== undefined) {
     style.lineHeight = String(formatting.lineSpacing);
   }
+  // Borders and shading last, so their margin collapsing inside a merged
+  // border run (SPEC-074 AC-12) wins over the paragraph's own space
+  // before/after — two members of one box must not be pushed apart.
+  Object.assign(style, paragraphBorderStyle(formatting, edges));
   return style;
+}
+
+// --- page borders and background (SPEC-074 AC-22, AC-24) ---------------------
+
+/** Whether this page of a section takes its page border (SPEC-074 AC-22):
+ * every page by default, or only/never the section's first when the border
+ * says so. */
+export function pageTakesBorder(borders: PageBorders, pageIndexInSection: number): boolean {
+  if (borders.appliesTo === "firstPage") {
+    return pageIndexInSection === 0;
+  }
+  if (borders.appliesTo === "exceptFirstPage") {
+    return pageIndexInSection > 0;
+  }
+  return true;
+}
+
+/** The absolutely-positioned box a section's page border paints as (AC-22):
+ * inset from the page edge by `offsetPt`, or from the text area outward by
+ * it when the border measures from the text (AC-21). Null when the section
+ * has no border, when no edge is set, or when this page is excluded.
+ *
+ * A box rather than a border on the page element itself, because the offset
+ * is independent of the margins and because the page box already carries the
+ * background and the shadow. */
+export function pageBorderStyle(
+  borders: PageBorders | undefined,
+  margins: Margins,
+  pageIndexInSection: number,
+): Record<string, string> | null {
+  if (!borders || !pageTakesBorder(borders, pageIndexInSection)) {
+    return null;
+  }
+  if (!borders.top && !borders.bottom && !borders.left && !borders.right) {
+    return null;
+  }
+  const offsetCm = ((borders.offsetPt ?? 24) / POINTS_PER_INCH) * CM_PER_INCH;
+  const inset = (marginCm: number): string =>
+    `${Math.max(0, borders.measureFrom === "text" ? marginCm - offsetCm : offsetCm)}cm`;
+  return {
+    position: "absolute",
+    top: inset(margins.topCm),
+    bottom: inset(margins.bottomCm),
+    left: inset(margins.leftCm),
+    right: inset(margins.rightCm),
+    borderTop: borderSideCss(borders.top),
+    borderBottom: borderSideCss(borders.bottom),
+    borderLeft: borderSideCss(borders.left),
+    borderRight: borderSideCss(borders.right),
+    pointerEvents: "none",
+  };
 }
 
 export function runKey(run: Run, index: number): string {
@@ -300,15 +366,6 @@ export function trackChangeBlockHidden(
 }
 
 // --- tables (SPEC-023) -------------------------------------------------
-
-function borderSideCss(side: BorderSide): string {
-  if (side.style === "none") {
-    return "none";
-  }
-  const cssStyle = side.style === "single" ? "solid" : side.style;
-  const color = side.color !== "auto" ? side.color : "#000000";
-  return `${side.widthPt}pt ${cssStyle} ${color}`;
-}
 
 /** A cell's own border/shading/padding/vertical-alignment as inline CSS
  * (AC-10..17): only the properties the cell actually sets — an unset side

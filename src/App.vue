@@ -122,6 +122,17 @@ body.is-print-preview .doc-field-shaded {
     display: none !important;
   }
 
+  /* Page backgrounds are opt-in on paper (SPEC-074 AC-25), matching both
+     source applications' "print background colours" setting. The page
+     BORDER has no such switch — it always prints. */
+  .page-background {
+    display: none !important;
+  }
+
+  body.prints-background .page-background {
+    display: block !important;
+  }
+
   /* The aria-live announcement stubs (.visually-hidden) are 1px absolutely
      positioned boxes whose static position is just past the last page box.
      That one pixel of overflow rounded the sheet count up, printing an empty

@@ -39,6 +39,7 @@ import {
   sectionColumnFlowWidthPx,
   type PageColumns,
   type PageItem,
+  type PageLayout,
 } from "../../lib/pagination";
 import { listMarkers } from "../../lib/lists";
 import { noNoteAreaItems, type NoteArea, type NoteAreaItem } from "../../lib/notesLayout";
@@ -53,6 +54,7 @@ import {
   headingTag,
   paragraphClassName,
   paragraphHasTrackedChange,
+  pageBorderStyle,
   paragraphStyle,
   runKey,
   runLinkHref,
@@ -63,6 +65,7 @@ import {
 import { effectiveLanguage } from "../../lib/core/language";
 import { markSegments, tabOnlySegments, type MarkSegment } from "../../lib/core/marks";
 import type { ParagraphTabLayout } from "../../lib/tabLayout";
+import { borderRuns, fragmentEdges, type BorderRunFlags } from "../../lib/paragraphBorders";
 import { splitRuns } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
@@ -123,6 +126,12 @@ export interface NoteAreaView {
 export interface PageView {
   pageStyle: Record<string, string>;
   contentStyle: Record<string, string>;
+  /** The section's page border as an absolutely-positioned box (SPEC-074
+   * AC-22), or null when this page takes none. */
+  pageBorderStyle: Record<string, string> | null;
+  /** The section's page background (SPEC-074 AC-24), or null. Rendered as
+   * its own layer behind the content so the print path can drop it (AC-25). */
+  pageBackgroundStyle: Record<string, string> | null;
   entries: RenderEntry[];
   columns: PageColumns | undefined;
   virtual: boolean;
@@ -265,6 +274,52 @@ function annotateTabSegments(
 
 /** One page item's precomputed render entry for DocPage — or null for the
  * continuation slice of a block whose real metrics have not arrived yet. */
+/** `borderRuns` per section, cached on the blocks array's identity
+ * (SPEC-074 AC-12). Every command clones the containers it edits, so a
+ * section whose blocks array is unchanged genuinely has unchanged runs — the
+ * same identity rule `v-memo` relies on. A WeakMap so a replaced section is
+ * collected with its entry. */
+const borderRunCache = new WeakMap<readonly Block[], BorderRunFlags[]>();
+
+function sectionBorderRuns(blocks: readonly Block[]): BorderRunFlags[] {
+  const cached = borderRunCache.get(blocks);
+  if (cached) {
+    return cached;
+  }
+  const runs = borderRuns(blocks);
+  borderRunCache.set(blocks, runs);
+  return runs;
+}
+
+/** Each page's 0-based ordinal within its own section. */
+function ordinalsWithinSection(pages: readonly PageLayout[]): number[] {
+  const ordinals: number[] = [];
+  let currentSection = -1;
+  let ordinal = 0;
+  for (const page of pages) {
+    if (page.sectionIndex !== currentSection) {
+      currentSection = page.sectionIndex;
+      ordinal = 0;
+    }
+    ordinals.push(ordinal);
+    ordinal += 1;
+  }
+  return ordinals;
+}
+
+function pageBorderStyleFor(
+  model: DocumentModel,
+  page: PageLayout,
+  pageIndexInSection: number,
+): Record<string, string> | null {
+  return pageBorderStyle(model.sections[page.sectionIndex]?.pageBorders, page.margins, pageIndexInSection ?? 0);
+}
+
+function pageBackgroundStyleFor(model: DocumentModel, page: PageLayout): Record<string, string> | null {
+  const fill = model.sections[page.sectionIndex]?.pageBackground;
+  return fill === undefined ? null : { backgroundColor: fill };
+}
+
 function renderEntryFor(
   model: DocumentModel,
   flatEntry: FlatEntry,
@@ -413,8 +468,23 @@ function renderEntryFor(
     const tail = splitRuns(paragraph.runs, from)[1];
     runs = sliceEnd !== undefined ? splitRuns(tail, sliceEnd - from)[0] : tail;
   }
-  const styleObj = { ...paragraphStyle(paragraph, model.listDefinitions ?? [], deps.trackChangesDisplayMode.value) };
   const continuation = sliceStart !== undefined && sliceStart > 0;
+  // Paragraph borders and shading (SPEC-074): which edges THIS fragment
+  // paints depends on the border run it belongs to (AC-12) and on where the
+  // fragment sits inside a page-split paragraph (AC-14..16).
+  const styleObj = {
+    ...paragraphStyle(
+      paragraph,
+      model.listDefinitions ?? [],
+      deps.trackChangesDisplayMode.value,
+      fragmentEdges(
+        sectionBorderRuns(model.sections[flatEntry.section].blocks),
+        flatEntry.blockIndex,
+        !continuation,
+        sliceEnd === undefined,
+      ),
+    ),
+  };
   if (continuation) {
     // A continuation slice starts mid-paragraph: no space-before, no
     // first-line indent, no repeated list marker.
@@ -595,6 +665,7 @@ function renderEntryFor(
     // The bar rules are absolutely positioned inside the paragraph box.
     styleObj.position = "relative";
   }
+  const borderSig = `${styleObj.borderTop ?? ""}|${styleObj.borderBottom ?? ""}|${styleObj.borderLeft ?? ""}|${styleObj.backgroundColor ?? ""}`;
   return {
     key: continuation ? `${flatEntry.key}@${sliceStart}` : flatEntry.key,
     memo: [
@@ -611,6 +682,10 @@ function renderEntryFor(
       deps.trackChangesDisplayMode.value,
       fieldShadeSig,
       tabSig,
+      // The painted edges depend on the NEIGHBOURS' borders too (SPEC-074
+      // AC-12), so a paragraph must repaint when the run it belongs to
+      // changes shape even though its own block object did not.
+      borderSig,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
@@ -1075,6 +1150,10 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     const numbers = deps.pageNumbers.value;
     const totalPages = deps.pagination.pages.value.length;
     const pageNoteAreas = deps.pagination.noteAreas.value;
+    // Each page's ordinal within its own section — what a page border's
+    // "first page"/"all but the first" restriction is measured against
+    // (SPEC-074 AC-22).
+    const pageIndexInSection = ordinalsWithinSection(deps.pagination.pages.value);
     return deps.pagination.pages.value.map((page, pageIndex) => {
       const realized =
         !virtual ||
@@ -1092,6 +1171,8 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
           contentStyle: {
             padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
           },
+          pageBorderStyle: pageBorderStyleFor(model, page, pageIndexInSection[pageIndex]),
+          pageBackgroundStyle: pageBackgroundStyleFor(model, page),
           entries: [],
           columns: page.columns,
           virtual: true,
@@ -1163,6 +1244,8 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         contentStyle: {
           padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
         },
+        pageBorderStyle: pageBorderStyleFor(model, page, pageIndexInSection[pageIndex]),
+        pageBackgroundStyle: pageBackgroundStyleFor(model, page),
         // Floating drawings render just before their anchor paragraph —
         // the paragraph-top reference their offsets are measured from
         // (SPEC-078, hoistFloatingDrawingEntries).
