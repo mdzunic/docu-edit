@@ -118,6 +118,93 @@ test("the page border and background render behind the page (AC-22, AC-24)", asy
   expect(await border.evaluate((el) => globalThis.getComputedStyle(el).borderTopStyle)).toBe("double");
   // Inert decoration — never a hit target for the caret.
   expect(await border.evaluate((el) => globalThis.getComputedStyle(el).pointerEvents)).toBe("none");
+
+  // The tint really is on screen, and it covers the whole sheet (AC-24).
+  await expect(background).toBeVisible();
+  const layer = await background.boundingBox();
+  const sheet = await page.locator(".page").first().boundingBox();
+  expect(layer).not.toBeNull();
+  expect(sheet).not.toBeNull();
+  expect(Math.abs(layer!.width - sheet!.width)).toBeLessThan(1);
+  expect(Math.abs(layer!.height - sheet!.height)).toBeLessThan(1);
+
+  // ...and it paints ABOVE the page's own white paper rather than behind it.
+  // The layer sits at z-index -1, which only stays inside the sheet because
+  // .page is its own stacking context; drop that and the colour vanishes
+  // behind the paper while every computed-style assertion above still
+  // passes. Assert the condition the browser actually decides this on.
+  const stacking = await page.locator(".page").first().evaluate((el) => {
+    const style = globalThis.getComputedStyle(el);
+    return { position: style.position, zIndex: style.zIndex, background: style.backgroundColor };
+  });
+  expect(stacking.position).not.toBe("static");
+  expect(stacking.zIndex).not.toBe("auto");
+  expect(await background.evaluate((el) => globalThis.getComputedStyle(el).zIndex)).toBe("-1");
+  // The paper underneath stays opaque white, so a translucent fill still
+  // reads against paper rather than against the workspace.
+  expect(stacking.background).toBe("rgb(255, 255, 255)");
+});
+
+test("a merged box with no between rule has no gap down its sides (AC-12)", async ({ page }) => {
+  await createDocument(page);
+  const editor = content(page);
+  await editor.click();
+  // Three paragraphs in a style that carries paragraph spacing — the case a
+  // box has to survive: with space-after left standing between two members,
+  // the left and right rules break at every internal boundary and the page
+  // shows through the side of the box.
+  for (const [index, text] of ["Box first", "Box second", "Box third"].entries()) {
+    if (index > 0) {
+      await page.keyboard.press("Enter");
+    }
+    await page.keyboard.type(text);
+  }
+  await page.keyboard.down("Shift");
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.up("Shift");
+
+  // "Add space before paragraph" puts an explicit 12pt on each of the three
+  // (SPEC-028's space-before toggle).
+  await page.getByTestId("line-spacing-button").click();
+  await page.getByTestId("space-before-toggle").click();
+  await waitForPagination(page);
+
+  // The "Box" preset, NOT "All": no between edge anywhere in this run.
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-apply").click();
+  await waitForPagination(page);
+
+  const first = paragraphStarting(page, "Box first");
+  const second = paragraphStarting(page, "Box second");
+  const third = paragraphStarting(page, "Box third");
+
+  // The spacing really is on the paragraphs — otherwise this test would pass
+  // for the wrong reason. It survives on the run's outer edge (12pt = 16px)
+  // and is collapsed at both internal boundaries.
+  expect(await styleOf(first, "margin-top")).toBe("16px");
+  expect(await styleOf(second, "margin-top")).toBe("0px");
+  expect(await styleOf(third, "margin-top")).toBe("0px");
+  // ...and no internal rule is drawn, so nothing but the sides joins them.
+  expect(await styleOf(first, "border-bottom-style")).toBe("none");
+  expect(await styleOf(second, "border-top-style")).toBe("none");
+
+  // The box is continuous: each member's border box ends exactly where the
+  // next one begins.
+  const boxes = [];
+  for (const paragraph of [first, second, third]) {
+    const box = await paragraph.boundingBox();
+    expect(box).not.toBeNull();
+    boxes.push(box!);
+  }
+  for (let i = 0; i + 1 < boxes.length; i += 1) {
+    const gap = boxes[i + 1].y - (boxes[i].y + boxes[i].height);
+    expect(Math.abs(gap)).toBeLessThan(1);
+    // ...and the sides line up, so the rules are one continuous pair.
+    expect(Math.abs(boxes[i + 1].x - boxes[i].x)).toBeLessThan(1);
+    expect(Math.abs(boxes[i + 1].width - boxes[i].width)).toBeLessThan(1);
+  }
 });
 
 test("the .odt fixture renders the same borders (AC-29, AC-31)", async ({ page }) => {
@@ -211,6 +298,33 @@ test("the print preview offers 'print background colours', off by default (AC-25
 
   await toggle.check();
   expect(await page.evaluate(() => document.body.classList.contains("prints-background"))).toBe(true);
+});
+
+test("page backgrounds are hidden on paper unless the switch is on (AC-25)", async ({ page }) => {
+  await openFixture(page, "word-borders.docx");
+  const background = page.getByTestId("page-background").first();
+  await expect(background).toBeAttached();
+  const displayOf = () => background.evaluate((el) => globalThis.getComputedStyle(el).display);
+
+  // On screen the layer is painted; under print media it is not. This is the
+  // assertion the body-class check cannot make: it observes the @media print
+  // rule resolving, not just the class that keys it.
+  await page.emulateMedia({ media: "print" });
+  expect(await displayOf()).toBe("none");
+  // The page BORDER has no such switch — it always prints.
+  expect(
+    await page.getByTestId("page-border").first().evaluate((el) => globalThis.getComputedStyle(el).display),
+  ).not.toBe("none");
+
+  await page.emulateMedia({ media: "screen" });
+  expect(await displayOf()).not.toBe("none");
+
+  // Turning "print background colours" on brings it back on paper.
+  await page.keyboard.press(`${MOD}+p`);
+  await expect(page.getByTestId("print-preview")).toBeVisible();
+  await page.getByTestId("print-background").check();
+  await page.emulateMedia({ media: "print" });
+  expect(await displayOf()).toBe("block");
 });
 
 test("a bordered paragraph split across a page break keeps its sides, top and bottom right (AC-14..AC-16)", async ({ page }) => {
