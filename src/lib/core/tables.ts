@@ -6,19 +6,12 @@
 // (paragraph blocks) is product-specific and stays on lib/documentModel.ts's
 // TableCell. The editing commands stay in lib/tables.ts.
 
-/** A border line's rendering (SPEC-023): the standard presets plus width and
- * colour. `"none"` paints nothing, distinct from an absent `BorderSide`
- * (unset — falls back to whatever the renderer/writer defaults to). */
-export type BorderLineStyle = "none" | "single" | "double" | "dashed" | "dotted";
-
-/** One edge of a cell's border (SPEC-023 AC-10..12): style, width in points
- * and a CSS-ready colour ("#rrggbb", or "auto" for the source's automatic
- * colour). */
-export interface BorderSide {
-  style: BorderLineStyle;
-  widthPt: number;
-  color: string;
-}
+// The border vocabulary moved to core/borders.ts (SPEC-074 AC-1): a border
+// is not a table concept, and paragraphs and pages now carry the same edges.
+// Re-exported here so every SPEC-023 import and test compiles untouched
+// (AC-2) — the move is a relocation, not a rename.
+export type { BorderLineStyle, BorderSide } from "./borders";
+import type { BorderLineStyle, BorderSide } from "./borders";
 
 /** A cell's four borders, each independently set or left unset (SPEC-023).
  * Table-wide and per-selected-cell border operations (AC-13, AC-14) both

@@ -25,6 +25,7 @@ import type {
   TableAlignment,
   TableWidthMode,
 } from "./core/tables";
+import type { BorderSide } from "./core/borders";
 import type { MediaPart } from "./core/media";
 // Type-only, erased at compile time — no runtime cycle with textEditing.ts,
 // which imports this module's guards (forEachParagraph below reports each
@@ -483,6 +484,79 @@ export interface ParagraphFormatting {
    * means the default tab grid only. Round-trips as `w:tabs` (.docx) and
    * `style:tab-stops` (.odt). */
   tabStops?: TabStop[];
+  /** Paragraph borders (SPEC-074 AC-4); absent means none. */
+  borders?: ParagraphBorders;
+  /** Paragraph background as a CSS-ready "#rrggbb" (SPEC-074 AC-5). Absent
+   * means no fill, which is distinct from "#ffffff". */
+  shadingFill?: string;
+}
+
+// --- paragraph borders and shading (SPEC-074) -------------------------------
+
+/** The default space between a paragraph border and its text, in points
+ * (SPEC-074 AC-9) — what an absent `paddingPt` entry means. Matches Word's
+ * and Writer's own default for a newly boxed paragraph. */
+export const DEFAULT_PARAGRAPH_BORDER_PADDING_PT = 4;
+
+/** A paragraph's borders (SPEC-074): the same four physical edges a table
+ * cell has, plus the `between` edge that draws at each internal boundary of
+ * a run of consecutive identically-bordered paragraphs (see
+ * lib/paragraphBorders.ts). Round-trips as `w:pBdr` (.docx) and the
+ * `fo:border*`/`fo:padding*` family (.odt). */
+export interface ParagraphBorders {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+  /** Drawn between consecutive paragraphs that share identical borders —
+   *  see lib/paragraphBorders.ts's borderRuns. */
+  between?: BorderSide;
+  /** Space between each border and the text, in points. Absent — for the
+   * whole object or for one edge — means DEFAULT_PARAGRAPH_BORDER_PADDING_PT. */
+  paddingPt?: { top?: number; bottom?: number; left?: number; right?: number };
+}
+
+/** A section's page border (SPEC-074 AC-19..22): an art-free line on any of
+ * the four edges, offset from either the page edge or the text area. */
+export interface PageBorders {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+  /** Distance from the reference edge, in points. */
+  offsetPt?: number;
+  /** What `offsetPt` measures from; absent means "page". */
+  measureFrom?: PageBorderMeasureFrom;
+  /** Which pages of the section get it; absent means "allPages". */
+  appliesTo?: PageBorderAppliesTo;
+}
+
+export type PageBorderMeasureFrom = "page" | "text";
+export type PageBorderAppliesTo = "allPages" | "firstPage" | "exceptFirstPage";
+
+/** Typed pass-through for a page-border reference edge coming from a `.vue`
+ * template's plain string (espree bars the annotation — see
+ * asCharacterFormatKey). */
+export function asPageBorderMeasureFrom(value: string): PageBorderMeasureFrom {
+  return value as PageBorderMeasureFrom;
+}
+
+/** Typed pass-through for a page-border applies-to coming from a `.vue`
+ * template's plain string. */
+export function asPageBorderAppliesTo(value: string): PageBorderAppliesTo {
+  return value as PageBorderAppliesTo;
+}
+
+/** Typed pass-through for a `ParagraphBorders` arriving from a `.vue`
+ * component's untyped Object prop (same espree constraint as asTabStops). */
+export function asParagraphBorders(value: unknown): ParagraphBorders | undefined {
+  return (value ?? undefined) as ParagraphBorders | undefined;
+}
+
+/** Typed pass-through for a `PageBorders` arriving from a `.vue`
+ * component's untyped Object prop. */
+export function asPageBorders(value: unknown): PageBorders | undefined {
+  return (value ?? undefined) as PageBorders | undefined;
 }
 
 // --- lists (SPEC-018; multilevel definitions SPEC-032) ----------------------
@@ -1133,6 +1207,11 @@ export function isImage(block: Block | undefined): block is Image {
   return block?.type === "image";
 }
 
+/** Whether a block is a paragraph — the isTable-style narrowing helper. */
+export function isParagraph(block: Block | undefined): block is Paragraph {
+  return block?.type === "paragraph";
+}
+
 /** Typed pass-through for an Image arriving as a runtime-declared Object prop
  * (espree bars the type annotation — see tables.ts's asTable for the same
  * pattern). */
@@ -1731,6 +1810,17 @@ export interface Section {
    * Mirrors `w:pgNumType/@w:start` (.docx) and an explicit
    * `style:page-number` on the section's first paragraph (.odt). */
   pageNumberStart?: number;
+  /** Page border for this section (SPEC-074 AC-19..22); absent means none.
+   * Round-trips as `w:pgBorders` in `w:sectPr` (.docx) and the master page's
+   * page-layout border properties (.odt). */
+  pageBorders?: PageBorders;
+  /** Page background as "#rrggbb" (SPEC-074 AC-23); absent means none
+   * (paper white). A *section* field even though `.docx` stores it
+   * document-wide (`w:background`) and `.odt` per master page: the writers
+   * reconcile (the .docx writer writes the first section's value and reports
+   * a DropRecord if sections disagree), because modelling per section and
+   * losing on write beats being unable to read a valid `.odt`. */
+  pageBackground?: string;
 }
 
 // PageSize and Margins moved to core/pageSetup.ts and MeasurementUnit (the
