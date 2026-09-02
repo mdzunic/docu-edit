@@ -24,6 +24,14 @@ async function openFixture(page: Page, name: string): Promise<void> {
   await expect(content(page).locator("p, h1, h2").first()).toBeVisible();
 }
 
+async function waitForPagination(page: Page, timeout = 30_000): Promise<void> {
+  await expect(page.getByTestId("document-pages")).toHaveAttribute(
+    "data-pagination-state",
+    "clean",
+    { timeout },
+  );
+}
+
 async function createDocument(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByTestId("new-document").first().click();
@@ -203,4 +211,44 @@ test("the print preview offers 'print background colours', off by default (AC-25
 
   await toggle.check();
   expect(await page.evaluate(() => document.body.classList.contains("prints-background"))).toBe(true);
+});
+
+test("a bordered paragraph split across a page break keeps its sides, top and bottom right (AC-14..AC-16)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+
+  // One paragraph long enough to run well past a page boundary. Inserted in
+  // one go rather than typed, so the test spends its time on the assertion
+  // rather than on thousands of keystrokes.
+  const sentence = "This bordered paragraph is deliberately long enough to run past the bottom of the first page. ";
+  await page.keyboard.insertText(sentence.repeat(90));
+  await waitForPagination(page);
+
+  const target = paragraphStarting(page, "This bordered paragraph is deliberately long");
+  await target.click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-apply").click();
+  await waitForPagination(page);
+
+  // The paragraph really did split: one fragment continues, one does not.
+  const fragments = content(page).locator("p[data-block]").filter({ hasText: "This bordered paragraph is deliberately long" });
+  expect(await fragments.count()).toBeGreaterThanOrEqual(2);
+  const firstFragment = fragments.first();
+  const lastFragment = fragments.last();
+  await expect(firstFragment).toHaveAttribute("data-slice-more", "1");
+  await expect(lastFragment).not.toHaveAttribute("data-slice-more", "1");
+
+  // AC-14: the side borders draw on BOTH fragments.
+  for (const fragment of [firstFragment, lastFragment]) {
+    expect(await styleOf(fragment, "border-left-style")).toBe("solid");
+    expect(await styleOf(fragment, "border-right-style")).toBe("solid");
+  }
+  // AC-15: the top border only on the fragment holding the first line.
+  expect(await styleOf(firstFragment, "border-top-style")).toBe("solid");
+  expect(await styleOf(lastFragment, "border-top-style")).toBe("none");
+  // AC-16: the bottom border only on the fragment holding the last line.
+  expect(await styleOf(firstFragment, "border-bottom-style")).toBe("none");
+  expect(await styleOf(lastFragment, "border-bottom-style")).toBe("solid");
 });
