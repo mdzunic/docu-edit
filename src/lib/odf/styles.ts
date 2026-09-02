@@ -32,6 +32,7 @@ import {
 } from "./properties";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt } from "./units";
 import { DE_BORDER_NAMESPACE, parseBorderShorthand } from "./borders";
+import { borderSideVisible } from "../core/borders";
 
 interface OdfStyleDefinition {
   name: string;
@@ -479,7 +480,13 @@ function parsePageLayoutProperties(props: Element): OdfMasterPageLayout {
   let offsetPt: number | undefined;
   for (const edge of ["top", "bottom", "left", "right"] as const) {
     const side = parseBorderShorthand(foAttr(props, `border-${edge}`) ?? shorthand);
-    if (!side) {
+    // An explicit `none` is a present edge for a PARAGRAPH — that is how a
+    // paragraph cancels the border its style would give it. A page layout
+    // inherits from nothing, so `fo:border="none"` here means exactly what
+    // an absent attribute means: no page border. Recording it would give a
+    // document that has none a `pageBorders` object (and an inert border
+    // layer on every page) it did not have before.
+    if (!side || !borderSideVisible(side)) {
       continue;
     }
     pageBorders[edge] = side;

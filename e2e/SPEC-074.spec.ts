@@ -285,6 +285,49 @@ test("Page setup's Borders tab sets a page border and background (AC-19..AC-23)"
   await expect(page.getByTestId("page-background").first()).toBeAttached();
 });
 
+test("the style editor sets borders and shading on a style (AC-17, AC-18)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Styled by a callout");
+
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-styles-pane").click();
+  await expect(page.getByTestId("styles-pane")).toBeVisible();
+
+  await page.getByTestId("new-style-paragraph").click();
+  await expect(page.getByTestId("style-editor-dialog")).toBeVisible();
+  await page.getByTestId("style-name-input").fill("Callout");
+
+  // The same Borders and shading dialog a paragraph's are edited by, mounted
+  // inside the style editor's own dialog. Escape must close the inner dialog
+  // and leave the editor standing — two nested modals, one dismissal.
+  await page.getByTestId("style-borders-button").click();
+  const borders = page.getByTestId("borders-shading-dialog");
+  await expect(borders).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(borders).toBeHidden();
+  await expect(page.getByTestId("style-editor-dialog")).toBeVisible();
+
+  await page.getByTestId("style-borders-button").click();
+  await expect(borders).toBeVisible();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-apply").click();
+  await expect(borders).toBeHidden();
+  await page.getByTestId("style-editor-save").click();
+  await expect(page.getByTestId("style-editor-dialog")).not.toBeVisible();
+
+  // The paragraph inherits the style's borders and shading until it sets its
+  // own (AC-17).
+  const paragraph = paragraphStarting(page, "Styled by a callout");
+  await paragraph.click();
+  await page.locator('[data-testid^="style-apply-"]').filter({ hasText: "Callout" }).first().click();
+  await waitForPagination(page);
+  expect(await styleOf(paragraph, "border-left-style")).toBe("solid");
+  expect(await styleOf(paragraph, "border-top-style")).toBe("solid");
+  expect(await styleOf(paragraph, "background-color")).not.toBe("rgba(0, 0, 0, 0)");
+});
+
 test("the print preview offers 'print background colours', off by default (AC-25)", async ({ page }) => {
   await openFixture(page, "word-borders.docx");
   await page.keyboard.press(`${MOD}+p`);

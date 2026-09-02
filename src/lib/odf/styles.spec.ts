@@ -114,6 +114,40 @@ describe("parseOdfStyleCatalog — master pages (SPEC-028 AC-33)", () => {
     expect(catalog.pageSize).toEqual({ widthCm: 21, heightCm: 29.7 });
     expect(catalog.margins).toEqual({ topCm: 2, rightCm: 2, bottomCm: 2, leftCm: 2 });
   });
+
+  // SPEC-074 AC-31. A page layout inherits from nothing, so an explicit
+  // `none` says exactly what an absent attribute says. (A paragraph is the
+  // other way round: there, `fo:border="none"` is how it cancels the border
+  // its style would give it — see properties.parseParagraphProperties.)
+  function pageLayout(attrs: string) {
+    return parseOdfStyleCatalog(
+      contentDoc(""),
+      parseXml(
+        `<office:document-styles ${NS}><office:automatic-styles>` +
+          `<style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm"` +
+          ` fo:page-height="29.7cm" ${attrs}/></style:page-layout>` +
+          "</office:automatic-styles><office:master-styles>" +
+          '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>' +
+          "</office:master-styles></office:document-styles>",
+      ),
+    ).masterPageLayouts.get("Standard");
+  }
+
+  it("reads a page layout with no border as having none", () => {
+    expect(pageLayout("")?.pageBorders).toBeUndefined();
+  });
+
+  it("reads an explicit fo:border='none' page layout as having none either", () => {
+    expect(pageLayout('fo:border="none"')?.pageBorders).toBeUndefined();
+    expect(pageLayout('fo:border-top="none" fo:border-bottom="none"')?.pageBorders).toBeUndefined();
+  });
+
+  it("keeps the edges a page layout really does draw", () => {
+    const borders = pageLayout('fo:border-top="2pt double #c00000" fo:border-bottom="none"')?.pageBorders;
+    expect(borders?.top).toEqual({ style: "double", widthPt: 2, color: "#c00000" });
+    expect(borders?.bottom).toBeUndefined();
+    expect(borders?.measureFrom).toBe("page");
+  });
 });
 
 describe("paragraphAutoStyleSignals (SPEC-028)", () => {
