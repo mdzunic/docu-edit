@@ -77,16 +77,22 @@ style's colour (`resolveNamedStyle`) → `DefaultStyles` → `#000000`.
 
 **Background**, first that is set: the run's `highlight` (mapped through the
 same `HIGHLIGHT_HEX` palette the renderer uses, `src/lib/renderFormatting.ts:22`)
-→ the run's `shadingFill` → the enclosing table cell's `shadingFill`
+→ the run's `shadingFill` → the *paragraph's* `shadingFill`, its own or its
+style's (SPEC-074 AC-27) → the enclosing table cell's `shadingFill`
 (`src/lib/renderFormatting.ts:315`) → the page, `#ffffff`
 (`src/components/DocPage.vue:309`).
 
-That chain is exhaustive by construction: the model has no paragraph shading
-(ruled out of SPEC-013) and no page background colour (ruled out of SPEC-027),
-so it always terminates at the page and there is no "background unknown" case to
-handle. It is also deliberately the renderer's own resolution order — the
-checker must report the contrast of what was actually painted, and a parallel
-implementation would eventually disagree with the screen.
+That chain is exhaustive by construction, and it always terminates at the
+page. SPEC-074 added the paragraph step: text on a shaded paragraph is read
+on the shading, so that is what it is checked against — the step this spec
+originally called impossible ("the model has no paragraph shading"). Run
+shading beyond a highlight is still ruled out of SPEC-013. A section's
+`pageBackground` (SPEC-074 AC-23) is deliberately NOT a step: it sits behind
+the whole sheet and does not print by default, so judging body text against
+it would report contrast the reader on paper never sees. The chain is
+otherwise the renderer's own resolution order — the checker must report the
+contrast of what was actually painted, and a parallel implementation would
+eventually disagree with the screen.
 
 A run whose `highlight` is `false` (an explicit "No colour", distinct from
 unset) falls through to the next step like an unset value.

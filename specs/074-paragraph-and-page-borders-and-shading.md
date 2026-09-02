@@ -33,23 +33,23 @@ field, a page-level field, and the layout rule for what a bordered
 paragraph does at a page break.
 
 ## Acceptance criteria
-- [ ] `BorderSide` and `BorderLineStyle` move to `src/lib/core/borders.ts`, product-neutral, re-exported from `src/lib/core/tables.ts` so no existing import changes, and gain the additional line styles in "Border styles"
-- [ ] `ParagraphFormatting` gains `borders?: ParagraphBorders` and `shadingFill?: string`, per "The paragraph model"
-- [ ] A Borders and shading dialog (`Format → Borders and shading…`) sets each of the five paragraph edges independently — top, bottom, left, right and between — with a style, width, colour, and a preset row (none, box, all, top and bottom, custom)
-- [ ] Padding between the border and the text is settable per edge, in the current measurement unit (SPEC-064), and defaults to 4pt
-- [ ] The dialog's paragraph shading control sets a background fill, with "no fill" as a distinct value from white
-- [ ] Borders and shading apply to every paragraph the selection touches, using SPEC-014's "touched by the selection" rule
-- [ ] **Consecutive paragraphs with identical borders and shading merge into one bordered block**: the outer edges draw once around the run, and the `between` edge draws between them — the behaviour both formats specify and the reason `between` exists as a separate edge
-- [ ] The shading region spans the paragraph's full content width including its padding — not just behind the glyphs — and follows the paragraph's indents
-- [ ] A bordered paragraph split across a page break draws its side borders on both fragments, its top border only on the first and its bottom only on the last, per "Pagination"
-- [ ] Borders and shading are inherited from the paragraph style (SPEC-019) until the paragraph sets its own; the style editor (SPEC-042) can set them on a style
-- [ ] Page borders are settable per section from Page setup — style, width, colour, an art-free line only, plus which edges and whether the border measures from the page edge or the text — and render on every page of that section
-- [ ] A page background colour is settable per section, renders behind the whole page, and is excluded from printing unless "print background" is chosen, matching both formats' own distinction
-- [ ] Formatting marks (SPEC-028) and the accessibility checker (SPEC-043) treat a shaded paragraph as a contrast surface: text on a shaded paragraph is checked against the shading, not against the page
-- [ ] Paragraph borders and shading round-trip through `.docx` (`w:pBdr` with `w:top/bottom/left/right/between`, `@w:val`, `@w:sz` in eighths of a point, `@w:space` in points, `@w:color`; `w:shd` with `@w:fill`) and `.odt` (`fo:border*`, `fo:padding*`, `fo:background-color`, plus `style:join-border` for the merge behaviour)
-- [ ] Page borders and background round-trip through `.docx` (`w:pgBorders` in `w:sectPr`, `w:background` in the document) and `.odt` (master-page and page-layout border and background properties)
-- [ ] A border style one format lacks maps to its nearest equivalent with a `DropRecord`, per "Border styles"
-- [ ] Fixtures with a boxed note paragraph, a bottom-rule heading, three consecutive identical bordered paragraphs, a shaded code block and a page border open, render, save and reopen `equalStructural`
+- [x] `BorderSide` and `BorderLineStyle` move to `src/lib/core/borders.ts`, product-neutral, re-exported from `src/lib/core/tables.ts` so no existing import changes, and gain the additional line styles in "Border styles"
+- [x] `ParagraphFormatting` gains `borders?: ParagraphBorders` and `shadingFill?: string`, per "The paragraph model"
+- [x] A Borders and shading dialog (`Format → Borders and shading…`) sets each of the five paragraph edges independently — top, bottom, left, right and between — with a style, width, colour, and a preset row (none, box, all, top and bottom, custom)
+- [x] Padding between the border and the text is settable per edge, in the current measurement unit (SPEC-064), and defaults to 4pt
+- [x] The dialog's paragraph shading control sets a background fill, with "no fill" as a distinct value from white
+- [x] Borders and shading apply to every paragraph the selection touches, using SPEC-014's "touched by the selection" rule
+- [x] **Consecutive paragraphs with identical borders and shading merge into one bordered block**: the outer edges draw once around the run, and the `between` edge draws between them — the behaviour both formats specify and the reason `between` exists as a separate edge
+- [x] The shading region spans the paragraph's full content width including its padding — not just behind the glyphs — and follows the paragraph's indents
+- [x] A bordered paragraph split across a page break draws its side borders on both fragments, its top border only on the first and its bottom only on the last, per "Pagination"
+- [x] Borders and shading are inherited from the paragraph style (SPEC-019) until the paragraph sets its own; the style editor (SPEC-042) can set them on a style
+- [x] Page borders are settable per section from Page setup — style, width, colour, an art-free line only, plus which edges and whether the border measures from the page edge or the text — and render on every page of that section
+- [x] A page background colour is settable per section, renders behind the whole page, and is excluded from printing unless "print background" is chosen, matching both formats' own distinction
+- [x] Formatting marks (SPEC-028) and the accessibility checker (SPEC-043) treat a shaded paragraph as a contrast surface: text on a shaded paragraph is checked against the shading, not against the page
+- [x] Paragraph borders and shading round-trip through `.docx` (`w:pBdr` with `w:top/bottom/left/right/between`, `@w:val`, `@w:sz` in eighths of a point, `@w:space` in points, `@w:color`; `w:shd` with `@w:fill`) and `.odt` (`fo:border*`, `fo:padding*`, `fo:background-color`, plus `style:join-border` for the merge behaviour)
+- [x] Page borders and background round-trip through `.docx` (`w:pgBorders` in `w:sectPr`, `w:background` in the document) and `.odt` (master-page and page-layout border and background properties)
+- [x] A border style one format lacks maps to its nearest equivalent with a `DropRecord`, per "Border styles"
+- [x] Fixtures with a boxed note paragraph, a bottom-rule heading, three consecutive identical bordered paragraphs, a shaded code block and a page border open, render, save and reopen `equalStructural`
 
 ## Out of scope
 Word's decorative "art" page borders (the clip-art border set) — preserved

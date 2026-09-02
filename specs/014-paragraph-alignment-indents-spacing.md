@@ -34,8 +34,10 @@ handling on both readers and both writers.
 
 ## Out of scope
 Tab stops (defer to SPEC-032's out of scope note; custom tab stops are a later
-spec). Paragraph borders and shading. Widow/orphan control and keep-with-next.
-Paragraph styles (SPEC-019).
+spec). ~~Paragraph borders and shading.~~ (superseded by SPEC-074, which adds
+`ParagraphFormatting.borders`/`shadingFill` and applies them by this spec's
+own "touched by the selection" rule — unchanged here.) Widow/orphan control
+and keep-with-next. Paragraph styles (SPEC-019).
 
 ## Decisions
 Question: What exactly constitutes a "first-line-caret paragraph" for the
