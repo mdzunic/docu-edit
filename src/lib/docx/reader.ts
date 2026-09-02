@@ -71,6 +71,8 @@ import {
   type FieldSpec,
 } from "../documentModel";
 import { parseChipText } from "../mergeChips";
+import { dropRedundantPaintOverride } from "../paragraphBorders";
+import { NORMAL_STYLE_ID } from "../styles";
 import { canonicalDateTimeFormatFromDocx } from "../fields";
 import { sanitizeHref } from "../links";
 import { createMessageId, parseReplyParagraphText } from "../comments";
@@ -633,6 +635,19 @@ function parseParagraphMeta(
 
   const resolved = resolveStyle(styleCatalog, styleId);
   const formatting = mergeParagraphFormatting(resolved.paragraphFormatting, parseParagraphProperties(pPr));
+  // Same idea for the SPEC-074 AC-17 paint overrides: an all-nil w:pBdr and
+  // a fill-less w:shd exist to switch a style's box or shading back off, and
+  // Word writes them freely on paragraphs whose style has neither, where
+  // they say nothing the absent field did not. The comparison resolves
+  // through Normal for a paragraph carrying no w:pStyle — it still has a
+  // style, and its box comes from there (styles.inheritedParagraphPaint's
+  // rule, which is what will paint it).
+  dropRedundantPaintOverride(
+    formatting,
+    styleId === undefined
+      ? resolveStyle(styleCatalog, NORMAL_STYLE_ID).paragraphFormatting
+      : resolved.paragraphFormatting,
+  );
   // "ltr" exists only to let a direct w:bidi="0" override a style's RTL
   // during the merge above; the model itself holds "rtl" or nothing.
   if (formatting.direction === "ltr") {

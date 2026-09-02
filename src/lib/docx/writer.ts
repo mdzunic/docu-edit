@@ -60,7 +60,7 @@ import type {
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
 import { borderElementXml } from "./borders";
-import { paragraphPaddingPt, type BorderEdge } from "../paragraphBorders";
+import { paragraphPaddingPt, NO_SHADING_FILL, type BorderEdge } from "../paragraphBorders";
 import {
   DEFAULT_TITLE,
   isEvaluatedField,
@@ -455,9 +455,16 @@ function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   if (pBdr !== "") {
     parts.push(pBdr);
   }
-  const shd = cssColorToOoxml(formatting.shadingFill);
-  if (shd !== undefined) {
-    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shd}"/>`);
+  // `w:fill="auto"` is Word's "no fill", which is what the model's explicit
+  // no-fill override means: present, so a style's shading stops at it, and
+  // painting nothing (SPEC-074 AC-17).
+  if (formatting.shadingFill === NO_SHADING_FILL) {
+    parts.push('<w:shd w:val="clear" w:color="auto" w:fill="auto"/>');
+  } else {
+    const shd = cssColorToOoxml(formatting.shadingFill);
+    if (shd !== undefined) {
+      parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shd}"/>`);
+    }
   }
 
   // Custom tab stops (SPEC-032 AC-19..25): one w:tab per stop, positions in
@@ -967,8 +974,22 @@ function paragraphBordersXml(borders: ParagraphBorders | undefined): string {
   if (borders.between) {
     parts.push(borderElementXml("between", borders.between));
   }
-  return parts.length > 0 ? `<w:pBdr>${parts.join("")}</w:pBdr>` : "";
+  if (parts.length > 0) {
+    return `<w:pBdr>${parts.join("")}</w:pBdr>`;
+  }
+  // A borders object that paints nothing is the explicit override of a
+  // style's box (SPEC-074 AC-17) — Word spells it as a w:pBdr whose every
+  // edge is nil, and so does this. Writing nothing at all would let the
+  // style's box come back on the next open.
+  return (
+    "<w:pBdr>" +
+    NIL_BORDER_EDGES.map((tag) => `<w:${tag} w:val="nil" w:sz="0" w:space="0" w:color="auto"/>`).join("") +
+    "</w:pBdr>"
+  );
 }
+
+/** The edges an all-`nil` `w:pBdr` spells out, in CT_PBdr's element order. */
+const NIL_BORDER_EDGES = ["top", "left", "bottom", "right"] as const;
 
 /** A section's `w:pgBorders` (SPEC-074 AC-30), in CT_PageBorders' element
  * order: top, left, bottom, right. `@w:offsetFrom` is the reference edge

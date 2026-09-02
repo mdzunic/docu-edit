@@ -294,6 +294,13 @@ function paragraphBorderAttrs(formatting: ParagraphFormatting): string[] {
     }
     if (anyEdge) {
       attrs.push('style:join-border="true"');
+    } else {
+      // A borders object that paints nothing is the explicit override of a
+      // style's box (SPEC-074 AC-17). ODF spells it with the shorthand:
+      // `fo:border="none"` on the paragraph's automatic style beats the
+      // named style's edges, where writing no attribute at all would let
+      // them through again on the next open.
+      attrs.push('fo:border="none"');
     }
   }
   if (formatting.shadingFill !== undefined) {

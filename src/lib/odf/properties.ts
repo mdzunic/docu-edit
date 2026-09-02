@@ -18,7 +18,7 @@ import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../core/language"
 import { foAttr, styleAttr, STYLE_NAMESPACE } from "../core/odfXml";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
 import { DE_BORDER_NAMESPACE, parseBorderShorthand as parseOdfBorderShorthand } from "./borders";
-import { normaliseParagraphBorders } from "../paragraphBorders";
+import { explicitNoBorders, normaliseParagraphBorders, NO_SHADING_FILL } from "../paragraphBorders";
 
 /** Font families keyed by `style:font-face`'s name — built from the
  * `office:font-face-decls` of content.xml and styles.xml, so a
@@ -345,7 +345,13 @@ export function parseParagraphProperties(paragraphPropsEl: Element | undefined):
   if (borders !== undefined) {
     formatting.borders = borders;
   }
-  const shadingFill = odfColorToCss(foAttr(paragraphPropsEl, "background-color"));
+  // `fo:background-color="transparent"` is ODF's "no fill", and reads as the
+  // explicit no-fill override rather than as absent: the attribute's
+  // presence is this style saying its background is nothing, which is what
+  // switches an inherited fill back off (AC-17). resolveParagraphStyle drops
+  // it again where the chain underneath had no fill to override.
+  const background = foAttr(paragraphPropsEl, "background-color");
+  const shadingFill = background === NO_SHADING_FILL ? NO_SHADING_FILL : odfColorToCss(background);
   if (shadingFill !== undefined) {
     formatting.shadingFill = shadingFill;
   }
@@ -383,7 +389,17 @@ function parseOdfParagraphBorders(props: Element): ParagraphBorders | undefined 
   if (anyPadding) {
     borders.paddingPt = paddingPt;
   }
-  return normaliseParagraphBorders(borders);
+  const painted = normaliseParagraphBorders(borders);
+  if (painted !== undefined) {
+    return painted;
+  }
+  // `fo:border="none"` (or a "none" on every edge) is a border stated and
+  // stated as nothing — ODF's explicit override of an inherited box
+  // (SPEC-074 AC-17), which reads back as a borders object that is present
+  // and paints nothing. An element that mentions no border at all still
+  // reads as undefined, i.e. "inherit". resolveParagraphStyle drops the
+  // override again where the chain underneath had no box to override.
+  return Object.keys(borders).length > 0 ? explicitNoBorders() : undefined;
 }
 
 function tabLeaderOf(leaderText: string | null, leaderStyle: string | null): TabLeader | undefined {

@@ -36,6 +36,7 @@ import {
   type ResolvedNamedStyle,
 } from "./styles";
 import { LINK_COLOR } from "./renderFormatting";
+import { paintedShadingFill } from "./paragraphBorders";
 import { HIGHLIGHT_HEX } from "./core/colors";
 
 // --- issue shape (AC-2, AC-3) ------------------------------------------
@@ -416,8 +417,10 @@ function checkParagraphContrastAndColour(
   // (AC-17's inheritance) — the surface this paragraph's text is read on.
   // Resolved through `paintedParagraphFormatting` rather than `resolvedStyle`
   // so the checker reads the very fill the renderer painted, including for a
-  // paragraph that names no style and inherits Normal's.
-  const paragraphShadingFill = paintedParagraphFormatting(model, paragraph)?.shadingFill;
+  // paragraph that names no style and inherits Normal's. A paragraph that
+  // explicitly overrides its style's fill with "no fill" is read on the page
+  // again, so the fill goes through paintedShadingFill.
+  const paragraphShadingFill = paintedShadingFill(paintedParagraphFormatting(model, paragraph));
 
   // Contrast (AC-11, AC-13..19): every run with visible text against its
   // own resolved background.

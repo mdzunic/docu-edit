@@ -8,8 +8,10 @@
 // lib/paragraphBorders.ts.
 import { ref } from "vue";
 import { applyParagraphBorders, type ModelSelection } from "../../lib/commands";
-import { firstTouchedFormatting } from "../../lib/commands.paragraph";
+import { firstTouchedParagraph } from "../../lib/commands.paragraph";
 import type { ParagraphBorders } from "../../lib/documentModel";
+import { paintedShadingFill } from "../../lib/paragraphBorders";
+import { paintedParagraphFormatting } from "../../lib/styles";
 import type { EditorContext } from "./context";
 
 /** What the dialog emits on OK — the `null`-removes shape the command takes. */
@@ -41,15 +43,22 @@ export function useBordersShading(deps: BordersShadingDeps) {
    * usePageSetupDialogs.openPageSetup, which seeds its prefill on open. */
   const bordersDialogInitial = ref<{ borders?: ParagraphBorders; shadingFill?: string }>({});
 
-  /** The seed for the selection as it is right now. */
+  /** The seed for the selection as it is right now: what the paragraph
+   * *paints*, its style's contribution included (SPEC-074 AC-17), not just
+   * what it sets directly. Showing "None" for a paragraph boxed by its style
+   * would make OK a trap — the dialog would apply the None it displayed and
+   * strip a box the user never asked to lose. The no-fill override reads
+   * back as no fill, so the Fill checkbox comes up cleared rather than
+   * holding a keyword in its colour input. */
   function currentInitial(): { borders?: ParagraphBorders; shadingFill?: string } {
     const model = doc.value;
     if (!model) {
       return {};
     }
     const root = contentRoot.value as HTMLElement | null;
-    const formatting = firstTouchedFormatting(model, deps.paragraphSelection(root));
-    return { borders: formatting.borders, shadingFill: formatting.shadingFill };
+    const paragraph = firstTouchedParagraph(model, deps.paragraphSelection(root));
+    const formatting = paragraph ? paintedParagraphFormatting(model, paragraph) : undefined;
+    return { borders: formatting?.borders, shadingFill: paintedShadingFill(formatting) };
   }
 
   function openBordersDialog(): void {

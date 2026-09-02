@@ -9,8 +9,8 @@ import { parseOdt } from "./odf/reader";
 import { writeOdt } from "./odf/writer";
 import { equalStructural, firstStructuralDifference } from "./equality";
 import { collectBorderStyleDropRecords, collectPageBackgroundDropRecords } from "./opaque";
-import { borderRuns } from "./paragraphBorders";
-import { paragraphPaintResolver } from "./styles";
+import { borderRuns, NO_SHADING_FILL } from "./paragraphBorders";
+import { paintedParagraphFormatting, paragraphPaintResolver } from "./styles";
 import type { BorderSide } from "./core/borders";
 import {
   createDefaultStyles,
@@ -442,4 +442,97 @@ describe("a paragraph style's borders and shading (AC-17, AC-18)", () => {
       borderRuns(model.sections[0].blocks, paragraphPaintResolver(model))[0],
     ).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
   });
+
+  // A paragraph that switches the style's box back off (AC-17) carries a
+  // value that is present and paints nothing. Both formats spell exactly
+  // that, and it has to survive a save: writing nothing would let the
+  // style's box come back on the next open.
+  describe("a paragraph that overrides the style's box with none", () => {
+    function overriddenDoc(): DocumentModel {
+      // Normal carries the box, so both paragraphs inherit it — the shape a
+      // user gets from "Modify Normal → Borders and shading" in a blank
+      // document. The first switches it back off; the second must not.
+      const off = para("No box on this one");
+      off.formatting = { borders: {}, shadingFill: NO_SHADING_FILL };
+      const model = docOf([off, para("Still boxed by Normal")]);
+      model.styles = [
+        {
+          id: "Normal",
+          name: "Normal",
+          paragraphFormatting: {
+            borders: { top: SINGLE, bottom: SINGLE, left: SINGLE, right: SINGLE },
+            shadingFill: "#ffd9d9",
+          },
+        },
+      ];
+      return model;
+    }
+
+    function paintedOf(model: DocumentModel, block = 0): ParagraphFormatting | undefined {
+      return paintedParagraphFormatting(model, model.sections[0].blocks[block] as Paragraph);
+    }
+
+    it("writes an all-nil w:pBdr and a fill-less w:shd", async () => {
+      const xml = buildDocumentXml(overriddenDoc());
+      expect(xml).toContain('<w:pBdr><w:top w:val="nil" w:sz="0" w:space="0" w:color="auto"/>');
+      expect(xml).toContain('<w:right w:val="nil" w:sz="0" w:space="0" w:color="auto"/></w:pBdr>');
+      expect(xml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="auto"/>');
+    });
+
+    it("writes fo:border=\"none\" and a transparent background", async () => {
+      const { bytes } = await writeOdt(overriddenDoc());
+      const content = await partOf(bytes, "content.xml");
+      expect(content).toContain('fo:border="none"');
+      expect(content).toContain('fo:background-color="transparent"');
+      // Nothing to space, so no padding is written beside it.
+      expect(content).not.toContain('fo:border="none" fo:padding');
+    });
+
+    it.each([
+      ["docx", docxRoundTrip],
+      ["odt", odtRoundTrip],
+    ])("survives a .%s round trip, so the style's box stays off", async (_format, roundTrip) => {
+      const reopened = await roundTrip(overriddenDoc());
+      expect(firstParagraph(reopened).formatting).toEqual({
+        borders: {},
+        shadingFill: NO_SHADING_FILL,
+      });
+      expect(paintedOf(reopened)?.borders).toEqual({});
+      expect(paintedOf(reopened)?.shadingFill).toBe(NO_SHADING_FILL);
+      // ...and the paragraph that did not override still takes Normal's box.
+      expect(paintedOf(reopened, 1)?.borders?.top).toEqual(SINGLE);
+      expect(paintedOf(reopened, 1)?.shadingFill).toBe("#ffd9d9");
+    });
+  });
+
+  // The same two spellings appear all over ordinary documents, on paragraphs
+  // whose style sets no border or fill at all — Word emits `w:shd
+  // w:val="clear" w:fill="auto"` and LibreOffice `fo:border="none"` freely.
+  // There they override nothing, and the model keeps no husk for them.
+  describe("a redundant override in the file", () => {
+    it("reads back as no borders and no shading, not as an empty husk", async () => {
+      const plain = docOf([para("Nothing to override")]);
+      const { bytes } = await writeDocx(plain);
+      const withHusk = (await partOf(bytes, "word/document.xml")).replace(
+          "<w:r>",
+          '<w:pPr><w:pBdr><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/>' +
+            '<w:right w:val="nil"/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="auto"/>' +
+            "</w:pPr><w:r>",
+        );
+      const parsed = await parseDocx(await rezip(bytes, "word/document.xml", withHusk));
+      const paragraph = parsed.sections[0].blocks[0] as Paragraph;
+      expect(paragraph.formatting?.borders).toBeUndefined();
+      expect(paragraph.formatting?.shadingFill).toBeUndefined();
+    });
+  });
 });
+
+/** Replaces one part of a written package, for the reader tests that need
+ * XML no writer of this product emits. */
+async function rezip(bytes: Uint8Array, name: string, xml: string): Promise<Uint8Array> {
+  const { unzip } = await import("./core/zip");
+  const { zip } = await import("./core/zipWriter");
+  const parts = await unzip(bytes);
+  parts.set(name, new TextEncoder().encode(xml));
+  return zip([...parts].map(([entry, data]) => ({ name: entry, data })));
+}

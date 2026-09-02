@@ -19,7 +19,7 @@ import { firstChildElement } from "../core/xml";
 import { ooxmlColorToCss } from "../core/colors";
 import { halfPointsToPt, twentiethsOfPointToPt, twipsToCm } from "../core/units";
 import { parseBorderElement } from "./borders";
-import { normaliseParagraphBorders } from "../paragraphBorders";
+import { explicitNoBorders, normaliseParagraphBorders, NO_SHADING_FILL } from "../paragraphBorders";
 
 const FALSE_VALUES = new Set(["0", "false", "off"]);
 
@@ -376,16 +376,23 @@ function parseParagraphBorders(pPr: Element): ParagraphBorders | undefined {
   if (anyPadding) {
     borders.paddingPt = paddingPt;
   }
-  return normaliseParagraphBorders(borders);
+  // A `w:pBdr` present but drawing nothing — every edge `w:val="nil"` — is
+  // Word's explicit "no border on this paragraph", the override of a style's
+  // box that SPEC-074 AC-17 needs; it reads back as a borders object that is
+  // present and paints nothing. `dropRedundantPaintOverride` discards it
+  // again where the style chain had no box to override.
+  return normaliseParagraphBorders(borders) ?? explicitNoBorders();
 }
 
 /** A paragraph's `w:shd` fill as CSS (SPEC-074 AC-28) — the same `@w:fill`
  * reading a table cell's shading uses; `@w:color` is the pattern colour on
- * top, which the model has no slot for and drops. An explicit `w:val="clear"`
- * with `w:fill="auto"` is Word's "no fill" and reads as absent. */
+ * top, which the model has no slot for and drops. A `w:shd` with no usable
+ * fill (`w:val="clear" w:fill="auto"`) is Word's "no fill", and reads as the
+ * explicit no-fill override rather than as absent — the element's presence
+ * is the paragraph overriding its style's shading (AC-17). */
 function parseParagraphShading(pPr: Element): string | undefined {
   const shd = firstChildElement(pPr, WORD_NAMESPACE, "shd");
-  return shd ? (ooxmlColorToCss(attr(shd, "fill")) ?? undefined) : undefined;
+  return shd ? (ooxmlColorToCss(attr(shd, "fill")) ?? NO_SHADING_FILL) : undefined;
 }
 
 /** `w:pPr/w:outlineLvl` is 0-based in OOXML; the document model's

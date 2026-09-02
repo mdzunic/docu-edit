@@ -105,6 +105,36 @@ describe("Borders and shading prefill (SPEC-074 AC-6..AC-11)", () => {
     expect(blocks[1].type === "paragraph" && blocks[1].formatting?.shadingFill).toBeUndefined();
   });
 
+  it("seeds from what the paragraph paints, its style's box included (AC-17)", () => {
+    // No paragraph sets anything; Normal draws the box. Seeding from the
+    // paragraph's DIRECT formatting would show "None" here, and OK would
+    // then apply that None and strip a box the user never asked to lose.
+    const model = twoParagraphs();
+    model.styles = [
+      { id: "Normal", name: "Normal", paragraphFormatting: { borders: BOX, shadingFill: "#ffd9d9" } },
+    ];
+    const { api, moveCaretTo } = harness(model);
+    moveCaretTo(1);
+    api.openBordersDialog();
+    expect(api.bordersDialogInitial.value).toEqual({ borders: BOX, shadingFill: "#ffd9d9" });
+  });
+
+  it("shows an explicit no-fill override as no fill, not as a colour", () => {
+    const model = twoParagraphs();
+    model.styles = [
+      { id: "Normal", name: "Normal", paragraphFormatting: { borders: BOX, shadingFill: "#ffd9d9" } },
+    ];
+    const at = { section: 0, block: 1, offset: 0 };
+    const off = applyParagraphBorders(model, { anchor: at, focus: at }, {
+      borders: null,
+      shadingFill: null,
+    }).model;
+    const { api, moveCaretTo } = harness(off);
+    moveCaretTo(1);
+    api.openBordersDialog();
+    expect(api.bordersDialogInitial.value).toEqual({ borders: {}, shadingFill: undefined });
+  });
+
   it("does not open on a read-only document", () => {
     const doc = shallowRef<DocumentModel>(twoParagraphs());
     const at = { section: 0, block: 0, offset: 0 };

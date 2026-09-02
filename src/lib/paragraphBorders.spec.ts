@@ -6,9 +6,14 @@ import {
   DEFAULT_MARK_COLOR,
   detectBorderPreset,
   fragmentEdges,
+  bordersPaintAnyEdge,
+  dropRedundantPaintOverride,
+  explicitNoBorders,
   hasBorderPaint,
   isDarkFill,
   normaliseParagraphBorders,
+  NO_SHADING_FILL,
+  paintedShadingFill,
   paragraphBorderStyle,
   paragraphBordersEqual,
   paragraphMarkColorStyle,
@@ -57,6 +62,101 @@ describe("hasBorderPaint", () => {
   it("is true for a visible edge or a shading fill", () => {
     expect(hasBorderPaint({ borders: { bottom: LINE } })).toBe(true);
     expect(hasBorderPaint({ shadingFill: "#eeeeee" })).toBe(true);
+  });
+
+  it("is false for the explicit no-borders and no-fill overrides", () => {
+    // They are present so inheritance stops at them (AC-17), but they paint
+    // nothing — a paragraph carrying them must not join a border run, or two
+    // ordinary paragraphs would lose the margin between them.
+    expect(hasBorderPaint({ borders: explicitNoBorders() })).toBe(false);
+    expect(hasBorderPaint({ shadingFill: NO_SHADING_FILL })).toBe(false);
+    expect(hasBorderPaint({ borders: explicitNoBorders(), shadingFill: NO_SHADING_FILL })).toBe(false);
+  });
+});
+
+describe("the explicit 'off' overrides (AC-17)", () => {
+  it("reads an override that paints nothing back as no paint", () => {
+    expect(bordersPaintAnyEdge(undefined)).toBe(false);
+    expect(bordersPaintAnyEdge(explicitNoBorders())).toBe(false);
+    expect(bordersPaintAnyEdge({ paddingPt: { top: 8 } })).toBe(false);
+    expect(bordersPaintAnyEdge({ right: LINE })).toBe(true);
+    expect(paintedShadingFill({ shadingFill: NO_SHADING_FILL })).toBeUndefined();
+    expect(paintedShadingFill({ shadingFill: "#ffffff" })).toBe("#ffffff");
+    expect(paintedShadingFill(undefined)).toBeUndefined();
+  });
+
+  it("stops a style's box and fill being inherited", () => {
+    const styleBox: ParagraphFormatting = { borders: { top: LINE }, shadingFill: "#eeeeee" };
+    const painted = withInheritedPaint(
+      { borders: explicitNoBorders(), shadingFill: NO_SHADING_FILL },
+      styleBox,
+    );
+    expect(painted?.borders).toEqual({});
+    expect(painted?.shadingFill).toBe(NO_SHADING_FILL);
+    expect(paragraphBorderStyle(painted)).toEqual({});
+  });
+
+  it("paints no background beside borders the paragraph does keep", () => {
+    const painted = withInheritedPaint({ borders: { top: THICK }, shadingFill: NO_SHADING_FILL }, {
+      shadingFill: "#eeeeee",
+    });
+    const style = paragraphBorderStyle(painted);
+    expect(style.borderTop).toContain("3pt");
+    expect(style.backgroundColor).toBeUndefined();
+    // The mark colour is a property of the shading, so an unshaded paragraph
+    // sets none (AC-26).
+    expect(style["--mark-color"]).toBeUndefined();
+  });
+
+  it("still merges with a neighbour that simply has no fill (AC-12)", () => {
+    const flags = borderRuns([para(boxed({ shadingFill: NO_SHADING_FILL })), para(boxed())]);
+    expect(flags[0].continuesBelow).toBe(true);
+    expect(flags.map((flag) => flag.top)).toEqual([true, false]);
+  });
+
+  it("leaves two paragraphs that paint nothing unmerged", () => {
+    const flags = borderRuns([
+      para({ borders: explicitNoBorders() }),
+      para({ borders: explicitNoBorders() }),
+    ]);
+    expect(flags.map((flag) => flag.continuesBelow)).toEqual([false, false]);
+    expect(flags.map((flag) => flag.sides)).toEqual([false, false]);
+  });
+});
+
+describe("dropRedundantPaintOverride (AC-17)", () => {
+  it("drops an override with nothing underneath to override", () => {
+    const effective: ParagraphFormatting = {
+      borders: explicitNoBorders(),
+      shadingFill: NO_SHADING_FILL,
+      alignment: "center",
+    };
+    dropRedundantPaintOverride(effective, {});
+    expect(effective).toEqual({ alignment: "center" });
+  });
+
+  it("keeps the override where the style chain really paints something", () => {
+    const effective: ParagraphFormatting = {
+      borders: explicitNoBorders(),
+      shadingFill: NO_SHADING_FILL,
+    };
+    dropRedundantPaintOverride(effective, { borders: { top: LINE }, shadingFill: "#eeeeee" });
+    expect(effective).toEqual({ borders: {}, shadingFill: NO_SHADING_FILL });
+  });
+
+  it("decides the two fields independently", () => {
+    const effective: ParagraphFormatting = {
+      borders: explicitNoBorders(),
+      shadingFill: NO_SHADING_FILL,
+    };
+    dropRedundantPaintOverride(effective, { shadingFill: "#eeeeee" });
+    expect(effective).toEqual({ shadingFill: NO_SHADING_FILL });
+  });
+
+  it("never touches a value that paints", () => {
+    const effective: ParagraphFormatting = { borders: { top: LINE }, shadingFill: "#ffffff" };
+    dropRedundantPaintOverride(effective, {});
+    expect(effective).toEqual({ borders: { top: LINE }, shadingFill: "#ffffff" });
   });
 });
 

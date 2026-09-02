@@ -778,6 +778,17 @@ export function resolveParagraphStyle(
   let runFormatting = catalog.defaultRunFormatting;
   let headingLevel: number | undefined;
 
+  // `fo:border="none"` and `fo:background-color="transparent"` are taken at
+  // their word here — an explicit "no box"/"no fill" that stops a style's
+  // being inherited (SPEC-074 AC-17). The .docx reader instead drops such a
+  // value where the style chain had nothing to override; ODF cannot make
+  // that comparison, because the chain a paragraph resolves through does not
+  // contain the common style its box would come from: this product's own
+  // writer names a paragraph's automatic style after its style id (see
+  // odf/writer's paragraphNameFor), and styleChain's automatic-before-named
+  // lookup then stops at that shadowing entry. Reading the attribute
+  // literally is also the more faithful reading — an ODF automatic style IS
+  // direct formatting, so a border stated there was stated deliberately.
   for (const style of styleChain(catalog.paragraphStyles, styleName)) {
     paragraphFormatting = mergeParagraphFormatting(paragraphFormatting, style.paragraphFormatting);
     runFormatting = applyTextProperties(runFormatting, style.textProperties);

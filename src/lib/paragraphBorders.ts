@@ -33,18 +33,35 @@ export function paragraphPaddingPt(borders: ParagraphBorders | undefined, edge: 
   return value === undefined ? DEFAULT_PARAGRAPH_BORDER_PADDING_PT : value;
 }
 
-/** Whether a paragraph paints anything at all — any visible edge or a
- * shading fill. An all-`"none"` `borders` object paints nothing but is still
- * meaningful as an explicit override of a style's borders, so it survives in
- * the model; it just contributes no CSS. */
-export function hasBorderPaint(formatting: ParagraphFormatting | undefined): boolean {
-  if (!formatting) {
-    return false;
-  }
-  if (formatting.shadingFill !== undefined) {
-    return true;
-  }
-  const borders = formatting.borders;
+// --- switching an inherited box or fill back off (AC-17) ---------------------
+//
+// Borders and shading resolve from the paragraph's style at paint time
+// (withInheritedPaint below), so an *absent* value means "inherit". A
+// paragraph that wants no box where its style draws one therefore cannot
+// simply drop the field — that re-inherits. It needs a value that is present
+// and paints nothing, which is exactly what both formats spell: OOXML's
+// `w:pBdr` with every edge `w:val="nil"`, ODF's `fo:border="none"`.
+
+/** The `shadingFill` value that means "this paragraph has NO fill", as
+ * distinct from an absent field, which inherits its style's (AC-17). The
+ * keyword both formats already use for it — OOXML's
+ * `w:shd w:val="clear" w:fill="auto"`, ODF's
+ * `fo:background-color="transparent"` — and a CSS one besides, so nothing
+ * downstream renders it as a colour by accident. */
+export const NO_SHADING_FILL = "transparent";
+
+/** The fill a paragraph actually paints: its `shadingFill`, unless that is
+ * the explicit no-fill override, which paints nothing. Every reader of the
+ * field that wants a *colour* goes through here. */
+export function paintedShadingFill(formatting: ParagraphFormatting | undefined): string | undefined {
+  const fill = formatting?.shadingFill;
+  return fill === undefined || fill === NO_SHADING_FILL ? undefined : fill;
+}
+
+/** Whether a `borders` object draws any edge at all. `false` for an absent
+ * one and for the present-but-empty object that is the explicit "no borders"
+ * override. */
+export function bordersPaintAnyEdge(borders: ParagraphBorders | undefined): boolean {
   return (
     borders !== undefined &&
     (borderSideVisible(borders.top) ||
@@ -53,6 +70,55 @@ export function hasBorderPaint(formatting: ParagraphFormatting | undefined): boo
       borderSideVisible(borders.right) ||
       borderSideVisible(borders.between))
   );
+}
+
+/** A fresh explicit "no borders" value: present, so inheritance stops at it,
+ * and painting nothing. A factory rather than a shared constant because it
+ * goes into the document model, which no two paragraphs may alias. */
+export function explicitNoBorders(): ParagraphBorders {
+  return {};
+}
+
+/** Drops an explicit "paints nothing" borders or shading value that has
+ * nothing to override (AC-17). Both formats let a producer write one freely
+ * — Word emits `<w:shd w:val="clear" w:fill="auto"/>` and LibreOffice
+ * `fo:border="none"` on paragraphs whose style sets neither — where it says
+ * only what the absence of a value already said. Keeping those would fill
+ * the model with husks that silently opt paragraphs out of a box the user
+ * gives their style later.
+ *
+ * Mutates the freshly merged `effective`, the way the readers' other
+ * merge-only normalisations do (see docx parseParagraphMeta's `w:bidi="0"`);
+ * `base` is what the style chain resolved to underneath it. */
+export function dropRedundantPaintOverride(
+  effective: ParagraphFormatting,
+  base: ParagraphFormatting,
+): void {
+  if (
+    effective.borders !== undefined &&
+    !bordersPaintAnyEdge(effective.borders) &&
+    !bordersPaintAnyEdge(base.borders)
+  ) {
+    delete effective.borders;
+  }
+  if (effective.shadingFill === NO_SHADING_FILL && paintedShadingFill(base) === undefined) {
+    delete effective.shadingFill;
+  }
+}
+
+/** Whether a paragraph paints anything at all — any visible edge or a
+ * shading fill. An all-`"none"` `borders` object, or a `shadingFill` of
+ * NO_SHADING_FILL, paints nothing but is still meaningful as an explicit
+ * override of a style's (AC-17), so it survives in the model; it just
+ * contributes no CSS. */
+export function hasBorderPaint(formatting: ParagraphFormatting | undefined): boolean {
+  if (!formatting) {
+    return false;
+  }
+  if (paintedShadingFill(formatting) !== undefined) {
+    return true;
+  }
+  return bordersPaintAnyEdge(formatting.borders);
 }
 
 /** Whether two paragraphs' padding is the same, treating an absent edge as
@@ -112,7 +178,10 @@ const NO_PAINT: BorderRunFlags = {
 
 /** The formatting a paragraph paints its borders and shading from (SPEC-074
  * AC-17): its own values where it sets them, its paragraph style's
- * underneath. Only the two fields this spec adds inherit here — the rest of
+ * underneath. "Where it sets them" is presence, not visibility: a paragraph
+ * carrying the explicit no-borders/no-fill override above has set them, and
+ * the style's box stops there. Only the two fields this spec adds inherit
+ * here — the rest of
  * ParagraphFormatting is already baked onto the paragraph when a style is
  * applied — so `inherited` is expected to carry nothing else.
  *
@@ -157,7 +226,9 @@ function mergesWith(
   if (!hasBorderPaint(a) || !hasBorderPaint(b)) {
     return false;
   }
-  if (a?.shadingFill !== b?.shadingFill) {
+  // The *painted* fill, so a paragraph that spells "no fill" out as an
+  // override still merges with a neighbour that simply has none.
+  if (paintedShadingFill(a) !== paintedShadingFill(b)) {
     return false;
   }
   if (!paragraphBordersEqual(a?.borders, b?.borders)) {
@@ -317,8 +388,9 @@ export function paragraphBorderStyle(
   style.paddingLeft = borderSideVisible(left) ? pt(paragraphPaddingPt(borders, "left")) : "0";
   style.paddingRight = borderSideVisible(right) ? pt(paragraphPaddingPt(borders, "right")) : "0";
 
-  if (formatting?.shadingFill !== undefined) {
-    style.backgroundColor = formatting.shadingFill;
+  const fill = paintedShadingFill(formatting);
+  if (fill !== undefined) {
+    style.backgroundColor = fill;
     // Formatting marks are drawn on the shading, so the shading is the
     // surface they contrast against (AC-26).
     Object.assign(style, paragraphMarkColorStyle(formatting));
@@ -354,7 +426,7 @@ export const DEFAULT_MARK_COLOR = "#80868b";
 export function paragraphMarkColorStyle(
   formatting: ParagraphFormatting | undefined,
 ): Record<string, string> {
-  const fill = formatting?.shadingFill;
+  const fill = paintedShadingFill(formatting);
   if (fill === undefined) {
     return {};
   }
@@ -638,20 +710,16 @@ export function isEventTargetChecked(target: EventTarget | null): boolean {
 }
 
 /** Drops a `borders` object that no longer paints anything, so the model
- * never carries an empty husk (which would break the merge comparison
- * against a genuinely unbordered neighbour). Padding alone is not worth
- * keeping — it is meaningless without an edge to space. */
+ * never carries an empty husk *by accident* — an edge set the user switched
+ * off edge by edge is "no borders", not "borders that happen to be
+ * invisible". Padding alone is not worth keeping either: it is meaningless
+ * without an edge to space.
+ *
+ * The deliberate empty husk — the explicit override of a style's box
+ * (AC-17) — is the callers' business, not this one's: they decide between
+ * `undefined` and `explicitNoBorders()` from what the style contributes. */
 export function normaliseParagraphBorders(borders: ParagraphBorders | undefined): ParagraphBorders | undefined {
-  if (!borders) {
-    return undefined;
-  }
-  const painted =
-    borderSideVisible(borders.top) ||
-    borderSideVisible(borders.bottom) ||
-    borderSideVisible(borders.left) ||
-    borderSideVisible(borders.right) ||
-    borderSideVisible(borders.between);
-  return painted ? borders : undefined;
+  return bordersPaintAnyEdge(borders) ? borders : undefined;
 }
 
 /** Rebuilds a `ParagraphBorders` on the grid both formats carry exactly —
