@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   caretFromDomPoint,
+  createCaretSliceCache,
   domPointForCaret,
   extendDomSelection,
   modelRangeFromSelection,
@@ -180,6 +181,53 @@ describe("domPointForCaret", () => {
       start: { section: 0, block: 0, offset: 0 },
       end: { section: 0, block: 0, offset: 0 },
     });
+    root.remove();
+  });
+
+  // SPEC-047 AC-8: the spell-check overlay re-measures every visible issue in
+  // one synchronous pass after each scroll, and each measurement resolved two
+  // carets — two full-document querySelectorAll scans per flagged word, the
+  // largest single main-thread cost of scrolling a large document. A shared
+  // per-pass cache collapses them to one scan per addressed block.
+  it("resolves the same point with and without a slice cache", () => {
+    const root = buildContent([["Hello ", "world"], ["second"]]);
+    const cache = createCaretSliceCache();
+    for (const caret of [
+      { section: 0, block: 0, offset: 8 },
+      { section: 0, block: 0, offset: 2 },
+      { section: 0, block: 1, offset: 3 },
+      { section: 0, block: 9, offset: 0 },
+    ]) {
+      const cached = domPointForCaret(root, caret, cache);
+      const uncached = domPointForCaret(root, caret);
+      expect(cached?.node).toBe(uncached?.node);
+      expect(cached?.offset).toBe(uncached?.offset);
+    }
+    root.remove();
+  });
+
+  it("queries the DOM once per addressed block when a cache is shared", () => {
+    const root = buildContent([["Hello ", "world"], ["second"]]);
+    const queried: string[] = [];
+    const realQuerySelectorAll = root.querySelectorAll.bind(root);
+    root.querySelectorAll = ((selector: string) => {
+      queried.push(selector);
+      return realQuerySelectorAll(selector);
+    }) as typeof root.querySelectorAll;
+
+    const cache = createCaretSliceCache();
+    for (let offset = 0; offset < 5; offset++) {
+      domPointForCaret(root, { section: 0, block: 0, offset }, cache);
+    }
+    domPointForCaret(root, { section: 0, block: 1, offset: 0 }, cache);
+    expect(queried).toHaveLength(2);
+
+    // Without one, every caret pays for its own scan.
+    queried.length = 0;
+    for (let offset = 0; offset < 5; offset++) {
+      domPointForCaret(root, { section: 0, block: 0, offset });
+    }
+    expect(queried).toHaveLength(5);
     root.remove();
   });
 });

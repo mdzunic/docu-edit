@@ -113,13 +113,34 @@ export function inIgnoredSubtree(root: Element, element: Element): boolean {
   return !!ignored && ignored !== root && root.contains(ignored);
 }
 
+/** Per-pass memo of block address → rendered slices for `domPointForCaret`.
+ * Resolving a caret costs one `querySelectorAll` over the whole realized
+ * document; a caller that resolves MANY carets in one synchronous pass (the
+ * spell-check overlay re-measures every visible issue on every scroll idle
+ * slot — SPEC-047 AC-8) would otherwise pay that scan twice per range. Only
+ * valid for one root and only while the DOM is unchanged: build one, use it
+ * synchronously, drop it. */
+export type CaretSliceCache = Map<string, Element[]>;
+
+/** A fresh {@link CaretSliceCache} — a named constructor so `.vue` scripts,
+ * which cannot write the generic annotation, can seed one too. */
+export function createCaretSliceCache(): CaretSliceCache {
+  return new Map();
+}
+
 // All rendered slices of a block address in document order, with each
 // slice's character window; a whole (unsplit) block is its own single
 // entry.
-function slicesFor(root: Element, address: string): Element[] {
-  return Array.from(root.querySelectorAll(`${address}:not([data-row])`))
+function slicesFor(root: Element, address: string, cache?: CaretSliceCache): Element[] {
+  const cached = cache?.get(address);
+  if (cached) {
+    return cached;
+  }
+  const slices = Array.from(root.querySelectorAll(`${address}:not([data-row])`))
     .filter((el) => !inIgnoredSubtree(root, el))
     .sort((a, b) => sliceStartOf(a) - sliceStartOf(b));
+  cache?.set(address, slices);
+  return slices;
 }
 
 // The slice whose character window contains `offset`: the first slice the
@@ -330,10 +351,13 @@ export interface DomPoint {
 /** Resolves a model caret to the DOM point inside its paragraph element:
  * the text node containing the offset, the last text node's end when the
  * offset overshoots, or the paragraph element itself when it has no text.
- * Null when the addressed paragraph is not in the DOM. */
+ * Null when the addressed paragraph is not in the DOM. Pass a
+ * {@link CaretSliceCache} when resolving many carets over one unchanged DOM
+ * to share the per-block element lookup. */
 export function domPointForCaret(
   root: Element,
   caret: CaretPosition,
+  sliceCache?: CaretSliceCache,
 ): DomPoint | null {
   const address = `[data-section="${caret.section}"][data-block="${caret.block}"]`;
   let paragraph: Element | null;
@@ -348,7 +372,7 @@ export function domPointForCaret(
     // top-level lookup must exclude them. When the address itself is a
     // table (an atom caret at its edge), resolve to the first or last cell
     // paragraph instead — offset 0 is the position before the table.
-    const slices = slicesFor(root, address);
+    const slices = slicesFor(root, address, sliceCache);
     paragraph = slices.length > 0 ? sliceForOffset(slices, caret.offset) : null;
     if (!paragraph) {
       const cellParagraphs = Array.from(root.querySelectorAll(`${address}[data-row]`)).filter(

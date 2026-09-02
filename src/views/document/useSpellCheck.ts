@@ -30,7 +30,12 @@ import {
 } from "../../lib/customDictionary";
 import { noIdleHandle, scheduleIdleWork } from "../../lib/core/idleScheduler";
 import { usePreferences } from "../../composables/usePreferences";
-import { BLOCK_SELECTOR, domPointForCaret } from "../../lib/domCaret";
+import {
+  BLOCK_SELECTOR,
+  createCaretSliceCache,
+  domPointForCaret,
+  type CaretSliceCache,
+} from "../../lib/domCaret";
 
 /** A flagged word, addressed the same way a bookmark/find-match is: a
  * paragraph offset range into its concatenated run text. */
@@ -291,9 +296,17 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     return found;
   }
 
-  function issueClientRects(root: HTMLElement, issue: SpellCheckIssue): DOMRect[] {
-    const startPoint = domPointForCaret(root, { section: issue.section, block: issue.block, offset: issue.start });
-    const endPoint = domPointForCaret(root, { section: issue.section, block: issue.block, offset: issue.end });
+  function issueClientRects(root: HTMLElement, issue: SpellCheckIssue, sliceCache: CaretSliceCache): DOMRect[] {
+    const startPoint = domPointForCaret(
+      root,
+      { section: issue.section, block: issue.block, offset: issue.start },
+      sliceCache,
+    );
+    const endPoint = domPointForCaret(
+      root,
+      { section: issue.section, block: issue.block, offset: issue.end },
+      sliceCache,
+    );
     if (!startPoint || !endPoint) {
       return [];
     }
@@ -322,13 +335,14 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     root: HTMLElement,
     pageRect: DOMRect,
     issue: SpellCheckIssue,
+    sliceCache: CaretSliceCache,
   ): void {
     // The underline layer paints INSIDE the scaled `.pages` container, so the
     // rects carry unscaled, .pages-relative px — the CSS transform re-applies
     // the zoom, keeping each underline registered with its word (SPEC-063
     // AC-25). Dividing by the scale undoes what getBoundingClientRect folded in.
     const z = zoom.value || 1;
-    for (const rect of issueClientRects(root, issue)) {
+    for (const rect of issueClientRects(root, issue, sliceCache)) {
       if (rect.width <= 0 || rect.height <= 0) {
         continue;
       }
@@ -391,9 +405,16 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     }
     const pageRect = pageEl.getBoundingClientRect();
     const rects: SpellUnderlineRect[] = [];
+    // One slice lookup per addressed block for the whole pass instead of two
+    // full-document `querySelectorAll` scans per issue: on a large document
+    // this measurement runs in an idle slot after every scroll event, and the
+    // repeated scans were the single largest main-thread cost of scrolling
+    // (SPEC-047 AC-8's fps budget). The DOM does not change between here and
+    // the end of the loop, so one cache spans the pass.
+    const sliceCache = createCaretSliceCache();
     for (const { key } of visible) {
       for (const issue of issueCache.get(key) ?? []) {
-        pushIssueRects(rects, root, pageRect, issue);
+        pushIssueRects(rects, root, pageRect, issue, sliceCache);
       }
     }
     spellUnderlineRects.value = rects;

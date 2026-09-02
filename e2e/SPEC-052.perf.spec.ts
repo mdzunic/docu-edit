@@ -18,6 +18,22 @@ import { test, expect, type Page } from "@playwright/test";
 // the budget.
 test.describe.configure({ mode: "serial" });
 
+/** The in-page stopwatch AC-39's benchmark arms before it clicks "Done" —
+ * see that test for why the reading has to be taken inside the page. */
+interface ChartRerenderProbe {
+  /** Click event → the frame after the chart canvas repainted, in ms. */
+  ms?: number;
+  /** How many canvas repaints the click produced (must be at least one, or
+   * the reading above measured nothing). */
+  repaints: number;
+}
+
+declare global {
+  interface Window {
+    __chartRerender?: ChartRerenderProbe;
+  }
+}
+
 async function createDocument(page: Page): Promise<string> {
   await page.goto("/");
   await page.getByTestId("new-document").first().click();
@@ -145,13 +161,73 @@ test("a data-sheet edit re-renders in under 100ms for a 12-series, 100-category 
   await page.getByTestId("chart-data-cell-1-1").fill("99");
   await page.getByTestId("chart-data-cell-1-1").blur();
 
-  const start = Date.now();
-  await page.getByTestId("chart-data-apply").click();
+  // The stopwatch runs INSIDE the page, for the same reason the paint budget
+  // above uses an in-page predicate: driven from the Playwright side, this
+  // reading measures the driver, not the product. `locator.click()` is not a
+  // stopwatch — before it dispatches anything it resolves the selector, runs
+  // the actionability pipeline (visible / bounding box stable across two
+  // animation frames / enabled / hit-testable) and scrolls the button into
+  // view, each a CDP round trip against a page that holds the data sheet's
+  // ~1300-input grid. Measured here, `click()` alone takes 91-123ms of which
+  // only 15-19ms falls after the click event reaches the app, and a trailing
+  // `expect(...).toHaveCount(0)` poll adds a further 23-30ms: ~110ms of
+  // driver wrapped around ~20ms of product. That overhead is not a
+  // regression — the Playwright-timed version of this assert fails
+  // identically (116ms) at f28d1d8, the last commit before this one to touch
+  // this file — so it is the instrument, exactly as it was for AC-38 above.
+  //
+  // Armed in the page instead: the click event on "Done" starts the clock
+  // (the moment the user's action reaches the app) and the frame following
+  // the chart canvas's repaint stops it. DocChartBlock's repaint() re-sizes
+  // the backing store on every paint, so an attribute observer on the canvas
+  // sees each one, and a task queued from the next requestAnimationFrame runs
+  // after that frame has been painted. That span is the whole of what AC-39
+  // names: edit committed, model updated, canvas repainted, frame on screen.
+  await page.evaluate(() => {
+    const probe: ChartRerenderProbe = { repaints: 0 };
+    window.__chartRerender = probe;
+    const drawing = document.querySelector('[data-testid^="drawing-"]');
+    const canvas = drawing?.parentElement?.querySelector("canvas");
+    const apply = document.querySelector('[data-testid="chart-data-apply"]');
+    if (!canvas || !apply) {
+      throw new Error("chart canvas or Done button missing — the benchmark cannot arm");
+    }
+    let clickAt = 0;
+    apply.addEventListener("click", () => { clickAt = performance.now(); }, { capture: true, once: true });
+    new MutationObserver(() => {
+      if (clickAt === 0) {
+        return; // A repaint from before the click is not this measurement.
+      }
+      probe.repaints += 1;
+      if (probe.ms !== undefined) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          probe.ms = performance.now() - clickAt;
+        }, 0);
+      });
+    }).observe(canvas, { attributes: true, attributeFilter: ["width", "height"] });
+  });
+
   // The commit (applyChartData) runs synchronously before the dialog closes,
-  // and Vue's watcher repaints the chart's canvas in the same update flush
-  // — the dialog closing is this test's observable signal that both the
-  // model update and the repaint have happened.
+  // and Vue's watcher repaints the chart's canvas in the same update flush.
+  await page.getByTestId("chart-data-apply").click();
   await expect(page.getByTestId("chart-data-sheet-dialog")).toHaveCount(0);
-  const renderMs = Date.now() - start;
-  expect(renderMs).toBeLessThan(100);
+
+  await page.waitForFunction(() => window.__chartRerender?.ms !== undefined);
+  const rerender = await page.evaluate(() => ({
+    // NaN rather than a default reading: an unset clock must fail the budget,
+    // never pass it.
+    ms: window.__chartRerender?.ms ?? Number.NaN,
+    repaints: window.__chartRerender?.repaints ?? 0,
+  }));
+  // The budget must not be met by a click that repainted nothing.
+  expect(rerender.repaints).toBeGreaterThan(0);
+  expect(rerender.ms).toBeLessThan(100);
+
+  // …nor by a chart that never took the edit: the committed model carries the
+  // new cell value, which the sheet reads back when it is reopened.
+  await proxy.dblclick();
+  await expect(page.getByTestId("chart-data-cell-1-1")).toHaveValue("99");
 });

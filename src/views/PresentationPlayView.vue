@@ -420,6 +420,7 @@ onBeforeUnmount(() => {
     aria-roledescription="slide show"
     :aria-label="deckTitle"
     data-testid="presentation-play"
+    :data-building="buildPreview.playing.value ? 'true' : 'false'"
     @click="onStageClick"
     @pointerdown="onPointerDown"
     @pointerup="onPointerUp"
