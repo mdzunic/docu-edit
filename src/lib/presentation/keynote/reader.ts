@@ -366,7 +366,7 @@ function storageParagraphText(objects: KeynoteObjects, storageId: number): strin
     }
   }
   const cleaned = text.replace(/[\uFFFC\u200B-\u200D\uFEFF]/g, "");
-  return cleaned.split(/[\n\u2029]/).filter((paragraph) => paragraph.length > 0);
+  return cleaned.split(/\r\n|[\r\n\u2029]/).filter((paragraph) => paragraph.length > 0);
 }
 
 /** Role-based default styling (AC-26/AC-28/AC-29): title → 36pt bold
@@ -564,16 +564,17 @@ function childNodeIds(objects: KeynoteObjects, nodeFields: Fields): number[] {
  * with a visited set, so cycles terminate and depth never recurses
  * (AC-43/AC-44). Falls back to PackageMetadata component order (rule (b))
  * when the tree yields nothing. */
-function orderedSlideNodeIds(objects: KeynoteObjects, rootNodeId: number): number[] {
-  const visited = new Set<number>([rootNodeId]);
+function orderedSlideNodeIds(objects: KeynoteObjects, rootNodeIds: number[]): number[] {
+  // KN.SlideTreeArchive field 2 is the REPEATED, ordered list of top-level
+  // slide nodes (a real Keynote 14 file has one per slide, each referencing
+  // its slide at field 2); a node's own children (grouped/nested slides)
+  // hang below it. The nodes themselves are slides — walk from them, not
+  // from their children.
+  const visited = new Set<number>();
   const ordered: number[] = [];
-  const rootArchive = archiveOf(objects, rootNodeId);
   const stack: number[] = [];
-  if (rootArchive && rootArchive.type === TYPE_SLIDE_NODE) {
-    const rootChildren = childNodeIds(objects, fields(rootArchive.payload));
-    for (let i = rootChildren.length - 1; i >= 0; i--) {
-      stack.push(rootChildren[i]);
-    }
+  for (let i = rootNodeIds.length - 1; i >= 0; i--) {
+    stack.push(rootNodeIds[i]);
   }
   while (stack.length > 0) {
     const id = stack.pop() as number;
@@ -604,7 +605,7 @@ function orderedSlideNodeIds(objects: KeynoteObjects, rootNodeId: number): numbe
   }
   // Rule (b): the type-4 archives in PackageMetadata component order.
   return objects.componentRootIds.filter(
-    (id) => id !== rootNodeId && archiveOf(objects, id)?.type === TYPE_SLIDE_NODE,
+    (id) => !rootNodeIds.includes(id) && archiveOf(objects, id)?.type === TYPE_SLIDE_NODE,
   );
 }
 
@@ -760,7 +761,7 @@ function targetWidthCm(showWidthPt: number, showHeightPt: number): number {
 export async function parseKeynote(parts: Map<string, Uint8Array>): Promise<ParsedKeynote> {
   let objects: KeynoteObjects;
   let showFields: Fields;
-  let rootNodeId: number;
+  let rootNodeIds: number[];
   try {
     const entries = await collectIwaEntries(parts);
     objects = decodePackage(entries, parts);
@@ -781,11 +782,11 @@ export async function parseKeynote(parts: Map<string, Uint8Array>): Promise<Pars
     }
     showFields = fields(show.payload);
     const slideTree = messageAt(showFields, 3);
-    const treeRootId = slideTree ? referencedId(slideTree, 2) : undefined;
-    if (treeRootId === undefined) {
+    const treeNodeIds = slideTree ? referencedIds(slideTree, 2) : [];
+    if (treeNodeIds.length === 0) {
       throw new KeynoteOpenError(NOT_KEYNOTE_MESSAGE);
     }
-    rootNodeId = treeRootId;
+    rootNodeIds = treeNodeIds;
   } catch (error) {
     // Any decode failure before the deck is established as Keynote — bad
     // Snappy, bad protobuf, a Pages/Numbers root — is "not a Keynote
@@ -818,7 +819,7 @@ export async function parseKeynote(parts: Map<string, Uint8Array>): Promise<Pars
     const context: SlideBuildContext = { objects, pointToCm, slideWidthCm, slideHeightCm, resolver, dropped };
 
     const slides: Slide[] = [];
-    for (const nodeId of orderedSlideNodeIds(objects, rootNodeId)) {
+    for (const nodeId of orderedSlideNodeIds(objects, rootNodeIds)) {
       const node = archiveOf(objects, nodeId);
       if (!node) {
         continue;
