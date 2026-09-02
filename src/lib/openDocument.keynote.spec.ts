@@ -22,7 +22,7 @@ import {
   KEYNOTE_UNREADABLE_MESSAGE,
   NOT_KEYNOTE_MESSAGE,
 } from "./presentation/keynote/reader";
-import { buildKeynoteFromArchives, buildSyntheticKeynote, message, varintField } from "./presentation/keynote/fixtures";
+import { buildKeynoteFromArchives, buildSyntheticKeynote, FIXTURE_PNG_BASE64, message, varintField } from "./presentation/keynote/fixtures";
 import { zip } from "./core/zipWriter";
 
 const e2eFixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "e2e", "fixtures");
@@ -166,5 +166,38 @@ describe("the assembled model and the import notice (AC-13..AC-16, AC-37/AC-38)"
   it("threads no notice when nothing was dropped (AC-38)", async () => {
     const opened = await openAnyDocumentFile(asFile(await buildSyntheticKeynote(), "mini-deck.key"));
     expect(opened.kind === "presentation" && opened.importNotice).toBeFalsy();
+  });
+
+  it("the imported deck saves as a from-scratch .pptx that re-opens with the same content (AC-55's unit half)", async () => {
+    const opened = await openAnyDocumentFile(asFile(await buildSyntheticKeynote(), "mini-deck.key"));
+    expect(opened.kind).toBe("presentation");
+    if (opened.kind !== "presentation") {
+      return;
+    }
+    const { writePptx } = await import("./presentation/pptx/writer");
+    const { readPresentationBytes } = await import("./presentation/open");
+    const { bytes } = await writePptx(opened.model);
+    const reopened = await readPresentationBytes(bytes, "pptx", "mini-deck");
+
+    expect(reopened.slides).toHaveLength(2);
+    const texts = reopened.slides.flatMap((slide) =>
+      slide.frames.flatMap((frame) =>
+        frame.kind === "text" ? frame.paragraphs.map((p) => p.runs.map((r) => r.text).join("")) : [],
+      ),
+    );
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        "Keynote fixture deck",
+        "Imported by docu-edit",
+        "Second slide",
+        "First bullet point",
+        "Second bullet point",
+      ]),
+    );
+    // The PNG media part survives byte-identical.
+    const media = reopened.media?.find((part) => part.contentType === "image/png");
+    expect(media?.data).toBe(FIXTURE_PNG_BASE64);
+    expect(reopened.slides[1].frames.some((frame) => frame.kind === "image")).toBe(true);
+    expect(reopened.slides[1].notes).toEqual(["A speaker note for the importer"]);
   });
 });

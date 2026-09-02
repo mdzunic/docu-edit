@@ -8,3 +8,4 @@
  * the time it leaves `parseKeynote`; the decode stack throws it with
  * internal messages that `parseKeynote` normalises. */
 export class KeynoteOpenError extends Error {}
+
