@@ -219,6 +219,6 @@ test("dropping an unsupported file type names all three supported formats in the
   }, "plain text, unsupported extension");
   await page.dispatchEvent("body", "dragenter", { dataTransfer });
   await page.dispatchEvent("body", "drop", { dataTransfer });
-  await expect(page.getByTestId("drop-error")).toHaveText("We can only open .docx, .odt, .md, .pptx, .odp, .pdf and image files");
+  await expect(page.getByTestId("drop-error")).toHaveText("We can only open .docx, .odt, .md, .pptx, .odp, .key, .pdf and image files");
   await expect(page).toHaveURL(/\/$/);
 });

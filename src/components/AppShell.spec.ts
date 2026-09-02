@@ -263,7 +263,7 @@ describe("AppShell", () => {
       await flushPromises();
 
       expect(wrapper.get('[data-testid="drop-error"]').text()).toBe(
-        "We can only open .docx, .odt, .md, .pptx, .odp, .pdf and image files",
+        "We can only open .docx, .odt, .md, .pptx, .odp, .key, .pdf and image files",
       );
       expect(router.currentRoute.value.path).toBe("/");
     });

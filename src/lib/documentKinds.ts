@@ -56,7 +56,9 @@ export function editorPathFor(kind: DocumentKind, id: string): string {
  * name-check accept, across every kind, in display order. Markdown's two
  * spellings are the SPEC-050 exception documented in openDocument.ts; jpg
  * and jpeg are one format ("jpeg", the canonical spelling) under two
- * conventional file extensions. */
+ * conventional file extensions. "key" (SPEC-087) is an import-only
+ * extension: a Keynote deck converts one-way into a "pptx" presentation, so
+ * it appears here (the open surface) but never as a LibraryFormat. */
 export const OPENABLE_EXTENSIONS = [
   "docx",
   "odt",
@@ -64,6 +66,7 @@ export const OPENABLE_EXTENSIONS = [
   "markdown",
   "pptx",
   "odp",
+  "key",
   "pdf",
   "png",
   "jpg",

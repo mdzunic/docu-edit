@@ -8,7 +8,7 @@ import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useToasts } from "../composables/useToasts";
-import { storeDocument, storeMedia, storePresentation } from "../lib/documentStore";
+import { storeOpenedFile } from "../lib/documentStore";
 import { editorPathFor } from "../lib/documentKinds";
 import {
   hasSupportedExtension,
@@ -153,13 +153,7 @@ async function handleDrop(event = new DragEvent("drop")) {
   }
   try {
     const opened = await openAnyDocumentFile(file);
-    if (opened.kind === "presentation") {
-      storePresentation(opened.model);
-    } else if (opened.kind === "media") {
-      storeMedia(opened.model);
-    } else {
-      storeDocument(opened.model);
-    }
+    storeOpenedFile(opened, addToast);
     if (files.length > 1) {
       addToast(`Opened ${opened.model.title} — only one file at a time`);
     }

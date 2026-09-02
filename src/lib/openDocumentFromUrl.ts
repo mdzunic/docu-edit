@@ -18,6 +18,8 @@ const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordpro
 const ODT_CONTENT_TYPE = "application/vnd.oasis.opendocument.text";
 const PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const ODP_CONTENT_TYPE = "application/vnd.oasis.opendocument.presentation";
+// SPEC-087: Apple's registered type for Keynote `.key` packages.
+const KEY_CONTENT_TYPE = "application/x-iwork-keynote-sffkey";
 // SPEC-050: Markdown's registered content type. Plain "text/plain" is
 // deliberately not included here — unlike the extension check below (which
 // only ever matches an actual .md/.markdown URL), that would accept any
@@ -51,6 +53,7 @@ function isSupportedContentType(contentType: string | null): boolean {
     type === MARKDOWN_CONTENT_TYPE ||
     type === PPTX_CONTENT_TYPE ||
     type === ODP_CONTENT_TYPE ||
+    type === KEY_CONTENT_TYPE ||
     type === "application/pdf" ||
     (LIBRARY_IMAGE_MIME_TYPES as readonly string[]).includes(type) ||
     GENERIC_BINARY_CONTENT_TYPES.includes(type)
@@ -107,7 +110,7 @@ export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
   const contentType = response.headers.get("content-type");
   if (!isSupportedContentType(contentType) && !hasDocumentExtension(url)) {
     throw new OpenFromUrlError(
-      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt, .md, .pptx, .odp, .pdf or image file`,
+      `The link returned ${contentType ?? "an unrecognised file type"}, not a .docx, .odt, .md, .pptx, .odp, .key, .pdf or image file`,
     );
   }
 

@@ -112,7 +112,11 @@ presentation siblings only — the boundary spec extends to it):
    data ids resolve through the metadata index (fact 7).
 6. Verified archive types: **1** = KN.DocumentArchive — field 2 → the
    show. **2** = KN.ShowArchive — field 3 = slide-tree message whose
-   field 2 → the root slide node; field 4 = size `{1: float32 width,
+   field 2 is the **repeated, ordered list of top-level slide nodes** —
+   one per slide, each referencing its slide at node field 2 (corrected
+   2026-09-02 against the real fixture: there is no single "root" node;
+   a node's fields 10/16/29 are a size, an id and an undecodable blob,
+   not child nodes); field 4 = size `{1: float32 width,
    2: float32 height}` in Keynote points (1920×1080 for 16:9). **4** =
    KN.SlideNodeArchive — field 2 → its KN.SlideArchive (field 16 holds
    a thumbnail data ref — ignore). **5** = KN.SlideArchive — field 5 →
@@ -126,22 +130,26 @@ presentation siblings only — the boundary spec extends to it):
    the super's field 2 → the text storage. **2001** =
    TSWP.StorageArchive — field 2 → stylesheet (ignore), field 3 =
    repeated string: the text (absent in Apple's templates, present in
-   documents). **11006** = TSP.PackageMetadata, always object id 2 in
+   documents). Paragraphs within a storage string are separated by
+   **U+000D** (carriage return; corrected 2026-09-02 against the real
+   fixture) — split on `\r\n`, `\r`, `\n` and U+2029. **11006** = TSP.PackageMetadata, always object id 2 in
    `Index/Metadata.iwa` — field 3 = repeated component `{1: root object
    id, 2: name, 3: iwa file base name}`, field 4 = repeated data `{1:
    data id, 2: 20-byte SHA-1, 3: preferred file name}`.
 7. On-disk media: the `Data/` entry for data id N has a base name ending
    `-N` (e.g. `…-353.jpg`); resolve by that suffix, falling back to the
    preferred-file-name match.
-8. Slide order: the show's slide tree → root node → child slide nodes.
-   The child-list field number on KN.SlideNodeArchive could not be
-   verified from Apple's template data (templates are flat); it is
-   expected at field 1. **Resolution rule (normative):** collect
-   candidate orderings — (a) root node's repeated reference field whose
-   targets are all type-4 nodes, else (b) the type-4 archives in the
-   order their components appear in `PackageMetadata` field 3. Assert
-   (a) against the fixture during implementation; keep (b) as the
-   documented fallback for graphs where (a) yields nothing.
+8. Slide order (corrected 2026-09-02 against the real fixture): the
+   show's slide tree carries the repeated, ordered top-level node list
+   itself (fact 6, ShowArchive field 3 → tree field 2) — one node per
+   slide. Nested child nodes (skipped slides / grouped decks) still
+   hang below each top-level node via its repeated reference field
+   whose targets are all type-4 nodes. **Resolution rule (normative):**
+   start from the tree's own node list, appending each node's nested
+   type-4 children after it; fall back to (b) the type-4 archives in
+   the order their components appear in `PackageMetadata` field 3 —
+   excluding all top-level nodes already ordered — only for graphs
+   where the tree list yields nothing.
 
 ### Import mapping (normative)
 - **Scale**: target width 33.867cm when the show's aspect is within 2%

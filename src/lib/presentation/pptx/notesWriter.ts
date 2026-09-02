@@ -38,8 +38,12 @@ const NOTES_SLIDE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/r
 const NOTES_MASTER_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
 const THEME_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 
-const NOTES_SLIDE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
-const NOTES_MASTER_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml";
+// Shared with the writer's from-scratch build (SPEC-087: an imported deck is
+// born with notes but no source package, so buildFromScratch emits the same
+// notes parts this planner would).
+export const NOTES_SLIDE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
+export const NOTES_MASTER_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml";
+export { NOTES_MASTER_REL };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8");
@@ -134,7 +138,7 @@ function hasOverride(contentTypesXml: string, absoluteName: string): boolean {
   return new RegExp(`<Override PartName="${escaped}"`).test(contentTypesXml);
 }
 
-const NOTES_MASTER_XML =
+export const NOTES_MASTER_XML =
   `${XML_DECL}<p:notesMaster xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree>` +
   `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>` +
   `<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>` +
