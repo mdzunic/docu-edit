@@ -19,6 +19,7 @@ defineProps({
 <template>
   <HtmlExportOptionsDialog
     v-if="deckActions.htmlDialogOpen.value"
+    :media-note="deckActions.htmlMediaNote.value"
     @confirm="deckActions.confirmHtmlExport($event)"
     @cancel="deckActions.cancelHtmlExport()"
   />

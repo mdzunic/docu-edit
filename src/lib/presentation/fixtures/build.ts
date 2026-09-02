@@ -19,6 +19,8 @@ import { GOLDEN_PAGE_LAYOUT_NAMES, LAYOUT_GOLDEN } from "../odp/layoutGolden";
 import { createBlankPresentation } from "../slides";
 import { defaultFieldRect } from "../headerFooter";
 import { createTableFrame } from "../tables";
+import { insertMediaFrame, setMediaPoster } from "../frames";
+import { POSTER_PNG_BASE64, SYNTHETIC_MP4_BASE64, WAV_BASE64 } from "./mediaBytes";
 import { writePptx } from "../pptx/writer";
 import { writeOdp } from "../odp/writer";
 import { unzip } from "../../core/zip";
@@ -1804,4 +1806,88 @@ export async function buildSpec096OdpFixtureBytes(): Promise<Uint8Array> {
   parts.set("content.xml", encoder.encode(content.replace("</draw:page>", `${SPEC096_ODP_GROUP}</draw:page>`)));
   const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+}
+
+// ============================================================================
+// SPEC-095 media fixtures — built through the from-scratch writers. Each deck's
+// one slide carries an embedded audio clip (a playable PCM WAV, with a poster),
+// an embedded video clip (a synthetic MP4 the browser cannot decode, exercising
+// the unsupported degrade), a linked clip (a placeholder, never fetched) and one
+// deliberately out-of-subset media element that must stay a "Media" ForeignFrame
+// (pinning preserve-don't-parse).
+
+/** What the SPEC-095 fixtures carry, for the unit spec and e2e to assert. */
+export const EXPECTED_MEDIA_FRAMES = {
+  /** Modelled media frames (audio + video + linked); the out-of-subset element
+   * stays a foreign frame and is counted separately. */
+  count: 3,
+  audioContentType: "audio/wav",
+  videoContentType: "video/mp4",
+  /** The linked clip's caption basename. */
+  linkedBasename: "remote.mp4",
+};
+
+const SPEC095_FIXTURE_INSTANT = new Date(Date.UTC(2026, 8, 1, 9, 0, 0));
+
+const OUT_OF_SUBSET_PPTX_MEDIA =
+  `<p:pic><p:nvPicPr><p:cNvPr id="99" name="Media 99"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+  `<p:blipFill><a:blip/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+  `<p:spPr><a:xfrm><a:off x="720000" y="5400000"/><a:ext cx="1440000" cy="720000"/></a:xfrm>` +
+  `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+
+const OUT_OF_SUBSET_ODP_MEDIA =
+  `<draw:frame svg:x="2cm" svg:y="15cm" svg:width="4cm" svg:height="2cm">` +
+  `<draw:image xlink:href="Pictures/missing.png" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+  `</draw:frame>`;
+
+function mediaFixtureModel(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  const slide = model.slides[0];
+  slide.frames = [];
+  const audioId = insertMediaFrame(model, 0, { mediaId: "", contentType: "audio/wav", data: WAV_BASE64 }, "audio")!;
+  const videoId = insertMediaFrame(model, 0, { mediaId: "", contentType: "video/mp4", data: SYNTHETIC_MP4_BASE64 }, "video")!;
+  setMediaPoster(model, 0, audioId, { mediaId: "", contentType: "image/png", data: POSTER_PNG_BASE64 });
+  // Distinct, non-overlapping boxes so each clip is separately clickable on the
+  // stage (insertMediaFrame centres them, which would stack audio under video).
+  const audio = slide.frames.find((f) => f.id === audioId)!;
+  audio.xCm = 1;
+  audio.yCm = 1;
+  const video = slide.frames.find((f) => f.id === videoId)!;
+  video.xCm = 2;
+  video.yCm = 8;
+  slide.frames.push({
+    id: crypto.randomUUID(),
+    kind: "media",
+    media: "video",
+    xCm: 20,
+    yCm: 2,
+    widthCm: 6,
+    heightCm: 4,
+    linkTarget: "../media/remote.mp4",
+    contentType: "video/mp4",
+  });
+  slide.frames.push({
+    id: crypto.randomUUID(),
+    kind: "foreign",
+    label: "Media",
+    xCm: 2,
+    yCm: 15,
+    widthCm: 4,
+    heightCm: 2,
+    xml: format === "odp" ? OUT_OF_SUBSET_ODP_MEDIA : OUT_OF_SUBSET_PPTX_MEDIA,
+  });
+  return model;
+}
+
+export async function buildPptxMediaFixtureBytes(): Promise<Uint8Array> {
+  return (
+    await writePptx(mediaFixtureModel("pptx"), { now: SPEC095_FIXTURE_INSTANT, modified: SPEC095_FIXTURE_INSTANT })
+  ).bytes;
+}
+
+export async function buildOdpMediaFixtureBytes(): Promise<Uint8Array> {
+  return (
+    await writeOdp(mediaFixtureModel("odp"), { now: SPEC095_FIXTURE_INSTANT, modified: SPEC095_FIXTURE_INSTANT })
+  ).bytes;
 }

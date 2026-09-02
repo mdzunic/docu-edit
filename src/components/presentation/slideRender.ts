@@ -157,6 +157,8 @@ export function frameAccessibleName(frame: SlideFrame): string {
       return "Table";
     case "chart":
       return "Chart";
+    case "media":
+      return frame.media === "audio" ? "Audio" : "Video";
     default:
       return frame.role ? "Placeholder" : "Text box";
   }

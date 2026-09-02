@@ -39,6 +39,40 @@ function setup() {
   return { model, render };
 }
 
+describe("useSlideRender commit media gate (SPEC-095 AC-12/14)", () => {
+  function withMedia() {
+    const model = shallowRef<PresentationModel | null>(createBlankPresentation());
+    model.value!.media = [{ mediaId: "ppt/media/media1.mp4", contentType: "video/mp4", data: "AAAA" }];
+    const render = useSlideRender({ model, currentIndex: shallowRef(0), recomputeScale: () => {} });
+    return { model, render };
+  }
+
+  it("does NOT re-slice model.media on a plain commit (a nudge/keystroke)", () => {
+    const { model, render } = withMedia();
+    const before = model.value!.media;
+    render.commit();
+    expect(model.value!.media).toBe(before);
+  });
+
+  it("re-slices model.media after bumpMedia (a just-inserted image or clip renders)", () => {
+    const { model, render } = withMedia();
+    const before = model.value!.media;
+    render.bumpMedia();
+    render.commit();
+    expect(model.value!.media).not.toBe(before);
+    expect(model.value!.media).toEqual(before);
+  });
+
+  it("clears the gate after each commit (the next plain commit does not re-slice)", () => {
+    const { model, render } = withMedia();
+    render.bumpMedia();
+    render.commit();
+    const afterBump = model.value!.media;
+    render.commit();
+    expect(model.value!.media).toBe(afterBump);
+  });
+});
+
 describe("useSlideRender refresh (SPEC-096)", () => {
   it("re-identifies the slide, its frames AND group descendants, preserving values", () => {
     const { model, render } = setup();

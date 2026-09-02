@@ -16,9 +16,11 @@
 import { cmToPx } from "../core/units";
 import { mediaDataUri, type MediaPart } from "../core/media";
 import { shapeDefinition, shapeSvgPath } from "../core/shapeCatalogue";
+import { mediaBasename } from "./mediaFrames";
 import {
   DEFAULT_PRESENTATION_TITLE,
   type GroupFrame,
+  type MediaFrame,
   type PresentationModel,
   type ShapeFrame,
   type Slide,
@@ -182,6 +184,10 @@ interface EmitContext {
    * through `fieldText` (AC-27/124) rather than any cached string. */
   model: PresentationModel;
   instant: Date;
+  /** SPEC-095: true when the deck's total media payload exceeds the budget, so
+   * every media frame exports as its poster plate and no clip bytes are
+   * emitted. */
+  omitMedia: boolean;
 }
 
 const FIELD_JUSTIFY: Record<"left" | "center" | "right", string> = {
@@ -279,6 +285,30 @@ function renderTableFrame(frame: TableFrame, fid: string, theme: DocumentTheme):
   );
 }
 
+/** A media clip on an exported slide (SPEC-095). Within the media budget an
+ * embedded clip becomes a native `<video controls>`/`<audio controls>` with the
+ * payload inline as a `data:` URI (poster on video); over budget — or for a
+ * linked/oversize clip with no embeddable payload — it degrades to the poster
+ * plate captioned "Media omitted from this export", carrying no clip bytes. */
+function renderMediaFrame(frame: MediaFrame, fid: string, ctx: EmitContext): string {
+  const style = positionStyle(frame);
+  const poster = frame.posterMediaId ? mediaDataUri(ctx.media.get(frame.posterMediaId)) : "";
+  const clip = frame.mediaId && !frame.oversize && !frame.linkTarget ? ctx.media.get(frame.mediaId) : undefined;
+  if (!ctx.omitMedia && clip) {
+    const src = mediaDataUri(clip);
+    const inner =
+      frame.media === "audio"
+        ? `<audio controls src="${esc(src)}" style="width:100%"></audio>`
+        : `<video controls src="${esc(src)}"${poster ? ` poster="${esc(poster)}"` : ""} style="width:100%;height:100%"></video>`;
+    return `<div class="frame media" data-fid="${fid}" style="${esc(style.join(";"))}">${inner}</div>`;
+  }
+  const plate = poster
+    ? `<img class="media-poster" alt="" src="${esc(poster)}">`
+    : `<span class="foreign-label">${esc(mediaBasename(frame) || "Media")}</span>`;
+  const caption = `<span class="media-omitted">Media omitted from this export</span>`;
+  return `<div class="frame media omitted" data-fid="${fid}" style="${esc(style.join(";"))}">${plate}${caption}</div>`;
+}
+
 function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
   const fid = nextFid(ctx, frame);
   const theme = deckThemeOf(ctx.model);
@@ -297,6 +327,8 @@ function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
       return renderTableFrame(frame, fid, theme);
     case "chart":
       return renderChartFrame(frame, fid);
+    case "media":
+      return renderMediaFrame(frame, fid, ctx);
   }
 }
 
@@ -423,6 +455,47 @@ export interface HtmlExportOptions {
   includeNotes: boolean;
 }
 
+/** SPEC-095: media embeds as `data:` URIs only while the deck's total media
+ * base64 stays within this budget. Past it, every media frame exports as its
+ * poster plate and no clip payload is emitted — so a video-heavy deck never
+ * yields a 60 MB HTML file. */
+export const HTML_EXPORT_MEDIA_BUDGET_BYTES = 8 * 1024 * 1024;
+
+/** How many media frames a deck exports and the combined base64 size of the
+ * distinct clips they would embed — so the export dialog can state the count
+ * and whether they will be omitted (AC-49), and the exporter gates embedding on
+ * the same number (single source of truth). Groups are descended. */
+export function mediaExportSummary(model: PresentationModel): {
+  count: number;
+  totalBase64Bytes: number;
+  omitted: boolean;
+} {
+  const byId = new Map((model.media ?? []).map((part) => [part.mediaId, part]));
+  let count = 0;
+  const clips = new Map<string, number>();
+  const walk = (frames: SlideFrame[]): void => {
+    for (const frame of frames) {
+      if (frame.kind === "media") {
+        count += 1;
+        const part = frame.mediaId && !frame.oversize && !frame.linkTarget ? byId.get(frame.mediaId) : undefined;
+        if (part) {
+          clips.set(part.mediaId, part.data.length);
+        }
+      } else if (frame.kind === "group") {
+        walk(frame.children);
+      }
+    }
+  };
+  for (const slide of model.slides) {
+    walk(slide.frames);
+  }
+  let totalBase64Bytes = 0;
+  for (const size of clips.values()) {
+    totalBase64Bytes += size;
+  }
+  return { count, totalBase64Bytes, omitted: totalBase64Bytes > HTML_EXPORT_MEDIA_BUDGET_BYTES };
+}
+
 /** Serialises a presentation to a single self-contained HTML document (see the
  * module header). Pure — never mutates the model. Throws on a deck with no
  * slides (the menu item is disabled; this guard is for API callers). */
@@ -438,6 +511,7 @@ export function exportPresentationHtml(model: PresentationModel, options: HtmlEx
     counter: { n: 0 },
     model,
     instant: now(),
+    omitMedia: mediaExportSummary(model).omitted,
   };
   const sections = model.slides.map((slide, index) => renderSlide(slide, index, widthPx, heightPx, ctx)).join("");
   const title = esc(model.title || DEFAULT_PRESENTATION_TITLE);
@@ -480,6 +554,10 @@ html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;font-fa
 .frame.group{left:0!important;top:0!important;width:0!important;height:0!important;overflow:visible}
 .frame.foreign{border:1px dashed #b0b0b0;display:flex;align-items:center;justify-content:center}
 .foreign-label{color:#666;font-size:.75rem}
+.frame.media{display:flex;align-items:center;justify-content:center;background:#1f1f1f;overflow:hidden}
+.frame.media video,.frame.media audio{display:block}
+.frame.media .media-poster{width:100%;height:100%;object-fit:contain}
+.media-omitted{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:.7rem;color:#eee;background:rgba(0,0,0,.55);padding:2px}
 #hud{position:fixed;bottom:12px;right:16px;color:#fff;opacity:.55;font-size:14px;pointer-events:none}
 #end{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;font-size:20px;text-align:center;padding:24px}
 #end[hidden]{display:none}

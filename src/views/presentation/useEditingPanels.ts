@@ -11,6 +11,7 @@ import { useTransitions } from "./useTransitions";
 import { useAnimations } from "./useAnimations";
 import { useTables } from "./useTables";
 import { useSlideCharts } from "./useSlideCharts";
+import { useSlideMedia } from "./useSlideMedia";
 import type { usePresentationEditing } from "./usePresentationEditing";
 
 export interface EditingPanelsDeps {
@@ -19,15 +20,30 @@ export interface EditingPanelsDeps {
   currentIndex: Ref<number>;
   record: (label?: string) => void;
   commit: () => void;
+  /** Marks `model.media` changed so `commit` re-slices it (SPEC-095). */
+  bumpMedia: () => void;
+  reportError: (message: string) => void;
   stageEdit: ReturnType<typeof usePresentationEditing>;
 }
 
 /** Wires the transition/animation/table/chart panel controllers and their
  * stage hookups; the view mounts the returned controllers unchanged. */
 export function useEditingPanels(deps: EditingPanelsDeps) {
-  const { model, currentSlide, currentIndex, record, commit, stageEdit } = deps;
+  const { model, currentSlide, currentIndex, record, commit, bumpMedia, reportError, stageEdit } = deps;
 
   const transitions = useTransitions({ model, currentSlide, currentIndex, record, commit });
+
+  const media = useSlideMedia({
+    model,
+    currentSlide,
+    currentIndex,
+    record,
+    commit,
+    bumpMedia,
+    reportError,
+    selectedFrameId: stageEdit.selection.selectedFrameId,
+    selectFrame: stageEdit.selection.select,
+  });
 
   const animations = useAnimations({
     model,
@@ -62,5 +78,5 @@ export function useEditingPanels(deps: EditingPanelsDeps) {
   });
   stageEdit.setChartEditHandler(charts.openDataSheet); // double-click a chart → data sheet
 
-  return { transitions, animations, tables, charts };
+  return { transitions, animations, tables, charts, media };
 }

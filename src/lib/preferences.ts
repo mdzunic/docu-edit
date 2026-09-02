@@ -129,6 +129,9 @@ export interface Preferences {
   /** Whether the presentation editor's table properties panel is expanded
    * (SPEC-091). Per-device, default collapsed. */
   presentationTableOpen: boolean;
+  /** Whether the presentation editor's Media panel is expanded (SPEC-095).
+   * Per-device, default collapsed. */
+  presentationMediaOpen: boolean;
   /** Whether the presentation editor's Design (theme) panel is expanded
    * (SPEC-094). Per-device, default collapsed. */
   presentationThemeOpen: boolean;
@@ -199,6 +202,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationNotesOpen: false,
   presentationTransitionsOpen: false,
   presentationAnimationsOpen: false,
+  presentationMediaOpen: false,
   presentationThemeOpen: false, // SPEC-094 Design panel
   presentationTableOpen: false,
   snapToGuides: true,
@@ -273,6 +277,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationNotesOpen: isBoolean,
   presentationTransitionsOpen: isBoolean,
   presentationAnimationsOpen: isBoolean,
+  presentationMediaOpen: isBoolean,
   presentationThemeOpen: isBoolean,
   presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,

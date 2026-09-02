@@ -18,6 +18,7 @@ import {
   type FrameStroke,
   type GroupFrame,
   type ImageFrame,
+  type MediaFrame,
   type PresentationModel,
   type ShapeFrame,
   type Slide,
@@ -41,6 +42,12 @@ import {
   type ModelFont,
 } from "../../core/theme";
 import { schemeClrXml, slideClrMapMode, type SlideColorWrite } from "./theme";
+import {
+  AUDIO_RELATIONSHIP,
+  MEDIA_RELATIONSHIP,
+  mediaNvPrXml,
+  VIDEO_RELATIONSHIP,
+} from "./mediaWire";
 import { writePptxTiming } from "./timing";
 import { DEFAULT_DATE_FORMAT, fieldText, isTitleSlide } from "../headerFooter";
 import { FIELD_GUID, FORMAT_TO_PPTX_DATETIME, PH_IDX_OF_KIND, PH_NAME_OF_KIND, PH_TYPE_OF_KIND } from "./fields";
@@ -257,6 +264,10 @@ function frameXml(
       // Verbatim (still carrying its source xml) re-emits unchanged and
       // claims no id; an authored group rebuilds as p:grpSp (SPEC-096).
       return frame.xml ?? groupFrameXml(frame, mint, rels, slidePartPath, tc);
+    case "media":
+      // An untouched clip re-emits its verbatim p:pic (byte-identical, AC-44);
+      // a touched/inserted one rebuilds against its minted media rels (SPEC-095).
+      return frame.sourceXml ?? mediaFrameXml(frame, mint(frame.id), rels, slidePartPath, tc);
     case "foreign":
       return frame.xml; // re-emitted verbatim, in z-order (AC-35)
     default:
@@ -552,6 +563,57 @@ function embedIdFor(mediaId: string, rels: Map<string, Relationship>, slidePartP
     }
   }
   return undefined;
+}
+
+// --- media frame (SPEC-095) -------------------------------------------------
+
+/** The relationship id of `relType` resolving to `mediaId` (a package part), or
+ * matching `linkTarget` directly (an external clip). The writer's
+ * `linkMediaRels` minted these before the part serialised. */
+function relIdFor(
+  rels: Map<string, Relationship>,
+  slidePartPath: string,
+  relType: string,
+  mediaId: string | undefined,
+  linkTarget?: string,
+): string | undefined {
+  for (const rel of rels.values()) {
+    if (rel.type !== relType) {
+      continue;
+    }
+    if (mediaId && resolvePartPath(slidePartPath, rel.target) === mediaId) {
+      return rel.id;
+    }
+    if (linkTarget && rel.target === linkTarget) {
+      return rel.id;
+    }
+  }
+  return undefined;
+}
+
+/** A rebuilt media `p:pic` (SPEC-095): the `a:videoFile`/`a:audioFile` + modern
+ * `p14:media` refs in `p:nvPr`, the poster in `p:blipFill`, geometry via
+ * `xfrmXml`, and the playback flags in a docu-edit extension. An untouched clip
+ * re-emits its verbatim `sourceXml` instead (see `frameXml`). */
+function mediaFrameXml(
+  frame: MediaFrame,
+  id: number,
+  rels: Map<string, Relationship>,
+  slidePartPath: string,
+  tc: SlideColorWrite,
+): string {
+  const noun = frame.media === "audio" ? "Audio" : "Video";
+  const fileRelType = frame.media === "audio" ? AUDIO_RELATIONSHIP : VIDEO_RELATIONSHIP;
+  const sourceRid = relIdFor(rels, slidePartPath, fileRelType, frame.mediaId, frame.linkTarget);
+  const mediaRid = frame.mediaId ? relIdFor(rels, slidePartPath, MEDIA_RELATIONSHIP, frame.mediaId) : undefined;
+  const posterEmbed = frame.posterMediaId ? embedIdFor(frame.posterMediaId, rels, slidePartPath) : undefined;
+  const blip = posterEmbed ? `<a:blip r:embed="${escapeXmlAttribute(posterEmbed)}"/>` : `<a:blip/>`;
+  return (
+    `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${noun} ${id}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>` +
+    `${mediaNvPrXml(frame, { sourceRid, mediaRid })}</p:nvPicPr>` +
+    `<p:blipFill>${blip}<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+    `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${strokeXml(frame.stroke, tc)}</p:spPr></p:pic>`
+  );
 }
 
 // --- table frame (SPEC-091) -------------------------------------------------

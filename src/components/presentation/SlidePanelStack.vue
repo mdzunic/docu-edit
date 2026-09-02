@@ -8,12 +8,14 @@ import NotesPanel from "./NotesPanel.vue";
 import TransitionsPanel from "./TransitionsPanel.vue";
 import AnimationsPanel from "./AnimationsPanel.vue";
 import TablePropertiesPanel from "./TablePropertiesPanel.vue";
+import MediaPanel from "./MediaPanel.vue";
 
 defineProps({
   notes: { type: Object, required: true },
   transitions: { type: Object, required: true },
   animations: { type: Object, required: true },
   tables: { type: Object, required: true },
+  media: { type: Object, required: true },
   slideNumber: { type: Number, default: 1 },
   hasSlide: { type: Boolean, default: false },
 });
@@ -39,6 +41,11 @@ defineProps({
   <TablePropertiesPanel
     v-if="tables.open.value && tables.hasTable.value && hasSlide"
     :controller="tables"
+    :slide-number="slideNumber"
+  />
+  <MediaPanel
+    v-if="media.open.value && hasSlide"
+    :controller="media"
     :slide-number="slideNumber"
   />
 </template>

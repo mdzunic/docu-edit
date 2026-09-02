@@ -13,7 +13,15 @@ import { detectPackage } from "../../core/packageDetect";
 import { parseCoreProperties, parseCustomProperties } from "../../core/opcProperties";
 import type { DocumentProperties } from "../../core/documentProperties";
 import type { MediaPart } from "../../core/media";
-import { contentTypeForPartName } from "../../core/media";
+import { contentTypeForPartName, MAX_MEDIA_SIZE_BYTES } from "../../core/media";
+import { mediaKindForContentType } from "../mediaFrames";
+import {
+  AUDIO_RELATIONSHIP,
+  DE_MEDIA_NAMESPACE,
+  MEDIA_RELATIONSHIP,
+  P14_NAMESPACE,
+  VIDEO_RELATIONSHIP,
+} from "./mediaWire";
 import { cmToEmu, emuToCm } from "../../core/units";
 import { unzip, ZipError } from "../../core/zip";
 import {
@@ -53,8 +61,10 @@ import {
   type SlideFieldKind,
   type SlideFieldPlaceholder,
   type SlideFill,
+  type MediaFrame,
   type SlideFrame,
   type SlideLayout,
+  type SlideMediaKind,
   type SlideParagraph,
   type SlideRun,
   type SlideTableCell,
@@ -660,12 +670,19 @@ function foreignFrame(
   return frame;
 }
 
-/** Resolves a `p:pic` blip into a media part and an ImageFrame. */
+/** Resolves a `p:pic` into a MediaFrame (SPEC-095), else an ImageFrame, else
+ * the SPEC-079 "Media" ForeignFrame. */
 function parsePic(pic: Element, ctx: SlideContext): SlideFrame {
   const spPr = pChild(pic, "spPr");
   const ownXfrm = parseXfrm(spPr ? firstA(spPr, "xfrm") : undefined);
   const geom = geometryFor(ownXfrm, undefined, undefined, undefined, ctx);
   const base = frameBase(geom);
+
+  const media = parseMediaPic(pic, base, spPr, ctx);
+  if (media) {
+    return media;
+  }
+
   const blipFill = pChild(pic, "blipFill");
   const blip = blipFill ? firstA(blipFill, "blip") : undefined;
   const embed = blip?.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "embed");
@@ -680,6 +697,148 @@ function parsePic(pic: Element, ctx: SlideContext): SlideFrame {
     }
   }
   return foreignFrame(pic, base, "Media");
+}
+
+/** The `p14:media` element under a `p:pic`'s `p:nvPr` (its modern embedded
+ * pointer), or undefined. */
+function firstP14Media(nvPr: Element): Element | undefined {
+  return Array.from(nvPr.getElementsByTagNameNS(P14_NAMESPACE, "media"))[0];
+}
+
+/** The docu-edit playback-flags recorded in a rebuilt media `p:pic` (SPEC-095),
+ * applied to `frame` when present; a no-op for a clip that carries none (a
+ * verbatim clip from another app). Mirrors `mediaFlagsExtXml`. */
+function applyMediaFlags(frame: MediaFrame, nvPr: Element): void {
+  const el = Array.from(nvPr.getElementsByTagNameNS(DE_MEDIA_NAMESPACE, "media"))[0];
+  if (!el) {
+    return;
+  }
+  if (el.getAttribute("autoStart") === "1") {
+    frame.autoStart = true;
+  }
+  if (el.getAttribute("loop") === "1") {
+    frame.loop = true;
+  }
+  if (el.getAttribute("mute") === "1") {
+    frame.muted = true;
+  }
+  const vol = el.getAttribute("vol");
+  if (vol !== null && vol !== "") {
+    const n = Number(vol);
+    if (Number.isFinite(n)) {
+      frame.volume = n;
+    }
+  }
+  if (el.getAttribute("fullScreen") === "1") {
+    frame.fullScreen = true;
+  }
+}
+
+/** A `p:pic` carrying `a:videoFile`/`a:audioFile` or a `p14:media` extension is
+ * an audio/video clip (AC-2): resolves the clip part (or, unresolved, its
+ * link/oversize state), the poster blip and the modelled flags, and keeps the
+ * verbatim source for byte-exact re-emit. Returns undefined for a `p:pic` that
+ * is not media (parsePic then treats it as an image or a "Media" ForeignFrame). */
+function parseMediaPic(
+  pic: Element,
+  base: ReturnType<typeof frameBase>,
+  spPr: Element | undefined,
+  ctx: SlideContext,
+): MediaFrame | undefined {
+  const nvPicPr = pChild(pic, "nvPicPr");
+  const nvPr = nvPicPr ? pChild(nvPicPr, "nvPr") : undefined;
+  if (!nvPr) {
+    return undefined;
+  }
+  const videoFile = firstA(nvPr, "videoFile");
+  const audioFile = firstA(nvPr, "audioFile");
+  const p14media = firstP14Media(nvPr);
+  if (!videoFile && !audioFile && !p14media) {
+    return undefined;
+  }
+
+  const R = R_ATTRIBUTE_NAMESPACE;
+  const fileEl = videoFile ?? audioFile;
+  // Resolution order: the modern p14:media embed, then the transitional
+  // videoFile/audioFile embed or link.
+  const rids = [
+    p14media?.getAttributeNS(R, "embed"),
+    fileEl?.getAttributeNS(R, "embed"),
+    fileEl?.getAttributeNS(R, "link"),
+  ];
+  let mediaId: string | undefined;
+  let linkTarget: string | undefined;
+  let oversize = false;
+  let contentType: string | undefined;
+  for (const rid of rids) {
+    if (!rid) {
+      continue;
+    }
+    const rel = ctx.slideRels.get(rid);
+    if (!rel) {
+      continue;
+    }
+    const partPath = resolvePartPath(ctx.slidePartPath, rel.target);
+    if (ctx.media.has(partPath)) {
+      mediaId = partPath;
+      contentType = ctx.media.get(partPath)?.contentType;
+      break;
+    }
+    if (ctx.parts.has(partPath)) {
+      // In the package but not taken into the model — over the ceiling
+      // (collectSlideMedia skipped it): model as oversize, ride out via opaque.
+      oversize = true;
+      contentType = contentTypeForPartName(partPath);
+      break;
+    }
+    // No such part: a linked (external) clip — a placeholder, never fetched.
+    linkTarget = rel.target;
+    break;
+  }
+  if (!contentType && fileEl) {
+    // A linked clip has no part to sniff — recover the type from the wire.
+    const declared = fileEl.getAttribute("contentType");
+    if (declared) {
+      contentType = declared;
+    }
+  }
+
+  const kind: SlideMediaKind = audioFile ? "audio" : videoFile ? "video" : mediaKindForContentType(contentType);
+  const frame: MediaFrame = { ...base, kind: "media", media: kind };
+  if (mediaId) {
+    frame.mediaId = mediaId;
+  }
+  if (linkTarget) {
+    frame.linkTarget = linkTarget;
+  }
+  if (oversize) {
+    frame.oversize = true;
+  }
+  if (contentType) {
+    frame.contentType = contentType;
+  }
+
+  const blipFill = pChild(pic, "blipFill");
+  const blip = blipFill ? firstA(blipFill, "blip") : undefined;
+  const posterEmbed = blip?.getAttributeNS(R, "embed");
+  if (posterEmbed) {
+    const posterRel = ctx.slideRels.get(posterEmbed);
+    if (posterRel && posterRel.type === IMAGE_RELATIONSHIP) {
+      const posterPath = resolvePartPath(ctx.slidePartPath, posterRel.target);
+      if (ctx.media.has(posterPath)) {
+        frame.posterMediaId = posterPath;
+      }
+    }
+  }
+
+  applyMediaFlags(frame, nvPr);
+  const stroke = strokeOf(spPr, ctx);
+  if (stroke) {
+    frame.stroke = stroke;
+  }
+  // Verbatim source, re-emitted byte-for-byte until a command edits a field.
+  frame.sourceXml = serializeElement(pic);
+  return frame;
 }
 
 /** Parses a `p:graphicFrame`: an in-subset DrawingML table (`a:tbl`) becomes a
@@ -1142,6 +1301,38 @@ export function parseChartGraphicFrameForTest(
     parts: new Map(Object.entries(parts)),
   };
   return parseGraphicFrame(gf, ctx);
+}
+
+/** Test seam (SPEC-095 golden): parses a standalone media `p:pic` against
+ * supplied slide rels, collected media parts and raw package parts, so the
+ * media golden can assert the reader accepts the canonical bytes plus a
+ * PowerPoint-flavoured variant, and degrades an unrecognised `p:pic` to the
+ * "Media" ForeignFrame. */
+export function parseMediaPicForTest(
+  picXml: string,
+  rels: Relationship[],
+  media: MediaPart[],
+  parts: Record<string, Uint8Array> = {},
+): SlideFrame {
+  // `xmlns:p="` specifically (not `xmlns:p14="`, which a media p:pic carries).
+  const xml = picXml.includes(`xmlns:p="`)
+    ? picXml
+    : picXml.replace(
+        "<p:pic>",
+        `<p:pic xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}" xmlns:r="${R_ATTRIBUTE_NAMESPACE}" xmlns:p14="${P14_NAMESPACE}">`,
+      );
+  const pic = parseXml(xml).documentElement;
+  const ctx: SlideContext = {
+    color: { scheme: {}, map: {} },
+    layoutPh: new Map(),
+    masterPh: new Map(),
+    txStyles: new Map(),
+    slideRels: new Map(rels.map((rel) => [rel.id, rel])),
+    slidePartPath: "ppt/slides/slide1.xml",
+    media: new Map(media.map((part) => [part.mediaId, part])),
+    parts: new Map(Object.entries(parts)),
+  };
+  return parsePic(pic, ctx);
 }
 
 /** Parses a `p:cxnSp` connector: a line/straight connector is a line shape,
@@ -1888,10 +2079,17 @@ function buildLayoutCatalogue(
   return [...byKey.values()];
 }
 
-/** Copies this slide's referenced image parts into the shared media map. */
+/** Copies this slide's referenced image AND audio/video parts into the shared
+ * media map (SPEC-095). A clip already in the package over `MAX_MEDIA_SIZE_BYTES`
+ * is deliberately NOT taken into the model — it would bloat the single media
+ * record — so it rides out through `opaque` and the reader models it as
+ * `oversize` (AC-11). */
 function collectSlideMedia(slideRels: Map<string, Relationship>, slidePath: string, deps: BuildDeps): void {
   for (const rel of slideRels.values()) {
-    if (rel.type !== IMAGE_RELATIONSHIP) {
+    const isImage = rel.type === IMAGE_RELATIONSHIP;
+    const isClip =
+      rel.type === VIDEO_RELATIONSHIP || rel.type === AUDIO_RELATIONSHIP || rel.type === MEDIA_RELATIONSHIP;
+    if (!isImage && !isClip) {
       continue;
     }
     const partPath = resolvePartPath(slidePath, rel.target);
@@ -1902,7 +2100,10 @@ function collectSlideMedia(slideRels: Map<string, Relationship>, slidePath: stri
     if (!raw) {
       continue;
     }
-    const contentType = contentTypeForPartName(partPath) ?? "image/png";
+    if (isClip && raw.length > MAX_MEDIA_SIZE_BYTES) {
+      continue;
+    }
+    const contentType = contentTypeForPartName(partPath) ?? (isClip ? "application/octet-stream" : "image/png");
     deps.media.set(partPath, { mediaId: partPath, contentType, data: base64Sync(raw) });
   }
 }

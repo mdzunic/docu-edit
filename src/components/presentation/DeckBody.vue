@@ -30,6 +30,9 @@ const props = defineProps({
   notes: { type: Object, required: true },
   tables: { type: Object, required: true },
   charts: { type: Object, required: true },
+  /** SPEC-095: the Media panel controller (distinct from the `media` deck part
+   * array above, which the stage resolves image/poster src from). */
+  mediaPanel: { type: Object, required: true },
   /** SPEC-093: each slide's pre-resolved deck field band, indexed to `slides`. */
   fieldsBySlide: { type: Array, default: () => [] },
 });
@@ -68,6 +71,7 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
       :transitions="transitions"
       :notes="notes"
       :tables="tables"
+      :media-panel="mediaPanel"
       :current-index="currentIndex"
       :fields="currentFields"
       @add="$emit('add')"

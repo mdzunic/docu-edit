@@ -6,10 +6,12 @@
 // labelled dashed placeholder box. Runtime prop declarations, not
 // defineProps<{...}>() generics — this repo lints .vue scripts with espree,
 // which rejects TS-only syntax; every typed transform lives in slideRender.ts.
-import { computed, nextTick, onMounted, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { paintChartIntoCanvas } from "../../lib/core/chartCanvas";
+import { mediaElementVolume } from "../../lib/presentation/mediaFrames";
+import { createCanPlayProbe, mediaRenderDescriptor } from "./mediaRender";
 import {
   asResolver,
   asTheme,
@@ -59,6 +61,9 @@ const props = defineProps({
    * layered onto the frame's position during a build preview/show. Null in the
    * editor, where frames always render fully visible (AC-25). */
   playStyle: { type: Object, default: null },
+  /** SPEC-095: true in SPEC-084 playback (not the editor), so an autoStart media
+   * frame that is currently visible plays under the autoplay policy. */
+  playbackMode: { type: Boolean, default: false },
   /** SPEC-094: the deck's theme, so scheme references resolve at render.
    * Null/absent = Office (`DEFAULT_THEME`). */
   theme: { type: Object, default: null },
@@ -104,6 +109,106 @@ const foreignText = computed(() => foreignLabel(frame.value));
 const imgSrc = computed(() => imageSrc(frame.value, asResolver(props.resolveMedia)));
 const showPrompt = computed(() => !props.editing && isEmptyTextPlaceholder(frame.value));
 const promptText = computed(() => placeholderPrompt(frame.value));
+
+// --- media frame (SPEC-095) -------------------------------------------------
+// Nothing auto-plays in the editor (AC-19); activating the badge (click, or
+// Enter on the selected frame) swaps in native controls that play inline
+// (AC-20). Local state resets on deselect and — since a slide change hands the
+// frame a fresh object identity — on slide change too (AC-21).
+const mediaEl = useTemplateRef("mediaEl");
+const mediaActivated = ref(false);
+const mediaRuntimeError = ref(false);
+const mediaBlocked = ref(false);
+const mediaDescriptor = computed(() => {
+  const f = frame.value;
+  if (f.kind !== "media") return null;
+  return mediaRenderDescriptor(f, asResolver(props.resolveMedia), createCanPlayProbe(f.media), mediaRuntimeError.value);
+});
+const mediaSrc = computed(() => {
+  const f = frame.value;
+  return f.kind === "media" && f.mediaId ? asResolver(props.resolveMedia)(f.mediaId) : "";
+});
+const mediaElementVol = computed(() => {
+  const f = frame.value;
+  return f.kind === "media" ? mediaElementVolume(f.volume) : 1;
+});
+const mediaLoop = computed(() => frame.value.kind === "media" && frame.value.loop === true);
+const mediaMuted = computed(() => frame.value.kind === "media" && frame.value.muted === true);
+// A frame hidden by a pending entrance build (or after its exit) must not play
+// (AC-40/41); its build style removes it from view.
+const mediaBuildHidden = computed(() => {
+  const s = props.playStyle;
+  return !!s && (s.visibility === "hidden" || s.opacity === "0");
+});
+// In SPEC-084 playback, an autoStart clip that is visible plays; entering
+// playback is a user gesture, so play() is allowed (AC-35), but an unmuted clip
+// reached without a gesture rejects and degrades to media-blocked (AC-36).
+const mediaShouldAutoStart = computed(
+  () =>
+    props.playbackMode &&
+    frame.value.kind === "media" &&
+    frame.value.autoStart === true &&
+    !mediaBuildHidden.value &&
+    !!mediaDescriptor.value?.playable,
+);
+function activateMedia() {
+  if (mediaDescriptor.value?.playable) {
+    mediaBlocked.value = false;
+    mediaActivated.value = true;
+  }
+}
+function startPlayback() {
+  mediaBlocked.value = false;
+  mediaActivated.value = true;
+  void nextTick(attemptPlay);
+}
+function attemptPlay() {
+  const el = mediaEl.value;
+  if (!(el instanceof HTMLMediaElement)) return;
+  el.muted = mediaMuted.value;
+  el.volume = mediaElementVol.value;
+  const played = el.play();
+  if (played && typeof played.then === "function") {
+    // A muted clip is never blocked (AC-37); an unmuted policy rejection degrades
+    // to the media-blocked affordance that plays on the next input (AC-36).
+    played.catch((error) => {
+      if (error && error.name === "NotAllowedError" && !el.muted) {
+        mediaBlocked.value = true;
+        mediaActivated.value = false;
+      }
+    });
+  }
+}
+function onMediaError() {
+  mediaRuntimeError.value = true;
+  mediaActivated.value = false;
+}
+function applyMediaVolume(event = new Event("loadedmetadata")) {
+  const el = event.target;
+  if (el instanceof HTMLMediaElement) {
+    el.volume = mediaElementVol.value;
+  }
+}
+watch(mediaShouldAutoStart, (should) => {
+  if (should) startPlayback();
+}, { immediate: true });
+// An exit effect (or any build) that hides the target pauses it (AC-41).
+watch(mediaBuildHidden, (hidden) => {
+  if (hidden && props.playbackMode) {
+    const el = mediaEl.value;
+    if (el instanceof HTMLMediaElement) el.pause();
+    mediaActivated.value = false;
+  }
+});
+// Deselecting stops editor inline playback (AC-21).
+watch(
+  () => props.selected,
+  (sel) => {
+    if (!sel && !props.playbackMode) {
+      mediaActivated.value = false;
+    }
+  },
+);
 
 const canvasEl = useTemplateRef("canvasEl");
 const chartCanvasEl = useTemplateRef("chartCanvasEl");
@@ -314,6 +419,115 @@ watch([() => props.frame, deckTheme], () => {
       :src="imgSrc"
       alt=""
     >
+  </div>
+
+  <!-- Media frame (SPEC-095) -->
+  <div
+    v-else-if="kind === 'media' && mediaDescriptor"
+    class="frame media-frame"
+    :class="{ 'is-selected': selected }"
+    :style="[position, playStyle]"
+    :data-testid="testId"
+    :role="role"
+    :aria-label="ariaName"
+    :tabindex="tabIndex"
+    @mousedown="onFrameMousedown"
+    @pointerdown="onFramePointerdown"
+    @keydown.enter="activateMedia"
+  >
+    <div
+      class="slide-media-frame"
+      data-testid="slide-media-frame"
+    >
+      <!-- Playing inline / in playback: native controls (AC-20/35) -->
+      <video
+        v-if="mediaActivated && mediaDescriptor.noun === 'Video'"
+        ref="mediaEl"
+        class="media-controls"
+        data-testid="media-controls"
+        controls
+        :src="mediaSrc"
+        :loop="mediaLoop"
+        :muted="mediaMuted"
+        :poster="mediaDescriptor.posterSrc || undefined"
+        @error="onMediaError"
+        @loadedmetadata="applyMediaVolume"
+      />
+      <audio
+        v-else-if="mediaActivated"
+        ref="mediaEl"
+        class="media-controls"
+        data-testid="media-controls"
+        controls
+        :src="mediaSrc"
+        :loop="mediaLoop"
+        :muted="mediaMuted"
+        @error="onMediaError"
+        @loadedmetadata="applyMediaVolume"
+      />
+      <!-- Idle: poster or neutral plate, plus the badge / degrade captions -->
+      <template v-else>
+        <img
+          v-if="mediaDescriptor.posterSrc"
+          class="media-poster"
+          data-testid="media-poster"
+          :src="mediaDescriptor.posterSrc"
+          alt=""
+        >
+        <div
+          v-else
+          class="media-plate"
+        >
+          <span
+            class="media-glyph"
+            aria-hidden="true"
+          >▶</span>
+          <span class="media-name">{{ mediaDescriptor.basename }}</span>
+        </div>
+        <button
+          v-if="mediaBlocked"
+          type="button"
+          class="media-play media-blocked"
+          data-testid="media-blocked"
+          aria-label="Click to play"
+          @click.stop="startPlayback"
+        >
+          ▶ Click to play
+        </button>
+        <button
+          v-else-if="mediaDescriptor.playable"
+          type="button"
+          class="media-play"
+          data-testid="media-play"
+          aria-label="Play"
+          @click.stop="activateMedia"
+        >
+          ▶
+        </button>
+        <div
+          v-else-if="mediaDescriptor.mode === 'link'"
+          class="media-caption media-link-placeholder"
+          data-testid="media-link-placeholder"
+        >
+          <span class="media-name">{{ mediaDescriptor.basename }}</span>
+          <span>{{ mediaDescriptor.caption }}</span>
+        </div>
+        <div
+          v-else-if="mediaDescriptor.mode === 'oversize'"
+          class="media-caption media-oversize"
+          data-testid="media-oversize"
+        >
+          {{ mediaDescriptor.caption }}
+        </div>
+        <div
+          v-else-if="mediaDescriptor.mode === 'unsupported'"
+          class="media-caption media-unsupported"
+          data-testid="media-unsupported"
+        >
+          {{ mediaDescriptor.caption }}
+        </div>
+      </template>
+    </div>
   </div>
 
   <!-- Shape frame -->
@@ -610,6 +824,76 @@ watch([() => props.frame, deckTheme], () => {
   height: 100%;
   object-fit: fill;
   display: block;
+}
+
+/* Media frame (SPEC-095) */
+.slide-media-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1f1f1f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide-media-frame .media-poster,
+.slide-media-frame .media-controls {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.slide-media-frame .media-poster {
+  object-fit: contain;
+}
+.media-plate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4em;
+  color: #e8e8e8;
+  padding: 0.5em;
+  text-align: center;
+}
+.media-plate .media-glyph {
+  font-size: 2em;
+  line-height: 1;
+}
+.media-name {
+  font-size: 0.75em;
+  word-break: break-all;
+}
+.media-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2.4em;
+  height: 2.4em;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 1em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.media-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15em;
+  padding: 0.3em;
+  font-size: 0.7em;
+  color: #eee;
+  background: rgba(0, 0, 0, 0.55);
+  text-align: center;
 }
 
 .shape-canvas {

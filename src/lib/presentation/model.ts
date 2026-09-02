@@ -221,6 +221,42 @@ export interface ShapeFrame extends SlideFrameBase {
   paragraphs?: SlideParagraph[]; // shape text, centred per bodyPr default
 }
 
+/** A slide media clip is one of two element kinds (SPEC-095). */
+export type SlideMediaKind = "video" | "audio";
+
+/** An audio or video clip on a slide (SPEC-095). Read from a pptx `p:pic`
+ * carrying `a:videoFile`/`a:audioFile`/`p14:media` or an odp `draw:frame`
+ * carrying `draw:plugin`; rendered on the stage with inline playback and in
+ * SPEC-084 playback under the autoplay policy. `mediaId` absent is never "no
+ * media": it pairs with `linkTarget` (a clip we did not embed) or `oversize`
+ * (a payload over MAX_MEDIA_SIZE_BYTES we left in `opaque`). */
+export interface MediaFrame extends SlideFrameBase {
+  kind: "media";
+  media: SlideMediaKind;
+  /** Key into `model.media`. Absent ⇒ see `linkTarget`/`oversize`. */
+  mediaId?: string;
+  /** Source href/target of a clip we did not embed (a linked file). */
+  linkTarget?: string;
+  /** Poster still (`p:blipFill` / sibling `draw:image`); absent = neutral plate. */
+  posterMediaId?: string;
+  /** From the package part or `draw:mime-type`. */
+  contentType?: string;
+  autoStart?: true; // absent = start on click
+  loop?: true;
+  muted?: true;
+  volume?: number; // 0..100; absent = 100
+  fullScreen?: true; // odp presentation:play-full-screen
+  oversize?: true; // in the package, over MAX_MEDIA_SIZE_BYTES
+  stroke?: FrameStroke;
+  /** The verbatim source `p:pic` / `draw:frame`. Present ⇒ the serialisers
+   *  re-emit it unchanged; deleted by any command changing a modelled field
+   *  (`markFrameEdited`, the frame-level analogue of `markSlideEdited`'s odp
+   *  rule). Absent ⇒ rebuild from the fields above. Not in
+   *  equality.ts's `XML_STRING_KEYS`, so it compares as a raw string —
+   *  byte-exactness is the point. */
+  sourceXml?: string;
+}
+
 export interface GroupFrame extends SlideFrameBase {
   kind: "group";
   children: SlideFrame[]; // coordinates already in slide space
@@ -335,7 +371,15 @@ export interface TableFrame extends SlideFrameBase {
   odpColumnStyleNames?: (string | undefined)[];
 }
 
-export type SlideFrame = TextFrame | ImageFrame | ShapeFrame | ChartFrame | GroupFrame | ForeignFrame | TableFrame;
+export type SlideFrame =
+  | TextFrame
+  | ImageFrame
+  | ShapeFrame
+  | ChartFrame
+  | MediaFrame
+  | GroupFrame
+  | ForeignFrame
+  | TableFrame;
 
 /** The three deck-level field kinds SPEC-093 models along a slide's bottom
  * edge: a footer string, the slide number and the date. */

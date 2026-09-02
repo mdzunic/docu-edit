@@ -19,9 +19,12 @@ import {
   insertImageRect,
   insertShapeFrame,
   groupFrames,
+  insertMediaFrame,
   insertTableFrame,
   insertTextBoxFrame,
-  mediaExtension,
+  markFrameEdited,
+  MEDIA_AUDIO_SIZE_CM,
+  MEDIA_VIDEO_SIZE_CM,
   moveFrame,
   moveFrames,
   reorderFrame,
@@ -45,6 +48,7 @@ import { MIN_COLUMN_WIDTH_CM, MIN_ROW_HEIGHT_CM } from "../core/tables";
 import type {
   GroupFrame,
   ImageFrame,
+  MediaFrame,
   PresentationModel,
   ShapeFrame,
   Slide,
@@ -187,9 +191,77 @@ describe("media minting", () => {
     expect(model.media![0].mediaId).toBe("Pictures/image1.png");
   });
 
-  it("maps webp to a webp extension", () => {
-    expect(mediaExtension("image/webp")).toBe("webp");
-    expect(mediaExtension("image/png")).toBe("png");
+  // (webp/mp4/… extension mapping folded into core/media.ts's
+  // extensionForContentType — covered by core/media.spec.ts.)
+});
+
+describe("insertMediaFrame (SPEC-095)", () => {
+  function mp4(): MediaPart {
+    return { mediaId: "", contentType: "video/mp4", data: "AAAA" };
+  }
+  function wav(): MediaPart {
+    return { mediaId: "", contentType: "audio/wav", data: "AAAA" };
+  }
+
+  it("lands a video at a 16×9 box, centred, selected, and mints a media part", () => {
+    const model = blank();
+    const id = insertMediaFrame(model, 0, mp4(), "video");
+    const frame = only(model.slides[0]) as MediaFrame;
+    expect(frame.id).toBe(id);
+    expect(frame.kind).toBe("media");
+    expect(frame.media).toBe("video");
+    expect(frame.widthCm).toBe(MEDIA_VIDEO_SIZE_CM.widthCm);
+    expect(frame.heightCm).toBe(MEDIA_VIDEO_SIZE_CM.heightCm);
+    expect(frame.xCm).toBeCloseTo((model.slideWidthCm - 16) / 2, 3);
+    expect(frame.yCm).toBeCloseTo((model.slideHeightCm - 9) / 2, 3);
+    expect(model.media).toHaveLength(1);
+    expect(model.media![0].mediaId).toBe("ppt/media/image1.mp4");
+    expect(frame.mediaId).toBe("ppt/media/image1.mp4");
+    expect(frame.contentType).toBe("video/mp4");
+    expect(model.slides[0].dirty).toBe(true);
+  });
+
+  it("lands audio at an 8×1.6 strip, minted with a .wav extension", () => {
+    const model = blank();
+    insertMediaFrame(model, 0, wav(), "audio");
+    const frame = only(model.slides[0]) as MediaFrame;
+    expect(frame.media).toBe("audio");
+    expect(frame.widthCm).toBe(MEDIA_AUDIO_SIZE_CM.widthCm);
+    expect(frame.heightCm).toBe(MEDIA_AUDIO_SIZE_CM.heightCm);
+    expect(model.media![0].mediaId).toBe("ppt/media/image1.wav");
+  });
+
+  it("clamps an oversized box into a small slide so at least a corner stays on", () => {
+    const model = blank();
+    model.slideWidthCm = 10;
+    model.slideHeightCm = 6;
+    insertMediaFrame(model, 0, mp4(), "video");
+    const frame = only(model.slides[0]) as MediaFrame;
+    // Box shrinks to the slide when it would overflow.
+    expect(frame.widthCm).toBeLessThanOrEqual(10);
+    expect(frame.heightCm).toBeLessThanOrEqual(6);
+    expect(frame.xCm).toBeGreaterThanOrEqual(FRAME_MIN_ON_SLIDE_CM - frame.widthCm);
+  });
+
+  it("markFrameEdited drops the frame's sourceXml and dirties the slide", () => {
+    const model = blank();
+    insertMediaFrame(model, 0, mp4(), "video");
+    const slide = model.slides[0];
+    const frame = only(slide) as MediaFrame;
+    frame.sourceXml = "<p:pic/>";
+    delete slide.dirty;
+    markFrameEdited(slide, frame, model.format);
+    expect(frame.sourceXml).toBeUndefined();
+    expect(slide.dirty).toBe(true);
+  });
+
+  it("moving a media frame drops its sourceXml (geometry is a modelled field)", () => {
+    const model = blank();
+    const id = insertMediaFrame(model, 0, mp4(), "video");
+    const frame = only(model.slides[0]) as MediaFrame;
+    frame.sourceXml = "<p:pic/>";
+    moveFrame(model, 0, id!, 1, 1);
+    expect(frame.sourceXml).toBeUndefined();
   });
 });
 

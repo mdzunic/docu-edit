@@ -14,6 +14,7 @@ import FrameStylePopover from "./FrameStylePopover.vue";
 import { asShapeGeometry } from "../../lib/core/shapes";
 import { asSlideFrame } from "./slideRender";
 import { PRESENTATION_IMAGE_ACCEPT } from "../../views/presentation/useFrameInsertion";
+import { MEDIA_ACCEPT_ATTR } from "../../lib/core/media";
 import { MAX_TABLE_COLS, MAX_TABLE_ROWS, PICKER_MAX_COLS, PICKER_MAX_ROWS } from "../../lib/core/tables";
 
 const props = defineProps({
@@ -39,6 +40,7 @@ const props = defineProps({
 const emit = defineEmits([
   "insert-text-box",
   "insert-image",
+  "insert-media",
   "insert-shape",
   "insert-table",
   "insert-chart",
@@ -145,6 +147,18 @@ function onFileChange(event = new Event("change")) {
   input.value = ""; // allow re-picking the same file
 }
 
+const mediaInput = useTemplateRef("mediaInput");
+function openMediaPicker() {
+  mediaInput.value?.click();
+}
+function onMediaFileChange(event = new Event("change")) {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement)) return;
+  const file = input.files?.[0];
+  if (file) emit("insert-media", file);
+  input.value = "";
+}
+
 const ARRANGE = [
   { target: "front", label: "Bring to front" },
   { target: "forward", label: "Bring forward" },
@@ -168,6 +182,7 @@ onMounted(() => {
 onBeforeUnmount(() => observer?.disconnect());
 
 const accept = PRESENTATION_IMAGE_ACCEPT;
+const mediaAccept = MEDIA_ACCEPT_ATTR;
 </script>
 
 <template>
@@ -185,6 +200,14 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
       :accept="accept"
       data-testid="slides-image-input"
       @change="onFileChange"
+    >
+    <input
+      ref="mediaInput"
+      type="file"
+      class="sr-only"
+      :accept="mediaAccept"
+      data-testid="slides-media-input"
+      @change="onMediaFileChange"
     >
 
     <div class="tb-group">
@@ -206,6 +229,15 @@ const accept = PRESENTATION_IMAGE_ACCEPT;
       >
         <AppIcon name="image" />
         Image…
+      </button>
+      <button
+        type="button"
+        class="tb-btn"
+        data-testid="insert-media"
+        @click="openMediaPicker"
+      >
+        <AppIcon name="image" />
+        Media…
       </button>
       <div class="popover-host">
         <button

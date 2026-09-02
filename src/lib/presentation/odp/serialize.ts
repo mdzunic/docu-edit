@@ -22,6 +22,7 @@ import {
   type ChartFrame,
   type FrameStroke,
   type ImageFrame,
+  type MediaFrame,
   type PlaceholderRole,
   type ShapeFrame,
   type Slide,
@@ -498,6 +499,10 @@ function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireI
       // authored group rebuilds as draw:g, whose children keep their OWN
       // svg:x/svg:y — a draw:g has no box of its own (SPEC-096).
       return frame.xml ?? `<draw:g>${frame.children.map((child) => frameXml(child, registry)).join("")}</draw:g>`;
+    case "media":
+      // Untouched clip re-emits verbatim (byte-identical, AC-44); a touched or
+      // inserted one rebuilds the canonical draw:frame + draw:plugin (SPEC-095).
+      return frame.sourceXml ?? mediaFrameXml(frame, registry, wireId);
     case "foreign":
       return frame.xml; // verbatim (AC-39)
     default:
@@ -626,6 +631,46 @@ function imageFrameXml(frame: ImageFrame, registry: StyleRegistry, wireId?: stri
   return (
     `<draw:frame${idAttrs(wireId)}${styleAttr}${geomAttrs(frame)}>` +
     `<draw:image xlink:href="${escapeXmlAttribute(frame.mediaId)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
+    `</draw:frame>`
+  );
+}
+
+/** The `draw:param` playback-flag rows for a media frame (SPEC-095), in
+ * AutoPlay/Loop/Mute/Volume order; "" when it carries no non-default flag. */
+function mediaParamsXml(frame: MediaFrame): string {
+  const rows: string[] = [];
+  if (frame.autoStart) {
+    rows.push(`<draw:param draw:name="AutoPlay" draw:value="true"/>`);
+  }
+  if (frame.loop) {
+    rows.push(`<draw:param draw:name="Loop" draw:value="true"/>`);
+  }
+  if (frame.muted) {
+    rows.push(`<draw:param draw:name="Mute" draw:value="true"/>`);
+  }
+  if (frame.volume !== undefined) {
+    rows.push(`<draw:param draw:name="Volume" draw:value="${frame.volume}"/>`);
+  }
+  return rows.join("");
+}
+
+/** A rebuilt media `draw:frame` (SPEC-095): a `draw:plugin` with the clip href,
+ * `draw:mime-type`, the playback-flag `draw:param` rows, and a sibling
+ * `draw:image` poster; `presentation:play-full-screen` on the frame. An
+ * untouched clip re-emits its verbatim `sourceXml` instead (see `frameXml`). */
+function mediaFrameXml(frame: MediaFrame, registry: StyleRegistry, wireId?: string): string {
+  const styleName = registry.graphicStyle({ stroke: frame.stroke });
+  const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
+  const fullScreen = frame.fullScreen ? ` presentation:play-full-screen="true"` : "";
+  const href = frame.mediaId ?? frame.linkTarget ?? "";
+  const mime = frame.contentType ? ` draw:mime-type="${escapeXmlAttribute(frame.contentType)}"` : "";
+  const poster = frame.posterMediaId
+    ? `<draw:image xlink:href="${escapeXmlAttribute(frame.posterMediaId)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>`
+    : "";
+  return (
+    `<draw:frame${idAttrs(wireId)}${styleAttr}${geomAttrs(frame)}${fullScreen}>` +
+    `<draw:plugin xlink:href="${escapeXmlAttribute(href)}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"${mime}>` +
+    `${mediaParamsXml(frame)}</draw:plugin>${poster}` +
     `</draw:frame>`
   );
 }

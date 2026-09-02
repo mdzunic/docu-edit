@@ -32,6 +32,8 @@ export interface PresentationEditingDeps {
   currentIndex: Ref<number>;
   record: (label?: string) => void;
   commit: () => void;
+  /** Marks `model.media` changed so `commit` re-slices it (SPEC-095 AC-13). */
+  bumpMedia: () => void;
   /** Re-render the stage without persisting — live drag/resize preview. */
   refresh: () => void;
   undo: () => void;
@@ -65,6 +67,7 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     surface,
     record: deps.record,
     commit: deps.commit,
+    bumpMedia: deps.bumpMedia,
     startEditing: (id) => editing.startEditing(id),
     reportError: deps.reportError,
   });

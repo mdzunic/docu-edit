@@ -25,11 +25,14 @@ import type {
   FrameStroke,
   GroupFrame,
   ImageFrame,
+  MediaFrame,
+  PresentationFormat,
   PresentationModel,
   ShapeFrame,
   Slide,
   SlideFill,
   SlideFrame,
+  SlideMediaKind,
   TextFrame,
 } from "./model";
 
@@ -102,14 +105,17 @@ function touch(model: PresentationModel, slide: Slide): void {
   markSlideEdited(slide, model.format);
 }
 
-/** A geometry change (move/resize/reorder/duplicate) invalidates a chart
- * frame's verbatim source container — the serialiser must regenerate the
- * `p:graphicFrame`/`draw:frame` at the new geometry — but it must NEVER set
- * `edited`: the chart PART is untouched, so it still round-trips byte-identical
- * (SPEC-092 AC-16a, D11). A no-op for every other frame kind. */
-function dropChartContainerXml(frame: SlideFrame): void {
+/** A geometry change (move/resize/reorder/duplicate) invalidates a frame's
+ * verbatim source container — the serialiser must regenerate it at the new
+ * geometry. For a chart this drops `xml` but must NEVER set `edited` (the chart
+ * PART is untouched, so it still round-trips byte-identical — SPEC-092 AC-16a,
+ * D11); for a media frame it drops `sourceXml`, the frame-level analogue of
+ * `markSlideEdited`'s odp rule (SPEC-095). A no-op for every other frame kind. */
+function dropRebuiltContainerXml(frame: SlideFrame): void {
   if (frame.kind === "chart") {
     delete frame.xml;
+  } else if (frame.kind === "media") {
+    delete frame.sourceXml;
   }
 }
 
@@ -219,16 +225,77 @@ export function insertImageFrame(
   return frame.id;
 }
 
-/** The file extension an inserted image is written under. Handles webp (which
- * the presentation picker accepts, AC-4) explicitly; other types delegate to
- * the shared core map. */
-export function mediaExtension(contentType: string): string {
-  return contentType === "image/webp" ? "webp" : extensionForContentType(contentType);
-}
-
 /** The package directory inserted media rides in, per format. */
 export function mediaDirectory(model: PresentationModel): string {
   return model.format === "odp" ? "Pictures/" : "ppt/media/";
+}
+
+/** The box a freshly inserted video lands in: a 16 cm × 9 cm (16:9) frame
+ * (SPEC-095). */
+export const MEDIA_VIDEO_SIZE_CM: { widthCm: number; heightCm: number } = { widthCm: 16, heightCm: 9 };
+
+/** The strip a freshly inserted audio clip lands in: 8 cm × 1.6 cm (SPEC-095). */
+export const MEDIA_AUDIO_SIZE_CM: { widthCm: number; heightCm: number } = { widthCm: 8, heightCm: 1.6 };
+
+/** The centred rect an inserted clip lands in (SPEC-095): the per-kind box
+ * (video 16×9, audio 8×1.6), shrunk to the slide when it would overflow and
+ * centred on the surface. */
+function mediaInsertRect(model: PresentationModel, mediaKind: SlideMediaKind): FrameRect {
+  const box = mediaKind === "video" ? MEDIA_VIDEO_SIZE_CM : MEDIA_AUDIO_SIZE_CM;
+  const widthCm = Math.min(box.widthCm, model.slideWidthCm);
+  const heightCm = Math.min(box.heightCm, model.slideHeightCm);
+  return {
+    xCm: r3((model.slideWidthCm - widthCm) / 2),
+    yCm: r3((model.slideHeightCm - heightCm) / 2),
+    widthCm: r3(widthCm),
+    heightCm: r3(heightCm),
+  };
+}
+
+/** Inserts an audio/video clip: adds `media` to `model.media` under a freshly
+ * minted, collision-free `mediaId`, lands a `MediaFrame` at the per-kind box
+ * (video 16×9 cm, audio 8×1.6 cm) centred and clamped into the slide, and
+ * returns its id (SPEC-095). The media part's own `mediaId` is overwritten with
+ * the minted package path. */
+export function insertMediaFrame(
+  model: PresentationModel,
+  slideIndex: number,
+  media: MediaPart,
+  mediaKind: SlideMediaKind,
+): string | null {
+  const slide = slideAt(model, slideIndex);
+  if (!slide) {
+    return null;
+  }
+  const mediaId = mintMediaId(model, media.contentType);
+  const part: MediaPart = { mediaId, contentType: media.contentType, data: media.data };
+  if (!model.media) {
+    model.media = [];
+  }
+  model.media.push(part);
+  const frame: MediaFrame = {
+    id: crypto.randomUUID(),
+    ...normaliseRect(mediaInsertRect(model, mediaKind)),
+    kind: "media",
+    media: mediaKind,
+    mediaId,
+    contentType: media.contentType,
+  };
+  slide.frames.push(frame);
+  clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
+  touch(model, slide);
+  return frame.id;
+}
+
+/** The frame-level analogue of `markSlideEdited`'s odp `sourceXml` rule
+ * (SPEC-095): a command that changes a modelled `MediaFrame` field drops the
+ * verbatim source so the serialiser rebuilds it from the model, then marks the
+ * slide edited (dirty; an odp page drops its own `sourceXml`). Called by the
+ * Media panel's flag/poster edits — geometry commands drop `sourceXml` through
+ * `dropRebuiltContainerXml` already. */
+export function markFrameEdited(slide: Slide, frame: MediaFrame, format: PresentationFormat): void {
+  delete frame.sourceXml;
+  markSlideEdited(slide, format);
 }
 
 /** Mints a package part path for an inserted image that collides with no part
@@ -238,7 +305,7 @@ export function mediaDirectory(model: PresentationModel): string {
  * guarded against by a final uniqueness pass). */
 function mintMediaId(model: PresentationModel, contentType: string): string {
   const dir = mediaDirectory(model);
-  const ext = mediaExtension(contentType);
+  const ext = extensionForContentType(contentType);
   const taken = new Set<string>();
   let max = 0;
   const scan = (name: string): void => {
@@ -333,7 +400,7 @@ function translateFrame(frame: SlideFrame, dxCm: number, dyCm: number): void {
   }
   frame.xCm = r3(frame.xCm + dxCm);
   frame.yCm = r3(frame.yCm + dyCm);
-  dropChartContainerXml(frame);
+  dropRebuiltContainerXml(frame);
   if (frame.kind === "group") {
     delete frame.xml;
     frame.children.forEach((child) => translateFrame(child, dxCm, dyCm));
@@ -356,7 +423,7 @@ export function moveFrame(
   }
   translateFrame(frame, dxCm, dyCm);
   clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
-  dropChartContainerXml(frame);
+  dropRebuiltContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -377,7 +444,7 @@ export function setFramePosition(
   }
   translateFrame(frame, xCm - frame.xCm, yCm - frame.yCm);
   clampToSlide(frame, model.slideWidthCm, model.slideHeightCm);
-  dropChartContainerXml(frame);
+  dropRebuiltContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -446,7 +513,7 @@ export function resizeFrame(
   frame.yCm = r3(rect.yCm);
   frame.widthCm = nextWidth;
   frame.heightCm = nextHeight;
-  dropChartContainerXml(frame);
+  dropRebuiltContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -462,7 +529,7 @@ function scaleGroupChildren(group: GroupFrame, next: FrameRect): void {
     frame.yCm = r3(next.yCm + (frame.yCm - group.yCm) * sy);
     frame.widthCm = r3(frame.widthCm * sx);
     frame.heightCm = r3(frame.heightCm * sy);
-    dropChartContainerXml(frame);
+    dropRebuiltContainerXml(frame);
     if (frame.kind === "group") {
       delete frame.xml;
       frame.children.forEach(scale);
@@ -552,7 +619,7 @@ export function setFrameRotation(
   } else {
     frame.rotationDeg = deg;
   }
-  dropChartContainerXml(frame);
+  dropRebuiltContainerXml(frame);
   touch(model, slide);
   return frame.id;
 }
@@ -578,7 +645,7 @@ function rotateGroupChildren(group: GroupFrame, deltaDeg: number): void {
     const ny = cy + fcx * sin + fcy * cos;
     frame.xCm = r3(nx - frame.widthCm / 2);
     frame.yCm = r3(ny - frame.heightCm / 2);
-    dropChartContainerXml(frame);
+    dropRebuiltContainerXml(frame);
     if (frame.kind === "group") {
       delete frame.xml;
       frame.children.forEach(spin);
@@ -681,7 +748,7 @@ export function duplicateFrame(model: PresentationModel, slideIndex: number, fra
   // A duplicated chart shares the source's `sourcePart` (legal — the writer
   // mints a fresh part for the later claimant, D8) but its verbatim container
   // now has the wrong geometry, so drop it (never `edited`; the part is intact).
-  dropChartContainerXml(copy);
+  dropRebuiltContainerXml(copy);
   slide.frames.push(copy);
   touch(model, slide);
   return copy.id;
@@ -723,7 +790,7 @@ export function reorderFrame(
   }
   const [moved] = slide.frames.splice(from, 1);
   slide.frames.splice(to, 0, moved);
-  dropChartContainerXml(moved);
+  dropRebuiltContainerXml(moved);
   touch(model, slide);
   return frameId;
 }
@@ -769,7 +836,7 @@ export function reorderFrames(
     return block.map((frame) => frame.id); // already at that end — untouched
   }
   slide.frames = next;
-  block.forEach(dropChartContainerXml);
+  block.forEach(dropRebuiltContainerXml);
   touch(model, slide);
   return block.map((frame) => frame.id);
 }
@@ -886,4 +953,51 @@ export function setFrameStroke(
 
 function clampStroke(stroke: FrameStroke): FrameStroke {
   return { color: stroke.color, widthPt: clamp(stroke.widthPt, MIN_STROKE_WIDTH_PT, MAX_STROKE_WIDTH_PT) };
+}
+
+// --- media panel edits (SPEC-095) -------------------------------------------
+
+/** Applies `mutate` to the selected media frame's modelled flags and marks the
+ * frame edited (drops its verbatim `sourceXml`, dirties the slide) — the model
+ * half of the Media panel's flag edits. Returns true when a media frame was
+ * found. The caller (`useSlideMedia`) records one undo entry and commits. */
+export function editMediaFrame(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  mutate: (frame: MediaFrame) => void,
+): boolean {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "media") {
+    return false;
+  }
+  mutate(frame);
+  markFrameEdited(slide, frame, model.format);
+  return true;
+}
+
+/** Replaces a media frame's poster still (AC-28): mints a collision-free
+ * `mediaId` for the image, adds it to `model.media`, points `posterMediaId` at
+ * it, and marks the frame edited. Returns true on success. The caller bumps
+ * media and commits. */
+export function setMediaPoster(
+  model: PresentationModel,
+  slideIndex: number,
+  frameId: string,
+  poster: MediaPart,
+): boolean {
+  const slide = slideAt(model, slideIndex);
+  const frame = slide ? frameOf(slide, frameId) : null;
+  if (!slide || !frame || frame.kind !== "media") {
+    return false;
+  }
+  const mediaId = mintMediaId(model, poster.contentType);
+  if (!model.media) {
+    model.media = [];
+  }
+  model.media.push({ mediaId, contentType: poster.contentType, data: poster.data });
+  frame.posterMediaId = mediaId;
+  markFrameEdited(slide, frame, model.format);
+  return true;
 }

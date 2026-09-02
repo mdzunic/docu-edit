@@ -7,6 +7,12 @@ import { ref } from "vue";
 import BaseDialog from "../BaseDialog.vue";
 import UiButton from "../ui/UiButton.vue";
 
+defineProps({
+  /** SPEC-095: a note about media that will be omitted from the export because
+   * the deck's clips exceed the budget; "" when nothing is omitted. */
+  mediaNote: { type: String, default: "" },
+});
+
 const emit = defineEmits(["confirm", "cancel"]);
 
 const includeNotes = ref(false);
@@ -35,6 +41,13 @@ function confirm() {
       >
       <span>Include speaker notes</span>
     </label>
+    <p
+      v-if="mediaNote"
+      class="media-note"
+      data-testid="export-html-media-note"
+    >
+      {{ mediaNote }}
+    </p>
     <template #actions>
       <UiButton
         variant="secondary"
@@ -66,5 +79,11 @@ function confirm() {
   gap: var(--space-2);
   align-items: center;
   font-size: var(--text-lg);
+}
+
+.media-note {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 </style>
