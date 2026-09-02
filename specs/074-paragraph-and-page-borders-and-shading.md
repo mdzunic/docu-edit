@@ -197,6 +197,29 @@ applications: SPEC-034's print path ignores `pageBackground` unless the
 print dialog's "print background colours" is set. Page *borders* always
 print.
 
+### Style inheritance
+Borders and shading are the one part of `ParagraphFormatting` this product
+does **not** bake onto the paragraph when a style is applied. They resolve
+at the point something paints them — `styles.paragraphPaintResolver` /
+`paintedParagraphFormatting`, layered by `paragraphBorders.withInheritedPaint`
+— and the paragraph's own values always win.
+
+Two reasons, both load-bearing:
+
+- A style's box belongs to the *style*. Baking it would give every
+  paragraph in the document a direct copy, and both writers would then emit
+  a per-paragraph `w:pBdr`/`fo:border` instead of the single style
+  definition Word and Writer expect (and that AC-18 saves).
+- A paragraph with no `styleId` at all still has a style: **Normal**, the
+  one the picker already names for it. Setting Normal's borders has to box
+  the paragraphs of a blank document, and no re-bake scoped to a style id
+  can reach a paragraph that names no style to be scoped by.
+
+The merge rule (AC-12) reads the same resolved values, so two paragraphs
+that inherit one box merge into one bordered run exactly as two that set it
+directly do; so does the accessibility checker (AC-27), which therefore
+measures contrast against the fill that was actually painted.
+
 ### Specs this changes
 - `specs/014-paragraph-alignment-indents-spacing.md` — "Paragraph borders
   and shading" leaves its out-of-scope list. Its alignment, indent, spacing

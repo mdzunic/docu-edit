@@ -10,6 +10,7 @@ import { writeOdt } from "./odf/writer";
 import { equalStructural, firstStructuralDifference } from "./equality";
 import { collectBorderStyleDropRecords, collectPageBackgroundDropRecords } from "./opaque";
 import { borderRuns } from "./paragraphBorders";
+import { paragraphPaintResolver } from "./styles";
 import type { BorderSide } from "./core/borders";
 import {
   createDefaultStyles,
@@ -386,3 +387,59 @@ async function partOf(bytes: Uint8Array, name: string): Promise<string> {
   }
   return new TextDecoder().decode(part);
 }
+
+// SPEC-074 AC-17/AC-18 — a style's own borders and shading. They live on the
+// style, not copied onto every paragraph that uses it, so what has to survive
+// a save is the *style definition*: `w:pBdr`/`w:shd` inside styles.xml's
+// `w:pPr`, and the ODF paragraph properties of the named style.
+describe("a paragraph style's borders and shading (AC-17, AC-18)", () => {
+  function styledDoc(): DocumentModel {
+    const boxed = para("Inherits the style's box");
+    boxed.styleId = "Callout";
+    const model = docOf([boxed]);
+    model.styles = [
+      { id: "Normal", name: "Normal" },
+      {
+        id: "Callout",
+        name: "Callout",
+        basedOn: "Normal",
+        paragraphFormatting: {
+          borders: { top: SINGLE, bottom: SINGLE, left: SINGLE, right: SINGLE },
+          shadingFill: "#fff2cc",
+        },
+      },
+    ];
+    return model;
+  }
+
+  function calloutOf(model: DocumentModel) {
+    return model.styles?.find((style) => style.id === "Callout")?.paragraphFormatting;
+  }
+
+  it("survives a .docx round trip on the style itself", async () => {
+    const { bytes } = await writeDocx(styledDoc());
+    const parsed = await parseDocx(bytes);
+    const callout = calloutOf({ ...styledDoc(), styles: parsed.styles });
+    expect(callout?.borders?.top).toEqual(SINGLE);
+    expect(callout?.borders?.right).toEqual(SINGLE);
+    expect(callout?.shadingFill).toBe("#fff2cc");
+  });
+
+  it("survives a .odt round trip on the style itself", async () => {
+    const { bytes } = await writeOdt(styledDoc());
+    const parsed = await parseOdt(bytes);
+    const callout = calloutOf({ ...styledDoc(), styles: parsed.styles });
+    expect(callout?.borders?.top).toEqual(SINGLE);
+    expect(callout?.shadingFill).toBe("#fff2cc");
+  });
+
+  it("paints the run through the resolver, not through the paragraph's own formatting", () => {
+    const model = styledDoc();
+    // The paragraph itself carries nothing — the box is entirely its style's.
+    expect((model.sections[0].blocks[0] as Paragraph).formatting).toBeUndefined();
+    expect(borderRuns(model.sections[0].blocks)[0].sides).toBe(false);
+    expect(
+      borderRuns(model.sections[0].blocks, paragraphPaintResolver(model))[0],
+    ).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+  });
+});
